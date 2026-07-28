@@ -179,7 +179,7 @@ describe("CertOps fake executor (B3)", function () {
       expect(terminal.status).to.equal("rejected");
       // Upstream (feature/certops) does not stamp completed_at for rejected
       // jobs (see the terminal-cases table in certops-executor-events.test.js,
-      // where rejected has timestamp: null), unlike the old M2 branch.
+      // where rejected has timestamp: null), unlike the old executor branch.
       expect(terminal.completedAt).to.equal(null);
 
       // Monotonic guard: rejected is terminal, so a late job.started must

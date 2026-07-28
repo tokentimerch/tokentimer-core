@@ -14,6 +14,9 @@ const {
 
 const {
   CERTOPS_EXECUTOR_EVENTS_PATH,
+  CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
   CERTOPS_JOB_EVENTS_PATH,
   CERTOPS_JOB_EVIDENCE_PATH,
   CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES,
@@ -28,6 +31,9 @@ const {
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 const MACHINE_WRITE_ROUTES = [
   CERTOPS_EXECUTOR_EVENTS_PATH,
+  CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH.replace(":jobId", JOB_ID),
   `/api/v1/certops/jobs/${JOB_ID}/events`,
   `/api/v1/certops/jobs/${JOB_ID}/evidence`,
 ];
@@ -42,6 +48,9 @@ function buildApp({ onAuth = () => {} } = {}) {
   app.use(express.json({ limit: "10mb" }));
   for (const route of [
     CERTOPS_EXECUTOR_EVENTS_PATH,
+    CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+    CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
+    CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
     CERTOPS_JOB_EVENTS_PATH,
     CERTOPS_JOB_EVIDENCE_PATH,
   ]) {
@@ -77,6 +86,7 @@ function buildBoundaryApp({ rateLimitOptions, onParser = () => {}, onAuth = () =
   app.use(express.json({ limit: "10mb" }));
   for (const route of [
     CERTOPS_EXECUTOR_EVENTS_PATH,
+    CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
     CERTOPS_JOB_EVENTS_PATH,
     CERTOPS_JOB_EVIDENCE_PATH,
   ]) {
@@ -148,6 +158,7 @@ describe("CertOps executor body parser", () => {
     for (const executorRoute of [
       "/API/v1/CertOps/Executor/Events",
       "/API/v1/CertOps/Executor/Events/",
+      "/API/v1/CertOps/Executor/Observations/",
     ]) {
       let parserCalls = 0;
       let authCalls = 0;
@@ -223,6 +234,7 @@ describe("CertOps executor body parser", () => {
       ...MACHINE_WRITE_ROUTES,
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Events/",
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Evidence/",
+      "/API/v1/CertOps/Executor/Provisioning-Commands/11111111-1111-4111-8111-111111111111/Authorize-Mutation/",
     ]) {
       let parserCalls = 0;
       let authCalls = 0;
@@ -252,7 +264,7 @@ describe("CertOps executor body parser", () => {
     }
   });
 
-  it("matches only exact case-insensitive M2 machine write paths", () => {
+  it("matches only exact case-insensitive executor machine write paths", () => {
     assert.equal(
       certOpsMachineWriteRouteFamily(
         "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Events/",
@@ -263,7 +275,12 @@ describe("CertOps executor body parser", () => {
       "/api/v1/certops/jobs//events",
       "/api/v1/certops/jobs/1/events/extra",
       "/api/v1/certops/jobs/1/evidence//",
-      "/api/v1/certops/agent/register",
+      "/api/v1/certops/executor/provisioning-commands//authorize-mutation",
+      "/api/v1/certops/executor/provisioning-commands/1/authorize-mutation/extra",
+      // /agent/register is now a machine-write family path; only its
+      // malformed neighbors must stay unrecognized.
+      "/api/v1/certops/agent/register/extra",
+      "/api/v1/certops/agent//register",
     ]) {
       assert.equal(certOpsMachineWriteRouteFamily(path), null);
     }
@@ -285,6 +302,15 @@ describe("CertOps executor body parser", () => {
     app.use(
       createCertOpsExecutorRouter({
         preAuthRateLimitMiddleware,
+        controllerObservationAuthMiddleware: (req, _res, next) => {
+          req.apiToken = {
+            id: "11111111-1111-4111-8111-111111111111",
+            workspaceId: "11111111-1111-4111-8111-111111111111",
+            controllerClusterId: "controller-a",
+            scopes: ["certops:observations:write"],
+          };
+          return next();
+        },
         certOpsEnabledMiddleware: (_req, res) =>
           res.status(404).json({ code: "NOT_FOUND" }),
       }),
@@ -293,16 +319,18 @@ describe("CertOps executor body parser", () => {
     for (const executorRoute of [
       "/API/v1/CertOps/Executor/Events",
       "/API/v1/CertOps/Executor/Events/",
+      "/API/v1/CertOps/Executor/Observations",
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Events",
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Evidence/",
     ]) {
+      const expectedStatus = /Observations/i.test(executorRoute) ? 401 : 404;
       await supertest(app)
         .post(executorRoute)
         .send({ schemaVersion: 1 })
-        .expect(404);
+        .expect(expectedStatus);
     }
     // Every request crosses the production pre-parser once; the router sees
     // the marker and never invokes its standalone fallback limiter.
-    assert.equal(limiterCalls, 4);
+    assert.equal(limiterCalls, 5);
   });
 });

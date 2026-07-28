@@ -61,6 +61,21 @@ describe("Authentication Integration Tests", () => {
   });
 
   describe("Two-Factor Authentication (TOTP)", () => {
+    // otplib v13's default verify has zero epoch tolerance (see
+    // node_modules/otplib dist: epochTolerance ?? 0), so a code generated in
+    // the last moment of its 30s period and verified a moment later, once the
+    // period has rolled over, is legitimately rejected. That is the correct
+    // security posture for the server, not a bug, but it makes "generate a
+    // code, then send it over an HTTP round-trip" flaky near the boundary.
+    // Wait for a fresh period before generating a code whenever there isn't
+    // comfortably enough of the window left to survive the request.
+    async function freshTotpPeriodMs(periodSeconds = 30, marginMs = 5000) {
+      const periodMs = periodSeconds * 1000;
+      const remainingMs = periodMs - (Date.now() % periodMs);
+      if (remainingMs >= marginMs) return;
+      await new Promise((resolve) => setTimeout(resolve, remainingMs));
+    }
+
     it("should support enabling 2FA and challenge on login", async () => {
       const email = `otp-user-${Date.now()}@example.com`;
       const password = "SecureTest123!@#";
@@ -92,6 +107,7 @@ describe("Authentication Integration Tests", () => {
 
       // otplib v13+ exports functions directly instead of authenticator object
       const { generateSync } = require("otplib");
+      await freshTotpPeriodMs();
       const firstCode = generateSync({ secret: setupRes.body.secret });
 
       await agent
@@ -116,6 +132,7 @@ describe("Authentication Integration Tests", () => {
         .expect(401);
 
       // Valid current code succeeds
+      await freshTotpPeriodMs();
       const validCode = generateSync({ secret: setupRes.body.secret });
       await agent
         .post("/auth/verify-2fa")

@@ -1,0 +1,119 @@
+{{- if .Values.certops.controller.enabled }}
+{{- include "tokentimer.certopsControllerValidate" . }}
+{{- $controller := .Values.certops.controller -}}
+{{- $name := include "tokentimer.certopsControllerName" . -}}
+{{- $serviceAccountName := include "tokentimer.certopsControllerServiceAccountName" . -}}
+{{- if $controller.clusterWide }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name | quote }}
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+rules:
+  - apiGroups:
+      - cert-manager.io
+    resources:
+      - certificates
+    verbs:
+      - get
+      - list
+      - watch
+      {{- if eq ($controller.mode | toString) "provision" }}
+      - create
+      - patch
+      {{- end }}
+  - apiGroups:
+      - cert-manager.io
+    resources:
+      - certificaterequests
+    verbs:
+      - get
+      - list
+      - watch
+  {{- if $controller.secretFallbackEnabled }}
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name | quote }}
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+{{- else }}
+{{- $watchNamespaces := include "tokentimer.certopsControllerWatchNamespaces" . | fromYamlArray -}}
+{{- range $namespace := $watchNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name | quote }}
+  namespace: {{ $namespace | quote }}
+  labels:
+    {{- include "tokentimer.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+rules:
+  - apiGroups:
+      - cert-manager.io
+    resources:
+      - certificates
+    verbs:
+      - get
+      - list
+      - watch
+      {{- if eq ($controller.mode | toString) "provision" }}
+      - create
+      - patch
+      {{- end }}
+  - apiGroups:
+      - cert-manager.io
+    resources:
+      - certificaterequests
+    verbs:
+      - get
+      - list
+      - watch
+  {{- if $controller.secretFallbackEnabled }}
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name | quote }}
+  namespace: {{ $namespace | quote }}
+  labels:
+    {{- include "tokentimer.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName | quote }}
+    namespace: {{ $.Release.Namespace | quote }}
+{{- end }}
+{{- end }}
+{{- end }}

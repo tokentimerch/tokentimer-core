@@ -75,6 +75,9 @@ worker:
     autoSync:
       enabled: true
       schedule: "*/1 * * * *"
+    certops:
+      enabled: true
+      schedule: "*/1 * * * *"
 
 # -- Ingress (Minikube nginx ingress)
 ingress:

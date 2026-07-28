@@ -95,19 +95,22 @@ the origins users and integrations actually use in the browser.
 
 ## Authentication and security
 
+> **Auth tuning is not configurable.** `LOCAL_AUTH_ENABLED`,
+> `REQUIRE_EMAIL_VERIFICATION`, `TWO_FACTOR_ENABLED`, `SESSION_MAX_AGE`,
+> `CSRF_ENABLED`, `MIN_PASSWORD_LENGTH`, `REQUIRE_UPPERCASE` and
+> `REQUIRE_NUMBERS` were previously listed here as supported variables. They are
+> parsed by `packages/config` but never read, so setting them has no effect. The
+> real behavior is fixed in code: a 2-hour rolling session cookie, CSRF always on
+> outside tests, local auth and TOTP always available, and a fixed 12-character
+> 5-class password policy. See [AUTHENTICATION.md](AUTHENTICATION.md).
+>
+> The cookie, CORS, and proxy variables below _are_ live.
+
 | Variable                                   | Description                                                                     | Default value                          | Scope        |
 | ------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------- | ------------ |
-| `LOCAL_AUTH_ENABLED`                       | Enable local email/password auth                                                | `true`                                 | API auth     |
-| `REQUIRE_EMAIL_VERIFICATION`               | Require verified email before access                                            | `true`                                 | API auth     |
-| `TWO_FACTOR_ENABLED`                       | Enable 2FA features                                                             | `true`                                 | API auth     |
-| `SESSION_MAX_AGE`                          | Session max age in ms                                                           | `86400000`                             | API auth     |
 | `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookies in production only when `APP_URL` and `API_URL` are both local HTTP (`localhost` / `127.0.0.1`); ignored otherwise | `false`                                | API auth     |
 | `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
-| `CSRF_ENABLED`                             | Enable CSRF protection                                                          | `true`                                 | API security |
-| `MIN_PASSWORD_LENGTH`                      | Minimum password length                                                         | `8`                                    | API auth     |
-| `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |
-| `REQUIRE_NUMBERS`                          | Enforce numeric chars in passwords                                              | `true`                                 | API auth     |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
@@ -188,10 +191,64 @@ the origins users and integrations actually use in the browser.
 | Variable           | Description                                                                                                                                                                                                                                                                                                                                 | Default value | Scope  |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------ |
 | `CERTOPS_ENABLED`  | Enable the certificate operations layer. When enabled, TokenTimer maintains a managed-certificate inventory linked to cert-category tokens, accepts public certificate (PEM) import, and bridges observations from HTTPS endpoint/domain monitors into the inventory (when the monitor has a linked token). When disabled, CertOps API endpoints return 404. Precedence: this env var > System Settings DB > code default. | `false` (app default when unset) | CertOps |
+| `CERTOPS_SIGNING_ENCRYPTION_KEY` | AES-256-GCM wrap key for the control-plane's Ed25519 job-signing private key at rest (64 hex chars = 32 bytes). Required the first time any agent registers, when the signing key is first generated; encrypt/decrypt fail closed when unset or malformed, so registration and job dispatch cannot proceed without it. Rotate with `pnpm certops:rotate-signing-key` (see the signing-key rotation runbook), not by changing this value: this key wraps the signing key at rest, it is not the signing key itself. | unset (required before registering any agent) | API |
+| `CERTOPS_REGISTRATION_ENCRYPTION_KEY` | AES-256-GCM wrap key for CertOps agent registration-replay credentials at rest (64 hex chars = 32 bytes). Required for agent registration; encrypt/decrypt fail closed when unset or malformed. Never store replay credentials as plaintext. | unset (required when registering agents) | API |
+| `CERTOPS_REGISTRATION_REPLAY_TTL_MS` | Short TTL for registrationId → credential replay rows after a successful register (lost-response recovery). Expired rows are swept by the CertOps maintenance worker. | `900000` (15 minutes) | API |
+| `CERTOPS_AGENT_OFFLINE_AFTER_MS` | How long an agent may go without a heartbeat (`last_seen_at`, or `created_at` if it never heartbeated) before it is treated as not-live. Read independently by two places that must be kept in sync if overridden: the API's `livenessState` fleet field (real-time, computed on every list/read call) and the CertOps maintenance worker's stale-agent sweep (periodic, persists `status='offline'`; requires the `certops` worker/CronJob target to actually be scheduled — see `docs/certops/agent.md`). | `600000` (10 minutes) | API + Worker |
+| `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION` | Supported agent protocol version window used to compute fleet `compatibilityState`. | `1.0.0` / `1.999.999` | API |
+| `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION` | Supported agent build version window used to compute fleet `compatibilityState`. | `0.1.0` / `99.999.999` | API |
+| `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` | Absolute clock-offset thresholds used to compute fleet `clockDriftState` (`warn`/`alert`). | `5000` / `30000` | API |
+| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. This is the fleet-wide default; a certificate whose renewal profile sets `certificate_profiles.renew_before_days` uses that value instead (`COALESCE(renew_before_days, <this>)`). Editing the profile from the Renewal automation page (`/certops/renewals`) is the supported way to give one certificate a longer runway than the rest of the fleet. A profile whose `status` is `disabled` or `archived` is excluded from renewal entirely regardless of this value. | `30` | API + Worker |
+| `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. | `5` | API + Worker |
+| `CERTOPS_JOB_LEASE_SECONDS` | How long an agent's claim on a job stays valid before it must be renewed. Raise this if legitimate renewals routinely take longer. | `900` | API |
+| `CERTOPS_LEASE_HARD_GRACE_MS` | Extra time a still-heartbeating agent gets before its expired-lease job is judged. | `3600000` (1 hour) | API + Worker |
+
+### CertOps maintenance sweeps (worker)
+
+The `certops` worker target runs six independent sweeps. Each has an enable
+flag (default enabled) and a per-sweep timeout (default `120000` ms,
+`DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an operational escape hatch,
+not a normal configuration.
+
+How it is scheduled depends on the deployment:
+
+| Deployment | Unit | Schedule set by |
+|---|---|---|
+| Compose | service `worker-certops` (cron runner) | `WORKER_CERTOPS_CRON`, default `*/1 * * * *` |
+| Kubernetes | `cronjob-certops` (one-shot `node apps/worker/src/certops-worker.js`) | `worker.cronjobs.certops.schedule` in Helm values, default `*/1 * * * *` |
+
+`WORKER_CERTOPS_CRON` has no effect in Kubernetes: the CronJob invokes the
+one-shot entrypoint directly, not the cron-scheduling runner, so the Kubernetes
+schedule is the CronJob's own `schedule` field. Set
+`worker.cronjobs.certops.enabled=false` to turn the sweeps off there.
+
+| Sweep | Enable | Timeout | What it does |
+| ----- | ------ | ------- | ------------ |
+| Lease reaper | `CERTOPS_SWEEP_LEASE_REAPER_ENABLED` | `CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS` | Requeues or flags jobs whose lease expired |
+| Stale agents | `CERTOPS_SWEEP_STALE_AGENTS_ENABLED` | `CERTOPS_SWEEP_STALE_AGENTS_TIMEOUT_MS` | Persists `status='offline'` for agents past `CERTOPS_AGENT_OFFLINE_AFTER_MS` |
+| Nonce cache | `CERTOPS_SWEEP_NONCE_ENABLED` | `CERTOPS_SWEEP_NONCE_TIMEOUT_MS` | Expires consumed job nonces |
+| Registration replay | `CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED` | `CERTOPS_SWEEP_REGISTRATION_REPLAY_TIMEOUT_MS` | Expires registration-replay credential rows |
+| Renewal scheduler | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED` | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_TIMEOUT_MS` | Creates renewal jobs for certificates near expiry |
+| Outbox drain | `CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED` | `CERTOPS_SWEEP_OUTBOX_DRAIN_TIMEOUT_MS` | Delivers recorded CertOps side effects from `certops_outbox`: resolves alert contacts and queues `cert_renewal_failed`, with backoff under an owner-scoped lease |
+
+**The outbox drain is not optional if you rely on renewal-failure alerts.** A
+terminal renewal failure records its *intent* to alert in `certops_outbox` inside
+the same transaction that decided the failure, and this sweep is what turns that
+intent into a queued alert. With the sweep disabled or the worker not deployed,
+intents accumulate as `pending` rather than being lost, so nothing is
+unrecoverable, but **no renewal-failure notification is delivered** in the
+meantime. See `docs/adr/0009-certops-durable-side-effects-and-alert-policy.md`.
+
+`CERTOPS_ENABLED` must be set for the worker too, not just the API. If the
+worker's value is out of sync, the renewal scheduler treats every workspace
+as ineligible and counts each certificate as "skipped, paused" without
+logging an error, so **nothing renews automatically** while the API and
+dashboard look healthy. See `docs/certops/agent.md` for the liveness/sweep
+interaction.
 
 **Deployment defaults differ from the app-level default above.** The Helm chart (`config.certopsEnabled`, see `deploy/helm/values.yaml`) and the Docker Compose files (`CERTOPS_ENABLED:-true` in `deploy/compose/docker-compose.yml` / `docker-compose.dev.yml`) both set `CERTOPS_ENABLED=true` unless explicitly overridden, so CertOps is **enabled by default** for Helm and Compose deployments. Set `config.certopsEnabled: false` (Helm) or `CERTOPS_ENABLED=false` (Compose `.env`) to opt out.
 
-TokenTimer stores only public certificate material (fingerprints, serials, issuers, subjects, SANs, validity, chains) and external key references. Requests containing private key material are rejected with HTTP 422.
+TokenTimer stores only public certificate material (fingerprints, serials, issuers, subjects, SANs, validity, chains) and external key references. Requests containing private key material are rejected with HTTP 422. Agent registration-replay credentials are stored only as an encrypted envelope (see `docs/certops/agent.md`).
 
 ## Metrics and observability
 

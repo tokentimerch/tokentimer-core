@@ -34,6 +34,8 @@ const REQUIRED_PINS = {
   qs: { "*": "6.15.2" },
   "ip-address": { "*": "10.2.0" },
   "form-data": { "*": "4.0.6" },
+  "js-yaml": { "*": "4.3.0" },
+  ws: { "*": "8.21.0" },
 };
 
 function fail(message) {

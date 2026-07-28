@@ -1,7 +1,7 @@
 import apiClient from '../../utils/apiClient';
 
 /**
- * CertOps jobs API helpers (M2 read-only job / log / evidence surface).
+ * CertOps jobs API helpers (read-only job / log / evidence surface).
  *
  * Additive module scoped to `/api/v1/workspaces/:id/certops/jobs/*`.
  * Returns 404 when `certops.enabled` is off.
@@ -21,6 +21,7 @@ export const CERTOPS_JOB_STATUSES = [
 ];
 
 export const CERTOPS_JOB_OPERATIONS = [
+  'issue',
   'renew',
   'deploy',
   'reload',
@@ -154,14 +155,57 @@ export async function listJobEvidence(
  */
 export async function createJob(
   workspaceId,
-  { operation, subjectType, subjectId, payload, idempotencyKey } = {}
+  {
+    operation,
+    subjectType,
+    subjectId,
+    payload,
+    idempotencyKey,
+    requiresApproval,
+    assignedAgentId,
+  } = {}
 ) {
   const body = { operation };
   if (subjectType !== undefined) body.subjectType = subjectType;
   if (subjectId !== undefined) body.subjectId = subjectId;
   if (payload !== undefined) body.payload = payload;
   if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
+  if (requiresApproval !== undefined) body.requiresApproval = requiresApproval;
+  if (assignedAgentId !== undefined) body.assignedAgentId = assignedAgentId;
 
   const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body);
+  return res.data;
+}
+
+/**
+ * Approve a job sitting at `pending_approval`, moving it to `pending`
+ * (claimable). Requires workspace_manager role or above; the requester of
+ * the job cannot approve their own job
+ * (403 CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN).
+ * @returns {Promise<{ job: object }>}
+ */
+export async function approveJob(workspaceId, jobId, { reason } = {}) {
+  const body = {};
+  if (reason !== undefined) body.reason = reason;
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/approve`,
+    body
+  );
+  return res.data;
+}
+
+/**
+ * Reject a job sitting at `pending_approval`, moving it directly to the
+ * terminal `rejected` status. Unlike approve, any authorized member
+ * (including the original requester) can reject a job.
+ * @returns {Promise<{ job: object }>}
+ */
+export async function rejectJob(workspaceId, jobId, { reason } = {}) {
+  const body = {};
+  if (reason !== undefined) body.reason = reason;
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/reject`,
+    body
+  );
   return res.data;
 }

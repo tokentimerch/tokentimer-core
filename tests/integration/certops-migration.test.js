@@ -32,6 +32,12 @@ const CERTOPS_MONITOR_IDENTITY_MIGRATION = migrations.find(
   (migration) =>
     migration.name === "certops_managed_certificate_monitor_identity",
 );
+const CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION = migrations.find(
+  (migration) => migration.name === "certops_workspace_kill_switch",
+);
+const CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION = migrations.find(
+  (migration) => migration.name === "certops_job_creation_request_fingerprint",
+);
 
 function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -89,7 +95,7 @@ async function withScratchCertOpsSchema(callback) {
     // Their api_tokens/workspaces/users FKs resolve to public via the
     // search_path.
     await TestUtils.execQuery(
-      `SET search_path TO ${quotedSchema}, public; ${CERTOPS_MIGRATION.sql}; ${CERTOPS_JOBS_EVIDENCE_MIGRATION.sql}; RESET search_path;`,
+      `SET search_path TO ${quotedSchema}, public; ${CERTOPS_MIGRATION.sql}; ${CERTOPS_JOBS_EVIDENCE_MIGRATION.sql}; ${CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql}; RESET search_path;`,
     );
     return await callback(quotedSchema);
   } finally {
@@ -154,6 +160,102 @@ describe("CertOps inventory migration", function () {
       [CERTOPS_MIGRATION.version],
     );
     expect(res.rows[0].count).to.equal(1);
+  });
+
+  it("adds the workspace-local CertOps pause flag safely with an unpaused default", async () => {
+    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION).to.exist;
+    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.version).to.equal(19);
+
+    await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
+    await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
+
+    const column = await TestUtils.execQuery(
+      `SELECT is_nullable, column_default, data_type
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'workspaces'
+          AND column_name = 'certops_paused'`,
+    );
+    expect(column.rows).to.have.length(1);
+    expect(column.rows[0].is_nullable).to.equal("NO");
+    expect(column.rows[0].data_type).to.equal("boolean");
+    expect(column.rows[0].column_default).to.match(/false/i);
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-kill-switch-default",
+    );
+    try {
+      const rows = await TestUtils.execQuery(
+        `SELECT id::text AS id, certops_paused
+           FROM workspaces
+          WHERE id = ANY($1::uuid[])
+          ORDER BY id`,
+        [[workspaceA, workspaceB]],
+      );
+      expect(rows.rows).to.have.length(2);
+      expect(rows.rows.every((row) => row.certops_paused === false)).to.equal(
+        true,
+      );
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("adds the nullable immutable job creation fingerprint idempotently without backfilling legacy rows", async () => {
+    expect(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION).to.exist;
+    expect(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.version).to.equal(20);
+
+    await TestUtils.execQuery(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql);
+    await TestUtils.execQuery(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql);
+
+    const column = await TestUtils.execQuery(
+      `SELECT is_nullable, data_type, character_maximum_length
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'certificate_jobs'
+          AND column_name = 'creation_request_hash'`,
+    );
+    expect(column.rows).to.have.length(1);
+    expect(column.rows[0]).to.deep.include({
+      is_nullable: "YES",
+      data_type: "character",
+      character_maximum_length: 64,
+    });
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-legacy-job-fingerprint",
+    );
+    try {
+      await withScratchCertOpsSchema(async (schema) => {
+        await TestUtils.execQuery(
+          `ALTER TABLE ${schema}.certificate_jobs
+             DROP COLUMN creation_request_hash`,
+        );
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_jobs
+             (workspace_id, operation, status, source, idempotency_key)
+           VALUES ($1, 'deploy', 'pending', 'api', 'legacy-null-hash')`,
+          [workspaceA],
+        );
+        await TestUtils.execQuery(
+          `SET search_path TO ${schema}, public;
+           ${CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql};
+           ${CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql};
+           RESET search_path;`,
+        );
+        const legacy = await TestUtils.execQuery(
+          `SELECT creation_request_hash
+             FROM ${schema}.certificate_jobs
+            WHERE workspace_id = $1
+              AND idempotency_key = 'legacy-null-hash'`,
+          [workspaceA],
+        );
+        expect(legacy.rows).to.have.length(1);
+        expect(legacy.rows[0].creation_request_hash).to.equal(null);
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
   });
 
   it("adds the nullable token certificate lifecycle status idempotently", async () => {

@@ -133,14 +133,25 @@ async function ingestExecutorEvent({
   jobId,
   eventId,
   request,
+  prepareRequest,
   apiTokenId,
   process,
 }) {
-  const hash = requestHash(request);
+  let hash = prepareRequest ? null : requestHash(request);
+  let jobLocked = false;
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
+
+    // A narrow caller may need server-owned job state to canonicalize its
+    // idempotency projection. Do that under the same job lock and transaction
+    // as the eventual event write, before comparing or reserving the event ID.
+    if (prepareRequest) {
+      await lockJob(client, workspaceId, jobId);
+      jobLocked = true;
+      hash = requestHash(await prepareRequest(client));
+    }
 
     const existing = await findExecutorEvent(client, workspaceId, jobId, eventId);
     if (existing) {
@@ -152,7 +163,7 @@ async function ingestExecutorEvent({
 
     // Serializing event processing on the job also closes the gap between a
     // replay lookup and unique-key reservation by another executor retry.
-    await lockJob(client, workspaceId, jobId);
+    if (!jobLocked) await lockJob(client, workspaceId, jobId);
     const inserted = await insertExecutorEvent({
       client,
       workspaceId,

@@ -1,0 +1,279 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/renewal-profile.schema.json",
+  "title": "CertOps Renewal Profile",
+  "description": "Versioned, public/non-secret renewal execution profile. Operators store the mutable source on certificate_profiles.public_metadata.renewalProfile; the scheduler resolves and binds an immutable snapshot into certificate_jobs.payload.renewalProfile before approval and dispatch. Never carries private keys, EAB HMAC secrets, or DNS credentials — only non-secret references the agent resolves locally.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sanPolicy",
+    "keyAlgorithm",
+    "keySize",
+    "keyRotationPolicy",
+    "preferredChain",
+    "ca",
+    "acme",
+    "dns",
+    "deploymentTargets",
+    "target",
+    "verification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "profileId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "description": "Source certificate_profiles.id when snapshotted; null for ad-hoc API jobs."
+    },
+    "profileName": {
+      "type": ["string", "null"],
+      "maxLength": 256
+    },
+    "sanPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "sans", "allowWildcards"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["exact", "template", "inherit"]
+        },
+        "sans": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "allowWildcards": {
+          "type": "boolean"
+        }
+      }
+    },
+    "keyAlgorithm": {
+      "type": "string",
+      "enum": ["rsa", "ecdsa"]
+    },
+    "keySize": {
+      "type": "integer",
+      "description": "RSA bit length (2048/3072/4096) or ECDSA curve bit size (256/384)."
+    },
+    "keyRotationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rotateOnRenew"],
+      "properties": {
+        "rotateOnRenew": {
+          "type": "boolean"
+        }
+      }
+    },
+    "preferredChain": {
+      "type": ["string", "null"],
+      "maxLength": 256,
+      "description": "Preferred issuer chain name (e.g. ISRG Root X1); null means CA default."
+    },
+    "ca": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "accountRef", "eabRef"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "format": "uri"
+        },
+        "accountRef": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "description": "Non-secret agent-local ACME account reference name."
+        },
+        "eabRef": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "description": "Non-secret agent-local EAB credential reference name; never the HMAC secret."
+        }
+      }
+    },
+    "acme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "commandRef"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["certbot", "acme.sh"]
+        },
+        "commandRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+        }
+      }
+    },
+    "dns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "zone"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      }
+    },
+    "deploymentTargets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "reference"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "domain",
+              "endpoint",
+              "kubernetes",
+              "appliance",
+              "load-balancer",
+              "external"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "certPath": {
+            "type": ["string", "null"],
+            "maxLength": 512
+          },
+          "keyPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/",
+            "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
+          },
+          "reloadService": {
+            "type": ["string", "null"],
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:@-]{1,128}$"
+          },
+          "chainPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "description": "Optional absolute destination for the intermediate chain PEM."
+          },
+          "certMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for certPath (octal string like \"0644\" or integer)."
+          },
+          "keyMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for keyPath (octal string like \"0600\" or integer)."
+          },
+          "chainMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for chainPath (octal string like \"0644\" or integer)."
+          },
+          "owner": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$"
+          },
+          "group": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$"
+          },
+          "backupDir": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/"
+          },
+          "backupRetentionCount": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 64
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "reference"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "domain",
+            "endpoint",
+            "kubernetes",
+            "appliance",
+            "load-balancer",
+            "external"
+          ]
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "certPath": {
+          "type": ["string", "null"],
+          "maxLength": 512
+        },
+        "keyPath": {
+          "type": ["string", "null"],
+          "maxLength": 512,
+          "pattern": "^/"
+        },
+        "chainPath": {
+          "type": ["string", "null"],
+          "maxLength": 512
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requireMatch"],
+      "properties": {
+        "host": {
+          "type": ["string", "null"],
+          "maxLength": 255
+        },
+        "port": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "requireMatch": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

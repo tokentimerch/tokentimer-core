@@ -8,8 +8,18 @@ Get TokenTimer Core running in under 5 minutes.
 ## Prerequisites
 
 - Docker and Docker Compose
-- Or Node.js >= 22.0.0 + PostgreSQL 14+
+- Or Node.js >= 22.0.0 + PostgreSQL 15+
 - pnpm (recommended package manager for this monorepo)
+
+For Option 3 (Kubernetes) additionally:
+
+- Kubernetes >= 1.29 and Helm >= 3.14
+- The [CloudNativePG operator](https://cloudnative-pg.io/), because the chart
+  defaults to `postgresql.cloudnative.enabled=true` and renders a CNPG
+  `Cluster` that nothing reconciles without it (the API pod then waits forever
+  for a database). Install the operator, or point the chart at an external
+  Postgres with `postgresql.external.*`. See
+  [deploy/helm/README.md](deploy/helm/README.md) for both paths.
 
 ## Option 1: Docker Compose (Fastest)
 
@@ -45,7 +55,10 @@ ADMIN_NAME=Administrator
 APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 
-# Optional host port remap for Docker Compose only.
+# Optional host port remap. These set the published host ports for Docker
+# Compose. Note pnpm dev also reads them for its port-availability preflight,
+# while the Vite dev server itself is pinned to 5173 (strictPort), so remapping
+# DASHBOARD_PORT here makes that preflight check the wrong port for pnpm dev.
 # Change these only if ports 4000/5173 are already used on your host.
 # If you remap, keep APP_URL/API_URL in sync with the new host ports.
 # API_PORT=4000
@@ -58,6 +71,14 @@ API_URL=http://localhost:4000
 # SMTP_PASS=your_smtp_password
 # FROM_EMAIL=noreply@example.com
 # FROM_EMAIL_NAME=TokenTimer
+
+# Required only if you plan to connect a CertOps agent. Compose enables CertOps
+# by default (CERTOPS_ENABLED:-true); without these two keys the CertOps UI
+# appears but agent registration and job dispatch fail closed with HTTP 500.
+# Generate each with: openssl rand -hex 32
+# CERTOPS_SIGNING_ENCRYPTION_KEY=
+# CERTOPS_REGISTRATION_ENCRYPTION_KEY=
+# Or set CERTOPS_ENABLED=false if you do not use CertOps at all.
 ```
 
 > [!WARNING]
@@ -130,17 +151,13 @@ APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 ```
 
-### 3. Run Migrations
-
-```bash
-pnpm run migrate
-```
-
-### 4. Start Development Servers
+### 3. Start Development Servers
 
 ```bash
 pnpm run dev
 ```
+
+The API applies pending migrations itself on startup, so there is no separate migration step.
 
 This starts PostgreSQL in Docker, then:
 
@@ -154,20 +171,35 @@ Default worker runner schedules:
 |--------|------------------|---------------|
 | Alert Discovery | `*/5 * * * *` | No |
 | Alert Delivery | `1/5 * * * *` | No |
-| Auto Sync | `0 * * * *` | No |
+| Auto Sync | `*/1 * * * *` | No |
 | Endpoint Check | `*/1 * * * *` | No |
 | Weekly Digest | `0 9 * * 1` | No |
+| CertOps Maintenance | `*/1 * * * *` | No |
 
-Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes.
+Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes. In that case apply migrations yourself first with `pnpm run migrate`, since that command talks to an existing database and does not start one.
 
-### 5. Access the Dashboard
+### 4. Access the Dashboard
 
 Open `http://localhost:5173` in your browser.
 
 ## Option 3: Kubernetes (Helm)
 
 > [!NOTE]
-> All configurable values are documented in [`deploy/helm/values.yaml`](deploy/helm/values.yaml). For a full environment variable reference, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+> All configurable values are documented in [`deploy/helm/values.yaml`](deploy/helm/values.yaml). For a full environment variable reference, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md). For the chart's own reference (value precedence, `existingSecret` semantics, private registries, autoscaling, the CertOps controller) see [`deploy/helm/README.md`](deploy/helm/README.md).
+
+> [!IMPORTANT]
+> **Prerequisite: the CloudNativePG operator.** The chart defaults to `postgresql.cloudnative.enabled=true`, which creates a CNPG `Cluster` resource. Without the operator installed, nothing reconciles that resource: no database pods appear and the API pod never becomes ready.
+>
+> ```bash
+> helm repo add cnpg https://cloudnative-pg.github.io/charts
+> helm repo update
+> helm install cnpg-operator cnpg/cloudnative-pg \
+>   --namespace cnpg-system --create-namespace \
+>   --version 0.23.0 \
+>   --wait
+> ```
+>
+> To use an existing external PostgreSQL instead, set `postgresql.cloudnative.enabled=false` and configure `postgresql.external.*`. See [`deploy/helm/README.md`](deploy/helm/README.md).
 
 ### 1. Install the Helm Chart
 
@@ -286,7 +318,7 @@ The worker runner uses explicit cron schedules and will:
 To test immediately, check the `alert_queue` table:
 
 ```sql
-SELECT * FROM alert_queue ORDER BY queued_at DESC LIMIT 10;
+SELECT * FROM alert_queue ORDER BY created_at DESC LIMIT 10;
 ```
 
 ## Troubleshooting
@@ -308,7 +340,7 @@ docker compose logs api
 **Check worker logs:**
 
 ```bash
-docker compose logs worker-discovery worker-delivery worker-weekly-digest worker-auto-sync worker-endpoint-check
+docker compose logs worker-discovery worker-delivery worker-weekly-digest worker-auto-sync worker-endpoint-check worker-certops
 ```
 
 **Verify SMTP configuration:**
@@ -378,7 +410,6 @@ Expected response:
   "status": "healthy",
   "timestamp": "2026-03-19T12:00:00.000Z",
   "uptime": 123.456,
-  "memory": { "rss": 52428800 },
   "environment": "production"
 }
 ```
@@ -407,12 +438,23 @@ docker compose exec -T postgres psql -U tokentimer tokentimer < backup.sql
 
 ### Docker Compose
 
-```bash
-# Pull latest images
-docker compose pull
+Which commands you need depends on which of the two patterns from [Start All Services](#3-start-all-services) you deployed.
 
-# Restart services
-docker compose up -d
+Build from local source (the default: app services declare `build:` with no `image:`, so `docker compose pull` has nothing to fetch for them):
+
+```bash
+git pull
+docker compose up -d --build
+
+# Verify health
+curl http://localhost:4000/health
+```
+
+Prebuilt images (the `docker-compose.images.yml` override):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.images.yml pull
+docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
 
 # Verify health
 curl http://localhost:4000/health
@@ -425,7 +467,7 @@ curl http://localhost:4000/health
 helm upgrade tokentimer ./deploy/helm -n tokentimer
 
 # Monitor rollout
-kubectl rollout status deployment/tokentimer-api
+kubectl rollout status deployment/tokentimer-api -n tokentimer
 ```
 
 ## Uninstalling
@@ -445,7 +487,7 @@ docker compose down -v
 ### Kubernetes
 
 ```bash
-helm uninstall tokentimer
+helm uninstall tokentimer -n tokentimer
 ```
 
 ## Getting Help

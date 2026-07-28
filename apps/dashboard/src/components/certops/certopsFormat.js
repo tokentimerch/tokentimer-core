@@ -27,6 +27,28 @@ export function formatDate(value) {
   });
 }
 
+/**
+ * Like formatDate but includes time-of-day (down to the second). Two
+ * certificate_instances rows for the same target can legitimately be
+ * observed seconds or milliseconds apart (e.g. a certificate rotation
+ * mid-reconcile); formatDate's day-only precision makes such rows look
+ * identical, so anywhere that distinction matters (observation history)
+ * should use this instead.
+ */
+export function formatDateTime(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -50,6 +72,7 @@ export function expiryDescriptor(notAfter) {
 }
 
 const STATUS_SCHEMES = {
+  provisioning: 'purple',
   active: 'green',
   discovered: 'blue',
   renewing: 'blue',
@@ -64,6 +87,7 @@ export function statusScheme(status) {
 }
 
 const STATUS_LABELS = {
+  provisioning: 'Provisioning',
   active: 'Active',
   discovered: 'Discovered',
   renewing: 'Renewing',
@@ -73,9 +97,224 @@ const STATUS_LABELS = {
   decommissioned: 'Decommissioned',
 };
 
+/** Mirrors MANAGED_CERTIFICATE_STATUSES in apps/api/services/certops/inventory.js. */
+export const MANAGED_CERTIFICATE_STATUSES = Object.keys(STATUS_LABELS);
+
 export function statusLabel(status) {
   const key = String(status || '').toLowerCase();
   return STATUS_LABELS[key] || (status ? String(status) : 'Unknown');
+}
+
+// Mirrors MANAGED_CERTIFICATE_SOURCES in
+// apps/api/services/certops/inventory.js.
+const SOURCE_LABELS = {
+  manual: 'Manual',
+  api: 'API',
+  import: 'Imported',
+  domain_checker: 'Domain checker',
+  endpoint_monitor: 'Endpoint monitor',
+  integration: 'Integration',
+  auto_sync: 'Auto sync',
+  cert_manager: 'cert-manager',
+  agent_filesystem: 'Agent (filesystem)',
+  agent_issuance: 'Agent (issuance)',
+};
+
+export const MANAGED_CERTIFICATE_SOURCES = Object.keys(SOURCE_LABELS);
+
+export function sourceLabel(source) {
+  const key = String(source || '').toLowerCase();
+  return SOURCE_LABELS[key] || (source ? String(source) : 'Unknown');
+}
+
+/**
+ * Renewal-automation states returned as `certificate.renewal.state` by
+ * GET /certops/certificates. Kept in sync with
+ * apps/api/routes/certops.js deriveCertificateRenewalState.
+ */
+export const RENEWAL_STATES = {
+  auto: 'auto',
+  disabled: 'disabled',
+  notConfigured: 'not-configured',
+  notEligible: 'not-eligible',
+  notApplicable: 'not-applicable',
+};
+
+const RENEWAL_STATE_FALLBACK_HELP =
+  'TokenTimer could not determine whether this certificate renews automatically. Treat it as manual until confirmed.';
+
+/**
+ * Presentation descriptor for a certificate's renewal automation.
+ *
+ * `not-configured` is the state this whole surface exists for: the scheduler
+ * will not touch such a certificate, so it silently expires unless an operator
+ * renews it by hand. It is therefore the only warning-level scheme here.
+ * An unknown or missing `renewal` object (older API build, or a response that
+ * predates the field) is also shown as a caution rather than silently as
+ * "fine", so a stale server never renders a reassuring badge.
+ *
+ * @returns {{ state: string, label: string, scheme: string, help: string, isWarning: boolean }}
+ */
+export function renewalDescriptor(renewal) {
+  const state = renewal?.state ? String(renewal.state) : null;
+  const workspacePaused = renewal?.workspacePaused === true;
+
+  if (state === RENEWAL_STATES.auto) {
+    const from = renewal?.renewsFrom ? formatDate(renewal.renewsFrom) : null;
+    const days = Number.isFinite(Number(renewal?.renewBeforeDays))
+      ? Number(renewal.renewBeforeDays)
+      : null;
+    // The profile itself is genuinely enabled here - that's what earned
+    // 'auto' - but a paused workspace kill switch means the scheduler will
+    // not act on it until resumed. Surfacing that on the badge itself
+    // (rather than only via the separate kill-switch banner) means an
+    // operator reading one row does not have to cross-reference workspace
+    // state elsewhere to know a renewal will not actually run (13.12).
+    if (workspacePaused) {
+      return {
+        state,
+        label: 'Auto-renew on (workspace paused)',
+        scheme: 'yellow',
+        help: 'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
+        isWarning: true,
+      };
+    }
+    return {
+      state,
+      label: from ? `Auto-renews from ${from}` : 'Auto-renews',
+      scheme: 'green',
+      help:
+        renewal?.detail ||
+        (days
+          ? `Renewal is attempted automatically from ${days} days before expiry.`
+          : 'Renewal is attempted automatically before expiry.'),
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.disabled) {
+    // Chosen, not broken, so this is not warning-level like 'not-configured'.
+    // It is still shown in a colour that reads as "acting on your instruction"
+    // rather than green, because the certificate does expire on its own.
+    return {
+      state,
+      label: 'Auto-renewal off',
+      scheme: 'yellow',
+      help:
+        renewal?.detail ||
+        'Automatic renewal is switched off for this certificate. It will expire unless it is renewed manually.',
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notConfigured) {
+    return {
+      state,
+      label: 'No auto-renewal',
+      scheme: 'orange',
+      help:
+        renewal?.detail ||
+        'This certificate will not renew automatically and will expire unless it is renewed manually.',
+      isWarning: true,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notEligible) {
+    return {
+      state,
+      label: 'Monitored only',
+      scheme: 'gray',
+      help:
+        renewal?.detail ||
+        'TokenTimer does not hold this certificate key, so it is monitored only and cannot be renewed by an agent.',
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notApplicable) {
+    return {
+      state,
+      label: 'Renewal not applicable',
+      scheme: 'gray',
+      help:
+        renewal?.detail ||
+        'Automatic renewal does not apply to this certificate lifecycle state.',
+      isWarning: false,
+    };
+  }
+
+  return {
+    state: state || 'unknown',
+    label: 'Renewal unknown',
+    scheme: 'yellow',
+    help: RENEWAL_STATE_FALLBACK_HELP,
+    isWarning: true,
+  };
+}
+
+/**
+ * `renewalSetup` states, mirroring `RENEWAL_SETUP_STATES` in
+ * apps/api/services/certops/renewalAdoption.js: the lifecycle of an
+ * adopt-via-issuance intent ("Set up automatic renewal"), distinct from
+ * `renewal.state` above, which describes the certificate's steady-state
+ * renewal coverage once (or if) that intent resolves.
+ */
+export const RENEWAL_SETUP_STATES = {
+  none: 'none',
+  waiting: 'waiting',
+  configured: 'configured',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+/**
+ * Presentation descriptor for `certificate.renewalSetup`. Returns `null` for
+ * `none`/missing, the ordinary case for a certificate nobody has tried to
+ * adopt yet, so callers can render nothing rather than an empty badge.
+ */
+export function renewalSetupDescriptor(renewalSetup) {
+  const state = renewalSetup?.state;
+  if (!state || state === RENEWAL_SETUP_STATES.none) return null;
+
+  if (state === RENEWAL_SETUP_STATES.waiting) {
+    return {
+      state,
+      label: 'Setting up automatic renewal',
+      scheme: 'blue',
+      message:
+        'TokenTimer is waiting on the renewal job this setup started to finish.',
+      canRetry: false,
+    };
+  }
+  if (state === RENEWAL_SETUP_STATES.configured) {
+    return {
+      state,
+      label: 'Automatic renewal configured',
+      scheme: 'green',
+      message: 'A renewal profile was created from this setup.',
+      canRetry: false,
+    };
+  }
+  if (state === RENEWAL_SETUP_STATES.skipped) {
+    return {
+      state,
+      label: 'Setup skipped',
+      scheme: 'gray',
+      message:
+        renewalSetup?.message ||
+        'Automatic renewal was not configured from this setup attempt.',
+      canRetry: false,
+    };
+  }
+  return {
+    state,
+    label: 'Setup failed',
+    scheme: 'red',
+    message:
+      renewalSetup?.message ||
+      'Automatic renewal could not be configured from this setup attempt.',
+    canRetry: Boolean(renewalSetup?.intentId),
+  };
 }
 
 /**
@@ -84,9 +323,72 @@ export function statusLabel(status) {
  * token can no longer be hard-deleted, only revoked/decommissioned.
  */
 export const RETIRE_STATUSES = ['revoked', 'decommissioned'];
-
 export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
+}
+
+/**
+ * Partitions the workspace CertOps inventory for the Control Center summary.
+ *
+ * The panel is titled around certificates linked to the token inventory, so
+ * only linked rows are listed and counted. A certificate is linked the moment
+ * it becomes real: discovery creates the token up front, and issuance links it
+ * at reconciliation, because tokens.expiration is NOT NULL and an unissued
+ * certificate has no honest expiry to record.
+ *
+ * Unlinked rows are reported as counts rather than listed: with no expiry they
+ * cannot be sorted or badged, and would read as broken inventory instead of
+ * work in flight. They are split by whether being unlinked is expected:
+ *
+ * - `provisioningCount` is the normal case, an issuance still in flight.
+ * - `unlinkedCount` is everything else. No product path should produce it
+ *   (reconciliation promotes to active and links the token in one
+ *   transaction), so it is surfaced instead of being filtered into silence.
+ *   Dropping such a row from both the list and every count is what made the
+ *   original inventory bug invisible.
+ *
+ * @param {Array<object>} certificates
+ * @param {{ highlightLimit?: number }} [options]
+ * @returns {{
+ *   linked: Array<object>,
+ *   highlights: Array<object>,
+ *   linkedCount: number,
+ *   provisioningCount: number,
+ *   unlinkedCount: number,
+ * }}
+ */
+export function summarizeManagedCertificates(certificates, options = {}) {
+  const highlightLimit = Number.isFinite(options.highlightLimit)
+    ? options.highlightLimit
+    : 5;
+  const items = Array.isArray(certificates) ? certificates : [];
+  const active = items.filter(cert => !isRetiredStatus(cert?.status));
+
+  const linked = active.filter(cert => cert?.tokenId != null);
+  const unlinked = active.filter(cert => cert?.tokenId == null);
+  const provisioningCount = unlinked.filter(
+    cert => String(cert?.status || '').toLowerCase() === 'provisioning'
+  ).length;
+
+  // Soonest expiry first; a missing expiry sorts last rather than first, so an
+  // unparseable date cannot masquerade as the most urgent certificate.
+  const highlights = [...linked]
+    .sort((a, b) => {
+      const left = a?.notAfter ? new Date(a.notAfter).getTime() : Infinity;
+      const right = b?.notAfter ? new Date(b.notAfter).getTime() : Infinity;
+      const l = Number.isFinite(left) ? left : Infinity;
+      const r = Number.isFinite(right) ? right : Infinity;
+      return l - r;
+    })
+    .slice(0, highlightLimit);
+
+  return {
+    linked,
+    highlights,
+    linkedCount: linked.length,
+    provisioningCount,
+    unlinkedCount: unlinked.length - provisioningCount,
+  };
 }
 
 /**

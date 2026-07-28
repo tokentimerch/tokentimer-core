@@ -31,6 +31,7 @@ const {
   loadWorkspace,
   requireWorkspaceMembership,
 } = require("./services/rbac");
+const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const {
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
@@ -252,6 +253,7 @@ const corsOptions = {
     "Authorization",
     "X-Requested-With",
     "X-CSRF-Token",
+    "Idempotency-Key",
   ],
   maxAge: 86400, // 24 hours
 };
@@ -331,6 +333,10 @@ if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
 // Remove duplicate later session initialization: session was already set up earlier
 
 // Enforce workspace membership and write restrictions for all workspace routes
+app.use(
+  "/api/v1/workspaces/:id/certops/settings",
+  hideWorkspaceExistence,
+);
 app.use(
   "/api/v1/workspaces/:id",
   requireAuth,
@@ -609,6 +615,8 @@ app.use(require("./routes/integrations"));
 app.use(require("./routes/certops"));
 // --- CERTOPS EXECUTOR (machine-token routes) ---
 app.use(require("./routes/certops-executor"));
+// --- CERTOPS AGENT (agent-protocol machine routes) ---
+app.use(require("./routes/certops-agent"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 

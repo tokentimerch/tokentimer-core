@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_CERTIFICATE_TOO_LARGE,
+  MAX_PUBLIC_CERTIFICATE_INPUT_BYTES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   parsePublicCertificateMaterial,
   parseTypedSubjectAltNames,
@@ -66,6 +68,30 @@ const FAKE_PRIVATE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
 const fakePem = (label) =>
   `-----BEGIN ${label}-----\n${FAKE_PRIVATE_BODY}\n-----END ${label}-----`;
 
+function pemToDer(pem) {
+  return Buffer.from(
+    pem
+      .replace(/-----BEGIN CERTIFICATE-----/g, "")
+      .replace(/-----END CERTIFICATE-----/g, "")
+      .replace(/\s+/g, ""),
+    "base64",
+  );
+}
+
+function fakePrivateKeyDer() {
+  return Buffer.from([
+    0x30, 0x08, 0x02, 0x01, 0x00, 0x30, 0x03, 0x06, 0x01, 0x2a,
+  ]);
+}
+
+function fakePfxDer() {
+  return Buffer.from([0x30, 0x05, 0x02, 0x01, 0x03, 0x30, 0x00]);
+}
+
+function fakeJks() {
+  return Buffer.from([0xfe, 0xed, 0xfe, 0xed, 0, 0, 0, 2, 0, 0, 0, 0]);
+}
+
 function assertParserCode(input, code) {
   assert.throws(
     () => parsePublicCertificateMaterial(input),
@@ -97,6 +123,13 @@ describe("CertOps public certificate parser", () => {
     assert.ok(certificates[0].certificatePem.endsWith("-----END CERTIFICATE-----"));
   });
 
+  it("keeps PEM behavior when Kubernetes supplies decoded PEM bytes", () => {
+    assert.deepEqual(
+      parsePublicCertificateMaterial(Buffer.from(PUBLIC_LEAF_CERT)),
+      parsePublicCertificateMaterial(PUBLIC_LEAF_CERT),
+    );
+  });
+
   it("parses a certificate chain with multiple certificates", () => {
     const chain = `\n\n${PUBLIC_LEAF_CERT}\n\n${PUBLIC_CA_CERT}\n`;
     const certificates = parsePublicCertificateMaterial(chain);
@@ -104,6 +137,16 @@ describe("CertOps public certificate parser", () => {
     assert.equal(certificates.length, 2);
     assert.equal(certificates[0].commonName, "certops.example");
     assert.equal(certificates[1].commonName, "CertOps Test CA");
+  });
+
+  it("parses one exact public DER certificate with the same normalized metadata as PEM", () => {
+    const der = pemToDer(PUBLIC_LEAF_CERT);
+    const [fromPem] = parsePublicCertificateMaterial(PUBLIC_LEAF_CERT);
+    const [fromDer] = parsePublicCertificateMaterial(der);
+    const [fromUint8Array] = parsePublicCertificateMaterial(new Uint8Array(der));
+
+    assert.deepEqual(fromDer, fromPem);
+    assert.deepEqual(fromUint8Array, fromPem);
   });
 
   it("extracts SAN values", () => {
@@ -220,6 +263,31 @@ describe("CertOps public certificate parser", () => {
     const pfxLike = Buffer.from([0x30, 0x82, 0x01, 0x0a, 0x02, 0x01, 0x03]);
 
     assertParserCode(pfxLike, PRIVATE_KEY_MATERIAL_REJECTED);
+  });
+
+  it("rejects malformed, empty, trailing, and oversized DER input", () => {
+    assertParserCode(Buffer.alloc(0), CERTOPS_CERTIFICATE_PARSE_FAILED);
+    assertParserCode(Buffer.from([0x30, 0x03, 0x01]), CERTOPS_CERTIFICATE_PARSE_FAILED);
+    assertParserCode(
+      Buffer.concat([pemToDer(PUBLIC_LEAF_CERT), Buffer.from([0x00])]),
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+    assertParserCode(
+      Buffer.alloc(MAX_PUBLIC_CERTIFICATE_INPUT_BYTES + 1),
+      CERTOPS_CERTIFICATE_TOO_LARGE,
+    );
+  });
+
+  it("rejects DER private-key and key-container material before certificate parsing", () => {
+    for (const input of [fakePrivateKeyDer(), fakePfxDer(), fakeJks()]) {
+      assertParserCode(input, PRIVATE_KEY_MATERIAL_REJECTED);
+    }
+  });
+
+  it("applies binary private-material detection to Uint8Array inputs", () => {
+    for (const input of [fakePrivateKeyDer(), fakePfxDer(), fakeJks()]) {
+      assertParserCode(new Uint8Array(input), PRIVATE_KEY_MATERIAL_REJECTED);
+    }
   });
 
   it("allows a public certificate but rejects the same payload when a private key is present", () => {

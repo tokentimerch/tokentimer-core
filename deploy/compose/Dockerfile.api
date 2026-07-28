@@ -8,9 +8,11 @@ RUN git clone --depth 1 --branch v2.14.0 https://github.com/projectdiscovery/sub
 
 WORKDIR /src/cmd/subfinder
 RUN go get \
-      golang.org/x/crypto@v0.52.0 \
-      golang.org/x/net@v0.55.0 \
-      golang.org/x/sys@v0.45.0 \
+      golang.org/x/crypto@v0.53.0 \
+      golang.org/x/net@v0.56.0 \
+      golang.org/x/sys@v0.46.0 \
+      golang.org/x/text@v0.39.0 \
+      github.com/yuin/goldmark@v1.7.17 \
       github.com/cloudflare/circl@v1.6.3 && \
     go mod tidy && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
@@ -44,9 +46,15 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY packages ./packages
 COPY apps/api ./apps/api
 
+# Operator commands that must be runnable against a live instance via
+# `kubectl exec` / `docker compose exec` (certops:rotate-signing-key resolves
+# ../apps/api/* from here). Only these files are un-ignored in .dockerignore;
+# the rest of scripts/ is dev tooling and stays out of the image.
+COPY scripts/certops-rotate-signing-key.js scripts/load-root-env.js ./scripts/
+
 # Install production dependencies for the api and its workspace deps
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/api... \
-    && rm -rf /usr/local/lib/node_modules/npm
+    && rm -rf /usr/local/lib/node_modules/npm /root/.cache/node/corepack
 
 # Own the app directory
 RUN chown -R tokentimer:tokentimer /app

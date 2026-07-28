@@ -6,16 +6,19 @@ import {
   GridItem,
   HStack,
   Text,
+  VStack,
 } from '@chakra-ui/react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
+import RenewalBadge from './RenewalBadge.jsx';
 import {
   expiryDescriptor,
   formatDate,
   isCertToken,
+  renewalDescriptor,
   statusScheme,
 } from './certopsFormat';
 import { useCertOpsForToken } from './useCertOps.js';
@@ -52,7 +55,7 @@ export default function TokenCertOpsPanel({ token, tokenId }) {
 }
 
 function CertOpsPanelBody({ tokenId }) {
-  const { muted } = useDashboardTheme();
+  const { muted, dashboard } = useDashboardTheme();
   const {
     enabled,
     certificate,
@@ -84,6 +87,7 @@ function CertOpsPanelBody({ tokenId }) {
   if (!certificate) return null;
 
   const expiry = expiryDescriptor(certificate.notAfter);
+  const renewal = renewalDescriptor(certificate.renewal);
   const sans = Array.isArray(certificate.subjectAltNames)
     ? certificate.subjectAltNames
     : [];
@@ -93,6 +97,11 @@ function CertOpsPanelBody({ tokenId }) {
   ]
     .filter(Boolean)
     .join(' ');
+  const fingerprintLabel =
+    certificate.fingerprintSha256 ||
+    (certificate.source === 'cert_manager'
+      ? 'Not reported (status-only observation)'
+      : 'Not available');
 
   return (
     <>
@@ -116,6 +125,7 @@ function CertOpsPanelBody({ tokenId }) {
           <Badge colorScheme={expiry.scheme} variant='subtle'>
             {expiry.label}
           </Badge>
+          <RenewalBadge renewal={certificate.renewal} fontSize='sm' />
         </HStack>
         {certificateCount > 1 ? (
           <Text fontSize='xs' color={muted} mb={3}>
@@ -130,6 +140,18 @@ function CertOpsPanelBody({ tokenId }) {
           keyMode={certificate.keyMode}
           keyReference={certificate.keyReference}
         />
+      </Field>
+
+      <Field label='Automatic renewal'>
+        <VStack align='start' spacing={2}>
+          <RenewalBadge renewal={certificate.renewal} fontSize='sm' />
+          <Text
+            fontSize='xs'
+            color={renewal.isWarning ? dashboard.state.warning : muted}
+          >
+            {renewal.help}
+          </Text>
+        </VStack>
       </Field>
 
       <Field label='Registration source'>
@@ -179,7 +201,7 @@ function CertOpsPanelBody({ tokenId }) {
 
       <Field label='SHA-256 fingerprint' colSpan={{ base: 1, md: 2 }}>
         <Code fontSize='xs' whiteSpace='pre-wrap' wordBreak='break-all'>
-          {certificate.fingerprintSha256 || 'Not available'}
+          {fingerprintLabel}
         </Code>
       </Field>
 

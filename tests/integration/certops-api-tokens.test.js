@@ -180,8 +180,14 @@ describe("CertOps API tokens", function () {
 
       const listA = await listApiTokens({ workspaceId: workspaceA });
       const listB = await listApiTokens({ workspaceId: workspaceB });
-      expect(listA.map((token) => token.id)).to.include(created.token.id);
-      expect(listB.map((token) => token.id)).to.not.include(created.token.id);
+      expect(listA.items.map((token) => token.id)).to.include(created.token.id);
+      expect(listB.items.map((token) => token.id)).to.not.include(
+        created.token.id,
+      );
+      expect(listA.pagination.total).to.be.at.least(1);
+      // No limit was supplied, so the list must still be unbounded.
+      expect(listA.pagination.limit).to.equal(null);
+      expect(listA.items.length).to.equal(listA.pagination.total);
       assertNoPlaintext(listA, created.plaintextToken);
 
       const getWrongWorkspace = await getApiTokenById({

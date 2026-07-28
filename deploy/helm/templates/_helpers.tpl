@@ -410,3 +410,79 @@ secret.secretName and configMap.name may use Helm tpl.
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{/* ---- CertOps controller helpers ---- */}}
+
+{{- define "tokentimer.certopsControllerName" -}}
+{{- printf "%s-certops-controller" (include "tokentimer.fullname" . | trunc 44 | trimSuffix "-") -}}
+{{- end -}}
+
+{{- define "tokentimer.certopsControllerServiceAccountName" -}}
+{{- include "tokentimer.certopsControllerName" . -}}
+{{- end -}}
+
+{{/* Keep these safety checks in templates when values.schema.json is unavailable. */}}
+{{- define "tokentimer.certopsControllerValidate" -}}
+{{- $controller := .Values.certops.controller -}}
+{{- if $controller.enabled -}}
+  {{- if not (or (eq ($controller.mode | toString) "observe") (eq ($controller.mode | toString) "provision")) -}}
+    {{- fail "certops.controller.mode must be observe or provision" -}}
+  {{- end -}}
+  {{- if ne (int $controller.replicaCount) 1 -}}
+    {{- fail "certops.controller.replicaCount must be 1 until leader election exists" -}}
+  {{- end -}}
+  {{- $apiUrl := required "certops.controller.api.url is required when certops.controller.enabled=true" $controller.api.url | toString -}}
+  {{- $parsedApiUrl := urlParse $apiUrl -}}
+  {{- $apiScheme := get $parsedApiUrl "scheme" | toString | lower -}}
+  {{- $apiHost := get $parsedApiUrl "host" | toString -}}
+  {{- $apiUserInfo := get $parsedApiUrl "userinfo" | toString -}}
+  {{- $apiPort := regexFind ":[0-9]+$" $apiHost | trimPrefix ":" -}}
+  {{- if or (not (or (eq $apiScheme "http") (eq $apiScheme "https"))) (eq $apiHost "") (ne $apiUserInfo "") (and $apiPort (gt (int $apiPort) 65535)) -}}
+    {{- fail "certops.controller.api.url must be an absolute http or https URL" -}}
+  {{- end -}}
+  {{- $workspaceId := required "certops.controller.api.workspaceId is required when certops.controller.enabled=true" $controller.api.workspaceId | toString -}}
+  {{- if not (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" $workspaceId) -}}
+    {{- fail "certops.controller.api.workspaceId must be a UUID" -}}
+  {{- end -}}
+  {{- $clusterId := required "certops.controller.api.clusterId is required when certops.controller.enabled=true" $controller.api.clusterId | toString -}}
+  {{- if or (gt (len $clusterId) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $clusterId)) -}}
+    {{- fail "certops.controller.api.clusterId must be an RFC1123 label" -}}
+  {{- end -}}
+  {{- $_ := required "certops.controller.apiToken.existingSecret is required when certops.controller.enabled=true" $controller.apiToken.existingSecret -}}
+  {{- $_ := required "certops.controller.apiToken.key is required when certops.controller.enabled=true" $controller.apiToken.key -}}
+  {{- if and $controller.clusterWide (gt (len $controller.watchNamespaces) 0) -}}
+    {{- fail "certops.controller.watchNamespaces must be empty when certops.controller.clusterWide=true" -}}
+  {{- end -}}
+  {{- $seenNamespaces := dict -}}
+  {{- range $namespace := $controller.watchNamespaces -}}
+    {{- if or (eq ($namespace | toString) "") (gt (len ($namespace | toString)) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" ($namespace | toString))) -}}
+      {{- fail "certops.controller.watchNamespaces entries must be RFC1123 labels" -}}
+    {{- end -}}
+    {{- if hasKey $seenNamespaces ($namespace | toString) -}}
+      {{- fail "certops.controller.watchNamespaces must not contain duplicates" -}}
+    {{- end -}}
+    {{- $_ := set $seenNamespaces ($namespace | toString) true -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "tokentimer.certopsControllerWatchNamespaces" -}}
+{{- if .Values.certops.controller.clusterWide -}}
+[]
+{{- else if gt (len .Values.certops.controller.watchNamespaces) 0 -}}
+{{- toYaml .Values.certops.controller.watchNamespaces -}}
+{{- else -}}
+{{- toYaml (list .Release.Namespace) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "tokentimer.certopsControllerNetworkPolicyValidate" -}}
+{{- if and .Values.certops.controller.enabled .Values.networkPolicy.enabled -}}
+  {{- if eq (len .Values.networkPolicy.egress.kubeApiServerCidrs) 0 -}}
+    {{- fail "networkPolicy.egress.kubeApiServerCidrs is required when certops.controller and networkPolicy are enabled" -}}
+  {{- end -}}
+  {{- if and (eq (len .Values.networkPolicy.egress.controllerApiCidrs) 0) (not .Values.api.enabled) -}}
+    {{- fail "networkPolicy.egress.controllerApiCidrs is required when networkPolicy is enabled and api.enabled=false" -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}

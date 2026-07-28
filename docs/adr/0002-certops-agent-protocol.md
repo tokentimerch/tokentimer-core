@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0, detail in M4.
+Proposed (2026-06-25). Skeleton record; details land with the agent protocol
+phase.
 
 ## Context
 
@@ -16,7 +17,7 @@ make an agent do arbitrary things.
   The control plane never connects to agents.
 - **Message envelope** frozen in `packages/contracts/certops/agent-protocol.schema.json`
   (stub): `register`, `heartbeat`, `claim`, `result`, `evidence`. Bodies defined
-  in M4.
+  with the agent protocol phase.
 - **Agent-local policy wins**: the agent executes only preconfigured/allowlisted
   command profiles, paths, CA endpoints, and DNS zones/providers. When
   control-plane intent exceeds local policy, the agent refuses and reports the
@@ -36,5 +37,38 @@ make an agent do arbitrary things.
 ## Consequences
 
 - The agent is testable in isolation against the frozen envelope.
-- TODO (M4): per-message body schemas, registration/enrollment trust, agent
+- TODO (agent protocol phase): per-message body schemas, registration/enrollment trust, agent
   credential storage (0700/0600, rotation), supply-chain integrity.
+- Addendum (2026-07-26, release 0.11.0): declared capabilities became a
+  dispatch-time gate, and evidence gained a claim binding. Both are additive to
+  the envelope and neither is a `schemaVersion` change.
+  - Agents declare capability strings at `register`. The control
+    plane matches on them when offering work, so a capability an agent does not
+    declare simply means it is not offered those jobs. This is a matching
+    predicate, not a rejection: the operator-visible symptom of an out-of-date
+    agent is an unclaimed `pending` job rather than an error. Capability names are
+    contract surfaces under the README's change-control rule.
+  - **Registration is currently the only declaration point, and that is a real
+    constraint rather than an accident of wording.** `heartbeatBody` is
+    `additionalProperties: false` and defines no `declaredCapabilities`, so a
+    heartbeat carrying capabilities is schema-invalid and both ends enforce the
+    schema. The control plane does have a heartbeat-side write for the column,
+    guarded so an empty array preserves the stored value, but it is unreachable
+    until the contract admits the field. The consequence for operators is the
+    part that matters: **upgrading an agent binary in place does not grant it a
+    new capability**, because the capability set was fixed at enrollment.
+    Re-declaration on heartbeat is the natural fix and is a contract change
+    (`supportedDnsProviders` is the precedent for a re-advertisable field). Until
+    then the only remedy is re-enrollment, which loses the agent's identity and
+    key pin, so this must not be documented as "upgrade, then run a renew job".
+  - The first such capability is `evidence-claim-binding-v1`, required to claim
+    `issue` jobs and `renew` jobs whose subject certificate is still
+    `provisioning`. See
+    [ADR-0008 A1.2](0008-certops-upfront-issuance.md#a12-agents-are-no-longer-upgrade-free-for-issue-amends-5).
+  - Evidence envelopes carry the `claimId` of the attempt that produced them, and
+    `certificate_evidence` persists it alongside the server's own attempt
+    counter. The value written is taken from the job row **after** ownership is
+    proven, never from the agent, and an agent-supplied `claimId` that disagrees
+    with the job's current claim is rejected outright. This preserves the
+    agent-local authority principle above while making evidence attributable to a
+    single attempt, which reconciliation now depends on.

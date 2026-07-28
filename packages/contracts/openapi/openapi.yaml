@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.10.3
+  version: 0.11.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -977,7 +977,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Managed-backed certificate token must be retired before reclassification
+          description: Managed-backed certificate token must be retired before reclassification (CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED)
           content:
             application/json:
               schema:
@@ -1006,7 +1006,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Managed-backed certificate token must be retired before removal
+          description: Managed-backed certificate token must be retired before removal (CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED)
           content:
             application/json:
               schema:
@@ -3054,8 +3054,8 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   # ----------------------------------------------------------------------------
-  # CertOps routes. M1 inventory routes are implemented with precise public-only
-  # schemas below. M2/M4 machine, token, job, and agent namespaces remain frozen
+  # CertOps routes. Inventory routes are implemented with precise public-only
+  # schemas below. Machine, token, job, and agent namespaces remain frozen
   # skeletons so downstream overlays can build without route churn.
   # ----------------------------------------------------------------------------
   /api/v1/workspaces/{id}/certops/certificates:
@@ -3066,8 +3066,14 @@ paths:
       description: Returns the workspace's managed certificate inventory. Response objects contain public certificate material and public metadata only.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+        - $ref: "#/components/parameters/certOpsCertificateStatusFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateSourceFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateNoRenewalProfileParam"
+        - $ref: "#/components/parameters/certOpsCertificateRenewalDisabledParam"
+        - $ref: "#/components/parameters/certOpsCertificateKeyNotAgentDeployableParam"
+        - $ref: "#/components/parameters/certOpsCertificateExcludeRetiredParam"
       responses:
         "200":
           description: Managed certificate inventory
@@ -3075,6 +3081,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CertOpsManagedCertificateListResponse"
+        "400":
+          description: >-
+            A filter value is outside the column constraint or is not a boolean.
+            Rejected rather than answered with an empty page that reads like a
+            real result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Invalid certificate status filter
+                code: CERTOPS_CERTIFICATE_STATUS_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -3401,6 +3419,785 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/renewal-setup:
+    post:
+      tags: [CertOps]
+      summary: Set up automatic renewal for a managed certificate
+      operationId: createCertOpsRenewalSetup
+      description: |
+        Creates a renew job for the certificate and, in the same transaction,
+        records the durable intent that turns the job's verified result into a
+        renewal profile. A real run and its intent therefore commit together:
+        there is no window in which renewal was requested but nothing was
+        recorded.
+
+        `dryRun: true` makes this a preflight instead. It creates a `dry_run`
+        renew job (which terminates as `dry_run_complete`, never `succeeded`)
+        and records no intent, so a preflight can never configure anything.
+        The certificate detail response reports a completed preflight with no
+        intent behind it so the operator can resume.
+
+        Refused when the certificate already has a renewal profile, when its
+        key mode is not agent-deployable, or when it is deployed in more than
+        one location: the schema records a single deployment path, so a second
+        location would silently go unrenewed behind a badge reading "auto".
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsRenewalSetupRequest"
+      responses:
+        "201":
+          description: Renew job created (and, for a real run, the adoption intent recorded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobDetailResponse"
+        "400":
+          description: The certificate's stored renewal inputs cannot produce a usable job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                profileIncomplete:
+                  value:
+                    error: Renewal profile is incomplete
+                    code: CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+                profileInvalid:
+                  value:
+                    error: Renewal profile is invalid
+                    code: CERTOPS_RENEWAL_PROFILE_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks the workspace manager/admin role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient role"
+                    code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "409":
+          description: |
+            CertOps is paused for this workspace, or the certificate cannot be
+            adopted as it stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
+                alreadyConfigured:
+                  value:
+                    error: This certificate already has a renewal profile
+                    code: CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED
+                multiLocation:
+                  value:
+                    error: This certificate is deployed in more than one location
+                    code: CERTOPS_RENEWAL_SETUP_MULTI_LOCATION
+                notAgentDeployable:
+                  value:
+                    error: This certificate's key mode is not agent-deployable
+                    code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
+        "422":
+          description: |
+            The request carried private key material, or no deployment path an
+            agent could write to is recorded for this certificate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                keyMaterialRejected:
+                  value:
+                    error: Private key material is not accepted in CertOps requests
+                    code: PRIVATE_KEY_MATERIAL_REJECTED
+                noDeployedPath:
+                  value:
+                    error: No deployed certificate path is recorded for this certificate
+                    code: CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/profile:
+    delete:
+      tags: [CertOps]
+      summary: Detach a managed certificate from its renewal profile
+      operationId: detachCertOpsRenewalProfile
+      description: |
+        Nulls the certificate's profile link, writes the audit record, and
+        cancels any outstanding profile-derivation intents, all in one
+        transaction: without the cancellation, an in-flight setup could
+        re-link the certificate moments after the operator detached it.
+
+        The profile row itself is never deleted, because one profile can cover
+        several certificates.
+
+        Gated like the profile PATCH: a session user with
+        `certops.renewal_profile.manage`, since both change what a privileged
+        agent will run on a host.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+      responses:
+        "200":
+          description: Certificate detached from its renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfileDetachResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks certops.renewal_profile.manage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient permissions"
+                    code: INSUFFICIENT_PERMISSIONS
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "422":
+          description: The certificate is not linked to a renewal profile, so there is nothing to detach
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: This certificate is not linked to a renewal profile
+                code: CERTOPS_CERTIFICATE_NOT_PROFILED
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/renewal-setup-intents/{outboxId}/retry:
+    post:
+      tags: [CertOps]
+      summary: Retry a failed automatic-renewal setup intent
+      operationId: retryCertOpsRenewalSetupIntent
+      description: |
+        Returns a parked profile-derivation intent to the pending queue with a
+        fresh attempt budget.
+
+        Only a `failed` intent can be retried. A `skipped` intent is a
+        recorded decision rather than a failure, and the decision this rule
+        exists for is `detached`: replaying it would re-link a certificate an
+        operator deliberately detached.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: outboxId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The intent identifier reported as renewalSetup.intentId.
+      responses:
+        "200":
+          description: Intent reset to pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalSetupRetryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks the workspace manager/admin role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient role"
+                    code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled or the intent was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                intentNotFound:
+                  value:
+                    error: Outbox event not found
+                    code: CERTOPS_OUTBOX_EVENT_NOT_FOUND
+        "422":
+          description: |
+            The request carried private key material, or the intent is not in a
+            retryable state (already succeeded, still pending, or skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                keyMaterialRejected:
+                  value:
+                    error: Private key material is not accepted in CertOps requests
+                    code: PRIVATE_KEY_MATERIAL_REJECTED
+                notRetryable:
+                  value:
+                    error: Only a failed outbox event can be retried; this one is skipped
+                    code: CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/instances:
+    get:
+      tags: [CertOps]
+      summary: List workspace certificate instances
+      operationId: listCertOpsInstances
+      description: Returns public, workspace-scoped certificate instance history across all managed certificates (a flat inventory browse, unlike the per-certificate instances route). Private key material, evidence, raw output, and secret fields are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Workspace certificate instance inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - workspaceId
+                        - managedCertificateId
+                        - targetId
+                        - status
+                        - source
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        workspaceId:
+                          type: string
+                          format: uuid
+                        managedCertificateId:
+                          type: string
+                          format: uuid
+                        targetId:
+                          type: string
+                          format: uuid
+                        domainMonitorId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        tokenId:
+                          type: integer
+                          nullable: true
+                        status:
+                          type: string
+                        source:
+                          type: string
+                        sourceRef:
+                          type: string
+                          nullable: true
+                        observedFingerprintSha256:
+                          type: string
+                          pattern: "^[a-f0-9]{64}$"
+                          nullable: true
+                        observedSerialNumber:
+                          type: string
+                          nullable: true
+                        observedSubject:
+                          type: string
+                          nullable: true
+                        observedIssuer:
+                          type: string
+                          nullable: true
+                        observedNotBefore:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        observedNotAfter:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        deploymentReference:
+                          type: string
+                          nullable: true
+                        observedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/profiles:
+    get:
+      tags: [CertOps]
+      summary: List renewal profiles
+      operationId: listCertOpsRenewalProfiles
+      description: |
+        Returns the workspace's renewal profiles. A profile carries the execution
+        contract the renewal scheduler uses for a certificate: SAN policy, key
+        parameters, CA endpoint, ACME command reference, DNS provider and zone,
+        and deployment paths. Profiles never hold key material.
+
+        Profiles are normally derived automatically from the issuance that
+        created a certificate, so `derived` is true for most rows and
+        `editableFields` lists the subset a caller may change.
+
+        Manager-only. A profile body describes deployment topology (certificate
+        and key paths, reload unit, file ownership and modes, ACME command
+        reference, CA account reference, DNS zone), so it is gated like the agent
+        and machine-token routes rather than like the certificate inventory.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Renewal profile inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfileList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/renewals/upcoming:
+    get:
+      tags: [CertOps]
+      summary: List upcoming automatic renewals
+      operationId: listCertOpsUpcomingRenewals
+      description: |
+        Returns every renewable certificate in the workspace, ordered by expiry,
+        with the date the renewal scheduler starts attempting each one
+        (`renewsFrom`, computed as notAfter minus the effective lead time) and
+        whether the scheduler would actually renew it.
+
+        Deliberately NOT restricted to certificates that will renew. A
+        certificate with no renewal profile, or with a profile the scheduler
+        cannot execute, is exactly the certificate that will silently expire, so
+        excluding it would make this endpoint report an all-clear for a workspace
+        where nothing renews at all. Every row that will not be renewed carries a
+        `blockedReason` naming the cause, distinguishing an operator's deliberate
+        switch-off from a defect.
+
+        Manager-only, matching the profile routes: each row carries the profile's
+        lead time and identity, and the view exists to be read alongside them.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Upcoming renewal schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsUpcomingRenewalList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/profiles/{profileId}:
+    get:
+      tags: [CertOps]
+      summary: Get a renewal profile
+      operationId: getCertOpsRenewalProfile
+      description: |
+        Returns one renewal profile with `editableFields`, the subset a caller may
+        change. Manager-only, for the same reason as the list route: the body
+        describes deployment topology rather than expiry metadata.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Renewal profile not found, or CertOps is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [CertOps]
+      summary: Update a renewal profile
+      operationId: updateCertOpsRenewalProfile
+      description: |
+        Changes renewal configuration for a profile. Requires the workspace
+        admin role (`certops.renewal_profile.manage`) because the stored profile
+        determines what a host-privileged agent executes at the next renewal.
+
+        Only the fields listed in the profile's `editableFields` may be changed.
+        The fields that decide WHERE a certificate is written and WHAT command
+        writes it (`target`, `deploymentTargets`, `acme`, `ca`, `dns`) are
+        immutable after issuance and are rejected with
+        `CERTOPS_PROFILE_FIELD_IMMUTABLE`; repointing a deployment is a new
+        issuance, not an edit.
+
+        Set `autoRenewEnabled` to false to stop automatic renewal for every
+        certificate linked to this profile. The certificate then expires unless
+        it is renewed manually. Every accepted change writes an audit event in
+        the same transaction as the update.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                autoRenewEnabled:
+                  type: boolean
+                  description: False switches automatic renewal off for certificates using this profile.
+                renewBeforeDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  nullable: true
+                  description: Lead time before expiry. Null falls back to the deployment-wide threshold.
+                description:
+                  type: string
+                  nullable: true
+                  maxLength: 1024
+                renewalProfile:
+                  type: object
+                  additionalProperties: false
+                  description: Partial patch limited to the editable fields.
+                  properties:
+                    sanPolicy:
+                      type: object
+                    keyAlgorithm:
+                      type: string
+                      enum: [rsa, ecdsa]
+                    keySize:
+                      type: integer
+                    keyRotationPolicy:
+                      type: object
+                    verification:
+                      type: object
+                    preferredChain:
+                      type: string
+                      nullable: true
+            examples:
+              switchOffAutomaticRenewal:
+                summary: Stop renewing certificates on this profile
+                value:
+                  autoRenewEnabled: false
+              changeLeadTime:
+                summary: Renew 45 days before expiry
+                value:
+                  renewBeforeDays: 45
+      responses:
+        "200":
+          description: Updated renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfile"
+        "400":
+          description: No supported changes were requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: No supported changes were requested
+                code: CERTOPS_PROFILE_NO_CHANGES
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Renewal profile not found, or CertOps is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The requested change is not permitted or fails the profile contract
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - type: object
+                    properties:
+                      fields:
+                        type: array
+                        items:
+                          type: string
+              example:
+                error: "These renewal-profile fields cannot be changed after issuance: target."
+                code: CERTOPS_PROFILE_FIELD_IMMUTABLE
+                fields: [target]
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/targets:
+    get:
+      tags: [CertOps]
+      summary: List certificate targets
+      operationId: listCertOpsTargets
+      description: Returns the workspace's certificate targets (deployment/observation locations such as hosts, endpoints, load balancers, or Kubernetes secrets). Targets never hold key material.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Certificate target inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - workspaceId
+                        - name
+                        - targetType
+                        - status
+                        - source
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        workspaceId:
+                          type: string
+                          format: uuid
+                        profileId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        domainMonitorId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        tokenId:
+                          type: integer
+                          nullable: true
+                        name:
+                          type: string
+                        targetType:
+                          type: string
+                        status:
+                          type: string
+                        source:
+                          type: string
+                        sourceRef:
+                          type: string
+                          nullable: true
+                        hostname:
+                          type: string
+                          nullable: true
+                        url:
+                          type: string
+                          nullable: true
+                        deploymentReference:
+                          type: string
+                          nullable: true
+                        environment:
+                          type: string
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/imports:
     post:
       tags: [CertOps]
@@ -3472,6 +4269,104 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/settings:
+    get:
+      tags: [CertOps]
+      summary: Get workspace CertOps pause state
+      operationId: getCertOpsWorkspaceSettings
+      description: >-
+        Returns the workspace-local CertOps kill-switch state and the effective
+        side-effect availability. All authorized workspace members may read it.
+        This is a human cookie/session-authenticated workspace surface; internal
+        worker bearer credentials are not accepted.
+        The stored pause state remains distinct from the deployment-wide
+        certops.enabled rollout flag, and this settings endpoint remains
+        available when that rollout flag is disabled.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Workspace CertOps pause state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspacePauseState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [CertOps]
+      summary: Pause or resume new CertOps work for a workspace
+      operationId: updateCertOpsWorkspaceSettings
+      description: >-
+        Changes only the workspace-local kill switch and remains available
+        while the deployment-wide rollout flag is disabled. Requires a human
+        cookie/session-authenticated workspace admin; internal worker bearer
+        credentials are not accepted. A paused workspace rejects new manual jobs and future dispatch or
+        provision side effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory,
+        status, audit, evidence, and existing-work reporting remain available.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsWorkspacePauseUpdateRequest"
+      responses:
+        "200":
+          description: Stored workspace CertOps pause state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspacePauseState"
+        "400":
+          description: Pause state or reason is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidState:
+                  value:
+                    error: CertOps workspace pause request is invalid
+                    code: CERTOPS_WORKSPACE_PAUSE_STATE_INVALID
+                invalidReason:
+                  value:
+                    error: CertOps workspace pause request is invalid
+                    code: CERTOPS_WORKSPACE_PAUSE_REASON_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: A human session user with the workspace admin role is required; internal worker bearer credentials are not accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Forbidden: insufficient role"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs:
     get:
       tags: [CertOps]
@@ -3495,12 +4390,12 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop]
+            enum: [renew, deploy, reload, revoke, noop, issue]
         - in: query
           name: source
           schema:
             type: string
-            enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+            enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         - in: query
           name: subjectType
           schema:
@@ -3573,14 +4468,34 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: idempotencyKey was already used with a different job request
+          description: >-
+            idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
+            capacity exceeded, or the subject certificate has no agent-manageable
+            key custody.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: Idempotency key was already used with a different CertOps job request
-                code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+              examples:
+                idempotencyConflict:
+                  value:
+                    error: Idempotency key was already used with a different CertOps job request
+                    code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
+                perCaCapExceeded:
+                  value:
+                    error: Per-CA renewal capacity exceeded
+                    code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED
+                certificateNotAgentDeployable:
+                  value:
+                    error: >-
+                      This certificate has no agent-manageable key custody (it
+                      was only observed, e.g. via an endpoint or domain monitor)
+                      and cannot be assigned an agent-executed renew job
+                    code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -3592,6 +4507,159 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/jobs/bulk-renew:
+    post:
+      tags: [CertOps]
+      summary: Bulk-create CertOps renewal jobs
+      operationId: bulkRenewCertOpsCertificates
+      description: >-
+        Queues a renew job for up to 100 managed certificates in one request.
+        Each certificate goes through the same manual job-creation path as
+        POST /jobs (manager role, workspace kill switch, approval gate,
+        payload validation), and jobs are always recorded with source "api".
+        The response is a partial-failure envelope: per-certificate successes
+        and failures are reported item by item and never abort the batch, so
+        the request returns 200 even when some or all items fail. Only
+        whole-request shape problems (malformed body, more than 100 ids,
+        non-UUID or duplicate ids) fail with 400. Private key or secret
+        material in the request body is rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsBulkRenewRequest"
+      responses:
+        "200":
+          description: Partial-failure envelope with per-certificate outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsBulkRenewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workspace CertOps is paused; no items are attempted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: The request contained private-key or forbidden secret material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/provision-intents:
+    post:
+      tags: [CertOps Controller]
+      summary: Create a cert-manager provisioning intent
+      operationId: createCertOpsProvisionIntent
+      description: >-
+        Manager-only human surface. It creates an idempotent `deploy` job
+        with a strict public cert-manager desired state. The route is blocked by
+        both CertOps rollout and workspace pause gates and never accepts a
+        Kubernetes manifest, Secret data, CSR, or private key material.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsProvisionIntentRequest"
+      responses:
+        "201":
+          description: Provisioning intent created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisionIntentResponse" }
+        "200":
+          description: Exact idempotent replay
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisionIntentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Idempotency conflict (the key was reused with a different body),
+            an attempt to reactivate a terminal managed certificate, or a
+            paused workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                idempotencyConflict:
+                  value:
+                    error: Idempotency key was already used with a different CertOps job request
+                    code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                terminalIdentity:
+                  value:
+                    error: Provisioning cannot reactivate a terminal managed certificate
+                    code: CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          description: >-
+            Provisioning intent could not be created after validation
+            (CERTOPS_CONTROLLER_PROVISIONING_CREATE_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -3628,6 +4696,132 @@ paths:
               example:
                 error: Certificate job not found
                 code: CERTOPS_JOB_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/approve:
+    post:
+      tags: [CertOps]
+      summary: Approve a pending CertOps job
+      operationId: approveCertOpsJob
+      description: >-
+        Grants the human approval a gated job needs before an agent can claim
+        it. Session-only manager surface (internal worker credentials are
+        rejected) with a non-requester rule: the user who requested the job
+        cannot approve it. The approval is bound to a canonical SHA256 hash of
+        the job payload at decision time; if the payload changes afterwards
+        the claim path voids the approval and returns the job to
+        pending_approval. Available while the workspace kill switch is paused.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1024
+                  description: Optional attributable justification stored in the decision ledger.
+      responses:
+        "200":
+          description: Job approved; status moves to approved and the payload hash is recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobApprovalDecisionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller lacks the manager role, is the job requester, or uses non-session credentials (CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is not awaiting approval (CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/reject:
+    post:
+      tags: [CertOps]
+      summary: Reject a pending CertOps job
+      operationId: rejectCertOpsJob
+      description: >-
+        Rejects a pending_approval job so it never becomes claimable.
+        Session-only manager surface like approve, but without the
+        non-requester rule: any authorized member, including the requester,
+        may withdraw or reject. The decision is recorded in the attributable
+        approval ledger. Available while the workspace kill switch is paused.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1024
+                  description: Optional attributable justification stored in the decision ledger.
+      responses:
+        "200":
+          description: Job rejected; status moves to rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobApprovalDecisionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller lacks the manager role or uses non-session credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is not awaiting approval (CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}/log:
@@ -3726,6 +4920,8 @@ paths:
       description: Returns workspace-scoped CertOps API-token metadata only. Plaintext tokens, token hashes, Authorization headers, and credential material are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: API token metadata list
@@ -3833,6 +5029,263 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agent-bootstrap-tokens:
+    get:
+      tags: [CertOps]
+      summary: List CertOps agent bootstrap tokens
+      operationId: listCertOpsAgentBootstrapTokens
+      description: Returns workspace-scoped agent bootstrap-token metadata only. Plaintext ttboot_ tokens, token hashes, Authorization headers, and credential material are never returned. Manager-only, same authorization posture as create/revoke.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Agent bootstrap-token metadata list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentBootstrapTokenListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Create a CertOps agent bootstrap token
+      operationId: createCertOpsAgentBootstrapToken
+      description: Issues a single-use agent bootstrap token used once by POST /api/v1/certops/agent/register. Expiry is required, must be in the future, and is capped at 30 days. The raw ttboot_ token is returned exactly once by this create response; only its hash is persisted.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsAgentBootstrapTokenCreateRequest"
+      responses:
+        "201":
+          description: Agent bootstrap token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentBootstrapTokenCreateResponse"
+        "400":
+          description: Bootstrap-token request is invalid (name or expiry)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                nameInvalid:
+                  value:
+                    error: CertOps agent bootstrap token request is invalid
+                    code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID
+                expiryInvalid:
+                  value:
+                    error: CertOps agent bootstrap token request is invalid
+                    code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agent-bootstrap-tokens/{tokenId}/revoke:
+    post:
+      tags: [CertOps]
+      summary: Revoke a CertOps agent bootstrap token
+      operationId: revokeCertOpsAgentBootstrapToken
+      description: Revokes an agent bootstrap token within the authorized workspace and returns metadata only. Revoking an already-revoked token is idempotent and returns its current state without a duplicate audit event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: tokenId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Agent bootstrap token revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentBootstrapTokenRevokeResponse"
+        "400":
+          description: Bootstrap-token identifier is not a UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent bootstrap token identifier is invalid
+                code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the bootstrap token was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                tokenNotFound:
+                  value:
+                    error: CertOps agent bootstrap token not found
+                    code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agents:
+    get:
+      tags: [CertOps]
+      summary: List CertOps agents
+      operationId: listCertOpsAgents
+      description: Returns workspace-scoped agent fleet metadata (hostnames, versions, liveness). Manager-only. Credential hashes and bearer credentials are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Agent metadata list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspaceAgentListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agents/{agentId}/retire:
+    post:
+      tags: [CertOps]
+      summary: Retire a CertOps agent
+      operationId: retireCertOpsAgent
+      description: >-
+        Retires an agent so its credential stops authenticating (agent protocol
+        routes return 410). Retiring an already-retired agent is idempotent. If
+        the agent holds actively leased jobs the request is blocked with 409
+        unless force is true, in which case an attributable reason is required.
+        A forced retire fences the agent's in-flight work immediately rather
+        than leaving it to the lease reaper: jobs still at "claimed" are
+        cancelled with error_code CERTOPS_AGENT_FORCE_RETIRED, while jobs that
+        had reached "running" become orphaned_unknown_effect and are flagged
+        needs_operator_reconciliation, because their real-world effect is
+        unknown. Both id lists are returned in the response and recorded on the
+        CERTOPS_AGENT_RETIRED audit event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Internal agent record id (UUID), not the protocol agentId string.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsWorkspaceAgentRetireRequest"
+      responses:
+        "200":
+          description: Agent retired (or already retired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspaceAgentRetireResponse"
+        "400":
+          description: Agent identifier or retire reason is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                agentIdInvalid:
+                  value:
+                    error: CertOps agent identifier is invalid
+                    code: CERTOPS_AGENT_INVALID
+                reasonInvalid:
+                  value:
+                    error: CertOps agent request is invalid
+                    code: CERTOPS_AGENT_RETIRE_REASON_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the agent was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                agentNotFound:
+                  value:
+                    error: CertOps agent not found
+                    code: CERTOPS_AGENT_NOT_FOUND
+        "409":
+          description: Agent has actively leased jobs and force was not set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent has actively leased jobs
+                code: CERTOPS_AGENT_RETIRE_BLOCKED
+                dependencies:
+                  leasedJobs: 2
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/certops/jobs/{jobId}/events:
     post:
       tags: [CertOps Agent]
@@ -3862,11 +5315,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Event body failed schema/idempotency validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID, CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+            CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH, or CERTOPS_JOB_STATUS_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Caller lacks the required events-write scope
+            (CERTOPS_API_TOKEN_SCOPE_DENIED), or the token's workspace does
+            not match the job's workspace (CERTOPS_EXECUTOR_WORKSPACE_MISMATCH)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: CertOps is disabled or the certificate job was not found in the authenticated workspace
           content:
@@ -3874,7 +5341,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different sanitized
+            payload (`CERTOPS_EXECUTOR_EVENT_CONFLICT`), or the job is currently
+            claimed by a CertOps agent and the event carries a terminal status
+            (`CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED`). The executor and agent lanes
+            share one certificate_jobs table but the executor lane holds no
+            lease, so allowing an executor token to end a job an agent is still
+            executing would land the agent's side effects against a terminal row.
           content:
             application/json:
               schema:
@@ -3949,11 +5423,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Evidence body failed schema validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID or CERTOPS_EVIDENCE_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Caller lacks the required evidence-write scope (CERTOPS_API_TOKEN_SCOPE_DENIED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: CertOps is disabled or the certificate job was not found in the authenticated workspace
           content:
@@ -3961,7 +5445,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different sanitized
+            payload (`CERTOPS_EXECUTOR_EVENT_CONFLICT`), or the job is currently
+            claimed by a CertOps agent and the event carries a terminal status
+            (`CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED`). The executor and agent lanes
+            share one certificate_jobs table but the executor lane holds no
+            lease, so allowing an executor token to end a job an agent is still
+            executing would land the agent's side effects against a terminal row.
           content:
             application/json:
               schema:
@@ -4007,13 +5498,151 @@ paths:
                 code: CERTOPS_MACHINE_RATE_LIMITED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/executor/observations:
+    post:
+      tags: [CertOps Controller]
+      summary: Report a public cert-manager observation
+      operationId: createCertOpsControllerObservation
+      description: >-
+        Additive controller transport, not the agent protocol. Requires
+        `certops:observations:write` and a token immutable controllerClusterId
+        binding. Workspace and cluster provenance are derived from that token;
+        body values must match. Private material is audited and rejected before
+        rollout, extension, or scope denial. The passive route remains available
+        while a workspace is paused. Idempotency is semantic and excludes only
+        retry diagnostic observationId and observedAt fields.
+      security:
+        - certOpsTokenAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-f0-9]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsControllerObservationRequest"
+      responses:
+        "201":
+          description: Observation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsControllerObservationResponse"
+        "200":
+          description: Exact idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsControllerObservationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            Idempotency key conflicts with a different semantic observation
+            (CERTOPS_CONTROLLER_OBSERVATION_CONFLICT)
+        "422":
+          description: Request rejected because it contained private key material
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "500":
+          description: >-
+            Observation could not be persisted after acceptance
+            (CERTOPS_CONTROLLER_OBSERVATION_PERSIST_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Security audit sink unavailable while rejecting private material
+  /api/v1/certops/executor/provisioning-commands/next:
+    post:
+      tags: [CertOps Controller]
+      summary: Fetch one narrow cert-manager provisioning command
+      operationId: nextCertOpsControllerProvisioningCommand
+      description: >-
+        Controller-specific command transport. Requires exactly
+        `certops:provision:execute` and immutable controller cluster binding.
+        It is not agent polling or claim protocol. Non-terminal work may be
+        redelivered after a bounded throttle; no Secrets or private material are
+        returned.
+      security:
+        - certOpsTokenAuth: []
+      responses:
+        "200":
+          description: One cluster-bound provisioning command
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisioningCommandResponse" }
+        "204": { description: No work assigned to the authenticated cluster }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Workspace CertOps is paused }
+        "422": { description: Request rejected because it contained private key material }
+        "429": { description: CertOps machine-token rate limit exceeded }
+        "500":
+          description: >-
+            Command dispatch failed after selection
+            (CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation:
+    post:
+      tags: [CertOps Controller]
+      summary: Reauthorize one controller provisioning mutation
+      operationId: authorizeCertOpsControllerProvisioningMutation
+      description: >-
+        Narrow controller authorization check called immediately before each
+        Kubernetes Certificate create or patch. Requires
+        `certops:provision:execute`, immutable controller cluster binding, an
+        active server-owned provisioning job, the deployment-wide CertOps
+        rollout gate, and an unpaused workspace. Retries recheck the same
+        authoritative state. This is not an agent claim, lease, heartbeat, or
+        agent-protocol operation.
+      security:
+        - certOpsTokenAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Mutation remains authorized immediately before execution }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Workspace paused or command no longer mutation-authorized }
+        "422": { description: Request rejected because it contained private key material }
+        "429": { description: CertOps machine-token rate limit exceeded }
+        "500":
+          description: >-
+            Reauthorization check failed
+            (CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
       description: >-
-        M2 aggregate executor ingestion endpoint for normalized job and public
+        Aggregate executor ingestion endpoint for normalized job and public
         evidence events. Lifecycle events require `certops:events:write`;
         evidence-bearing events additionally require `certops:evidence:write`.
         The route is hidden with 404 when `certops.enabled` is disabled.
@@ -4041,11 +5670,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Executor event body failed schema/idempotency validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID, CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+            CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH, CERTOPS_JOB_STATUS_INVALID,
+            or CERTOPS_EVIDENCE_INVALID for evidence-bearing events)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Caller lacks the required scope for this event type
+            (CERTOPS_API_TOKEN_SCOPE_DENIED), or the token's workspace does not
+            match the event's workspaceId (CERTOPS_EXECUTOR_WORKSPACE_MISMATCH)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -4067,7 +5711,19 @@ paths:
                 error: CertOps security audit is temporarily unavailable
                 code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different
+            sanitized payload (CERTOPS_EXECUTOR_EVENT_CONFLICT); the event
+            conflicts with the job's current status
+            (CERTOPS_JOB_STATUS_TRANSITION_INVALID); or a terminal status
+            does not match the job's mode, e.g. a dry_run job completing as
+            succeeded instead of dry_run_complete (CERTOPS_JOB_MODE_TERMINAL_INVALID);
+            or the job is currently claimed by a CertOps agent and the event
+            carries a terminal status (CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED). The
+            executor and agent lanes share one certificate_jobs table but the
+            executor lane holds no lease, so allowing an executor token to end a
+            job an agent is still executing would land the agent's side effects
+            against a terminal row.
           content:
             application/json:
               schema:
@@ -4114,7 +5770,17 @@ paths:
       tags: [CertOps Agent]
       summary: Register an agent
       operationId: createCertOpsAgentRegistration
-      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Frozen namespace skeleton; body schema lands in M4.
+      description: >-
+        Outbound-only agent enrollment using a single-use, hashed, expiring
+        bootstrap token (bearer); registration returns the per-agent
+        credential exactly once, together with the active job-signing public
+        key. Request body is the agent-protocol envelope with messageType
+        register (packages/contracts/certops/agent-protocol.schema.json,
+        additionalProperties false); that schema remains authoritative for
+        body shapes. Unknown, expired, used, and revoked bootstrap tokens all
+        return the same generic 401 so callers cannot probe token state.
+        Private key material is audited and rejected with 422 before rollout
+        gating. Hidden with 404 while certops.enabled is disabled.
       security:
         - agentBootstrapTokenAuth: []
       requestBody:
@@ -4122,18 +5788,63 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsAgentRegisterRequest"
       responses:
         "201":
-          description: Agent registered
+          description: Agent registered; the credential is shown exactly once
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsAgentRegisterResponse"
+        "400":
+          description: Message envelope or register body failed agent-protocol validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "messageType must be register"
+                code: CERTOPS_AGENT_MESSAGE_INVALID
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Generic bootstrap unauthorized (identical body for unknown, expired, used, and revoked tokens; also returned when the registration lost a single-use race)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent bootstrap authentication required
+                code: CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED
+        "404":
+          description: CertOps is disabled deployment-wide (route is hidden)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "409":
+          description: An agent with this agentId already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: An agent with this agentId already exists
+                code: CERTOPS_AGENT_REGISTRATION_CONFLICT
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/heartbeat:
@@ -4141,7 +5852,18 @@ paths:
       tags: [CertOps Agent]
       summary: Agent heartbeat
       operationId: createCertOpsAgentHeartbeat
-      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Frozen skeleton; body schema lands in M4.
+      description: >-
+        Steady-state heartbeat authenticated with the per-agent credential
+        (bearer). Updates last_seen_at, records the envelope clockOffsetMs and
+        body ntpSynced/uptimeSeconds/pinnedSigningKeyId for clock-drift and
+        key-rotation fleet monitoring, flips an offline agent back to active,
+        and announces the active job-signing public key. Request body is the
+        agent-protocol envelope with messageType heartbeat
+        (packages/contracts/certops/agent-protocol.schema.json,
+        additionalProperties false). A retired agent authenticates but
+        receives 410 without any last_seen_at update. Private key material is
+        audited and rejected with 422. Hidden with 404 while certops.enabled
+        is disabled.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4149,18 +5871,65 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsAgentHeartbeatRequest"
       responses:
         "200":
-          description: Heartbeat accepted
+          description: Heartbeat accepted with signing key announcement
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsAgentHeartbeatResponse"
+        "400":
+          description: Message envelope or heartbeat body failed agent-protocol validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "messageType must be heartbeat"
+                code: CERTOPS_AGENT_MESSAGE_INVALID
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: CertOps is disabled deployment-wide (route is hidden)
+        "409":
+          description: Message sequence is not greater than the last accepted sequence for this agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Message sequence is not greater than the last accepted sequence for this agent
+                code: CERTOPS_AGENT_SEQUENCE_REGRESSION
+        "410":
+          description: Agent is retired; last_seen_at is not updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent is retired
+                code: CERTOPS_AGENT_RETIRED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/claim:
@@ -4168,7 +5937,20 @@ paths:
       tags: [CertOps Agent]
       summary: Claim pending jobs
       operationId: createCertOpsAgentJobClaim
-      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) in M4.
+      description: >-
+        Outbound-only claim poll authenticated with the per-agent
+        credential (bearer). Request body is the agent-protocol envelope with
+        messageType claim (packages/contracts/certops/agent-protocol.schema.json,
+        additionalProperties false); the body only expresses poll preferences
+        (maxJobs, supportedActions), never a specific job selection. Server
+        selects pending workspace jobs with FOR UPDATE SKIP LOCKED, leases
+        them, and returns signed dispatch payloads: job-payload fields plus
+        claimId, leaseExpiresAt, attemptCount, and the Ed25519 dispatch
+        fields nonce, issuedAt, expiresAt, signingKeyId, signature. Dispatch
+        is blocked while the workspace kill switch is on (409
+        CERTOPS_WORKSPACE_PAUSED); results reporting never is. A retired
+        agent receives 410. Hidden with 404 while certops.enabled is
+        disabled.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4176,18 +5958,162 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsAgentClaimRequest"
       responses:
         "200":
-          description: Claimed jobs
+          description: Zero or more signed claimed jobs
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsAgentClaimResponse"
+        "400":
+          description: Message envelope or claim body failed agent-protocol validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "messageType must be claim"
+                code: CERTOPS_AGENT_MESSAGE_INVALID
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: CertOps is disabled deployment-wide (route is hidden)
+        "409":
+          description: >-
+            Workspace CertOps is paused (CERTOPS_WORKSPACE_PAUSED); message
+            sequence regression (CERTOPS_AGENT_SEQUENCE_REGRESSION); agent
+            blocked by compatibility policy (CERTOPS_AGENT_COMPATIBILITY_BLOCKED);
+            or the deploy public certificate is unavailable
+            (CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "410":
+          description: Agent is retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent is retired
+                code: CERTOPS_AGENT_RETIRED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/{jobId}/lease:
+    post:
+      tags: [CertOps Agent]
+      summary: Renew a claimed job lease
+      operationId: renewCertOpsAgentJobLease
+      description: >-
+        Re-proves claim ownership (authenticated agent + claimId), transitions
+        claimed→running on first renew, extends lease_expires_at, stamps
+        lease_renewed_at, and extends the still-open dispatch nonce so late
+        results remain reportable through the reaper hard-grace window. The
+        agent must call this before each external side effect (ACME/DNS/deploy/
+        reload). See COORDINATION-B6.md. Not an agent-protocol envelope
+        messageType: lean JSON body with claimId and optional sequence.
+      security:
+        - agentCredentialAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_.:-]+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsAgentLeaseRequest"
+      responses:
+        "200":
+          description: Lease renewed; job is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentLeaseResponse"
+        "400":
+          description: Lease body invalid or job not in a renewable state (CERTOPS_AGENT_MESSAGE_INVALID or CERTOPS_AGENT_LEASE_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: claimId is invalid
+                code: CERTOPS_AGENT_MESSAGE_INVALID
+        "401":
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: Job not found, or CertOps is disabled deployment-wide
+        "409":
+          description: >-
+            Claim ownership mismatch (CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH)
+            or sequence regression (CERTOPS_AGENT_SEQUENCE_REGRESSION)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Lease renew does not match the current claim for this job
+                code: CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
+        "410":
+          description: Agent is retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent is retired
+                code: CERTOPS_AGENT_RETIRED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/results:
@@ -4195,7 +6121,19 @@ paths:
       tags: [CertOps Agent]
       summary: Report job results and evidence
       operationId: createCertOpsAgentJobResult
-      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands in M4.
+      description: >-
+        Result/evidence ingestion authenticated with the per-agent
+        credential (bearer). Request body is the agent-protocol envelope with
+        messageType result or evidence, dispatched on the envelope
+        messageType (packages/contracts/certops/agent-protocol.schema.json,
+        additionalProperties false). Result ingestion re-proves claim
+        ownership (agent + claimId, where attemptId doubles as the claimId),
+        consumes the single-use dispatch nonce (replay ledger), and
+        transitions the job terminally in one transaction. Evidence messages
+        append job-scoped public evidence without any job transition. The
+        workspace kill switch never blocks results. A retired agent receives
+        410. Payloads containing private key material are rejected with 422.
+        Hidden with 404 while certops.enabled is disabled.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4203,25 +6141,72 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsAgentResultRequest"
       responses:
-        "202":
-          description: Result accepted
+        "200":
+          description: Result acknowledged (jobId/status/errorCode/completedAt) or evidence appended (ok/evidenceCount)
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsAgentResultResponse"
+        "400":
+          description: Invalid envelope, body, or result status (CERTOPS_AGENT_MESSAGE_INVALID or CERTOPS_AGENT_RESULT_STATUS_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Result status is invalid
+                code: CERTOPS_AGENT_RESULT_STATUS_INVALID
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: Certificate job not found (CERTOPS_AGENT_JOB_NOT_FOUND), or CertOps disabled deployment-wide (NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Certificate job not found
+                code: CERTOPS_AGENT_JOB_NOT_FOUND
+        "409":
+          description: Claim ownership mismatch (CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH) or single-use nonce rejected/replayed (CERTOPS_AGENT_RESULT_NONCE_REJECTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Result nonce was rejected
+                code: CERTOPS_AGENT_RESULT_NONCE_REJECTED
+        "410":
+          description: Agent is retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent is retired
+                code: CERTOPS_AGENT_RETIRED
         "422":
           description: Request rejected because it contained private key material
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
 components:
@@ -4234,7 +6219,7 @@ components:
     certOpsTokenAuth:
       type: http
       scheme: bearer
-      description: Scoped CertOps API token (bearer) used by M2 machine routes. Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope. Bearer-only and non-cookie; CSRF-exempt only for the exact planned POST machine routes. Empty required-scope configuration is invalid.
+      description: Scoped CertOps API token (bearer) used by machine routes. Allowed scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope. Bearer-only and non-cookie; CSRF-exempt only for the exact planned POST machine routes. Empty required-scope configuration is invalid.
     agentBootstrapTokenAuth:
       type: http
       scheme: bearer
@@ -4302,6 +6287,92 @@ components:
         type: integer
         minimum: 0
         default: 0
+    certOpsUnboundedListLimitParam:
+      in: query
+      name: limit
+      description: >-
+        Number of items returned, capped at 100. Omitting this parameter returns
+        every row in the workspace; there is no implicit page size. A default
+        here would page a list that has no paging control, hiding rows from an
+        audit with nothing on screen to reveal them.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    certOpsCertificateStatusFilterParam:
+      in: query
+      name: status
+      description: >-
+        Restricts the page and its total to one inventory status. A value outside
+        the set is rejected with 400 rather than answered with an empty page.
+      schema:
+        type: string
+        enum:
+          - discovered
+          - provisioning
+          - active
+          - renewing
+          - expiring
+          - expired
+          - revoked
+          - decommissioned
+    certOpsCertificateSourceFilterParam:
+      in: query
+      name: source
+      description: >-
+        Restricts the page and its total to one discovery or registration source.
+        A value outside the set is rejected with 400.
+      schema:
+        type: string
+        enum:
+          - manual
+          - api
+          - import
+          - domain_checker
+          - endpoint_monitor
+          - integration
+          - auto_sync
+          - cert_manager
+          - agent_filesystem
+          - agent_issuance
+    certOpsCertificateNoRenewalProfileParam:
+      in: query
+      name: noRenewalProfile
+      description: >-
+        true selects certificates with no renewal profile attached; false selects
+        those with one. This is one of three independent renewal facts, kept
+        separate because each has a different remedy and none of them alone means
+        a certificate will renew.
+      schema:
+        type: boolean
+    certOpsCertificateRenewalDisabledParam:
+      in: query
+      name: renewalDisabled
+      description: >-
+        true selects certificates whose attached profile is disabled or archived,
+        an operator decision that is reversible from the profile controls.
+      schema:
+        type: boolean
+    certOpsCertificateKeyNotAgentDeployableParam:
+      in: query
+      name: keyNotAgentDeployable
+      description: >-
+        true selects certificates whose key custody is not agent-deployable,
+        unknown custody included: no agent holds the private key, so renewal is
+        impossible regardless of any profile.
+      schema:
+        type: boolean
+    certOpsCertificateExcludeRetiredParam:
+      in: query
+      name: excludeRetired
+      description: >-
+        true excludes certificates in a retired lifecycle status (revoked or
+        decommissioned) from the page and its total. Omitted or false returns
+        every status, which is what index-building callers (e.g. the token
+        detail panel) need since a retired certificate's page must still
+        resolve.
+      schema:
+        type: boolean
     auditSinceParam:
       in: query
       name: since
@@ -4354,6 +6425,210 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    CertOpsRenewalProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, autoRenewEnabled, editableFields]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          description: Lifecycle status. 'disabled' and 'archived' both stop automatic renewal.
+          enum: [active, disabled, archived]
+        source:
+          type: string
+          nullable: true
+        autoRenewEnabled:
+          type: boolean
+          description: Convenience view of status. False means the scheduler will not renew certificates on this profile.
+        renewBeforeDays:
+          type: integer
+          nullable: true
+          description: Lead time before expiry. Null means the deployment-wide threshold applies.
+        keyMode:
+          type: string
+          nullable: true
+        renewalProfile:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            The stored execution contract. Exposed in full because an operator
+            needs to see where a renewal deploys in order to trust it; every
+            field is non-secret by the zero-custody rule (no key material, and
+            CA/EAB references are opaque identifiers).
+        derived:
+          type: boolean
+          description: True when the profile was generated automatically from a successful issuance rather than authored by hand.
+        derivedFrom:
+          type: object
+          nullable: true
+          additionalProperties: true
+        certificateCount:
+          type: integer
+          description: Number of managed certificates currently linked to this profile.
+        editableFields:
+          type: array
+          description: |
+            The renewalProfile fields this API permits changing. Travels with the
+            record so a client renders the same boundary the server enforces.
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsRenewalProfileList:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsRenewalProfile"
+        total:
+          type: integer
+          deprecated: true
+          description: Read pagination.total instead. Retained for shipped clients.
+        limit:
+          type: integer
+          deprecated: true
+          description: Read pagination.limit instead. Retained for shipped clients.
+        offset:
+          type: integer
+          deprecated: true
+          description: Read pagination.offset instead. Retained for shipped clients.
+        pagination:
+          $ref: "#/components/schemas/CertOpsListPagination"
+    CertOpsUpcomingRenewalList:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [certificateId, commonName, autoRenewEnabled]
+            properties:
+              certificateId:
+                type: string
+                format: uuid
+              commonName:
+                type: string
+                nullable: true
+              certificateStatus:
+                type: string
+                nullable: true
+                description: Inventory status of the certificate. Non-renewable statuses (revoked, decommissioned) are excluded from this list entirely.
+              notAfter:
+                type: string
+                format: date-time
+                nullable: true
+              renewsFrom:
+                type: string
+                format: date-time
+                nullable: true
+                description: When the scheduler starts attempting this renewal (notAfter minus the effective lead time).
+              profileId:
+                type: string
+                format: uuid
+                nullable: true
+              profileName:
+                type: string
+                nullable: true
+              autoRenewEnabled:
+                type: boolean
+                description: True only when the scheduler would actually create a renewal job for this certificate. False whenever anything prevents that, with blockedReason naming the cause.
+              blockedReason:
+                type: string
+                nullable: true
+                description: >-
+                  Why the scheduler will not renew this certificate, or null when it will.
+                  auto_renew_disabled is an operator decision and is reversible from the
+                  profile controls; the others are defects that no toggle will fix.
+                  not_agent_deployable means no agent holds the private key (typically an
+                  externally observed certificate), so renewal is impossible regardless of
+                  the profile, and is reported ahead of any profile problem.
+                enum:
+                  - auto_renew_disabled
+                  - no_profile
+                  - incomplete_profile
+                  - not_agent_deployable
+                  - unknown_expiry
+              renewBeforeDays:
+                type: integer
+                description: Effective lead time, falling back to the deployment threshold when the profile does not set one.
+              lastRenewJobStatus:
+                type: string
+                nullable: true
+                description: Status of the most recent renewal job for this certificate, if any.
+        total:
+          type: integer
+          deprecated: true
+          description: Read pagination.total instead. Retained for shipped clients.
+        limit:
+          type: integer
+          deprecated: true
+          description: Read pagination.limit instead. Retained for shipped clients.
+        offset:
+          type: integer
+          deprecated: true
+          description: Read pagination.offset instead. Retained for shipped clients.
+        pagination:
+          $ref: "#/components/schemas/CertOpsListPagination"
+    CertOpsListPagination:
+      type: object
+      additionalProperties: false
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            Rows matching the request's filters, counted over the same predicate
+            as the returned page and ignoring limit and offset. A client knows
+            more pages exist when offset + items.length < total.
+    CertOpsUnboundedListPagination:
+      type: object
+      additionalProperties: false
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: >-
+            Echo of the requested limit, or null when none was supplied and the
+            whole result set was returned.
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            Rows in the workspace, ignoring limit and offset. A client knows more
+            pages exist when offset + items.length < total.
     Pagination:
       type: object
       properties:
@@ -4431,6 +6706,7 @@ components:
           type: string
           enum:
             - discovered
+            - provisioning
             - active
             - renewing
             - expiring
@@ -4448,6 +6724,7 @@ components:
             - endpoint_monitor
             - integration
             - auto_sync
+            - cert_manager
             - null
         sourceRef:
           type: string
@@ -4525,6 +6802,269 @@ components:
           type: string
           format: date-time
           nullable: true
+        reconciliationReason:
+          type: string
+          nullable: true
+          maxLength: 256
+          description: >-
+            Machine-readable reason a reconciliation step (issuance promotion
+            or post-renewal refresh) could not update this certificate from
+            agent evidence, e.g. "no_claim_bound_verify_evidence",
+            "verify_evidence_missing_fingerprint",
+            "verify_evidence_missing_expiry". Null when the certificate's
+            facts are current. Also recorded as a
+            CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED or
+            CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED audit event when set.
+        renewal:
+          $ref: "#/components/schemas/CertOpsCertificateRenewalState"
+        renewalSetup:
+          $ref: "#/components/schemas/CertOpsRenewalSetupState"
+        renewalPreflight:
+          allOf:
+            - $ref: "#/components/schemas/CertOpsRenewalPreflightState"
+          description: |
+            Present on the certificate detail response only. Lists are paged
+            over many certificates and have no use for a per-certificate
+            resume action, so the anti-join behind it is not run for them.
+    CertOpsCertificateRenewalState:
+      type: object
+      additionalProperties: false
+      description: |
+        Derived renewal-automation verdict for one certificate, computed from
+        the same inputs the renewal scheduler scans with. `auto` is the only
+        state in which the scheduler will actually create a renew job; every
+        other state names why it will not.
+      required:
+        - schemaVersion
+        - keyMode
+        - profileId
+        - profileName
+        - renewBeforeDays
+        - renewsFrom
+        - state
+        - detail
+        - workspacePaused
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        keyMode:
+          type: string
+          nullable: true
+        profileId:
+          type: string
+          format: uuid
+          nullable: true
+        profileName:
+          type: string
+          nullable: true
+        renewBeforeDays:
+          type: integer
+          nullable: true
+        renewsFrom:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the sweep starts attempting this renewal (notAfter minus the effective lead time). Only set when state is 'auto'.
+        state:
+          type: string
+          enum:
+            - auto
+            - disabled
+            - not-configured
+            - not-eligible
+            - not-applicable
+        detail:
+          type: string
+          description: Operator-facing explanation of the state.
+        workspacePaused:
+          type: boolean
+          description: |
+            True when the workspace's CertOps kill switch is paused, independent
+            of `state`. Answers "will this workspace's scheduler act right now",
+            a different question from `state`'s "is this profile switched on" -
+            a paused workspace can still report `state: auto` because the
+            profile itself is genuinely enabled, so callers must check both
+            before assuming a certificate will renew unattended.
+    CertOpsRenewalSetupState:
+      type: object
+      additionalProperties: false
+      description: |
+        Status of the durable profile-derivation intent behind "Set up
+        automatic renewal", if one has ever been recorded for this
+        certificate. `none` is the ordinary case for a certificate nobody has
+        tried to adopt. While `waiting`, the certificate is mid-setup rather
+        than genuinely `not-configured`.
+
+        The stored row's own failure text is never exposed: it is a raw
+        exception message that can carry driver or constraint detail, so
+        `outcomeCode` and `message` are a closed, server-authored vocabulary
+        and the raw text stays server-side.
+      required:
+        - state
+        - jobId
+        - attempts
+        - outcomeCode
+        - message
+        - intentId
+      properties:
+        state:
+          type: string
+          enum:
+            - none
+            - waiting
+            - configured
+            - skipped
+            - failed
+        jobId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The renew job the intent was created from.
+        attempts:
+          type: integer
+          minimum: 0
+        outcomeCode:
+          type: string
+          nullable: true
+          description: |
+            Machine-readable skip or failure reason, never raw error text.
+            Set for `skipped` and `failed`, null otherwise.
+          enum:
+            - already_linked
+            - detached
+            - dry_run
+            - job_never_terminated
+            - job_not_found
+            - certificate_not_found
+            - no_claim_bound_verify_evidence
+            - missing_certificate_id
+            - missing_job_id
+            - profile_operator_owned
+            - certificate_link_conflict
+            - job_failed
+            - job_rejected
+            - job_cancelled
+            - job_blocked
+            - orphaned_unknown_effect
+            - renewal_profile_incomplete
+            - renewal_profile_invalid
+            - derivation_failed
+            - unknown
+        message:
+          type: string
+          nullable: true
+          description: |
+            Operator-facing explanation authored server-side. Set for
+            `skipped` and `failed`, null otherwise.
+        intentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The outbox event id to pass to the retry route. Non-null only
+            while the intent is retryable, so a `skipped` intent (a decision,
+            not a failure) never offers one.
+    CertOpsRenewalPreflightState:
+      type: object
+      additionalProperties: false
+      description: |
+        A completed preflight for this certificate that nothing has been armed
+        behind yet, which is what lets the UI offer "Continue setup" after a
+        reload. A preflight is an asynchronous dry_run renew job terminating as
+        `dry_run_complete`, never `succeeded`, and it is reported here only
+        while no adoption intent exists for the certificate.
+      required:
+        - available
+        - jobId
+        - completedAt
+      properties:
+        available:
+          type: boolean
+        jobId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The dry_run job to read the preflight's own result from.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsRenewalSetupRetryResponse:
+      type: object
+      additionalProperties: false
+      required: [id, eventType, status, attemptCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The intent that was reset, matching renewalSetup.intentId.
+        eventType:
+          type: string
+          enum: [profile_derivation_requested]
+        status:
+          type: string
+          enum: [pending]
+          description: A reset intent is always returned to the pending queue.
+        attemptCount:
+          type: integer
+          minimum: 0
+          description: Zero after a reset, so the retry gets a full attempt budget.
+    CertOpsRenewalProfileDetachResponse:
+      type: object
+      additionalProperties: false
+      description: |
+        Result of unlinking a certificate from its renewal profile. The profile
+        row itself is never deleted, because one profile can cover several
+        certificates.
+      required: [certificateId, detachedProfileId, invalidatedIntents]
+      properties:
+        certificateId:
+          type: string
+          format: uuid
+        detachedProfileId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The profile the certificate was linked to, for the audit trail.
+        invalidatedIntents:
+          type: integer
+          minimum: 0
+          description: |
+            Outstanding profile-derivation intents cancelled in the same
+            transaction, so a detach cannot be undone by an in-flight setup.
+    CertOpsRenewalSetupRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Arms automatic renewal by creating a renew job and, for a real run,
+        recording the derivation intent in the same transaction. A dry run is a
+        preflight: it records no intent, so it can never configure anything.
+      properties:
+        dryRun:
+          type: boolean
+          default: false
+          description: Run as a preflight (mode dry_run) instead of arming renewal.
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Job payload overrides. Private-key material is rejected.
+        assignedAgentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Pin the job to one agent. Left unset, the service pins the agent
+            whose discovery recorded the deployment path, since only that host
+            has it.
+        idempotencyKey:
+          type: string
+          nullable: true
+          maxLength: 200
+        requiresApproval:
+          type: boolean
+          default: false
     CertOpsManagedCertificateListResponse:
       type: object
       additionalProperties: false
@@ -4535,16 +7075,7 @@ components:
           items:
             $ref: "#/components/schemas/CertOpsManagedCertificate"
         pagination:
-          type: object
-          additionalProperties: false
-          required: [limit, offset]
-          properties:
-            limit:
-              type: integer
-              minimum: 1
-            offset:
-              type: integer
-              minimum: 0
+          $ref: "#/components/schemas/CertOpsListPagination"
     CertOpsManagedCertificateDetailResponse:
       type: object
       additionalProperties: false
@@ -4675,7 +7206,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
         status:
           type: string
           enum:
@@ -4689,9 +7220,11 @@ components:
             - failed
             - blocked
             - cancelled
+            - dry_run_complete
+            - orphaned_unknown_effect
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         subjectType:
           type: string
           nullable: true
@@ -4739,29 +7272,269 @@ components:
           items:
             $ref: "#/components/schemas/CertOpsJob"
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: "#/components/schemas/CertOpsListPagination"
     CertOpsJobCreateRequest:
       type: object
       additionalProperties: false
       required: [operation]
       description: >-
         Manual job creation request. source is always forced to "api" by the
-        server and is not accepted from the request body.
+        server and is not accepted from the request body. Operation "issue"
+        requests a brand-new certificate for which no managed certificate row
+        exists yet: subjectType, subjectId, and payload.certificateId must all
+        be omitted, and idempotencyKey is required. For "issue" the server
+        creates the managed certificate upfront in the same transaction with
+        status "provisioning" and source "agent_issuance", then creates the job
+        against that new row and reconciles the certificate to "active" from
+        the job's own validation evidence when the job succeeds.
       properties:
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
+          description: >-
+            Job operation. "issue" is control-plane-only first-time issuance;
+            it is dispatched to agents as action "renew", so the agent-facing
+            action values are unchanged.
         subjectType:
           type: string
           enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          description: >-
+            Subject kind of an already existing subject. Must be omitted for
+            operation "issue"; the server sets managed_certificate on the row
+            it creates.
         subjectId:
           type: string
           maxLength: 128
+          description: >-
+            Id of an already existing subject. Must be omitted for operation
+            "issue"; the server assigns the id of the managed certificate it
+            creates.
         payload:
-          $ref: "#/components/schemas/CertOpsPublicObject"
+          allOf:
+            - $ref: "#/components/schemas/CertOpsPublicObject"
+          description: >-
+            Public job payload. For operation "issue", payload.certificateId
+            must be omitted because the server assigns it; the name and common
+            name of the created certificate come from
+            payload.target.reference, and its subject alternative names come
+            from payload.sans. The execution
+            fields accepted on an "issue" job are exactly the renew set
+            (commandRef, caEndpoint, acmeKind, keyRotation, certPath,
+            reloadService, verifyHost, verifyPort, dnsZone, dnsProvider); a
+            renewalProfile snapshot is not valid on an "issue" job.
         idempotencyKey:
           type: string
           maxLength: 128
+          description: >-
+            Required for operation "issue", where it makes a retry safe
+            instead of creating a duplicate certificate row and is stored as
+            the created certificate's source reference. Optional for all other
+            operations.
+        requiresApproval:
+          type: boolean
+          default: false
+          description: >-
+            True creates the job at pending_approval instead of pending, so
+            it must be approved by a different user before it becomes
+            claimable (see the approval gate on POST .../{jobId}/approve).
+    CertOpsBulkRenewRequest:
+      type: object
+      additionalProperties: false
+      required: [certificateIds]
+      description: >-
+        Bulk renewal request. Each certificate id becomes one renew job
+        created through the same manual creation path as POST /jobs; source
+        is always forced to "api" by the server.
+      properties:
+        certificateIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        dryRun:
+          type: boolean
+          default: false
+          description: >-
+            True validates each certificate and reports per-item outcomes
+            without creating any jobs.
+        requiresApproval:
+          type: boolean
+          default: false
+          description: >-
+            True makes every created job start at pending_approval, matching
+            the per-job approval gate of single manual job creation.
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._-]{1,64}$'
+          description: >-
+            Optional request-level idempotency key. Combined with each
+            certificateId to derive a per-item key
+            (bulk-renew:<idempotencyKey>:<certificateId>), so retrying the
+            same bulk request is safe. When omitted, the server derives
+            bulk-renew:auto:<certificateId> instead.
+        payload:
+          allOf:
+            - $ref: "#/components/schemas/CertOpsPublicObject"
+          description: >-
+            Optional shared public payload merged into every created renew
+            job, accepting the same optional execution fields as a single
+            renew job. The server sets certificateId per item.
+    CertOpsJobApprovalDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [jobId, status]
+      description: >-
+        Result of an approve/reject decision. approvedByUserId/payloadHash/
+        canonicalIntentHash are null on reject (no hash is bound to a
+        rejection); approval mirrors the ledger row the server just wrote.
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [approved, rejected]
+        approvedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        payloadHash:
+          type: string
+          nullable: true
+          description: SHA256 hex of the canonical job payload bound by this decision. Null on reject.
+        canonicalIntentHash:
+          type: string
+          nullable: true
+          description: SHA256 hex of the canonical job intent bound by this decision. Null on reject.
+        approval:
+          type: object
+          additionalProperties: false
+          required: [id, workspaceId, jobId, decision, createdAt]
+          description: The approval-ledger row just written for this decision.
+          properties:
+            id:
+              type: string
+              format: uuid
+            workspaceId:
+              type: string
+              format: uuid
+            jobId:
+              type: string
+              format: uuid
+            decision:
+              type: string
+              enum: [approved, rejected]
+            approvedByUserId:
+              type: string
+              format: uuid
+              nullable: true
+            payloadHash:
+              type: string
+              nullable: true
+            canonicalIntentHash:
+              type: string
+              nullable: true
+            reason:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+    CertOpsBulkRenewResultItem:
+      type: object
+      additionalProperties: false
+      required: [certificateId, ok]
+      properties:
+        certificateId:
+          type: string
+          format: uuid
+        ok:
+          type: boolean
+        jobId:
+          type: string
+          format: uuid
+          description: Present only when ok is true and the request was not a dry run.
+        errorCode:
+          type: string
+          description: >-
+            Present only when ok is false. Uses the existing CertOps error
+            vocabulary (for example CERTOPS_CERTIFICATE_NOT_FOUND,
+            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED).
+        message:
+          type: string
+          description: Present only when ok is false.
+    CertOpsBulkRenewResponse:
+      type: object
+      additionalProperties: false
+      required: [summary, results]
+      description: >-
+        Partial-failure envelope for bulk renewal. Returned with HTTP 200
+        even when some or all items fail; consumers must inspect per-item
+        results.
+      properties:
+        summary:
+          type: object
+          additionalProperties: false
+          required: [requested, succeeded, failed]
+          properties:
+            requested:
+              type: integer
+              minimum: 1
+              maximum: 100
+            succeeded:
+              type: integer
+              minimum: 0
+            failed:
+              type: integer
+              minimum: 0
+        dryRun:
+          type: boolean
+          description: Present and true only for dry-run requests.
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsBulkRenewResultItem"
+    CertOpsWorkspacePauseUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [certOpsPaused]
+      properties:
+        certOpsPaused:
+          type: boolean
+          description: True prevents new CertOps side effects in this workspace only.
+        reason:
+          type: string
+          maxLength: 500
+          description: Optional bounded operator reason, redacted before transactional audit persistence.
+    CertOpsWorkspacePauseState:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, certOpsPaused, certOpsEnabled, certOpsActive]
+      properties:
+        workspaceId:
+          type: string
+          format: uuid
+        certOpsPaused:
+          type: boolean
+          description: Stored workspace-local kill-switch state.
+        certOpsEnabled:
+          type: boolean
+          description: Current deployment-wide certops.enabled rollout state.
+        certOpsActive:
+          type: boolean
+          description: True only when certOpsEnabled is true and certOpsPaused is false.
+        changed:
+          type: boolean
+          description: Present on updates; false means the requested state already existed and no transition audit was written.
     CertOpsPublicObject:
       type: object
       additionalProperties: true
@@ -4779,13 +7552,25 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
         status:
           type: string
-          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+          enum:
+            - pending_approval
+            - approved
+            - rejected
+            - pending
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - blocked
+            - cancelled
+            - dry_run_complete
+            - orphaned_unknown_effect
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         subjectType:
           type: string
           nullable: true
@@ -4943,6 +7728,168 @@ components:
             $ref: "#/components/schemas/CertOpsEvidenceItem"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    CertOpsControllerObservationRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, observationId, idempotencyKey, workspaceId, clusterId, namespace, certificateName, certificateUid, issuerRef, secretName, certificateRequestRef, dnsNames, conditions, ready, publicCertificate, observationSource, observedAt]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        observationId: { type: string, format: uuid }
+        idempotencyKey: { type: string, pattern: "^[a-f0-9]{64}$" }
+        workspaceId: { type: string, format: uuid }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+        certificateUid: { type: string, format: uuid }
+        certificateGeneration: { type: integer, minimum: 0 }
+        resourceVersion: { type: string, maxLength: 256 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            group: { type: string, maxLength: 253 }
+            kind: { type: string, maxLength: 253 }
+            name: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+        secretName: { type: string, nullable: true, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+        certificateRequestRef:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+            uid: { type: string, format: uuid }
+        dnsNames:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+        revision: { type: integer, minimum: 0 }
+        conditions:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, status]
+            properties:
+              type: { type: string, maxLength: 253 }
+              status: { type: string, maxLength: 32 }
+              reason: { type: string, maxLength: 1024 }
+              message: { type: string, maxLength: 1024 }
+              lastTransitionTime: { type: string, format: date-time }
+        ready: { type: boolean }
+        failureReason: { type: string, maxLength: 1024 }
+        failureMessage: { type: string, maxLength: 1024 }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        renewalTime: { type: string, format: date-time }
+        publicCertificate:
+          type: object
+          nullable: true
+          additionalProperties: false
+          properties:
+            fingerprintSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+            serialNumber: { type: string, maxLength: 1024 }
+            subject: { type: string, maxLength: 1024 }
+            issuer: { type: string, maxLength: 1024 }
+            subjectAltNames:
+              type: array
+              maxItems: 64
+              items:
+                oneOf:
+                  - { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+                  - { type: string, format: ipv4, maxLength: 253 }
+                  - { type: string, format: ipv6, maxLength: 253 }
+                  - { type: string, format: uri, maxLength: 253, pattern: "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$" }
+                  - { type: string, format: email, maxLength: 253, pattern: "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" }
+            publicKeyAlgorithm: { type: string, maxLength: 1024 }
+            publicKeySize: { type: integer, minimum: 1, maximum: 16384 }
+            signatureAlgorithm: { type: string, maxLength: 1024 }
+            certificatePem: { type: string, maxLength: 65536 }
+        observationSource: { type: string, enum: [cert_manager] }
+        observedAt: { type: string, format: date-time }
+    CertOpsControllerObservationResponse:
+      type: object
+      additionalProperties: false
+      required: [managedCertificateId, targetId, certificateInstanceId, duplicate]
+      properties:
+        managedCertificateId: { type: string, format: uuid, nullable: true }
+        targetId: { type: string, format: uuid, nullable: true }
+        certificateInstanceId: { type: string, format: uuid, nullable: true }
+        duplicate: { type: boolean }
+    CertOpsProvisionIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, clusterId, namespace, certificateName, secretName, issuerRef, dnsNames]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        secretName: { type: string, minLength: 1, maxLength: 253 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [group, kind, name]
+          properties:
+            group: { type: string, minLength: 1, maxLength: 253 }
+            kind: { type: string, enum: [Issuer, ClusterIssuer] }
+            name: { type: string, minLength: 1, maxLength: 253 }
+        dnsNames:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+    CertOpsProvisionIntentResponse:
+      type: object
+      additionalProperties: false
+      required: [job, managedCertificateId, targetId, duplicate]
+      properties:
+        job: { $ref: "#/components/schemas/CertOpsJob" }
+        managedCertificateId: { type: string, format: uuid }
+        targetId: { type: string, format: uuid }
+        duplicate: { type: boolean }
+    CertOpsControllerProvisioningCommand:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, workspaceId, clusterId, jobId, managedCertificateId, namespace, certificateName, secretName, issuerRef, dnsNames]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        workspaceId: { type: string, format: uuid }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        jobId: { type: string, format: uuid }
+        managedCertificateId: { type: string, format: uuid }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        secretName: { type: string, minLength: 1, maxLength: 253 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [group, kind, name]
+          properties:
+            group: { type: string, minLength: 1, maxLength: 253 }
+            kind: { type: string, enum: [Issuer, ClusterIssuer] }
+            name: { type: string, minLength: 1, maxLength: 253 }
+        dnsNames:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+    CertOpsProvisioningCommandResponse:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command: { $ref: "#/components/schemas/CertOpsControllerProvisioningCommand" }
+        eventTimestamps:
+          type: object
+          additionalProperties: false
+          description: First accepted real executor-event times for bounded command redelivery; not an agent attempt or lease record.
+          properties:
+            started: { type: string, format: date-time }
+            completed: { type: string, format: date-time }
+            failed: { type: string, format: date-time }
     CertOpsApiTokenScope:
       type: string
       enum:
@@ -4950,7 +7897,9 @@ components:
         - certops:events:write
         - certops:jobs:read
         - certops:evidence:write
-      description: Canonical M2 CertOps API-token scope. Job-claim and signed-agent scopes are deferred to M4.
+        - certops:observations:write
+        - certops:provision:execute
+      description: Canonical CertOps API-token scope. Either controller scope requires a controller cluster binding; job-claim and signed-agent scopes remain reserved for signed agent dispatch.
     CertOpsApiToken:
       type: object
       additionalProperties: false
@@ -4987,6 +7936,13 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/CertOpsApiTokenScope"
+        controllerClusterId:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 63
+          pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          description: Immutable binding required exactly when scopes includes either controller scope.
         status:
           type: string
           enum: [active, revoked, expired]
@@ -5017,12 +7973,14 @@ components:
     CertOpsApiTokenListResponse:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, pagination]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/CertOpsApiToken"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
     CertOpsApiTokenCreateRequest:
       type: object
       additionalProperties: false
@@ -5044,6 +8002,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        controllerClusterId:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 63
+          pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          description: Required exactly when scopes includes either controller scope; creation-only and immutable.
     CertOpsApiTokenCreateResponse:
       type: object
       additionalProperties: false
@@ -5068,7 +8033,7 @@ components:
     CertOpsEvidenceMetadata:
       type: object
       additionalProperties: false
-      description: Strict standalone normalized/persisted public evidence metadata. M2-A10 separately stores bounded executor output after private-key rejection and generic-secret redaction; raw output and key-bearing artifacts are excluded here.
+      description: Strict standalone normalized/persisted public evidence metadata. The executor-output store separately keeps bounded executor output after private-key rejection and generic-secret redaction; raw output and key-bearing artifacts are excluded here.
       required:
         - schemaVersion
         - evidenceId
@@ -5174,7 +8139,7 @@ components:
     CertOpsEmbeddedExecutorEvidenceItem:
       type: object
       additionalProperties: false
-      description: Relaxed embedded evidence item for the M2 executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata. Raw executor output is deferred to M2-A10.
+      description: Relaxed embedded evidence item for the executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata. Raw executor output is stored separately after redaction.
       required: [eventType]
       properties:
         schemaVersion:
@@ -5275,7 +8240,7 @@ components:
     CertOpsExecutorEventRequest:
       type: object
       additionalProperties: false
-      description: M2 external executor event envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed protocol and job signing are deferred to M4.
+      description: External executor event envelope. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed protocol and job signing live on the signed agent dispatch surface.
       required:
         - schemaVersion
         - eventId
@@ -5509,7 +8474,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Server-side job log event identifier; matches eventId for M2 runtime responses.
+          description: Server-side job log event identifier; matches eventId for runtime responses.
         jobId:
           type: string
           format: uuid
@@ -5838,3 +8803,592 @@ components:
           items:
             type: object
             additionalProperties: true
+    CertOpsAgentBootstrapToken:
+      type: object
+      additionalProperties: false
+      description: Public agent bootstrap-token metadata. Plaintext ttboot_ tokens, token hashes, Authorization headers, and credential material are never returned by metadata/list/revoke responses.
+      required:
+        - id
+        - workspaceId
+        - name
+        - tokenPrefix
+        - status
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        tokenPrefix:
+          type: string
+          pattern: "^ttboot_[a-f0-9]{16}$"
+          description: Public lookup prefix only; not sufficient to authenticate.
+        status:
+          type: string
+          enum: [active, used, revoked, expired]
+          description: Single-use lifecycle. A token flips to used after a successful agent registration; expired is derived from expiresAt.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Required future expiry, capped at 30 days from creation.
+        usedAt:
+          type: string
+          format: date-time
+          nullable: true
+        usedByAgentId:
+          type: string
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedBy:
+          type: integer
+          nullable: true
+        createdBy:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsAgentBootstrapTokenListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsAgentBootstrapToken"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
+    CertOpsAgentBootstrapTokenCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, expiresAt]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Public label. Must not contain a raw ttboot_/ttagent_ credential, token hash, bearer credential, or private-key material.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Required. Must be in the future and within 30 days of creation.
+    CertOpsAgentBootstrapTokenCreateResponse:
+      type: object
+      additionalProperties: false
+      description: Bootstrap-token creation response. plaintextToken is returned once at creation only; only the hash is persisted, so it can never be shown again.
+      required: [token, plaintextToken]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsAgentBootstrapToken"
+        plaintextToken:
+          type: string
+          pattern: "^ttboot_[a-f0-9]{16}_[a-f0-9]{64}$"
+          description: One-time plaintext bootstrap token shown only by the create response.
+    CertOpsAgentBootstrapTokenRevokeResponse:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsAgentBootstrapToken"
+    CertOpsWorkspaceAgent:
+      type: object
+      additionalProperties: false
+      description: Public agent fleet metadata. Credential hashes and bearer credentials never leave the service layer.
+      required:
+        - id
+        - agentId
+        - agentVersion
+        - protocolVersion
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Internal agent record id used by the retire route.
+        agentId:
+          type: string
+          description: Stable protocol-level agent identifier.
+        name:
+          type: string
+          nullable: true
+        hostname:
+          type: string
+          nullable: true
+        platform:
+          type: string
+          nullable: true
+        agentVersion:
+          type: string
+        protocolVersion:
+          type: string
+        status:
+          type: string
+          enum: [active, offline, retired]
+        lastSeenAt:
+          type: string
+          format: date-time
+          nullable: true
+        clockOffsetMs:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        retiredAt:
+          type: string
+          format: date-time
+          nullable: true
+        retireReason:
+          type: string
+          nullable: true
+    CertOpsWorkspaceAgentListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
+    CertOpsWorkspaceAgentRetireRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        force:
+          type: boolean
+          default: false
+          description: Retire even when the agent holds actively leased jobs. Requires reason.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Attributable justification. Required exactly when force is true; recorded in audit metadata after generic-secret redaction.
+    CertOpsWorkspaceAgentRetireResponse:
+      type: object
+      additionalProperties: false
+      required: [agent]
+      properties:
+        agent:
+          $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+    CertOpsAgentProtocolEnvelope:
+      type: object
+      description: Agent-protocol message envelope. Mirrors packages/contracts/certops/agent-protocol.schema.json (the authoritative schema, additionalProperties false there); the per-messageType body is constrained in the operation-specific request schemas below. Messages never carry private key material.
+      required:
+        - schemaVersion
+        - protocolVersion
+        - messageType
+        - agentId
+        - sentAt
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        protocolVersion:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          description: Agent protocol semver the agent speaks (version negotiation).
+        messageType:
+          type: string
+          enum: [register, heartbeat, claim, result, evidence]
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          description: Stable agent identifier. For messageType register this is a client-generated candidate id echoed back by the control plane.
+        workspaceId:
+          type: string
+          format: uuid
+          nullable: true
+        sentAt:
+          type: string
+          format: date-time
+        clockOffsetMs:
+          type: integer
+          nullable: true
+          description: Agent-reported offset vs control-plane time, used for clock-drift detection.
+        body:
+          type: object
+          nullable: true
+          description: Message-type-specific payload; see the operation-specific request schemas.
+    CertOpsAgentRegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
+        - type: object
+          required: [body]
+          properties:
+            messageType:
+              type: string
+              enum: [register]
+            body:
+              type: object
+              description: agent-protocol registerBody. The raw bootstrap token travels as the bearer credential, never as a body field; bootstrapTokenId is an opaque non-secret correlation reference.
+              required: [bootstrapTokenId, agentVersion]
+              properties:
+                bootstrapTokenId:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                agentVersion:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                hostname:
+                  type: string
+                  maxLength: 255
+                  nullable: true
+                platform:
+                  type: string
+                  enum: [linux, darwin, win32]
+                  nullable: true
+                nodeVersion:
+                  type: string
+                  maxLength: 32
+                  nullable: true
+                declaredTargetSelectors:
+                  type: array
+                  maxItems: 64
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                declaredCommandProfileNames:
+                  type: array
+                  maxItems: 64
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                    pattern: "^[A-Za-z0-9_.:-]+$"
+    CertOpsAgentRegisterResponse:
+      type: object
+      description: Registration result. credential is the raw per-agent bearer credential, returned exactly once and never retrievable again. signingPublicKeyPem is PUBLIC key material only.
+      required: [agentId, credential, protocolVersion]
+      properties:
+        agentId:
+          type: string
+          description: Control-plane-confirmed agent identifier (source of truth after registration).
+        credential:
+          type: string
+          description: Raw per-agent credential (ttagent_ prefix), shown exactly once.
+        protocolVersion:
+          type: string
+          description: Negotiated agent protocol version recorded for this agent.
+        signingKeyId:
+          type: string
+          nullable: true
+          description: Active job-signing key id for signature pinning.
+        signingPublicKeyPem:
+          type: string
+          nullable: true
+          description: Active Ed25519 job-signing PUBLIC key (PEM). Never private material.
+    CertOpsAgentHeartbeatRequest:
+      allOf:
+        - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
+        - type: object
+          required: [body]
+          properties:
+            messageType:
+              type: string
+              enum: [heartbeat]
+            body:
+              type: object
+              description: agent-protocol heartbeatBody.
+              required: [agentVersion]
+              properties:
+                agentVersion:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                ntpSynced:
+                  type: boolean
+                  nullable: true
+                uptimeSeconds:
+                  type: integer
+                  minimum: 0
+                  nullable: true
+                pinnedSigningKeyId:
+                  type: string
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                  nullable: true
+    CertOpsAgentHeartbeatResponse:
+      type: object
+      description: Heartbeat acknowledgment with the active job-signing key announcement so agents can detect rotation overlap.
+      required: [ok, status, lastSeenAt]
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+          description: Agent status after the heartbeat (an offline agent that calls in flips back to active).
+        lastSeenAt:
+          type: string
+          format: date-time
+        signingKeyId:
+          type: string
+          nullable: true
+        signingPublicKeyPem:
+          type: string
+          nullable: true
+          description: Active Ed25519 job-signing PUBLIC key (PEM). Never private material.
+    CertOpsAgentClaimRequest:
+      allOf:
+        - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
+        - type: object
+          properties:
+            messageType:
+              type: string
+              enum: [claim]
+            body:
+              type: object
+              nullable: true
+              description: agent-protocol claimBody; poll preferences only, never a specific job selection.
+              properties:
+                maxJobs:
+                  type: integer
+                  minimum: 1
+                  maximum: 16
+                  default: 1
+                supportedActions:
+                  type: array
+                  maxItems: 16
+                  items:
+                    type: string
+                    enum: [renew, deploy, reload, revoke, noop]
+    CertOpsAgentClaimResponse:
+      type: object
+      description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            description: Job-payload fields (job-payload.schema.json) plus jobId, workspaceId, action, claimId, attemptId, leaseExpiresAt, attemptCount, and the Ed25519 dispatch-integrity fields below.
+            required:
+              - jobId
+              - nonce
+              - issuedAt
+              - expiresAt
+              - signingKeyId
+              - signature
+            properties:
+              jobId:
+                type: string
+              workspaceId:
+                type: string
+                format: uuid
+              action:
+                type: string
+              claimId:
+                type: string
+                description: Claim identifier the agent must echo back with the result (ownership re-proof).
+              attemptId:
+                type: string
+                description: Server-assigned attempt id mirroring claimId, so a schema-minimal result report (attemptId only) still re-proves claim ownership.
+              leaseExpiresAt:
+                type: string
+                format: date-time
+              attemptCount:
+                type: integer
+              nonce:
+                type: string
+                description: Single-use dispatch nonce consumed when the result is reported (replay ledger).
+              issuedAt:
+                type: string
+                format: date-time
+              expiresAt:
+                type: string
+                format: date-time
+              signingKeyId:
+                type: string
+              signature:
+                type: string
+                description: Base64 Ed25519 signature over the canonical job payload (excluding this field).
+    CertOpsAgentLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [claimId]
+      description: Lean lease-renew body (not an agent-protocol envelope). See COORDINATION-B6.md.
+      properties:
+        claimId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_.:-]+$'
+          description: Claim id from the signed dispatch payload.
+        sequence:
+          type: integer
+          minimum: 1
+          description: Optional per-agent monotonic sequence (same semantics as heartbeat/claim/result).
+    CertOpsAgentLeaseResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, jobId, status, claimId, leaseExpiresAt]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [running]
+        claimId:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        leaseRenewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        nonceExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Extended dispatch-nonce expiry after this renew (B7).
+    CertOpsAgentResultRequest:
+      allOf:
+        - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
+        - type: object
+          required: [body]
+          properties:
+            messageType:
+              type: string
+              enum: [result, evidence]
+              description: The server dispatches on the envelope messageType; this route accepts both result and evidence messages.
+            body:
+              type: object
+              description: agent-protocol resultBody (jobId, attemptId, status required; claimId/nonce ride alongside for ownership re-proof and single-use nonce consumption) or evidenceBody (evidenceItems required; jobId required by this route because evidence persistence is job-scoped).
+              properties:
+                jobId:
+                  type: string
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                attemptId:
+                  type: string
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                  description: Result messages only. Doubles as the claimId when claimId is omitted.
+                status:
+                  type: string
+                  enum: [succeeded, failed, rejected, blocked, dry_run_complete, orphaned_unknown_effect]
+                  description: Result messages only.
+                rejectionReason:
+                  type: string
+                  nullable: true
+                  enum:
+                    - job_integrity_failed
+                    - job_replay_rejected
+                    - target_out_of_scope
+                    - command_not_allowlisted
+                    - path_not_allowlisted
+                    - ca_endpoint_not_allowlisted
+                    - dns_zone_not_allowlisted
+                    - dns_provider_not_allowlisted
+                    - key_export_requested
+                    - clock_drift_suspected
+                keyRotated:
+                  type: boolean
+                  nullable: true
+                errorMessage:
+                  type: string
+                  maxLength: 1024
+                  nullable: true
+                claimId:
+                  type: string
+                  maxLength: 128
+                nonce:
+                  type: string
+                  maxLength: 128
+                  description: Single-use dispatch nonce from the signed job payload.
+                evidenceItems:
+                  type: array
+                  minItems: 1
+                  maxItems: 16
+                  description: Evidence messages only.
+                  items:
+                    type: object
+                    required: [eventType, observedAt]
+                    properties:
+                      eventType:
+                        type: string
+                        enum:
+                          - certificate.observed
+                          - deployment.checked
+                          - deployment.updated
+                          - validation.passed
+                          - validation.failed
+                          - policy.checked
+                      observedAt:
+                        type: string
+                        format: date-time
+                      fingerprintSha256:
+                        type: string
+                        pattern: "^[a-f0-9]{64}$"
+                        nullable: true
+                      summary:
+                        type: string
+                        maxLength: 1024
+                        nullable: true
+                      metadata:
+                        type: array
+                        maxItems: 32
+                        items:
+                          type: object
+                          required: [name, value]
+                          properties:
+                            name:
+                              type: string
+                            value:
+                              nullable: true
+    CertOpsAgentResultResponse:
+      type: object
+      description: Acknowledgment. Result messages return ok/jobId/status/errorCode/completedAt after the terminal transition; evidence messages return ok/evidenceCount.
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+          description: Result messages only.
+        status:
+          type: string
+          description: Terminal job status after ingestion (result messages only).
+        errorCode:
+          type: string
+          nullable: true
+          description: Persisted error_code for terminal failures (result messages only).
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Result messages only.
+        evidenceCount:
+          type: integer
+          description: Number of evidence items appended (evidence messages only).

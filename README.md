@@ -23,16 +23,16 @@
 
 # Introducing TokenTimer
 
-Operational incidents caused by expired assets are still a recurring problem. Certificates expire, API keys get rotated, secrets are forgotten, and renewal ownership is often unclear. Most systems expose expiration data inconsistently, offer limited notification support, and lack a centralized cross-provider view.
+Operational incidents caused by expired assets are still a recurring problem. Certificates expire, API keys get rotated, secrets are forgotten, and renewal ownership is often unclear. Most systems expose expiration data inconsistently, offer limited notification support, lack a centralized cross-provider view, and leave renewal as manual, error-prone work.
 
-TokenTimer is a security-first expiration manager that aggregates expiring assets across providers and environments into one place. It helps teams monitor certificates, tokens, secrets, licenses, subscriptions, and other time-bound assets through configurable multi-channel alerting and team collaboration workflows.
+TokenTimer is a security-first expiration manager that aggregates expiring assets across providers and environments into one place, and goes beyond visibility: with certificate operations (CertOps) enabled, it automates renewal, deployment, and verification end to end so certificates stop expiring in the first place. Alongside automation, teams get multi-channel alerting and collaboration workflows for everything else that expires: tokens, secrets, licenses, and subscriptions.
 
 **What makes TokenTimer different?**
 
+- **End-to-end certificate automation (CertOps):** An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), with approval gates, a kill switch, and renewal-failure alerts keeping humans in control. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material.
 - **Unified expiration visibility:** Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place.
 - **Flexible multi-channel alerting:** Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 - **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
-- **Certificate operations:** Maintain a managed-certificate inventory linked to your tokens, import public certificates, observe rotations from endpoint monitoring, and retire certificates without losing history. Public certificate metadata only, never private keys.
 - **Built for teams and audits** ([demo](docs/assets/dashboard-overview.gif)): Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys. Integration scan credentials are discarded after one-off imports; if you enable auto-sync, they are encrypted at rest in the database for scheduled re-scans.
 
@@ -65,7 +65,9 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full environment variables reference |
-| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and M1 behavior |
+| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
+| [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, and verification |
+| [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |

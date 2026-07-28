@@ -48,22 +48,26 @@ jobs:
           API_REPO="ghcr.io/${OWNER}/tokentimer-core-api"
           DASHBOARD_REPO="ghcr.io/${OWNER}/tokentimer-core-dashboard"
           WORKER_REPO="ghcr.io/${OWNER}/tokentimer-core-worker"
+          CONTROLLER_REPO="ghcr.io/${OWNER}/tokentimer-core-k8s-controller"
 
           echo "api_repo=${API_REPO}" >> $GITHUB_OUTPUT
           echo "dashboard_repo=${DASHBOARD_REPO}" >> $GITHUB_OUTPUT
           echo "worker_repo=${WORKER_REPO}" >> $GITHUB_OUTPUT
+          echo "controller_repo=${CONTROLLER_REPO}" >> $GITHUB_OUTPUT
 
           # Conditionally push latest tags only if explicitly requested
           if [ "${{ inputs.push_latest }}" = "true" ]; then
             echo "api_latest=${API_REPO}:latest" >> $GITHUB_OUTPUT
             echo "dashboard_latest=${DASHBOARD_REPO}:latest" >> $GITHUB_OUTPUT
             echo "worker_latest=${WORKER_REPO}:latest" >> $GITHUB_OUTPUT
+            echo "controller_latest=${CONTROLLER_REPO}:latest" >> $GITHUB_OUTPUT
           fi
           # Optional extra suffix
           if [ -n "${{ inputs.tag_suffix }}" ]; then
             echo "api_extra=${API_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
             echo "dashboard_extra=${DASHBOARD_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
             echo "worker_extra=${WORKER_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
+            echo "controller_extra=${CONTROLLER_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push API
@@ -110,5 +114,20 @@ jobs:
             ${{ steps.meta.outputs.worker_repo }}:${{ github.ref_name }}
             ${{ steps.meta.outputs.worker_latest }}
             ${{ steps.meta.outputs.worker_extra }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Kubernetes controller
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: ./apps/k8s-controller/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.controller_repo }}:${{ github.sha }}
+            ${{ steps.meta.outputs.controller_repo }}:${{ github.ref_name }}
+            ${{ steps.meta.outputs.controller_latest }}
+            ${{ steps.meta.outputs.controller_extra }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -13,7 +13,9 @@ Token, certificate, and secret expiration management for teams.
 | Weekly Digest | CronJob | Sends weekly token-expiry summaries |
 | Endpoint Check | CronJob | SSL certificate and health monitoring |
 | Auto Sync | CronJob | Scheduled integration scans |
+| CertOps Maintenance | CronJob | Lease reaper, stale-agent sweep, nonce/registration-replay sweeps, renewal scheduler |
 | PostgreSQL | CloudNativePG Cluster | Database (optional, can use external) |
+| CertOps Controller | Deployment | Optional cert-manager observation and safe `Certificate` provisioning |
 
 Optional resources (disabled by default): Ingress, HPA, PDB, ServiceMonitor, PrometheusRule, NetworkPolicy.
 
@@ -23,6 +25,8 @@ Optional resources (disabled by default): Ingress, HPA, PDB, ServiceMonitor, Pro
 - Helm >= 3.14
 - [CloudNativePG operator](https://cloudnative-pg.io/) if using the default in-cluster PostgreSQL (see below), or an existing PostgreSQL instance
 - Prometheus Operator if enabling ServiceMonitor or PrometheusRule
+- cert-manager CRDs (`certificates.cert-manager.io` and
+  `certificaterequests.cert-manager.io`) before enabling the CertOps controller
 
 ### Installing the CloudNativePG operator (optional)
 
@@ -82,9 +86,9 @@ kubectl get secret -n tokentimer tokentimer-secrets \
 
 Open http://localhost:8080 and log in with your admin credentials.
 
-> When installing from a local checkout, run
-> `helm dependency update ./deploy/helm` first, then use `./deploy/helm`
-> instead of the OCI URL.
+> When installing from a local checkout, use `./deploy/helm` instead of the
+> OCI URL. The chart declares no subchart dependencies, so there is no
+> `helm dependency update` step.
 
 > **TLS Warning:** With `NODE_ENV=production`, the API sets the `Secure` flag on session cookies and enforces CSRF protection. Browsers will not persist or send secure cookies over plain HTTP, and mutating requests (including login) over `http://localhost` port-forwards will fail with 403 CSRF errors. For local testing, set `config.nodeEnv=development`, or inject `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` on the API via `api.envFrom`. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
 
@@ -135,13 +139,34 @@ worker:
 
 ### Secrets Management
 
-The chart generates a Kubernetes Secret with auto-generated values for `SESSION_SECRET`, `DB_PASSWORD`, and `ADMIN_PASSWORD` (when `adminEmail` is set). You only need to provide explicit passwords for production stability (auto-generated values change on each `helm upgrade`).
+The chart generates a Kubernetes Secret with auto-generated values for `SESSION_SECRET`, `DB_PASSWORD`, `ADMIN_PASSWORD` (when `adminEmail` is set), and, when CertOps is enabled, `CERTOPS_SIGNING_ENCRYPTION_KEY` and `CERTOPS_REGISTRATION_ENCRYPTION_KEY`.
+
+Generated values are **not** regenerated on upgrade: each is read back from the existing release Secret via `lookup`, so `helm upgrade` preserves them. Set them explicitly if you manage secrets externally, or if you render manifests with `helm template` (which runs without cluster access and therefore cannot read the existing Secret back, producing a fresh value on every render).
+
+#### CertOps encryption keys
+
+`config.certopsEnabled` defaults to `true`, and the API fails closed without these two keys: agent registration and signed job dispatch reject with `CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING` / `CERTOPS_SIGNING_ENCRYPTION_KEY_MISSING`. Each must be **64 hex characters** (32 bytes):
+
+```bash
+openssl rand -hex 32
+```
+
+```yaml
+config:
+  certopsSigningEncryptionKey: "<64 hex chars>"
+  certopsRegistrationEncryptionKey: "<64 hex chars>"
+```
+
+These wrap, at rest, the job-signing private keys and the agent registration-replay credentials. **Rotating either value makes the data it wrapped unreadable**: signing keys must be re-issued and agents must re-register. Treat them like `SESSION_SECRET`, back them up, and set them explicitly in any GitOps or `helm template` workflow.
 
 For production, use pre-existing secrets instead of setting plaintext values:
 
 ```yaml
 config:
-  existingSecret: "my-tokentimer-secrets"  # must contain SESSION_SECRET
+  existingSecret: "my-tokentimer-secrets"  # must contain SESSION_SECRET; also
+                                           # CERTOPS_SIGNING_ENCRYPTION_KEY and
+                                           # CERTOPS_REGISTRATION_ENCRYPTION_KEY
+                                           # when CertOps is enabled
 
 postgresql:
   external:
@@ -155,6 +180,202 @@ twilio:
 ```
 
 When `existingSecret` is set for a group, the chart renders **no keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts.
+
+### CertOps Controller
+
+The customer-cluster CertOps controller is a separate image and is disabled by
+default. When enabled, its default `observe` mode watches cert-manager public
+status and reports outbound to the TokenTimer API. TokenTimer never connects
+inbound to Kubernetes and no kubeconfig is uploaded. Explicit `provision` mode
+keeps observation enabled and additionally creates or Merge Patches only an
+owned cert-manager `Certificate`. cert-manager—not TokenTimer—generates the
+private key and manages the TLS Secret.
+
+Create a machine token in the target workspace, bind it immutably to the same
+lowercase cluster ID used below, and mount it from an existing Kubernetes
+Secret. Scopes do not imply one another:
+
+| Mode | Required machine-token scopes |
+|---|---|
+| `observe` | `certops:observations:write` |
+| `provision` | `certops:observations:write`, `certops:provision:execute`, `certops:events:write`, `certops:evidence:write` |
+
+The raw token is returned only when it is created. Store it under the configured
+Secret key; do not put a raw token in Helm values.
+
+```yaml
+certops:
+  controller:
+    enabled: true
+    mode: observe
+    api:
+      url: "https://api.tokentimer.example"
+      workspaceId: "00000000-0000-4000-8000-000000000001"
+      clusterId: "cluster-123"
+    apiToken:
+      existingSecret: "tokentimer-controller-api-token"
+      key: token
+    # clusterWide: true is the chart default (below) and takes the entire
+    # cluster; watchNamespaces is ignored while it is true. Set clusterWide:
+    # false to scope down: watchNamespaces: [] then means the Helm release
+    # namespace, and a non-empty list renders one Role/RoleBinding per
+    # namespace (never combine a non-empty list with clusterWide: true).
+    watchNamespaces: []
+    clusterWide: true
+    # Adds `get` on Secrets only; leave false unless public-certificate Secret
+    # fallback is required.
+    secretFallbackEnabled: false
+```
+
+The controller image reads the mounted token file on every request, so normal
+Kubernetes Secret-volume rotation is picked up without retaining the token.
+`api.url` must be reachable from the controller Pod; use HTTPS for external
+control planes. `workspaceId` and `clusterId` must match the immutable token
+binding. `clusterWide: true` is the default and grants cluster-wide read (and,
+in `provision` mode, write) access via ClusterRole/ClusterRoleBinding; set
+`clusterWide: false` to scope down instead, where `watchNamespaces: []`
+resolves to the Helm release namespace and a non-empty list renders one
+Role/RoleBinding per namespace. Invalid names, overlapping namespace and
+cluster-wide settings, modes other than `observe`/`provision`, and replica
+counts other than one fail rendering.
+
+#### Zero-custody and RBAC model
+
+Observation is status-first. The optional fallback performs one Secret `get`
+and a bounded streaming reader captures only `Secret.data["tls.crt"]`; other
+data values are never object-deserialized, decoded, logged, or reported.
+Kubernetes RBAC cannot authorize one data key inside a Secret, so enabling
+fallback necessarily permits the complete Secret HTTP response even though the
+controller code consumes only `tls.crt`.
+Leave fallback disabled unless public certificate parsing requires it. All
+outbound observation envelopes are scanned for private material and fail
+closed.
+
+| Capability | cert-manager `Certificate` | `CertificateRequest` | Secret |
+|---|---|---|---|
+| `observe` | `get`, `list`, `watch` | `get`, `list`, `watch` | none; optional `get` for fallback |
+| `provision` | `get`, `list`, `watch`, `create`, `patch` | `get`, `list`, `watch` | none; optional `get` for fallback |
+
+Both modes forbid wildcard permissions, Secret writes, CertificateRequest
+writes, and delete operations. Namespace-scoped mode (`clusterWide: false`)
+uses Role/RoleBinding resources; cluster-wide mode (the default) uses a
+ClusterRole/ClusterRoleBinding. Provision
+mode uses a `Recreate` deployment strategy to prevent overlapping write-capable
+Pods until leader election exists.
+
+Provisioning success means the desired `Certificate` resource was accepted or
+reconciled by the Kubernetes API. Issuance is not complete at that point;
+cert-manager updates status and the controller reports the eventual public
+certificate asynchronously. Existing resources without the exact TokenTimer
+workspace/cluster/managed-certificate ownership identity are rejected and are
+never adopted. TokenTimer does not automatically delete or roll back a
+Certificate.
+
+The fingerprint in a controller observation is optional. Ready condition,
+issuer, revision, validity, DNS names, and CertificateRequest identity are
+sufficient for a valid status-only observation without Secret access; the
+dashboard shows its fingerprint as `Not reported (status-only observation)`.
+Such an observation has no fingerprint-keyed instance row until a real public
+fingerprint is observed. Enable `secretFallback.enabled` only when that
+additional public metadata is required and the Secret-read tradeoff is
+accepted. TokenTimer never fabricates a fingerprint, and this status-only
+controller behavior does not weaken the agent's strict post-deployment
+fingerprint comparison.
+
+#### Pause, topology, and operations
+
+The workspace pause switch blocks new human provision intents and provisioning
+command delivery. It does not delete queued/running records, and passive
+observations plus the existing executor event/evidence surfaces remain
+available. The deployment-wide rollout flag (`config.certopsEnabled` in this
+chart, rendered as the `CERTOPS_ENABLED` env var) is a separate outer gate.
+
+| From | To | Direction and purpose |
+|---|---|---|
+| CertOps controller | TokenTimer API | Outbound HTTP(S): observations, command polling, events, evidence |
+| CertOps controller | Kubernetes API | Outbound: list/watch Certificate and CertificateRequest; optional Secret `get`; owned Certificate create/patch in provision mode |
+| cert-manager | Kubernetes API | In-cluster reconciliation of Certificate/CertificateRequest and TLS Secret resources |
+| TokenTimer API | customer Kubernetes API | No connection |
+
+When `networkPolicy.enabled` is also true,
+`networkPolicy.egress.kubeApiServerCidrs` must list the Kubernetes API server
+CIDRs, and `kubeApiServerPort` must match its effective destination port.
+The controller policy permits DNS, that Kubernetes API destination, and either
+the in-chart API Service or the explicit
+`networkPolicy.egress.controllerApiCidrs`/`controllerApiPort` allow-list. It has
+no ingress rule and grants no database, SMTP, or Pushgateway egress.
+
+Do not assume that the `kubernetes` Service ClusterIP and port `443` are the
+addresses a NetworkPolicy engine matches. kube-proxy or an eBPF datapath may
+translate the Service before egress policy is evaluated, so the policy may
+need the backing control-plane address and port instead. The ordering is
+CNI/platform-specific. A Service address that works on one cluster can time
+out on another even though both clusters expose the same in-Pod
+`KUBERNETES_SERVICE_HOST`.
+
+Discover candidates from the cluster being installed rather than copying an
+example:
+
+```bash
+# Service-facing address seen by normal in-cluster clients.
+kubectl -n default get service kubernetes \
+  -o jsonpath='{.spec.clusterIP}{":"}{.spec.ports[0].port}{"\n"}'
+
+# Backing addresses/ports commonly matched after Service DNAT. Include every
+# stable address for an HA control plane, as /32 CIDRs.
+kubectl -n default get endpointslice \
+  -l kubernetes.io/service-name=kubernetes \
+  -o jsonpath='{range .items[*]}{range .endpoints[*].addresses[*]}{.}{"\n"}{end}{range .ports[*]}{"port="}{.port}{"\n"}{end}{end}'
+```
+
+Confirm the selected CIDRs and port with the cluster's CNI documentation and a
+real controller readiness/observation test while policy enforcement is active.
+The chart deliberately has no universal API-server CIDR:
+
+- Kind commonly needs the dynamically discovered control-plane container
+  address and port `6443`; both values change between clusters and must not be
+  hardcoded.
+- Self-managed and HA clusters must include every stable control-plane or load
+  balancer destination actually matched by their CNI.
+- Managed Kubernetes and OpenShift control-plane endpoints, translation order,
+  and address stability are provider/network-plugin concerns. Use the
+  provider-supported stable CIDRs or egress mechanism and qualify it on the
+  actual production platform; a DNS name cannot be placed in an `ipBlock`.
+
+Set `networkPolicy.enabled=false` when the platform cannot provide stable
+effective API-server CIDRs, the CNI uses a different policy mechanism, or the
+cluster operator owns policy centrally. This disables all NetworkPolicy
+objects from this chart, not only the controller policy, so the operator must
+supply the complete replacement policy set. Keep controller egress limited to
+DNS, the real TokenTimer API destination, and the discovered Kubernetes API
+destinations; do not replace the list with `0.0.0.0/0`.
+
+Use the Pod's `/healthz` endpoint for liveness and `/readyz` for readiness.
+Readiness requires both Certificate watches, the CertificateRequest watches,
+the observation reporter, and—in provision mode—the provisioning transport and
+write adapter. Common failures are:
+
+- invalid/expired token or missing scopes: rotate the mounted token and verify
+  the exact mode scope set above;
+- workspace/cluster mismatch: recreate the token with the intended immutable
+  cluster binding and align Helm values;
+- namespace-policy denial: add the namespace to `watchNamespaces` or explicitly
+  choose cluster-wide mode, then verify rendered RBAC;
+- missing cert-manager CRDs: install the pinned cert-manager version selected by
+  the cluster operator before enabling the controller;
+- public certificate unavailable: inspect cert-manager status first, then
+  enable Secret fallback only if its security tradeoff is accepted;
+- unmanaged-resource conflict: rename the desired Certificate or resolve the
+  foreign owner manually; the controller will not adopt it;
+- paused workspace: resume the workspace before creating/delivering new
+  provisioning work;
+- transient API failure: the bounded retry policy handles network errors,
+  `408`, `429`, and `5xx`; permanent `4xx` responses require configuration
+  correction.
+
+Safe rollback is to disable the controller or switch from `provision` to
+`observe`. Shutdown stops new work before waiting for bounded in-flight work.
+Neither rollback path deletes Kubernetes resources.
 
 ### Ingress
 
@@ -240,6 +461,11 @@ The chart defaults to a hardened security posture:
 - `seccompProfile: RuntimeDefault`
 - `automountServiceAccountToken: false`
 - NetworkPolicy available (opt-in)
+
+When the optional CertOps controller is enabled, it is the only workload that
+opts into a mounted Kubernetes ServiceAccount token. Its distinct identity has
+the mode-specific least-privilege RBAC described above, with Secret `get` added
+only when fallback is explicitly enabled.
 
 ## Upgrading
 

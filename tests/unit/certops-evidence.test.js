@@ -57,22 +57,29 @@ function createMemoryClient() {
           workspace_id: params[0],
           operation: params[1],
           status: params[2],
-          source: params[3],
-          requested_by_user_id: params[4],
-          requested_by_api_token_id: params[5],
-          idempotency_key: params[6],
-          subject_type: params[7],
-          subject_id: params[8],
-          payload: json(params[9]),
-          result_metadata: json(params[10]),
-          error_code: params[11],
-          error_message: params[12],
+          mode: params[3],
+          source: params[4],
+          executor_kind: params[5],
+          requested_by_user_id: params[6],
+          requested_by_api_token_id: params[7],
+          idempotency_key: params[8],
+          subject_type: params[9],
+          subject_id: params[10],
+          payload: json(params[11]),
+          result_metadata: json(params[12]),
+          error_code: params[13],
+          error_message: params[14],
+          assigned_agent_id: params[15],
+          required_target_selector: params[16],
+          required_dns_provider: params[17],
+          required_command_profile: params[18],
           created_at: createdAt,
           updated_at: createdAt,
-          queued_at: params[13],
-          started_at: params[14],
-          completed_at: params[15],
-          canceled_at: params[16],
+          queued_at: params[19],
+          started_at: params[20],
+          completed_at: params[21],
+          canceled_at: params[22],
+          creation_request_hash: params[23],
         };
         jobs.push(row);
         return { rows: [row] };
@@ -106,6 +113,8 @@ function createMemoryClient() {
           observed_at: params[10],
           created_by_user_id: params[11],
           created_by_api_token_id: params[12],
+          created_by_agent_id: params[13] ?? null,
+          client_evidence_id: params[14] ?? null,
           created_at: now(),
         };
         evidence.push(row);
@@ -141,6 +150,29 @@ function createMemoryClient() {
         if (normalizedSql.includes("subject_id = $")) {
           rows = rows.filter((row) => row.subject_id === params[paramIndex]);
         }
+        return { rows };
+      }
+
+      if (normalizedSql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+
+      if (
+        normalizedSql.includes("FROM certificate_jobs") &&
+        normalizedSql.includes("operation = ANY($3::text[])") &&
+        normalizedSql.includes("FOR UPDATE")
+      ) {
+        const [workspaceId, terminalStatuses, capOperations] = params;
+        const rows = jobs
+          .filter(
+            (row) =>
+              row.workspace_id === workspaceId &&
+              (capOperations || []).includes(row.operation) &&
+              !(terminalStatuses || []).includes(row.status),
+          )
+          .map((row) => ({
+            ca_endpoint: row.payload && row.payload.caEndpoint,
+          }));
         return { rows };
       }
 
@@ -199,6 +231,8 @@ async function createJob(client, workspaceId = WORKSPACE_A) {
     client,
     workspaceId,
     operation: "renew",
+    subjectType: "managed_certificate",
+    subjectId: "cert-1",
     payload: { certificateId: "cert-1" },
   });
 }

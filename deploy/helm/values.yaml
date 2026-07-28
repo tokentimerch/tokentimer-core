@@ -3,6 +3,12 @@
 #
 # All resources deploy into the Helm release namespace (--namespace <ns>).
 # Only ServiceMonitor/PrometheusRule support a separate namespace override.
+#
+# Image tags default to Chart.appVersion (pinned per release), not :latest.
+# The mutable GHCR :latest tags are a convenience/dev channel only; a mid-promotion
+# failure can leave a mixed :latest set. For reproducible deploys, pin
+# image.digest from release-manifest.json on the GitHub Release (digest takes
+# precedence over tag via tokentimer.image).
 
 nameOverride: ""
 fullnameOverride: ""
@@ -19,8 +25,8 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
-    digest: ""    # takes precedence over tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
   service:
@@ -105,7 +111,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -152,7 +158,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -256,6 +262,77 @@ worker:
           memory: 256Mi
         limits:
           memory: 512Mi
+
+    # CertOps maintenance -- lease reaper, stale-agent sweep, nonce and
+    # registration-replay sweeps, renewal scheduler. Without this cronjob,
+    # certops_agents.status is never demoted off 'active' when an agent
+    # stops heartbeating.
+    certops:
+      enabled: true
+      schedule: "*/1 * * * *"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+# -- CertOps Kubernetes controller -------------------------------------------
+# The controller is independently opt-in. Observe is the default; provision
+# adds only cert-manager Certificate create/patch rights.
+certops:
+  controller:
+    enabled: false
+    mode: observe
+    # Leader election is not available yet, so exactly one replica is safe.
+    replicaCount: 1
+    # Cluster-wide RBAC (ClusterRole/ClusterRoleBinding) is the default. A
+    # non-empty watchNamespaces value is invalid while this is true. Set this
+    # to false to scope down to Role/RoleBinding in watchNamespaces (empty
+    # list then means the release namespace).
+    clusterWide: true
+    watchNamespaces: []
+    secretFallbackEnabled: false
+
+    image:
+      registry: ""
+      repository: tokentimer-core-k8s-controller
+      tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
+      digest: ""
+      pullPolicy: IfNotPresent
+
+    # Controller configuration. These are required when enabled.
+    api:
+      url: ""
+      workspaceId: ""
+      clusterId: ""
+    # Only an existing Secret reference is accepted. There is intentionally no
+    # raw API-token value field in this chart.
+    apiToken:
+      existingSecret: ""
+      key: token
+
+    healthPort: 8080
+    reconcileInterval: "30s"
+    shutdownTimeout: "10s"
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 
 # -- Ingress -------------------------------------------------------------------
 ingress:
@@ -390,6 +467,21 @@ config:
   # Precedence: this value > System Settings DB > code default (disabled).
   certopsEnabled: true
 
+  # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
+  # These wrap, at rest, the job-signing private keys and the agent
+  # registration-replay credentials. The API fails closed without them:
+  # agent registration and signed job dispatch throw
+  # CERTOPS_{SIGNING,REGISTRATION}_ENCRYPTION_KEY_MISSING.
+  # Left empty, the chart generates them and reuses the values already
+  # stored in the release Secret on every subsequent `helm upgrade`.
+  # Set them explicitly if you manage secrets externally or render with
+  # `helm template` (which cannot read back the existing Secret).
+  # Rotating either value makes the data it wrapped unreadable: signing
+  # keys must be re-issued and agents must re-register.
+  #   openssl rand -hex 32
+  certopsSigningEncryptionKey: ""
+  certopsRegistrationEncryptionKey: ""
+
 # -- SMTP (optional) ----------------------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
 # Precedence: System Settings DB (admin UI) > env vars here > code defaults.
@@ -481,6 +573,19 @@ networkPolicy:
     # (Slack, Discord, Teams, Twilio).
     httpsCidrs:
       - 0.0.0.0/0
+    # Controller-only egress. When controllerApiCidrs is empty, the controller
+    # can reach only the in-chart API pods. Use explicit CIDRs for an external
+    # TokenTimer API endpoint; hostname rules are not valid NetworkPolicy rules.
+    controllerApiCidrs: []
+    controllerApiPort: 443
+    # Required when both networkPolicy and certops.controller are enabled.
+    # Kubernetes NetworkPolicy cannot safely express a kube-apiserver hostname,
+    # and some datapaths enforce this rule after Service DNAT. Discover the
+    # effective EndpointSlice/control-plane destinations for this cluster;
+    # never copy a Kind or another cluster's address as a universal value.
+    kubeApiServerCidrs: []
+    # Match the effective destination port, which may differ from Service 443.
+    kubeApiServerPort: 443
 
 # -- Pod Security (shared defaults) --------------------------------------------
 podSecurityContext:

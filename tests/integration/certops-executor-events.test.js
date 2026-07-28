@@ -2980,6 +2980,56 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("returns a safe 409 (not a 500) when a job.completed event targets a dry_run job", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-mode-terminal",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const job = await createCertificateJob({
+        workspaceId: workspaceA,
+        operation: "deploy",
+        source: "api",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${crypto.randomUUID()}`,
+        payload: {
+          deploymentTarget: "kubernetes/default/web-cert",
+          fingerprintSha256:
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
+        status: "running",
+        mode: "dry_run",
+        requestedByUserId: ownerId,
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      const res = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "job.completed",
+            status: "succeeded",
+          }),
+        );
+
+      expect(res.status).to.equal(409);
+      expect(res.body.code).to.equal("CERTOPS_JOB_MODE_TERMINAL_INVALID");
+      expectNoSensitiveValues(res.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("rejects malformed IDs and metadata at the route boundary", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-boundary",
@@ -3870,6 +3920,247 @@ describe("CertOps executor event ingestion", function () {
       ]) {
         expect(serialized).to.not.include(forbidden);
       }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("keeps event and evidence reporting available for work already in a paused workspace", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-paused-workspace",
+    );
+
+    try {
+      await TestUtils.execQuery(
+        "UPDATE workspaces SET certops_paused = TRUE WHERE id = $1",
+        [workspaceA],
+      );
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp();
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      const eventResponse = await supertest(app)
+        .post(`/api/v1/certops/jobs/${job.id}/events`)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.progress",
+          status: "running",
+          occurredAt: new Date().toISOString(),
+          message: "Work already in flight",
+        });
+      expect(eventResponse.status).to.equal(202);
+
+      const evidenceResponse = await supertest(app)
+        .post(`/api/v1/certops/jobs/${job.id}/evidence`)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          occurredAt: new Date().toISOString(),
+          evidence: [
+            {
+              eventType: "certificate.observed",
+              output: "paused workspace status reported honestly",
+            },
+          ],
+        });
+      expect(evidenceResponse.status).to.equal(202);
+      expect(evidenceResponse.body.evidenceIds).to.have.length(1);
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items).to.have.length(1);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  // Cross-lane fencing. Executor machine tokens and CertOps agents are two
+  // independent execution lanes over the same certificate_jobs table, and only
+  // the agent lane holds a lease. Nothing stopped an executor token from ending
+  // a job an agent was actively running: the agent kept driving the ACME client
+  // and reported its own result against a row the executor had already moved to
+  // terminal, so real side effects landed with no owning job state.
+  it("refuses an executor terminal status on a job a CertOps agent currently holds", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-agent-lane-fencing",
+    );
+
+    try {
+      const job = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+        status: "running",
+      });
+      const agentRow = await TestUtils.execQuery(
+        `INSERT INTO certops_agents
+           (workspace_id, agent_id, name, status, credential_prefix,
+            credential_hash, protocol_version, agent_version)
+         VALUES ($1, $2, 'lane-fencing-agent', 'active', $3, $4, '1.0.0', '0.11.0')
+         RETURNING id`,
+        [
+          workspaceA,
+          `agent-${crypto.randomUUID()}`,
+          `ttagent_${crypto.randomBytes(8).toString("hex")}`,
+          crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex"),
+        ],
+      );
+      await TestUtils.execQuery(
+        `UPDATE certificate_jobs
+            SET claimed_by_agent_id = $2,
+                claim_id = $3,
+                lease_expires_at = NOW() + INTERVAL '5 minutes'
+          WHERE id = $1`,
+        [job.id, agentRow.rows[0].id, crypto.randomUUID()],
+      );
+
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const app = buildExecutorApp();
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      // Non-terminal executor progress stays allowed: it is redundant, not
+      // destructive, and refusing it would break executors that narrate.
+      const progress = await supertest(app)
+        .post(`/api/v1/certops/jobs/${job.id}/events`)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.progress",
+          status: "running",
+          occurredAt: new Date().toISOString(),
+          message: "still working",
+        });
+      expect(progress.status).to.equal(202);
+
+      for (const [eventType, status] of [
+        ["job.completed", "succeeded"],
+        ["job.failed", "failed"],
+        ["job.rejected", "rejected"],
+      ]) {
+        const terminal = await supertest(app)
+          .post(`/api/v1/certops/jobs/${job.id}/events`)
+          .set("Authorization", auth)
+          .send({
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType,
+            status,
+            occurredAt: new Date().toISOString(),
+            message: `executor claims ${status}`,
+          });
+        expect(terminal.status, eventType).to.equal(409);
+        expect(terminal.body.code, eventType).to.equal(
+          "CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED",
+        );
+      }
+
+      // The job must still be the agent's to finish.
+      const after = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(after.status).to.equal("running");
+      expect(after.claimedByAgentId).to.equal(agentRow.rows[0].id);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  // The executor lane owed the same alert the agent lane pays. It did not pay
+  // it: a renew failed by certctl recorded the status and stopped, so the
+  // operator learned nothing, while the identical failure reported by an agent
+  // notified them. The assertion is on the outbox intent because that is the
+  // part which must be atomic with the status change.
+  it("records a renewal-alert intent for an executor-reported renew failure", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-renew-alert-intent",
+    );
+
+    try {
+      const renewJob = await createCertificateJob({
+        workspaceId: workspaceA,
+        operation: "renew",
+        source: "api",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${crypto.randomUUID()}`,
+        payload: { deploymentTarget: "kubernetes/default/web-cert" },
+        status: "running",
+        requestedByUserId: ownerId,
+      });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const app = buildExecutorApp();
+
+      const failed = await supertest(app)
+        .post(`/api/v1/certops/jobs/${renewJob.id}/events`)
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.failed",
+          status: "failed",
+          occurredAt: new Date().toISOString(),
+          message: "ACME order failed",
+        });
+      expect(failed.status).to.equal(202);
+
+      const outbox = await TestUtils.execQuery(
+        `SELECT event_type, dedupe_key, payload
+           FROM certops_outbox
+          WHERE workspace_id = $1
+            AND dedupe_key = $2`,
+        [workspaceA, String(renewJob.id)],
+      );
+      expect(outbox.rows).to.have.length(1);
+      expect(outbox.rows[0].event_type).to.equal("renewal_alert_requested");
+      const payload =
+        typeof outbox.rows[0].payload === "string"
+          ? JSON.parse(outbox.rows[0].payload)
+          : outbox.rows[0].payload;
+      expect(payload.origin).to.equal("executor_event");
+      expect(payload.jobStatus).to.equal("failed");
+      expect(payload.operation).to.equal("renew");
+
+      // A deploy failure on the same lane must stay silent: the alerting set is
+      // renew-only, and widening it here would spam on every deploy.
+      const deployJob = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+        status: "running",
+      });
+      const deployFailed = await supertest(app)
+        .post(`/api/v1/certops/jobs/${deployJob.id}/events`)
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.failed",
+          status: "failed",
+          occurredAt: new Date().toISOString(),
+          message: "deploy failed",
+        });
+      expect(deployFailed.status).to.equal(202);
+      const deployOutbox = await TestUtils.execQuery(
+        `SELECT 1 FROM certops_outbox WHERE workspace_id = $1 AND dedupe_key = $2`,
+        [workspaceA, String(deployJob.id)],
+      );
+      expect(deployOutbox.rows).to.have.length(0);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

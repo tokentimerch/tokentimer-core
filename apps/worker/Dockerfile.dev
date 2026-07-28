@@ -23,6 +23,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY --chown=nodejs:nodejs packages ./packages
 COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 COPY --chown=nodejs:nodejs apps/api/services/certops ./apps/api/services/certops
+COPY --chown=nodejs:nodejs apps/api/services/audit.js ./apps/api/services/audit.js
 COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
 COPY --chown=nodejs:nodejs apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js

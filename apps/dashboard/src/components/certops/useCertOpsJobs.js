@@ -214,13 +214,18 @@ export function useCertOpsJobTimeline(jobId) {
  * The list endpoint is manager-only server-side; the fetch is skipped for
  * non-managers so viewers see an empty state instead of a 403 error banner.
  *
- * @returns {{ enabled: boolean|null, tokens: object[], loading: boolean, error: string, refresh: function }}
+ * @param {{ limit?: number, offset?: number }} [page] - Page position. Same
+ *   convention as useCertOpsAgents: omitting `limit` asks for the whole
+ *   token inventory.
+ * @returns {{ enabled: boolean|null, tokens: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsApiTokens() {
+export function useCertOpsApiTokens(page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
+  const { limit, offset = 0 } = page;
   const [tokens, setTokens] = useState([]);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -232,6 +237,7 @@ export function useCertOpsApiTokens() {
   useEffect(() => {
     if (!workspaceId || enabled !== true || !canManage) {
       setTokens([]);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -242,15 +248,17 @@ export function useCertOpsApiTokens() {
     setLoading(true);
     setError('');
 
-    listApiTokens(workspaceId, { signal: controller.signal })
+    listApiTokens(workspaceId, { limit, offset, signal: controller.signal })
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);
+          setPagination(data?.pagination || null);
         }
       })
       .catch(err => {
         if (cancelled) return;
         setTokens([]);
+        setPagination(null);
         setError(
           err?.response?.data?.error ||
             err?.message ||
@@ -265,7 +273,7 @@ export function useCertOpsApiTokens() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, canManage, reloadTick]);
+  }, [workspaceId, enabled, canManage, reloadTick, limit, offset]);
 
-  return { enabled, tokens, loading, error, refresh };
+  return { enabled, tokens, pagination, loading, error, refresh };
 }

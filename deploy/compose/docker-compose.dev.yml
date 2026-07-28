@@ -48,6 +48,12 @@ services:
       - API_URL=http://localhost:4000
       # CertOps rollout flag (env > DB > default). Enabled by default.
       - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
+      # AES-256-GCM wrap keys required by CertOps job-signing and agent
+      # registration-replay credential encryption; both fail closed (500)
+      # when unset. Dev-only values, override via CERTOPS_*_ENCRYPTION_KEY
+      # in your shell/.env if you need to persist a stable dev keypair.
+      - CERTOPS_SIGNING_ENCRYPTION_KEY=${CERTOPS_SIGNING_ENCRYPTION_KEY:-0373fa8efa2f600e2aace83edf1a646ac60c1e494bb00c50507e50d3bb6cc2f0}
+      - CERTOPS_REGISTRATION_ENCRYPTION_KEY=${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-87b3ee9b4028ddc59ed8c506e0074f143b411144323faa10c6304f398ca4d267}
       - SESSION_SECRET=dev_session_secret_change_in_production
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
@@ -340,6 +346,48 @@ services:
       - /app/apps/worker/node_modules
     restart: unless-stopped
     command: ["node", "src/runner.js", "endpoint-check"]
+
+  # Worker Service - CertOps maintenance (lease reaper, stale-agent sweep,
+  # nonce/registration-replay sweeps, renewal scheduler). Without this
+  # service certops_agents.status is never demoted off 'active' when an
+  # agent stops heartbeating: the fleet panel then shows a crashed/offline
+  # agent as active indefinitely.
+  worker-certops:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-certops
+    environment:
+      - NODE_ENV=development
+      - TZ=${TZ:-UTC}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      # CertOps rollout flag (env > DB > default). Enabled by default; must
+      # match api service.
+      - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
+      # How long an active agent may go without a heartbeat before this
+      # sweep marks it offline (ms). Default is 10 minutes when unset.
+      - CERTOPS_AGENT_OFFLINE_AFTER_MS=${CERTOPS_AGENT_OFFLINE_AFTER_MS:-}
+      - "WORKER_CERTOPS_CRON=${WORKER_CERTOPS_CRON:-*/1 * * * *}"
+      - WORKER_CERTOPS_INTERVAL_MS=${WORKER_CERTOPS_INTERVAL_MS:-}
+      - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: ["node", "src/runner.js", "certops"]
 
 volumes:
   postgres_data:

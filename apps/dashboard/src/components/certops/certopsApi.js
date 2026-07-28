@@ -2,7 +2,7 @@ import apiClient from '../../utils/apiClient';
 import { pickPrimaryCertificate } from './certopsFormat';
 
 /**
- * CertOps API helpers (M1 inventory surface).
+ * CertOps API helpers (inventory surface).
  *
  * Kept in a dedicated module rather than the shared apiClient.js so the CertOps
  * feature stays additive and self-contained (new files, minimal wiring edits).
@@ -16,19 +16,56 @@ function workspaceBase(workspaceId) {
 
 /**
  * List managed certificates for a workspace.
- * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
+ * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number, total: number } }>}
  */
 export async function listCertificates(
   workspaceId,
-  { limit = 50, offset = 0, signal } = {}
+  { limit = 50, offset = 0, status, source, excludeRetired, signal } = {}
 ) {
+  const params = { limit, offset };
+  if (status) params.status = status;
+  if (source) params.source = source;
+  if (excludeRetired !== undefined) params.excludeRetired = excludeRetired;
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/certificates`,
     {
-      params: { limit, offset },
+      params,
       signal,
     }
   );
+  return res.data;
+}
+
+/**
+ * List certificate targets for a workspace (deployment/observation
+ * locations: hosts, endpoints, load balancers, k8s secrets, etc.).
+ * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
+ */
+export async function listCertificateTargets(
+  workspaceId,
+  { limit = 50, offset = 0, signal } = {}
+) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/targets`, {
+    params: { limit, offset },
+    signal,
+  });
+  return res.data;
+}
+
+/**
+ * List certificate instances across the whole workspace (flat browse, not
+ * scoped to one managed certificate). Distinct from getCertificateInstances,
+ * which is nested under a single certificate id.
+ * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
+ */
+export async function listWorkspaceCertificateInstances(
+  workspaceId,
+  { limit = 50, offset = 0, signal } = {}
+) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/instances`, {
+    params: { limit, offset },
+    signal,
+  });
   return res.data;
 }
 
@@ -68,6 +105,49 @@ export async function getCertificateInstances(
       certificateId
     )}/instances`,
     { signal, _suppressLog: true }
+  );
+  return res.data;
+}
+
+/**
+ * Create a cert-manager provisioning intent: the manager-only human surface
+ * that hands a strict public desired state (namespace, certificate/secret
+ * name, issuerRef, dnsNames) to a controller bound to `clusterId`, without
+ * ever accepting a manifest, Secret data, CSR, or private key material.
+ *
+ * Maps to POST /certops/provision-intents. `idempotencyKey` is required by
+ * the server as the `Idempotency-Key` header (not a body field); a retried
+ * request with the same key returns the existing job (`duplicate: true`)
+ * instead of provisioning a second certificate. See
+ * apps/api/services/certops/controllerProvisioning.js and the
+ * CertOpsProvisionIntentRequest schema in openapi.yaml.
+ * @returns {Promise<{ job: object, managedCertificateId: string, targetId: string, duplicate: boolean }>}
+ */
+export async function createControllerProvisionIntent(
+  workspaceId,
+  {
+    idempotencyKey,
+    clusterId,
+    namespace,
+    certificateName,
+    secretName,
+    issuerRef,
+    dnsNames,
+  } = {}
+) {
+  const body = {
+    schemaVersion: 1,
+    clusterId,
+    namespace,
+    certificateName,
+    secretName,
+    issuerRef,
+    dnsNames,
+  };
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/provision-intents`,
+    body,
+    { headers: { 'Idempotency-Key': idempotencyKey } }
   );
   return res.data;
 }
@@ -129,6 +209,113 @@ export async function retireCertificate(
     { status, reason }
   );
   invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+/**
+ * Adopt-via-issuance: "Set up automatic renewal" for an already-active,
+ * unprofiled certificate.
+ *
+ * Maps to POST .../certificates/:id/renewal-setup. This creates a renew job
+ * immediately (it is not a settings save) and, only on a non-dry-run
+ * request, records a durable `profile_derivation_requested` outbox intent in
+ * the same transaction, so a renewal profile is derived from the job once it
+ * succeeds. A dry run creates the job but arms no intent, so it can never
+ * adopt anything on its own even if it succeeds.
+ * @returns {Promise<{ job: object }>}
+ */
+export async function setUpCertificateRenewal(
+  workspaceId,
+  certificateId,
+  { dryRun = false, payload, assignedAgentId, idempotencyKey } = {}
+) {
+  const body = {};
+  if (dryRun) body.dryRun = true;
+  if (payload && Object.keys(payload).length) body.payload = payload;
+  if (assignedAgentId) body.assignedAgentId = assignedAgentId;
+  if (idempotencyKey) body.idempotencyKey = idempotencyKey;
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(
+      certificateId
+    )}/renewal-setup`,
+    body
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+/**
+ * Detach a certificate from its renewal profile (U8). The profile row is
+ * left alone since other certificates may share it; only this
+ * certificate's link is cleared, and any outstanding adoption intent is
+ * invalidated in the same transaction so the drain cannot re-attach it.
+ * @returns {Promise<{ certificateId: string, detachedProfileId: string, invalidatedIntents: number }>}
+ */
+export async function detachCertificateRenewalProfile(
+  workspaceId,
+  certificateId
+) {
+  const res = await apiClient.delete(
+    `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(
+      certificateId
+    )}/profile`
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+/**
+ * Retry a parked (`failed`) automatic-renewal setup intent. Refused for a
+ * `skipped` row (a decision, not a failure) by the backend.
+ * @returns {Promise<object>}
+ */
+export async function retryRenewalSetupIntent(workspaceId, outboxId) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/renewal-setup-intents/${encodeURIComponent(
+      outboxId
+    )}/retry`
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+/**
+ * Fetch the workspace CertOps kill-switch state.
+ *
+ * Maps to GET /certops/settings, which stays available even while the
+ * deployment-wide certops.enabled rollout flag is off, so incident controls
+ * can be inspected and staged ahead of a rollout. Any human session member
+ * can read it; only workspace admins can change it (see
+ * updateWorkspaceCertOpsPauseState).
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean }>}
+ */
+export async function getWorkspaceCertOpsPauseState(
+  workspaceId,
+  { signal } = {}
+) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/settings`, {
+    signal,
+  });
+  return res.data;
+}
+
+/**
+ * Pause or resume CertOps for a workspace (the local kill switch).
+ *
+ * Maps to PUT /certops/settings. Requires the workspace admin role
+ * server-side (certops.kill_switch.manage); a 403 surfaces for
+ * managers/viewers. `reason` is optional free text recorded on the
+ * pause/resume audit event, not persisted as ongoing state.
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, changed: boolean }>}
+ */
+export async function updateWorkspaceCertOpsPauseState(
+  workspaceId,
+  { certOpsPaused, reason } = {}
+) {
+  const res = await apiClient.put(`${workspaceBase(workspaceId)}/settings`, {
+    certOpsPaused,
+    reason,
+  });
   return res.data;
 }
 

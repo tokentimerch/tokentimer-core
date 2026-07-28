@@ -25,6 +25,37 @@ const ALLOWED_KEY_MODES = new Set([
   "os-store-managed",
   "external-unknown",
 ]);
+const CERTOPS_CERTIFICATE_STATUS_INVALID = "CERTOPS_CERTIFICATE_STATUS_INVALID";
+const CERTOPS_CERTIFICATE_SOURCE_INVALID = "CERTOPS_CERTIFICATE_SOURCE_INVALID";
+const CERTOPS_CERTIFICATE_FILTER_INVALID = "CERTOPS_CERTIFICATE_FILTER_INVALID";
+
+// Mirrors managed_certificates_status_check and managed_certificates_source_check.
+// A value outside the constraint can never match a row, so it is rejected rather
+// than answered with an empty page that reads like a real result.
+const MANAGED_CERTIFICATE_STATUSES = new Set([
+  "discovered",
+  "provisioning",
+  "active",
+  "renewing",
+  "expiring",
+  "expired",
+  "revoked",
+  "decommissioned",
+]);
+const MANAGED_CERTIFICATE_SOURCES = new Set([
+  "manual",
+  "api",
+  "import",
+  "domain_checker",
+  "endpoint_monitor",
+  "integration",
+  "auto_sync",
+  "cert_manager",
+  "agent_filesystem",
+  "agent_issuance",
+]);
+const AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST = "'disabled', 'archived'";
+const AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST = "'agent-local', 'proxy-agent-local'";
 const CERTOPS_KEY_REFERENCE_INVALID = "CERTOPS_KEY_REFERENCE_INVALID";
 const KEY_REFERENCE_MAX_LENGTH = 256;
 const RETIRE_REASON_MAX_LENGTH = 512;
@@ -160,10 +191,10 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
   return consuming;
 }
 
-function certOpsTokenNotes(certificate, domains) {
+function certOpsTokenNotes(certificate, domains, sourceLabel = "public PEM import") {
   const fingerprint = fingerprintSha256For(certificate) || "unknown";
   const domainText = domains.length ? ` Domains: ${domains.join(", ")}.` : "";
-  return `Imported by CertOps public PEM import. Fingerprint: ${fingerprint}.${domainText}`;
+  return `Imported by CertOps ${sourceLabel}. Fingerprint: ${fingerprint}.${domainText}`;
 }
 
 function keyReferenceError() {
@@ -215,6 +246,14 @@ function toInventoryRecord(row) {
     notAfter: dateToIso(row.not_after),
     keyMode: row.key_mode,
     keyReference: row.key_reference,
+    // Manager-only field: the routes that serve this projection to a viewer
+    // (the list and single-certificate GET) redact it before responding,
+    // since a deployment filesystem path is host reconnaissance, the same
+    // reasoning that gates the renewal-profile routes (see routes/certops.js
+    // near requireCertOpsWriteRole). Routes already restricted to managers
+    // pass it through untouched.
+    deployedCertPath: row.deployed_cert_path || null,
+    reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
   };
@@ -256,6 +295,123 @@ function normalizeOffset(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, parsed);
+}
+
+function normalizeCertificateStatusFilter(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const trimmed = String(value).trim();
+  if (MANAGED_CERTIFICATE_STATUSES.has(trimmed)) return trimmed;
+  throw certOpsValidationError(
+    "Invalid certificate status filter",
+    CERTOPS_CERTIFICATE_STATUS_INVALID,
+  );
+}
+
+function normalizeCertificateSourceFilter(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const trimmed = String(value).trim();
+  if (MANAGED_CERTIFICATE_SOURCES.has(trimmed)) return trimmed;
+  throw certOpsValidationError(
+    "Invalid certificate source filter",
+    CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  );
+}
+
+function normalizeCertificateFlagFilter(value, field) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "boolean") return value;
+  const trimmed = String(value).trim().toLowerCase();
+  if (trimmed === "true" || trimmed === "1") return true;
+  if (trimmed === "false" || trimmed === "0") return false;
+  throw certOpsValidationError(
+    `Invalid certificate filter value for ${field}`,
+    CERTOPS_CERTIFICATE_FILTER_INVALID,
+  );
+}
+
+/**
+ * SQL predicate set shared by the page query and its count, so a filtered page
+ * can never advertise a total taken over a different population.
+ *
+ * The three renewal predicates are deliberately separate facts rather than one
+ * "will not renew" filter: a certificate whose profile fails validation renews
+ * no more than these do, but that case lives in a JavaScript validator over the
+ * profile body and has no SQL expression, so a combined filter would claim a
+ * completeness it cannot deliver.
+ */
+function managedCertificateFilterSql(filters = {}) {
+  const params = [filters.workspaceId];
+  const conditions = ["mc.workspace_id = $1"];
+
+  const status = normalizeCertificateStatusFilter(filters.status);
+  if (status) {
+    params.push(status);
+    conditions.push(`mc.status = $${params.length}`);
+  }
+
+  const source = normalizeCertificateSourceFilter(filters.source);
+  if (source) {
+    params.push(source);
+    conditions.push(`mc.source = $${params.length}`);
+  }
+
+  const noProfile = normalizeCertificateFlagFilter(
+    filters.noRenewalProfile,
+    "noRenewalProfile",
+  );
+  if (noProfile === true) conditions.push("mc.profile_id IS NULL");
+  if (noProfile === false) conditions.push("mc.profile_id IS NOT NULL");
+
+  const renewalDisabled = normalizeCertificateFlagFilter(
+    filters.renewalDisabled,
+    "renewalDisabled",
+  );
+  if (renewalDisabled === true) {
+    conditions.push(
+      `cp.status IN (${AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST})`,
+    );
+  }
+  if (renewalDisabled === false) {
+    // COALESCE keeps the complement two-valued: a certificate with no profile
+    // has not had renewal switched off, so it belongs on this side of the split
+    // rather than being dropped by a NULL comparison.
+    conditions.push(
+      `COALESCE(cp.status, '') NOT IN (${AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST})`,
+    );
+  }
+
+  const keyNotAgentDeployable = normalizeCertificateFlagFilter(
+    filters.keyNotAgentDeployable,
+    "keyNotAgentDeployable",
+  );
+  if (keyNotAgentDeployable === true) {
+    // A NULL key_mode is not agent-deployable either: nothing has claimed the
+    // key, so no agent can renew it.
+    conditions.push(
+      `COALESCE(mc.key_mode, '') NOT IN (${AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST})`,
+    );
+  }
+  if (keyNotAgentDeployable === false) {
+    conditions.push(
+      `mc.key_mode IN (${AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST})`,
+    );
+  }
+
+  // Retired (revoked/decommissioned) certificates are excluded only when a
+  // caller opts in: the inventory index that backs the token-detail panel
+  // wants every row (a retired certificate's page must still resolve), so the
+  // default with no filter at all stays "everything". The Certificates tab
+  // is the one caller that passes this explicitly, defaulted to true, since
+  // an operator's daily view should not be dominated by dead certificates.
+  const excludeRetired = normalizeCertificateFlagFilter(
+    filters.excludeRetired,
+    "excludeRetired",
+  );
+  if (excludeRetired === true) {
+    conditions.push(`mc.status NOT IN (${RETIRE_STATUS_SQL_LIST})`);
+  }
+
+  return { where: conditions.join("\n        AND "), params };
 }
 
 function certOpsValidationError(message, code) {
@@ -339,6 +495,16 @@ function publicMetadataFor(certificate, options, chainIndex) {
     publicKeyMetadata: certificate.publicKeyMetadata || null,
     signatureAlgorithmOid: certificate.signatureAlgorithmOid || null,
     requestSource: options.source || null,
+    controllerObservation:
+      options.controllerObservationMetadata &&
+      typeof options.controllerObservationMetadata === "object"
+        ? options.controllerObservationMetadata
+        : null,
+    controllerProvisioning:
+      options.controllerProvisioningMetadata &&
+      typeof options.controllerProvisioningMetadata === "object"
+        ? options.controllerProvisioningMetadata
+        : null,
   });
 }
 
@@ -352,6 +518,27 @@ async function existingManagedCertificateForToken(client, certificate, options) 
         AND fingerprint_sha256 = $2
       LIMIT 1`,
     [options.workspaceId, fingerprintSha256],
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Look up an existing managed_certificate row by its stable (source,
+ * source_ref) identity rather than fingerprint. Used by discovery sources
+ * (e.g. agent filesystem) whose source_ref is stable across a certificate
+ * rotation at the same location, so a rotated fingerprint still resolves to
+ * the same already-linked token instead of minting a new one each time.
+ */
+async function findManagedCertificateBySourceRef(client, { workspaceId, source, sourceRef }) {
+  if (!sourceRef) return null;
+  const result = await client.query(
+    `SELECT id, token_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND source = $2
+        AND source_ref = $3
+      LIMIT 1`,
+    [workspaceId, source, sourceRef],
   );
   return result.rows[0] || null;
 }
@@ -440,7 +627,7 @@ async function ensureManagedCertificateToken(
       certificate.subject || null,
       domains,
       domains[0] || null,
-      certOpsTokenNotes(certificate, domains),
+      certOpsTokenNotes(certificate, domains, options.tokenNotesSourceLabel),
     ],
   );
   return token.rows[0].id;
@@ -506,7 +693,10 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
      )
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
-         AND source NOT IN ('endpoint_monitor', 'domain_checker')
+         AND source NOT IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
+         )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE
@@ -554,10 +744,9 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
 }
 
 /**
- * Upsert a managed certificate keyed by monitor identity (workspace, source,
- * source_ref). Does not require fingerprint uniqueness, so a second monitor
- * observing the same cert material inserts a new row instead of stealing the
- * first monitor's provenance.
+ * Upsert a managed certificate keyed by source identity (workspace, source,
+ * source_ref). This supports observers whose stable identity must not merge on
+ * a shared public certificate fingerprint.
  */
 async function upsertManagedCertificateByMonitorSource(
   client,
@@ -571,6 +760,11 @@ async function upsertManagedCertificateByMonitorSource(
   }
 
   const keyReference = normalizeKeyReference(options.keyReference);
+  const deployedCertPath =
+    typeof options.deployedCertPath === "string" && options.deployedCertPath.trim() !== ""
+      ? options.deployedCertPath.trim()
+      : null;
+  const deployedAgentId = options.deployedAgentId || null;
   const params = [
     options.workspaceId,
     options.tokenId || null,
@@ -595,6 +789,8 @@ async function upsertManagedCertificateByMonitorSource(
     keyReference,
     JSON.stringify(publicMetadataFor(certificate, options, chainIndex)),
     options.createdBy || null,
+    deployedCertPath,
+    deployedAgentId,
   ];
 
   const result = await client.query(
@@ -621,15 +817,21 @@ async function upsertManagedCertificateByMonitorSource(
        key_mode,
        key_reference,
        public_metadata,
-       created_by
+       created_by,
+       deployed_cert_path,
+       deployed_agent_id
      )
      VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12,
-       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23
+       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23,
+       $24, $25::uuid
      )
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
-         AND source IN ('endpoint_monitor', 'domain_checker')
+         AND source IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
+         )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE
@@ -655,11 +857,145 @@ async function upsertManagedCertificateByMonitorSource(
        key_reference = COALESCE(EXCLUDED.key_reference, managed_certificates.key_reference),
        public_metadata = EXCLUDED.public_metadata,
        created_by = COALESCE(managed_certificates.created_by, EXCLUDED.created_by),
+       -- A rediscovery at a different path on the same source_ref identity is
+       -- a real redeploy; a call that carries no path (endpoint/domain
+       -- monitors, which never populate this) must not null out what an
+       -- agent-filesystem scan previously recorded.
+       deployed_cert_path = COALESCE(EXCLUDED.deployed_cert_path, managed_certificates.deployed_cert_path),
+       deployed_agent_id = COALESCE(EXCLUDED.deployed_agent_id, managed_certificates.deployed_agent_id),
        updated_at = NOW()
      RETURNING *`,
     params,
   );
 
+  return toInventoryRecord(result.rows[0]);
+}
+
+/**
+ * Upsert an agent-filesystem discovery target (host) keyed by agent + host.
+ * Mirrors cert-manager target upsert identity semantics.
+ */
+async function upsertAgentFilesystemTarget(client, options) {
+  const sourceRef = options.sourceRef || null;
+  if (!sourceRef) {
+    throw new Error("sourceRef is required for agent filesystem target upsert");
+  }
+  const result = await client.query(
+    `INSERT INTO certificate_targets (
+       workspace_id, name, target_type, status, source, source_ref,
+       hostname, deployment_reference, public_metadata
+     ) VALUES ($1, $2, 'agent-host', 'active', 'agent_filesystem', $3, $4, $5, $6::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source = 'agent_filesystem' AND source_ref IS NOT NULL
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       target_type = 'agent-host',
+       status = 'active',
+       hostname = EXCLUDED.hostname,
+       deployment_reference = EXCLUDED.deployment_reference,
+       public_metadata = EXCLUDED.public_metadata,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      options.name || options.hostname || sourceRef,
+      sourceRef,
+      options.hostname || null,
+      options.deploymentReference || null,
+      JSON.stringify(options.publicMetadata || {}),
+    ],
+  );
+  return result.rows[0];
+}
+
+/**
+ * Upsert an agent-observed certificate instance keyed by target + fingerprint.
+ */
+async function upsertAgentFilesystemInstance(client, options) {
+  if (!options.fingerprintSha256) return null;
+  const result = await client.query(
+    `INSERT INTO certificate_instances (
+       workspace_id, managed_certificate_id, target_id, status, source, source_ref,
+       observed_fingerprint_sha256, observed_serial_number, observed_subject,
+       observed_issuer, observed_not_before, observed_not_after,
+       deployment_reference, observed_at, public_metadata
+     ) VALUES ($1, $2, $3, $4, 'agent_filesystem', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+     ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
+     DO UPDATE SET
+       status = EXCLUDED.status, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
+       observed_serial_number = EXCLUDED.observed_serial_number,
+       observed_subject = EXCLUDED.observed_subject, observed_issuer = EXCLUDED.observed_issuer,
+       observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
+       deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
+       public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      options.managedCertificateId,
+      options.targetId,
+      options.status || "discovered",
+      options.sourceRef || null,
+      options.fingerprintSha256,
+      options.serialNumber || null,
+      options.subject || null,
+      options.issuer || null,
+      options.notBefore || null,
+      options.notAfter || null,
+      options.deploymentReference || null,
+      options.observedAt || null,
+      JSON.stringify(options.publicMetadata || {}),
+    ],
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Create or update only controller-provisioning-owned fields for a stable
+ * cert-manager identity. Planning must never overwrite certificate material
+ * or observation metadata that a cert-manager observer has already recorded.
+ */
+async function upsertManagedCertificateForControllerProvisioning(client, options) {
+  const sourceRef = options.sourceRef || null;
+  if (!sourceRef) {
+    throw new Error("sourceRef is required for controller provisioning upsert");
+  }
+  const result = await client.query(
+    `INSERT INTO managed_certificates (
+       workspace_id, status, source, source_ref, name, key_mode,
+       key_reference, public_metadata
+     ) VALUES ($1, 'discovered', 'cert_manager', $2, $3, 'cert-manager-managed', $4, $5::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source_ref IS NOT NULL
+         AND source IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
+         )
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       key_mode = EXCLUDED.key_mode,
+       key_reference = EXCLUDED.key_reference,
+       public_metadata = jsonb_set(
+         COALESCE(managed_certificates.public_metadata, '{}'::jsonb),
+         '{controllerProvisioning}',
+         EXCLUDED.public_metadata->'controllerProvisioning',
+         true
+       ),
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      sourceRef,
+      options.name || null,
+      normalizeKeyReference(options.keyReference),
+      JSON.stringify({
+        controllerProvisioning: {
+          clusterId: options.clusterId,
+          namespace: options.namespace,
+          certificateName: options.certificateName,
+        },
+      }),
+    ],
+  );
   return toInventoryRecord(result.rows[0]);
 }
 
@@ -728,16 +1064,30 @@ async function countActiveManagedCertificates({ workspaceId }) {
   return result.rows[0].count;
 }
 
-async function listManagedCertificates({ workspaceId, limit, offset }) {
-  const normalizedLimit = normalizeLimit(limit);
-  const normalizedOffset = normalizeOffset(offset);
-  const result = await pool.query(
-    `SELECT *
-       FROM managed_certificates
-      WHERE workspace_id = $1
-      ORDER BY not_after ASC NULLS LAST, created_at DESC, id ASC
-      LIMIT $2 OFFSET $3`,
-    [workspaceId, normalizedLimit, normalizedOffset],
+const MANAGED_CERTIFICATE_LIST_FROM = `
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id`;
+
+async function listManagedCertificates(options = {}) {
+  const db = options.client || pool;
+  const normalizedLimit = normalizeLimit(options.limit);
+  const normalizedOffset = normalizeOffset(options.offset);
+  const { where, params } = managedCertificateFilterSql(options);
+
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total${MANAGED_CERTIFICATE_LIST_FROM}
+      WHERE ${where}`,
+    params,
+  );
+
+  const pageParams = [...params, normalizedLimit, normalizedOffset];
+  const result = await db.query(
+    `SELECT mc.*${MANAGED_CERTIFICATE_LIST_FROM}
+      WHERE ${where}
+      ORDER BY mc.not_after ASC NULLS LAST, mc.created_at DESC, mc.id ASC
+      LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
+    pageParams,
   );
 
   return {
@@ -745,6 +1095,7 @@ async function listManagedCertificates({ workspaceId, limit, offset }) {
     pagination: {
       limit: normalizedLimit,
       offset: normalizedOffset,
+      total: Number(totalResult.rows[0]?.total || 0),
     },
   };
 }
@@ -783,6 +1134,87 @@ async function listCertificateInstances({ workspaceId, certId, limit, offset }) 
 
   return {
     items: result.rows.map(toInstanceRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
+/**
+ * Flat, workspace-wide certificate_instances listing (no certId filter).
+ * Distinct from listCertificateInstances, which is scoped to one certificate
+ * and 404s when that certificate doesn't exist; this one is a plain
+ * inventory browse, used by UI surfaces (e.g. the manual job Subject ID
+ * suggestions) that need "any instance in this workspace" rather than
+ * "instances of this one certificate".
+ */
+async function listWorkspaceCertificateInstances({ workspaceId, limit, offset }) {
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_instances
+      WHERE workspace_id = $1
+      ORDER BY observed_at DESC NULLS LAST,
+               updated_at DESC,
+               created_at DESC,
+               id ASC
+      LIMIT $2 OFFSET $3`,
+    [workspaceId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toInstanceRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
+function toTargetRecord(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    profileId: row.profile_id,
+    domainMonitorId: row.domain_monitor_id,
+    tokenId: row.token_id,
+    name: row.name,
+    targetType: row.target_type,
+    status: row.status,
+    source: row.source,
+    sourceRef: row.source_ref,
+    hostname: row.hostname,
+    url: row.url,
+    deploymentReference: row.deployment_reference,
+    environment: row.environment,
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+  };
+}
+
+/**
+ * Workspace-wide certificate_targets listing (deployment/observation
+ * locations: hosts, endpoints, load balancers, etc.). No nesting under a
+ * certificate, since a target can outlive or precede any given cert.
+ */
+async function listCertificateTargets({ workspaceId, limit, offset }) {
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_targets
+      WHERE workspace_id = $1
+      ORDER BY updated_at DESC, created_at DESC, id ASC
+      LIMIT $2 OFFSET $3`,
+    [workspaceId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toTargetRecord),
     pagination: {
       limit: normalizedLimit,
       offset: normalizedOffset,
@@ -929,13 +1361,94 @@ async function retireManagedCertificate(clientOrPool, options) {
   }
 }
 
+/**
+ * Link a just-verified provisioning certificate into the token-centric
+ * inventory, and mirror its facts onto the token exactly as discovery and
+ * import do.
+ *
+ * Called only from reconciliation, once a real notAfter is known. Doing it any
+ * earlier is impossible rather than merely undesirable: tokens.expiration is
+ * DATE NOT NULL, so a certificate that has not been issued yet has no expiry to
+ * store, and inventing one would corrupt the expiry tracking this link exists
+ * to enable.
+ *
+ * Idempotent: an already-linked certificate has its token facts refreshed
+ * rather than acquiring a second token.
+ */
+async function linkReconciledCertificateToken({
+  client,
+  workspaceId,
+  certificateId,
+  certificate,
+  existingTokenId = null,
+  createdBy = null,
+}) {
+  const tokenId =
+    existingTokenId ||
+    (await ensureManagedCertificateToken(
+      client,
+      certificate,
+      {
+        workspaceId,
+        createdBy,
+        tokenNotesSourceLabel: "agent issuance",
+      },
+      null,
+    ));
+
+  const domains = certificateDomainsFor(certificate);
+  const expiration = formatDateYmd(certificate.notAfter);
+
+  await client.query(
+    `UPDATE tokens
+        SET expiration = COALESCE($3, expiration),
+            issuer = COALESCE($4, issuer),
+            serial_number = COALESCE($5, serial_number),
+            subject = COALESCE($6, subject),
+            domains = CASE
+              WHEN COALESCE(array_length($7::text[], 1), 0) > 0
+                THEN $7::text[]
+              ELSE domains
+            END,
+            updated_at = NOW()
+      WHERE id = $1
+        AND workspace_id = $2`,
+    [
+      tokenId,
+      workspaceId,
+      expiration,
+      certificate.issuer || null,
+      certificate.serialNumber || null,
+      certificate.subject || null,
+      domains,
+    ],
+  );
+
+  await client.query(
+    `UPDATE managed_certificates
+        SET token_id = $3,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND token_id IS DISTINCT FROM $3`,
+    [workspaceId, certificateId, tokenId],
+  );
+
+  return tokenId;
+}
+
 module.exports = {
+  CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
   CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+  CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
+  MANAGED_CERTIFICATE_SOURCES,
+  MANAGED_CERTIFICATE_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   RETIRE_STATUSES,
   RETIRE_STATUS_SQL_LIST,
@@ -943,12 +1456,18 @@ module.exports = {
   countActiveManagedCertificates,
   countActiveManagedCertificatesWithClient,
   countQuotaConsumingNewFingerprints,
+  ensureManagedCertificateToken,
+  findManagedCertificateBySourceRef,
   fingerprintsFromCertificates,
   getManagedCertificate,
   importPublicCertificates,
   isRetiredCertificateStatus,
+  linkReconciledCertificateToken,
   listCertificateInstances,
+  listCertificateTargets,
   listManagedCertificates,
+  listWorkspaceCertificateInstances,
+  managedCertificateFilterSql,
   normalizeKeyMode,
   normalizeKeyReference,
   normalizeLimit,
@@ -956,6 +1475,10 @@ module.exports = {
   retireManagedCertificate,
   toInstanceRecord,
   toInventoryRecord,
+  toTargetRecord,
+  upsertAgentFilesystemInstance,
+  upsertAgentFilesystemTarget,
   upsertManagedCertificate,
   upsertManagedCertificateByMonitorSource,
+  upsertManagedCertificateForControllerProvisioning,
 };

@@ -89,6 +89,10 @@ tests/integration/audit-system-admin-org-scope.test.js
 tests/integration/certops-migration.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
+tests/integration/certops-controller-observations.test.js
+tests/integration/certops-controller-provisioning.test.js
+tests/integration/certops-k8s-controller-provisioning-execution.test.js
+tests/integration/certops-controller-e2e.test.js
 tests/integration/certops-api-tokens.test.js
 tests/integration/certops-api-token-routes.test.js
 tests/integration/certops-api-token-auth.test.js
@@ -97,7 +101,10 @@ tests/integration/certops-jobs-evidence.test.js
 tests/integration/certops-executor-events.test.js
 tests/integration/certops-docs-fixtures.test.js
 tests/integration/certops-fake-executor.test.js
+tests/integration/certops-job-create-api.test.js
 tests/integration/certops-job-read-apis.test.js
+tests/integration/certops-workspace-kill-switch-api.test.js
+tests/integration/certops-k8s-controller-wiring.test.js
 tests/integration/database-schema.test.js
 tests/integration/frontend-integration.test.js
 tests/integration/email-content-formatting.test.js

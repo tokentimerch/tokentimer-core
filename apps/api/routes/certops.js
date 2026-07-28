@@ -9,53 +9,158 @@ const {
   rejectKeyMaterial,
 } = require("../middleware/reject-key-material");
 const {
+  CERTOPS_DISABLED,
+  NOT_FOUND_RESPONSE,
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
-const { hasAtLeastRole } = require("../services/rbac");
 const {
+  requireWorkspaceCertOpsActive,
+} = require("../middleware/require-workspace-certops-active");
+const { authorize, hasAtLeastRole } = require("../services/rbac");
+const {
+  CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
   CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+  CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   getManagedCertificate,
   importPublicCertificates,
   listCertificateInstances,
+  listCertificateTargets,
   listManagedCertificates,
+  listWorkspaceCertificateInstances,
   retireManagedCertificate,
 } = require("../services/certops/inventory");
+const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
   CERTOPS_API_TOKEN_INVALID,
   CERTOPS_API_TOKEN_NAME_INVALID,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
+  CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
   createApiToken,
   listApiTokens,
   revokeApiTokenWithResult,
 } = require("../services/certops/apiTokens");
 const {
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID,
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
+  createBootstrapToken,
+  getBootstrapTokenById,
+  listBootstrapTokens,
+  revokeBootstrapToken,
+} = require("../services/certops/agentCredentials");
+const {
+  CERTOPS_AGENT_INVALID,
+  CERTOPS_AGENT_RETIRE_REASON_INVALID,
+  countActivelyLeasedJobs,
+  getAgentById,
+  listAgents,
+  normalizeRequiredRetireReason,
+  retireAgent,
+} = require("../services/certops/agentRegistry");
+const {
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+  CERTOPS_JOB_METADATA_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
-  createCertificateJob,
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+  findActiveJobForSubject,
   getCertificateJobById,
+  isAgentDeployableKeyMode,
   listCertificateJobLog,
   listCertificateJobs,
+  validateJobPayloadForOperation,
 } = require("../services/certops/jobs");
+const {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  NON_RENEWABLE_CERTIFICATE_STATUSES,
+  resolveRenewalThresholdDays,
+} = require("../services/certops/renewalScheduler");
+const {
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  resolveRenewalProfileSnapshot,
+} = require("../services/certops/renewalProfile");
+const {
+  CERTOPS_PROFILE_FIELD_IMMUTABLE,
+  CERTOPS_PROFILE_INVALID,
+  CERTOPS_PROFILE_NOT_FOUND,
+  CERTOPS_PROFILE_NO_CHANGES,
+  getRenewalProfile,
+  listRenewalProfiles,
+  listUpcomingRenewals,
+  updateRenewalProfile,
+} = require("../services/certops/renewalProfileAdmin");
 const {
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   listCertificateEvidence,
 } = require("../services/certops/evidence");
+const {
+  CERTOPS_WORKSPACE_NOT_FOUND,
+  CERTOPS_WORKSPACE_PAUSED,
+  CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
+  CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  createManualCertificateJob,
+  getWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsPauseState,
+} = require("../services/certops/workspaceKillSwitch");
+const {
+  CERTOPS_CERTIFICATE_NOT_PROFILED,
+  CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
+  CERTOPS_RENEWAL_SETUP_MULTI_LOCATION,
+  CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+  detachRenewalProfile,
+  loadRenewalSetupIntents,
+  loadResumablePreflights,
+  projectRenewalPreflight,
+  projectRenewalSetupState,
+  renewalSetupJobCreator,
+  retryRenewalSetupIntent,
+} = require("../services/certops/renewalAdoption");
+const {
+  CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+  CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
+} = require("../services/certops/outbox");
+const {
+  CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
+  createControllerProvisionIntent,
+} = require("../services/certops/controllerProvisioning");
+const {
+  createCertificateIssuanceJob,
+} = require("../services/certops/issuance");
+const {
+  CERTOPS_APPROVAL_APPROVER_REQUIRED,
+  CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_REASON_INVALID,
+  CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+  approveJob,
+  rejectJob,
+} = require("../services/certops/jobApprovals");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
 
 const CERTOPS_API_TOKEN_NOT_FOUND = "CERTOPS_API_TOKEN_NOT_FOUND";
+const CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND =
+  "CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND";
+const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
+const CERTOPS_AGENT_RETIRE_BLOCKED = "CERTOPS_AGENT_RETIRE_BLOCKED";
+const CERTOPS_CERTIFICATE_NOT_RENEWABLE = "CERTOPS_CERTIFICATE_NOT_RENEWABLE";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,6 +178,28 @@ function requireCertOpsWriteRole(req, res, next) {
   return next();
 }
 
+/**
+ * Strips `deployedCertPath` from certificate records before they reach a
+ * viewer.
+ *
+ * The certificate list and single-certificate GET routes are intentionally
+ * not manager-gated (a viewer can see the inventory), but a deployment
+ * filesystem path is host reconnaissance, the same reasoning that keeps the
+ * renewal-profile routes manager-only (see the comment above those routes
+ * below). This keeps that line even though the two projections share
+ * `toInventoryRecord`, rather than forking the projection itself.
+ */
+function redactDeploymentPathForViewers(req, certificateOrList) {
+  if (req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager")) {
+    return certificateOrList;
+  }
+  const strip = (certificate) =>
+    certificate ? { ...certificate, deployedCertPath: undefined } : certificate;
+  return Array.isArray(certificateOrList)
+    ? certificateOrList.map(strip)
+    : strip(certificateOrList);
+}
+
 function requireCertOpsTokenManager(req, res, next) {
   if (req.isWorkerCall || !req.user?.id) {
     return res.status(403).json({
@@ -88,6 +215,20 @@ function requireCertOpsTokenManager(req, res, next) {
     });
   }
 
+  return next();
+}
+
+// The workspace kill switch is an attributable human-admin incident control.
+// Shared workspace middleware intentionally grants internal workers an
+// effective admin role for unrelated machine work, so this route-local guard
+// must reject them rather than trusting that derived role.
+function requireCertOpsSessionUser(req, res, next) {
+  if (req.isWorkerCall || !req.user?.id) {
+    return res.status(403).json({
+      error: "Forbidden: session user required",
+      code: "INSUFFICIENT_ROLE",
+    });
+  }
   return next();
 }
 
@@ -130,6 +271,43 @@ function writeOptionsFromRequest(req, source) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === CERTOPS_DISABLED) {
+    return res.status(404).json(NOT_FOUND_RESPONSE);
+  }
+
+  if (err?.code === CERTOPS_PROFILE_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Renewal profile not found",
+      code: CERTOPS_PROFILE_NOT_FOUND,
+    });
+  }
+
+  // 422 rather than 400: the request is well-formed, it asks for a change the
+  // profile contract does not permit. The offending field names are returned so
+  // the caller is never left guessing which one was refused.
+  if (err?.code === CERTOPS_PROFILE_FIELD_IMMUTABLE) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_FIELD_IMMUTABLE,
+      fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === CERTOPS_PROFILE_INVALID) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_INVALID,
+      fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === CERTOPS_PROFILE_NO_CHANGES) {
+    return res.status(400).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_NO_CHANGES,
+    });
+  }
+
   if (err?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
     return res.status(422).json({
       error: "Private key material is not accepted in CertOps requests",
@@ -189,11 +367,40 @@ function handleCertOpsError(res, err) {
   if (
     err?.code === CERTOPS_API_TOKEN_INVALID ||
     err?.code === CERTOPS_API_TOKEN_NAME_INVALID ||
-    err?.code === CERTOPS_API_TOKEN_SCOPE_INVALID
+    err?.code === CERTOPS_API_TOKEN_SCOPE_INVALID ||
+    err?.code === CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID
   ) {
     return res.status(400).json({
       error: "CertOps API token request is invalid",
       code: err.code,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID ||
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID ||
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps agent bootstrap token request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_AGENT_INVALID ||
+    err?.code === CERTOPS_AGENT_RETIRE_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps agent request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_AGENT_NOT_FOUND) {
+    return res.status(404).json({
+      error: "CertOps agent not found",
+      code: CERTOPS_AGENT_NOT_FOUND,
     });
   }
 
@@ -204,12 +411,46 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_WORKSPACE_PAUSED) {
+    return res.status(409).json({
+      error: "CertOps is paused for this workspace",
+      code: CERTOPS_WORKSPACE_PAUSED,
+    });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN) {
+    return res.status(403).json({
+      error: "The user who requested a CertOps job cannot approve it",
+      code: CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+    });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL) {
+    return res.status(409).json({
+      error: "Certificate job is not awaiting approval",
+      code: CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_APPROVAL_APPROVER_REQUIRED ||
+    err?.code === CERTOPS_APPROVAL_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps approval request is invalid",
+      code: err.code,
+    });
+  }
+
   const certOpsJobBadRequestCodes = new Set([
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_OPERATION_INVALID,
     CERTOPS_JOB_SOURCE_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+    CERTOPS_JOB_METADATA_INVALID,
+    CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
   ]);
@@ -220,10 +461,103 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (
+    err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+    err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+  ) {
+    return res.status(400).json({
+      error: "Certificate renewal profile is missing or invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    });
+  }
+
+  if (err?.code === CERTOPS_RENEWAL_AUTO_RENEW_DISABLED) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED ||
+    err?.code === CERTOPS_RENEWAL_SETUP_MULTI_LOCATION
+  ) {
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_PROFILED) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_CERTIFICATE_NOT_PROFILED,
+    });
+  }
+
+  if (err?.code === CERTOPS_OUTBOX_EVENT_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Outbox event not found",
+      code: CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+    });
+  }
+
+  if (err?.code === CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_TOO_LARGE) {
+    return res.status(400).json({
+      error: "Certificate input exceeds the public certificate size limit",
+      code: CERTOPS_CERTIFICATE_TOO_LARGE,
+    });
+  }
+
   if (err?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT) {
     return res.status(409).json({
       error: "Idempotency key was already used with a different CertOps job request",
       code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    });
+  }
+
+  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {
+    return res.status(409).json({
+      error: err.message || "Per-CA renewal capacity exceeded",
+      code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_WORKSPACE_PAUSE_STATE_INVALID ||
+    err?.code === CERTOPS_WORKSPACE_PAUSE_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps workspace pause request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_WORKSPACE_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Workspace not found",
+      code: "WORKSPACE_NOT_FOUND",
     });
   }
 
@@ -254,6 +588,30 @@ function tokenIdFromParams(req, res) {
   return tokenId;
 }
 
+function bootstrapTokenIdFromParams(req, res) {
+  const tokenId = String(req.params.tokenId || "");
+  if (!UUID_PATTERN.test(tokenId)) {
+    res.status(400).json({
+      error: "CertOps agent bootstrap token identifier is invalid",
+      code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
+    });
+    return null;
+  }
+  return tokenId;
+}
+
+function agentIdFromParams(req, res) {
+  const agentId = String(req.params.agentId || "");
+  if (!UUID_PATTERN.test(agentId)) {
+    res.status(400).json({
+      error: "CertOps agent identifier is invalid",
+      code: CERTOPS_AGENT_INVALID,
+    });
+    return null;
+  }
+  return agentId;
+}
+
 function jobListOptionsFromRequest(req) {
   return {
     workspaceId: req.workspace.id,
@@ -275,6 +633,14 @@ function jobCreateOptionsFromRequest(req) {
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,
     idempotencyKey: req.body?.idempotencyKey,
+    // Optional pin to a specific agent (jobs.js: explicit assignment always
+    // wins over auto-assignment from the certificate's discovery agent).
+    // Lets an operator route a manual job to a known-good host instead of
+    // whichever eligible agent happens to poll first.
+    assignedAgentId: req.body?.assignedAgentId,
+    // Per-job approval gate: an explicitly requested boolean true makes
+    // the job start at pending_approval; anything else defaults to false.
+    requiresApproval: req.body?.requiresApproval === true,
     // Manual jobs are always created through this session-authenticated
     // route: source is always "api" (the same value the certificate-import
     // route uses for session-initiated writes), never taken from the
@@ -282,6 +648,409 @@ function jobCreateOptionsFromRequest(req) {
     // job through the manual-create surface.
     source: "api",
     requestedByUserId: req.user?.id || null,
+  };
+}
+
+function createManualCertificateJobHandler({
+  manualJobCreator = createManualCertificateJob,
+} = {}) {
+  return async function createManualCertificateJobHandler(req, res) {
+    try {
+      // An issue job has to create the certificate identity before the job
+      // that references it, so it swaps in a different creator. Everything
+      // else (workspace lock, kill switch, audit row) is shared.
+      const jobCreator =
+        req.body?.operation === "issue"
+          ? createCertificateIssuanceJob
+          : undefined;
+      const { job } = await manualJobCreator({
+        ...jobCreateOptionsFromRequest(req),
+        ...(jobCreator ? { jobCreator } : {}),
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.status(201).json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps manual job creation failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps job",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+const BULK_RENEW_MAX_CERTIFICATES = 100;
+const BULK_RENEW_ALLOWED_BODY_FIELDS = Object.freeze([
+  "certificateIds",
+  "dryRun",
+  "idempotencyKey",
+  "requiresApproval",
+  "payload",
+]);
+// Per-item keys are "bulk-renew:<client key>:<certificate uuid>". Bound the
+// client part so the composed key stays under the service's 128-char
+// short-text limit with room to spare.
+const BULK_RENEW_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
+  // Non-dry-run bulk creates must always carry a stable per-certificate key
+  // so client retries cannot enqueue duplicate renew jobs. When the caller
+  // omits a request key, derive one from the certificate id alone (scoped
+  // by the workspace-scoped unique index on the jobs table's idempotency key).
+  if (idempotencyKey) {
+    return `bulk-renew:${idempotencyKey}:${certificateId}`;
+  }
+  return `bulk-renew:auto:${certificateId}`;
+}
+
+/**
+ * Validates the whole bulk-renew request shape. Shape problems (missing or
+ * oversized id list, non-UUID or duplicate ids, wrong field types, unknown
+ * fields) fail the entire request with 400; per-certificate problems are
+ * reported in the response envelope instead.
+ */
+function parseBulkRenewRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "Request body must be a JSON object" };
+  }
+
+  const unknownField = Object.keys(body).find(
+    (key) => !BULK_RENEW_ALLOWED_BODY_FIELDS.includes(key),
+  );
+  if (unknownField) {
+    return { error: `Unknown field: ${unknownField}` };
+  }
+
+  const { certificateIds } = body;
+  if (!Array.isArray(certificateIds) || certificateIds.length < 1) {
+    return { error: "certificateIds must be a non-empty array" };
+  }
+  if (certificateIds.length > BULK_RENEW_MAX_CERTIFICATES) {
+    return {
+      error: `certificateIds accepts at most ${BULK_RENEW_MAX_CERTIFICATES} ids per request`,
+    };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const value of certificateIds) {
+    if (typeof value !== "string" || !UUID_PATTERN.test(value.trim())) {
+      return { error: "certificateIds must contain only UUID strings" };
+    }
+    const id = value.trim().toLowerCase();
+    if (seen.has(id)) {
+      return { error: "certificateIds must not contain duplicates" };
+    }
+    seen.add(id);
+    normalized.push(id);
+  }
+
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return { error: "dryRun must be a boolean" };
+  }
+  if (body.idempotencyKey !== undefined) {
+    if (
+      typeof body.idempotencyKey !== "string" ||
+      !BULK_RENEW_IDEMPOTENCY_KEY_PATTERN.test(body.idempotencyKey)
+    ) {
+      return {
+        error:
+          "idempotencyKey must be 1-64 characters of letters, digits, '.', '_' or '-'",
+      };
+    }
+  }
+  if (
+    body.requiresApproval !== undefined &&
+    typeof body.requiresApproval !== "boolean"
+  ) {
+    return { error: "requiresApproval must be a boolean" };
+  }
+  if (
+    body.payload !== undefined &&
+    (body.payload === null ||
+      typeof body.payload !== "object" ||
+      Array.isArray(body.payload))
+  ) {
+    return { error: "payload must be an object" };
+  }
+
+  return {
+    certificateIds: normalized,
+    dryRun: body.dryRun === true,
+    idempotencyKey: body.idempotencyKey || null,
+    requiresApproval: body.requiresApproval === true,
+    payload: body.payload || {},
+  };
+}
+
+/**
+ * Bulk renewal with a partial-failure envelope. Each certificate id goes
+ * through the same manual-creation service path as POST /jobs (kill switch,
+ * approval gate, payload validation), so per-certificate behavior matches a
+ * single renew job exactly. Item failures never abort the batch; the
+ * response is always 200 with per-item outcomes, except whole-request shape
+ * problems (400) and the disabled-rollout 404.
+ *
+ * An optional request-level idempotencyKey makes retries safe: each item is
+ * created with a derived "bulk-renew:<key>:<certificateId>" job key, so a
+ * replayed batch returns the already-created jobs (marked replayed: true)
+ * instead of enqueueing duplicates.
+ *
+ * Dry run preflights each certificate without writing: existence, renewable
+ * inventory status, the same payload validation the real run applies, and
+ * whether a non-terminal renew job is already in flight (reported as
+ * activeJobId so callers can spot double-renewals before committing).
+ */
+function bulkRenewCertificatesHandler({
+  manualJobCreator = createManualCertificateJob,
+  certificateLoader = getManagedCertificate,
+  activeJobFinder = findActiveJobForSubject,
+} = {}) {
+  return async function bulkRenewCertificatesHandler(req, res) {
+    const parsed = parseBulkRenewRequest(req.body);
+    if (parsed.error) {
+      return res.status(400).json({
+        error: parsed.error,
+        code: CERTOPS_JOB_INVALID,
+      });
+    }
+
+    // The payload is a whole-request field; validate it once up front (with
+    // a representative certificateId stamped in, as each item's payload
+    // will be) so a bad payload is a 400 instead of N identical item errors.
+    try {
+      validateJobPayloadForOperation(
+        { ...parsed.payload, certificateId: parsed.certificateIds[0] },
+        "renew",
+      );
+    } catch (err) {
+      if (typeof err?.code === "string" && err.code) {
+        return res.status(400).json({
+          error: err.message || "payload is invalid",
+          code: err.code,
+        });
+      }
+      throw err;
+    }
+
+    const results = [];
+    let succeeded = 0;
+
+    for (const certificateId of parsed.certificateIds) {
+      try {
+        const certificate = await certificateLoader({
+          workspaceId: req.workspace.id,
+          certId: certificateId,
+        });
+        if (!certificate) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: CERTOPS_CERTIFICATE_NOT_FOUND,
+            message: "Certificate not found",
+          });
+          continue;
+        }
+
+        if (NON_RENEWABLE_CERTIFICATE_STATUSES.includes(certificate.status)) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: CERTOPS_CERTIFICATE_NOT_RENEWABLE,
+            message: `Certificate status '${certificate.status}' is not renewable`,
+          });
+          continue;
+        }
+
+        if (parsed.dryRun) {
+          const activeJob = await activeJobFinder({
+            workspaceId: req.workspace.id,
+            subjectType: "managed_certificate",
+            subjectId: certificateId,
+            operation: "renew",
+          });
+          succeeded += 1;
+          results.push({
+            certificateId,
+            ok: true,
+            ...(activeJob ? { activeJobId: activeJob.id } : {}),
+          });
+          continue;
+        }
+
+        const { job, created } = await manualJobCreator({
+          workspaceId: req.workspace.id,
+          operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: certificateId,
+          payload: { ...parsed.payload, certificateId },
+          requiresApproval: parsed.requiresApproval,
+          idempotencyKey: bulkRenewItemIdempotencyKey(
+            parsed.idempotencyKey,
+            certificateId,
+          ),
+          // Same session-write source posture as single manual job creation.
+          source: "api",
+          requestedByUserId: req.user?.id || null,
+          actorUserId: req.user?.id || null,
+          subjectUserId: req.user?.id || null,
+        });
+        succeeded += 1;
+        results.push({
+          certificateId,
+          ok: true,
+          jobId: job.id,
+          ...(created === false ? { replayed: true } : {}),
+        });
+      } catch (err) {
+        // A disabled rollout is a whole-surface condition, not a
+        // per-certificate one: keep the same 404 posture as the middleware.
+        if (err?.code === CERTOPS_DISABLED) {
+          return res.status(404).json(NOT_FOUND_RESPONSE);
+        }
+        if (typeof err?.code === "string" && err.code) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: err.code,
+            message: err.message || "CertOps job creation failed",
+          });
+          continue;
+        }
+        logger.error("CertOps bulk renew item failed", {
+          error: err?.message,
+          workspaceId: req.workspace?.id,
+          certificateId,
+          userId: req.user?.id,
+        });
+        results.push({
+          certificateId,
+          ok: false,
+          errorCode: "INTERNAL_ERROR",
+          message: "Failed to create CertOps job",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      summary: {
+        requested: parsed.certificateIds.length,
+        succeeded,
+        failed: parsed.certificateIds.length - succeeded,
+      },
+      ...(parsed.dryRun ? { dryRun: true } : {}),
+      results,
+    });
+  };
+}
+
+function jobApprovalDecisionHandler(decision, {
+  approver = approveJob,
+  rejecter = rejectJob,
+} = {}) {
+  const decide = decision === "approve" ? approver : rejecter;
+  return async function jobApprovalDecisionHandler(req, res) {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+
+    try {
+      const result = await decide({
+        workspaceId: req.workspace.id,
+        jobId,
+        approverUserId: req.user?.id || null,
+        reason: req.body?.reason,
+      });
+
+      // Audit is written inside the approval transaction (jobApprovals.js).
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job approval decision failed", {
+        error: err.message,
+        code: err.code || null,
+        decision,
+        workspaceId: req.workspace?.id,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to record CertOps approval decision",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+function controllerProvisioningIdempotencyKey(req) {
+  const value = typeof req.get === "function"
+    ? req.get("Idempotency-Key")
+    : req.headers?.["idempotency-key"];
+  return typeof value === "string" ? value : null;
+}
+
+function createControllerProvisionIntentHandler({
+  provisionIntentCreator = createControllerProvisionIntent,
+} = {}) {
+  return async function createControllerProvisionIntentHandler(req, res) {
+    try {
+      const result = await provisionIntentCreator({
+        request: req.body,
+        workspaceId: req.workspace.id,
+        idempotencyKey: controllerProvisioningIdempotencyKey(req),
+        actorUserId: req.user?.id || null,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({
+        job: jobDetail(result.job),
+        managedCertificateId: result.managedCertificateId,
+        targetId: result.targetId,
+        duplicate: Boolean(result.duplicate),
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      if (err?.code === CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY) {
+        return res.status(409).json({
+          error: "Provisioning cannot reactivate a terminal managed certificate",
+          code: err.code,
+        });
+      }
+      if (err?.code === CERTOPS_CONTROLLER_PROVISIONING_INVALID) {
+        return res.status(400).json({
+          error: "CertOps provision request is invalid",
+          code: err.code,
+        });
+      }
+      logger.error("CertOps controller provision intent creation failed", {
+        code: err?.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps provision intent",
+        code: "CERTOPS_CONTROLLER_PROVISIONING_CREATE_FAILED",
+      });
+    }
+  };
+}
+
+function workspacePauseStateResponse(state) {
+  return {
+    workspaceId: state.workspaceId,
+    certOpsPaused: state.certOpsPaused,
+    certOpsEnabled: state.certOpsEnabled,
+    certOpsActive: state.certOpsActive,
+    ...(typeof state.changed === "boolean" ? { changed: state.changed } : {}),
   };
 }
 
@@ -353,6 +1122,11 @@ function apiTokenMetadata(token) {
     name: token.name,
     tokenPrefix: token.tokenPrefix,
     scopes: Array.isArray(token.scopes) ? [...token.scopes] : [],
+    // A controller token is unusable without this: the executor that claims a
+    // provisioning job authenticates with a token bound to the same
+    // clusterId, so a token list that omitted it could not show which
+    // cluster (if any) a token is bound to.
+    controllerClusterId: token.controllerClusterId ?? null,
     status: token.status,
     expiresAt: token.expiresAt,
     lastUsedAt: token.lastUsedAt,
@@ -424,6 +1198,76 @@ async function recordApiTokenAudit({
   });
 }
 
+function bootstrapTokenAuditMetadata(token, { includeRevocation = false } = {}) {
+  const metadata = {
+    bootstrap_token_id: token.id,
+    token_prefix: token.tokenPrefix,
+    name: token.name,
+    status: token.status,
+  };
+
+  if (includeRevocation) {
+    metadata.revoked_at = token.revokedAt;
+  } else {
+    metadata.expires_at = token.expiresAt;
+  }
+
+  return metadata;
+}
+
+async function recordBootstrapTokenAudit({
+  client,
+  req,
+  action,
+  token,
+  includeRevocation,
+}) {
+  const actorUserId = req.user.id;
+  await writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: actorUserId,
+    action,
+    targetType: "certops_agent_bootstrap_token",
+    targetId: null,
+    workspaceId: req.workspace.id,
+    metadata: bootstrapTokenAuditMetadata(token, { includeRevocation }),
+  });
+}
+
+async function recordAgentRetiredAudit({
+  client,
+  req,
+  agent,
+  force,
+  reason,
+  leasedJobs,
+  fenced = null,
+}) {
+  const actorUserId = req.user.id;
+  await writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: actorUserId,
+    action: "CERTOPS_AGENT_RETIRED",
+    targetType: "certops_agent",
+    targetId: null,
+    workspaceId: req.workspace.id,
+    metadata: {
+      agentId: agent.agentId,
+      force,
+      reason,
+      leasedJobs,
+      ...(fenced
+        ? {
+            cancelledJobIds: fenced.cancelledJobIds || [],
+            orphanedJobIds: fenced.orphanedJobIds || [],
+          }
+        : {}),
+    },
+  });
+}
+
 async function recordInventoryAudit(req, source, certificates, client = null) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
@@ -459,8 +1303,13 @@ router.get(
     try {
       const tokens = await listApiTokens({
         workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
       });
-      return res.json({ items: tokens.map(apiTokenMetadata) });
+      return res.json({
+        items: tokens.items.map(apiTokenMetadata),
+        pagination: tokens.pagination,
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -510,6 +1359,7 @@ router.post(
           workspaceId: req.workspace.id,
           name: req.body?.name,
           scopes: req.body?.scopes,
+          controllerClusterId: req.body?.controllerClusterId,
           expiresAt: req.body?.expiresAt,
           createdBy: req.user.id,
         });
@@ -627,6 +1477,307 @@ router.post(
 );
 
 router.get(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  // Bootstrap-token metadata enumeration is manager-only, same as
+  // create/revoke: viewers must not see agent onboarding token names,
+  // prefixes, or expiry windows.
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const tokens = await listBootstrapTokens({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json({
+        items: tokens.items,
+        pagination: tokens.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps agent bootstrap tokens",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    try {
+      const created = await withCertOpsTokenTransaction(async (client) => {
+        // createBootstrapToken enforces required future expiry and the
+        // max-TTL window, so this route relies on service-layer validation.
+        const tokenResult = await createBootstrapToken({
+          client,
+          workspaceId: req.workspace.id,
+          name: req.body?.name,
+          expiresAt: req.body?.expiresAt,
+          createdBy: req.user.id,
+        });
+        await recordBootstrapTokenAudit({
+          client,
+          req,
+          action: "CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED",
+          token: tokenResult.token,
+          includeRevocation: false,
+        });
+        return tokenResult;
+      });
+
+      // The raw ttboot_ token is returned exactly once; only the hash is
+      // persisted, so it can never be shown again.
+      return res.status(201).json({
+        token: created.token,
+        plaintextToken: created.plaintextToken,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token create failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps agent bootstrap token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    const tokenId = bootstrapTokenIdFromParams(req, res);
+    if (!tokenId) return null;
+
+    try {
+      const revoked = await withCertOpsTokenTransaction(async (client) => {
+        const before = await getBootstrapTokenById({
+          client,
+          workspaceId: req.workspace.id,
+          tokenId,
+        });
+        const token = await revokeBootstrapToken({
+          client,
+          workspaceId: req.workspace.id,
+          tokenId,
+          revokedBy: req.user.id,
+        });
+        const revokedNow =
+          Boolean(token) &&
+          token.status === "revoked" &&
+          before?.status !== "revoked";
+        if (token && revokedNow) {
+          await recordBootstrapTokenAudit({
+            client,
+            req,
+            action: "CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED",
+            token,
+            includeRevocation: true,
+          });
+        }
+        return token;
+      });
+
+      if (!revoked) {
+        return res.status(404).json({
+          error: "CertOps agent bootstrap token not found",
+          code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND,
+        });
+      }
+
+      return res.json({ token: revoked });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token revoke failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        tokenId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to revoke CertOps agent bootstrap token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/agents",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  // Agent fleet metadata (hostnames, versions, liveness) is manager-only,
+  // matching the authorization posture of the token routes.
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const agents = await listAgents({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json({
+        items: agents.items,
+        pagination: agents.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps agents",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agents/:agentId/retire",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    const agentId = agentIdFromParams(req, res);
+    if (!agentId) return null;
+
+    const force = req.body?.force === true;
+
+    try {
+      // Force requires an attributable justification before any DB work.
+      const reason = force
+        ? normalizeRequiredRetireReason(req.body?.reason)
+        : null;
+
+      const outcome = await withCertOpsTransaction(async (client) => {
+        const existing = await getAgentById({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+        });
+        if (!existing) return { notFound: true };
+
+        // Idempotent: an already-retired agent returns its current state
+        // without a duplicate audit event.
+        if (existing.status === "retired") {
+          return { agent: existing, retiredNow: false };
+        }
+
+        const leasedJobs = await countActivelyLeasedJobs({
+          client,
+          agentId,
+        });
+        if (leasedJobs > 0 && !force) {
+          return { blocked: true, leasedJobs };
+        }
+
+        // Force-retire immediately fences in-flight leases (H12): claimed
+        // jobs are cancelled; running jobs become orphaned_unknown_effect
+        // for operator reconciliation rather than waiting for the reaper.
+        const result = await retireAgent({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+          retiredBy: req.user.id,
+          reason,
+          force,
+        });
+        if (result.agent && result.retiredNow) {
+          await recordAgentRetiredAudit({
+            client,
+            req,
+            agent: result.agent,
+            force,
+            reason,
+            leasedJobs,
+            fenced: result.fenced || null,
+          });
+        }
+        return result;
+      });
+
+      if (outcome.blocked) {
+        return res.status(409).json({
+          error: "CertOps agent has actively leased jobs",
+          code: CERTOPS_AGENT_RETIRE_BLOCKED,
+          dependencies: { leasedJobs: outcome.leasedJobs },
+        });
+      }
+
+      if (outcome.notFound || !outcome.agent) {
+        return res.status(404).json({
+          error: "CertOps agent not found",
+          code: CERTOPS_AGENT_NOT_FOUND,
+        });
+      }
+
+      return res.json({
+        agent: outcome.agent,
+        ...(outcome.fenced
+          ? {
+              fenced: {
+                cancelledJobIds: outcome.fenced.cancelledJobIds || [],
+                orphanedJobIds: outcome.fenced.orphanedJobIds || [],
+              },
+            }
+          : {}),
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent retire failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        agentId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to retire CertOps agent",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
   "/api/v1/workspaces/:id/certops/jobs",
   getApiLimiter(),
   requireCertOpsEnabled,
@@ -655,6 +1806,71 @@ router.get(
   },
 );
 
+// The kill-switch setting is intentionally small and workspace-local. It stays
+// available while rollout is disabled so incident controls can be inspected or
+// staged; its response composes the independent global and workspace state.
+router.get(
+  "/api/v1/workspaces/:id/certops/settings",
+  getApiLimiter(),
+  requireCertOpsSessionUser,
+  async (req, res) => {
+    try {
+      const state = await getWorkspaceCertOpsPauseState({
+        workspaceId: req.workspace.id,
+      });
+      return res.json(workspacePauseStateResponse(state));
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps workspace settings fetch failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch CertOps workspace settings",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.put(
+  "/api/v1/workspaces/:id/certops/settings",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsSessionUser,
+  authorize("certops.kill_switch.manage"),
+  async (req, res) => {
+    try {
+      const state = await setWorkspaceCertOpsPauseState({
+        workspaceId: req.workspace.id,
+        certOpsPaused: req.body?.certOpsPaused,
+        reason: req.body?.reason,
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.json(workspacePauseStateResponse(state));
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps workspace settings update failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to update CertOps workspace settings",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/jobs",
   getApiLimiter(),
@@ -664,40 +1880,63 @@ router.post(
   // (queues an executor job), so it uses the same manager-only gate as
   // token issuance/revocation rather than the read-only jobs-list route.
   requireCertOpsWriteRole,
-  async (req, res) => {
-    try {
-      const job = await createCertificateJob(jobCreateOptionsFromRequest(req));
-      await writeAudit({
-        actorUserId: req.user?.id || null,
-        subjectUserId: req.user?.id || null,
-        action: "CERTOPS_JOB_CREATED_MANUAL",
-        targetType: "certificate_job",
-        targetId: job.id,
-        workspaceId: req.workspace.id,
-        metadata: {
-          operation: job.operation,
-          subjectType: job.subjectType,
-          subjectId: job.subjectId,
-          source: job.source,
-        },
-      });
-      return res.status(201).json({ job: jobDetail(job) });
-    } catch (err) {
-      const handled = handleCertOpsError(res, err);
-      if (handled) return handled;
+  // Keep this after key-material rejection, rollout, and role checks. It
+  // blocks only new work; reads and existing machine event/evidence ingestion
+  // remain available while a workspace is paused.
+  requireWorkspaceCertOpsActive,
+  createManualCertificateJobHandler(),
+);
 
-      logger.error("CertOps manual job creation failed", {
-        error: err.message,
-        code: err.code || null,
-        workspaceId: req.workspace?.id,
-        userId: req.user?.id,
-      });
-      return res.status(500).json({
-        error: "Failed to create CertOps job",
-        code: "INTERNAL_ERROR",
-      });
-    }
-  },
+// Bulk renewal shares the exact middleware posture of single manual job
+// creation: each certificate id is queued through the same manual-creation
+// service path, and per-certificate outcomes are reported in a
+// partial-failure envelope instead of aborting the batch.
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/bulk-renew",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  bulkRenewCertificatesHandler(),
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/provision-intents",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  createControllerProvisionIntentHandler(),
+);
+
+// Approval gates. Approval/rejection is an attributable human decision:
+// internal worker credentials are rejected (requireCertOpsSessionUser) and
+// the decision needs the same manager role as manual job creation. The
+// workspace pause gate is intentionally absent: deciding an approval while
+// paused is safe because the agent claim path is itself blocked by the
+// kill switch, and a rejection is exactly the kind of action an operator
+// may need during an incident.
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/approve",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  jobApprovalDecisionHandler("approve"),
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/reject",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  jobApprovalDecisionHandler("reject"),
 );
 
 router.get(
@@ -893,6 +2132,286 @@ async function importCertificatesHandler(req, res, source, statusCode) {
   }
 }
 
+/**
+ * Renewal-automation state exposed with every inventory row.
+ *
+ * The renewal scheduler only creates automatic renew jobs for certificates
+ * with agent-deployable key custody AND a linked certificate_profiles row
+ * whose public_metadata.renewalProfile resolves to a complete, executable
+ * contract; everything else is counted as skippedIncompleteProfile and never
+ * renews. Without this projection an `active` certificate that will silently
+ * expire looked identical to one that renews itself, so the decision is
+ * derived here from the scheduler's own inputs instead of being guessed by
+ * the client.
+ */
+const CERTOPS_RENEWAL_STATE_AUTO = "auto";
+const CERTOPS_RENEWAL_STATE_DISABLED = "disabled";
+const CERTOPS_RENEWAL_STATE_NOT_CONFIGURED = "not-configured";
+const CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE = "not-eligible";
+const CERTOPS_RENEWAL_STATE_NOT_APPLICABLE = "not-applicable";
+
+// Lifecycle states where renewal is moot rather than missing: the scheduler
+// refuses NON_RENEWABLE_CERTIFICATE_STATUSES outright, and a provisioning
+// certificate has no issued lifetime to renew yet.
+const RENEWAL_MOOT_CERTIFICATE_STATUSES = new Set([
+  ...NON_RENEWABLE_CERTIFICATE_STATUSES,
+  "provisioning",
+]);
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Effective renewal lead time: the per-profile override when it is a usable
+ * positive integer, else the deployment-wide threshold. Matches the
+ * COALESCE(cp.renew_before_days, threshold) the scheduler scans with.
+ */
+function effectiveRenewBeforeDays(profileRenewBeforeDays, env) {
+  const parsed = Number.parseInt(profileRenewBeforeDays, 10);
+  if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  return resolveRenewalThresholdDays(env);
+}
+
+function renewalWindowStart(notAfter, renewBeforeDays) {
+  if (!notAfter) return null;
+  const expiry = new Date(notAfter);
+  if (Number.isNaN(expiry.getTime())) return null;
+  return new Date(
+    expiry.getTime() - renewBeforeDays * MS_PER_DAY,
+  ).toISOString();
+}
+
+/**
+ * Derives the renewal state for one managed_certificates row joined with its
+ * certificate_profiles row (same column names the scheduler selects).
+ *
+ * Profile completeness is answered by resolveRenewalProfileSnapshot, the
+ * function the scheduler itself admits on, so the badge can never claim
+ * "auto" for a certificate the sweep would refuse. `renewsFrom` is when the
+ * sweep starts picking the certificate up (not_after minus the effective lead
+ * time), not a promise of the exact renewal moment.
+ *
+ * `workspacePaused` answers a different question than `state`: `state` is
+ * "is this profile switched on", `workspacePaused` is "will this workspace's
+ * scheduler actually act right now". A paused workspace still derives `auto`
+ * here (the profile itself is not disabled), but with `workspacePaused: true`
+ * so the badge can say so instead of promising a renewal that will not run
+ * until the workspace is resumed (13.12 finding, 2026-07-27).
+ */
+function deriveCertificateRenewalState(
+  row,
+  { env = process.env, workspacePaused = false } = {},
+) {
+  const keyMode = row?.key_mode || null;
+  const base = {
+    schemaVersion: 1,
+    keyMode,
+    profileId: row?.profile_id ? String(row.profile_id) : null,
+    profileName:
+      typeof row?.profile_name === "string" ? row.profile_name : null,
+    renewBeforeDays: null,
+    renewsFrom: null,
+    workspacePaused: workspacePaused === true,
+  };
+
+  const status = String(row?.status || "").toLowerCase();
+  if (RENEWAL_MOOT_CERTIFICATE_STATUSES.has(status)) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_APPLICABLE,
+      detail: `Automatic renewal does not apply while this certificate is ${status}.`,
+    };
+  }
+
+  if (!isAgentDeployableKeyMode(keyMode)) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE,
+      detail:
+        "TokenTimer does not hold this certificate's key, so it is monitored only and cannot be renewed by an agent.",
+    };
+  }
+
+  const renewBeforeDays = effectiveRenewBeforeDays(
+    row?.profile_renew_before_days,
+    env,
+  );
+
+  // Deliberate operator intent, so it is reported before profile completeness:
+  // a switched-off certificate is not misconfigured and telling the operator to
+  // go fix its profile would be wrong. Mirrors
+  // AUTO_RENEW_DISABLED_PROFILE_STATUSES in the scheduler, which excludes these
+  // rows from the scan entirely.
+  const profileStatus = String(row?.profile_status || "").toLowerCase();
+  if (
+    row?.profile_id &&
+    AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(profileStatus)
+  ) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_DISABLED,
+      renewBeforeDays,
+      detail: `Automatic renewal is switched off for this certificate because its renewal profile is ${profileStatus}. It will expire unless it is renewed manually or the profile is re-enabled.`,
+    };
+  }
+
+  let incompleteReason = null;
+  try {
+    resolveRenewalProfileSnapshot(row);
+  } catch (error) {
+    if (
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INCOMPLETE &&
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID
+    ) {
+      throw error;
+    }
+    incompleteReason = error.message || "renewal profile is incomplete";
+  }
+
+  if (incompleteReason) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      renewBeforeDays,
+      detail: `This certificate will not renew automatically: ${incompleteReason}.`,
+    };
+  }
+
+  const renewsFrom = renewalWindowStart(row?.not_after, renewBeforeDays);
+  if (!renewsFrom) {
+    // The scheduler only scans rows with a not_after, so a complete profile
+    // still never produces a job without a recorded expiry.
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      renewBeforeDays,
+      detail:
+        "This certificate will not renew automatically: no expiry date is recorded, so no renewal window can be computed.",
+    };
+  }
+
+  return {
+    ...base,
+    state: CERTOPS_RENEWAL_STATE_AUTO,
+    renewBeforeDays,
+    renewsFrom,
+    detail: `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
+  };
+}
+
+/**
+ * Renewal inputs for the listed certificates, joined to their profile exactly
+ * the way findCertificatesDueForRenewal joins it. Read here rather than in the
+ * inventory projection so the public-only inventory record keeps its shape and
+ * profile metadata never leaks into it verbatim.
+ */
+async function loadCertificateRenewalRows({
+  db = pool,
+  workspaceId,
+  certificateIds,
+}) {
+  const result = await db.query(
+    `SELECT mc.id,
+            mc.status,
+            mc.key_mode,
+            mc.not_after,
+            mc.common_name,
+            mc.subject_alt_names,
+            mc.profile_id,
+            cp.name AS profile_name,
+            cp.status AS profile_status,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata,
+            cp.renew_before_days AS profile_renew_before_days
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = ANY($2::uuid[])`,
+    [workspaceId, certificateIds],
+  );
+  return result.rows;
+}
+
+/**
+ * Snake_case view of an inventory record, used when the renewal join returned
+ * no row for it (retired between the two reads). It carries no profile
+ * metadata, so the fallback can only ever resolve to a non-auto state: the UI
+ * degrades to "not configured", never to a false "auto".
+ */
+function renewalRowFromInventoryRecord(certificate) {
+  return {
+    id: certificate?.id,
+    status: certificate?.status,
+    key_mode: certificate?.keyMode,
+    not_after: certificate?.notAfter,
+    common_name: certificate?.commonName,
+    subject_alt_names: certificate?.subjectAltNames,
+    profile_id: certificate?.profileId,
+  };
+}
+
+async function withRenewalState({
+  db = pool,
+  env = process.env,
+  workspaceId,
+  certificates,
+  // Off for lists: resumability is a per-certificate action offered on the
+  // detail page, and the query behind it is an anti-join over the job table
+  // that a paged list has no use for.
+  includePreflight = false,
+}) {
+  const items = Array.isArray(certificates) ? certificates : [];
+  const certificateIds = items
+    .map((certificate) => certificate?.id)
+    .filter(Boolean)
+    .map(String);
+  if (certificateIds.length === 0) return items;
+
+  const [rows, setupIntentsById, preflightsById, workspaceRow] =
+    await Promise.all([
+      loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
+      loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
+      includePreflight
+        ? loadResumablePreflights({ db, workspaceId, certificateIds })
+        : Promise.resolve(new Map()),
+      // Answers "will this workspace's scheduler act right now", a different
+      // question from the per-profile state above (13.12 finding,
+      // 2026-07-27: a paused workspace still reported `auto` because the
+      // profile itself is genuinely switched on). Read directly rather than
+      // through getWorkspaceCertOpsPauseState/isCertOpsEnabled to avoid a
+      // second, redundant check of the global rollout flag this route is
+      // already gated on by requireCertOpsEnabled - advisory display only,
+      // never a gate, so a stale or failed read just falls back to "not
+      // paused" rather than failing the request.
+      db
+        .query(`SELECT certops_paused FROM workspaces WHERE id = $1`, [
+          workspaceId,
+        ])
+        .catch(() => null),
+    ]);
+  const rowsById = new Map(rows.map((row) => [String(row.id), row]));
+  const workspacePaused = workspaceRow?.rows?.[0]?.certops_paused === true;
+
+  return items.map((certificate) => ({
+    ...certificate,
+    renewal: deriveCertificateRenewalState(
+      rowsById.get(String(certificate.id)) ||
+        renewalRowFromInventoryRecord(certificate),
+      { env, workspacePaused },
+    ),
+    renewalSetup: projectRenewalSetupState(
+      setupIntentsById.get(String(certificate.id)) || null,
+    ),
+    ...(includePreflight
+      ? {
+          renewalPreflight: projectRenewalPreflight(
+            preflightsById.get(String(certificate.id)) || null,
+          ),
+        }
+      : {}),
+  }));
+}
+
 router.get(
   "/api/v1/workspaces/:id/certops/certificates",
   getApiLimiter(),
@@ -903,9 +2422,37 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        status: req.query.status,
+        source: req.query.source,
+        // Three separate renewal facts rather than one "will not auto-renew"
+        // switch: a certificate whose profile fails validation also never
+        // renews, and that verdict comes from a JavaScript validator over the
+        // profile body with no SQL equivalent. A combined filter would promise
+        // a complete answer and stop an operator looking further.
+        noRenewalProfile: req.query.noRenewalProfile,
+        renewalDisabled: req.query.renewalDisabled,
+        keyNotAgentDeployable: req.query.keyNotAgentDeployable,
+        excludeRetired: req.query.excludeRetired,
       });
-      return res.json(result);
+      return res.json({
+        ...result,
+        items: redactDeploymentPathForViewers(
+          req,
+          await withRenewalState({
+            workspaceId: req.workspace.id,
+            certificates: result.items,
+          })
+        ),
+      });
     } catch (err) {
+      if (
+        err?.code === CERTOPS_CERTIFICATE_STATUS_INVALID ||
+        err?.code === CERTOPS_CERTIFICATE_SOURCE_INVALID ||
+        err?.code === CERTOPS_CERTIFICATE_FILTER_INVALID
+      ) {
+        return res.status(400).json({ error: err.message, code: err.code });
+      }
+
       logger.error("CertOps certificate list failed", {
         error: err.message,
         code: err.code || null,
@@ -927,6 +2474,180 @@ router.post(
   requireCertOpsEnabled,
   requireCertOpsWriteRole,
   (req, res) => importCertificatesHandler(req, res, "api", 201),
+);
+
+// Renewal-profile administration. Reads are manager-gated, matching the
+// agent and machine-token routes rather than the certificates inventory: a
+// profile body carries deployment topology (certPath, keyPath, reloadService,
+// deployment owner/group, ACME command refs, CA account refs, DNS zone), which
+// is host reconnaissance rather than expiry metadata. A viewer who can see the
+// certificate inventory has no reason to learn where its key sits on disk or
+// which privileged unit reloads it. The dashboard route guard for /certops/* is
+// manager-scoped too, so this keeps the API and the UI enforcing the same line
+// instead of relying on the client to hide the surface.
+//
+// The single mutating route is admin-gated via
+// authorize("certops.renewal_profile.manage") because a profile edit changes
+// what a host-privileged agent executes at the next renewal; see
+// services/certops/renewalProfileAdmin.js for the editable-field boundary.
+router.get(
+  "/api/v1/workspaces/:id/certops/profiles",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const result = await listRenewalProfiles({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list renewal profiles",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/renewals/upcoming",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const result = await listUpcomingRenewals({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+        thresholdDays: resolveRenewalThresholdDays(process.env),
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps upcoming renewals list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list upcoming renewals",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/profiles/:profileId",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.profileId || ""))) {
+      return res.status(404).json({
+        error: "Renewal profile not found",
+        code: CERTOPS_PROFILE_NOT_FOUND,
+      });
+    }
+    try {
+      const profile = await getRenewalProfile({
+        workspaceId: req.workspace.id,
+        profileId: req.params.profileId,
+      });
+      return res.json(profile);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile fetch failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.patch(
+  "/api/v1/workspaces/:id/certops/profiles/:profileId",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // A session user specifically: a profile edit is an attributable human
+  // decision, so internal worker credentials must not reach it.
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.profileId || ""))) {
+      return res.status(404).json({
+        error: "Renewal profile not found",
+        code: CERTOPS_PROFILE_NOT_FOUND,
+      });
+    }
+    try {
+      const profile = await updateRenewalProfile({
+        workspaceId: req.workspace.id,
+        profileId: req.params.profileId,
+        autoRenewEnabled: req.body?.autoRenewEnabled,
+        renewBeforeDays: req.body?.renewBeforeDays,
+        renewalProfile: req.body?.renewalProfile,
+        description: req.body?.description,
+        actorUserId: req.user?.id || null,
+      });
+      return res.json(profile);
+    } catch (err) {
+      // Mapped here rather than in handleCertOpsError: these two codes already
+      // have an established 400 meaning on the job-creation routes ("this
+      // certificate's stored profile is unusable"), and on this route they mean
+      // something different ("the patch you sent would produce an unusable
+      // profile"). Keeping the mapping local avoids changing the existing
+      // contract for every other caller.
+      if (
+        err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+        err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+      ) {
+        return res.status(422).json({
+          error: err.message,
+          code: err.code,
+        });
+      }
+
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile update failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to update renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
 );
 
 router.get(
@@ -983,6 +2704,60 @@ router.post(
 );
 
 router.get(
+  "/api/v1/workspaces/:id/certops/instances",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listWorkspaceCertificateInstances({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      logger.error("CertOps certificate instances list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate instances",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/targets",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listCertificateTargets({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      logger.error("CertOps certificate targets list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate targets",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId",
   getApiLimiter(),
   requireCertOpsEnabled,
@@ -1007,7 +2782,14 @@ router.get(
         });
       }
 
-      return res.json({ certificate });
+      const [enriched] = await withRenewalState({
+        workspaceId: req.workspace.id,
+        certificates: [certificate],
+        includePreflight: true,
+      });
+      return res.json({
+        certificate: redactDeploymentPathForViewers(req, enriched || certificate),
+      });
     } catch (err) {
       logger.error("CertOps certificate detail failed", {
         error: err.message,
@@ -1025,6 +2807,152 @@ router.get(
 );
 
 router.post(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/renewal-setup",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // Same posture as manual job creation: this creates a renew job (and, on a
+  // real run, an adoption intent), so it needs the write role and the
+  // workspace-active gate. A session user specifically, because arming
+  // automatic renewal is an attributable human decision and the audit row
+  // names an actor: the role check alone would let internal worker
+  // credentials through.
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const { job } = await createManualCertificateJob({
+        workspaceId: req.workspace.id,
+        jobCreator: renewalSetupJobCreator({
+          certificateId: req.params.certId,
+        }),
+        // A resumable dry_run job rather than a payload checkbox. The
+        // jobCreator only enqueues the adoption intent for a real run, so a
+        // preflight arms nothing even when the job itself succeeds.
+        ...(dryRun ? { mode: "dry_run" } : {}),
+        payload: req.body?.payload,
+        assignedAgentId: req.body?.assignedAgentId,
+        idempotencyKey: req.body?.idempotencyKey,
+        requiresApproval: req.body?.requiresApproval === true,
+        requestedByUserId: req.user?.id || null,
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.status(201).json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal setup failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        certId: req.params?.certId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to set up automatic renewal",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // Session-user, like approve/reject: this decides the fate of a parked
+  // outbox row, not agent-claimed work, so the workspace-active gate is
+  // deliberately absent, matching the approval routes' reasoning.
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.outboxId || ""))) {
+      return res.status(404).json({
+        error: "Outbox event not found",
+        code: CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+      });
+    }
+    try {
+      const result = await retryRenewalSetupIntent({
+        workspaceId: req.workspace.id,
+        outboxId: req.params.outboxId,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal setup retry failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        outboxId: req.params?.outboxId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to retry automatic renewal setup",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+// Detach: unlink the certificate from its renewal profile without deleting the
+// profile row, since one profile can cover several certificates. Same gate as
+// the profile PATCH (session user, certops.renewal_profile.manage): both change
+// what an agent will run on a host, and neither is agent-claimed work, so the
+// workspace-active gate that blocks new job creation does not apply here.
+router.delete(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/profile",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+    try {
+      const result = await detachRenewalProfile({
+        workspaceId: req.workspace.id,
+        certificateId: req.params.certId,
+        actorUserId: req.user?.id || null,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile detach failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        certId: req.params?.certId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to detach renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
   "/api/v1/workspaces/:id/certops/imports",
   getApiLimiter(),
   rejectKeyMaterial,
@@ -1034,3 +2962,17 @@ router.post(
 );
 
 module.exports = router;
+module.exports._test = {
+  createManualCertificateJobHandler,
+  bulkRenewCertificatesHandler,
+  bulkRenewItemIdempotencyKey,
+  createControllerProvisionIntentHandler,
+  deriveCertificateRenewalState,
+  parseBulkRenewRequest,
+  requireCertOpsSessionUser,
+  handleCertOpsError,
+  withRenewalState,
+  loadRenewalSetupIntents,
+  projectRenewalSetupState,
+  apiTokenMetadata,
+};

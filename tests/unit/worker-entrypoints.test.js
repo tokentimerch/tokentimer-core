@@ -27,6 +27,10 @@ describe("worker entrypoints", () => {
       workerPackage.scripts["start:discovery"],
       "node src/queue-manager.js",
     );
+    assert.strictEqual(
+      workerPackage.scripts["start:certops"],
+      "node src/certops-worker.js",
+    );
     assert.match(
       dockerfile,
       /CMD \["node", "apps\/worker\/src\/runner\.js", "all"\]/,
@@ -46,6 +50,7 @@ describe("worker entrypoints", () => {
       "weekly-digest",
       "auto-sync",
       "endpoint-check",
+      "certops",
     ];
 
     for (const worker of workers) {
@@ -75,6 +80,7 @@ describe("worker entrypoints", () => {
       WORKER_WEEKLY_DIGEST_CRON: "0 9 * * 1",
       WORKER_AUTO_SYNC_CRON: "*/1 * * * *",
       WORKER_ENDPOINT_CHECK_CRON: "*/1 * * * *",
+      WORKER_CERTOPS_CRON: "*/1 * * * *",
     };
 
     for (const [variable, cron] of Object.entries(expectedCrons)) {

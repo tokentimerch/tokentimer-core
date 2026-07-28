@@ -87,6 +87,7 @@ API_URL=http://localhost:4000
 # WORKER_AUTO_SYNC_CRON="*/1 * * * *"
 # WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
 # WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
+# WORKER_CERTOPS_CRON="*/1 * * * *"
 ```
 
 The root `migrate` and `dev:*` scripts load this file before starting package
@@ -150,6 +151,7 @@ pnpm --filter @tokentimer/worker dev:delivery
 pnpm --filter @tokentimer/worker dev:auto-sync
 pnpm --filter @tokentimer/worker dev:endpoint-check
 pnpm --filter @tokentimer/worker dev:weekly-digest
+pnpm --filter @tokentimer/worker dev:certops
 ```
 
 One-shot worker commands remain available for tests, CI, and Kubernetes CronJobs:
@@ -160,6 +162,7 @@ pnpm --filter @tokentimer/worker start:delivery
 pnpm --filter @tokentimer/worker start:auto-sync
 pnpm --filter @tokentimer/worker start:endpoint-check
 pnpm --filter @tokentimer/worker start:weekly-digest
+pnpm --filter @tokentimer/worker start:certops
 ```
 
 ## Worker Runner
@@ -176,6 +179,7 @@ node apps/worker/src/runner.js delivery
 node apps/worker/src/runner.js auto-sync
 node apps/worker/src/runner.js endpoint-check
 node apps/worker/src/runner.js weekly-digest
+node apps/worker/src/runner.js certops
 node apps/worker/src/runner.js all
 node apps/worker/src/runner.js discovery --once
 ```
@@ -190,6 +194,7 @@ Schedules are explicit and configurable. Cron defaults match
 | Auto Sync | `WORKER_AUTO_SYNC_CRON` | `*/1 * * * *` | No |
 | Endpoint Check | `WORKER_ENDPOINT_CHECK_CRON` | `*/1 * * * *` | No |
 | Weekly Digest | `WORKER_WEEKLY_DIGEST_CRON` | `0 9 * * 1` | No |
+| CertOps Maintenance | `WORKER_CERTOPS_CRON` | `*/1 * * * *` | No |
 
 ```bash
 WORKER_DISCOVERY_CRON="*/5 * * * *"
@@ -197,6 +202,7 @@ WORKER_DELIVERY_CRON="1/5 * * * *"
 WORKER_AUTO_SYNC_CRON="*/1 * * * *"
 WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
 WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
+WORKER_CERTOPS_CRON="*/1 * * * *"
 WORKER_RUN_ON_START=false
 WORKER_EXIT_ON_ERROR=false
 ```
@@ -268,7 +274,7 @@ For backend in Docker with local dashboard hot reload:
 
 ```bash
 cd deploy/compose
-docker compose up -d postgres api worker-discovery worker-delivery worker-auto-sync worker-endpoint-check worker-weekly-digest
+docker compose up -d postgres api worker-discovery worker-delivery worker-auto-sync worker-endpoint-check worker-weekly-digest worker-certops
 
 cd ../..
 pnpm run dev:dashboard

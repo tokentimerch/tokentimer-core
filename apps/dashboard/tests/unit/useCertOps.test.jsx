@@ -8,6 +8,9 @@ const {
   getCertificateInstancesMock,
   probeCertOpsEnabledMock,
   invalidateCertOpsInventoryCacheMock,
+  getWorkspaceCertOpsPauseStateMock,
+  updateWorkspaceCertOpsPauseStateMock,
+  workspaceAPIGetMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   loadCertOpsInventoryIndexMock: vi.fn(),
@@ -15,6 +18,9 @@ const {
   getCertificateInstancesMock: vi.fn(),
   probeCertOpsEnabledMock: vi.fn(),
   invalidateCertOpsInventoryCacheMock: vi.fn(),
+  getWorkspaceCertOpsPauseStateMock: vi.fn(),
+  updateWorkspaceCertOpsPauseStateMock: vi.fn(),
+  workspaceAPIGetMock: vi.fn().mockResolvedValue({ role: 'admin' }),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -22,7 +28,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
-  workspaceAPI: { get: vi.fn().mockResolvedValue({ role: 'admin' }) },
+  workspaceAPI: { get: workspaceAPIGetMock },
 }));
 
 vi.mock('../../src/components/certops/certopsApi', () => ({
@@ -31,11 +37,15 @@ vi.mock('../../src/components/certops/certopsApi', () => ({
   getCertificateInstances: getCertificateInstancesMock,
   probeCertOpsEnabled: probeCertOpsEnabledMock,
   invalidateCertOpsInventoryCache: invalidateCertOpsInventoryCacheMock,
+  getWorkspaceCertOpsPauseState: getWorkspaceCertOpsPauseStateMock,
+  updateWorkspaceCertOpsPauseState: updateWorkspaceCertOpsPauseStateMock,
 }));
 
 import {
   useWorkspaceCertOps,
   useCertOpsForToken,
+  useCertOpsIsWorkspaceAdmin,
+  useCertOpsWorkspaceKillSwitch,
 } from '../../src/components/certops/useCertOps.js';
 
 describe('useWorkspaceCertOps fail-closed resolution', () => {
@@ -142,5 +152,102 @@ describe('useCertOpsForToken instance error handling', () => {
     );
     expect(result.current.instancesAvailable).toBe(true);
     expect(result.current.instancesError).toBe('');
+  });
+});
+
+describe('useCertOpsIsWorkspaceAdmin', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
+  });
+
+  it('is true only for the admin role', async () => {
+    workspaceAPIGetMock.mockResolvedValue({ role: 'admin' });
+
+    const { result } = renderHook(() => useCertOpsIsWorkspaceAdmin());
+
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it('is false for workspace_manager and viewer roles', async () => {
+    workspaceAPIGetMock.mockResolvedValue({ role: 'workspace_manager' });
+
+    const { result } = renderHook(() => useCertOpsIsWorkspaceAdmin());
+
+    await waitFor(() => expect(workspaceAPIGetMock).toHaveBeenCalled());
+    expect(result.current).toBe(false);
+  });
+
+  it('is false when the workspace lookup fails', async () => {
+    workspaceAPIGetMock.mockRejectedValue(new Error('boom'));
+
+    const { result } = renderHook(() => useCertOpsIsWorkspaceAdmin());
+
+    await waitFor(() => expect(workspaceAPIGetMock).toHaveBeenCalled());
+    expect(result.current).toBe(false);
+  });
+});
+
+describe('useCertOpsWorkspaceKillSwitch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
+  });
+
+  it('loads the workspace pause state', async () => {
+    getWorkspaceCertOpsPauseStateMock.mockResolvedValue({
+      workspaceId: 'ws-1',
+      certOpsPaused: false,
+      certOpsEnabled: true,
+      certOpsActive: true,
+    });
+
+    const { result } = renderHook(() => useCertOpsWorkspaceKillSwitch());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.certOpsPaused).toBe(false);
+    expect(result.current.certOpsActive).toBe(true);
+    expect(result.current.error).toBe('');
+  });
+
+  it('surfaces a load failure', async () => {
+    getWorkspaceCertOpsPauseStateMock.mockRejectedValue(
+      Object.assign(new Error('boom'), {
+        response: { data: { error: 'Internal error' } },
+      })
+    );
+
+    const { result } = renderHook(() => useCertOpsWorkspaceKillSwitch());
+
+    await waitFor(() => expect(result.current.error).toBe('Internal error'));
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('setPaused calls the update endpoint and applies the returned state', async () => {
+    getWorkspaceCertOpsPauseStateMock.mockResolvedValue({
+      workspaceId: 'ws-1',
+      certOpsPaused: false,
+      certOpsEnabled: true,
+      certOpsActive: true,
+    });
+    updateWorkspaceCertOpsPauseStateMock.mockResolvedValue({
+      workspaceId: 'ws-1',
+      certOpsPaused: true,
+      certOpsEnabled: true,
+      certOpsActive: false,
+      changed: true,
+    });
+
+    const { result } = renderHook(() => useCertOpsWorkspaceKillSwitch());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await result.current.setPaused(true, 'incident');
+
+    expect(updateWorkspaceCertOpsPauseStateMock).toHaveBeenCalledWith('ws-1', {
+      certOpsPaused: true,
+      reason: 'incident',
+    });
+    await waitFor(() => expect(result.current.certOpsPaused).toBe(true));
+    expect(result.current.certOpsActive).toBe(false);
   });
 });

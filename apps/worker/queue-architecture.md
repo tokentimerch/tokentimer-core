@@ -80,7 +80,8 @@ the Helm CronJob schedules.
 | Alert Delivery | `1/5 * * * *` | `WORKER_DELIVERY_CRON` | No |
 | Weekly Digest | `0 9 * * 1` | `WORKER_WEEKLY_DIGEST_CRON` | No |
 | Endpoint Check | `*/1 * * * *` | `WORKER_ENDPOINT_CHECK_CRON` | No |
-| Auto Sync | `0 * * * *` | `WORKER_AUTO_SYNC_CRON` | No |
+| Auto Sync | `*/1 * * * *` | `WORKER_AUTO_SYNC_CRON` | No |
+| CertOps Maintenance | `*/1 * * * *` | `WORKER_CERTOPS_CRON` | No |
 
 The runner also supports legacy interval mode for local testing or special
 deployments: set a worker cron variable to `interval`, then configure the

@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const {
   assertNoUnredactedGenericSecretMaterial,
@@ -7,6 +8,16 @@ const {
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
+const {
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  validateRenewalProfile,
+} = require("./renewalProfile");
+const {
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+  assertRenewalPerCaCapacityAvailable,
+} = require("./renewalCapacity");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -21,7 +32,25 @@ const CERTOPS_JOB_LOG_EVENT_TYPE_INVALID =
   "CERTOPS_JOB_LOG_EVENT_TYPE_INVALID";
 const CERTOPS_JOB_METADATA_INVALID = "CERTOPS_JOB_METADATA_INVALID";
 const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
+const CERTOPS_JOB_EXECUTION_FIELD_INVALID =
+  "CERTOPS_JOB_EXECUTION_FIELD_INVALID";
+const CERTOPS_JOB_EXECUTION_FIELD_REQUIRED =
+  "CERTOPS_JOB_EXECUTION_FIELD_REQUIRED";
+const CERTOPS_JOB_MODE_INVALID = "CERTOPS_JOB_MODE_INVALID";
+const CERTOPS_JOB_MODE_TERMINAL_INVALID =
+  "CERTOPS_JOB_MODE_TERMINAL_INVALID";
+const CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE =
+  "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
+const CERTOPS_RENEWAL_AUTO_RENEW_DISABLED = "CERTOPS_RENEWAL_AUTO_RENEW_DISABLED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
+
+// Job execution mode. Persisted on certificate_jobs.mode and included in the
+// signed dispatch payload. Required at creation; immutable afterwards.
+// "dry_run" must NEVER terminate as "succeeded" — use "dry_run_complete".
+// See COORDINATION-B4.md at the worktree root.
+const JOB_MODES = Object.freeze(["real", "dry_run"]);
+const JOB_MODE_SET = new Set(JOB_MODES);
+const DEFAULT_JOB_MODE = "real";
 
 const JOB_STATUSES = Object.freeze([
   "pending_approval",
@@ -34,6 +63,13 @@ const JOB_STATUSES = Object.freeze([
   "failed",
   "blocked",
   "cancelled",
+  // Terminal outcome for mode === "dry_run" only. Never use "succeeded" for
+  // dry-run jobs (no keygen/renew/deploy/reload/verify actually ran).
+  "dry_run_complete",
+  // Terminal outcome when a lease was renewed (a side effect may have
+  // occurred) but the agent never reported a result. Requires manual
+  // operator reconciliation instead of a silent retry or success/failure.
+  "orphaned_unknown_effect",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
@@ -46,6 +82,8 @@ const TERMINAL_JOB_STATUSES = new Set([
   "failed",
   "blocked",
   "cancelled",
+  "dry_run_complete",
+  "orphaned_unknown_effect",
 ]);
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
@@ -77,6 +115,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "rejected",
     "blocked",
     "cancelled",
+    "dry_run_complete",
   ]),
   claimed: new Set([
     "running",
@@ -85,16 +124,39 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "rejected",
     "blocked",
     "cancelled",
+    "dry_run_complete",
+    "orphaned_unknown_effect",
   ]),
-  running: new Set(["succeeded", "failed", "rejected", "blocked", "cancelled"]),
+  running: new Set([
+    "succeeded",
+    "failed",
+    "rejected",
+    "blocked",
+    "cancelled",
+    "dry_run_complete",
+    "orphaned_unknown_effect",
+  ]),
   rejected: new Set(),
   succeeded: new Set(),
   failed: new Set(),
   blocked: new Set(),
   cancelled: new Set(),
+  dry_run_complete: new Set(),
+  orphaned_unknown_effect: new Set(),
 });
 
-const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
+// "issue" requests a brand-new certificate that TokenTimer does not track
+// yet. It is a control-plane-only operation: the agent never sees it, because
+// signed dispatch translates it to the wire-level action "renew" (identical
+// execution). See docs/adr/0008-certops-upfront-issuance.md.
+const JOB_OPERATIONS = Object.freeze([
+  "issue",
+  "renew",
+  "deploy",
+  "reload",
+  "revoke",
+  "noop",
+]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
 const JOB_SOURCES = Object.freeze([
@@ -106,8 +168,17 @@ const JOB_SOURCES = Object.freeze([
   "endpoint-monitor",
   "control-plane",
   "external",
+  // This provenance is assigned only by the human provision-intent service.
+  // It distinguishes narrow controller commands from generic deploy jobs.
+  "controller_provisioning",
 ]);
 const JOB_SOURCE_SET = new Set(JOB_SOURCES);
+
+// Immutable at insert: agent claim path only sees 'agent'; controller
+// provisioning delivery only sees 'controller' (B2).
+const JOB_EXECUTOR_KINDS = Object.freeze(["agent", "controller"]);
+const JOB_EXECUTOR_KIND_SET = new Set(JOB_EXECUTOR_KINDS);
+const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
 
 const SUBJECT_TYPES = Object.freeze([
   "managed_certificate",
@@ -131,6 +202,11 @@ const JOB_LOG_EVENT_TYPES = Object.freeze([
   "job.cancelled",
   "job.status_updated",
   "evidence.attached",
+  // Approval gate lifecycle (kept in sync with the migration-25 CHECK
+  // constraint on certificate_job_log.event_type).
+  "approval.granted",
+  "approval.rejected",
+  "approval.invalidated",
 ]);
 const JOB_LOG_EVENT_TYPE_SET = new Set(JOB_LOG_EVENT_TYPES);
 
@@ -139,16 +215,38 @@ const SAFE_JOB_SELECT_FIELDS = `
   workspace_id,
   operation,
   status,
+  mode,
   source,
+  executor_kind,
   requested_by_user_id,
   requested_by_api_token_id,
   idempotency_key,
+  creation_request_hash,
   subject_type,
   subject_id,
   payload,
   result_metadata,
   error_code,
   error_message,
+  claimed_by_agent_id,
+  claimed_by_controller_cluster_id,
+  claim_id,
+  lease_expires_at,
+  lease_renewed_at,
+  attempt_count,
+  max_attempts,
+  next_attempt_at,
+  scheduled_for,
+  assigned_agent_id,
+  required_target_selector,
+  required_dns_provider,
+  required_command_profile,
+  approved_by_user_id,
+  approved_at,
+  approved_payload_hash,
+  approved_canonical_intent_hash,
+  needs_operator_reconciliation,
+  reconciliation_reason,
   created_at,
   updated_at,
   queued_at,
@@ -237,6 +335,25 @@ function normalizeOptionalShortText(value, fieldName) {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (trimmed.length > MAX_SHORT_TEXT_LENGTH) {
+    throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function normalizeRequesterIdentity(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+    }
+    return String(value);
+  }
+  if (typeof value !== "string") {
+    throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_SHORT_TEXT_LENGTH) {
     throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
   }
   assertSafePublicValue(trimmed);
@@ -392,6 +509,287 @@ function normalizeEnum(value, allowedSet, code, fieldName, fallback = null) {
   return trimmed;
 }
 
+// --- Execution-field validation (job-payload.schema.json bounds) ---
+//
+// The stored certificate_jobs payload may carry the execution fields the
+// agent consumes for renew/deploy/reload (blessed execution fields). This
+// validator mirrors the schema constraints so a malformed field is rejected
+// at creation instead of at dispatch. certificatePem is deliberately NOT in
+// this list: the persistence boundary (fieldNameLooksForbidden's "pem" ban)
+// rejects it, because certificate PEM is attached only at signed dispatch
+// time and never stored in the payload column.
+
+const ACME_KINDS = Object.freeze(["certbot", "acme.sh"]);
+const ACME_KIND_SET = new Set(ACME_KINDS);
+const COMMAND_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const RELOAD_SERVICE_PATTERN = /^[A-Za-z0-9_.:@-]{1,128}$/;
+const DNS_PROVIDER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+function executionFieldError(fieldName) {
+  return serviceError(
+    `CertOps job payload field ${fieldName} is invalid`,
+    CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  );
+}
+
+const EXECUTION_FIELD_VALIDATORS = Object.freeze({
+  commandRef(value) {
+    if (typeof value !== "string" || !COMMAND_REF_PATTERN.test(value)) {
+      throw executionFieldError("commandRef");
+    }
+  },
+  caEndpoint(value) {
+    if (typeof value !== "string" || value.length > 512) {
+      throw executionFieldError("caEndpoint");
+    }
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch (_error) {
+      throw executionFieldError("caEndpoint");
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw executionFieldError("caEndpoint");
+    }
+  },
+  acmeKind(value) {
+    if (typeof value !== "string" || !ACME_KIND_SET.has(value)) {
+      throw executionFieldError("acmeKind");
+    }
+  },
+  keyRotation(value) {
+    if (typeof value !== "boolean") {
+      throw executionFieldError("keyRotation");
+    }
+  },
+  certPath(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+      throw executionFieldError("certPath");
+    }
+  },
+  reloadService(value) {
+    if (typeof value !== "string" || !RELOAD_SERVICE_PATTERN.test(value)) {
+      throw executionFieldError("reloadService");
+    }
+  },
+  verifyHost(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 255) {
+      throw executionFieldError("verifyHost");
+    }
+  },
+  verifyPort(value) {
+    if (!Number.isInteger(value) || value < 1 || value > 65535) {
+      throw executionFieldError("verifyPort");
+    }
+  },
+  dnsZone(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 255) {
+      throw executionFieldError("dnsZone");
+    }
+  },
+  dnsProvider(value) {
+    if (typeof value !== "string" || !DNS_PROVIDER_PATTERN.test(value)) {
+      throw executionFieldError("dnsProvider");
+    }
+  },
+});
+
+const EXECUTION_FIELD_NAMES = Object.freeze(
+  Object.keys(EXECUTION_FIELD_VALIDATORS),
+);
+
+// Which execution fields make sense on which operation. Execution fields on
+// operations that never execute them (noop/revoke) indicate a caller bug and
+// are rejected rather than silently dispatched to the agent.
+const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+  // An issue job runs the exact same agent pipeline as a renew (ACME order,
+  // deploy, optional reload, verify), so it accepts the same execution fields.
+  issue: new Set([
+    "commandRef",
+    "caEndpoint",
+    "acmeKind",
+    "keyRotation",
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+    "dnsZone",
+    "dnsProvider",
+  ]),
+  renew: new Set([
+    "commandRef",
+    "caEndpoint",
+    "acmeKind",
+    "keyRotation",
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+    "dnsZone",
+    "dnsProvider",
+  ]),
+  deploy: new Set([
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+  ]),
+  reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
+  revoke: new Set(),
+  noop: new Set(),
+});
+
+// Fields an operation cannot function without. Only `issue` is covered today:
+// it is the one operation with no renewalProfile to fall back on (only
+// renew jobs get one, via validateRenewalProfileOnPayload / dispatch-time
+// merge), and DNS-01 is the only challenge mechanism this agent supports
+// (docs/certops/CONTEXT.md), so every field the agent needs to actually run
+// the ACME order must be present on the payload at creation time. Without
+// this, validateExecutionFields only validated fields that were present,
+// so an issue request missing commandRef/caEndpoint/dnsZone/dnsProvider was
+// accepted, a provisioning certificate row and job were created, and the
+// gap surfaced only later on the execution plane -- potentially after a
+// real, rate-limited ACME order had already been placed.
+const REQUIRED_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+  issue: new Set(["commandRef", "caEndpoint", "certPath", "dnsZone", "dnsProvider"]),
+});
+
+// Multi-destination deployment is a real agent capability, but only through a
+// renewalProfile.deploymentTargets array on a renew job. An `issue` payload has
+// no profile: its renewal configuration is DERIVED from the payload after the
+// certificate exists, and the derivation reads deploymentTargets[0] and nothing
+// else. So an issue request carrying several targets was accepted, deployed to
+// all of them, and then produced a renewal profile describing only the first,
+// meaning every later renewal quietly stopped maintaining the rest. Refuse the
+// shape instead: failing the request is recoverable, a certificate that renews
+// on one host out of three is not, and it fails silently months later.
+const MAX_ISSUE_DEPLOYMENT_TARGETS = 1;
+
+function validateIssueDeploymentTargets(payload, operation) {
+  if (operation !== "issue") return;
+  const targets = payload?.deploymentTargets;
+  if (targets === null || targets === undefined) return;
+  if (!Array.isArray(targets)) {
+    throw serviceError(
+      "CertOps job payload field deploymentTargets must be an array",
+      CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+  }
+  if (targets.length > MAX_ISSUE_DEPLOYMENT_TARGETS) {
+    throw serviceError(
+      "CertOps issue jobs accept at most one deploymentTargets entry, because " +
+        "the renewal profile derived from the issuance describes a single " +
+        "target; issue once per destination, or renew with an explicit " +
+        "multi-target renewalProfile",
+      CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+  }
+}
+
+function validateExecutionFields(payload, operation) {
+  const allowedForOperation =
+    EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+  for (const fieldName of EXECUTION_FIELD_NAMES) {
+    if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
+    const value = payload[fieldName];
+    if (value === null || value === undefined) continue;
+    if (!allowedForOperation.has(fieldName)) {
+      throw serviceError(
+        `CertOps job payload field ${fieldName} is not valid for the ` +
+          `${operation} operation`,
+        CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      );
+    }
+    EXECUTION_FIELD_VALIDATORS[fieldName](value);
+  }
+
+  validateIssueDeploymentTargets(payload, operation);
+
+  const requiredForOperation =
+    REQUIRED_EXECUTION_FIELDS_BY_OPERATION[operation];
+  if (!requiredForOperation) return;
+  for (const fieldName of requiredForOperation) {
+    const present =
+      Object.prototype.hasOwnProperty.call(payload, fieldName) &&
+      payload[fieldName] !== null &&
+      payload[fieldName] !== undefined;
+    if (!present) {
+      throw serviceError(
+        `CertOps job payload field ${fieldName} is required for the ` +
+          `${operation} operation`,
+        CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
+      );
+    }
+  }
+}
+
+/**
+ * Renew jobs carry an immutable renewalProfile snapshot so approval and
+ * dispatch bind against a complete execution contract. Automation-created
+ * renew jobs (scheduler) always require it. Manual/API renew jobs may omit
+ * it at create time but approveJob will refuse to approve without one.
+ */
+function validateRenewalProfileOnPayload(
+  payload,
+  operation,
+  { required = false } = {},
+) {
+  if (operation !== "renew") {
+    if (
+      payload &&
+      Object.prototype.hasOwnProperty.call(payload, "renewalProfile")
+    ) {
+      throw serviceError(
+        "renewalProfile is only valid on renew jobs",
+        CERTOPS_RENEWAL_PROFILE_INVALID,
+      );
+    }
+    return null;
+  }
+  const hasProfile =
+    payload &&
+    Object.prototype.hasOwnProperty.call(payload, "renewalProfile");
+  if (!hasProfile && !required) return null;
+  try {
+    return validateRenewalProfile(payload?.renewalProfile);
+  } catch (error) {
+    if (
+      error?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+      error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+    ) {
+      throw error;
+    }
+    throw serviceError(
+      error?.message || "renewalProfile is invalid",
+      CERTOPS_RENEWAL_PROFILE_INVALID,
+    );
+  }
+}
+
+function normalizeJobMode(value) {
+  // Omitted mode defaults to "real". Dry-run is never an ambient default:
+  // callers must pass mode: "dry_run" explicitly at creation time.
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_JOB_MODE;
+  }
+  return normalizeEnum(value, JOB_MODE_SET, CERTOPS_JOB_MODE_INVALID, "mode");
+}
+
+function assertModeAllowsTerminalStatus(mode, status) {
+  if (mode === "dry_run" && status === "succeeded") {
+    throw serviceError(
+      'dry_run jobs must terminate as dry_run_complete, never succeeded',
+      CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+  }
+  if (mode === "real" && status === "dry_run_complete") {
+    throw serviceError(
+      "dry_run_complete is only valid for dry_run jobs",
+      CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+  }
+}
+
 function normalizeOptionalEnum(value, allowedSet, code, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   return normalizeEnum(value, allowedSet, code, fieldName);
@@ -463,24 +861,51 @@ function withStatusTransitionOutcome(job, decision) {
 function initialLifecycleTimestamps(options, status) {
   const now = new Date();
   const queuedAt =
-    normalizeOptionalDate(options.queuedAt, "queuedAt") ||
+    options.queuedAt ||
     (ACTIVE_JOB_STATUSES.has(status) ? now : null);
   const startedAt =
-    normalizeOptionalDate(options.startedAt, "startedAt") ||
+    options.startedAt ||
     (status === "running" ? now : null);
   const completedAt =
-    normalizeOptionalDate(options.completedAt, "completedAt") ||
-    (["succeeded", "failed", "blocked"].includes(status) ? now : null);
+    options.completedAt ||
+    ([
+      "succeeded",
+      "failed",
+      "blocked",
+      "dry_run_complete",
+      "orphaned_unknown_effect",
+    ].includes(status)
+      ? now
+      : null);
   // The database column retains the American spelling for compatibility. The
-  // public job state and service option use the plan's canonical "cancelled".
+  // public job state and service option use the canonical "cancelled".
   const cancelledAt =
-    normalizeOptionalDate(options.cancelledAt, "cancelledAt") ||
+    options.cancelledAt ||
     (status === "cancelled" ? now : null);
 
   return { queuedAt, startedAt, completedAt, cancelledAt };
 }
 
-function normalizeSubject(options) {
+function normalizeExplicitLifecycleTimestamps(options) {
+  return {
+    queuedAt: normalizeOptionalDate(options.queuedAt, "queuedAt"),
+    startedAt: normalizeOptionalDate(options.startedAt, "startedAt"),
+    completedAt: normalizeOptionalDate(options.completedAt, "completedAt"),
+    cancelledAt: normalizeOptionalDate(options.cancelledAt, "cancelledAt"),
+  };
+}
+
+// renew/deploy/reload/revoke always act on something that must already
+// exist (a certificate, domain, endpoint, etc.), so a subject reference is
+// mandatory, though its type may be "managed_certificate" (agent-executable,
+// dashboard-linked) or a free-text type like "domain"/"endpoint"/"external"
+// (an audit-trail job for something an external executor already handles,
+// not yet adopted as a managed certificate). "issue" forbids a subject
+// (issuance.js: it creates the certificate identity itself). "noop" is a
+// pure heartbeat/connectivity check with nothing to reference.
+const SUBJECT_REQUIRED_OPERATIONS = new Set(["renew", "deploy", "reload", "revoke"]);
+
+function normalizeSubject(options, operation) {
   const subjectType = normalizeOptionalEnum(
     options.subjectType,
     SUBJECT_TYPE_SET,
@@ -494,7 +919,251 @@ function normalizeSubject(options) {
   if (subjectType && !subjectId) {
     throw serviceError("subjectId is required with subjectType", CERTOPS_JOB_INVALID);
   }
+  if (!subjectType && SUBJECT_REQUIRED_OPERATIONS.has(operation)) {
+    throw serviceError(
+      `subjectType and subjectId are required for the ${operation} operation`,
+      CERTOPS_JOB_INVALID,
+    );
+  }
   return { subjectType, subjectId };
+}
+
+/**
+ * Resolve the immutable executor lane and the optional B5 routing selectors
+ * for a new job. Controller provisioning source always forces the controller
+ * lane; any other source defaults to agent unless the caller overrides.
+ */
+function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId = null) {
+  const inferredKind =
+    source === CONTROLLER_PROVISIONING_JOB_SOURCE ? "controller" : "agent";
+  const executorKind = normalizeEnum(
+    options.executorKind,
+    JOB_EXECUTOR_KIND_SET,
+    CERTOPS_JOB_INVALID,
+    "executorKind",
+    inferredKind,
+  );
+  if (
+    source === CONTROLLER_PROVISIONING_JOB_SOURCE &&
+    executorKind !== "controller"
+  ) {
+    throw serviceError(
+      "controller_provisioning jobs must use executor_kind=controller",
+      CERTOPS_JOB_INVALID,
+    );
+  }
+  if (
+    source !== CONTROLLER_PROVISIONING_JOB_SOURCE &&
+    executorKind === "controller"
+  ) {
+    throw serviceError(
+      "executor_kind=controller is reserved for controller_provisioning jobs",
+      CERTOPS_JOB_INVALID,
+    );
+  }
+
+  // Explicit caller/payload assignment always wins; only fall back to the
+  // certificate's stored discovery agent (agent_filesystem source) when
+  // neither was supplied, so a caller can still override for a legitimate
+  // hand-off (e.g. re-homing a certificate to a replacement agent).
+  const assignedAgentId =
+    normalizeOptionalShortText(
+      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
+      "assignedAgentId",
+    ) || null;
+
+  const requiredTargetSelector =
+    normalizeOptionalPublicText(
+      options.requiredTargetSelector ??
+        payload.targetSelector ??
+        (payload.target && typeof payload.target === "object"
+          ? payload.target.reference
+          : null),
+      "requiredTargetSelector",
+      512,
+    ) || null;
+
+  const requiredDnsProvider =
+    normalizeOptionalShortText(
+      options.requiredDnsProvider ?? payload.dnsProvider,
+      "requiredDnsProvider",
+    ) || null;
+  if (
+    requiredDnsProvider &&
+    !DNS_PROVIDER_PATTERN.test(requiredDnsProvider)
+  ) {
+    throw executionFieldError("dnsProvider");
+  }
+
+  const requiredCommandProfile =
+    normalizeOptionalShortText(
+      options.requiredCommandProfile ?? payload.commandRef,
+      "requiredCommandProfile",
+    ) || null;
+  if (
+    requiredCommandProfile &&
+    !COMMAND_REF_PATTERN.test(requiredCommandProfile)
+  ) {
+    throw executionFieldError("commandRef");
+  }
+
+  return {
+    executorKind,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
+  };
+}
+
+const AGENT_MUTATING_OPERATIONS = new Set([
+  "renew",
+  "deploy",
+  "reload",
+  "revoke",
+]);
+const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
+
+/**
+ * Can an agent actually deploy to this certificate's key?
+ *
+ * The single source of truth for that question. Job creation refuses a
+ * renew/deploy/reload/revoke against anything else, and the renewal scheduler
+ * counts the refusal as skipped_not_agent_deployable, so any other view that
+ * predicts whether a certificate will renew has to ask the same question here
+ * rather than restate the key-mode list. A second copy of this list is a second
+ * place for the answer to drift, and the drift is silent: a view that says a
+ * certificate is covered while the scheduler refuses it is worse than no view.
+ *
+ * A NULL key_mode means the certificate was only ever observed (an endpoint or
+ * domain monitor), so there is no key anywhere for an agent to rotate.
+ *
+ * @param {{ key_mode?: string|null }|string|null} certificateOrKeyMode
+ * @returns {boolean}
+ */
+function isAgentDeployableKeyMode(certificateOrKeyMode) {
+  const keyMode =
+    certificateOrKeyMode && typeof certificateOrKeyMode === "object"
+      ? certificateOrKeyMode.key_mode
+      : certificateOrKeyMode;
+  return AGENT_DEPLOYABLE_KEY_MODES.has(keyMode);
+}
+const SUBJECT_ID_UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Resolve certificate-ownership defaults for renew/deploy/reload/revoke jobs
+ * against a managed_certificate subject, and reject the ones that have no
+ * agent-manageable key custody at all. Two related problems this closes:
+ *
+ * 1. Without the key_mode check, a renew job could be created for a
+ *    certificate that was only ever observed (e.g. via an endpoint/domain
+ *    monitor: key_mode NULL, no agent target). Nothing can ever deploy to
+ *    it, so whichever agent later claims it fails immediately, surfacing as
+ *    a false cert_renewal_failed alert instead of a clear creation-time
+ *    error.
+ * 2. Without the auto-assign, a job with no requiredTargetSelector/
+ *    assignedAgentId is claimable by *any* online agent that declares
+ *    support for the operation (see agentDispatch.js claimJobs'
+ *    "assigned_agent_id IS NULL OR ..." matcher) -- including one with zero
+ *    relationship to the certificate. For a certificate discovered by a
+ *    specific agent (source = agent_filesystem), that agent's id is already
+ *    stored in public_metadata.controllerObservation.agentId; defaulting
+ *    assignedAgentId from it pins the job to that exact agent instead of
+ *    relying on every fleet agent's self-declared target-selector policy to
+ *    avoid overlap (which does not scale safely to hundreds of agents).
+ *
+ * Skipped entirely for subject ids that are not a real managed_certificates
+ * UUID: free-text subjects and most job-lifecycle test fixtures are not
+ * DB-backed rows here, so there is nothing to look up.
+ *
+ * "issue" is deliberately NOT in AGENT_MUTATING_OPERATIONS. Its subject row
+ * was created moments earlier by this same request (status 'provisioning',
+ * source 'agent_issuance'), so there is no prior discovery agent to inherit
+ * and the key_mode check would only be re-reading the value the issuance
+ * service just wrote. Issue jobs use open-claim routing, matched on the
+ * declared command profile and DNS provider like an unassigned renew.
+ */
+async function resolveManagedCertificateJobDefaults({
+  db,
+  workspaceId,
+  source,
+  operation,
+  subjectType,
+  subjectId,
+}) {
+  if (source === CONTROLLER_PROVISIONING_JOB_SOURCE) {
+    return { autoAssignedAgentId: null };
+  }
+  if (!AGENT_MUTATING_OPERATIONS.has(operation)) {
+    return { autoAssignedAgentId: null };
+  }
+  if (subjectType !== "managed_certificate" || !subjectId) {
+    return { autoAssignedAgentId: null };
+  }
+  if (!SUBJECT_ID_UUID_PATTERN.test(subjectId)) {
+    return { autoAssignedAgentId: null };
+  }
+
+  const result = await db.query(
+    `SELECT mc.key_mode,
+            mc.source,
+            mc.public_metadata->'controllerObservation'->>'agentId'
+              AS discovery_agent_id,
+            cp.status AS profile_status
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = $2::uuid
+      LIMIT 1`,
+    [workspaceId, subjectId],
+  );
+  const row = result.rows[0];
+  if (!row) return { autoAssignedAgentId: null };
+
+  if (!isAgentDeployableKeyMode(row)) {
+    throw serviceError(
+      "This certificate has no agent-manageable key custody (it was only " +
+        "observed, e.g. via an endpoint or domain monitor) and cannot be " +
+        `assigned an agent-executed ${operation} job`,
+      CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    );
+  }
+
+  // The renewal scheduler's own scan query already excludes certificates
+  // whose linked profile is 'disabled'/'archived' (renewalScheduler.js,
+  // AUTO_RENEW_DISABLED_PROFILE_STATUSES) - but that guarantee lives in the
+  // sweep's SQL, not here, so any *other* code path that creates an
+  // automation-sourced renew job directly (an alternate scheduler entry, a
+  // future batch job) would not be stopped by it. Re-checked here rather
+  // than left to the caller so the guarantee holds regardless of how job
+  // creation is reached. Scoped to source === "automation" only: a manager
+  // manually renewing (or bulk-renewing) a certificate whose profile has
+  // auto-renew switched off is the documented, intended way to still renew
+  // it yourself (see "Switching automatic renewal off" in automation.mdx) -
+  // only the *scheduler's automatic* pickup is supposed to skip it.
+  if (
+    source === "automation" &&
+    operation === "renew" &&
+    AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(row.profile_status)
+  ) {
+    throw serviceError(
+      "This certificate's renewal profile has automatic renewal switched " +
+        `off (status: ${row.profile_status}); an automation-sourced renew ` +
+        "job cannot be created for it",
+      CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
+    );
+  }
+
+  if (row.source !== "agent_filesystem" || !row.discovery_agent_id) {
+    return { autoAssignedAgentId: null };
+  }
+  const agentResult = await db.query(
+    `SELECT id FROM certops_agents WHERE workspace_id = $1 AND agent_id = $2 LIMIT 1`,
+    [workspaceId, row.discovery_agent_id],
+  );
+  return { autoAssignedAgentId: agentResult.rows[0]?.id || null };
 }
 
 function jobFromRow(row) {
@@ -504,16 +1173,40 @@ function jobFromRow(row) {
     workspaceId: row.workspace_id,
     operation: row.operation,
     status: row.status,
+    // Rows created before migration 26 have NULL mode; treat as real.
+    mode: row.mode || DEFAULT_JOB_MODE,
     source: row.source,
+    executorKind: row.executor_kind ?? "agent",
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
     idempotencyKey: row.idempotency_key,
+    creationRequestHash: row.creation_request_hash,
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     payload: parseJsonb(row.payload),
     resultMetadata: parseJsonb(row.result_metadata),
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    claimedByAgentId: row.claimed_by_agent_id ?? null,
+    claimedByControllerClusterId:
+      row.claimed_by_controller_cluster_id ?? null,
+    claimId: row.claim_id ?? null,
+    leaseExpiresAt: dateToIso(row.lease_expires_at),
+    leaseRenewedAt: dateToIso(row.lease_renewed_at),
+    attemptCount: row.attempt_count ?? 0,
+    maxAttempts: row.max_attempts ?? 3,
+    nextAttemptAt: dateToIso(row.next_attempt_at),
+    scheduledFor: dateToIso(row.scheduled_for),
+    assignedAgentId: row.assigned_agent_id ?? null,
+    requiredTargetSelector: row.required_target_selector ?? null,
+    requiredDnsProvider: row.required_dns_provider ?? null,
+    requiredCommandProfile: row.required_command_profile ?? null,
+    approvedByUserId: row.approved_by_user_id ?? null,
+    approvedAt: dateToIso(row.approved_at),
+    approvedPayloadHash: row.approved_payload_hash ?? null,
+    approvedCanonicalIntentHash: row.approved_canonical_intent_hash ?? null,
+    needsOperatorReconciliation: Boolean(row.needs_operator_reconciliation),
+    reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     queuedAt: dateToIso(row.queued_at),
@@ -533,22 +1226,53 @@ function canonicalizeJson(value) {
   );
 }
 
-function idempotencyIdentity(value) {
+function legacyJobCreationIdentity(value) {
   return JSON.stringify(
     canonicalizeJson({
       operation: value.operation,
-      status: value.status,
       source: value.source,
-      requestedByUserId: value.requestedByUserId || null,
-      requestedByApiTokenId: value.requestedByApiTokenId || null,
+      mode: value.mode || DEFAULT_JOB_MODE,
+      requestedByUserId: normalizeRequesterIdentity(
+        value.requestedByUserId,
+        "requestedByUserId",
+      ),
+      requestedByApiTokenId: normalizeRequesterIdentity(
+        value.requestedByApiTokenId,
+        "requestedByApiTokenId",
+      ),
       subjectType: value.subjectType || null,
       subjectId: value.subjectId || null,
       payload: value.payload || {},
-      resultMetadata: value.resultMetadata || {},
-      errorCode: value.errorCode || null,
-      errorMessage: value.errorMessage || null,
     }),
   );
+}
+
+function jobCreationRequestFingerprint(value) {
+  // Hash only normalized public creation inputs. This immutable record is
+  // intentionally separate from a job's mutable lifecycle state so an exact
+  // replay remains valid after executor transitions.
+  const canonicalRequest = canonicalizeJson({
+    operation: value.operation,
+    status: value.status,
+    mode: value.mode || DEFAULT_JOB_MODE,
+    source: value.source,
+    requestedByUserId: value.requestedByUserId ?? null,
+    requestedByApiTokenId: value.requestedByApiTokenId ?? null,
+    subjectType: value.subjectType ?? null,
+    subjectId: value.subjectId ?? null,
+    payload: value.payload ?? {},
+    resultMetadata: value.resultMetadata ?? {},
+    errorCode: value.errorCode ?? null,
+    errorMessage: value.errorMessage ?? null,
+    queuedAt: value.queuedAt ?? null,
+    startedAt: value.startedAt ?? null,
+    completedAt: value.completedAt ?? null,
+    cancelledAt: value.cancelledAt ?? null,
+  });
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(canonicalRequest), "utf8")
+    .digest("hex");
 }
 
 function jobLogFromRow(row) {
@@ -614,13 +1338,31 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
+  // Per-job approval gate: a job that requires human approval starts at
+  // pending_approval and only reaches the claimable 'pending' status through
+  // services/certops/jobApprovals.approveJob. The flag only chooses the
+  // default initial status; an explicit conflicting status is rejected so a
+  // caller cannot both request a gate and bypass it.
+  const requiresApproval = options.requiresApproval === true;
+  if (
+    requiresApproval &&
+    options.status !== undefined &&
+    options.status !== null &&
+    options.status !== "pending_approval"
+  ) {
+    throw serviceError(
+      "A CertOps job that requires approval must start at pending_approval",
+      CERTOPS_JOB_STATUS_INVALID,
+    );
+  }
   const status = normalizeEnum(
     options.status,
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",
-    "pending",
+    requiresApproval ? "pending_approval" : "pending",
   );
+  const mode = normalizeJobMode(options.mode);
   const source = normalizeEnum(
     options.source,
     JOB_SOURCE_SET,
@@ -628,12 +1370,46 @@ async function createCertificateJob(options) {
     "source",
     "api",
   );
-  const { subjectType, subjectId } = normalizeSubject(options);
+  const { subjectType, subjectId } = normalizeSubject(options, operation);
+  const requestedByUserId = normalizeRequesterIdentity(
+    options.requestedByUserId,
+    "requestedByUserId",
+  );
+  const requestedByApiTokenId = normalizeRequesterIdentity(
+    options.requestedByApiTokenId,
+    "requestedByApiTokenId",
+  );
   const idempotencyKey = normalizeOptionalShortText(
     options.idempotencyKey,
     "idempotencyKey",
   );
   const payload = normalizePublicObject(options.payload, "payload");
+  // Persist mode on the payload as well so signed dispatch (which spreads
+  // certificate_jobs.payload) always carries the immutable mode contract
+  // even when a caller forgets to select the column. The row column remains
+  // the source of truth and is never updated after insert.
+  payload.mode = mode;
+  validateExecutionFields(payload, operation);
+  validateRenewalProfileOnPayload(payload, operation, {
+    required:
+      source === "automation" || options.requireRenewalProfile === true,
+  });
+  assertModeAllowsTerminalStatus(mode, status);
+  const { autoAssignedAgentId } = await resolveManagedCertificateJobDefaults({
+    db,
+    workspaceId,
+    source,
+    operation,
+    subjectType,
+    subjectId,
+  });
+  const {
+    executorKind,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
+  } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -643,21 +1419,80 @@ async function createCertificateJob(options) {
     options.errorMessage,
     "errorMessage",
   );
+  const explicitLifecycleTimestamps = normalizeExplicitLifecycleTimestamps(options);
   const { queuedAt, startedAt, completedAt, cancelledAt } =
-    initialLifecycleTimestamps(options, status);
-  const requestIdentity = idempotencyIdentity({
+    initialLifecycleTimestamps(explicitLifecycleTimestamps, status);
+  const creationRequestHash = jobCreationRequestFingerprint({
     operation,
     status,
+    mode,
     source,
-    requestedByUserId: options.requestedByUserId,
-    requestedByApiTokenId: options.requestedByApiTokenId,
+    executorKind,
+    requestedByUserId,
+    requestedByApiTokenId,
     subjectType,
     subjectId,
     payload,
     resultMetadata,
     errorCode,
     errorMessage,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
+    queuedAt: dateToIso(explicitLifecycleTimestamps.queuedAt),
+    startedAt: dateToIso(explicitLifecycleTimestamps.startedAt),
+    completedAt: dateToIso(explicitLifecycleTimestamps.completedAt),
+    cancelledAt: dateToIso(explicitLifecycleTimestamps.cancelledAt),
   });
+
+  // Idempotent replays must not be rejected by the per-CA cap: a retry of an
+  // already-created renew job is not a new capacity reservation.
+  if (idempotencyKey) {
+    const existingBeforeInsert = await getJobByIdempotencyKey(
+      db,
+      workspaceId,
+      idempotencyKey,
+    );
+    if (existingBeforeInsert) {
+      const isMatchingReplay = existingBeforeInsert.creationRequestHash
+        ? existingBeforeInsert.creationRequestHash === creationRequestHash
+        : legacyJobCreationIdentity(existingBeforeInsert) ===
+          legacyJobCreationIdentity({
+            operation,
+            source,
+            mode,
+            requestedByUserId,
+            requestedByApiTokenId,
+            subjectType,
+            subjectId,
+            payload,
+          });
+      if (isMatchingReplay) {
+        return options.returnOutcome === true
+          ? { job: existingBeforeInsert, created: false }
+          : existingBeforeInsert;
+      }
+      throw serviceError(
+        "Idempotency key was already used with a different CertOps job request",
+        CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+      );
+    }
+  }
+
+  // Authoritative per-(workspace, CA) capacity. Scheduler pre-filters are
+  // best-effort; bulk/manual paths share this transactional gate. issue and
+  // renew share the bucket: both place a real ACME order.
+  if (operation === "renew" || operation === "issue") {
+    await assertRenewalPerCaCapacityAvailable({
+      client: db,
+      workspaceId,
+      payload,
+      terminalStatuses: [...TERMINAL_JOB_STATUSES],
+      env: options.env || process.env,
+      perCaCap: options.perCaCap,
+    });
+  }
 
   try {
     const result = await db.query(
@@ -665,7 +1500,9 @@ async function createCertificateJob(options) {
          workspace_id,
          operation,
          status,
+         mode,
          source,
+         executor_kind,
          requested_by_user_id,
          requested_by_api_token_id,
          idempotency_key,
@@ -675,23 +1512,34 @@ async function createCertificateJob(options) {
          result_metadata,
          error_code,
          error_message,
+         assigned_agent_id,
+         required_target_selector,
+         required_dns_provider,
+         required_command_profile,
          queued_at,
          started_at,
          completed_at,
-        canceled_at
+        canceled_at,
+        creation_request_hash
        )
        VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+         $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19,
+         $20, $21, $22, $23, $24
        )
+       ON CONFLICT (workspace_id, idempotency_key)
+         WHERE idempotency_key IS NOT NULL
+       DO NOTHING
        RETURNING ${SAFE_JOB_SELECT_FIELDS}`,
       [
         workspaceId,
         operation,
         status,
+        mode,
         source,
-        options.requestedByUserId || null,
-        options.requestedByApiTokenId || null,
+        executorKind,
+        requestedByUserId,
+        requestedByApiTokenId,
         idempotencyKey,
         subjectType,
         subjectId,
@@ -699,14 +1547,63 @@ async function createCertificateJob(options) {
         JSON.stringify(resultMetadata),
         errorCode,
         errorMessage,
+        assignedAgentId,
+        requiredTargetSelector,
+        requiredDnsProvider,
+        requiredCommandProfile,
         queuedAt,
         startedAt,
         completedAt,
         cancelledAt,
+        creationRequestHash,
       ],
     );
 
-    return jobFromRow(result.rows[0]);
+    const job = jobFromRow(result.rows[0]);
+    if (job) {
+      return options.returnOutcome === true ? { job, created: true } : job;
+    }
+
+    // ON CONFLICT DO NOTHING keeps the transaction usable for an idempotent
+    // replay, which is essential when the caller also persists an audit in the
+    // same transaction.
+    if (idempotencyKey) {
+      const existing = await getJobByIdempotencyKey(
+        db,
+        workspaceId,
+        idempotencyKey,
+      );
+      if (existing) {
+        // Rows created before migration 20 have no immutable request hash.
+        // Their original lifecycle inputs cannot be reconstructed from mutable
+        // state, so replay falls back to the historic immutable-subset check
+        // and deliberately leaves the legacy NULL value untouched.
+        const isMatchingReplay = existing.creationRequestHash
+          ? existing.creationRequestHash === creationRequestHash
+          : legacyJobCreationIdentity(existing) ===
+            legacyJobCreationIdentity({
+              operation,
+              source,
+              mode,
+              requestedByUserId,
+              requestedByApiTokenId,
+              subjectType,
+              subjectId,
+              payload,
+            });
+        if (isMatchingReplay) {
+          return options.returnOutcome === true
+            ? { job: existing, created: false }
+            : existing;
+        }
+        throw serviceError(
+          "Idempotency key was already used with a different CertOps job request",
+          CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+        );
+      }
+    }
+
+    throw serviceError("Certificate job insert did not return a job", CERTOPS_JOB_INVALID);
   } catch (error) {
     if (
       idempotencyKey &&
@@ -721,8 +1618,23 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        if (idempotencyIdentity(existing) === requestIdentity) {
-          return existing;
+        const isMatchingReplay = existing.creationRequestHash
+          ? existing.creationRequestHash === creationRequestHash
+          : legacyJobCreationIdentity(existing) ===
+            legacyJobCreationIdentity({
+              operation,
+              source,
+              mode,
+              requestedByUserId,
+              requestedByApiTokenId,
+              subjectType,
+              subjectId,
+              payload,
+            });
+        if (isMatchingReplay) {
+          return options.returnOutcome === true
+            ? { job: existing, created: false }
+            : existing;
         }
         throw serviceError(
           "Idempotency key was already used with a different CertOps job request",
@@ -734,13 +1646,76 @@ async function createCertificateJob(options) {
   }
 }
 
-async function getCertificateJobById(options) {
+function getCertificateJobById(options) {
   const db = options.client || pool;
   return getJobById(
     db,
     normalizeWorkspaceId(options.workspaceId),
     normalizeRequiredId(options.jobId),
   );
+}
+
+/**
+ * Runs the exact payload normalization and per-operation execution-field
+ * validation that createCertificateJob applies, without touching the
+ * database. Dry-run preflight uses this so a dry run rejects the same
+ * payloads the real run would.
+ */
+function validateJobPayloadForOperation(payload, operation) {
+  const normalizedOperation = normalizeEnum(
+    operation,
+    JOB_OPERATION_SET,
+    CERTOPS_JOB_OPERATION_INVALID,
+    "operation",
+  );
+  const normalizedPayload = normalizePublicObject(payload, "payload");
+  validateExecutionFields(normalizedPayload, normalizedOperation);
+  // Preflight validates a profile when one is supplied; incomplete profiles
+  // are rejected the same way a real create would reject them.
+  validateRenewalProfileOnPayload(normalizedPayload, normalizedOperation, {
+    required: false,
+  });
+  return normalizedPayload;
+}
+
+/**
+ * Returns the newest non-terminal job for a subject (optionally scoped to
+ * one operation), or null. Lets preflight surface an in-flight renewal that
+ * a new job would race against.
+ */
+async function findActiveJobForSubject(options) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const { subjectType, subjectId } = normalizeSubject(options);
+  const params = [workspaceId, subjectType, subjectId, [...ACTIVE_JOB_STATUSES]];
+  const conditions = [
+    "workspace_id = $1",
+    "subject_type = $2",
+    "subject_id = $3",
+    "status = ANY($4)",
+  ];
+
+  if (options.operation !== undefined && options.operation !== null && options.operation !== "") {
+    const operation = normalizeEnum(
+      options.operation,
+      JOB_OPERATION_SET,
+      CERTOPS_JOB_OPERATION_INVALID,
+      "operation",
+    );
+    params.push(operation);
+    conditions.push(`operation = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `SELECT ${SAFE_JOB_SELECT_FIELDS}
+       FROM certificate_jobs
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY created_at DESC, id ASC
+      LIMIT 1`,
+    params,
+  );
+
+  return result.rows[0] ? jobFromRow(result.rows[0]) : null;
 }
 
 async function listCertificateJobs(options) {
@@ -801,6 +1776,16 @@ async function listCertificateJobs(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  // Counted over the filter predicate the page itself uses, before LIMIT and
+  // OFFSET are appended. A total taken over a wider predicate would advertise
+  // pages that hold none of the rows the caller asked for.
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total
+       FROM certificate_jobs
+      WHERE ${conditions.join(" AND ")}`,
+    params,
+  );
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_JOB_SELECT_FIELDS}
@@ -813,7 +1798,11 @@ async function listCertificateJobs(options) {
 
   return {
     items: result.rows.map(jobFromRow),
-    pagination: { limit, offset },
+    pagination: {
+      limit,
+      offset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
   };
 }
 
@@ -858,6 +1847,7 @@ async function updateCertificateJobStatus(options) {
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertModeAllowsTerminalStatus(current.mode, status);
     const decision = jobStatusTransitionDecision(current.status, status);
     if (!decision.applied) {
       return withStatusTransitionOutcome(current, decision);
@@ -880,7 +1870,14 @@ async function updateCertificateJobStatus(options) {
                 ELSE started_at
               END,
               completed_at = CASE
-                WHEN $3 IN ('succeeded', 'failed', 'blocked') THEN COALESCE(completed_at, NOW())
+                WHEN $3 IN (
+                  'succeeded',
+                  'failed',
+                  'blocked',
+                  'dry_run_complete',
+                  'orphaned_unknown_effect'
+                )
+                  THEN COALESCE(completed_at, NOW())
                 ELSE completed_at
               END,
               -- Keep the legacy column name only as storage compatibility for
@@ -998,6 +1995,8 @@ async function listCertificateJobLog(options) {
 
 module.exports = {
   CERTOPS_JOB_INVALID,
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_METADATA_INVALID,
@@ -1007,8 +2006,18 @@ module.exports = {
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   CERTOPS_JOB_WORKSPACE_REQUIRED,
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
+  CERTOPS_JOB_MODE_INVALID,
+  CERTOPS_JOB_MODE_TERMINAL_INVALID,
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  DEFAULT_JOB_MODE,
   JOB_LOG_EVENT_TYPES,
+  JOB_MODES,
   JOB_OPERATIONS,
+  JOB_EXECUTOR_KINDS,
   JOB_SOURCES,
   JOB_STATUSES,
   JOB_STATUS_TRANSITIONS,
@@ -1016,16 +2025,21 @@ module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
   appendCertificateJobLog,
+  assertModeAllowsTerminalStatus,
   assertSafePublicValue,
   createCertificateJob,
   dateToIso,
   fieldNameLooksForbidden,
+  findActiveJobForSubject,
   getCertificateJobById,
+  isAgentDeployableKeyMode,
   isTerminalJobStatus,
+  jobCreationRequestFingerprint,
   jobFromRow,
   jobLogFromRow,
   listCertificateJobLog,
   listCertificateJobs,
+  normalizeJobMode,
   normalizeLimit,
   normalizeOffset,
   normalizePublicObject,
@@ -1033,10 +2047,14 @@ module.exports = {
   normalizeWorkspaceId,
   serviceError,
   updateCertificateJobStatus,
+  validateJobPayloadForOperation,
+  validateRenewalProfileOnPayload,
   _test: {
     assertSafePublicValue,
     fieldNameLooksForbidden,
     normalizePublicObject,
     parseJsonb,
+    validateExecutionFields,
+    EXECUTION_FIELDS_BY_OPERATION,
   },
 };

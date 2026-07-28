@@ -1,0 +1,49 @@
+{
+  "name": "@tokentimer/agent",
+  "version": "0.11.0",
+  "private": true,
+  "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps",
+  "license": "BUSL-1.1",
+  "packageManager": "pnpm@11.13.0",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "tokentimer-agent": "bin/tokentimer-agent.js",
+    "certops-dns-hook": "bin/certops-dns-hook.js"
+  },
+  "scripts": {
+    "start": "node bin/tokentimer-agent.js",
+    "build": "node scripts/check-shipped-sources.js",
+    "sync-vendor": "node scripts/sync-vendor.js",
+    "pack:release": "node scripts/pack-release.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test src/**/*.test.js scripts/**/*.test.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "!src/**/*.test.js",
+    "!src/verify/fixtures/**",
+    "vendor",
+    "scripts/install-agent.sh",
+    "scripts/tokentimer-agent.service",
+    "scripts/host-sandbox.js",
+    "scripts/validate-server-url.js",
+    "scripts/check-shipped-sources.js",
+    "scripts/sync-vendor.js",
+    "scripts/pack-release.js",
+    "README.md",
+    "LICENSE*",
+    "package.json"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "ajv": "8.18.0",
+    "ajv-formats": "3.0.1",
+    "eslint": "9.39.2"
+  },
+  "engines": {
+    "node": ">=22.0.0 <25.0.0"
+  }
+}

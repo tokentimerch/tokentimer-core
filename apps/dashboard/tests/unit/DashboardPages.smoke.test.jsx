@@ -257,6 +257,80 @@ describe('Dashboard page smoke tests', () => {
     expectTextPresent(/System admin after login: yes/);
   });
 
+  it('renders the newly wired CertOps audit actions without crashing', async () => {
+    workspaceListMock.mockResolvedValue({
+      items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
+    });
+    alertGetAuditEventsMock.mockResolvedValue([
+      {
+        id: 'ev-certops-approval',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_JOB_APPROVAL_GRANTED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { jobId: 'job-1', status: 'approved', payloadHash: 'abc123' },
+      },
+      {
+        id: 'ev-certops-bootstrap',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { bootstrap_token_id: 'bt-1', name: 'ci-agent', status: 'active' },
+      },
+      {
+        id: 'ev-certops-retired',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_AGENT_RETIRED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { agentId: 'agent-1', force: false, leasedJobs: 0 },
+      },
+      {
+        id: 'ev-certops-paused',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_WORKSPACE_PAUSED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { certOpsPaused: true, previousCertOpsPaused: false },
+      },
+      {
+        id: 'ev-certops-provision',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { clusterId: 'cluster-1', jobId: 'job-2' },
+      },
+      {
+        id: 'ev-certops-observation',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_CONTROLLER_OBSERVATION_ACCEPTED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { clusterId: 'cluster-1', observationId: 'obs-1' },
+      },
+      {
+        id: 'ev-certops-rotation',
+        occurred_at: new Date().toISOString(),
+        action: 'CERTOPS_SIGNING_KEY_ROTATION_COMPLETED',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: { retired_signing_key_id: 'ttsk_old', active_signing_key_id: 'ttsk_new' },
+      },
+    ]);
+
+    renderWithProviders(<Audit {...baseProps} />);
+
+    await waitFor(() => expectTextPresent(/Job: job-1/));
+    expectTextPresent(/Token: bt-1/);
+    expectTextPresent(/Agent: agent-1/);
+    expectTextPresent(/Paused: yes/);
+    expectTextPresent(/Cluster: cluster-1/);
+    expectTextPresent(/Observation: obs-1/);
+    expectTextPresent(/Active: ttsk_new/);
+  });
+
   it('shows organization scope for system admins on Audit route', async () => {
     workspaceListMock.mockResolvedValue({
       items: [{ id: 'ws-1', name: 'Workspace', role: 'viewer' }],

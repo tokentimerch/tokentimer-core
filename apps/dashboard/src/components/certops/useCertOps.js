@@ -4,9 +4,11 @@ import { workspaceAPI } from '../../utils/apiClient';
 import {
   getCertificateInstances,
   getManagedCertificatesForToken,
+  getWorkspaceCertOpsPauseState,
   invalidateCertOpsInventoryCache,
   loadCertOpsInventoryIndex,
   probeCertOpsEnabled,
+  updateWorkspaceCertOpsPauseState,
 } from './certopsApi';
 import { pickPrimaryCertificate } from './certopsFormat';
 
@@ -116,6 +118,121 @@ export function useCertOpsCanManage() {
   }, [workspaceId]);
 
   return canManage;
+}
+
+/**
+ * Resolves whether the current user holds the workspace admin role. The
+ * kill switch (PUT /certops/settings) requires admin specifically
+ * (certops.kill_switch.manage), stricter than the workspace_manager-or-above
+ * gate used for other CertOps writes; backend RBAC remains authoritative
+ * (403 for non-admins), this only drives whether the control is shown.
+ */
+export function useCertOpsIsWorkspaceAdmin() {
+  const { workspaceId } = useWorkspace();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setIsAdmin(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    workspaceAPI
+      .get(workspaceId)
+      .then(ws => {
+        if (cancelled) return;
+        const role = String(ws?.role || '').toLowerCase();
+        setIsAdmin(role === 'admin');
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  return isAdmin;
+}
+
+/**
+ * Loads and manages the workspace CertOps kill-switch state.
+ *
+ * Reads GET /certops/settings (available to any human session member, even
+ * while the deployment-wide certops.enabled rollout is off) and exposes a
+ * `setPaused` action mapped to PUT /certops/settings (admin-only
+ * server-side). `certOpsActive` mirrors the server's composed
+ * `certOpsEnabled && !certOpsPaused` so callers do not need to re-derive it.
+ */
+export function useCertOpsWorkspaceKillSwitch() {
+  const { workspaceId } = useWorkspace();
+  const [state, setState] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const refresh = useCallback(() => {
+    setReloadTick(tick => tick + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setState(null);
+      setLoading(false);
+      setError('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+
+    getWorkspaceCertOpsPauseState(workspaceId, { signal: controller.signal })
+      .then(data => {
+        if (!cancelled) setState(data);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        setState(null);
+        setError(
+          err?.response?.data?.error ||
+            'Could not load the certificate operations kill switch.'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [workspaceId, reloadTick]);
+
+  const setPaused = useCallback(
+    async (certOpsPaused, reason) => {
+      if (!workspaceId) return null;
+      setSaving(true);
+      try {
+        const data = await updateWorkspaceCertOpsPauseState(workspaceId, {
+          certOpsPaused,
+          reason,
+        });
+        setState(data);
+        setError('');
+        return data;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [workspaceId]
+  );
+
+  return { ...state, loading, error, saving, setPaused, refresh };
 }
 
 /**

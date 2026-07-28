@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Alert,
@@ -43,11 +43,13 @@ import {
   useWorkspaceCertOps,
 } from '../components/certops/useCertOps.js';
 import {
+  RENEWAL_STATES,
   expiryDescriptor,
-  isRetiredStatus,
   keyModeLabel,
+  renewalDescriptor,
   statusLabel,
   statusScheme,
+  summarizeManagedCertificates,
 } from '../components/certops/certopsFormat.js';
 import {
   DashboardActionButton,
@@ -541,8 +543,8 @@ function InsightListRow({
         </Circle>
       ) : null}
       <Box minW={0} flex='1'>
-        <Flex justify='space-between' align='start' gap={2}>
-          <Box minW={0} flex='1'>
+        <Flex justify='space-between' align='start' gap={2} flexWrap='wrap'>
+          <Box minW='140px' flex='1'>
             {titleNode}
             {subtitle ? (
               <Text color={muted} fontSize='xs' mt={0.5} noOfLines={1}>
@@ -550,7 +552,11 @@ function InsightListRow({
               </Text>
             ) : null}
           </Box>
-          {trailing ? <Box flexShrink={0}>{trailing}</Box> : null}
+          {trailing ? (
+            <Box flexShrink={0} sx={{ '& > *': { flexWrap: 'wrap' } }}>
+              {trailing}
+            </Box>
+          ) : null}
         </Flex>
         {meta ? (
           <Text color={muted} fontSize='xs' mt={1.5} noOfLines={1}>
@@ -1068,35 +1074,77 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const { items: managedCertItems, loading: certOpsLoading } =
     useWorkspaceCertOps();
 
-  const activeManagedCerts = useMemo(
-    () => managedCertItems.filter(cert => !isRetiredStatus(cert.status)),
+  const {
+    linked: linkedManagedCerts,
+    linkedCount: managedCertCount,
+    provisioningCount: provisioningCertCount,
+    unlinkedCount: unlinkedCertCount,
+  } = useMemo(
+    () => summarizeManagedCertificates(managedCertItems),
     [managedCertItems]
   );
 
-  const managedCertHighlights = useMemo(() => {
-    return [...activeManagedCerts]
-      .sort((a, b) => {
-        const left = a.notAfter ? new Date(a.notAfter).getTime() : Infinity;
-        const right = b.notAfter ? new Date(b.notAfter).getTime() : Infinity;
-        return left - right;
-      })
-      .slice(0, 5);
-  }, [activeManagedCerts]);
-
-  const managedCertCount = activeManagedCerts.length;
+  // linkedManagedCerts is already fully loaded client-side (useWorkspaceCertOps
+  // fetches the whole workspace inventory in one request), so "load more" here
+  // just reveals more of what summarizeManagedCertificates already sorted by
+  // soonest expiry, rather than making another network call.
+  const [managedCertVisibleCount, setManagedCertVisibleCount] = useState(
+    INSIGHT_LIST_VISIBLE_ROWS
+  );
+  useEffect(() => {
+    setManagedCertVisibleCount(INSIGHT_LIST_VISIBLE_ROWS);
+  }, [linkedManagedCerts]);
+  const managedCertHighlights = useMemo(
+    () =>
+      summarizeManagedCertificates(managedCertItems, {
+        highlightLimit: managedCertVisibleCount,
+      }).highlights,
+    [managedCertItems, managedCertVisibleCount]
+  );
+  const managedCertHasMore =
+    managedCertVisibleCount < linkedManagedCerts.length;
+  const loadMoreManagedCerts = useCallback(() => {
+    setManagedCertVisibleCount(count =>
+      Math.min(count + INSIGHT_LIST_VISIBLE_ROWS, linkedManagedCerts.length)
+    );
+  }, [linkedManagedCerts.length]);
 
   const managedCertSummaryDetail = useMemo(() => {
     if (certOpsLoading) return 'Loading inventory...';
-    const urgent = activeManagedCerts.filter(cert =>
+    const urgent = linkedManagedCerts.filter(cert =>
       ['expiring', 'expired', 'renewing'].includes(
         String(cert.status || '').toLowerCase()
       )
     ).length;
-    if (urgent > 0) {
-      return `${urgent} expiring or expired · ${managedCertCount} registered`;
+    // Only the explicit not-configured state is counted, so an API build that
+    // predates the renewal field cannot inflate this into a false alarm.
+    const notAutoRenewed = linkedManagedCerts.filter(
+      cert =>
+        renewalDescriptor(cert.renewal).state === RENEWAL_STATES.notConfigured
+    ).length;
+    // Listed first when both apply: an expiring certificate is already visible
+    // from its own badge, whereas a certificate that will never auto-renew
+    // looks perfectly healthy right up until the day it expires.
+    const signals = [];
+    if (notAutoRenewed > 0) {
+      signals.push(`${notAutoRenewed} without auto-renewal`);
     }
-    return 'Registered in this workspace';
-  }, [activeManagedCerts, certOpsLoading, managedCertCount]);
+    if (urgent > 0) signals.push(`${urgent} expiring or expired`);
+    if (provisioningCertCount > 0) {
+      signals.push(`${provisioningCertCount} provisioning`);
+    }
+    if (unlinkedCertCount > 0) {
+      signals.push(`${unlinkedCertCount} not linked to a token`);
+    }
+    if (signals.length === 0) return 'Registered in this workspace';
+    return `${signals.join(' · ')} · ${managedCertCount} registered`;
+  }, [
+    certOpsLoading,
+    linkedManagedCerts,
+    managedCertCount,
+    provisioningCertCount,
+    unlinkedCertCount,
+  ]);
 
   // Prefer the workspace-wide aggregate: neverExpires is a preview list capped
   // by the backend (LIMIT 12), so its length undercounts large inventories.
@@ -1589,11 +1637,24 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                               value={managedCertCount}
                               detail={managedCertSummaryDetail}
                             />
-                            <InsightListShell emptyMessage='No managed certificates registered in this workspace yet.'>
+                            <InsightListShell
+                              emptyMessage={
+                                provisioningCertCount + unlinkedCertCount > 0
+                                  ? `No managed certificates linked to a token yet. ${
+                                      provisioningCertCount + unlinkedCertCount
+                                    } not linked.`
+                                  : 'No managed certificates registered in this workspace yet.'
+                              }
+                              onLoadMore={loadMoreManagedCerts}
+                              hasMore={managedCertHasMore}
+                            >
                               {managedCertHighlights.length > 0
                                 ? managedCertHighlights.map(cert => {
                                     const expiry = expiryDescriptor(
                                       cert.notAfter
+                                    );
+                                    const renewal = renewalDescriptor(
+                                      cert.renewal
                                     );
                                     return (
                                       <InsightListRow
@@ -1615,7 +1676,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                           'Managed certificate'
                                         }
                                         trailing={
-                                          <HStack spacing={2}>
+                                          <HStack spacing={1}>
                                             <Badge
                                               colorScheme={statusScheme(
                                                 cert.status
@@ -1637,16 +1698,16 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                         }
                                         meta={
                                           cert.notAfter
-                                            ? `Expires ${formatDate(cert.notAfter)}`
-                                            : undefined
+                                            ? `Expires ${formatDate(cert.notAfter)} · ${renewal.label}`
+                                            : renewal.label
                                         }
                                       />
                                     );
                                   })
                                 : null}
                             </InsightListShell>
-                            <InsightPanelFooterLink to='/certops/operations'>
-                              View executor jobs and machine tokens
+                            <InsightPanelFooterLink to='/certops/jobs'>
+                              View executor jobs
                             </InsightPanelFooterLink>
                           </InsightPanelBody>
                         ) : (

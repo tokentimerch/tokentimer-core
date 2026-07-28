@@ -75,6 +75,16 @@ services:
       # worker below so the monitor bridge gate resolves consistently.
       CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
 
+      # AES-256-GCM wrap keys for CertOps job-signing key custody and agent
+      # registration-replay credential encryption (64 hex chars = 32 bytes
+      # each, e.g. `openssl rand -hex 32`). Not needed for plain certificate
+      # inventory/import; only the agent register/heartbeat/claim/results
+      # routes touch them, and they fail closed with HTTP 500 there when
+      # unset or malformed, so leaving these empty is safe until you connect
+      # a CertOps agent.
+      CERTOPS_SIGNING_ENCRYPTION_KEY: ${CERTOPS_SIGNING_ENCRYPTION_KEY:-}
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: ${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-}
+
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
@@ -182,6 +192,7 @@ services:
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_DISCOVERY_CRON: "${WORKER_DISCOVERY_CRON:-*/5 * * * *}"
       WORKER_DISCOVERY_INTERVAL_MS: ${WORKER_DISCOVERY_INTERVAL_MS:-}
+      WORKER_DISCOVERY_RUN_ON_START: ${WORKER_DISCOVERY_RUN_ON_START:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
@@ -260,6 +271,7 @@ services:
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_DELIVERY_CRON: "${WORKER_DELIVERY_CRON:-1/5 * * * *}"
       WORKER_DELIVERY_INTERVAL_MS: ${WORKER_DELIVERY_INTERVAL_MS:-}
+      WORKER_DELIVERY_RUN_ON_START: ${WORKER_DELIVERY_RUN_ON_START:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
@@ -423,6 +435,51 @@ services:
       CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
       WORKER_ENDPOINT_CHECK_CRON: "${WORKER_ENDPOINT_CHECK_CRON:-*/1 * * * *}"
       WORKER_ENDPOINT_CHECK_INTERVAL_MS: ${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-}
+      WORKER_ENDPOINT_CHECK_RUN_ON_START: ${WORKER_ENDPOINT_CHECK_RUN_ON_START:-}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
+
+  # Worker Service - CertOps maintenance (lease reaper, stale-agent sweep,
+  # nonce/registration-replay sweeps, renewal scheduler). Without this
+  # service certops_agents.status is never demoted off 'active' when an
+  # agent stops heartbeating: the fleet panel then shows a crashed/offline
+  # agent as active indefinitely.
+  worker-certops:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-certops
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/runner.js", "certops"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      # Without this, isCertOpsEnabled() falls through to the DB setting and
+      # then to a hard "false" default, which makes lockWorkspaceForCertOps-
+      # SideEffect() reject every renewal-scheduler attempt as CERTOPS_DISABLED
+      # (silently counted as skippedPaused, no error log) even though the API
+      # and every other worker correctly see CertOps as enabled.
+      CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
+      # How long an active agent may go without a heartbeat before this
+      # sweep marks it offline (ms). Keep in sync with the fleet panel's
+      # expectations; default is 10 minutes when unset.
+      CERTOPS_AGENT_OFFLINE_AFTER_MS: ${CERTOPS_AGENT_OFFLINE_AFTER_MS:-}
+      WORKER_CERTOPS_CRON: "${WORKER_CERTOPS_CRON:-*/1 * * * *}"
+      WORKER_CERTOPS_INTERVAL_MS: ${WORKER_CERTOPS_INTERVAL_MS:-}
+      WORKER_CERTOPS_RUN_ON_START: ${WORKER_CERTOPS_RUN_ON_START:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 

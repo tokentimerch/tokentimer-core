@@ -190,6 +190,7 @@ spec:
           - weekly-digest
           - endpoint-check
           - auto-sync
+          - certops
   policyTypes:
     - Egress
   egress:

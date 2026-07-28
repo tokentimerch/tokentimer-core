@@ -23,8 +23,26 @@ overrides:
   qs: 6.15.2
   ip-address: 10.2.0
   form-data: 4.0.6
+  ws: 8.21.0
+  # Low-severity DoS when an invalid limit silently disables size enforcement
+  # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
+  body-parser: 2.3.0
+  # AJV pulls fast-uri; pin past GHSA-q3j6-qgpj-74h6 / GHSA-v39h-62p7-jpjc /
+  # GHSA-4c8g-83qw-93j6 / GHSA-v2hh-gcrm-f6hx (path traversal + host confusion).
+  fast-uri: 3.1.4
 
 allowBuilds:
   esbuild: true
   sharp: true
   "@scarf/scarf": true
+
+auditConfig:
+  ignoreGhsas:
+    # react-router: RSC Mode CSRF Bypass (GHSA-qwww-vcr4-c8h2). Only reachable
+    # via the unstable RSC APIs. The dashboard uses Declarative Mode
+    # (<BrowserRouter>, apps/dashboard/src/main.jsx) and never touches RSC, so
+    # this app is not exploitable. No 7.x patch exists; the fix (8.3.0)
+    # requires react@19.2.7+ and drops react-router-dom, which is a breaking
+    # upgrade tracked separately. Remove this entry once react-router is
+    # upgraded past 8.3.0.
+    - GHSA-qwww-vcr4-c8h2

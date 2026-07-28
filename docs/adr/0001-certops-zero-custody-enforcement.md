@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0.
+Proposed (2026-06-25). Skeleton record; to be finalized before ratification.
 
 ## Context
 
@@ -29,7 +29,7 @@ Enterprise. Enforce it in multiple layers:
 3. **API rejection boundary**: requests whose body contains private key material
    are rejected with HTTP 422 `PRIVATE_KEY_MATERIAL_REJECTED` (see
    `packages/contracts/api/certops-route-compat.contract.json`).
-   In M1 this guard is intentionally mounted on CertOps write routes rather
+   Today this guard is intentionally mounted on CertOps write routes rather
    than globally, to avoid changing unrelated non-CertOps request behavior
    during observe-only work. Domain-checker import keeps its own inline
    `containsPrivateKeyMaterial` guard. Future CertOps write surfaces must attach
@@ -39,7 +39,11 @@ Enterprise. Enforce it in multiple layers:
 4. **Schema design**: no inventory field is intended to hold key material;
    inventory stores public material and opaque, non-secret references
    (`certops-inventory.schema.json`). Flexible JSONB fields are protected by the
-   detector, not by the absence of a column.
+   detector, not by the absence of a column. `key_reference` in particular is a
+   **material-locality pointer** (which host or cluster holds the key), not a
+   path to the key: recording a real key path would mean storing an assertion the
+   control plane cannot verify, since it never sees the key. See ADR-0008's
+   custody implication and `docs/certops/CONTEXT.md`.
 5. **Evidence scrubbing**: `redactGenericSecrets` runs before evidence storage.
 
 The single private key the platform holds is the **platform operational signing
@@ -55,7 +59,8 @@ customer key custody.
 
 ## Consequences
 
-- A shared, well-tested detector is a hard dependency for M1 and M2.
-- TODO (M0): define exact 422 error envelope; PKCS#12/PFX binary DER detection
+- A shared, well-tested detector is a hard dependency for the inventory and
+  executor surfaces.
+- TODO (ratification): define exact 422 error envelope; PKCS#12/PFX binary DER detection
   scope; performance bounds for large evidence scans; where the rejection
   middleware mounts relative to body parsing.

@@ -13,6 +13,25 @@ const BUCKET_KEYS = [
   "expired",
 ];
 
+// Terminal CertOps lifecycle states, mirroring RETIRE_STATUSES in the
+// dashboard's certopsFormat.js.
+const RETIRED_CERT_LIFECYCLE_STATUSES = Object.freeze([
+  "revoked",
+  "decommissioned",
+]);
+
+// A revoked or decommissioned certificate is not live inventory: its expiry is
+// meaningless, it cannot be renewed, and it must not be counted toward asset
+// health. The token row is deliberately kept (the asset inventory table badges
+// it as retired), so exclusion belongs in the read path rather than in a delete.
+// NULL means the token is not CertOps-managed at all, which is still live.
+const SQL_EXCLUDE_RETIRED_CERTS = `
+  AND (
+    t.cert_lifecycle_status IS NULL
+    OR t.cert_lifecycle_status NOT IN ('revoked', 'decommissioned')
+  )
+`;
+
 /**
  * SQL CASE for expiry bucket classification aligned with classifyExpiryBucket.
  *
@@ -194,6 +213,8 @@ function formatAutoSyncStatusRow(row) {
 module.exports = {
   BUCKET_KEYS,
   CATEGORY_SOURCE_LABELS,
+  RETIRED_CERT_LIFECYCLE_STATUSES,
+  SQL_EXCLUDE_RETIRED_CERTS,
   sqlExpiryBucketCase,
   emptyBuckets,
   formatSourceEntry,

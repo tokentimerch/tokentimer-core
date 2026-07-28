@@ -2,6 +2,7 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
+const fs = require("fs");
 const path = require("path");
 
 const {
@@ -11,6 +12,8 @@ const {
   scorePrivileges,
   buildPrivilegeHighlight,
   formatAutoSyncStatusRow,
+  SQL_EXCLUDE_RETIRED_CERTS,
+  RETIRED_CERT_LIFECYCLE_STATUSES,
 } = require(path.resolve(
   __dirname,
   "../../apps/api/src/shared/controlCenterStatsHelpers.js",
@@ -112,5 +115,63 @@ describe("controlCenterStats helpers", () => {
       last_sync_error: "Rate limited",
     });
     assert.equal(failed.health, "failed");
+  });
+});
+
+describe("controlCenterStats retired-certificate exclusion", () => {
+  const servicePath = path.resolve(
+    __dirname,
+    "../../apps/api/services/controlCenterStats.js",
+  );
+  const source = fs.readFileSync(servicePath, "utf8");
+
+  it("treats revoked and decommissioned as the retired lifecycle set", () => {
+    assert.deepEqual([...RETIRED_CERT_LIFECYCLE_STATUSES].sort(), [
+      "decommissioned",
+      "revoked",
+    ]);
+  });
+
+  it("keeps NULL lifecycle rows in scope so non-CertOps assets still count", () => {
+    assert.match(SQL_EXCLUDE_RETIRED_CERTS, /cert_lifecycle_status IS NULL/);
+    assert.match(
+      SQL_EXCLUDE_RETIRED_CERTS,
+      /NOT IN \('revoked', 'decommissioned'\)/,
+    );
+    // The fragment is appended to an existing WHERE, so it must start with AND
+    // rather than introduce its own clause.
+    assert.match(SQL_EXCLUDE_RETIRED_CERTS.trim(), /^AND\b/);
+  });
+
+  it("lists the exclusion in the SQL fragment for each lifecycle value", () => {
+    for (const status of RETIRED_CERT_LIFECYCLE_STATUSES) {
+      assert.ok(
+        SQL_EXCLUDE_RETIRED_CERTS.includes(`'${status}'`),
+        `expected the exclusion fragment to name ${status}`,
+      );
+    }
+  });
+
+  // A retired certificate must not inflate asset health anywhere. Counting the
+  // interpolations is what catches a newly added query that forgets the filter,
+  // which is exactly how the original bug shipped.
+  it("applies the exclusion to every workspace-scoped token query", () => {
+    const interpolations = source.match(/\$\{SQL_EXCLUDE_RETIRED_CERTS\}/g);
+    assert.ok(interpolations, "expected the exclusion to be interpolated");
+    // total, buckets, sources, needsAttention, neverExpires rows + count,
+    // privilege candidates + count.
+    assert.equal(interpolations.length, 8);
+  });
+
+  it("never counts tokens without applying the filter", () => {
+    // Any COUNT/SELECT over `tokens` scoped only by workspace_id is a bug.
+    const unfiltered = source.match(
+      /FROM tokens[\s\S]{0,200}?WHERE t\.workspace_id = \$1\s*(?:`|ORDER|GROUP|LIMIT)/g,
+    );
+    assert.equal(
+      unfiltered,
+      null,
+      "found a tokens query scoped only by workspace_id",
+    );
   });
 });

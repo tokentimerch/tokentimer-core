@@ -59,7 +59,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
-import { FiTrash2, FiPlus, FiX, FiChevronRight } from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
   BadgeCheck,
@@ -95,6 +95,7 @@ import {
 } from './components/DashboardModalFrame.jsx';
 import DashboardShell from './components/DashboardShell.jsx';
 import AssetFilters from './components/AssetFilters.jsx';
+import DashboardPagination from './components/DashboardPagination.jsx';
 import AssetInventoryTable, {
   resolveContactGroupLabel,
 } from './components/AssetInventoryTable.jsx';
@@ -133,6 +134,7 @@ import {
   TOUR_MOCK_CONTACT_GROUPS,
   TOUR_MOCK_WORKSPACE_CONTACTS,
 } from './constants/tourMockData.js';
+import { TOKEN_CATEGORIES } from './constants/tokenCategories.js';
 
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
@@ -192,87 +194,6 @@ function AdminOnlyRoute({ session, children }) {
 /**
  * Token Categories with their specific types, fields, and styling.
  */
-const TOKEN_CATEGORIES = [
-  {
-    value: 'cert',
-    label: 'Certificate',
-    description: 'SSL/TLS certificates, domain certificates',
-    color: 'blue',
-    bgColor: 'blue.100',
-    borderColor: 'blue.400',
-    types: [
-      { value: 'ssl_cert', label: 'SSL Certificate' },
-      { value: 'tls_cert', label: 'TLS Certificate' },
-      { value: 'code_signing', label: 'Code Signing' },
-      { value: 'client_cert', label: 'Client Certificate' },
-    ],
-    fields: [
-      'domains',
-      'issuer',
-      'serial_number',
-      'subject',
-      'renewal_url',
-      'contacts',
-    ],
-  },
-  {
-    value: 'key_secret',
-    label: 'Key/Secret',
-    description: 'API keys, secrets, passwords, encryption keys',
-    color: 'green',
-    bgColor: 'green.100',
-    borderColor: 'green.500',
-    types: [
-      { value: 'api_key', label: 'API Key' },
-      { value: 'secret', label: 'Secret' },
-      { value: 'password', label: 'Password' },
-      { value: 'encryption_key', label: 'Encryption Key' },
-      { value: 'ssh_key', label: 'SSH Key' },
-    ],
-    fields: ['location', 'used_by', 'renewal_url', 'description', 'contacts'],
-    // Fields that only apply to specific types
-    conditionalFields: {
-      encryption_key: ['algorithm', 'key_size'],
-      ssh_key: ['algorithm', 'key_size'],
-    },
-  },
-  {
-    value: 'license',
-    label: 'License',
-    description: 'Software licenses, service subscriptions',
-    color: 'purple',
-    bgColor: 'purple.100',
-    borderColor: 'purple.500',
-    types: [
-      { value: 'software_license', label: 'Software License' },
-      { value: 'service_subscription', label: 'Service Subscription' },
-      { value: 'domain_registration', label: 'Domain Registration' },
-    ],
-    fields: [
-      'vendor',
-      'license_type',
-      'cost',
-      'renewal_url',
-      'renewal_date',
-      'contacts',
-    ],
-  },
-  {
-    value: 'general',
-    label: 'General',
-    description: 'Other expiring items',
-    color: 'gray',
-    bgColor: 'gray.100',
-    borderColor: 'gray.500',
-    types: [
-      { value: 'other', label: 'Other' },
-      { value: 'document', label: 'Document' },
-      { value: 'membership', label: 'Membership' },
-    ],
-    fields: ['location', 'used_by', 'renewal_url', 'contacts'],
-  },
-];
-
 function buildAccountPathFromDashboardSearch(search) {
   const params = new URLSearchParams(search);
   const workspace = params.get('workspace');
@@ -3768,23 +3689,6 @@ function DashboardView({
     'gray.200',
     'rgba(148, 163, 184, 0.16)'
   );
-  const paginationControlColor = useColorModeValue(
-    'gray.600',
-    'rgba(203, 213, 225, 0.9)'
-  );
-  const paginationControlHoverBg = useColorModeValue(
-    'gray.100',
-    'rgba(30, 41, 59, 0.72)'
-  );
-  const paginationPageBg = useColorModeValue(
-    'blue.50',
-    'rgba(37, 99, 235, 0.18)'
-  );
-  const paginationPageColor = useColorModeValue('blue.700', 'white');
-  const paginationPageBorder = useColorModeValue(
-    'blue.200',
-    'rgba(59, 130, 246, 0.38)'
-  );
   const pageTextColor = text;
   const mutedTextColor = muted;
   const sessionName =
@@ -5174,13 +5078,6 @@ function DashboardView({
     return sortedVisibleTokens.slice(start, start + assetPageSize);
   }, [assetPage, assetPageSize, sortedVisibleTokens]);
 
-  const assetRangeStart =
-    sortedVisibleTokens.length === 0 ? 0 : (assetPage - 1) * assetPageSize + 1;
-  const assetRangeEnd = Math.min(
-    assetPage * assetPageSize,
-    sortedVisibleTokens.length
-  );
-
   const selectedVisibleTokenIds = useMemo(() => {
     const visibleIds = new Set(paginatedVisibleTokens.map(token => token.id));
     return selectedTokenIds.filter(id => visibleIds.has(id));
@@ -5276,84 +5173,17 @@ function DashboardView({
   );
 
   const renderAssetPaginationControls = () => (
-    <Flex
-      align={{ base: 'stretch', md: 'center' }}
-      justify={{ base: 'space-between', md: 'end' }}
-      direction={{ base: 'column', sm: 'row' }}
-      gap={3}
-      flex='1'
-      minW={0}
-    >
-      <HStack spacing={2}>
-        <Text color={mutedTextColor} fontSize='sm'>
-          Show
-        </Text>
-        <Select
-          size='sm'
-          w='84px'
-          value={assetPageSize}
-          bg={inputBg}
-          borderColor={inputBorder}
-          onChange={event => {
-            setAssetPageSize(Number(event.target.value));
-            setAssetPage(1);
-          }}
-        >
-          {ASSET_PAGE_SIZE_OPTIONS.map(size => (
-            <option key={size} value={size}>
-              {size}
-            </option>
-          ))}
-        </Select>
-      </HStack>
-
-      <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
-        <Text color={mutedTextColor} fontSize='sm' whiteSpace='nowrap'>
-          {assetRangeStart}-{assetRangeEnd} of {sortedVisibleTokens.length}
-        </Text>
-        <HStack spacing={1}>
-          <IconButton
-            aria-label='Previous assets page'
-            icon={<FiChevronRight />}
-            size='sm'
-            variant='ghost'
-            color={paginationControlColor}
-            isDisabled={assetPage <= 1}
-            onClick={() => setAssetPage(page => Math.max(1, page - 1))}
-            sx={{ svg: { transform: 'rotate(180deg)' } }}
-            _hover={{
-              bg: paginationControlHoverBg,
-              color: outlineButtonHoverColor,
-            }}
-          />
-          <Button
-            size='sm'
-            variant='outline'
-            borderColor={paginationPageBorder}
-            color={paginationPageColor}
-            bg={paginationPageBg}
-            minW='38px'
-          >
-            {assetPage}
-          </Button>
-          <IconButton
-            aria-label='Next assets page'
-            icon={<FiChevronRight />}
-            size='sm'
-            variant='ghost'
-            color={paginationControlColor}
-            isDisabled={assetPage >= assetPageCount}
-            onClick={() =>
-              setAssetPage(page => Math.min(assetPageCount, page + 1))
-            }
-            _hover={{
-              bg: paginationControlHoverBg,
-              color: outlineButtonHoverColor,
-            }}
-          />
-        </HStack>
-      </HStack>
-    </Flex>
+    <DashboardPagination
+      limit={assetPageSize}
+      offset={(assetPage - 1) * assetPageSize}
+      total={sortedVisibleTokens.length}
+      pageSizeOptions={ASSET_PAGE_SIZE_OPTIONS}
+      noun='assets'
+      onChange={({ limit, offset }) => {
+        setAssetPageSize(limit);
+        setAssetPage(Math.floor(offset / limit) + 1);
+      }}
+    />
   );
 
   const renderDashboardWorkspace = () => (

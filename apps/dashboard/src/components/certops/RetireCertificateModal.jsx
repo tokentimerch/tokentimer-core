@@ -40,11 +40,15 @@ const RETIRE_OPTIONS = [
 ];
 
 /**
- * Retire (soft lifecycle transition) for a managed certificate that is linked to
- * a token. The token cannot be hard-deleted while it is
- * backed by a managed certificate; it is revoked or decommissioned instead. The
- * certificate row and its evidence are preserved and the status is mirrored onto
- * the linked token by the backend.
+ * Retire (soft lifecycle transition) for a managed certificate. Most callers
+ * link a token (the token inventory's retire action, where the token cannot
+ * be hard-deleted while it is backed by a managed certificate; see App.jsx),
+ * but the Certificates tab operates on certificate rows directly and often
+ * has no linked token at all (e.g. `agent_issuance` before reconciliation),
+ * so `token` is optional and the certificate's own name/status carries the
+ * subject line when it is absent. The certificate row and its evidence are
+ * preserved and the status is mirrored onto the linked token, if any, by the
+ * backend.
  */
 export default function RetireCertificateModal({
   isOpen,
@@ -100,6 +104,14 @@ export default function RetireCertificateModal({
   };
 
   const selected = RETIRE_OPTIONS.find(option => option.value === status);
+  const subjectLabel =
+    token?.name ||
+    certificate?.commonName ||
+    (Array.isArray(certificate?.subjectAltNames)
+      ? certificate.subjectAltNames[0]
+      : null) ||
+    certificate?.id ||
+    null;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
@@ -119,10 +131,10 @@ export default function RetireCertificateModal({
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
           <VStack spacing={4} align='stretch'>
-            {token ? (
+            {subjectLabel ? (
               <Text fontSize='sm'>
                 <Text as='span' fontWeight='semibold'>
-                  {token.name}
+                  {subjectLabel}
                 </Text>
                 {certificate?.status ? (
                   <Badge ml={2} colorScheme='gray' textTransform='capitalize'>

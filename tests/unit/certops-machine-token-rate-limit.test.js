@@ -405,7 +405,7 @@ describe("CertOps machine-token rate limiter", () => {
     }
   });
 
-  it("extracts only the public prefix from an exact lower-case M2 token", () => {
+  it("extracts only the public prefix from an exact lower-case machine token", () => {
     assert.equal(
       tokenPrefixFromAuthorization(createRequest()),
       TOKEN_PREFIX,

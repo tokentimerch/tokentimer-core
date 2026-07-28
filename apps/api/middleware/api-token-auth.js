@@ -191,7 +191,7 @@ function hasSessionIdentity(req) {
 function safeApiTokenIdentity(token) {
   if (!token) return null;
 
-  return {
+  const identity = {
     id: token.id,
     workspaceId: token.workspaceId,
     tokenPrefix: token.tokenPrefix,
@@ -200,6 +200,10 @@ function safeApiTokenIdentity(token) {
     createdBy: token.createdBy ?? null,
     lastUsedAt: token.lastUsedAt || null,
   };
+  if (token.controllerClusterId) {
+    identity.controllerClusterId = token.controllerClusterId;
+  }
+  return identity;
 }
 
 function createCertOpsApiTokenAuth(options = {}) {

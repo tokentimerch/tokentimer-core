@@ -11,6 +11,7 @@ const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
   CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+  CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,
   createApiToken,
@@ -26,11 +27,13 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
-const CANONICAL_M2_SCOPES = [
+const CANONICAL_TOKEN_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
+  "certops:observations:write",
+  "certops:provision:execute",
 ];
 
 function date(offsetMs) {
@@ -58,12 +61,13 @@ function createMemoryClient() {
           token_prefix: params[2],
           token_hash: params[3],
           scopes: params[4],
+          controller_cluster_id: params[5],
           status: "active",
-          expires_at: params[5],
+          expires_at: params[6],
           last_used_at: null,
           revoked_at: null,
           revoked_by: null,
-          created_by: params[6],
+          created_by: params[7],
           created_at: new Date("2026-06-30T00:00:00.000Z"),
           updated_at: new Date("2026-06-30T00:00:00.000Z"),
         };
@@ -88,11 +92,30 @@ function createMemoryClient() {
       }
 
       if (
+        normalizedSql.includes("SELECT COUNT(*)") &&
+        normalizedSql.includes("FROM api_tokens")
+      ) {
+        return {
+          rows: [
+            {
+              total: rows.filter((row) => row.workspace_id === params[0]).length,
+            },
+          ],
+        };
+      }
+
+      if (
         normalizedSql.includes("WHERE workspace_id = $1") &&
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
+        const matching = rows.filter((row) => row.workspace_id === params[0]);
+        const hasLimit = normalizedSql.includes("LIMIT $2");
+        const offset = hasLimit ? params[2] : params[1];
+        const start = Number(offset || 0);
         return {
-          rows: rows.filter((row) => row.workspace_id === params[0]),
+          rows: hasLimit
+            ? matching.slice(start, start + Number(params[1]))
+            : matching.slice(start),
         };
       }
 
@@ -258,8 +281,8 @@ describe("CertOps API token service", () => {
     }
   });
 
-  it("uses canonical M2 scopes and keeps jobs claim deferred to M4", async () => {
-    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M2_SCOPES);
+  it("uses canonical scopes and keeps jobs claim deferred to the agent protocol phase", async () => {
+    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_TOKEN_SCOPES);
 
     const client = createMemoryClient();
     const created = await createApiToken({
@@ -288,6 +311,8 @@ describe("CertOps API token service", () => {
     for (const requiredScope of [
       "certops:events:write",
       "certops:evidence:write",
+      "certops:observations:write",
+      "certops:provision:execute",
     ]) {
       const result = await validateApiToken({
         client,
@@ -315,6 +340,46 @@ describe("CertOps API token service", () => {
         (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
       );
     }
+  });
+
+  it("requires an immutable RFC 1123 cluster binding for either controller token scope", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () => createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: "Controller",
+        scopes: ["certops:observations:write"],
+      }),
+      { code: CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID },
+    );
+    await assert.rejects(
+      () => createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: "Executor",
+        scopes: ["certops:events:write"],
+        controllerClusterId: "controller-a",
+      }),
+      { code: CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID },
+    );
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Controller",
+      scopes: ["certops:observations:write"],
+      controllerClusterId: "controller-a",
+    });
+    assert.equal(created.token.controllerClusterId, "controller-a");
+    assert.equal(client.rows[0].controller_cluster_id, "controller-a");
+    const provision = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Provision controller",
+      scopes: ["certops:provision:execute"],
+      controllerClusterId: "controller-a",
+    });
+    assert.equal(provision.token.controllerClusterId, "controller-a");
   });
 
   it("rejects private key material in persisted token metadata", async () => {
@@ -620,7 +685,7 @@ describe("CertOps API token service", () => {
       workspaceId: WORKSPACE_A,
       tokenId: created.token.id,
     });
-    assert.equal(listed[0].status, "expired");
+    assert.equal(listed.items[0].status, "expired");
     assert.equal(fetched.status, "expired");
   });
 
@@ -668,7 +733,7 @@ describe("CertOps API token service", () => {
     assertNoPlaintextToken(list, created.plaintextToken);
     assertNoPlaintextToken(got, created.plaintextToken);
     assertNoPlaintextToken(revoked, created.plaintextToken);
-    assert.equal(list[0].tokenHash, undefined);
+    assert.equal(list.items[0].tokenHash, undefined);
     assert.equal(got.tokenHash, undefined);
     assert.equal(revoked.tokenHash, undefined);
   });
@@ -693,5 +758,68 @@ describe("CertOps API token service", () => {
     assert.equal(_test.safeCompareSha256Hex(hash, hash), true);
     assert.equal(_test.safeCompareSha256Hex(hash, _test.sha256Hex("other")), false);
     assert.equal(_test.safeCompareSha256Hex(hash, "not-a-sha256"), false);
+  });
+});
+
+describe("CertOps API token list pagination", () => {
+  async function seed(count) {
+    const client = createMemoryClient();
+    for (let index = 0; index < count; index += 1) {
+      await createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: `Executor ${index}`,
+        scopes: ["certops:events:write"],
+      });
+    }
+    await createApiToken({
+      client,
+      workspaceId: WORKSPACE_B,
+      name: "Other workspace",
+      scopes: ["certops:events:write"],
+    });
+    return client;
+  }
+
+  it("returns every row when no limit is supplied", async () => {
+    // This list has no pagination control in the product yet. A silent default
+    // page would truncate a credential audit with nothing on screen saying so.
+    const client = await seed(60);
+    const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
+
+    assert.equal(listed.items.length, 60);
+    assert.equal(listed.pagination.limit, null);
+    assert.equal(listed.pagination.offset, 0);
+    assert.equal(listed.pagination.total, 60);
+    for (const sql of client.queries) {
+      if (sql.includes("FROM api_tokens") && sql.includes("ORDER BY")) {
+        assert.equal(sql.includes("LIMIT"), false);
+      }
+    }
+  });
+
+  it("counts the whole workspace rather than the page", async () => {
+    const client = await seed(7);
+    const listed = await listApiTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 3,
+    });
+
+    assert.equal(listed.items.length, 3);
+    assert.equal(listed.pagination.total, 7);
+  });
+
+  it("reports a non-zero total for an offset past the end", async () => {
+    const client = await seed(4);
+    const listed = await listApiTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 2,
+      offset: 90,
+    });
+
+    assert.deepEqual(listed.items, []);
+    assert.equal(listed.pagination.total, 4);
   });
 });

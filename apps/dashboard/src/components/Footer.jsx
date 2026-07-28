@@ -35,6 +35,10 @@ const DASHBOARD_SHELL_PATHS = new Set([
   '/system-settings',
 ]);
 
+/** Prefixes for dashboard-shell sections with nested/dynamic routes, where an
+ * exact-match Set would miss child paths (e.g. `/certops/certificates/:id`). */
+const DASHBOARD_SHELL_PATH_PREFIXES = ['/certops'];
+
 const AUTH_SHELL_PATHS = new Set([
   '/login',
   '/register',
@@ -42,8 +46,13 @@ const AUTH_SHELL_PATHS = new Set([
   '/verify-email',
 ]);
 
-function isDashboardShellPath(pathname) {
-  return DASHBOARD_SHELL_PATHS.has(pathname);
+export function isDashboardShellPath(pathname) {
+  return (
+    DASHBOARD_SHELL_PATHS.has(pathname) ||
+    DASHBOARD_SHELL_PATH_PREFIXES.some(
+      prefix => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    )
+  );
 }
 
 function isAuthShellPath(pathname) {
