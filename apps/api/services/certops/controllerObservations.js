@@ -605,85 +605,33 @@ async function upsertControllerTarget(client, observation) {
 }
 
 async function upsertControllerInstance(client, observation, certificate, managedCertificate, target) {
+  // A certificate_instances row asserts "this fingerprint is deployed here," so
+  // it must not exist until cert-manager reports real material (fingerprintSha256).
+  // Status-only observations (Certificate not Ready yet / secretName not readable)
+  // stay represented at the managed_certificates/audit-evidence level only; see
+  // certops-controller-observations.test.js "creates pending observations without
+  // instances..." and certops-controller-e2e.test.js "status-first observation".
+  if (!certificate.fingerprintSha256) return null;
   const status = observation.ready ? "active" : "discovered";
   const sourceRef = sourceRefFor(observation);
   const deploymentReference = `k8s://${observation.clusterId}/${observation.namespace}/secret/${observation.secretName}`;
   const publicMetadata = JSON.stringify(publicStatusSummary(observation, { applied: false, count: 0 }));
 
-  if (certificate.fingerprintSha256) {
-    const result = await client.query(
-      `INSERT INTO certificate_instances (
-         workspace_id, managed_certificate_id, target_id, status, source, source_ref,
-         observed_fingerprint_sha256, observed_serial_number, observed_subject,
-         observed_issuer, observed_not_before, observed_not_after,
-         deployment_reference, observed_at, public_metadata
-       ) VALUES ($1, $2, $3, $4, 'cert_manager', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
-       ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
-       DO UPDATE SET
-         status = EXCLUDED.status, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
-         observed_serial_number = EXCLUDED.observed_serial_number,
-         observed_subject = EXCLUDED.observed_subject, observed_issuer = EXCLUDED.observed_issuer,
-         observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
-         deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
-         public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
-       RETURNING *`,
-      [
-        observation.workspaceId,
-        managedCertificate.id,
-        target.id,
-        status,
-        sourceRef,
-        certificate.fingerprintSha256,
-        certificate.serialNumber || null,
-        certificate.subject || null,
-        certificate.issuer || null,
-        certificate.notBefore || null,
-        certificate.notAfter || null,
-        deploymentReference,
-        observation.observedAt,
-        publicMetadata,
-      ],
-    );
-    return result.rows[0];
-  }
-
-  // Postgres treats every NULL as distinct in the unique index on
-  // (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256),
-  // so ON CONFLICT can't dedupe status-only rows; UPDATE the existing NULL-fingerprint
-  // row in place, falling back to INSERT only the first time this combo is observed.
-  const updated = await client.query(
-    `UPDATE certificate_instances
-        SET status = $4, source = 'cert_manager', source_ref = $5,
-            observed_subject = $6, observed_issuer = $7,
-            observed_not_before = $8, observed_not_after = $9,
-            deployment_reference = $10, observed_at = $11,
-            public_metadata = $12::jsonb, updated_at = NOW()
-      WHERE workspace_id = $1 AND managed_certificate_id = $2 AND target_id = $3
-        AND observed_fingerprint_sha256 IS NULL
-      RETURNING *`,
-    [
-      observation.workspaceId,
-      managedCertificate.id,
-      target.id,
-      status,
-      sourceRef,
-      certificate.subject || null,
-      certificate.issuer || null,
-      certificate.notBefore || null,
-      certificate.notAfter || null,
-      deploymentReference,
-      observation.observedAt,
-      publicMetadata,
-    ],
-  );
-  if (updated.rows[0]) return updated.rows[0];
-
-  const inserted = await client.query(
+  const result = await client.query(
     `INSERT INTO certificate_instances (
        workspace_id, managed_certificate_id, target_id, status, source, source_ref,
-       observed_subject, observed_issuer, observed_not_before, observed_not_after,
+       observed_fingerprint_sha256, observed_serial_number, observed_subject,
+       observed_issuer, observed_not_before, observed_not_after,
        deployment_reference, observed_at, public_metadata
-     ) VALUES ($1, $2, $3, $4, 'cert_manager', $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+     ) VALUES ($1, $2, $3, $4, 'cert_manager', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+     ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
+     DO UPDATE SET
+       status = EXCLUDED.status, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
+       observed_serial_number = EXCLUDED.observed_serial_number,
+       observed_subject = EXCLUDED.observed_subject, observed_issuer = EXCLUDED.observed_issuer,
+       observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
+       deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
+       public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
      RETURNING *`,
     [
       observation.workspaceId,
@@ -691,6 +639,8 @@ async function upsertControllerInstance(client, observation, certificate, manage
       target.id,
       status,
       sourceRef,
+      certificate.fingerprintSha256,
+      certificate.serialNumber || null,
       certificate.subject || null,
       certificate.issuer || null,
       certificate.notBefore || null,
@@ -700,7 +650,7 @@ async function upsertControllerInstance(client, observation, certificate, manage
       publicMetadata,
     ],
   );
-  return inserted.rows[0];
+  return result.rows[0];
 }
 
 function safeResultFromRow(row) {
