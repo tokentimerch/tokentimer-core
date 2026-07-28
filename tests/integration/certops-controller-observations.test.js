@@ -585,6 +585,82 @@ describe("CertOps controller observation persistence", function () {
     }
   });
 
+  it("mints a legacy tokens row once cert-manager reports notAfter, defers while pending, and reuses it across rotation", async () => {
+    const { ownerId, workspaceId } = await createWorkspace("controller-token-link");
+    try {
+      const token = await createApiToken({
+        workspaceId,
+        name: "Token-link controller",
+        scopes: ["certops:observations:write"],
+        controllerClusterId: "controller-a",
+        createdBy: ownerId,
+      });
+
+      const pending = await persistRawObservation({
+        apiTokenId: token.token.id,
+        workspaceId,
+        keyCharacter: "a",
+        overrides: { ready: false, publicCertificate: null },
+      });
+      const pendingRow = await TestUtils.execQuery(
+        "SELECT token_id FROM managed_certificates WHERE id = $1",
+        [pending.managedCertificateId],
+      );
+      expect(pendingRow.rows[0].token_id).to.equal(null);
+
+      const first = await persistRawObservation({
+        apiTokenId: token.token.id,
+        workspaceId,
+        keyCharacter: "b",
+        overrides: {
+          resourceVersion: "2",
+          notAfter: "2027-01-15T00:00:00.000Z",
+          publicCertificate: { fingerprintSha256: "c".repeat(64) },
+        },
+      });
+      expect(first.managedCertificateId).to.equal(pending.managedCertificateId);
+      const linked = await TestUtils.execQuery(
+        "SELECT token_id FROM managed_certificates WHERE id = $1",
+        [first.managedCertificateId],
+      );
+      const tokenId = linked.rows[0].token_id;
+      expect(tokenId).to.not.equal(null);
+      const tokenRow = await TestUtils.execQuery(
+        "SELECT type, expiration::text AS expiration, domains, notes FROM tokens WHERE id = $1",
+        [tokenId],
+      );
+      expect(tokenRow.rows[0].type).to.equal("ssl_cert");
+      expect(tokenRow.rows[0].expiration).to.equal("2027-01-15");
+      expect(tokenRow.rows[0].domains).to.include("example.com");
+      expect(tokenRow.rows[0].notes).to.include("Kubernetes cert-manager controller observation");
+
+      const rotated = await persistRawObservation({
+        apiTokenId: token.token.id,
+        workspaceId,
+        keyCharacter: "c",
+        overrides: {
+          resourceVersion: "3",
+          notAfter: "2027-04-15T00:00:00.000Z",
+          publicCertificate: { fingerprintSha256: "d".repeat(64) },
+        },
+      });
+      expect(rotated.managedCertificateId).to.equal(first.managedCertificateId);
+      const afterRotation = await TestUtils.execQuery(
+        "SELECT token_id FROM managed_certificates WHERE id = $1",
+        [rotated.managedCertificateId],
+      );
+      expect(afterRotation.rows[0].token_id).to.equal(tokenId);
+      const tokenCount = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM tokens WHERE workspace_id = $1 AND type = 'ssl_cert'",
+        [workspaceId],
+      );
+      expect(tokenCount.rows[0].count).to.equal(1);
+    } finally {
+      await TestUtils.execQuery("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
+      await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
+    }
+  });
+
   it("enforces the controller route's authenticated binding, passive pause, private-key precedence, and idempotency responses", async () => {
     const firstWorkspace = await createWorkspace("controller-route-a");
     const secondWorkspace = await createWorkspace("controller-route-b");

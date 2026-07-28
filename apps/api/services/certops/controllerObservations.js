@@ -9,7 +9,10 @@ const {
   assertNoPrivateKeyMaterial,
   redactGenericSecretsWithReport,
 } = require("../../utils/secretMaterial");
-const { upsertManagedCertificateByMonitorSource } = require("./inventory");
+const {
+  ensureManagedCertificateToken,
+  upsertManagedCertificateByMonitorSource,
+} = require("./inventory");
 const { createControllerObservationEvidence } = require("./evidence");
 const {
   MAX_PUBLIC_PEM_BYTES,
@@ -523,13 +526,35 @@ function publicStatusSummary(observation, redaction) {
 
 async function findExistingSourceIdentity(client, observation) {
   const result = await client.query(
-    `SELECT id, public_metadata
+    `SELECT id, token_id, public_metadata
        FROM managed_certificates
       WHERE workspace_id = $1 AND source = 'cert_manager' AND source_ref = $2
       FOR UPDATE`,
     [observation.workspaceId, sourceRefFor(observation)],
   );
   return result.rows[0] || null;
+}
+
+/**
+ * Controller-observed certificates need a `tokens` row so they participate in
+ * the legacy expiry/renewal-failure alert pipeline, which keys off
+ * managed_certificates.token_id (see docs/alerting). A token is only minted
+ * once cert-manager's own Certificate.status has reported notAfter — this is
+ * populated independently of whether Secret fallback is enabled, but is
+ * absent for a Certificate that has not finished issuing yet. Deferring in
+ * that case avoids a hard failure on the ingestion path; the next accepted
+ * observation for the same source_ref retries once data is sufficient.
+ * A source_ref already linked to a token (tracked across fingerprint
+ * rotations, e.g. renewals) always reuses it instead of minting a new one.
+ */
+function resolveControllerObservationTokenId(client, observation, certificate, prior) {
+  if (prior?.token_id) return prior.token_id;
+  if (!certificate.notAfter) return null;
+  return ensureManagedCertificateToken(client, certificate, {
+    workspaceId: observation.workspaceId,
+    name: observation.certificateName,
+    tokenNotesSourceLabel: "Kubernetes cert-manager controller observation",
+  });
 }
 
 function previousCertificateUid(row) {
@@ -674,11 +699,13 @@ async function persistControllerObservation({
       prior && previousCertificateUid(prior) && previousCertificateUid(prior) !== observation.certificateUid,
     );
     const certificate = certificateFor(observation);
+    const tokenId = await resolveControllerObservationTokenId(client, observation, certificate, prior);
     const managedCertificate = await upsertManagedCertificateByMonitorSource(
       client,
       certificate,
       {
         workspaceId: observation.workspaceId,
+        tokenId,
         status: observation.ready ? "active" : "discovered",
         source: "cert_manager",
         sourceRef: sourceRefFor(observation),
