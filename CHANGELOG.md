@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-07-31
+
+### Fixed
+
+- **Duplicate `managed_certificates` rows when Domain Checker and Endpoint Monitor both observed the same real endpoint.** Enabling "endpoint monitor" on a domain that Domain Checker had already discovered created a second certificate row for the same host, permanently: Domain Checker keys its `managed_certificates` row `(source: 'domain_checker', source_ref: <hostname>)`, Endpoint Monitor keys its own `(source: 'endpoint_monitor', source_ref: <domain_monitor_id>)`, and the existing `(workspace_id, source, source_ref)` unique index treats those as two unrelated identities even though both point at the same `domain_monitors` row. `apps/api/services/certops/monitorBridge.js`'s certificate upsert now falls back to a second lookup, joining `certificate_instances.domain_monitor_id` back to `managed_certificates`, before creating a new row - so it reuses whatever certificate row *any* prior observation from *any* source already created for that same monitor, instead of minting a duplicate. A new migration (38) merges pre-existing duplicates the same way, keeping the newest row per `(workspace_id, domain_monitor_id)` group and re-pointing certificate instance/job/evidence history and terminal lifecycle status onto it before dropping the loser.
+- **Duplicate `domain_monitors` rows for the same URL.** `POST /api/v1/workspaces/:id/domains` always inserted a new `domain_monitors` row, even when one already existed for that exact URL in the workspace (the bulk domain-checker import path already guarded against this; the single-add endpoint did not). Now reuses and updates the existing monitor instead of inserting a duplicate. A new migration (37) merges pre-existing duplicate monitors by `(workspace_id, url)` and adds a unique index to prevent new ones.
+- **Minting a new CertOps API token or agent-bootstrap token was not blocked while a workspace was paused.** Both `POST .../certops/tokens` and `POST .../certops/agent-bootstrap-tokens` were missing the `requireWorkspaceCertOpsActive` gate that manual job creation already has, so a paused workspace (the operator believes new CertOps work is blocked, matching the disabled create button in the dashboard) could still mint a live, usable credential server-side. Both routes now carry the same pause gate, ordered after their existing role check; revoke/retire routes for both credential types are deliberately left ungated, since they are recovery actions an operator may need mid-incident.
+
 ## [0.11.1] - 2026-07-29
 
 ### Fixed

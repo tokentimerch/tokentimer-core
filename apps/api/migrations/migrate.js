@@ -2463,6 +2463,327 @@ const migrations = [
           DEFAULT '[]'::jsonb;
     `,
   },
+  {
+    version: 37,
+    name: "domain_monitors_workspace_url_dedup",
+    sql: `
+      -- Duplicate endpoint monitors for the same URL (POST .../domains had no
+      -- existing-URL lookup before its own insert) each earn their own
+      -- distinct id, so managed_certificates' (workspace_id, source,
+      -- source_ref) unique index (migration 15,
+      -- certops_managed_certificate_monitor_identity) never sees a conflict
+      -- between them - source_ref is the monitor's own id, and two
+      -- different monitor rows for one URL both look "valid" to it. The
+      -- real gap is one level up: domain_monitors itself has never had a
+      -- uniqueness check on (workspace_id, url). Deduplicate existing
+      -- monitor rows first (keep the newest per URL, same
+      -- updated_at/created_at/id DESC convergence, plus a token-linked
+      -- preference so an existing token stays attached), carrying over each
+      -- loser's certificate lifecycle state (D7 retire-first, same rule
+      -- migration 15 used) and job/evidence history onto the keeper's own
+      -- managed_certificates row before the loser rows are dropped, then add
+      -- the unique index that makes this class of duplicate impossible
+      -- again.
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      ),
+      url_losers AS (
+        SELECT dm.workspace_id, dm.id AS loser_id, k.keeper_id
+          FROM domain_monitors dm
+          JOIN url_keepers k
+            ON k.workspace_id = dm.workspace_id AND k.url = dm.url
+         WHERE dm.id <> k.keeper_id
+      )
+      -- Backfill a token link onto the keeper if it has none but a loser
+      -- does (should not happen given the ordering above, but cheap
+      -- insurance against losing a real token link either way).
+      UPDATE domain_monitors k
+         SET token_id = l.token_id, updated_at = NOW()
+        FROM url_losers ul
+        JOIN domain_monitors l ON l.id = ul.loser_id
+       WHERE k.id = ul.keeper_id
+         AND k.token_id IS NULL
+         AND l.token_id IS NOT NULL;
+
+      -- D7 retire-first: a terminal lifecycle status ('revoked' or
+      -- 'decommissioned') on a losing monitor's certificate must not be
+      -- discarded just because the keeper's own certificate row is not
+      -- terminal. source_ref has no FK (polymorphic text/uuid identity
+      -- column), so this join is by value, not constraint.
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      ),
+      url_losers AS (
+        SELECT dm.workspace_id, dm.id AS loser_id, k.keeper_id
+          FROM domain_monitors dm
+          JOIN url_keepers k
+            ON k.workspace_id = dm.workspace_id AND k.url = dm.url
+         WHERE dm.id <> k.keeper_id
+      ),
+      terminal_losers AS (
+        SELECT DISTINCT ON (ul.workspace_id, ul.keeper_id)
+               ul.workspace_id, ul.keeper_id, mc.status AS terminal_status
+          FROM managed_certificates mc
+          JOIN url_losers ul
+            ON ul.workspace_id = mc.workspace_id
+           AND ul.loser_id::text = mc.source_ref
+         WHERE mc.source IN ('endpoint_monitor', 'domain_checker')
+           AND mc.status IN ('revoked', 'decommissioned')
+         ORDER BY ul.workspace_id, ul.keeper_id,
+                  mc.updated_at DESC, mc.created_at DESC, mc.id DESC
+      )
+      UPDATE managed_certificates mc
+         SET status = t.terminal_status
+        FROM terminal_losers t
+       WHERE mc.workspace_id = t.workspace_id
+         AND mc.source IN ('endpoint_monitor', 'domain_checker')
+         AND mc.source_ref = t.keeper_id::text
+         AND mc.status NOT IN ('revoked', 'decommissioned');
+
+      -- Re-point certificate_jobs/certificate_evidence history (FK-less text
+      -- pair, subject_type = 'managed_certificate') from a loser monitor's
+      -- certificate row onto the keeper's, mirroring migration 15's own
+      -- re-pointing precedent - covers the unlikely case that a job or
+      -- evidence row was ever created against a monitor-sourced (never
+      -- agent-deployable) certificate.
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      ),
+      url_losers AS (
+        SELECT dm.workspace_id, dm.id AS loser_id, k.keeper_id
+          FROM domain_monitors dm
+          JOIN url_keepers k
+            ON k.workspace_id = dm.workspace_id AND k.url = dm.url
+         WHERE dm.id <> k.keeper_id
+      ),
+      cert_pairs AS (
+        SELECT loser_mc.workspace_id, loser_mc.id AS loser_mc_id, keeper_mc.id AS keeper_mc_id
+          FROM url_losers ul
+          JOIN managed_certificates loser_mc
+            ON loser_mc.workspace_id = ul.workspace_id
+           AND loser_mc.source_ref = ul.loser_id::text
+           AND loser_mc.source IN ('endpoint_monitor', 'domain_checker')
+          JOIN managed_certificates keeper_mc
+            ON keeper_mc.workspace_id = ul.workspace_id
+           AND keeper_mc.source_ref = ul.keeper_id::text
+           AND keeper_mc.source IN ('endpoint_monitor', 'domain_checker')
+      )
+      UPDATE certificate_jobs cj
+         SET subject_id = cp.keeper_mc_id::text
+        FROM cert_pairs cp
+       WHERE cj.workspace_id = cp.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = cp.loser_mc_id::text;
+
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      ),
+      url_losers AS (
+        SELECT dm.workspace_id, dm.id AS loser_id, k.keeper_id
+          FROM domain_monitors dm
+          JOIN url_keepers k
+            ON k.workspace_id = dm.workspace_id AND k.url = dm.url
+         WHERE dm.id <> k.keeper_id
+      ),
+      cert_pairs AS (
+        SELECT loser_mc.workspace_id, loser_mc.id AS loser_mc_id, keeper_mc.id AS keeper_mc_id
+          FROM url_losers ul
+          JOIN managed_certificates loser_mc
+            ON loser_mc.workspace_id = ul.workspace_id
+           AND loser_mc.source_ref = ul.loser_id::text
+           AND loser_mc.source IN ('endpoint_monitor', 'domain_checker')
+          JOIN managed_certificates keeper_mc
+            ON keeper_mc.workspace_id = ul.workspace_id
+           AND keeper_mc.source_ref = ul.keeper_id::text
+           AND keeper_mc.source IN ('endpoint_monitor', 'domain_checker')
+      )
+      UPDATE certificate_evidence ce
+         SET subject_id = cp.keeper_mc_id::text
+        FROM cert_pairs cp
+       WHERE ce.workspace_id = cp.workspace_id
+         AND ce.subject_type = 'managed_certificate'
+         AND ce.subject_id = cp.loser_mc_id::text;
+
+      -- Drop each loser monitor's own managed_certificates row - its
+      -- lifecycle-relevant state, if any, was already carried onto the
+      -- keeper's row above.
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      ),
+      url_losers AS (
+        SELECT dm.workspace_id, dm.id AS loser_id, k.keeper_id
+          FROM domain_monitors dm
+          JOIN url_keepers k
+            ON k.workspace_id = dm.workspace_id AND k.url = dm.url
+         WHERE dm.id <> k.keeper_id
+      )
+      DELETE FROM managed_certificates mc
+       USING url_losers ul
+       WHERE mc.workspace_id = ul.workspace_id
+         AND mc.source IN ('endpoint_monitor', 'domain_checker')
+         AND mc.source_ref = ul.loser_id::text;
+
+      -- Drop the loser monitor rows themselves.
+      WITH url_keepers AS (
+        SELECT DISTINCT ON (workspace_id, url)
+               workspace_id, url, id AS keeper_id
+          FROM domain_monitors
+         ORDER BY workspace_id, url,
+                  (token_id IS NOT NULL) DESC, updated_at DESC, created_at DESC, id DESC
+      )
+      DELETE FROM domain_monitors dm
+       USING url_keepers k
+       WHERE dm.workspace_id = k.workspace_id
+         AND dm.url = k.url
+         AND dm.id <> k.keeper_id;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_monitors_workspace_url
+        ON domain_monitors(workspace_id, url);
+    `,
+  },
+  {
+    version: 38,
+    name: "managed_certificates_cross_source_monitor_dedup",
+    sql: `
+      -- Domain Checker and Endpoint Monitor each mint their own
+      -- managed_certificates row keyed by (source, source_ref) - "domain_checker"
+      -- keys on the discovered certificate's own id/hostname, "endpoint_monitor"
+      -- keys on the domain_monitors row id - so migration 15's
+      -- (workspace_id, source, source_ref) unique index never sees these as the
+      -- same identity even when they are the same real endpoint: Domain Checker
+      -- discovers a hostname first (with "Also create endpoint monitors" off),
+      -- then a user later manually adds that same hostname as an endpoint
+      -- monitor (or the reverse order), and the certificate shows up twice in
+      -- the Certificate operations list forever after. The application-level
+      -- fix (this migration's companion change in monitorBridge.js) makes new
+      -- observations reuse whatever managed_certificate a PRIOR observation -
+      -- from any source - already created for the same domain_monitors row,
+      -- found via certificate_instances.domain_monitor_id (a column
+      -- managed_certificates itself does not have). This migration merges
+      -- pre-existing duplicates the same way, keeping the newest row per
+      -- (workspace_id, domain_monitor_id) group - the same
+      -- updated_at/created_at/id DESC convergence used by every dedup migration
+      -- in this file - and carrying over lifecycle state and history exactly as
+      -- migration 15 did for its own (source, source_ref) merge.
+      --
+      -- Materialized once into a temp table: re-deriving the keeper/loser
+      -- pairs from certificate_instances after the first UPDATE below
+      -- re-points those very rows would make every loser look like it was
+      -- already merged (no remaining instances pointing at it), silently
+      -- orphaning loser managed_certificates rows instead of deleting them.
+      CREATE TEMP TABLE tmp_monitor_cert_pairs AS
+      WITH monitor_cert_links AS (
+        SELECT DISTINCT ci.workspace_id, ci.domain_monitor_id, ci.managed_certificate_id AS mc_id
+          FROM certificate_instances ci
+         WHERE ci.domain_monitor_id IS NOT NULL
+      ),
+      monitor_cert_groups AS (
+        SELECT l.workspace_id, l.domain_monitor_id, l.mc_id,
+               mc.updated_at, mc.created_at
+          FROM monitor_cert_links l
+          JOIN managed_certificates mc
+            ON mc.workspace_id = l.workspace_id AND mc.id = l.mc_id
+      ),
+      keepers AS (
+        SELECT DISTINCT ON (workspace_id, domain_monitor_id)
+               workspace_id, domain_monitor_id, mc_id AS keeper_mc_id
+          FROM monitor_cert_groups
+         ORDER BY workspace_id, domain_monitor_id,
+                  updated_at DESC, created_at DESC, mc_id DESC
+      )
+      SELECT DISTINCT g.workspace_id, g.mc_id AS loser_mc_id, k.keeper_mc_id
+        FROM monitor_cert_groups g
+        JOIN keepers k
+          ON k.workspace_id = g.workspace_id AND k.domain_monitor_id = g.domain_monitor_id
+       WHERE g.mc_id <> k.keeper_mc_id;
+
+      WITH colliding_instances AS (
+        SELECT ci.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ci.workspace_id, ci.target_id, cp.keeper_mc_id,
+                              ci.observed_fingerprint_sha256
+                 ORDER BY (ci.managed_certificate_id = cp.keeper_mc_id) DESC,
+                          ci.updated_at DESC, ci.created_at DESC, ci.id DESC
+               ) AS rn
+          FROM certificate_instances ci
+          JOIN tmp_monitor_cert_pairs cp
+            ON cp.workspace_id = ci.workspace_id AND cp.loser_mc_id = ci.managed_certificate_id
+         WHERE ci.observed_fingerprint_sha256 IS NOT NULL
+      )
+      DELETE FROM certificate_instances
+       WHERE id IN (SELECT id FROM colliding_instances WHERE rn > 1);
+
+      UPDATE certificate_instances ci
+         SET managed_certificate_id = cp.keeper_mc_id
+        FROM tmp_monitor_cert_pairs cp
+       WHERE ci.workspace_id = cp.workspace_id
+         AND ci.managed_certificate_id = cp.loser_mc_id;
+
+      -- D7 retire-first: a terminal lifecycle status on a losing row must not
+      -- be discarded just because the keeper is not terminal.
+      WITH terminal_losers AS (
+        SELECT DISTINCT ON (cp.workspace_id, cp.keeper_mc_id)
+               cp.workspace_id, cp.keeper_mc_id, mc.status AS terminal_status
+          FROM managed_certificates mc
+          JOIN tmp_monitor_cert_pairs cp
+            ON cp.workspace_id = mc.workspace_id AND cp.loser_mc_id = mc.id
+         WHERE mc.status IN ('revoked', 'decommissioned')
+         ORDER BY cp.workspace_id, cp.keeper_mc_id,
+                  mc.updated_at DESC, mc.created_at DESC, mc.id DESC
+      )
+      UPDATE managed_certificates mc
+         SET status = t.terminal_status
+        FROM terminal_losers t
+       WHERE mc.workspace_id = t.workspace_id
+         AND mc.id = t.keeper_mc_id
+         AND mc.status NOT IN ('revoked', 'decommissioned');
+
+      -- Re-point certificate_jobs/certificate_evidence history (FK-less text
+      -- pair, subject_type = 'managed_certificate') from a loser row to the
+      -- keeper's, mirroring migration 15's own re-pointing precedent.
+      UPDATE certificate_jobs cj
+         SET subject_id = cp.keeper_mc_id::text
+        FROM tmp_monitor_cert_pairs cp
+       WHERE cj.workspace_id = cp.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = cp.loser_mc_id::text;
+
+      UPDATE certificate_evidence ce
+         SET subject_id = cp.keeper_mc_id::text
+        FROM tmp_monitor_cert_pairs cp
+       WHERE ce.workspace_id = cp.workspace_id
+         AND ce.subject_type = 'managed_certificate'
+         AND ce.subject_id = cp.loser_mc_id::text;
+
+      -- Drop the now-fully-merged loser managed_certificates rows.
+      DELETE FROM managed_certificates mc
+       USING tmp_monitor_cert_pairs cp
+       WHERE mc.workspace_id = cp.workspace_id
+         AND mc.id = cp.loser_mc_id;
+
+      DROP TABLE tmp_monitor_cert_pairs;
+    `,
+  },
 ];
 
 async function runMigrations() {

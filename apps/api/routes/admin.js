@@ -1270,6 +1270,22 @@ router.post(
       }
       const normalizedUrl = parsedUrl.toString().replace(/\/+$/, "");
 
+      // Reuse an existing monitor for this URL instead of creating a
+      // duplicate domain_monitors row (and, downstream, a duplicate
+      // managed_certificates row via recordCertOpsMonitorObservation's
+      // source_ref = domainMonitorId keying - two different monitor rows
+      // for the same URL each get their own valid source_ref, so the
+      // managed_certificates unique constraint never catches this).
+      // Mirrors the dedup lookup the bulk domain-checker import path
+      // already does above (createMonitors branch, existingMonitor lookup).
+      const existingMonitorRes = await pool.query(
+        `SELECT id, token_id FROM domain_monitors
+         WHERE workspace_id = $1 AND url = $2
+         LIMIT 1`,
+        [req.workspace.id, normalizedUrl],
+      );
+      const existingMonitor = existingMonitorRes.rows[0] || null;
+
       // Try to fetch SSL cert immediately
       let sslData = {};
       try {
@@ -1331,32 +1347,59 @@ router.post(
           ? Math.max(1, Math.round(Number(alert_after_failures) || 2))
           : 2;
 
-      // Create endpoint monitor
-      const result = await pool.query(
-        `INSERT INTO domain_monitors
-          (workspace_id, url, validated, validated_at, ssl_issuer, ssl_subject, ssl_valid_from, ssl_valid_to, ssl_serial, ssl_fingerprint,
-           health_check_enabled, check_interval, alert_after_failures, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-         RETURNING *`,
-        [
-          req.workspace.id,
-          normalizedUrl,
-          !!sslData.ssl_valid_to,
-          sslData.ssl_valid_to ? new Date() : null,
-          sslData.ssl_issuer || null,
-          sslData.ssl_subject || null,
-          sslData.ssl_valid_from || null,
-          sslData.ssl_valid_to || null,
-          sslData.ssl_serial || null,
-          sslData.ssl_fingerprint || null,
-          health_check_enabled !== false,
-          check_interval || "hourly",
-          parsedAlertAfter,
-          req.user.id,
-        ],
-      );
-
-      const domainRow = result.rows[0];
+      // Create endpoint monitor (or update the existing one for this URL)
+      let domainRow;
+      if (existingMonitor) {
+        const updateResult = await pool.query(
+          `UPDATE domain_monitors
+           SET validated = $1, validated_at = $2, ssl_issuer = $3, ssl_subject = $4,
+               ssl_valid_from = $5, ssl_valid_to = $6, ssl_serial = $7, ssl_fingerprint = $8,
+               health_check_enabled = $9, check_interval = $10, alert_after_failures = $11,
+               updated_at = NOW()
+           WHERE id = $12
+           RETURNING *`,
+          [
+            !!sslData.ssl_valid_to,
+            sslData.ssl_valid_to ? new Date() : null,
+            sslData.ssl_issuer || null,
+            sslData.ssl_subject || null,
+            sslData.ssl_valid_from || null,
+            sslData.ssl_valid_to || null,
+            sslData.ssl_serial || null,
+            sslData.ssl_fingerprint || null,
+            health_check_enabled !== false,
+            check_interval || "hourly",
+            parsedAlertAfter,
+            existingMonitor.id,
+          ],
+        );
+        domainRow = updateResult.rows[0];
+      } else {
+        const result = await pool.query(
+          `INSERT INTO domain_monitors
+            (workspace_id, url, validated, validated_at, ssl_issuer, ssl_subject, ssl_valid_from, ssl_valid_to, ssl_serial, ssl_fingerprint,
+             health_check_enabled, check_interval, alert_after_failures, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           RETURNING *`,
+          [
+            req.workspace.id,
+            normalizedUrl,
+            !!sslData.ssl_valid_to,
+            sslData.ssl_valid_to ? new Date() : null,
+            sslData.ssl_issuer || null,
+            sslData.ssl_subject || null,
+            sslData.ssl_valid_from || null,
+            sslData.ssl_valid_to || null,
+            sslData.ssl_serial || null,
+            sslData.ssl_fingerprint || null,
+            health_check_enabled !== false,
+            check_interval || "hourly",
+            parsedAlertAfter,
+            req.user.id,
+          ],
+        );
+        domainRow = result.rows[0];
+      }
 
       // Resolve contact_group_id: use provided value, or fall back to workspace default
       let resolvedContactGroupId = null;
@@ -1378,8 +1421,9 @@ router.post(
         }
       }
 
-      // Auto-create token for SSL cert if we got cert data
-      if (sslData.ssl_valid_to) {
+      // Auto-create token for SSL cert if we got cert data (skip if the
+      // existing monitor already has one linked)
+      if (sslData.ssl_valid_to && !existingMonitor?.token_id) {
         try {
           const tokenResult = await pool.query(
             `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id, section)
@@ -1440,15 +1484,32 @@ router.post(
         await writeAudit({
           actorUserId: req.user.id,
           subjectUserId: req.user.id,
-          action: "DOMAIN_MONITOR_CREATED",
+          action: existingMonitor
+            ? "DOMAIN_MONITOR_UPDATED"
+            : "DOMAIN_MONITOR_CREATED",
           targetType: "domain_monitor",
           targetId: null,
           channel: null,
           workspaceId: req.workspace.id,
-          metadata: {
-            url: normalizedUrl,
-            ssl_detected: !!sslData.ssl_valid_to,
-          },
+          metadata: existingMonitor
+            ? {
+                url: normalizedUrl,
+                fields_updated: [
+                  "ssl_issuer",
+                  "ssl_subject",
+                  "ssl_valid_from",
+                  "ssl_valid_to",
+                  "ssl_serial",
+                  "ssl_fingerprint",
+                  "health_check_enabled",
+                  "check_interval",
+                  "alert_after_failures",
+                ],
+              }
+            : {
+                url: normalizedUrl,
+                ssl_detected: !!sslData.ssl_valid_to,
+              },
         });
       } catch (_err) {
         logger.warn("Audit write failed (DOMAIN_MONITOR_CREATED)", {
@@ -1456,7 +1517,7 @@ router.post(
         });
       }
 
-      res.status(201).json(domainRow);
+      res.status(existingMonitor ? 200 : 201).json(domainRow);
     } catch (e) {
       logger.error("Endpoint monitor create error", { error: e.message });
       res.status(500).json({ error: "Failed to create endpoint monitor" });

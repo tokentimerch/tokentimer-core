@@ -1334,6 +1334,14 @@ router.post(
   rejectKeyMaterial,
   requireCertOpsEnabled,
   requireCertOpsTokenManager,
+  // Minting a machine token is new capability granted to a workspace, not
+  // a read or a recovery action, so it uses the same workspace-active gate
+  // as manual job creation. Without this, a paused workspace (the operator
+  // believes it is frozen from new work) could still mint a live, usable
+  // credential server-side even though the dashboard's create button is
+  // already disabled while paused - the UI's own intent was never enforced
+  // here.
+  requireWorkspaceCertOpsActive,
   async (req, res) => {
     try {
       // Reject already-expired expiry up front: the service layer also
@@ -1519,6 +1527,12 @@ router.post(
   rejectKeyMaterial,
   requireCertOpsEnabled,
   requireCertOpsTokenManager,
+  // Same posture as API token creation immediately above (see that route's
+  // comment): minting a bootstrap credential is new capability, not a read
+  // or a recovery action, so it is blocked while the workspace is paused.
+  // Found alongside the token-create gap this route mirrors; both were
+  // missing the workspace-active gate for the same reason.
+  requireWorkspaceCertOpsActive,
   async (req, res) => {
     try {
       const created = await withCertOpsTokenTransaction(async (client) => {

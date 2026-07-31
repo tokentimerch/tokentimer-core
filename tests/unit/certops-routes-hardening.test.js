@@ -775,7 +775,7 @@ describe("CertOps route hardening", () => {
     }
   });
 
-  it("applies the workspace pause gate only to manual CertOps job creation", () => {
+  it("applies the workspace pause gate to manual CertOps job creation and new-credential minting", () => {
     const createBlock = routeBlock(
       "post",
       "/api/v1/workspaces/:id/certops/jobs",
@@ -801,6 +801,31 @@ describe("CertOps route hardening", () => {
       "bulk renew role authorization must run before the pause gate",
     );
 
+    // Minting a new machine or agent-bootstrap credential grants new
+    // standing capability, same class of "new work" as a manual job, so it
+    // is blocked while the workspace is paused - unlike revoke/retire, which
+    // stay available as recovery actions (see the "no pause gate" test
+    // below).
+    for (const [routePath, authorizationMiddleware] of [
+      ["/api/v1/workspaces/:id/certops/tokens", "requireCertOpsTokenManager"],
+      [
+        "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+        "requireCertOpsTokenManager",
+      ],
+    ]) {
+      const block = routeBlock("post", routePath);
+      assert.match(
+        block,
+        /requireWorkspaceCertOpsActive/,
+        `${routePath} must be blocked while the workspace is paused`,
+      );
+      assert.ok(
+        block.indexOf(authorizationMiddleware) <
+          block.indexOf("requireWorkspaceCertOpsActive"),
+        `${routePath} role authorization must run before the pause gate`,
+      );
+    }
+
     for (const [method, routePath] of [
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
@@ -811,6 +836,23 @@ describe("CertOps route hardening", () => {
         routeBlock(method, routePath),
         /requireWorkspaceCertOpsActive/,
         `${routePath} is a passive read and must remain available while paused`,
+      );
+    }
+  });
+
+  it("keeps token and agent-bootstrap-token revoke/retire available while paused", () => {
+    // Revoking or retiring a credential is a recovery action an operator may
+    // need mid-incident, same posture as the approval and detach routes, so
+    // it must not be blocked by the pause gate that now guards creation.
+    for (const routePath of [
+      "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
+      "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
+      "/api/v1/workspaces/:id/certops/agents/:agentId/retire",
+    ]) {
+      assert.doesNotMatch(
+        routeBlock("post", routePath),
+        /requireWorkspaceCertOpsActive/,
+        `${routePath} is a recovery action and must remain available while paused`,
       );
     }
   });

@@ -764,6 +764,68 @@ describe("CertOps API token management routes", function () {
     }
   });
 
+  it("blocks token creation while the workspace is paused, but still allows revoke", async () => {
+    const created = await createApiToken({
+      workspaceId: fixture.workspaceId,
+      name: "Revocable during pause",
+      scopes: ["certops:events:write"],
+      createdBy: fixture.ownerUser.id,
+    });
+    const auditsBefore = await tokenAuditCount(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_CREATED",
+    );
+
+    await TestUtils.execQuery(
+      "UPDATE workspaces SET certops_paused = TRUE WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    try {
+      const pausedCreate = await request(BASE)
+        .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({
+          name: "Minted while paused",
+          scopes: ["certops:events:write"],
+        });
+      expect(pausedCreate.status).to.equal(409);
+      expect(pausedCreate.body.code).to.equal("CERTOPS_WORKSPACE_PAUSED");
+      expectNoTokenLeak(pausedCreate.body);
+      expect(
+        await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
+      ).to.equal(auditsBefore);
+
+      // Revoke is a recovery action, not new work, so it must stay reachable
+      // even while the workspace is paused.
+      const pausedRevoke = await request(BASE)
+        .post(
+          `/api/v1/workspaces/${fixture.workspaceId}/certops/tokens/${created.token.id}/revoke`,
+        )
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({})
+        .expect(200);
+      expect(pausedRevoke.body.token.status).to.equal("revoked");
+      expectNoTokenLeak(pausedRevoke.body, [created.plaintextToken]);
+    } finally {
+      await TestUtils.execQuery(
+        "UPDATE workspaces SET certops_paused = FALSE WHERE id = $1",
+        [fixture.workspaceId],
+      );
+    }
+
+    const resumedCreate = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        name: "Minted after resume",
+        scopes: ["certops:events:write"],
+      })
+      .expect(201);
+    expectNoTokenLeak(resumedCreate.body.token, [
+      resumedCreate.body.plaintextToken,
+    ]);
+  });
+
   it("rejects private-key material before token creation or revoke handlers run", async () => {
     const createRejected = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)

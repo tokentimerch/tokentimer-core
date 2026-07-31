@@ -126,6 +126,25 @@ function createIdentityStore() {
       }
 
       if (
+        normalized.includes("FROM certificate_instances ci") &&
+        normalized.includes("JOIN managed_certificates mc") &&
+        normalized.includes("ci.domain_monitor_id = $2")
+      ) {
+        const matches = [...instances.values()].filter(
+          (item) => item.workspace_id === params[0] && item.domain_monitor_id === params[1],
+        );
+        matches.sort(
+          (a, b) => new Date(b.updated_at) - new Date(a.updated_at),
+        );
+        const hit = matches[0];
+        if (!hit) return { rows: [] };
+        const row = [...managed.values()].find(
+          (item) => item.workspace_id === hit.workspace_id && item.id === hit.managed_certificate_id,
+        );
+        return { rows: row ? [row] : [] };
+      }
+
+      if (
         normalized.includes("FROM managed_certificates") &&
         normalized.includes("source = $2") &&
         normalized.includes("source_ref = $3")
@@ -641,5 +660,101 @@ describe("CertOps monitor bridge retire-first lifecycle", () => {
     });
 
     assert.equal(second.managedCertificate.status, "active");
+  });
+});
+
+describe("CertOps monitor bridge cross-source dedup", () => {
+  it("reuses the managed_certificate a different source already created for the same domain monitor", async () => {
+    const store = createIdentityStore();
+    const cert = {
+      issuer: "Probe CA",
+      subject: "CN=www.example.com",
+      fingerprintSha256: SHARED_FINGERPRINT,
+      serialNumber: "01",
+      notAfter: "2099-01-01",
+    };
+
+    const discovered = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      source: "domain_checker",
+      sourceRef: "www.example.com",
+      certificate: cert,
+    });
+    assert.equal(discovered.skipped, false);
+    assert.equal(store.managed.size, 1);
+
+    const monitored = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      source: "endpoint_monitor",
+      sourceRef: MONITOR_A,
+      certificate: { ...cert, serialNumber: "02" },
+    });
+
+    assert.equal(monitored.skipped, false);
+    assert.equal(
+      monitored.managedCertificate.id,
+      discovered.managedCertificate.id,
+      "endpoint_monitor observation must reuse the domain_checker row for the same monitor, not mint a second one",
+    );
+    assert.equal(store.managed.size, 1);
+    assert.equal(monitored.managedCertificate.serialNumber, "02");
+    // Original identity (first observer) is preserved, only observation
+    // fields refresh.
+    assert.equal(monitored.managedCertificate.source, "domain_checker");
+    assert.equal(monitored.managedCertificate.sourceRef, "www.example.com");
+  });
+
+  it("works in the reverse order too (endpoint_monitor first, domain_checker second)", async () => {
+    const store = createIdentityStore();
+    const cert = {
+      issuer: "Probe CA",
+      subject: "CN=www.example.com",
+      fingerprintSha256: SHARED_FINGERPRINT,
+      notAfter: "2099-01-01",
+    };
+
+    const monitored = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      source: "endpoint_monitor",
+      sourceRef: MONITOR_A,
+      certificate: cert,
+    });
+    const discovered = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      source: "domain_checker",
+      sourceRef: "www.example.com",
+      certificate: cert,
+    });
+
+    assert.equal(discovered.managedCertificate.id, monitored.managedCertificate.id);
+    assert.equal(store.managed.size, 1);
+  });
+
+  it("does not merge across different domain monitors even under the same fingerprint", async () => {
+    const store = createIdentityStore();
+    const cert = {
+      issuer: "Probe CA",
+      subject: "CN=www.example.com",
+      fingerprintSha256: SHARED_FINGERPRINT,
+      notAfter: "2099-01-01",
+    };
+
+    const monitorA = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      source: "domain_checker",
+      sourceRef: "a.example.com",
+      hostname: "a.example.com",
+      certificate: cert,
+    });
+    const monitorB = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_B,
+      source: "endpoint_monitor",
+      sourceRef: MONITOR_B,
+      hostname: "b.example.com",
+      certificate: cert,
+    });
+
+    assert.notEqual(monitorA.managedCertificate.id, monitorB.managedCertificate.id);
+    assert.equal(store.managed.size, 2);
   });
 });
