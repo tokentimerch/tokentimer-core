@@ -16,7 +16,7 @@ goes stale.
 
 Machine tokens are scoped API keys for non-human callers (scripts, CI jobs,
 certbot/ACME hooks). Create one from the dashboard: workspace manager or
-admin role, `/certops/operations` page, "Machine API tokens" panel.
+admin role, `/certops/settings` page (Settings tab), "Machine API tokens" panel.
 
 - Format: `ttx_<id>_<secret>` (`apps/api/services/certops/apiTokens.js`).
 - The plaintext token is shown exactly once, in the create-token response.
@@ -310,13 +310,14 @@ should ever be sent to TokenTimer, and if it is, the request is rejected
 
 ## 8. Timeline in the dashboard
 
-Reported events and evidence show up under `/certops/operations` (Executor
-jobs panel + evidence timeline) for workspace managers/admins, with status
-badges, redaction markers, and audit links where available. See
+Reported events and evidence show up under `/certops/jobs` (`/certops/operations`
+permanently redirects there) - Executor jobs panel + evidence timeline - for
+workspace managers/admins, with status badges, redaction markers, and audit
+links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
 A job sitting at `pending_approval` shows inline **Approve**/**Reject**
-buttons on its row (manager/admin only, via the confirm modal in
-`apps/dashboard/src/pages/certops/CertOpsOperations.jsx`); see the
+buttons on its row (manager/admin only, via `ApprovalDecisionModal.jsx` inside
+`apps/dashboard/src/pages/certops/CertOpsJobs.jsx`); see the
 "Approval gates" runbook in `tokentimer-cloud`'s docs for the non-requester
 rule and what each decision does.
 
