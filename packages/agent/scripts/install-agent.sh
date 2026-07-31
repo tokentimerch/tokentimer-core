@@ -406,11 +406,22 @@ run chmod 0700 "$STATE_DIR"
 # --home/--config-home (acme.sh) pointed at these subdirectories.
 # dns_certops.sh is symlinked into acme.sh's dnsapi/ so `--dns dns_certops`
 # resolves (acme.sh sources the hook by name, never by absolute path).
+#
+# certbot/acme.sh create these directories themselves via their own
+# mkdir -p calls (config/work/logs dirs, acme.sh's per-domain cert dirs,
+# dnsapi/), inheriting the ambient umask (0755) rather than $STATE_DIR's
+# 0700. That is currently only harmless because $STATE_DIR itself blocks
+# traversal; explicitly re-hardening the acme/ subtree here (both the
+# dirs created up front and, defensively, anything either tool creates
+# underneath later) keeps the "0700 everywhere under state/" invariant
+# true on its own rather than depending on the parent dir as the only
+# line of defense.
 ACME_CERTBOT_DIR="$STATE_DIR/acme/certbot"
 ACME_SH_HOME="$STATE_DIR/acme/acme.sh"
 ACME_SH_DNSAPI_DIR="$ACME_SH_HOME/dnsapi"
 run mkdir -p "$ACME_CERTBOT_DIR/config" "$ACME_CERTBOT_DIR/work" "$ACME_CERTBOT_DIR/logs"
 run mkdir -p "$ACME_SH_DNSAPI_DIR"
+run chmod -R go-rwx "$STATE_DIR/acme"
 DNS_CERTOPS_SRC="$APP_DIR/bin/dns_certops.sh"
 DNS_CERTOPS_LINK="$ACME_SH_DNSAPI_DIR/dns_certops.sh"
 if [ "$DRY_RUN" -eq 1 ]; then
