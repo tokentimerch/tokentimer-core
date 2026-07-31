@@ -8,6 +8,9 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { main, sha256File, assertNoPrivateKeyMaterial } = require("./pack-release.js");
 
+const packageJsonPath = path.resolve(__dirname, "..", "package.json");
+const expectedVersion = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version;
+
 describe("pack-release (H10)", () => {
   let outDir;
 
@@ -18,10 +21,13 @@ describe("pack-release (H10)", () => {
   it("builds a versioned tarball and matching sha256 sidecar", () => {
     outDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-release-"));
     const result = main([`--out-dir=${outDir}`]);
-    assert.equal(result.version, "0.11.0");
+    assert.equal(result.version, expectedVersion);
     assert.ok(fs.existsSync(result.tarballPath));
     assert.ok(fs.existsSync(result.checksumPath));
-    assert.match(path.basename(result.tarballPath), /tokentimer-agent-0\.11\.0\.tgz$/);
+    assert.match(
+      path.basename(result.tarballPath),
+      new RegExp(`tokentimer-agent-${expectedVersion.replace(/\./g, "\\.")}\\.tgz$`),
+    );
 
     const checksum = fs.readFileSync(result.checksumPath, "utf8").trim();
     assert.equal(checksum, `${result.digest}  ${path.basename(result.tarballPath)}`);
