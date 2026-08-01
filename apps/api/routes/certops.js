@@ -1081,6 +1081,23 @@ function jobDetail(job) {
     resultMetadata: job.resultMetadata || {},
     errorCode: job.errorCode,
     errorMessage: job.errorMessage,
+    // Claim/lease/attempt metadata: already computed by the service layer
+    // (mapJobRow in services/certops/jobs.js) but previously dropped at this
+    // projection boundary, so a human reviewing the job timeline had no
+    // visibility into which agent held the job, how long its lease was valid
+    // for, or which attempt this was. There is no per-attempt signing-key id
+    // anywhere in the schema or agent protocol (pinned_signing_key_id lives
+    // on certops_agents, not on a job/attempt), so that piece isn't included
+    // here - it would need new schema, not just a projection fix. The
+    // job-detail route below best-effort-resolves the claiming agent's
+    // current pinned key as the closest honest proxy.
+    claimId: job.claimId,
+    claimedByAgentId: job.claimedByAgentId,
+    claimedByControllerClusterId: job.claimedByControllerClusterId,
+    leaseExpiresAt: job.leaseExpiresAt,
+    leaseRenewedAt: job.leaseRenewedAt,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
   };
 }
 
@@ -2050,7 +2067,31 @@ router.get(
         });
       }
 
-      return res.json({ job: jobDetail(job) });
+      // There is no per-attempt signing-key id anywhere in the schema, so
+      // the closest honest proxy for "which signing key backed this
+      // dispatch" is the claiming agent's own currently-pinned key. Best
+      // effort only: a lookup failure must not fail the job-detail response.
+      let claimedByAgentSigningKeyId = null;
+      if (job.claimedByAgentId) {
+        try {
+          const claimingAgent = await getAgentById({
+            workspaceId: req.workspace.id,
+            agentId: job.claimedByAgentId,
+          });
+          claimedByAgentSigningKeyId =
+            claimingAgent?.pinnedSigningKeyId ?? null;
+        } catch (lookupErr) {
+          logger.warn("CertOps job-detail signing-key lookup failed", {
+            error: lookupErr.message,
+            workspaceId: req.workspace?.id,
+            jobId,
+          });
+        }
+      }
+
+      return res.json({
+        job: { ...jobDetail(job), claimedByAgentSigningKeyId },
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
