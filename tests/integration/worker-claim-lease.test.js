@@ -385,15 +385,19 @@ describe("Worker claim leases", function () {
 
   describe("endpoint check worker claim lease", () => {
     async function insertMonitor() {
+      // Unique URL per call: domain_monitors now enforces one row per
+      // (workspace_id, url) (uq_domain_monitors_workspace_url), so reusing a
+      // fixed URL across the tests in this describe block would collide.
+      const url = `http://127.0.0.1:9/${crypto.randomUUID()}`;
       const res = await pool.query(
         `INSERT INTO domain_monitors
            (workspace_id, url, token_id, health_check_enabled, check_interval,
             last_health_status, last_health_check_at, consecutive_failures,
             alert_after_failures, created_by)
-         VALUES ($1, 'http://127.0.0.1:9', $2, TRUE, '1min',
-                 'healthy', NOW() - INTERVAL '10 minutes', 0, 2, $3)
+         VALUES ($1, $2, $3, TRUE, '1min',
+                 'healthy', NOW() - INTERVAL '10 minutes', 0, 2, $4)
          RETURNING id`,
-        [workspaceId, tokenId, userId],
+        [workspaceId, url, tokenId, userId],
       );
       monitorIds.push(res.rows[0].id);
       return res.rows[0].id;
