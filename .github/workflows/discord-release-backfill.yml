@@ -7,6 +7,13 @@ name: Backfill Discord releases
 # is safe to leave in the repo (unlike the original one-time backfill removed
 # in #98, which unconditionally reposted every release and was meant to run
 # exactly once).
+#
+# STATUS: disabled (commented out via `if: false` below) after its one use
+# on 2026-08-01, which posted v0.11.0 through v0.11.3 (the gap left by the
+# notify-discord job being silently dropped from release.yml - see
+# discord-release-notify.yml and the CHANGELOG "Unreleased" entry for
+# context). Flip `if: false` to `if: true` (or delete the line) the next
+# time a gap needs backfilling; do not remove this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -20,6 +27,7 @@ permissions:
 
 jobs:
   backfill-discord:
+    if: false
     runs-on: ubuntu-latest
     env:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
