@@ -24,7 +24,23 @@ const FORCE_RETIRED_UNKNOWN_EFFECT_CODE =
 const DEFAULT_MIN_PROTOCOL_VERSION = "1.0.0";
 const DEFAULT_MAX_PROTOCOL_VERSION = "1.999.999";
 const DEFAULT_MIN_AGENT_VERSION = "0.1.0";
+// Intentionally unbounded: this is a reject-ceiling, not a "latest version"
+// reference, so the control plane never blocks an agent purely for being
+// newer than this server happens to know about. Do not reuse this constant
+// to decide what counts as "outdated" (see DEFAULT_LATEST_KNOWN_AGENT_VERSION).
 const DEFAULT_MAX_AGENT_VERSION = "99.999.999";
+// The "outdated" heuristic below needs a real latest-version reference, not
+// the unbounded reject-ceiling above. Default it to the agent package this
+// server actually ships, so it tracks every release automatically without
+// an operator having to remember to bump an env var each time. Falls back to
+// the reject-ceiling (old behavior) only if that package.json can't be read.
+let DEFAULT_LATEST_KNOWN_AGENT_VERSION = null;
+try {
+  DEFAULT_LATEST_KNOWN_AGENT_VERSION =
+    require("../../../../packages/agent/package.json").version || null;
+} catch {
+  DEFAULT_LATEST_KNOWN_AGENT_VERSION = null;
+}
 const DEFAULT_CLOCK_DRIFT_WARN_MS = 5_000;
 const DEFAULT_CLOCK_DRIFT_ALERT_MS = 30_000;
 // Kept in sync with apps/worker/src/certops-worker.js's
@@ -139,6 +155,13 @@ function readCompatibilityConfig(env = process.env) {
       env.CERTOPS_AGENT_MIN_AGENT_VERSION || DEFAULT_MIN_AGENT_VERSION,
     maxAgentVersion:
       env.CERTOPS_AGENT_MAX_AGENT_VERSION || DEFAULT_MAX_AGENT_VERSION,
+    // Reference point for the "outdated" heuristic only; kept distinct from
+    // maxAgentVersion's reject-ceiling (see comment on the constants above).
+    latestKnownAgentVersion:
+      env.CERTOPS_AGENT_LATEST_KNOWN_VERSION ||
+      DEFAULT_LATEST_KNOWN_AGENT_VERSION ||
+      env.CERTOPS_AGENT_MAX_AGENT_VERSION ||
+      DEFAULT_MAX_AGENT_VERSION,
     clockDriftWarnMs: Number.parseInt(
       env.CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS || String(DEFAULT_CLOCK_DRIFT_WARN_MS),
       10,
@@ -186,10 +209,10 @@ function computeAgentCompatibility(agent, env = process.env) {
   ) {
     compatibilityState = "blocked";
   } else {
-    // Within supported bounds but more than one minor behind the configured
-    // maximum: surface as outdated so operators can plan upgrades.
+    // Within supported bounds but more than one minor behind the latest
+    // known agent build: surface as outdated so operators can plan upgrades.
     const agentParts = parseSemverParts(agent.agentVersion);
-    const maxParts = parseSemverParts(config.maxAgentVersion);
+    const maxParts = parseSemverParts(config.latestKnownAgentVersion);
     if (
       agentParts &&
       maxParts &&
@@ -240,6 +263,7 @@ function computeAgentCompatibility(agent, env = process.env) {
       maxProtocolVersion: config.maxProtocolVersion,
       minAgentVersion: config.minAgentVersion,
       maxAgentVersion: config.maxAgentVersion,
+      latestKnownAgentVersion: config.latestKnownAgentVersion,
       clockDriftWarnMs: config.clockDriftWarnMs,
       clockDriftAlertMs: config.clockDriftAlertMs,
       agentOfflineAfterMs: config.agentOfflineAfterMs,

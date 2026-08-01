@@ -486,7 +486,10 @@ describe("CertOps agents list route", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       retiredAt: null,
       retireReason: null,
-      compatibilityState: "outdated",
+      // 1.2.3 is ahead of the shipped agent package's own version (the
+      // default "latest known" reference for the outdated heuristic), so
+      // it is compatible, not outdated.
+      compatibilityState: "compatible",
       clockDriftState: "ok",
       clockDriftMs: 25,
       livenessState: "stale",

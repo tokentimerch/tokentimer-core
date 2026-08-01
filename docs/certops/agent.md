@@ -1131,15 +1131,19 @@ surfaces it on fleet status APIs (`compatibilityState`, `clockDriftState`,
 Env knobs (API process):
 
 - `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION`
-- `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION`
+- `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION` (the
+  `MAX` is an unbounded reject-ceiling, not the "outdated" reference; see
+  `CERTOPS_AGENT_LATEST_KNOWN_VERSION` below)
+- `CERTOPS_AGENT_LATEST_KNOWN_VERSION` (defaults to the shipped agent
+  package's own version; only this drives the `outdated` label)
 - `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS`
 - `CERTOPS_AGENT_OFFLINE_AFTER_MS` (default `600000`, 10 minutes; also read by
   the worker sweep below, so keep both in sync if overridden)
 
 `blocked` agents are outside the supported protocol/agent version window.
-`outdated` means below the preferred minimum but still accepted. Full alert
-delivery wiring for `clockDriftState: alert` is a follow-up; the fleet API
-flag is the operator-visible signal today.
+`outdated` means more than one minor behind `CERTOPS_AGENT_LATEST_KNOWN_VERSION`
+but still accepted. Full alert delivery wiring for `clockDriftState: alert` is
+a follow-up; the fleet API flag is the operator-visible signal today.
 
 The persisted `certops_agents.status` column (`active` / `offline` /
 `retired`) only ever moves *toward* `active` on the agent's own

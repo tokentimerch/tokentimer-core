@@ -146,6 +146,72 @@ describe("Endpoint Monitor CRUD", function () {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. URL dedup - POST must reuse an existing monitor for the same URL
+// ---------------------------------------------------------------------------
+describe("Endpoint Monitor - URL dedup", function () {
+  this.timeout(60000);
+
+  let testUser;
+  let session;
+  let workspaceId;
+  let domainId;
+
+  before(async () => {
+    await TestEnvironment.setup();
+    testUser = await TestUtils.createVerifiedTestUser();
+    session = await TestUtils.loginTestUser(testUser.email, "SecureTest123!@#");
+    const wsList = await request(BASE)
+      .get("/api/v1/workspaces?limit=50&offset=0")
+      .set("Cookie", session.cookie);
+    workspaceId = wsList?.body?.items?.[0]?.id;
+  });
+
+  after(async () => {
+    if (domainId) {
+      await TestUtils.execQuery("DELETE FROM domain_monitors WHERE id = $1", [
+        domainId,
+      ]);
+    }
+    await TestUtils.cleanupTestUser(testUser.email, session.cookie);
+  });
+
+  it("POST /domains twice with the same URL should not create a second monitor row", async () => {
+    const url = "https://example.com/dedup-test";
+
+    const first = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/domains`)
+      .set("Cookie", session.cookie)
+      .send({ url })
+      .expect(201);
+    domainId = first.body.id;
+
+    const second = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/domains`)
+      .set("Cookie", session.cookie)
+      .send({ url })
+      .expect(200);
+
+    // Same underlying row, not a new one.
+    expect(second.body.id).to.equal(first.body.id);
+
+    const countRes = await TestUtils.execQuery(
+      "SELECT COUNT(*)::int AS c FROM domain_monitors WHERE workspace_id = $1 AND url = $2",
+      [workspaceId, url],
+    );
+    expect(countRes.rows[0].c).to.equal(1);
+  });
+
+  it("should not create a duplicate managed_certificates row for the reused monitor", async () => {
+    const certRes = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS c FROM managed_certificates
+       WHERE workspace_id = $1 AND source = 'endpoint_monitor' AND source_ref = $2`,
+      [workspaceId, String(domainId)],
+    );
+    expect(certRes.rows[0].c).to.be.at.most(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. Token listing with health data
 // ---------------------------------------------------------------------------
 describe("Token listing with endpoint-monitor health data", function () {

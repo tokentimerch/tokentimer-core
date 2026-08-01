@@ -217,6 +217,38 @@ async function existingManagedCertificate(client, options) {
   return result.rows[0] ? toInventoryRecord(result.rows[0]) : null;
 }
 
+// Domain Checker and Endpoint Monitor each key their own managed_certificates
+// row by (source, source_ref) - "domain_checker" keys on the discovered
+// certificate's own id/hostname, "endpoint_monitor" keys on the
+// domain_monitors row id - so the SAME real endpoint, observed by both
+// features (discovered first, monitoring enabled later, or vice versa),
+// never collides under existingManagedCertificate() above and used to earn
+// two permanent "Discovered"/"Monitored only" rows for one hostname.
+// domain_monitors is deduped to one row per (workspace_id, url) (see the
+// domain_monitors_workspace_url_dedup migration), so domainMonitorId is a
+// reliable cross-source identity: both call sites always pass it (it is
+// required by bridgeEndpointCertificateObservation below), even when the
+// source's own source_ref does not reference it directly. Reuse whatever
+// managed_certificate a PRIOR observation - from any source - already
+// created for this monitor before minting a second one.
+async function existingManagedCertificateForDomainMonitor(client, options) {
+  const domainMonitorId = normalizeText(options.domainMonitorId);
+  if (!domainMonitorId) return null;
+
+  const result = await client.query(
+    `SELECT mc.*
+       FROM certificate_instances ci
+       JOIN managed_certificates mc
+         ON mc.workspace_id = ci.workspace_id AND mc.id = ci.managed_certificate_id
+      WHERE ci.workspace_id = $1
+        AND ci.domain_monitor_id = $2
+      ORDER BY ci.updated_at DESC, ci.created_at DESC
+      LIMIT 1`,
+    [options.workspaceId, domainMonitorId],
+  );
+  return result.rows[0] ? toInventoryRecord(result.rows[0]) : null;
+}
+
 async function updateManagedCertificateFromObservation(
   client,
   managedCertificate,
@@ -289,6 +321,27 @@ async function upsertObservedManagedCertificate(client, certificate, options) {
     return updateManagedCertificateFromObservation(
       client,
       managedByMonitor,
+      certificate,
+      options,
+    );
+  }
+
+  // No row under this exact (source, source_ref) yet - before minting a new
+  // one, check whether a different monitor source already observed this
+  // same domain_monitors row. If so, that row IS this certificate; refresh
+  // it in place instead of creating a cross-source duplicate. The row keeps
+  // its original (source, source_ref) identity (first observer wins it),
+  // which is fine - it is only ever used to look itself back up, and this
+  // fallback covers every later observation regardless of which source
+  // sends it.
+  const managedByOtherSource = await existingManagedCertificateForDomainMonitor(
+    client,
+    options,
+  );
+  if (managedByOtherSource) {
+    return updateManagedCertificateFromObservation(
+      client,
+      managedByOtherSource,
       certificate,
       options,
     );
