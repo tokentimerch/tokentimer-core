@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-08-01
+
+### Fixed
+
+- **Migration 38's own dedup pass could fail with `duplicate key value violates unique constraint "uq_certificate_instances_target_cert_fingerprint"` on upgrade, on exactly the data it was written to clean up.** Introduced in v0.11.2 to merge cross-source `managed_certificates` duplicates (see v0.11.2 entry above), migration 38's collision detection scanned only the *losing* `managed_certificate`'s `certificate_instances` rows when deciding which duplicates to drop before re-pointing survivors onto the keeper. Since Domain Checker and Endpoint Monitor share one `certificate_targets` row per `domain_monitor_id`, a workspace where both sources had already observed the same live certificate on the same target ended up with the keeper's own instance and a loser's instance already agreeing on `(target_id, observed_fingerprint_sha256)` *before* the migration ran - a collision the loser-only scan never checked for, so the later `UPDATE` that re-points loser rows onto the keeper's `managed_certificate_id` hit the unique constraint directly. The migration's `combined_instances` CTE now unions the keeper's own pre-existing instances into the same collision-detection partition as the losers', so the keeper's row is ranked first and the true duplicate is dropped up front instead of colliding mid-`UPDATE`. This was data-dependent - invisible on an empty database or on a workspace without that specific cross-source overlap - which is why it shipped undetected in v0.11.2 and then failed on `tokentimer-cloud`'s backend startup on upgrade. Added a dedicated upgrade-path integration test (`certops-migrations-37-38-upgrade.test.js`) that seeds this exact colliding shape, and documented the requirement in the release skill: any future migration that merges, dedupes, or backfills pre-existing rows must ship with a test seeded with the colliding legacy data it is meant to clean up, not just clean non-conflicting rows.
+
 ## [0.11.2] - 2026-07-31
 
 ### Fixed

@@ -2717,18 +2717,40 @@ const migrations = [
           ON k.workspace_id = g.workspace_id AND k.domain_monitor_id = g.domain_monitor_id
        WHERE g.mc_id <> k.keeper_mc_id;
 
-      WITH colliding_instances AS (
-        SELECT ci.id,
-               ROW_NUMBER() OVER (
-                 PARTITION BY ci.workspace_id, ci.target_id, cp.keeper_mc_id,
-                              ci.observed_fingerprint_sha256
-                 ORDER BY (ci.managed_certificate_id = cp.keeper_mc_id) DESC,
-                          ci.updated_at DESC, ci.created_at DESC, ci.id DESC
-               ) AS rn
+      -- Collision detection must also include the KEEPER's own pre-existing
+      -- instances, not just the losers': Domain Checker and Endpoint Monitor
+      -- share one certificate_targets row per domain_monitor_id
+      -- (findOrCreateTarget in monitorBridge.js keys the lookup on
+      -- domain_monitor_id), so when both sources observed the same live
+      -- certificate, the keeper's own instance and a loser's instance
+      -- already agree on (target_id, observed_fingerprint_sha256) before
+      -- this migration ever runs. Scanning losers alone missed that
+      -- collision, so the UPDATE below - which re-points loser rows onto the
+      -- keeper's managed_certificate_id - hit
+      -- uq_certificate_instances_target_cert_fingerprint the moment a loser
+      -- row collided with a keeper row nobody had checked against. Unioning
+      -- keeper + loser instances into one partition lets the ORDER BY
+      -- tiebreaker rank the keeper's own row first and drop the duplicate
+      -- loser row up front instead of during the re-point.
+      WITH combined_instances AS (
+        SELECT DISTINCT ci.id, ci.workspace_id, ci.target_id,
+               ci.observed_fingerprint_sha256, ci.managed_certificate_id,
+               ci.updated_at, ci.created_at, cp.keeper_mc_id
           FROM certificate_instances ci
           JOIN tmp_monitor_cert_pairs cp
-            ON cp.workspace_id = ci.workspace_id AND cp.loser_mc_id = ci.managed_certificate_id
+            ON cp.workspace_id = ci.workspace_id
+           AND ci.managed_certificate_id IN (cp.loser_mc_id, cp.keeper_mc_id)
          WHERE ci.observed_fingerprint_sha256 IS NOT NULL
+      ),
+      colliding_instances AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY workspace_id, target_id, keeper_mc_id,
+                              observed_fingerprint_sha256
+                 ORDER BY (managed_certificate_id = keeper_mc_id) DESC,
+                          updated_at DESC, created_at DESC, id DESC
+               ) AS rn
+          FROM combined_instances
       )
       DELETE FROM certificate_instances
        WHERE id IN (SELECT id FROM colliding_instances WHERE rn > 1);
