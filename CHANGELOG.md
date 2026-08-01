@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Discord release announcements silently stopped after v0.10.3.** The `notify-discord` job (added in `release.yml` on `main` by #97) was overwritten when the long-lived `release/0.11.0` branch (#96) was based on a pre-Discord snapshot of `release.yml` and squash-merged, deleting the job with no diff review catching it — every release from v0.11.0 through v0.11.3 shipped without a Discord post. Re-added the notification as its own workflow, `.github/workflows/discord-release-notify.yml`, triggered by the repo's `release: published` event (fired by `gh release create`) instead of a job inside `release.yml`, so it can no longer be silently dropped by a `release.yml` merge and correctly never fires for beta dry-run tags (which never get a GitHub Release). Added `.github/workflows/discord-release-backfill.yml` (`workflow_dispatch`, takes an `after_tag` input) to post any run of missed releases going forward, and used it once to backfill v0.11.0 through v0.11.3.
+
 ## [0.11.3] - 2026-08-01
 
 ### Fixed
