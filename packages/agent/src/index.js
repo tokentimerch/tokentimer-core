@@ -121,6 +121,7 @@ const {
   removeDeployedArtifacts,
   getDeployMetrics,
 } = require("./deploy");
+const { durabilityMetadataEntries } = require("./platform/durability.js");
 const {
   markSideEffectReached,
   scanUnresolvedJournalEntries,
@@ -3169,6 +3170,7 @@ async function runDeployReloadVerify({
         ...Object.entries(metricsForType)
           .filter(([, value]) => typeof value === "number")
           .map(([name, value]) => ({ name: `deployMetric_${name}`, value })),
+        ...durabilityMetadataEntries(),
       ],
     }),
   ]);
