@@ -15,7 +15,9 @@ const contractsManifest = require("../../contracts.manifest.json");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
 const evidenceSchema = require("../../packages/contracts/certops/evidence.schema.json");
 const executorEventSchema = require("../../packages/contracts/certops/executor-event.schema.json");
-const signedDispatchEnvelopeSchema = require("../../packages/contracts/certops/signed-dispatch-envelope.schema.json");
+const signedDispatchPayloadSchema = require("../../packages/contracts/certops/signed-dispatch-payload.schema.json");
+const signedDispatchWireV1Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v1.schema.json");
+const signedDispatchWireV2Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v2.schema.json");
 const protocolSmokePayloadSchema = require("../../packages/contracts/certops/protocol-smoke-payload.schema.json");
 
 const openApiSource = fs.readFileSync(
@@ -163,14 +165,23 @@ const certopsSchemas = {
   "evidence.schema.json": evidenceSchema,
   "executor-event.schema.json": executorEventSchema,
   "protocol-smoke-payload.schema.json": protocolSmokePayloadSchema,
+  "signed-dispatch-wire-v2.schema.json": signedDispatchWireV2Schema,
 };
 
-// Not part of certopsSchemas: this is a partial building-block definition
-// (no top-level additionalProperties of its own; each composing schema owns
-// that), so it must not be subject to the "every top-level schema is bounded"
-// assertion below. It still needs to be addSchema'd for $ref resolution
+// Not part of certopsSchemas: these are partial building-block definitions
+// (no top-level additionalProperties of their own; each composing schema owns
+// that), so they must not be subject to the "every top-level schema is bounded"
+// assertion below. They still need to be addSchema'd for $ref resolution
 // whenever job-payload/protocol-smoke are validated.
-const crossFileRefOnlySchemas = [signedDispatchEnvelopeSchema];
+//
+// signed-dispatch-payload defines the SIGNED fields and deliberately has no
+// signature property (a signature cannot sign itself); signed-dispatch-wire-v1
+// owns that wire-only field. signed-dispatch-wire-v2 IS a bounded top-level
+// wrapper schema, so it lives in certopsSchemas above instead.
+const crossFileRefOnlySchemas = [
+  signedDispatchPayloadSchema,
+  signedDispatchWireV1Schema,
+];
 
 function manifestPaths() {
   return new Set(
@@ -683,7 +694,6 @@ describe("CertOps contract skeletons", () => {
       "expiresAt",
       "nonce",
       "signingKeyId",
-      "signature",
       "claimId",
       "attemptId",
       "leaseExpiresAt",
@@ -700,6 +710,31 @@ describe("CertOps contract skeletons", () => {
         `${agentOnlyField} must be documented as reserved for signed agent dispatch`,
       );
     }
+
+    // "signature" is deliberately NOT in the list above. It is not a reserved
+    // signed-payload field; it is a WIRE WRAPPER field, and documenting it as
+    // "reserved for signed agent dispatch" alongside the others is what let an
+    // earlier revision describe one shared definition as carrying both the
+    // signed fields and the signature -- an impossible shape, since a signature
+    // cannot sign itself (ADR-0012 decision 3). It must stay optional here, and
+    // its description must say which side of the boundary it is on.
+    assert.equal(jobPayloadSchema.required.includes("signature"), false);
+    // "signature" is defined exactly once, on the v1 wire wrapper, and $ref'd
+    // here, so the boundary documentation cannot drift between copies.
+    assert.equal(
+      jobPayloadSchema.properties.signature.$ref,
+      `${signedDispatchWireV1Schema.$id}#/properties/signature`,
+    );
+    assert.match(
+      signedDispatchWireV1Schema.properties.signature.description,
+      /wire-only/i,
+      "signature must be documented as a wire wrapper field, not a signed-payload field",
+    );
+    assert.equal(
+      "signature" in signedDispatchPayloadSchema.properties,
+      false,
+      "the signed-payload schema must not define a signature property: it is the content being signed",
+    );
 
     // The unsigned skeleton evolved: the execution fields the agent consumes
     // are now blessed as part of the executable job contract. The description
@@ -1523,7 +1558,7 @@ describe("CertOps contract skeletons", () => {
   });
 });
 
-describe("signed-dispatch envelope and the action-keyed discriminated union", () => {
+describe("signed-dispatch payload, wire wrappers, and the action-keyed discriminated union", () => {
   const {
     CERTIFICATE_ACTIONS,
     PROTOCOL_SMOKE_ACTION,
@@ -1620,10 +1655,14 @@ describe("signed-dispatch envelope and the action-keyed discriminated union", ()
     assert.equal(result.valid, false);
   });
 
-  it("still validates a certificate job WITHOUT agentId (legacy tolerance during the additive rollout)", () => {
-    // job-payload.schema.json keeps agentId schema-optional during the
-    // server-first rollout (ADR-0012 decision 3); runtime enforcement of the
-    // trusted-identity gate is a client-side concern, not a schema one.
+  it("still validates a certificate job WITHOUT agentId (compatibility only; 1b-3 makes it required)", () => {
+    // job-payload.schema.json does NOT require agentId as of the schema-split
+    // change (1b-1), because the control plane does not emit it yet. It becomes
+    // required ATOMICALLY with server-side emission in 1b-3 -- the producer
+    // schema is never optional-then-required across releases, since a schema
+    // that permits omitting the field cannot catch a dispatch path that forgot
+    // it. Consumer-side absence tolerance lives in the compatibility decoder
+    // gated on CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID, never here.
     const job = baseCertificateJob();
     assert.equal("agentId" in job, false);
     const result = validateSignedJob(job);
@@ -1644,7 +1683,7 @@ describe("signed-dispatch envelope and the action-keyed discriminated union", ()
     assert.equal(result.valid, false);
   });
 
-  it("shares the signed-dispatch envelope fields identically across both schemas", () => {
+  it("shares the signed-dispatch payload fields identically across both schemas", () => {
     const nonce = "n".repeat(20);
     const certJob = validateSignedJob(
       baseCertificateJob({
@@ -1674,5 +1713,123 @@ describe("signed-dispatch envelope and the action-keyed discriminated union", ()
     );
     assert.equal(certJob.valid, true, JSON.stringify(certJob.errors));
     assert.equal(smokeJob.valid, true, JSON.stringify(smokeJob.errors));
+  });
+
+  // ---------------------------------------------------------------------
+  // Payload vs wire wrapper (ADR-0012 decisions 1 and 3).
+  //
+  // An earlier revision had ONE shared definition named "signedDispatchEnvelope"
+  // carrying both the signed fields and "signature". That cannot describe signed
+  // content: the signature is computed over the payload, so it cannot be one of
+  // the payload's fields. These tests pin the three-way split so the naming
+  // cannot silently regress into the impossible shape again.
+  // ---------------------------------------------------------------------
+
+  it("defines no signature property on the signed payload: a signature cannot sign itself", () => {
+    assert.equal("signature" in signedDispatchPayloadSchema.properties, false);
+    assert.match(signedDispatchPayloadSchema.$id, /signed-dispatch-payload\.schema\.json$/);
+  });
+
+  it("defines signature exactly once, on the v1 wire wrapper, and both per-action schemas $ref it", () => {
+    assert.ok(signedDispatchWireV1Schema.properties.signature);
+
+    const expectedRef = `${signedDispatchWireV1Schema.$id}#/properties/signature`;
+    assert.equal(jobPayloadSchema.properties.signature.$ref, expectedRef);
+    assert.equal(protocolSmokePayloadSchema.properties.signature.$ref, expectedRef);
+  });
+
+  it("bounds the v2 wrapper to exactly four fields and no payload fields", () => {
+    assert.equal(signedDispatchWireV2Schema.additionalProperties, false);
+    assert.deepEqual(Object.keys(signedDispatchWireV2Schema.properties).sort(), [
+      "envelopeVersion",
+      "payloadB64",
+      "signatureB64",
+      "signingKeyId",
+    ]);
+    // No sibling unsigned job object and no leaked payload fields: anything not
+    // inside payloadB64 is simply not part of a v2 dispatch (decision 1).
+    for (const payloadOnlyField of ["jobId", "nonce", "claimId", "agentId", "action"]) {
+      assert.equal(
+        payloadOnlyField in signedDispatchWireV2Schema.properties,
+        false,
+        `v2 wrapper must not carry the payload field ${payloadOnlyField}`,
+      );
+    }
+    assert.equal(signedDispatchWireV2Schema.properties.envelopeVersion.const, 2);
+  });
+
+  it("shares signingKeyId between payload and v2 wrapper, and only signingKeyId", () => {
+    // This is the one intentional duplication: the wrapper's copy is the
+    // pre-verification key-selection hint, the payload's copy is authenticated,
+    // and verification requires them equal (decision 2 step 13).
+    const payloadFields = new Set(Object.keys(signedDispatchPayloadSchema.properties));
+    const shared = Object.keys(signedDispatchWireV2Schema.properties).filter((key) =>
+      payloadFields.has(key),
+    );
+    assert.deepEqual(shared, ["signingKeyId"]);
+  });
+
+  it("validates a well-formed v2 wrapper and rejects malformed ones", () => {
+    const ajv = createAjv();
+    const validate = ajv.getSchema(signedDispatchWireV2Schema.$id);
+    assert.ok(validate, "the v2 wrapper schema must be registered");
+
+    const wellFormed = {
+      envelopeVersion: 2,
+      payloadB64: Buffer.from('{"jobId":"job-1"}', "utf8").toString("base64"),
+      signatureB64: Buffer.alloc(64, 7).toString("base64"),
+      signingKeyId: "ttsk_abc123",
+    };
+    assert.equal(validate(wellFormed), true, JSON.stringify(validate.errors));
+
+    assert.equal(
+      validate({ ...wellFormed, envelopeVersion: 1 }),
+      false,
+      "envelopeVersion must be exactly 2",
+    );
+    assert.equal(
+      validate({ ...wellFormed, job: { jobId: "job-1" } }),
+      false,
+      "a sibling unsigned job object must be rejected",
+    );
+    assert.equal(
+      validate({ ...wellFormed, signature: "s".repeat(88) }),
+      false,
+      "the v1 wrapper's signature field must be rejected on a v2 wrapper",
+    );
+    assert.equal(
+      validate({ ...wellFormed, signatureB64: Buffer.alloc(63, 7).toString("base64") }),
+      false,
+      "a signature that is not exactly 64 decoded bytes must be rejected",
+    );
+    assert.match(
+      signedDispatchWireV2Schema.properties.payloadB64.pattern,
+      /\+\//,
+      "payloadB64 must require the standard base64 alphabet, not base64url",
+    );
+  });
+
+  it("rejects base64url in payloadB64 for an encoding that actually contains + and /", () => {
+    const ajv = createAjv();
+    const validate = ajv.getSchema(signedDispatchWireV2Schema.$id);
+
+    // These bytes are chosen so standard base64 provably emits both + and /
+    // (6-bit groups 62 and 63), making the base64url transform below a real
+    // change rather than a no-op that would pass vacuously.
+    const raw = Buffer.from([0xfb, 0xef, 0xbe, 0xff, 0xff, 0xff]);
+    const standard = raw.toString("base64");
+    assert.ok(standard.includes("+") && standard.includes("/"), standard);
+
+    const wrapper = {
+      envelopeVersion: 2,
+      payloadB64: standard,
+      signatureB64: Buffer.alloc(64, 7).toString("base64"),
+      signingKeyId: "ttsk_abc123",
+    };
+    assert.equal(validate(wrapper), true, JSON.stringify(validate.errors));
+
+    const urlSafe = standard.replace(/\+/g, "-").replace(/\//g, "_");
+    assert.notEqual(urlSafe, standard);
+    assert.equal(validate({ ...wrapper, payloadB64: urlSafe }), false);
   });
 });

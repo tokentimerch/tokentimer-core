@@ -176,9 +176,21 @@
           "status": "existing"
         },
         {
-          "id": "certops-signed-dispatch-envelope-schema",
+          "id": "certops-signed-dispatch-payload-schema",
           "kind": "schema",
-          "path": "packages/contracts/certops/signed-dispatch-envelope.schema.json",
+          "path": "packages/contracts/certops/signed-dispatch-payload.schema.json",
+          "status": "new"
+        },
+        {
+          "id": "certops-signed-dispatch-wire-v1-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/signed-dispatch-wire-v1.schema.json",
+          "status": "new"
+        },
+        {
+          "id": "certops-signed-dispatch-wire-v2-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/signed-dispatch-wire-v2.schema.json",
           "status": "new"
         },
         {

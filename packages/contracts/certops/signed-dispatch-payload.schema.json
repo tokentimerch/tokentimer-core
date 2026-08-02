@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json",
+  "title": "CertOps Signed Dispatch Payload",
+  "description": "Shared definitions for the fields that ARE SIGNED on every signed-dispatch job, regardless of action (ADR-0012 decision 3). This file deliberately does NOT define 'signature': the signature is computed over these fields, so it cannot be one of them. A v2 payloadB64 decode must contain no signature field at all, and the v1 wire object's top-level signature is excluded when recomputing canonical bytes -- signature is therefore a property of the WIRE WRAPPER, defined in signed-dispatch-wire-v1.schema.json, not of the signed payload. See signed-dispatch-wire-v2.schema.json for the v2 wrapper. Composed by job-payload.schema.json (alongside its certificate-specific required fields, unchanged) and by protocol-smoke-payload.schema.json (which needs none of the certificate fields). This file is the single source of truth for the shape of these fields; both per-action schemas $ref into it by $id rather than duplicating field definitions, so they cannot drift apart on what a signed field looks like. schemaVersion/jobId/workspaceId/action/mode/requestedAt are shared with the unsigned/bootstrap shape; agentId/issuedAt/expiresAt/nonce/signingKeyId/claimId/attemptId/leaseExpiresAt/attemptCount exist only once a job is actually signed for dispatch. This definition intentionally carries no top-level 'required' list of its own: each composing schema decides which of these fields it requires, because job-payload.schema.json's required list is constrained by backward compatibility with already-dispatched certificate jobs while protocol-smoke-payload.schema.json, being new, requires them from day one.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Unique public job identifier."
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Owning workspace identifier."
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "ADR-0012 decision 3: the agentId this job is signed for, binding the dispatch to one agent identity so a captured envelope cannot be replayed against a different agent. Required by the producer schemas from the moment the control plane emits it (both land in the same change; the producer schema is never optional-then-required, because a schema that permits omitting the field cannot catch a dispatch path that forgets it). Consumer-side tolerance for a control plane that has not yet deployed emission lives in a separate compatibility decoder gated on CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID, never in this schema: absence may be tolerated there while that flag's effective value is false, but a value that is PRESENT AND MISMATCHED always fails closed regardless of the flag. Clients advertise agent-id-binding-v1 based on the flag's effective value in the running process, not on their release's compiled-in default."
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Generic shape only. Each composing schema layers its own stricter action property (a fixed enum for certificate jobs, a const for protocol_smoke) via allOf; this definition does not constrain which action values are valid."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["real", "dry_run"],
+      "description": "First-class immutable job execution mode set at creation. dry_run jobs must terminate as dry_run_complete, never succeeded."
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: job dispatch timestamp."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: signed job validity bound."
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: single-use nonce for signed job replay protection."
+    },
+    "signingKeyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: identifier of the control-plane operational signing key. This is the ONE field that legitimately appears both here and on the v2 wire wrapper: the wrapper's copy is the pre-verification key-selection hint (read before any signature verdict exists), this copy is the authenticated value, and ADR-0012 decision 2 step 13 requires the two to be equal after verification so a wrapper hint cannot silently point at a different key than the one the payload claims."
+    },
+    "claimId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: claim identifier the agent must echo back with the result (ownership re-proof)."
+    },
+    "attemptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: server-assigned attempt id mirroring claimId, so a schema-minimal result report (attemptId only) still re-proves claim ownership."
+    },
+    "leaseExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: current claim lease expiry, echoed on dispatch so the agent can plan lease renewal."
+    },
+    "attemptCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Signed agent dispatch: number of claim attempts made for this job so far."
+    }
+  }
+}

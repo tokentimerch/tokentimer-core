@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v2.schema.json",
+  "title": "CertOps Signed Dispatch Wire Wrapper v2",
+  "description": "The v2 'exact-byte signed envelope' wire shape (ADR-0012 decision 1). The wire object is ONLY these four fields: it carries no payload fields and no sibling unsigned job object, so anything not inside payloadB64 is not part of the dispatch. payloadB64 is the base64 of the EXACT bytes the control plane signed (plain serialization, no canonicalization algorithm required on either side); signatureB64 is the base64 Ed25519 signature over those DECODED bytes, not over the base64 text. A client verifies payloadB64's bytes against signatureB64 BEFORE parsing any JSON, which is what makes a Node-free Bash+OpenSSL or standalone Go verifier viable: it needs base64-decode plus Ed25519-verify and nothing else. NOTE that this schema validates the WRAPPER only. The decoded payload is validated separately, after verification, against the per-action signed-payload schemas via validate-signed-job.cjs; that decoded object must NOT contain a signature field, since in v2 the signature travels beside the signed bytes rather than inside them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelopeVersion", "payloadB64", "signatureB64", "signingKeyId"],
+  "properties": {
+    "envelopeVersion": {
+      "type": "integer",
+      "const": 2,
+      "description": "Envelope format discriminator. A client that does not recognize the value fails closed rather than guessing; it never falls back to v1 parsing of an object it could not identify."
+    },
+    "payloadB64": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 262144,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+      "description": "Standard base64 (RFC 4648 section 4) of the signed payload bytes. NOT base64url: the + and / alphabet is required and the pattern rejects - and _. Canonical encoding only, per ADR-0012 decision 2: no embedded whitespace or newlines, no BOM, correct padding, and a re-encode of the decoded bytes must reproduce this string exactly, so a malleable encoding cannot produce two accepted spellings of the same payload. maxLength bounds the decode before it happens; the decoded-size limit is enforced separately by the verifier."
+    },
+    "signatureB64": {
+      "type": "string",
+      "minLength": 88,
+      "maxLength": 88,
+      "pattern": "^[A-Za-z0-9+/]{86}==$",
+      "description": "Standard base64 of the raw 64-byte Ed25519 signature over payloadB64's decoded bytes. Exactly 64 bytes decodes to exactly 88 base64 characters ending in '==', so the length is fixed rather than bounded: an unexpected length is rejected as malformed before any verification is attempted, rather than being handed to the crypto library."
+    },
+    "signingKeyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Pre-verification key-selection hint: the client uses it to pick which pinned public key to verify against, which necessarily happens before a signature verdict exists. It is therefore UNTRUSTED at read time. The signed payload carries its own signingKeyId, and ADR-0012 decision 2 step 13 requires the two to be equal after successful verification, so this hint cannot silently point at a different key than the payload claims."
+    }
+  }
+}

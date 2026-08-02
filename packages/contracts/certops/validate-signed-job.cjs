@@ -25,11 +25,22 @@
  * NOTE on the .cjs extension: packages/contracts/package.json declares
  * "type": "module", so this module ships as .cjs to stay requireable from
  * the CommonJS API service, matching canonical-json.cjs.
+ *
+ * SCOPE: this module validates a SIGNED PAYLOAD -- the fields that were
+ * signed -- not a wire wrapper. For v1 the two coincide on the wire (the
+ * per-action schemas also carry the wrapper's signature field), but for v2
+ * the caller validates the wrapper against signed-dispatch-wire-v2.schema.
+ * json, verifies payloadB64's bytes, and only then hands the DECODED payload
+ * here. The wrapper schemas are registered with Ajv below so a caller can
+ * resolve them by $id through this module's Ajv instance rather than building
+ * a second one.
  */
 
 const JOB_PAYLOAD_SCHEMA = require("./job-payload.schema.json");
 const PROTOCOL_SMOKE_PAYLOAD_SCHEMA = require("./protocol-smoke-payload.schema.json");
-const SIGNED_DISPATCH_ENVELOPE_SCHEMA = require("./signed-dispatch-envelope.schema.json");
+const SIGNED_DISPATCH_PAYLOAD_SCHEMA = require("./signed-dispatch-payload.schema.json");
+const SIGNED_DISPATCH_WIRE_V1_SCHEMA = require("./signed-dispatch-wire-v1.schema.json");
+const SIGNED_DISPATCH_WIRE_V2_SCHEMA = require("./signed-dispatch-wire-v2.schema.json");
 
 // Certificate lifecycle actions from job-payload.schema.json's own "action"
 // enum, duplicated here ONLY as the discriminator's action->schema routing
@@ -63,7 +74,9 @@ function getAjv() {
 
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
-  ajv.addSchema(SIGNED_DISPATCH_ENVELOPE_SCHEMA);
+  ajv.addSchema(SIGNED_DISPATCH_PAYLOAD_SCHEMA);
+  ajv.addSchema(SIGNED_DISPATCH_WIRE_V1_SCHEMA);
+  ajv.addSchema(SIGNED_DISPATCH_WIRE_V2_SCHEMA);
   ajv.addSchema(JOB_PAYLOAD_SCHEMA);
   ajv.addSchema(PROTOCOL_SMOKE_PAYLOAD_SCHEMA);
 
@@ -151,6 +164,8 @@ module.exports = {
     getAjv,
     JOB_PAYLOAD_SCHEMA,
     PROTOCOL_SMOKE_PAYLOAD_SCHEMA,
-    SIGNED_DISPATCH_ENVELOPE_SCHEMA,
+    SIGNED_DISPATCH_PAYLOAD_SCHEMA,
+    SIGNED_DISPATCH_WIRE_V1_SCHEMA,
+    SIGNED_DISPATCH_WIRE_V2_SCHEMA,
   },
 };

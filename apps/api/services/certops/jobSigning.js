@@ -477,17 +477,78 @@ function generateNonce() {
   return crypto.randomBytes(NONCE_RANDOM_BYTES).toString("base64url");
 }
 
+// ADR-0012 decision 1: the "exact-byte signed envelope". v1 (canonical-JSON
+// signing, above) requires every client to implement the SAME field-sorting
+// canonicalization algorithm as packages/contracts/certops/canonical-json.cjs
+// bit-for-bit, which is a real burden for a Bash+jq+OpenSSL or a standalone
+// Go verifier. v2 sidesteps canonicalization entirely: the control plane
+// serializes the job once, signs THOSE EXACT BYTES, and ships payloadB64 (the
+// base64 of those bytes) alongside signatureB64 (the base64 Ed25519
+// signature over the DECODED bytes, not over the base64 string). A verifier
+// only needs "base64-decode, then Ed25519-verify the raw bytes" -- no JSON
+// canonicalization, no field sorting, no whitespace-sensitivity -- so it can
+// be implemented in a few lines of jq-free Bash+OpenSSL or Go. The verifier
+// MUST verify before parsing: payloadB64's bytes are checked against
+// signatureB64 first, and only a verified byte sequence is ever JSON.parse'd.
+const ENVELOPE_VERSION_1 = 1;
+const ENVELOPE_VERSION_2 = 2;
+const SUPPORTED_ENVELOPE_VERSIONS = Object.freeze([
+  ENVELOPE_VERSION_1,
+  ENVELOPE_VERSION_2,
+]);
+
+/**
+ * Builds the v2 wire envelope for an already-fully-assembled signed job
+ * object (every field the client needs -- including nonce/issuedAt/
+ * expiresAt/claimId/attemptId/leaseExpiresAt/attemptCount/agentId -- must
+ * already be present on `signedJob`; v2 carries NO sibling unsigned fields,
+ * so anything not inside payloadB64 is simply not part of the dispatch).
+ *
+ * @param {object} params
+ * @param {object} params.signedJob complete job object, no signature field
+ * @param {string} params.signingKeyId
+ * @param {import('crypto').KeyObject} params.privateKeyObject
+ * @returns {{ envelopeVersion: 2, payloadB64: string, signatureB64: string, signingKeyId: string }}
+ */
+function buildV2Envelope({ signedJob, signingKeyId, privateKeyObject }) {
+  let payloadBytes;
+  try {
+    payloadBytes = Buffer.from(JSON.stringify(signedJob), "utf8");
+  } catch (error) {
+    throw serviceError(
+      `Job payload cannot be JSON-serialized for the v2 envelope: ${error.message}`,
+      CERTOPS_SIGNING_PAYLOAD_INVALID,
+    );
+  }
+  const signatureBytes = crypto.sign(null, payloadBytes, privateKeyObject);
+  return {
+    envelopeVersion: ENVELOPE_VERSION_2,
+    payloadB64: payloadBytes.toString("base64"),
+    signatureB64: signatureBytes.toString("base64"),
+    signingKeyId,
+  };
+}
+
 /**
  * Signs a job for dispatch and records the issued nonce in the server-side
  * replay ledger (certops_consumed_nonces, consumed_at stays NULL until the
  * result is ingested).
  *
- * Wire shape (what the agent's verifyJobSignature expects): the caller's
- * job payload fields (jobId, workspaceId, certificateId, action, target,
- * keyMode, requestedAt, ... per job-payload.schema.json) PLUS the signed
- * dispatch envelope added here: nonce, issuedAt, expiresAt, signingKeyId,
- * and the top-level signature (base64 Ed25519 over the canonical JSON of
- * everything except the signature itself).
+ * Wire shape (what the agent's verifyJobSignature expects) depends on
+ * envelopeVersion:
+ *   - v1 (default, legacy): the caller's job payload fields (jobId,
+ *     workspaceId, certificateId, action, target, keyMode, requestedAt, ...
+ *     per job-payload.schema.json) PLUS the signed dispatch envelope added
+ *     here: nonce, issuedAt, expiresAt, signingKeyId, and the top-level
+ *     signature (base64 Ed25519 over the canonical JSON of everything except
+ *     the signature itself).
+ *   - v2 (ADR-0012 decision 1, "exact-byte signed envelope"): the wire
+ *     object is ONLY { envelopeVersion: 2, payloadB64, signatureB64,
+ *     signingKeyId } -- no sibling unsigned fields. payloadB64 is the exact
+ *     bytes that were signed (plain JSON.stringify, no canonicalization
+ *     algorithm required on either side); signatureB64 is the Ed25519
+ *     signature over those decoded bytes. A v2 client must verify
+ *     payloadB64's bytes against signatureB64 BEFORE ever parsing JSON.
  *
  * @param {object} params
  * @param {object} [params.client]
@@ -495,6 +556,9 @@ function generateNonce() {
  * @param {string|null} [params.agentId] certops_agents uuid or null
  * @param {string} params.workspaceId
  * @param {number} [params.nonceTtlSeconds]
+ * @param {number} [params.envelopeVersion] 1 (default) or 2; the caller
+ *   picks this based on whether the polling agent declared the
+ *   signed-payload-b64-v1 capability (dual-format dispatch).
  * @returns {Promise<object>} the signed job ready for the claim `jobs` array
  */
 async function signJobForDispatch(options = {}) {
@@ -504,6 +568,7 @@ async function signJobForDispatch(options = {}) {
     agentId = null,
     workspaceId,
     nonceTtlSeconds = DEFAULT_NONCE_TTL_SECONDS,
+    envelopeVersion = ENVELOPE_VERSION_1,
   } = options;
 
   if (
@@ -530,6 +595,12 @@ async function signJobForDispatch(options = {}) {
       CERTOPS_SIGNING_PAYLOAD_INVALID,
     );
   }
+  if (!SUPPORTED_ENVELOPE_VERSIONS.includes(envelopeVersion)) {
+    throw serviceError(
+      `signJobForDispatch envelopeVersion must be one of ${SUPPORTED_ENVELOPE_VERSIONS.join(", ")}`,
+      CERTOPS_SIGNING_PAYLOAD_INVALID,
+    );
+  }
 
   // Fail closed on the env key before touching the DB row.
   const { signingKeyId, privateKeyObject } = await getActiveKeyWithPrivate(db);
@@ -548,8 +619,20 @@ async function signJobForDispatch(options = {}) {
   };
   delete signedJob.signature;
 
-  // Identical canonical form to the agent verifier (shared module). Throws
-  // CERTOPS_SIGNING_PAYLOAD_INVALID on unserializable payloads.
+  await db.query(
+    `INSERT INTO certops_consumed_nonces (
+       nonce, job_id, workspace_id, issued_to_agent_id, expires_at
+     )
+     VALUES ($1, $2, $3, $4, $5)`,
+    [nonce, job.jobId, workspaceId, agentId, expiresAt],
+  );
+
+  if (envelopeVersion === ENVELOPE_VERSION_2) {
+    return buildV2Envelope({ signedJob, signingKeyId, privateKeyObject });
+  }
+
+  // v1: identical canonical form to the agent verifier (shared module).
+  // Throws CERTOPS_SIGNING_PAYLOAD_INVALID on unserializable payloads.
   let canonical;
   try {
     canonical = canonicalizeJobPayload(signedJob);
@@ -563,14 +646,6 @@ async function signJobForDispatch(options = {}) {
   signedJob.signature = crypto
     .sign(null, Buffer.from(canonical, "utf8"), privateKeyObject)
     .toString("base64");
-
-  await db.query(
-    `INSERT INTO certops_consumed_nonces (
-       nonce, job_id, workspace_id, issued_to_agent_id, expires_at
-     )
-     VALUES ($1, $2, $3, $4, $5)`,
-    [nonce, job.jobId, workspaceId, agentId, expiresAt],
-  );
 
   return signedJob;
 }
@@ -706,6 +781,9 @@ module.exports = {
   CERTOPS_NONCE_REPLAYED,
   CERTOPS_NONCE_UNKNOWN_OR_EXPIRED,
   DEFAULT_NONCE_TTL_SECONDS,
+  ENVELOPE_VERSION_1,
+  ENVELOPE_VERSION_2,
+  SUPPORTED_ENVELOPE_VERSIONS,
   acknowledgeSigningKey,
   beginSigningKeyRotation,
   completeSigningKeyRotation,
@@ -730,5 +808,6 @@ module.exports = {
     generateNonce,
     generateSigningKeyId,
     getEncryptionKey,
+    buildV2Envelope,
   },
 };
