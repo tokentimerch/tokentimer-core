@@ -636,6 +636,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     pinnedSigningKeyId = null,
     clockOffsetMs = null,
     supportedDnsProviders = undefined,
+    declaredCapabilities = undefined,
   } = {}) {
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
@@ -652,6 +653,9 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
           pinnedSigningKeyId,
           ...(Array.isArray(supportedDnsProviders)
             ? { supportedDnsProviders }
+            : {}),
+          ...(Array.isArray(declaredCapabilities)
+            ? { declaredCapabilities }
             : {}),
         },
       })),

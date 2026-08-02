@@ -48,19 +48,17 @@ make an agent do arbitrary things.
     predicate, not a rejection: the operator-visible symptom of an out-of-date
     agent is an unclaimed `pending` job rather than an error. Capability names are
     contract surfaces under the README's change-control rule.
-  - **Registration is currently the only declaration point, and that is a real
-    constraint rather than an accident of wording.** `heartbeatBody` is
-    `additionalProperties: false` and defines no `declaredCapabilities`, so a
-    heartbeat carrying capabilities is schema-invalid and both ends enforce the
-    schema. The control plane does have a heartbeat-side write for the column,
-    guarded so an empty array preserves the stored value, but it is unreachable
-    until the contract admits the field. The consequence for operators is the
-    part that matters: **upgrading an agent binary in place does not grant it a
-    new capability**, because the capability set was fixed at enrollment.
-    Re-declaration on heartbeat is the natural fix and is a contract change
-    (`supportedDnsProviders` is the precedent for a re-advertisable field). Until
-    then the only remedy is re-enrollment, which loses the agent's identity and
-    key pin, so this must not be documented as "upgrade, then run a renew job".
+  - **Registration was the only declaration point until 0.12.0.**
+    `heartbeatBody` now also admits `declaredCapabilities`
+    (`packages/contracts/certops/agent-protocol.schema.json`), so an in-place
+    agent binary upgrade can advertise a newly-supported capability without
+    re-enrollment. Before this, `heartbeatBody` was `additionalProperties: false`
+    and defined no `declaredCapabilities`, so a heartbeat carrying capabilities
+    was schema-invalid; the server-side write existed (guarded so an empty
+    array preserves the stored value) but was unreachable until the contract
+    admitted the field. Re-enrollment (which loses the agent's identity and
+    key pin) is no longer the only remedy for a capability gap; it remains the
+    remedy only for an agent build old enough to predate this addendum.
   - The first such capability is `evidence-claim-binding-v1`, required to claim
     `issue` jobs and `renew` jobs whose subject certificate is still
     `provisioning`. See

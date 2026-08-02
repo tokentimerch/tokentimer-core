@@ -210,6 +210,17 @@
             "pattern": "^[A-Za-z0-9_.:-]+$"
           },
           "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Re-advertised on heartbeat so capability changes are picked up without re-registration."
+        },
+        "declaredCapabilities": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Named behaviours this agent build supports, re-advertised on heartbeat (ADR-0002 addendum). Registration remains the first declaration point; heartbeat is now a second one, so an in-place agent binary upgrade can advertise a newly-supported capability (e.g. windows-cert-store-v1, trust-anchor-deploy-v1) without losing its identity and signing-key pin through re-enrollment. An empty array on heartbeat preserves the previously declared set rather than clearing it, so an agent build that has not been updated to send this field is unaffected. Unknown values are ignored rather than rejected, matching registerBody's declaredCapabilities.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
         }
       }
     },

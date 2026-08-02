@@ -259,7 +259,7 @@ renewal POST used during job execution:
 | `heartbeat` | `POST /api/v1/certops/agent/heartbeat` |
 | `claim` | `POST /api/v1/certops/agent/jobs/claim` |
 | `result`, `evidence` | `POST /api/v1/certops/agent/jobs/results` |
-| lease renew (B6) | `POST /api/v1/certops/agent/jobs/:jobId/lease` |
+| lease renew | `POST /api/v1/certops/agent/jobs/:jobId/lease` |
 
 Result and evidence share one route; the envelope's `messageType`
 disambiguates server-side. Every envelope carries `schemaVersion` (1),
@@ -305,8 +305,11 @@ Flow:
   `declaredCommandProfileNames`. Response returns `agentId`, `credential`,
   and optionally `signingKeyId` + `signingPublicKeyPem` for TOFU pinning.
 - **heartbeat**: every `heartbeatIntervalMs`, sends `agentVersion`,
-  `ntpSynced`, `uptimeSeconds`, `pinnedSigningKeyId`, and (on the envelope)
-  `clockOffsetMs`. With execution enabled, `clockOffsetMs` is the clock
+  `ntpSynced`, `uptimeSeconds`, `pinnedSigningKeyId`, `declaredCapabilities`
+  (this build's fixed capability set, re-sent every heartbeat so
+  an in-place binary upgrade can advertise a new one without re-enrollment;
+  see `AGENT_DECLARED_CAPABILITIES`), and (on the envelope) `clockOffsetMs`.
+  With execution enabled, `clockOffsetMs` is the clock
   estimator's current median and `pinnedSigningKeyId` is the pinned key id;
   in observe-only mode both stay null. `ntpSynced` is independent of
   execution mode: it comes from `src/ntp` running
