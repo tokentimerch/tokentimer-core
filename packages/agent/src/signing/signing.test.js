@@ -9,7 +9,6 @@ const {
   DEFAULT_TIME_WINDOW_TOLERANCE_MS,
   ENVELOPE_VERSION_2,
   V2_MAX_ENCODED_PAYLOAD_CHARS,
-  V2_MAX_DECODED_PAYLOAD_BYTES,
   canonicalizeJobPayload,
   verifyJobSignature,
   verifyV2Envelope,
