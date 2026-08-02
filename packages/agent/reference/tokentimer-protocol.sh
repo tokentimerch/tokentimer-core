@@ -62,6 +62,15 @@ SKIP_TIME_WINDOW=0
 
 LAST_HTTP_STATUS=""
 LAST_RESPONSE_BODY=""
+# Identity obtained from a register response during 'all --execute'. The
+# credential is held in this process's memory only: never logged, never
+# written to disk, and never passed as an argv value to a child process.
+REGISTERED_AGENT_ID=""
+REGISTERED_CREDENTIAL=""
+# Result-envelope fields copied out of the verified claimed job.
+JOB_NONCE=""
+JOB_CLAIM_ID=""
+JOB_MODE=""
 
 usage() {
   cat <<'EOF'
@@ -265,6 +274,13 @@ resolve_bootstrap_token() {
 }
 
 resolve_credential() {
+  # A credential minted by this run's own register step wins: 'all --execute'
+  # must speak as the identity it just enrolled, not as a separately supplied
+  # one, or heartbeat/claim/result act on the wrong agent.
+  if [ -n "$REGISTERED_CREDENTIAL" ]; then
+    printf '%s' "$REGISTERED_CREDENTIAL"
+    return
+  fi
   if [ -n "$CREDENTIAL_FILE" ]; then
     read_secret_file "$CREDENTIAL_FILE" "credential"
     return
@@ -411,8 +427,15 @@ build_agent_result_body() {
     "") key_rotated_json=null ;;
     *) fail "--key-rotated must be 'true' or 'false', got '$KEY_ROTATED'" ;;
   esac
+  # nonce and claimId come from the signed dispatch: the control plane consumes
+  # the nonce in its replay ledger at result ingestion, so a real submission
+  # without it is rejected. Both are omitted (as JSON null) only when this run
+  # never claimed a signed job, i.e. a dry-run walkthrough.
+  local nonce_json claim_id_json
+  nonce_json=$([ -n "$JOB_NONCE" ] && json_escape "$JOB_NONCE" || echo null)
+  claim_id_json=$([ -n "$JOB_CLAIM_ID" ] && json_escape "$JOB_CLAIM_ID" || echo null)
   cat <<JSON
-{"schemaVersion":1,"protocolVersion":"$PROTOCOL_VERSION","messageType":"result","agentId":"$AGENT_ID","sentAt":"$(iso_now)","body":{"jobId":"$JOB_ID","attemptId":"$ATTEMPT_ID","status":"$RESULT_STATUS","rejectionReason":$rejection_json,"keyRotated":$key_rotated_json,"errorMessage":$error_message_json}}
+{"schemaVersion":1,"protocolVersion":"$PROTOCOL_VERSION","messageType":"result","agentId":"$AGENT_ID","sentAt":"$(iso_now)","body":{"jobId":"$JOB_ID","attemptId":"$ATTEMPT_ID","status":"$RESULT_STATUS","rejectionReason":$rejection_json,"keyRotated":$key_rotated_json,"errorMessage":$error_message_json,"claimId":$claim_id_json,"nonce":$nonce_json}}
 JSON
 }
 
@@ -498,7 +521,7 @@ require_execute_verify_materials() {
 }
 
 verify_and_submit_claimed_jobs() {
-  local job_count i job_file job_signing_key_id
+  local job_count i job_file job_signing_key_id result_fields
   require_node
   job_count=$(node -e '
     const input = process.argv[1];
@@ -535,20 +558,73 @@ verify_and_submit_claimed_jobs() {
       fail "verification failed for claimed job; aborting before result submission"
     fi
 
-    JOB_ID=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" jobId)
-    ATTEMPT_ID=$(node -e '
-      const fs = require("fs");
-      const job = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      const attempt = job.attemptId || job.claimId;
-      if (!attempt) process.exit(5);
-      process.stdout.write(String(attempt));
-    ' "$job_file") || fail "claimed job is missing attemptId/claimId required for result submission"
+    # jobId / attemptId / claimId / nonce / mode all come out of the signed
+    # payload in one pass; the helper fails closed if any required id is absent.
+    result_fields=$(node "$CANONICALIZE_JS" result-fields "$job_file") \
+      || { rm -f "$job_file"; fail "claimed job is missing ids required for result submission"; }
+    JOB_ID=$(printf '%s\n' "$result_fields" | sed -n 's/^JOB_ID=//p')
+    ATTEMPT_ID=$(printf '%s\n' "$result_fields" | sed -n 's/^ATTEMPT_ID=//p')
+    JOB_CLAIM_ID=$(printf '%s\n' "$result_fields" | sed -n 's/^CLAIM_ID=//p')
+    JOB_NONCE=$(printf '%s\n' "$result_fields" | sed -n 's/^NONCE=//p')
+    JOB_MODE=$(printf '%s\n' "$result_fields" | sed -n 's/^MODE=//p')
 
-    [ -n "$RESULT_STATUS" ] || RESULT_STATUS="dry_run_complete"
+    # Status is decided by the job's immutable mode, not by a convenient
+    # default. dry_run_complete is only legal for mode:"dry_run"; the control
+    # plane rejects it for a real job. This client performs no certificate
+    # work at all, so it must never claim a real job succeeded: it refuses the
+    # job outright and leaves it to a real agent.
+    if [ -z "$RESULT_STATUS" ]; then
+      case "$JOB_MODE" in
+        dry_run)
+          RESULT_STATUS="dry_run_complete"
+          ;;
+        real)
+          rm -f "$job_file"
+          fail "claimed job $JOB_ID has mode 'real' but this reference client performs no certificate operations; it will not report a terminal status for it. Use --result-status explicitly only if you are reporting on work done elsewhere, or claim with an agent that can execute."
+          ;;
+        "")
+          rm -f "$job_file"
+          fail "claimed job $JOB_ID carries no execution mode; refusing to guess a terminal status"
+          ;;
+        *)
+          rm -f "$job_file"
+          fail "claimed job $JOB_ID has unrecognized mode '$JOB_MODE'; refusing to guess a terminal status"
+          ;;
+      esac
+    fi
     log "=== result for job $((i + 1))/$job_count ==="
     run_step result || { rm -f "$job_file"; return 1; }
     rm -f "$job_file"
   done
+}
+
+# Parses { agentId, credential, protocolVersion, signingKeyId?,
+# signingPublicKeyPem? } out of a register response and adopts that identity
+# for the rest of the run. Fails closed: a register response we cannot read
+# means we do not know who we are, so continuing would report against the
+# wrong agent id.
+adopt_registered_identity() {
+  local parsed
+  require_node
+  parsed=$(node -e '
+    let parsed;
+    try { parsed = JSON.parse(process.argv[1]); } catch { process.exit(3); }
+    if (!parsed || typeof parsed !== "object") process.exit(3);
+    const agentId = parsed.agentId;
+    const credential = parsed.credential;
+    if (typeof agentId !== "string" || agentId.length === 0) process.exit(4);
+    if (typeof credential !== "string" || credential.length === 0) process.exit(5);
+    // Newline-separated so the shell can read it without a JSON parser, and
+    // so the credential never becomes a child process argv value.
+    process.stdout.write(`${agentId}\n${credential}`);
+  ' "$LAST_RESPONSE_BODY") || fail "register response did not carry a usable { agentId, credential } pair; cannot continue as the newly enrolled agent"
+
+  REGISTERED_AGENT_ID="${parsed%%$'\n'*}"
+  REGISTERED_CREDENTIAL="${parsed#*$'\n'}"
+  [ -n "$REGISTERED_AGENT_ID" ] || fail "register response carried an empty agentId"
+  [ -n "$REGISTERED_CREDENTIAL" ] || fail "register response carried an empty credential"
+  AGENT_ID="$REGISTERED_AGENT_ID"
+  log "adopted registered identity: agentId $AGENT_ID (credential held in memory only)"
 }
 
 run_all() {
@@ -569,6 +645,9 @@ run_all() {
 
   log "=== step 1/4: register ==="
   run_step register || exit 1
+  if [ "$EXECUTE" -eq 1 ]; then
+    adopt_registered_identity
+  fi
 
   log "=== step 2/4: heartbeat ==="
   run_step heartbeat || exit 1

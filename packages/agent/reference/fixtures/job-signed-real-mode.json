@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "jobId": "job-ref-0001",
+  "jobId": "job-ref-0002",
   "workspaceId": "00000000-0000-4000-8000-000000000000",
   "certificateId": "cert-ref-0001",
-  "action": "revoke",
-  "mode": "dry_run",
+  "action": "renew",
+  "mode": "real",
   "target": {
     "type": "domain",
     "reference": "example.test"
@@ -19,5 +19,5 @@
   "leaseExpiresAt": "2099-12-31T23:59:59.000Z",
   "attemptCount": 1,
   "signingKeyId": "signing-key-reference-001",
-  "signature": "qFyDUFzS2S/McuUQIgO7xDG2S4YKB+5xGwCbYIavlCoEgP7IcFTGt6BpSrvj6qWemgu3Tf36ZO0YDQdxKbcrBw=="
+  "signature": "jsYOK6YQU21nKQyAoTaf7lOM/Qft0Hf/73nqCq8bV9ZJDBiFiX1Mj9rfoFZWrV1wY3gGTPM+Rv9c8x7ED5HIAw=="
 }

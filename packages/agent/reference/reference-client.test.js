@@ -391,6 +391,87 @@ describe("reference-client deterministic dry-run fixtures", () => {
   });
 });
 
+describe("reference-client incoming job contract validation", () => {
+  const {
+    validateJobPayloadContract,
+    verifyJobSignature,
+    canonicalizeJobPayload,
+  } = require("./lib/canonicalize.cjs");
+  const crypto = require("node:crypto");
+
+  const signingKeyId = fs
+    .readFileSync(path.join(fixturesDir, "signing-key-id.txt"), "utf8")
+    .trim();
+
+  function readFixture(name) {
+    return JSON.parse(fs.readFileSync(path.join(fixturesDir, name), "utf8"));
+  }
+
+  it("accepts a well-formed claimed job", () => {
+    const result = validateJobPayloadContract(readFixture("job-signed-valid.json"));
+    assert.equal(result.allowed, true);
+  });
+
+  it("rejects a claimed job with an unknown action", () => {
+    const job = { ...readFixture("job-signed-valid.json"), action: "not-an-action" };
+    const result = validateJobPayloadContract(job);
+    assert.equal(result.allowed, false);
+    assert.equal(result.rejectionReason, "job_integrity_failed");
+  });
+
+  it("rejects a claimed job missing a required field", () => {
+    const job = readFixture("job-signed-valid.json");
+    delete job.certificateId;
+    const result = validateJobPayloadContract(job);
+    assert.equal(result.allowed, false);
+  });
+
+  it("rejects a correctly signed but contract-invalid payload before verifying it", () => {
+    // Sign a payload that carries an extra property the contract forbids. The
+    // signature is genuine for its own key, so only schema validation can catch
+    // it: this is the regression guard for validating incoming jobs, not just
+    // outgoing envelopes.
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    const base = { ...readFixture("job-signed-valid.json"), bogusExtraField: "x" };
+    delete base.signature;
+    base.signingKeyId = signingKeyId;
+    const signature = crypto
+      .sign(null, Buffer.from(canonicalizeJobPayload(base), "utf8"), privateKey)
+      .toString("base64");
+    const result = verifyJobSignature({
+      job: { ...base, signature },
+      publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(result.allowed, false);
+    assert.equal(result.rejectionReason, "job_integrity_failed");
+    assert.match(result.detail, /job-payload\.schema\.json/);
+  });
+
+  it("reports the result-envelope fields a client must echo back", () => {
+    const { execFileSync } = require("node:child_process");
+    const out = execFileSync(
+      process.execPath,
+      [canonicalizeJs, "result-fields", path.join(fixturesDir, "job-signed-valid.json")],
+      { encoding: "utf8" },
+    );
+    assert.match(out, /^JOB_ID=/m);
+    assert.match(out, /^ATTEMPT_ID=/m);
+    assert.match(out, /^NONCE=/m);
+    assert.match(out, /^MODE=dry_run$/m);
+  });
+
+  it("surfaces mode real for the real-mode fixture", () => {
+    const { execFileSync } = require("node:child_process");
+    const out = execFileSync(
+      process.execPath,
+      [canonicalizeJs, "result-fields", path.join(fixturesDir, "job-signed-real-mode.json")],
+      { encoding: "utf8" },
+    );
+    assert.match(out, /^MODE=real$/m);
+  });
+});
+
 describe("reference-client contract independence", () => {
   it("canonicalize.cjs does not require production agent runtime modules", () => {
     const src = fs.readFileSync(canonicalizeJs, "utf8");

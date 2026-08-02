@@ -15,18 +15,27 @@ const { canonicalizeJobPayload } = require("./lib/canonicalize.cjs");
 
 const fixturesDir = path.join(__dirname, "fixtures");
 
+// Shaped like a real claimed dispatch: the claim-time fields (claimId,
+// attemptId, leaseExpiresAt, attemptCount) and the immutable execution mode
+// are part of the signed payload, so the reference tests exercise the same
+// envelope an agent actually receives.
 const BASE_JOB = {
   schemaVersion: 1,
   jobId: "job-ref-0001",
   workspaceId: "00000000-0000-4000-8000-000000000000",
   certificateId: "cert-ref-0001",
   action: "renew",
+  mode: "dry_run",
   target: { type: "domain", reference: "example.test" },
   keyMode: "agent-local",
   requestedAt: "2020-01-01T00:00:00.000Z",
   issuedAt: "2020-01-01T00:00:00.000Z",
   expiresAt: "2099-12-31T23:59:59.000Z",
   nonce: "reference0000000000000000000001",
+  claimId: "claim-ref-0001",
+  attemptId: "claim-ref-0001",
+  leaseExpiresAt: "2099-12-31T23:59:59.000Z",
+  attemptCount: 1,
 };
 
 function writeJson(filePath, value) {
@@ -65,7 +74,14 @@ function main() {
     privateKeyPem: otherKeyPair.privateKeyPem,
   });
 
+  const realModeJob = { ...validJob, mode: "real", jobId: "job-ref-0002" };
+  const realModeSignature = signJobPayload({ job: realModeJob, privateKeyPem });
+
   writeJson(path.join(fixturesDir, "job-signed-valid.json"), signedJob);
+  writeJson(path.join(fixturesDir, "job-signed-real-mode.json"), {
+    ...realModeJob,
+    signature: realModeSignature,
+  });
   writeJson(path.join(fixturesDir, "job-signed-tampered.json"), tamperedJob);
   writeJson(path.join(fixturesDir, "job-signed-wrong-key.json"), {
     ...wrongKeyJob,

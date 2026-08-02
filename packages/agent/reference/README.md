@@ -15,6 +15,22 @@ claim/lease loop, and by default no real work at all (see "Dry run by
 default" below). The PowerShell script is also the reference a Windows
 integrator reaches for before onboarding the real Windows agent.
 
+### Runtime dependencies
+
+| Client | Requires |
+|---|---|
+| `tokentimer-protocol.sh` | Bash, `curl`, OpenSSL 3.x, **and** Node `>=22 <25` |
+| `tokentimer-protocol.ps1` | PowerShell 7+ **and** Node `>=22 <25` |
+
+Both clients need Node, not only the PowerShell one. The signed-job
+canonicalization contract (ADR-0003) is defined in terms of JavaScript's
+key-ordering and number-formatting behavior, so reimplementing it in pure
+Bash could not be proven byte-identical to what the control plane signs. The
+Bash client therefore delegates canonical-JSON handling (and only that) to
+`reference/lib/canonicalize.cjs`, and does the Ed25519 signature math itself
+with `openssl pkeyutl -verify -rawin`. `canonicalize.cjs` is self-contained
+against the published contracts and imports no production agent runtime.
+
 Both scripts share one flag contract so they can be read side by side:
 
 ```
@@ -56,6 +72,10 @@ is missing or too old, they fail closed with a clear, named error:
   with Node's `crypto.verify(null, ...)`. It does **not** import production
   agent runtime code. Requires pinned Node `>=22 <25` on `PATH`.
 
+The same helper also exposes `result-fields <job.json>`, which reports the
+`jobId` / `attemptId` / `claimId` / `nonce` / `mode` a client must echo into
+its result envelope, and fails closed when a required id is missing.
+
 ## Dry run by default
 
 Every step except `verify` prints the HTTP request it *would* send —
@@ -95,12 +115,39 @@ its own log output.
 ## Verified `all --execute` pipeline
 
 ```
-register → heartbeat → claim → parse jobs[] → verify each job → result
+register → adopt returned identity → heartbeat → claim
+        → parse jobs[] → validate contract → verify signature/key/window
+        → result (echoing nonce + claimId)
 ```
 
-A failed verification stops the flow before any result is submitted. Until
-`--pubkey-file` / `-PubKeyFile` and `--signing-key-id` / `-SigningKeyId` are
-supplied, `all --execute` refuses to run.
+Each stage fails closed:
+
+- **Registration identity is consumed, not assumed.** `all --execute` reads
+  `{ agentId, credential }` out of the register response and speaks as that
+  identity for heartbeat, claim, and result. The credential is held in process
+  memory only: never logged, never written to disk, never passed as a child
+  process argument. A register response without a usable pair aborts the run
+  rather than continuing under a locally generated id.
+- **Incoming jobs are contract-validated first.** Every claimed job is checked
+  against the published `job-payload.schema.json` *before* any signature work,
+  so a correctly signed payload that violates the contract (unknown action,
+  missing required field, unexpected extra property) never reaches an
+  execution path. If the compiled validator is unavailable, the client rejects
+  the job rather than skipping the check.
+- **Then signature, pinned key id, and validity window** are verified. A
+  failed verification stops the flow before any result is submitted.
+- **The result echoes the signed `nonce` and `claimId`.** The control plane
+  consumes that nonce in its replay ledger at result ingestion, so a real
+  submission that omits it is rejected.
+- **Terminal status follows the job's immutable `mode`.** `dry_run_complete`
+  is reported only for `mode: "dry_run"` jobs. Because this client performs no
+  certificate operations at all, a `mode: "real"` job is **refused** rather
+  than reported as complete: it is left for an agent that can actually execute
+  it. Pass `--result-status` / `-ResultStatus` explicitly only when reporting
+  on work performed elsewhere.
+
+Until `--pubkey-file` / `-PubKeyFile` and `--signing-key-id` /
+`-SigningKeyId` are supplied, `all --execute` refuses to run.
 
 ## Exit codes
 

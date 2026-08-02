@@ -4,6 +4,7 @@
   "workspaceId": "00000000-0000-4000-8000-000000000000",
   "certificateId": "cert-ref-0001",
   "action": "renew",
+  "mode": "dry_run",
   "target": {
     "type": "domain",
     "reference": "example.test"
@@ -13,6 +14,10 @@
   "issuedAt": "2020-01-01T00:00:00.000Z",
   "expiresAt": "2099-12-31T23:59:59.000Z",
   "nonce": "reference0000000000000000000001",
+  "claimId": "claim-ref-0001",
+  "attemptId": "claim-ref-0001",
+  "leaseExpiresAt": "2099-12-31T23:59:59.000Z",
+  "attemptCount": 1,
   "signingKeyId": "signing-key-reference-001",
-  "signature": "NPivkpq0WhTw2edzFXc6aKrYhoD2ApH6xVWSrTvYYTMTzfQTfhMAXGeJneL50KbQz2KEQ85k2Wty6mEaSwqBBw=="
+  "signature": "HB1c00V4Ysu9/FSeBKNs9ExZGWwQ/eVb7CEr0PqQw5+vhASdBFytNubD7UuNFQMN9Ygzesqrm/DEZMp82y06Dg=="
 }

@@ -67,6 +67,15 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $script:LastVerifyAllowed = $false
+# Identity obtained from a register response during 'all -Execute'. The
+# credential stays in this process's memory: never logged, never written to
+# disk, never passed as an argv value to a child process.
+$script:RegisteredAgentId = $null
+$script:RegisteredCredential = $null
+# Result-envelope fields copied out of the verified claimed job.
+$script:JobNonce = $null
+$script:JobClaimId = $null
+$script:JobMode = $null
 $script:LastRequestOk = $false
 $script:LastResponse = $null
 
@@ -138,6 +147,10 @@ function Resolve-BootstrapToken {
 }
 
 function Resolve-Credential {
+  # A credential minted by this run's own register step wins: 'all -Execute'
+  # must speak as the identity it just enrolled, not as a separately supplied
+  # one, or heartbeat/claim/result act on the wrong agent.
+  if ($script:RegisteredCredential) { return $script:RegisteredCredential }
   if ($CredentialFile) { return Read-SecretFile -Path $CredentialFile -Label "credential" }
   if ($env:TOKENTIMER_AGENT_CREDENTIAL) { return $env:TOKENTIMER_AGENT_CREDENTIAL }
   if (-not $Execute) {
@@ -297,6 +310,12 @@ function Build-AgentResultBody {
       rejectionReason = if ($RejectionReason) { $RejectionReason } else { $null }
       keyRotated      = $KeyRotated
       errorMessage    = if ($ErrorMessageText) { $ErrorMessageText } else { $null }
+      # nonce and claimId come from the signed dispatch: the control plane
+      # consumes the nonce in its replay ledger at result ingestion, so a real
+      # submission without it is rejected. Null only on a dry-run walkthrough
+      # that never claimed a signed job.
+      claimId         = if ($script:JobClaimId) { $script:JobClaimId } else { $null }
+      nonce           = if ($script:JobNonce) { $script:JobNonce } else { $null }
     }
   }
 }
@@ -384,6 +403,53 @@ function Set-JobFieldsFromClaimedJob {
   } elseif ($Job.claimId) {
     $script:AttemptId = [string]$Job.claimId
   }
+  if ($Job.claimId) { $script:JobClaimId = [string]$Job.claimId }
+  if ($Job.nonce) { $script:JobNonce = [string]$Job.nonce }
+  if ($Job.mode) { $script:JobMode = [string]$Job.mode }
+
+  if (-not $script:JobId) { Fail "claimed job carries no jobId; cannot report a result" }
+  if (-not $script:AttemptId) { Fail "claimed job carries neither attemptId nor claimId; cannot report a result" }
+
+  # Status is decided by the job's immutable mode, not by a convenient default.
+  # dry_run_complete is only legal for mode:"dry_run"; the control plane rejects
+  # it for a real job. This client performs no certificate work at all, so it
+  # must never claim a real job succeeded: it refuses the job outright and
+  # leaves it to a real agent.
+  if (-not $ResultStatus) {
+    switch ($script:JobMode) {
+      "dry_run" { $script:ResultStatus = "dry_run_complete" }
+      "real" {
+        Fail "claimed job $($script:JobId) has mode 'real' but this reference client performs no certificate operations; it will not report a terminal status for it. Pass -ResultStatus explicitly only if you are reporting on work done elsewhere, or claim with an agent that can execute."
+      }
+      default {
+        Fail "claimed job $($script:JobId) carries no recognized execution mode ('$($script:JobMode)'); refusing to guess a terminal status"
+      }
+    }
+  }
+}
+
+# Parses { agentId, credential, protocolVersion, signingKeyId?,
+# signingPublicKeyPem? } out of a register response and adopts that identity
+# for the rest of the run. Fails closed: a register response we cannot read
+# means we do not know who we are, so continuing would report against the
+# wrong agent id.
+function Set-RegisteredIdentity {
+  param($Response)
+  if ($null -eq $Response) {
+    Fail "register response was empty; cannot continue as the newly enrolled agent"
+  }
+  $agentId = $Response.agentId
+  $credential = $Response.credential
+  if ([string]::IsNullOrWhiteSpace([string]$agentId)) {
+    Fail "register response did not carry a usable agentId; cannot continue as the newly enrolled agent"
+  }
+  if ([string]::IsNullOrWhiteSpace([string]$credential)) {
+    Fail "register response did not carry a usable credential; cannot continue as the newly enrolled agent"
+  }
+  $script:RegisteredAgentId = [string]$agentId
+  $script:RegisteredCredential = [string]$credential
+  $script:AgentId = [string]$agentId
+  Write-Log "adopted registered identity: agentId $($script:AgentId) (credential held in memory only)"
 }
 
 function Invoke-VerifyJobObject {
@@ -449,6 +515,7 @@ function Invoke-All {
   Write-Log "=== step 1/4: register ==="
   Invoke-Step -StepName "register"
   if ($Execute -and -not $script:LastRequestOk) { exit 1 }
+  if ($Execute) { Set-RegisteredIdentity -Response $script:LastResponse }
 
   Write-Log "=== step 2/4: heartbeat ==="
   Invoke-Step -StepName "heartbeat"
@@ -471,8 +538,8 @@ function Invoke-All {
       Write-Log "verify claimed job $index/$($claimedJobs.Count)"
       Invoke-VerifyJobObject -Job $job -TempPrefix "tokentimer-claimed-job" -FailOnReject $true
     }
+    # Sets ids, nonce, claimId, and a mode-appropriate status (or fails closed).
     Set-JobFieldsFromClaimedJob -Job $claimedJobs[0]
-    if (-not $ResultStatus) { $script:ResultStatus = "dry_run_complete" }
     Write-Log "=== step 5/5: result ==="
     Invoke-Step -StepName "result"
     if (-not $script:LastRequestOk) { exit 1 }

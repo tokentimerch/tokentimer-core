@@ -14,7 +14,9 @@
       "status": "dry_run_complete",
       "rejectionReason": null,
       "keyRotated": null,
-      "errorMessage": null
+      "errorMessage": null,
+      "claimId": null,
+      "nonce": null
     }
   }
 }

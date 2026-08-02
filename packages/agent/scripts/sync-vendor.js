@@ -59,6 +59,25 @@ const VENDOR_MAP = [
     ),
     raw: true,
   },
+  {
+    // Signed job dispatch payload contract. Vendored so the agent (and the
+    // reference client) can validate an *incoming* claimed job against the
+    // published schema before spending work on signature verification.
+    from: path.join(
+      repoRoot,
+      "packages",
+      "contracts",
+      "certops",
+      "job-payload.schema.json",
+    ),
+    to: path.join(
+      packageRoot,
+      "vendor",
+      "contracts",
+      "job-payload.schema.json",
+    ),
+    raw: true,
+  },
 ];
 
 function stripExistingAttribution(source) {

@@ -24,6 +24,7 @@ const crypto = require("node:crypto");
  * Usage:
  *   node canonicalize.cjs canonicalize <job.json>
  *   node canonicalize.cjs extract-field <job.json> <fieldName>
+ *   node canonicalize.cjs result-fields <job.json>
  *   node canonicalize.cjs verify <job.json> <pubkey.pem> <pinnedSigningKeyId> [--skip-time-window]
  *
  * Exit codes (verify): 0 = allowed; 1 = soft-rejected (JSON on stdout);
@@ -58,6 +59,57 @@ const EXTRACTABLE_FIELDS = new Set([
   "claimId",
   "attemptId",
 ]);
+
+/**
+ * Loads the standalone job-payload validator compiled from the published
+ * job-payload.schema.json (packages/agent/vendor/contracts/). Returns null
+ * when the validator is not present, which happens only for a partial
+ * checkout of the reference directory alone; the caller then fails closed
+ * rather than silently skipping contract validation.
+ *
+ * @returns {Function|null}
+ */
+function loadJobPayloadValidator() {
+  const candidates = [
+    path.join(__dirname, "..", "..", "vendor", "contracts", "job-payload-validator.generated.js"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      // eslint-disable-next-line global-require
+      return require(candidate);
+    }
+  }
+  return null;
+}
+
+/**
+ * Validates an untrusted claimed job against the published job-payload
+ * schema BEFORE any signature work. A correctly signed payload that does not
+ * satisfy the contract (unknown action, missing required field, unexpected
+ * extra property) must never reach an execution path, so this runs first and
+ * fails closed when the validator itself cannot be loaded.
+ *
+ * @param {*} job
+ * @returns {{ allowed: true } | { allowed: false, rejectionReason: string, detail: string }}
+ */
+function validateJobPayloadContract(job) {
+  const validate = loadJobPayloadValidator();
+  if (typeof validate !== "function") {
+    return reject(
+      "job_integrity_failed",
+      "job-payload contract validator is unavailable (expected " +
+        "vendor/contracts/job-payload-validator.generated.js); refusing to " +
+        "accept an unvalidated job payload.",
+    );
+  }
+  if (validate(job)) return { allowed: true };
+  const first = Array.isArray(validate.errors) ? validate.errors[0] : null;
+  const where = first?.instancePath ? `${first.instancePath} ` : "";
+  return reject(
+    "job_integrity_failed",
+    `Claimed job does not satisfy job-payload.schema.json: ${where}${first?.message ?? "unknown validation error"}.`,
+  );
+}
 
 function isPlainObject(value) {
   return (
@@ -160,6 +212,11 @@ function verifyJobSignature({ job, publicKeyPem, pinnedSigningKeyId }) {
     pinnedSigningKeyId.length === 0
   ) {
     throw new Error("verify requires a pinnedSigningKeyId string");
+  }
+
+  const contractResult = validateJobPayloadContract(job);
+  if (!contractResult.allowed) {
+    return contractResult;
   }
 
   const fieldProblem = findSignedFieldProblem(job);
@@ -314,6 +371,49 @@ function cmdExtractField(args) {
   process.stdout.write(value);
 }
 
+/**
+ * Emits the result-envelope fields the shell clients must copy out of a
+ * claimed job: jobId, attemptId (falling back to claimId), claimId, nonce,
+ * and mode. The nonce is consumed by the server-side replay ledger at result
+ * ingestion, so omitting it makes a real submission fail; mode decides which
+ * terminal status is even legal.
+ *
+ * Output is one KEY=VALUE line per field, so a shell can `eval` or read it
+ * without a JSON parser. Absent optional fields are omitted entirely.
+ */
+function cmdResultFields(args) {
+  const [jobFilePath] = args;
+  if (!jobFilePath) fail("result-fields requires <job.json>");
+  const job = readJobFile(jobFilePath);
+  if (!isPlainObject(job)) fail("job payload must be a plain object");
+
+  const jobId = job.jobId;
+  if (typeof jobId !== "string" || jobId.length === 0) {
+    fail("claimed job is missing a string jobId");
+  }
+  const attemptId =
+    typeof job.attemptId === "string" && job.attemptId.length > 0
+      ? job.attemptId
+      : typeof job.claimId === "string" && job.claimId.length > 0
+        ? job.claimId
+        : null;
+  if (attemptId === null) {
+    fail("claimed job is missing both attemptId and claimId; cannot report a result");
+  }
+
+  const lines = [`JOB_ID=${jobId}`, `ATTEMPT_ID=${attemptId}`];
+  if (typeof job.claimId === "string" && job.claimId.length > 0) {
+    lines.push(`CLAIM_ID=${job.claimId}`);
+  }
+  if (typeof job.nonce === "string" && job.nonce.length > 0) {
+    lines.push(`NONCE=${job.nonce}`);
+  }
+  if (typeof job.mode === "string" && job.mode.length > 0) {
+    lines.push(`MODE=${job.mode}`);
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 function cmdVerify(args) {
   const [jobFilePath, pubKeyPath, pinnedSigningKeyId, ...rest] = args;
   if (!jobFilePath || !pubKeyPath || !pinnedSigningKeyId) {
@@ -355,11 +455,13 @@ function main() {
       return cmdCanonicalize(rest);
     case "extract-field":
       return cmdExtractField(rest);
+    case "result-fields":
+      return cmdResultFields(rest);
     case "verify":
       return cmdVerify(rest);
     default:
       return fail(
-        `unknown subcommand "${subcommand ?? ""}" (expected canonicalize | extract-field | verify)`,
+        `unknown subcommand "${subcommand ?? ""}" (expected canonicalize | extract-field | result-fields | verify)`,
       );
   }
 }
@@ -370,10 +472,12 @@ if (require.main === module) {
 
 module.exports = {
   EXTRACTABLE_FIELDS,
+  validateJobPayloadContract,
   canonicalizeJobPayload,
   verifyJobSignature,
   checkJobTimeWindow,
   cmdCanonicalize,
   cmdExtractField,
+  cmdResultFields,
   cmdVerify,
 };
