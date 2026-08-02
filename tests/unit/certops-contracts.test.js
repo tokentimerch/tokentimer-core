@@ -1562,6 +1562,7 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
   const {
     CERTIFICATE_ACTIONS,
     PROTOCOL_SMOKE_ACTION,
+    TRUST_ANCHOR_ACTIONS,
     selectSchemaForAction,
     validateSignedJob,
   } = require("../../packages/contracts/certops/validate-signed-job.cjs");
@@ -1608,8 +1609,16 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     assert.match(selection.schemaId, /protocol-smoke-payload\.schema\.json$/);
   });
 
+  it("selects trust-job-payload.schema.json for every trust-anchor action", () => {
+    for (const action of TRUST_ANCHOR_ACTIONS) {
+      const selection = selectSchemaForAction(action);
+      assert.ok(selection);
+      assert.match(selection.schemaId, /trust-job-payload\.schema\.json$/);
+    }
+  });
+
   it("returns null for an unrecognized or missing action", () => {
-    assert.equal(selectSchemaForAction("distribute-trust"), null);
+    assert.equal(selectSchemaForAction("frobnicate"), null);
     assert.equal(selectSchemaForAction(undefined), null);
     assert.equal(selectSchemaForAction(42), null);
   });
@@ -1736,6 +1745,92 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
       }),
     );
     assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  function baseTrustJob(overrides = {}) {
+    return {
+      schemaVersion: 1,
+      jobId: "job-trust-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      trustAnchorId: "anchor-1",
+      action: "distribute-trust",
+      anchorType: "root",
+      fingerprintSha256: "a".repeat(64),
+      pem: "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
+      mode: "real",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  it("validates a well-formed distribute-trust job against trust-job-payload.schema.json", () => {
+    const result = validateSignedJob(baseTrustJob());
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.match(result.schemaId, /trust-job-payload\.schema\.json$/);
+  });
+
+  it("validates a well-formed revoke-trust job with no pem", () => {
+    const job = baseTrustJob({ action: "revoke-trust" });
+    delete job.pem;
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.match(result.schemaId, /trust-job-payload\.schema\.json$/);
+  });
+
+  it("rejects a distribute-trust job missing the required pem", () => {
+    const job = baseTrustJob();
+    delete job.pem;
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, false);
+  });
+
+  it("rejects a revoke-trust job that carries a pem (revocation is identified by id + fingerprint alone)", () => {
+    const result = validateSignedJob(
+      baseTrustJob({ action: "revoke-trust" }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("rejects a trust job with an invalid anchorType", () => {
+    const result = validateSignedJob(baseTrustJob({ anchorType: "leaf" }));
+    assert.equal(result.valid, false);
+  });
+
+  it("rejects a trust job whose fingerprintSha256 is not 64 lowercase hex characters", () => {
+    const result = validateSignedJob(
+      baseTrustJob({ fingerprintSha256: "not-a-fingerprint" }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("never validates a trust job against the certificate schema: certificateId/target/keyMode are not accepted", () => {
+    // additionalProperties: false on trust-job-payload.schema.json means a
+    // certificate-shaped field must fail, proving the trust and certificate
+    // schemas are never silently compatible with each other's shape.
+    const result = validateSignedJob(
+      baseTrustJob({ certificateId: "cert-should-not-be-here" }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("never validates a certificate job against the trust schema: missing trustAnchorId/anchorType/fingerprintSha256 fails", () => {
+    const result = validateSignedJob({
+      schemaVersion: 1,
+      jobId: "job-3",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      action: "distribute-trust",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.schemaId, /trust-job-payload\.schema\.json$/);
+  });
+
+  it("rejects a trust job missing the required agentId, same as protocol_smoke", () => {
+    const job = baseTrustJob();
+    delete job.agentId;
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, false);
   });
 
   it("rejects protocol_smoke's mode when it is not dry_run: there is no 'real' variant", () => {
