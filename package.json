@@ -28,6 +28,7 @@
     "start:controller": "pnpm --filter @tokentimer/k8s-controller start",
     "migrate": "node scripts/run-with-env.js pnpm --filter @tokentimer/api migrate",
     "certops:rotate-signing-key": "node scripts/certops-rotate-signing-key.js",
+    "certops:integrity-check": "node scripts/certops-integrity-check.cjs",
     "lint": "pnpm run lint:api && pnpm run lint:worker && pnpm run lint:controller && pnpm run lint:dashboard && pnpm run lint:agent",
     "lint:api": "pnpm --filter @tokentimer/api lint",
     "lint:worker": "pnpm --filter @tokentimer/worker lint",
