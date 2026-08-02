@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "jobId": "job-ref-0001",
+  "workspaceId": "00000000-0000-4000-8000-000000000000",
+  "certificateId": "cert-ref-0001",
+  "action": "renew",
+  "target": {
+    "type": "domain",
+    "reference": "example.test"
+  },
+  "keyMode": "agent-local",
+  "requestedAt": "2026-08-01T00:00:00.000Z",
+  "issuedAt": "2020-01-01T00:00:00.000Z",
+  "expiresAt": "2099-12-31T23:59:59.000Z",
+  "nonce": "reference0000000000000000000001",
+  "signingKeyId": "signing-key-9d6f8b34-6d57-417e-bcf8-b559c4719ff5",
+  "signature": "Cf0fqcx7QmJNzvfqjUf7QcpntaI1OwM5bTdsjqf1ky1Y3vJ9F/APqzS/oEgDiN9MUEkp5O6cFmjwmNiKihYUAQ=="
+}

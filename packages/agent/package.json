@@ -18,7 +18,7 @@
     "pack:release": "node scripts/pack-release.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --test src/**/*.test.js scripts/**/*.test.js"
+    "test": "node --test src/**/*.test.js scripts/**/*.test.js reference/**/*.test.js"
   },
   "files": [
     "bin",
@@ -26,6 +26,10 @@
     "!src/**/*.test.js",
     "!src/verify/fixtures/**",
     "vendor",
+    "reference/tokentimer-protocol.sh",
+    "reference/tokentimer-protocol.ps1",
+    "reference/lib/canonicalize.cjs",
+    "reference/README.md",
     "scripts/install-agent.sh",
     "scripts/tokentimer-agent.service",
     "scripts/host-sandbox.js",

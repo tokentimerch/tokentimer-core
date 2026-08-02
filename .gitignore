@@ -59,6 +59,10 @@ license.key
 # Exception: committed OpenSSL TEST-ONLY fixtures for X.509 validation tests.
 !packages/agent/src/verify/fixtures/*.pem
 !packages/agent/src/verify/fixtures/*.key.pem
+# Exception: reference-client test fixtures. Public key only
+# (packages/agent/reference/generate-fixtures.js discards the private key
+# it generates; never commit a matching *.key.pem here).
+!packages/agent/reference/fixtures/*.pem
 
 # Database
 *.sqlite

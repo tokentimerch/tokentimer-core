@@ -25,6 +25,12 @@ const sourceRoots = [
   path.join(packageRoot, "bin"),
   path.join(packageRoot, "src"),
   path.join(packageRoot, "vendor"),
+  // reference/lib/canonicalize.cjs is shipped (package.json
+  // "files") and requires packages/agent/src/signing/index.js directly
+  // (not vendored), so it must stay self-contained the same way bin/src/
+  // vendor do. reference/fixtures and reference/generate-fixtures.js are
+  // NOT shipped and are intentionally excluded (see pack-release tests).
+  path.join(packageRoot, "reference", "lib"),
 ];
 
 const REQUIRE_PATTERN =

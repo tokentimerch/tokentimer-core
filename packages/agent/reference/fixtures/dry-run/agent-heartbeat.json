@@ -1,0 +1,15 @@
+{
+  "dryRun": true,
+  "method": "POST",
+  "url": "<normalized-origin>/api/v1/certops/agent/heartbeat",
+  "body": {
+    "schemaVersion": 1,
+    "protocolVersion": "1.0.0",
+    "messageType": "heartbeat",
+    "agentId": "<normalized-agent-id>",
+    "sentAt": "<normalized-timestamp>",
+    "body": {
+      "agentVersion": "reference-client"
+    }
+  }
+}

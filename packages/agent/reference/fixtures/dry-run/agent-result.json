@@ -1,0 +1,20 @@
+{
+  "dryRun": true,
+  "method": "POST",
+  "url": "<normalized-origin>/api/v1/certops/agent/jobs/results",
+  "body": {
+    "schemaVersion": 1,
+    "protocolVersion": "1.0.0",
+    "messageType": "result",
+    "agentId": "<normalized-agent-id>",
+    "sentAt": "<normalized-timestamp>",
+    "body": {
+      "jobId": "job-1",
+      "attemptId": "attempt-1",
+      "status": "succeeded",
+      "rejectionReason": null,
+      "keyRotated": null,
+      "errorMessage": null
+    }
+  }
+}

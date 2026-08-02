@@ -1,0 +1,17 @@
+{
+  "dryRun": true,
+  "method": "POST",
+  "url": "<normalized-origin>/api/v1/certops/agent/register",
+  "body": {
+    "schemaVersion": 1,
+    "protocolVersion": "1.0.0",
+    "messageType": "register",
+    "agentId": "<normalized-agent-id>",
+    "sentAt": "<normalized-timestamp>",
+    "body": {
+      "bootstrapTokenId": "reference-client-demo",
+      "agentVersion": "reference-client",
+      "registrationId": "<normalized-registration-id>"
+    }
+  }
+}
