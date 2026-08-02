@@ -87,6 +87,7 @@ const {
   resolveAcmeAccountCredentials,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
+const { filterQualifiedCapabilities } = require("./capabilities");
 const {
   createProtocolClient,
   createCaAwareFetch,
@@ -258,7 +259,21 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload
  * regardless (resolveClaimSupportedActions returns []), so the declaration
  * is inert until execution is actually turned on.
  */
-const AGENT_DECLARED_CAPABILITIES = Object.freeze(["evidence-claim-binding-v1"]);
+const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(["evidence-claim-binding-v1"]);
+
+/**
+ * Capabilities this build actually advertises, after the build-time
+ * qualified-capabilities manifest gate (ADR-0012 decision 14; see
+ * ./capabilities). evidence-claim-binding-v1 is not one of the
+ * manifest-gated strings, so today this is identical to
+ * AGENT_CANDIDATE_CAPABILITIES; the filter exists so that when Wave 2b/3
+ * add windows-cert-store-v1, iis-binding-v1, or trust-anchor-deploy-v1 to
+ * the candidate list, they pass through this same gate rather than a new
+ * one being invented at that point.
+ */
+const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
+  AGENT_CANDIDATE_CAPABILITIES,
+);
 
 /**
  * Claim scope in observe-only mode (execution disabled): empty. An
@@ -4293,4 +4308,6 @@ module.exports = {
   DEFAULT_JOB_LEASE_MS,
   MAX_LEASE_TRANSIENT_RETRIES,
   LEASE_HEARTBEAT_INTERVAL_MS,
+  AGENT_CANDIDATE_CAPABILITIES,
+  AGENT_DECLARED_CAPABILITIES,
 };
