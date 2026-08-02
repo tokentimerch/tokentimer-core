@@ -9,6 +9,7 @@
     "schemaVersion",
     "jobId",
     "workspaceId",
+    "agentId",
     "certificateId",
     "action",
     "target",

@@ -254,6 +254,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       policyEngine: world.policyEngine,
       client: world.client,
       executionContext: world.executionContext,
+      boundAgentId: world.agent.agentId,
       log: silentLog,
     });
     expect(outcome.status).to.equal("succeeded");
@@ -333,6 +334,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       policyEngine: world.policyEngine,
       client: world.client,
       executionContext: world.executionContext,
+      boundAgentId: world.agent.agentId,
       log: silentLog,
     });
     expect(replayOutcome.status).to.equal("rejected");
@@ -365,6 +367,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       policyEngine: world.policyEngine,
       client: world.client,
       executionContext: world.executionContext,
+      boundAgentId: world.agent.agentId,
       log: silentLog,
     });
     expect(outcome.status).to.equal("succeeded");

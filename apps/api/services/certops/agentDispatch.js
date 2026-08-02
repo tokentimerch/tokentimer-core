@@ -1176,6 +1176,12 @@ async function claimJobs({
         ...payload,
         jobId: String(job.id),
         workspaceId: agent.workspaceId,
+        // ADR-0012 decision 3: binds this dispatch to one agent identity so
+        // a captured envelope cannot be replayed against a different agent.
+        // This is the wire-format agentId (agent.agentId), not the
+        // certops_agents row id passed to signJob below for the nonce
+        // ledger; the two are different identifiers for the same agent.
+        agentId: agent.agentId,
         action: wireActionForOperation(job.operation),
         mode: job.mode || payload.mode || "real",
         claimId: job.claim_id,
