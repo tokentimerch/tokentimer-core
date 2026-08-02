@@ -205,7 +205,7 @@ describe("CertOps adoption route refusals", () => {
 
   it("refuses a key mode no agent can deploy to with 409", async () => {
     const client = adoptionClient({
-      certificate: certificateRow({ key_mode: "os-store-managed" }),
+      certificate: certificateRow({ key_mode: "vault-managed" }),
     });
 
     const { response } = await adoptAndMapErrors({ client });
@@ -215,6 +215,19 @@ describe("CertOps adoption route refusals", () => {
       response.body.code,
       "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE",
     );
+  });
+
+  it("allows adoption of an os-store-managed certificate now that the predicate recognizes it", async () => {
+    // The actual Windows deploy path is not wired yet; this only asserts
+    // adoption is not blocked by the shared custody predicate.
+    const client = adoptionClient({
+      certificate: certificateRow({ key_mode: "os-store-managed" }),
+    });
+
+    const { outcome, response } = await adoptAndMapErrors({ client });
+
+    assert.equal(response, null);
+    assert.ok(outcome.job);
   });
 
   it("refuses a certificate that already has a renewal profile with 409", async () => {

@@ -752,7 +752,6 @@ describe("CertOps upcoming renewals coverage", () => {
       "appliance-managed",
       "hsm-managed",
       "vault-managed",
-      "os-store-managed",
       "external-unknown",
     ]) {
       const { item } = await listOne({ key_mode: keyMode });
@@ -766,6 +765,17 @@ describe("CertOps upcoming renewals coverage", () => {
 
   it("treats agent-local custody as renewable", async () => {
     const { item } = await listOne({ key_mode: "agent-local" });
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("treats os-store-managed custody as renewable", async () => {
+    // The agent (not an external appliance/HSM/vault) is what rotates a key
+    // in the Windows certificate store, so this custody mode is
+    // agent-deployable even though the actual store/site/binding deploy
+    // path is not wired yet.
+    const { item } = await listOne({ key_mode: "os-store-managed" });
 
     assert.equal(item.autoRenewEnabled, true);
     assert.equal(item.blockedReason, null);

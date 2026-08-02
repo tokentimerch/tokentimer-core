@@ -1022,7 +1022,21 @@ const AGENT_MUTATING_OPERATIONS = new Set([
   "reload",
   "revoke",
 ]);
-const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
+// os-store-managed (ADR-0012 decision 9) is a CNG-native or PFX-imported key
+// held in the OS certificate store rather than on the agent filesystem, but
+// it is still agent-managed custody: the agent (not an external appliance,
+// HSM, or vault) is the thing that can rotate it. Recognizing the predicate
+// here does NOT by itself make Windows deploy/renew work end to end -- the
+// actual store/site/binding deploy-path wiring (validateTargetConfig's
+// windows-iis dispatch calling real IIS bind APIs, CNG key generation) is
+// Wave 2b. Landing the predicate now, in the same change as the schema/
+// target work, avoids every os-store-managed certificate incorrectly
+// reporting as not_agent_deployable in between.
+const AGENT_DEPLOYABLE_KEY_MODES = new Set([
+  "agent-local",
+  "proxy-agent-local",
+  "os-store-managed",
+]);
 
 /**
  * Can an agent actually deploy to this certificate's key?
