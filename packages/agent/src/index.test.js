@@ -705,7 +705,11 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     );
   }
 
-  it("rejects an unsigned job with job_integrity_failed while execution is enabled", async () => {
+  it("submits NO result for an unsigned job while execution is enabled (trusted-identity gate)", async () => {
+    // ADR-0012 decision 2: a signature-verdict failure must not produce a
+    // result of any kind, because claimId/nonce live inside the payload the
+    // verdict just declared untrustworthy. The job fails locally and its
+    // lease expires.
     const client = createRecordingClient();
     const job = makeSignedJob();
     delete job.signature;
@@ -719,16 +723,18 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.status, "failed");
     assert.equal(outcome.rejectionReason, "job_integrity_failed");
-    assert.equal(client.calls.reportResult[0].status, "rejected");
-    assert.equal(client.calls.reportEvidence.length, 1);
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  it("rejects a tampered job with job_integrity_failed", async () => {
+  it("submits NO result for a tampered job, and never echoes its claimId/nonce", async () => {
     const client = createRecordingClient();
     const job = makeSignedJob();
     job.action = "renew"; // mutate after signing
+    job.claimId = "attacker-chosen-claim";
+    job.nonce = "attackerchosennonce123456";
 
     const outcome = await handleClaimedJob({
       job,
@@ -738,8 +744,15 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.status, "failed");
     assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    // The attacker-controlled identifiers must not reach the control plane
+    // through any call this attempt made.
+    const transmitted = JSON.stringify(client.calls);
+    assert.ok(!transmitted.includes("attacker-chosen-claim"));
+    assert.ok(!transmitted.includes("attackerchosennonce123456"));
   });
 
   it("rejects a replayed job with job_replay_rejected on the second dispatch", async () => {
@@ -898,14 +911,18 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(result.nonce, job.nonce);
   });
 
-  it("passes job.claimId/job.nonce through on a rejection report", async () => {
+  it("passes job.claimId/job.nonce through on a below-the-gate rejection report", async () => {
+    // The pass-through property is asserted through a SEMANTIC rejection
+    // (agent-local policy denies the target), which sits below the
+    // trusted-identity gate. A signature-verdict failure cannot be used
+    // here: per ADR-0012 decision 2 it submits no result at all, so there
+    // would be nothing to inspect.
     const client = createRecordingClient();
     const job = makeSignedJob({ claimId: "claim-rej-1" });
-    job.action = "renew"; // mutate after signing -> job_integrity_failed
 
     const outcome = await handleClaimedJob({
       job,
-      policyEngine: permissiveEngine(),
+      policyEngine: permissiveEngine([]), // target selector not declared
       client,
       executionContext: makeExecutionContext(),
       log: silentLog,
@@ -914,7 +931,6 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(outcome.status, "rejected");
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "rejected");
-    assert.equal(result.rejectionReason, "job_integrity_failed");
     assert.equal(result.claimId, "claim-rej-1");
     assert.equal(result.nonce, job.nonce);
   });

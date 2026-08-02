@@ -1195,13 +1195,15 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
  * is not enabled. This branch is byte-for-byte the observe-only bootstrap behavior.
  *
  * With an enabled execution context: run the full trust chain in
- * order -- signature verify -> replay check -> clock window check -> policy
- * evaluateJob -> replay consume -> executeJob. Any { allowed: false }
- * verdict reports policy.checked evidence + a "rejected" result with that
- * rejectionReason. A job missing its signed-dispatch fields is rejected
- * with job_integrity_failed (unsigned jobs must never execute). If no
- * signing key is pinned yet, jobs are "blocked" (never executed) until
- * registration pins one.
+ * order -- signature verify -> trusted-identity gate -> replay check -> clock
+ * window check -> policy evaluateJob -> replay consume -> executeJob. A
+ * below-the-gate { allowed: false } verdict reports policy.checked evidence +
+ * a "rejected" result with that rejectionReason. A signature-verdict failure
+ * (which includes a job missing its signed-dispatch fields) is terminal and
+ * SILENT: no result and no evidence are submitted, because claimId/nonce would
+ * have to come from the payload the verdict just declared untrustworthy
+ * (ADR-0012 decision 2). If no signing key is pinned yet, jobs are "blocked"
+ * (never executed) until registration pins one.
  *
  * Never throws for per-job failures; errors are reported through the
  * protocol client and logged.
@@ -1325,12 +1327,22 @@ async function handleClaimedJob({
 
 /**
  * Trust chain for a claimed job when execution is enabled. Order per
- * ADR-0003 (and tests/integration/agent-protocol.test.js
- * runVerificationChain): signature verify -> replay check -> clock window
- * check -> policy -> replay consume -> execute. The replay nonce is
+ * ADR-0003 and ADR-0012 decision 2 (the one normative verification order):
+ * signature verify -> trusted-identity extraction -> replay check -> clock
+ * window check -> policy -> replay consume -> execute. The replay nonce is
  * consumed only after every gate passed, so a rejected job does not burn
  * its nonce, but it IS consumed before execution starts, so a crash
  * mid-execution can never allow a replay.
+ *
+ * TRUSTED-IDENTITY GATE (ADR-0012 decision 2): claimId and nonce are read
+ * only AFTER verifyJobSignature has returned an allowed verdict. Nothing
+ * above that gate may construct a result of any kind, because in a
+ * signature-failure mode the very fields a report would be built from are
+ * what an attacker controls. A signature failure therefore fails locally
+ * and lets the lease expire rather than submitting a rejected result; there
+ * is no unsigned claim handle in the claim response to bind such a report
+ * to. Integrity-failure telemetry would require a separate opaque handle,
+ * which is a protocol addition and deliberately out of scope here.
  *
  * @param {object} params see handleClaimedJob
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
@@ -1346,15 +1358,6 @@ async function handleSignedJob({
 }) {
   const { pinnedSigningKey, replayCache, clockEstimator, execution, outboxDir } =
     executionContext;
-  // Server-assigned claim id and single-use dispatch nonce: forwarded on
-  // every result so the control plane can re-prove claim ownership and
-  // consume the nonce in its replay ledger (ADR-0003).
-  const claimId =
-    typeof job?.claimId === "string" && job.claimId.length > 0
-      ? job.claimId
-      : null;
-  const nonce =
-    typeof job?.nonce === "string" && job.nonce.length > 0 ? job.nonce : null;
 
   const resolvedOutboxDir = outboxDir || execution.outboxDir;
   if (typeof resolvedOutboxDir !== "string" || resolvedOutboxDir.length === 0) {
@@ -1362,6 +1365,76 @@ async function handleSignedJob({
       "tokentimer-agent: execution outboxDir is required when execution is enabled",
     );
   }
+
+  // No pinned key => integrity of ANY job cannot be established. Blocked,
+  // not rejected: this is an agent-side precondition failure, not a verdict
+  // about the job itself, which is why it still reports (an operator needs
+  // to see "this agent cannot execute anything") and why reporting is safe
+  // here even though nothing has been verified. Unlike a signature-verdict
+  // failure, no signature has proven the payload is not control-plane
+  // issued; the identifiers are merely echoed back to the authority that
+  // issued them, and the server's own nonce ledger, bound to
+  // (jobId, workspaceId, agentRowId), decides whether the report binds. A
+  // fabricated nonce therefore cannot cause a false state transition; it
+  // fails to consume and the submission is refused.
+  if (!pinnedSigningKey) {
+    return persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
+        jobId,
+        attemptId,
+        claimId:
+          typeof job?.claimId === "string" && job.claimId.length > 0
+            ? job.claimId
+            : null,
+        nonce:
+          typeof job?.nonce === "string" && job.nonce.length > 0
+            ? job.nonce
+            : null,
+        status: "blocked",
+        errorMessage:
+          "execution is enabled but no control-plane signing key is pinned " +
+          "yet (the register response did not carry one); unsigned or " +
+          "unverifiable jobs are never executed",
+      },
+      log,
+    });
+  }
+
+  // 1. Signature, strictly first, over the job exactly as received. No field
+  // of `job` is read before this returns allowed (covers the base-payload
+  // fallback: a job without signed fields fails field validation inside
+  // verifyJobSignature).
+  const signatureVerdict = verifyJobSignature({
+    job,
+    publicKeyPem: pinnedSigningKey.publicKeyPem,
+    pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
+  });
+  if (!signatureVerdict.allowed) {
+    // Deliberately no result and no evidence: see the trusted-identity gate
+    // note above. Fail locally and let the lease expire.
+    emitLog(
+      log,
+      `tokentimer-agent: job ${jobId} failed signature verification; ` +
+        "submitting no result and letting the lease expire " +
+        `(${signatureVerdict.rejectionReason})`,
+    );
+    return {
+      status: "failed",
+      rejectionReason: signatureVerdict.rejectionReason,
+    };
+  }
+
+  // 2. TRUSTED-IDENTITY GATE PASSED. Only now are the server-assigned claim
+  // id and single-use dispatch nonce read, so every result built below is
+  // bound to identifiers that carry a verified signature (ADR-0003).
+  const claimId =
+    typeof job.claimId === "string" && job.claimId.length > 0
+      ? job.claimId
+      : null;
+  const nonce =
+    typeof job.nonce === "string" && job.nonce.length > 0 ? job.nonce : null;
 
   const rejectionArgs = {
     client,
@@ -1373,41 +1446,7 @@ async function handleSignedJob({
     outboxDir: resolvedOutboxDir,
   };
 
-  // No pinned key => integrity of ANY job cannot be established. Blocked,
-  // not rejected: this is an agent-side precondition failure, not a verdict
-  // about the job itself.
-  if (!pinnedSigningKey) {
-    return persistAndTransmitOutcome({
-      outboxDir: resolvedOutboxDir,
-      client,
-      result: {
-        jobId,
-        attemptId,
-        claimId,
-        nonce,
-        status: "blocked",
-        errorMessage:
-          "execution is enabled but no control-plane signing key is pinned " +
-          "yet (the register response did not carry one); unsigned or " +
-          "unverifiable jobs are never executed",
-      },
-      log,
-    });
-  }
-
-  // 1. Signature (covers the base-payload fallback: a job without signed
-  // fields fails field validation inside verifyJobSignature and is
-  // rejected with job_integrity_failed).
-  const signatureVerdict = verifyJobSignature({
-    job,
-    publicKeyPem: pinnedSigningKey.publicKeyPem,
-    pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
-  });
-  if (!signatureVerdict.allowed) {
-    return reportJobRejection({ ...rejectionArgs, verdict: signatureVerdict });
-  }
-
-  // 2. Replay check (no consume yet).
+  // 3. Replay check (no consume yet).
   const replayVerdict = replayCache.check({
     nonce: job.nonce,
     jobId,
@@ -1417,7 +1456,7 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: replayVerdict });
   }
 
-  // 3. Clock window with drift compensation.
+  // 4. Clock window with drift compensation.
   const windowVerdict = checkJobTimeWindow({
     job,
     nowMs: Date.now(),
@@ -1428,13 +1467,13 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: windowVerdict });
   }
 
-  // 4. Agent-local policy (default deny; ADR-0002 local policy wins).
+  // 5. Agent-local policy (default deny; ADR-0002 local policy wins).
   const policyVerdict = policyEngine.evaluateJob(buildSignedJobPolicyDescriptor(job));
   if (!policyVerdict.allowed) {
     return reportJobRejection({ ...rejectionArgs, verdict: policyVerdict });
   }
 
-  // 5. Consume the nonce before executing (see function doc comment).
+  // 6. Consume the nonce before executing (see function doc comment).
   const consumeVerdict = replayCache.consume({
     nonce: job.nonce,
     jobId,

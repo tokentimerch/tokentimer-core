@@ -428,11 +428,21 @@ verifies every job against it (`verifyJobSignature`):
 
 1. Structural checks on `signature` (base64, 64-1024 chars), `signingKeyId`,
    `nonce` (16-128 chars, `[A-Za-z0-9_.:-]`), `issuedAt`, `expiresAt`. A job
-   missing any of these (e.g. a plain unsigned payload) is rejected with
-   `job_integrity_failed`: unsigned jobs never execute.
+   missing any of these (e.g. a plain unsigned payload) fails integrity:
+   unsigned jobs never execute.
 2. `job.signingKeyId` must equal the pinned key id. A mismatch (rotation lag
-   or forgery) rejects with `job_integrity_failed`.
+   or forgery) fails integrity.
 3. `crypto.verify` over the canonical payload bytes.
+
+An integrity failure at any of those three steps is **terminal and silent**:
+the agent submits **no** result and lets the lease expire. `claimId` and
+`nonce` live inside the signed payload and the claim response carries no
+unsigned handle, so a report would have to be built from the very fields the
+verdict just declared untrustworthy. Operators therefore see such a job as an
+expired lease plus a local agent log line, not as a `rejected` result. A
+*semantic* rejection decided after verification (target out of scope, command
+not allowlisted, and so on) does travel the result path, bound to the verified
+`claimId`/`nonce`.
 
 A present-but-corrupted pin file fails startup loudly (never silently
 unpinned). If execution is enabled but no key is pinned yet, jobs are
@@ -528,9 +538,10 @@ reopen the replay window. Semantics:
 `checkJobTimeWindow` validates `now + clockOffsetMs` against
 `[issuedAt - tolerance, expiresAt + tolerance]` with
 `execution.clockDriftToleranceMs` (default 30000 ms) slack. `expiresAt`
-before `issuedAt` is malformed regardless of any clock and rejects with
-`job_integrity_failed`; a future-dated or expired job rejects with
-`clock_drift_suspected` (both are plausibly clock-related, and a genuinely
+before `issuedAt` is malformed regardless of any clock and fails integrity
+(terminal and silent, no result submitted); a future-dated or expired job
+rejects with `clock_drift_suspected`, which is a below-the-gate rejection and
+therefore IS reported (both are plausibly clock-related, and a genuinely
 replayed job is independently caught by the replay cache).
 
 ### Agent-local policy
@@ -997,10 +1008,10 @@ payload; the executable job-type contract has since landed
 control plane now dispatches signed jobs, so most deviations are resolved.
 Current behavior:
 
-- Unsigned jobs are rejected with `job_integrity_failed` whenever execution
-  is enabled; a payload without `signature`/`nonce`/`signingKeyId`/
-  `issuedAt`/`expiresAt` fails signed-field validation. Signed dispatch is
-  what the control plane's claim route produces.
+- Unsigned jobs never execute whenever execution is enabled; a payload without
+  `signature`/`nonce`/`signingKeyId`/`issuedAt`/`expiresAt` fails signed-field
+  validation, and that failure is terminal and silent (no result, lease
+  expires). Signed dispatch is what the control plane's claim route produces.
 - When `job.sans` is absent: the CSR CN and the ACME `-d` domain come
   from `job.target.reference`. When present, the full SAN list is used.
 - `certPath` / `keyPath` / `chainPath` resolution: an explicit
@@ -1070,12 +1081,14 @@ Common terminal states and what to look for:
   `pinnedSigningKeyId` will be null until then.
 - **Job `blocked`, "does not execute jobs yet" message**: `execution.enabled` is not
   true. This is the expected observe-only behavior, not an error.
-- **`rejected` with `job_integrity_failed`**: missing/malformed signed
-  fields, a signing key id mismatch (rotation lag or forgery), a signature
-  that does not verify against the canonical payload, or a malformed
-  validity window (`expiresAt` before `issuedAt`). The `policy.checked`
-  evidence item's summary carries the specific detail. If it persists after
-  a control-plane key rotation, re-register to re-pin.
+- **No result at all, lease expired, `job_integrity_failed` in the agent log**:
+  missing/malformed signed fields, a signing key id mismatch (rotation lag or
+  forgery), a signature that does not verify against the canonical payload, or
+  a malformed validity window (`expiresAt` before `issuedAt`). This is
+  deliberate: an integrity verdict is terminal and silent, so there is no
+  `rejected` result and no `policy.checked` evidence item to read. Look for the
+  detail in the agent's own log. If it persists after a control-plane key
+  rotation, re-register to re-pin.
 - **`rejected` with `clock_drift_suspected`**: the adjusted time fell
   outside `[issuedAt - tolerance, expiresAt + tolerance]`. Check NTP sync on
   the agent host, and compare the heartbeat's `clockOffsetMs` against
