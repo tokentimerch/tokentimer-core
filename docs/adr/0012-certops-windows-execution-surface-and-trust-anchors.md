@@ -197,10 +197,10 @@ Windows offers two paths to get a certificate into `LocalMachine\My`:
   Microsoft Software KSP unless a hardware KSP is configured) and
   `certreq -accept` binds the CA's response to it. The private key never
   exists as a file; it is a CNG key handle, non-exportable by default.
-- **PFX import**: a key pair is generated off-host (or by the same agent
-  using OpenSSL/Node crypto) and imported as a PFX/PKCS#12 bundle via
-  `Import-PfxCertificate`. The private key exists as bytes, however briefly,
-  before import.
+- **PFX import**: a key pair is generated off-host, or agent-side by the
+  local ACME client tooling when it cannot be pointed at a CNG-generated CSR,
+  and imported as a PFX/PKCS#12 bundle via `Import-PfxCertificate`. The
+  private key exists as bytes, however briefly, before import.
 
 Decision: CNG-native is the default and required path for any certificate the
 Windows agent itself requests (i.e., a `renew` or `issue` job targeting a
@@ -219,19 +219,57 @@ enum for exactly this custody model, so the Windows cert-store work extends the
 deployable set with `os-store-managed` rather than overloading `agent-local`
 with a second, incompatible meaning.
 
-PFX import is supported only for `deploy` jobs where the certificate material
-already exists off-host and is being placed onto a Windows target, the same
-shape ADR-0001's zero-custody model already permits for other platforms, since
-the control plane never holds the private key either way and the PFX bytes are
-agent-side, ephemeral, and immediately wrapped by the CNG store on import.
+PFX import is the disciplined fallback, not a second default, for two
+distinct cases:
 
-This mirrors ADR-0001's zero-custody invariant precisely: CNG-native gives
-Windows the same "the agent generates it, the agent holds it, nothing else
-ever sees it" property that Linux `agent-local` key generation already has via
-`openssl genrsa`/`certbot`, while keeping the custody *mode* honest about who
-can actually read the key. Defaulting to PFX would mean every Windows issuance
-briefly materializes a private key as file bytes, in exchange for no benefit
-over CNG for the case that matters most (agent-originated keys).
+1. `deploy` jobs where the certificate material already exists off-host and
+   is being placed onto a Windows target, the same shape ADR-0001's
+   zero-custody model already permits for other platforms.
+2. `issue`/`renew` jobs where the local ACME client cannot be pointed at a
+   CNG-generated CSR (some ACME client integrations generate their own key
+   pair and CSR internally and have no supported hook to consume an
+   externally supplied one). This case is still agent-originated custody
+   (`keyMode: agent-local`, not `os-store-managed`, since the key transits
+   agent-local file bytes before the store wraps it) and is gated by the same
+   discipline as case 1, not an open door to default-to-PFX.
+
+In both cases the control plane never holds the private key, and the PFX
+bytes are agent-side, ephemeral, and bound by the following, enforced on every
+code path (success, failure, or process termination) via `try`/`finally`:
+
+- **In-memory password.** The PFX password is generated per-operation with
+  `RandomNumberGenerator`/`node:crypto`, held only as a `SecureString` (or
+  cleared `Byte[]`) in process memory, and passed directly to
+  `Import-PfxCertificate -Password`. It is never written to disk, logged, or
+  passed as a plain command-line argument.
+- **ACL-restricted temporary file.** `Import-PfxCertificate` requires a file
+  path, so the PFX bytes touch disk for the minimum required window, in a
+  temp file with the same restrictive ACL discipline as the agent's
+  config/credential files (decision 5's "Config/credential file ACLs" below):
+  owner plus `SYSTEM` only, inheritance disabled.
+- **Non-exportable import.** Import always runs without `-Exportable` (its
+  default is non-exportable), so the store-side key ends up with the same
+  "cannot be read back out" property CNG-native keys have natively.
+- **Cleanup on every exit path.** The temp file is deleted in a `finally`
+  block covering the success, failure, and exception paths, plus a
+  best-effort startup sweep for stale PFX temp files left by a process that
+  was killed before its `finally` ran.
+- **Evidence of the transient file window.** Because the private key existed
+  as file bytes for a bounded window, the issue/renew/deploy evidence item
+  records that fact (a boolean `keygen.pfx_transient_file` marker plus the
+  temp directory's ACL posture), even though the file itself never leaves the
+  host and is gone before the evidence item reaches the outbox.
+
+This mirrors ADR-0001's zero-custody invariant: CNG-native gives Windows the
+same "the agent generates it, the agent holds it, nothing else ever sees it"
+property that Linux `agent-local` key generation already has via `openssl
+genrsa`/`certbot`, while keeping the custody *mode* honest about who can
+actually read the key. CNG-native stays the default and required path
+whenever the Windows agent originates the key pair itself and the local ACME
+tooling can be pointed at an external CSR, in exchange for no benefit over CNG
+for the case that matters most (agent-originated keys with no ACME-client
+constraint). PFX import is reserved for the two documented fallback cases
+above, both wrapped in the safeguards enumerated here.
 
 ### 5. The Windows agent service runs as `LocalSystem`
 
@@ -343,8 +381,15 @@ New audit events, following ADR-0011's naming convention
 (`CERTOPS_<NOUN>_<VERB>`): `CERTOPS_TRUST_ANCHOR_DISTRIBUTED`,
 `CERTOPS_TRUST_ANCHOR_REVOKED`. Per ADR-0011's asymmetric-audit rule (success
 is audited, routine non-events are not), a claim or an in-flight attempt does
-not itself produce an event; only a terminal `succeeded`/`failed` transition
-does, matching how certificate job completion is audited today.
+not itself produce an event. `CERTOPS_TRUST_ANCHOR_DISTRIBUTED` /
+`CERTOPS_TRUST_ANCHOR_REVOKED` fire only on that action's own terminal
+`succeeded` transition, matching how `CERTOPS_CERTIFICATE_ISSUED` is emitted
+only for a successful issuance today, never for a failed one. A terminal
+`failed` transition for either action reuses the existing generic
+`CERTOPS_JOB_FAILED` event (`agentDispatch.js`'s pattern for certificate job
+failures), rather than a success-named event, and rather than inventing two
+more one-off failure events for actions that already share a job-failure
+shape with every other job type.
 
 ## Alternatives considered
 
