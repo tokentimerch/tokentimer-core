@@ -95,6 +95,82 @@ describe("certops renewal profile", () => {
     );
   });
 
+  it("accepts a windows-iis target with no certPath (store/binding-based deploy destination)", () => {
+    const windowsTarget = {
+      type: "windows-iis",
+      reference: "iis-01/default-web-site",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" },
+    };
+    const profile = validateRenewalProfile(
+      validProfile({
+        deploymentTargets: [windowsTarget],
+        target: windowsTarget,
+      }),
+    );
+    assert.equal(profile.target.type, "windows-iis");
+    assert.equal(profile.target.store, "My");
+    assert.deepEqual(profile.target.binding, {
+      site: "Default Web Site",
+      port: 443,
+      sniHost: "app.example.com",
+    });
+    assert.equal(
+      "certPath" in profile.target,
+      false,
+      "a windows-iis target has no filesystem certPath",
+    );
+  });
+
+  it("rejects a windows-iis target missing store", () => {
+    assert.throws(
+      () =>
+        validateRenewalProfile(
+          validProfile({
+            target: {
+              type: "windows-iis",
+              reference: "iis-01/default-web-site",
+              binding: { site: "Default Web Site", port: 443 },
+            },
+          }),
+        ),
+      /target\.store/,
+    );
+  });
+
+  it("rejects a windows-iis target missing binding", () => {
+    assert.throws(
+      () =>
+        validateRenewalProfile(
+          validProfile({
+            target: {
+              type: "windows-iis",
+              reference: "iis-01/default-web-site",
+              store: "My",
+            },
+          }),
+        ),
+      /target\.binding/,
+    );
+  });
+
+  it("rejects a windows-iis binding with an out-of-range port", () => {
+    assert.throws(
+      () =>
+        validateRenewalProfile(
+          validProfile({
+            target: {
+              type: "windows-iis",
+              reference: "iis-01/default-web-site",
+              store: "My",
+              binding: { site: "Default Web Site", port: 999999 },
+            },
+          }),
+        ),
+      /target\.binding\.port/,
+    );
+  });
+
   it("resolves a snapshot from certificate inventory + profile metadata", () => {
     const sourceProfile = validProfile();
     delete sourceProfile.keyRotationPolicy;

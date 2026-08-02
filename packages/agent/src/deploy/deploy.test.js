@@ -181,6 +181,136 @@ describe("validateTargetConfig", () => {
   });
 });
 
+describe("validateTargetConfig (windows-iis target type)", () => {
+  // A checkPath that would reject anything (windows-iis targets have no
+  // filesystem paths, so this proves the filesystem policy callback is
+  // never even consulted for this target type).
+  const uncallableCheckPath = () => {
+    throw new Error("checkPath must not be called for a windows-iis target");
+  };
+
+  function makeWindowsTarget(overrides = {}) {
+    return {
+      type: "windows-iis",
+      reference: "iis-01/default-web-site",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+      ...overrides,
+    };
+  }
+
+  it("accepts a well-formed windows-iis target with no sniHost/thumbprint", () => {
+    const result = validateTargetConfig(makeWindowsTarget(), {
+      checkPath: uncallableCheckPath,
+    });
+    assert.deepEqual(result, { valid: true });
+  });
+
+  it("accepts a well-formed windows-iis target with sniHost and thumbprintSha1", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({
+        binding: { site: "Default Web Site", port: 443, sniHost: "www.example.com" },
+        thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+      }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.deepEqual(result, { valid: true });
+  });
+
+  it("rejects a missing/empty store", () => {
+    const result = validateTargetConfig(makeWindowsTarget({ store: "" }), {
+      checkPath: uncallableCheckPath,
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.store/);
+  });
+
+  it("rejects a store name with disallowed characters", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ store: "My; DROP TABLE" }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.store/);
+  });
+
+  it("rejects a missing binding object", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ binding: undefined }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding must be an object/);
+  });
+
+  it("rejects a binding with no site", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ binding: { port: 443 } }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding\.site/);
+  });
+
+  it("rejects a binding port of 0", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ binding: { site: "Default Web Site", port: 0 } }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding\.port/);
+  });
+
+  it("rejects a binding port above 65535", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ binding: { site: "Default Web Site", port: 65536 } }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding\.port/);
+  });
+
+  it("rejects a non-integer binding port", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ binding: { site: "Default Web Site", port: "443" } }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding\.port/);
+  });
+
+  it("rejects an invalid sniHost", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({
+        binding: { site: "Default Web Site", port: 443, sniHost: "not a host!" },
+      }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.binding\.sniHost/);
+  });
+
+  it("rejects a thumbprintSha1 that is not 40 hex characters", () => {
+    const result = validateTargetConfig(
+      makeWindowsTarget({ thumbprintSha1: "not-a-thumbprint" }),
+      { checkPath: uncallableCheckPath },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /target\.thumbprintSha1/);
+  });
+
+  it("never consults checkPath for a windows-iis target (no filesystem paths in this shape)", () => {
+    // uncallableCheckPath throws if invoked; reaching { valid: true } here
+    // proves validateTargetConfig routed to the windows-iis validator and
+    // never fell through to the certPath/keyPath/chainPath/backupDir
+    // filesystem-policy loop.
+    const result = validateTargetConfig(makeWindowsTarget(), {
+      checkPath: uncallableCheckPath,
+    });
+    assert.equal(result.valid, true);
+  });
+});
+
 describe("deployCertificate", () => {
   it("happy path: writes content atomically with a restrictive mode", async () => {
     const dir = makeTempDir();
