@@ -8,7 +8,16 @@ async function importFresh(relativePath) {
   return import(href);
 }
 
-describe.skip("auto-sync-providers (core)", () => {
+// This suite was found skipped with no reason comment while building the
+// skip inventory (see scripts/generate-skip-inventory.cjs). It requires no
+// database, no live host feature and no unimplemented functionality -
+// apps/worker/src/auto-sync-providers.js already exports exactly what these
+// tests assert on, and running the suite standalone
+// (pnpm exec mocha tests/integration/auto-sync-providers.unit.test.js) passes
+// cleanly. Neither "no-host" nor "unimplemented" honestly describes a stale
+// skip, so per the "don't invent fake tags" rule it is re-enabled here
+// instead of being tagged with a reason that would not be true.
+describe("auto-sync-providers (core)", () => {
   const envKeys = ["TT_MODE", "AUTO_SYNC_PROVIDERS"];
 
   afterEach(() => {
