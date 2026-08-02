@@ -1676,6 +1676,68 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     assert.equal(result.valid, true, JSON.stringify(result.errors));
   });
 
+  it("validates a windows-iis deploy target with typed store/binding/thumbprint fields", () => {
+    const result = validateSignedJob(
+      baseCertificateJob({
+        action: "deploy",
+        target: {
+          type: "windows-iis",
+          reference: "iis-01/default-web-site",
+          store: "My",
+          binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" },
+          thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+        },
+      }),
+    );
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  it("rejects a windows-iis target with a malformed binding.port", () => {
+    const result = validateSignedJob(
+      baseCertificateJob({
+        action: "deploy",
+        target: {
+          type: "windows-iis",
+          reference: "iis-01/default-web-site",
+          store: "My",
+          binding: { site: "Default Web Site", port: "not-a-port" },
+        },
+      }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("rejects a windows-iis target missing the required binding object", () => {
+    const result = validateSignedJob(
+      baseCertificateJob({
+        action: "deploy",
+        target: {
+          type: "windows-iis",
+          reference: "iis-01/default-web-site",
+          store: "My",
+        },
+      }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("accepts store/binding/thumbprintSha1 on a deploymentTargets[] entry too", () => {
+    const result = validateSignedJob(
+      baseCertificateJob({
+        action: "deploy",
+        deploymentTargets: [
+          {
+            type: "windows-iis",
+            reference: "iis-01/default-web-site",
+            store: "WebHosting",
+            binding: { site: "1", port: 8443 },
+          },
+        ],
+      }),
+    );
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
   it("rejects protocol_smoke's mode when it is not dry_run: there is no 'real' variant", () => {
     const job = baseSmokeJob();
     job.payload.mode = "real";
