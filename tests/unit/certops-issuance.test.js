@@ -25,7 +25,7 @@ const {
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/issuance.js"),
 );
-const { JOB_OPERATIONS } = require(
+const { JOB_OPERATIONS, isTrustAnchorOperation } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
 const dispatch = require(
@@ -733,6 +733,26 @@ describe("certops provisioning reconciliation", () => {
     );
     assert.equal(state.updates.length, 0);
   });
+
+  it("skips a trust-anchor job (subject_type trust_anchor), even one that also carries operation distribute-trust", async () => {
+    // By-construction exclusion (ADR-0012 decisions 4-6): a trust job's
+    // subject_type is never 'managed_certificate', so it must never reach
+    // the FOR UPDATE lock, the certificate promotion, or renewal-profile
+    // derivation this function drives.
+    const { state, client } = reconcileClient();
+    const result = await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: {
+        ...jobFixture,
+        operation: "distribute-trust",
+        subject_type: "trust_anchor",
+        subject_id: "anchor-1",
+      },
+    });
+    assert.equal(result, null);
+    assert.equal(state.updates.length, 0);
+  });
 });
 
 describe("refreshRenewedCertificateEvidence (renewal of an already-active certificate)", () => {
@@ -968,12 +988,18 @@ describe("migration 34 issue job operation", () => {
     }
   });
 
-  it("accepts exactly the operations the service layer declares", () => {
+  it("accepts exactly the operations the service layer declared at the time (later widened by migration 42 for trust-anchor operations)", () => {
     const declared = migration.sql.match(/operation IN \(([^)]+)\)/);
     assert.ok(declared, "operation IN (...) list expected");
     const values = declared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...values].sort(), [...JOB_OPERATIONS].sort());
+    const operationsAsOfMigration34 = JOB_OPERATIONS.filter(
+      (operation) => !isTrustAnchorOperation(operation),
+    );
+    assert.deepEqual(
+      [...values].sort(),
+      [...operationsAsOfMigration34].sort(),
+    );
   });
 });

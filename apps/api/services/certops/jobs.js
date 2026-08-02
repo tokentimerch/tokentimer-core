@@ -149,6 +149,14 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
 // yet. It is a control-plane-only operation: the agent never sees it, because
 // signed dispatch translates it to the wire-level action "renew" (identical
 // execution). See docs/adr/0008-certops-upfront-issuance.md.
+//
+// "distribute-trust"/"revoke-trust" (ADR-0012 decisions 4-6 and 14) install
+// or remove a root/intermediate CA in a machine trust store. A trust anchor
+// has no private key and no renewal, so these two operations are a distinct
+// family from every certificate operation above: TRUST_ANCHOR_OPERATIONS
+// below is the routing key every trust-exclusion guard in this file (and in
+// renewalScheduler.js / renewalProfileDerivation.js) checks against, rather
+// than each guard re-deriving "is this a trust op" ad hoc.
 const JOB_OPERATIONS = Object.freeze([
   "issue",
   "renew",
@@ -156,8 +164,26 @@ const JOB_OPERATIONS = Object.freeze([
   "reload",
   "revoke",
   "noop",
+  "distribute-trust",
+  "revoke-trust",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
+
+const TRUST_ANCHOR_OPERATIONS = Object.freeze([
+  "distribute-trust",
+  "revoke-trust",
+]);
+const TRUST_ANCHOR_OPERATION_SET = new Set(TRUST_ANCHOR_OPERATIONS);
+
+/**
+ * True when operation is one of the trust-anchor operations. The single
+ * predicate every by-construction exclusion guard (renewal scheduler,
+ * ADR-0010 derivation, the automation-source guard below) calls, so the
+ * definition of "trust operation" cannot drift between call sites.
+ */
+function isTrustAnchorOperation(operation) {
+  return TRUST_ANCHOR_OPERATION_SET.has(operation);
+}
 
 const JOB_SOURCES = Object.freeze([
   "api",
@@ -188,6 +214,11 @@ const SUBJECT_TYPES = Object.freeze([
   "domain",
   "endpoint",
   "external",
+  // A trust anchor (root/intermediate CA distributed to machine trust
+  // stores, ADR-0012 decision 6) has no private key and no
+  // managed_certificates row, so it is a subject in its own right rather
+  // than a certificate.
+  "trust_anchor",
 ]);
 const SUBJECT_TYPE_SET = new Set(SUBJECT_TYPES);
 
@@ -637,6 +668,12 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
   revoke: new Set(),
   noop: new Set(),
+  // A trust job carries no certificate execution fields at all (ADR-0012
+  // decision 4): its own typed fields (trustAnchorId, anchorType, pem,
+  // fingerprintSha256) live in trust-job-payload.schema.json, a sibling
+  // contract, not in this certificate-shaped execution-field vocabulary.
+  "distribute-trust": new Set(),
+  "revoke-trust": new Set(),
 });
 
 // Fields an operation cannot function without. Only `issue` is covered today:
@@ -903,7 +940,18 @@ function normalizeExplicitLifecycleTimestamps(options) {
 // not yet adopted as a managed certificate). "issue" forbids a subject
 // (issuance.js: it creates the certificate identity itself). "noop" is a
 // pure heartbeat/connectivity check with nothing to reference.
-const SUBJECT_REQUIRED_OPERATIONS = new Set(["renew", "deploy", "reload", "revoke"]);
+// distribute-trust/revoke-trust always act on an existing certops_trust_
+// anchors row (ADR-0012 decision 6), referenced the same way every other
+// subject-bearing operation is: subject_type = 'trust_anchor',
+// subject_id = the anchor's id.
+const SUBJECT_REQUIRED_OPERATIONS = new Set([
+  "renew",
+  "deploy",
+  "reload",
+  "revoke",
+  "distribute-trust",
+  "revoke-trust",
+]);
 
 function normalizeSubject(options, operation) {
   const subjectType = normalizeOptionalEnum(
@@ -922,6 +970,23 @@ function normalizeSubject(options, operation) {
   if (!subjectType && SUBJECT_REQUIRED_OPERATIONS.has(operation)) {
     throw serviceError(
       `subjectType and subjectId are required for the ${operation} operation`,
+      CERTOPS_JOB_INVALID,
+    );
+  }
+  // A trust_anchor subject only ever makes sense under a trust-anchor
+  // operation, and vice versa: this is the by-construction half of keeping
+  // trust jobs and certificate jobs from ever crossing over, matching the
+  // exclusion enforced in the renewal scheduler and ADR-0010 derivation
+  // (see isTrustAnchorOperation).
+  if (isTrustAnchorOperation(operation) && subjectType !== "trust_anchor") {
+    throw serviceError(
+      `subjectType must be trust_anchor for the ${operation} operation`,
+      CERTOPS_JOB_INVALID,
+    );
+  }
+  if (!isTrustAnchorOperation(operation) && subjectType === "trust_anchor") {
+    throw serviceError(
+      "subjectType trust_anchor is only valid for distribute-trust/revoke-trust jobs",
       CERTOPS_JOB_INVALID,
     );
   }
@@ -1384,6 +1449,22 @@ async function createCertificateJob(options) {
     "source",
     "api",
   );
+  // Trust-anchor operations are excluded from the unattended renewal
+  // scheduler BY CONSTRUCTION, not by convention: "automation" is the one
+  // source value the scheduler (and only the scheduler) uses, so refusing
+  // that combination here makes "the scheduler can never create a trust
+  // job" a property of job creation itself, holding even if a future change
+  // to the scheduler tried to parameterize its hardcoded operation: "renew".
+  // Distributing or revoking a CA trust anchor is always an explicit human
+  // or API-token decision.
+  if (source === "automation" && isTrustAnchorOperation(operation)) {
+    throw serviceError(
+      "Trust-anchor operations cannot be created by automation; " +
+        "distribute-trust and revoke-trust require an explicit human or " +
+        "API request",
+      CERTOPS_JOB_OPERATION_INVALID,
+    );
+  }
   const { subjectType, subjectId } = normalizeSubject(options, operation);
   const requestedByUserId = normalizeRequesterIdentity(
     options.requestedByUserId,
@@ -2038,6 +2119,7 @@ module.exports = {
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
+  TRUST_ANCHOR_OPERATIONS,
   appendCertificateJobLog,
   assertModeAllowsTerminalStatus,
   assertSafePublicValue,
@@ -2048,6 +2130,7 @@ module.exports = {
   getCertificateJobById,
   isAgentDeployableKeyMode,
   isTerminalJobStatus,
+  isTrustAnchorOperation,
   jobCreationRequestFingerprint,
   jobFromRow,
   jobLogFromRow,

@@ -46,6 +46,12 @@ const actionPolicy = {
   // host at the next renewal, so it sits above ordinary CertOps job creation
   // (workspace_manager) and alongside the kill switch.
   "certops.renewal_profile.manage": "admin",
+  // Installing or removing a root/intermediate CA in a machine trust store
+  // (ADR-0012 decisions 4-6) changes what every certificate on that host is
+  // trusted against, not just one certificate's lifecycle, so it sits at the
+  // same admin level as the kill switch and renewal profile management
+  // rather than the workspace_manager level ordinary job creation uses.
+  "certops.trust_anchor.manage": "admin",
 };
 
 /**

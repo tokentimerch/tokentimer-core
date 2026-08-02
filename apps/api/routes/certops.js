@@ -16,7 +16,7 @@ const {
 const {
   requireWorkspaceCertOpsActive,
 } = require("../middleware/require-workspace-certops-active");
-const { authorize, hasAtLeastRole } = require("../services/rbac");
+const { authorize, can, hasAtLeastRole } = require("../services/rbac");
 const {
   CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
@@ -80,6 +80,7 @@ const {
   findActiveJobForSubject,
   getCertificateJobById,
   isAgentDeployableKeyMode,
+  isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
   validateJobPayloadForOperation,
@@ -656,6 +657,24 @@ function createManualCertificateJobHandler({
 } = {}) {
   return async function createManualCertificateJobHandler(req, res) {
     try {
+      // Trust-anchor operations change what every certificate on a host is
+      // trusted against, not just one certificate's lifecycle (ADR-0012
+      // decisions 4-6), so they require certops.trust_anchor.manage (admin)
+      // rather than the workspace_manager level ordinary job creation
+      // (requireCertOpsWriteRole, above this handler in the route chain)
+      // uses. Checked here, not as a static route-level authorize(), because
+      // this one route handles every operation and only two of them need the
+      // higher bar.
+      if (
+        isTrustAnchorOperation(req.body?.operation) &&
+        !can(req.authz?.workspaceRole, "certops.trust_anchor.manage")
+      ) {
+        return res.status(403).json({
+          error: "Forbidden: insufficient role",
+          code: "INSUFFICIENT_ROLE",
+        });
+      }
+
       // An issue job has to create the certificate identity before the job
       // that references it, so it swaps in a different creator. Everything
       // else (workspace lock, kill switch, audit row) is shared.

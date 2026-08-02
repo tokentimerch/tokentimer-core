@@ -1547,6 +1547,7 @@ async function reconcileProvisionedCertificate({
     workspaceId,
     certificateId: String(job.subject_id),
     payload: job.payload || {},
+    operation: job.operation || null,
     certificate: {
       commonName: text(certificate.common_name),
       subjectAltNames: sans
