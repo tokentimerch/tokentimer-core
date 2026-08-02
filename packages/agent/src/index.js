@@ -242,15 +242,12 @@ const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
 const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
 
 /**
- * Named behaviours this agent build supports, declared **at registration only**,
- * so the control plane's claim query can gate work that would otherwise be
- * dispatched and then stall. Registration is the only declaration point that
- * exists: `heartbeatBody` is `additionalProperties: false` and defines no
- * `declaredCapabilities`, so a heartbeat carrying capabilities is schema-invalid
- * and the control plane's heartbeat-side write is unreachable (ADR-0002
- * addendum). The operator consequence is that upgrading this binary in place
- * does not grant it a capability it did not register with, and the only remedy
- * today is re-enrollment, which costs the agent's identity and key pin.
+ * Named behaviours this agent build supports, declared at registration and
+ * re-declared on every heartbeat (`heartbeatBody` now also
+ * admits `declaredCapabilities`, see ADR-0002's addendum). Re-declaration on
+ * heartbeat means an in-place binary upgrade advertises a newly-supported
+ * capability without re-enrollment, which previously cost the agent its
+ * identity and signing-key pin.
  *
  * This build's "verify" step already reports validation.passed evidence carrying
  * fingerprintSha256 and validTo for every ACME run (see runRenewal's verify tail
@@ -285,7 +282,7 @@ function resolveClaimSupportedActions(executionContext) {
 
 /**
  * Whether this process should poll the jobs/claim endpoint. Observe-only
- * agents must not claim (B3): discovery and heartbeat stay independent.
+ * agents must not claim: discovery and heartbeat stay independent.
  *
  * @param {object|null|undefined} executionContext
  * @returns {boolean}
@@ -1058,7 +1055,7 @@ function resolveJobEabAccountRef(job) {
 /**
  * Persists a terminal job outcome (+ evidence) to the durable outbox, then
  * attempts transmission. Transmission failures leave the entry on disk for
- * retry and never rewrite a persisted success as a failure (B8).
+ * retry and never rewrite a persisted success as a failure.
  *
  * @param {object} params
  * @param {string} params.outboxDir
@@ -1507,7 +1504,7 @@ async function handleSignedJob({
   // 7. Execute. Step evidence is buffered locally; the terminal outcome and
   // evidence are persisted to the durable outbox BEFORE any network
   // transmission so a reportResult failure cannot reclassify a real-world
-  // success as "failed" (B8). Periodic lease heartbeat covers long ACME/DNS
+  // success as "failed". Periodic lease heartbeat covers long ACME/DNS
   // stages that can approach the 15-minute lease TTL without stage-boundary
   // renews.
   emitInfo(
@@ -3940,6 +3937,13 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         ntpSynced,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
         supportedDnsProviders,
+        // Re-declared on every heartbeat so an in-place binary
+        // upgrade's new capabilities reach the control plane without
+        // re-enrollment. Always the same non-empty set this build declares
+        // at registration (see AGENT_DECLARED_CAPABILITIES); never sent as
+        // [] here, since an empty array on this field means "no change" to
+        // the control plane, not "no capabilities".
+        declaredCapabilities: AGENT_DECLARED_CAPABILITIES,
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
         // key-rotation lag. in observe-only bootstrap mode these stay null.

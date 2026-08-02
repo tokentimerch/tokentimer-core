@@ -256,7 +256,7 @@ test("claim: missing jobs field in response returns empty array", async () => {
   assert.deepEqual(jobs, []);
 });
 
-test("reportResult: accepts dry_run_complete as a valid result status (B4)", async () => {
+test("reportResult: accepts dry_run_complete as a valid result status", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 
   const client = createProtocolClient({
@@ -295,7 +295,7 @@ test("reportResult: accepts orphaned_unknown_effect as a valid result status", a
   assert.equal(calls[0].parsedBody.body.status, "orphaned_unknown_effect");
 });
 
-test("renewLease: POSTs plain body to jobs/:jobId/lease with claimId and sequence (B6)", async () => {
+test("renewLease: POSTs plain body to jobs/:jobId/lease with claimId and sequence", async () => {
   const calls = stubFetch([
     {
       status: 200,
@@ -405,6 +405,32 @@ test("register/heartbeat/claim: accept and forward supportedDnsProviders", async
   assert.deepEqual(calls[0].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
   assert.deepEqual(calls[1].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
   assert.deepEqual(calls[2].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
+});
+
+test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", async () => {
+  const calls = stubFetch([
+    { status: 200, json: { ok: true } },
+    { status: 200, json: { ok: true } },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    declaredCapabilities: ["evidence-claim-binding-v1", "windows-cert-store-v1"],
+  });
+  assert.deepEqual(calls[0].parsedBody.body.declaredCapabilities, [
+    "evidence-claim-binding-v1",
+    "windows-cert-store-v1",
+  ]);
+
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal("declaredCapabilities" in calls[1].parsedBody.body, false);
 });
 
 test("reportResult: sends correct envelope shape (messageType + resultBody fields)", async () => {
