@@ -2843,6 +2843,55 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS capabilities_updated_at TIMESTAMPTZ NULL;
     `,
   },
+  {
+    version: 40,
+    name: "certops_windows_iis_target_descriptors",
+    sql: `
+      -- Windows execution surface (ADR-0012 decisions 1, 9, 10): an IIS
+      -- deploy destination is a machine certificate store plus a site
+      -- binding (site, port, optional SNI host), keyed on thumbprint rather
+      -- than a filesystem path. certificate_targets is where every other
+      -- target-type-specific descriptor already lives (hostname, url,
+      -- deployment_reference), so these columns join that set rather than
+      -- starting a parallel table: a windows-iis row is still one
+      -- certificate_targets row, just with a different subset of columns
+      -- populated, the same shape every other target_type already uses.
+      --
+      -- All four columns are nullable and unconstrained against target_type
+      -- at the database layer: enforcing "populated only for windows-iis" as
+      -- a CHECK would need a multi-column conditional CHECK that duplicates
+      -- the validation validateTargetConfig (packages/agent/src/deploy) and
+      -- renewalProfile.js's validateTarget already own, and having both
+      -- enforce it invites them to drift. The database stores; the service
+      -- layer validates.
+      ALTER TABLE certificate_targets
+        ADD COLUMN IF NOT EXISTS windows_store TEXT NULL
+          CHECK (windows_store IS NULL OR windows_store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        ADD COLUMN IF NOT EXISTS windows_site TEXT NULL
+          CHECK (windows_site IS NULL OR windows_site ~ '^[A-Za-z0-9 _.:-]{1,256}$'),
+        ADD COLUMN IF NOT EXISTS windows_port INTEGER NULL
+          CHECK (windows_port IS NULL OR windows_port BETWEEN 1 AND 65535),
+        ADD COLUMN IF NOT EXISTS windows_sni_host TEXT NULL
+          CHECK (
+            windows_sni_host IS NULL
+            OR windows_sni_host ~ '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+          );
+
+      -- "windows-iis" joins the target_type vocabulary the same way every
+      -- earlier target type did (see the certificate_targets_source_check
+      -- pattern above): widen the enum additively, never CREATE TYPE.
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_target_type_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_target_type_check CHECK (
+          target_type IN (
+            'endpoint', 'domain', 'host', 'kubernetes-secret',
+            'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other',
+            'windows-iis'
+          )
+        );
+    `,
+  },
 ];
 
 async function runMigrations() {

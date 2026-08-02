@@ -1192,3 +1192,50 @@ describe("CertOps inventory migration", () => {
     );
   });
 });
+
+describe("migration 40 Windows IIS target descriptors", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_windows_iis_target_descriptors",
+  );
+
+  it("exists at version 40 and widens certificate_targets", () => {
+    assert.ok(migration, "certops_windows_iis_target_descriptors migration expected");
+    assert.equal(migration.version, 40);
+    for (const column of [
+      "windows_store",
+      "windows_site",
+      "windows_port",
+      "windows_sni_host",
+    ]) {
+      assert.match(migration.sql, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\b`));
+    }
+  });
+
+  it("widens certificate_targets_target_type_check to accept windows-iis while keeping every earlier type", () => {
+    assert.match(migration.sql, /certificate_targets_target_type_check/);
+    for (const value of [
+      "endpoint",
+      "domain",
+      "host",
+      "kubernetes-secret",
+      "load-balancer",
+      "cdn",
+      "appliance",
+      "hsm",
+      "vault",
+      "other",
+      "windows-iis",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+  });
+
+  it("constrains windows_port to the valid TCP port range and never uses CREATE TYPE", () => {
+    assert.match(migration.sql, /windows_port BETWEEN 1 AND 65535/);
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+});
