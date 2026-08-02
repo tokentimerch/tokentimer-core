@@ -3940,9 +3940,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // Re-declared on every heartbeat so an in-place binary
         // upgrade's new capabilities reach the control plane without
         // re-enrollment. Always the same non-empty set this build declares
-        // at registration (see AGENT_DECLARED_CAPABILITIES); never sent as
-        // [] here, since an empty array on this field means "no change" to
-        // the control plane, not "no capabilities".
+        // at registration (see AGENT_DECLARED_CAPABILITIES). Sending [] here
+        // would be a declaration that this build supports nothing, which the
+        // control plane honours by clearing the stored set; this build never
+        // does that, because its capability set is a non-empty constant.
         declaredCapabilities: AGENT_DECLARED_CAPABILITIES,
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and

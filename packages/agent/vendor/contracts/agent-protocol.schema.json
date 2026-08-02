@@ -214,7 +214,7 @@
         "declaredCapabilities": {
           "type": "array",
           "maxItems": 64,
-          "description": "Named behaviours this agent build supports, re-advertised on heartbeat (ADR-0002 addendum). Registration remains the first declaration point; heartbeat is now a second one, so an in-place agent binary upgrade can advertise a newly-supported capability (e.g. windows-cert-store-v1, trust-anchor-deploy-v1) without losing its identity and signing-key pin through re-enrollment. An empty array on heartbeat preserves the previously declared set rather than clearing it, so an agent build that has not been updated to send this field is unaffected. Unknown values are ignored rather than rejected, matching registerBody's declaredCapabilities.",
+          "description": "Named behaviours this agent build supports, re-advertised on heartbeat (ADR-0002 addendum). Registration remains the first declaration point; heartbeat is now a second one, so an in-place agent binary upgrade can advertise a newly-supported capability (e.g. windows-cert-store-v1, trust-anchor-deploy-v1) without losing its identity and signing-key pin through re-enrollment. Declaration is three-valued: omitting the field preserves the stored set (so an older agent build that never sends it is unaffected), sending an explicit empty array clears the set, and sending a non-empty array replaces it. Clearing must be expressible so that an agent downgraded to a build that no longer supports a capability stops matching jobs gated on it. Unknown values are ignored rather than rejected, matching registerBody's declaredCapabilities.",
           "items": {
             "type": "string",
             "minLength": 1,

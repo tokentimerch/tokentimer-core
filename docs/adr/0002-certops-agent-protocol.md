@@ -49,7 +49,7 @@ make an agent do arbitrary things.
     agent is an unclaimed `pending` job rather than an error. Capability names are
     contract surfaces under the README's change-control rule.
   - **Registration was the only declaration point until 0.12.0.**
-    `heartbeatBody` now also admits `declaredCapabilities`
+    `heartbeatBody` now also admits `declaredCapabilities` (three-valued: omitted preserves, `[]` clears, non-empty replaces)
     (`packages/contracts/certops/agent-protocol.schema.json`), so an in-place
     agent binary upgrade can advertise a newly-supported capability without
     re-enrollment. Before this, `heartbeatBody` was `additionalProperties: false`
