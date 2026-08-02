@@ -2,10 +2,57 @@
 
 ## Status
 
-Proposed (2026-08-02). This record must be accepted before the Windows
-execution-surface, signed-envelope and trust-anchor work described below can
-begin; the PRs that implement this feature set follow this decision rather than
-re-deciding it.
+Proposed (2026-08-02). Amended five times on the same day against successive external
+audits and **still pending sign-off**: decisions 2, 3 and 16 first (Finding A's
+misattribution, the observe-only carve-out, and `agentId` absence-versus-mismatch),
+then decisions 2, 3, 4 and 8 again (the signed-payload/wire-wrapper split,
+`agentId`'s requiredness sequencing and effective-flag capability gating, the
+PowerShell pre-execution trust boundary, the signed-script encoding constraint,
+and the replacement of "zero network calls" with a testable post-verdict-request
+property), and finally decision 8 once more plus decision 3's heading: the Bash
+decoded-payload transport said "a file or a process substitution", which this
+same decision's command-allowlist test forbids by excluding `mktemp`, so the
+normal path is now one byte-preserving stream and a named file is a declared
+exception with explicit obligations; and decision 3's title still called the
+shared definition an "envelope", the one word its own body rules out.
+**A fourth amendment (2026-08-02) added decision 17** (a capability epoch and
+claim-time freshness bound, closing Finding C) and corrected decision 8's Bash
+sequence, which described a single decode reused for both verification and
+parsing; Ed25519 verification consumes and does not re-emit its input, so the
+implementable form is two deterministic decodes of the same immutable
+`payloadB64`, the second gated on the first's verdict. The same pass synced
+decision 8's PowerShell file-transfer clause with the Bash-side declared-
+dependency obligations, and corrected the Consequences section's sequencing,
+which had said envelope v2 ships "together with" mandatory `agentId`,
+contradicting the deliberate split of that work into separate changes.
+**A fifth amendment (2026-08-02) corrected four further issues found in the
+fourth amendment itself**, all in decisions 14, 17, and 1: (1) decision 14's
+"ship undeclared" mechanism was specified as an environment variable,
+`CERTOPS_AGENT_QUALIFIED_CAPABILITIES`, which cannot be release-controlled
+since an environment variable is by definition operator-configured, and which
+additionally created a qualification loop with no fixed point between "test
+before enabling" and "enable after evidence exists"; replaced with a
+build-time manifest embedded in the binary, so the tested artifact and the
+promoted artifact are the same bytes. (2) decision 17's freshness bound
+justified 900000ms as "three times" a 30-second heartbeat, which is off by a
+factor of ten, and separately claimed the bound equalled the lease TTL so a
+lease could not outlive the assertion, which is false regardless of the
+multiplier since the two durations compose additively; the bound is now
+600000ms, derived from the existing agent-offline SLO rather than from either
+piece of the original, retracted reasoning. (3) decision 17 gained explicit
+column-initialization semantics: `capabilities_updated_at` is set at
+registration and is never backfilled for pre-existing rows, which migrate
+with it `NULL` and are treated as maximally stale until their next
+capability-reporting heartbeat, rather than being given a fabricated
+timestamp. (4) decision 1 had permitted Bash to use "`openssl pkeyutl -verify`
+or the bundled verifier", which would let either reference client silently
+fall back to the other's Ed25519 implementation and erase the independence
+the two-client design exists to provide; Bash now uses `openssl pkeyutl
+-verify` exclusively and PowerShell uses the bundled `tokentimer-verify`
+exclusively, with neither permitted to call the other's path.
+This record must be accepted before the Windows execution-surface,
+signed-envelope and trust-anchor work described below can begin; the PRs that
+implement this feature set follow this decision rather than re-deciding it.
 
 ## Context
 
@@ -155,16 +202,43 @@ separate checks: decode, parse exactly one value, require end-of-input.
 Canonical control-plane output carries no leading or trailing whitespace, so
 the framing check is defense in depth against a tolerant parser.
 
-**Nothing above the gate may produce a result of any kind.** `jobId`, `claimId`
-and `nonce` live inside the signed payload, and the claim response is
-`{ jobs: [signedJob] }` with no unsigned handle, so a failure at or before step
-10 must fail locally and let the lease expire. A signature mismatch therefore
-produces **no** result, `job_integrity_failed` included: in that failure mode
-the fields a report would be built from are exactly what an attacker controls.
-Integrity-failure telemetry would require a separate opaque claim handle in the
-claim response, which is a protocol addition and is deliberately not part of
-this record. Below the gate, a replay-bound `rejected` result may be built for
-a semantic problem (unsupported action, invalid mode, stale window).
+**Nothing above the gate may produce a result built from the signed payload's**
+**own identifiers.** `jobId`, `claimId` and `nonce` live inside the signed
+payload, and the claim response is `{ jobs: [signedJob] }` with no unsigned
+handle, so a failure at or before step 10 must fail locally and let the lease
+expire. A **signature-verdict failure** therefore produces **no** result,
+`job_integrity_failed` included: the verdict has affirmatively established that
+the payload is not control-plane-issued, so the fields a report would be built
+from are exactly what an attacker controls. Integrity-failure telemetry would
+require a separate opaque claim handle in the claim response, which is a
+protocol addition and is deliberately not part of this record. Below the gate, a
+replay-bound `rejected` result may be built for a semantic problem (unsupported
+action, invalid mode, stale window).
+
+Stated as a testable property, and **not** as "zero network calls", which is
+false on its face because registration, heartbeat and the claim itself are all
+network calls that necessarily already happened: **after the envelope is
+received, a pre-gate failure produces no result, no evidence, no lease renewal,
+and no other post-verdict request.** Local error classification may and should
+differ between failure modes — malformed base64 is a different local log line
+and a different exit code from an unsupported FIPS policy or an unparseable
+wrapper — because an operator debugging a broken install needs to tell them
+apart. What may never differ is the content: no local error, log line, exit
+code, or metric may carry an identifier taken from an unverified payload.
+
+One case sits above the gate and still reports, and the distinction is
+substantive rather than a carve-out: when **no signing key is pinned at all**,
+verification is not possible in either direction. No signature has proven the
+payload false, the agent cannot execute anything until an operator fixes the
+pin, and that is precisely the state an operator needs to see, so the agent
+reports `blocked` with an explanatory message. Echoing the received
+`claimId`/`nonce` there opens no forgery vector, because the identifiers return
+only to the authority that issued them and the server's own nonce ledger, bound
+to `(jobId, workspaceId, agentRowId)`, decides whether the report binds: a
+fabricated nonce fails to consume and the submission is refused rather than
+causing a false state transition. The rule is therefore "a signature verdict
+against a job silences all reporting about that job", not "anything unverified
+is unreportable".
 
 The gate is drawn between identity and intent on purpose. An earlier draft put
 one "validate required fields" step here, covering both the identifiers a
@@ -172,7 +246,28 @@ rejection is built from and the fields describing what the job wants; that is
 wrong precisely when the identifier validation itself fails, because then there
 is nothing trusted to report with.
 
-### 3. The signed payload shape: a shared envelope definition plus per-action schemas
+**There is no observe-only carve-out from this order.** An agent running
+without execution configured (`executionContext` null or `enabled: false`)
+still runs steps 1-14 unchanged before doing anything else with a job object;
+"observe-only" changes only what happens at step 15. Observe-only avoids
+certificate side effects, but the shipped agent's separate observe-only branch
+still terminates the job and submits evidence and a result, which is enough to
+corrupt operational state from an unverified payload if that branch is ever
+reached. A signature-verdict failure in observe-only mode is governed by the
+identical silent-failure rule as the execution-enabled path: no result, no
+evidence, `job_integrity_failed` included, and the lease is left to expire.
+Only after a verdict is available does execution status matter, and only to
+choose between running the job and reporting a policy rejection or `blocked`
+from the now-verified payload's own fields — never to decide whether
+verification runs at all. This closes the finding recorded against
+`handleClaimedJob` in decision 16: its observe-only branch must call into the
+same verify-then-derive-identity path as its execution-enabled branch, not
+`validateClaimedJob` on the raw wire object as a substitute for a signature
+verdict. Local execution readiness (configured vs. not, key pinned vs. not) is
+heartbeat and diagnostic telemetry; it is never grounds to construct a
+job-specific result from identifiers a verdict has not yet blessed.
+
+### 3. The signed payload shape: a shared signed-payload definition plus per-action schemas
 
 `agentId` is a **required field of the signed payload**. Without it a client
 cannot self-check that a job was meant for it the way it checks `workspaceId`;
@@ -194,13 +289,44 @@ the v2 `payloadB64` decode. It is not a v2-only field.
 (`certificateId`, `target`, `keyMode`) that a diagnostic smoke job deliberately
 has none of, so adding a bare required key would either weaken certificate
 validation to admit smoke jobs or leave smoke jobs unable to validate at all.
-Both are unacceptable. The shape is:
+Both are unacceptable.
 
-- a shared `signedDispatchEnvelope` definition carrying every field a signed
-  job has regardless of action: `schemaVersion`, `jobId`, `workspaceId`,
-  `agentId` (required), `action`, `mode`, `requestedAt`, plus the
-  signed-dispatch fields `nonce`, `signingKeyId`, `signature`, `claimId`,
-  `attemptId`, `leaseExpiresAt`, `attemptCount`, `issuedAt`, `expiresAt`;
+**Signed payload and wire wrapper are separate schemas, and conflating them is
+not a naming nit.** An earlier draft of this decision named one shared
+definition `signedDispatchEnvelope` and gave it both the signed fields *and*
+`signature`. That is impossible as a description of signed content: the
+signature cannot be one of the fields it signs. The v1 wire object legitimately
+carries payload-fields-plus-`signature` (verification excludes the top-level
+`signature` when recomputing canonical bytes), but that is a property of the
+**wrapper**, not of the payload, and a v2 `payloadB64` decode must contain no
+`signature` field at all. Three schemas, named for what they are:
+
+```text
+signed-dispatch-payload   the signed fields, and ONLY the signed fields:
+                          schemaVersion, jobId, workspaceId, agentId, action,
+                          mode, requestedAt, issuedAt, expiresAt, nonce,
+                          signingKeyId, claimId, attemptId, leaseExpiresAt,
+                          attemptCount. NO signature: this is the content that
+                          gets signed, so it cannot carry its own signature
+
+v1 wire wrapper           the signed payload's fields PLUS signature, as one
+                          flat object (today's shape, unchanged)
+
+v2 wire wrapper           envelopeVersion, payloadB64, signatureB64,
+                          signingKeyId. additionalProperties: false. Carries no
+                          payload fields and no sibling job object (decision 1)
+```
+
+`signingKeyId` appears in the signed payload *and* on the v2 wrapper on
+purpose: the wrapper's copy is the pre-verification selection hint, the
+payload's copy is the authenticated value, and step 13 requires them to agree.
+That is the one field legitimately present in both, and the equality check is
+why.
+
+The per-action composition is then:
+
+- the shared `signed-dispatch-payload` definition carries every field a signed
+  job has regardless of action;
 - composed into `job-payload.schema.json` alongside today's certificate
   requirements, which stay unchanged;
 - composed into a new `protocol-smoke-payload.schema.json` with its own minimal
@@ -232,16 +358,86 @@ exists to prevent for the encoding itself:
 
 ```text
 1. control plane starts signing agentId into the one shared canonical payload
-   for both wire shapes (server-only; no client behavior change yet)
+   for both wire shapes, AND the producer schema makes agentId required, in the
+   SAME change (server-only; no client behavior change yet)
 2. confirm deployed v1 agents tolerate the extra field IN PRODUCTION, via a
    staged/canary rollout watching for verification-failure regressions
-3. only then ship agents/clients that require and validate agentId at the gate,
-   advertising a distinct agent-id-binding-v1 capability (separate from
-   signed-payload-b64-v1, which gates the envelope shape, not the identity check)
-4. a new client meeting a control plane that has not completed step 1 fails
-   closed with a named incompatibility error at heartbeat or claim time, never
-   silently accepting the field's absence
+3. only then ship agents/clients that validate agentId at the gate; a
+   compatibility DECODER may accept absence while the effective flag is false,
+   never mismatch
+4. the flag's effective value becomes true so absence also fails closed; only
+   then is agent-id-binding-v1 advertised
 ```
+
+**Step 1 is atomic, and the producer schema is never optional-then-required.**
+An earlier draft had the schema relax `agentId` to optional "during rollout" and
+tighten it later. That is the wrong lever: the schema that validates what the
+**control plane emits** should require `agentId` from the moment the control
+plane emits it, in the same change, because a producer schema that permits
+omitting the field cannot catch a dispatch path that forgets it — which is
+exactly the regression a required key exists to prevent, and exactly the state a
+staged rollout would leave in place for a whole release. Nothing is gained by
+the looseness: no deployed *control plane* needs to emit a payload without the
+field, since step 1 is a single server-side change under the operator's own
+control.
+
+What legitimately needs to tolerate absence is the **consumer** side, and only
+for a bounded reason: a client may be talking to a control plane that has not
+yet deployed step 1. That tolerance belongs in a compatibility decoder path
+with its own explicit, named condition, not in the normative schema. The
+normative schema stays one thing; the decoder is separately and visibly lenient
+while its flag says so.
+
+**Absence and mismatch are not the same failure, and only one of them is ever
+allowed a transition period.** A present-but-mismatched `agentId` means a job
+correctly signed for one agent was delivered to another: that is exactly what
+this decision exists to catch, and it **always fails closed**, unconditionally,
+regardless of any flag or rollout step. There is no warn-only mode for a
+mismatch, because warning about a caught misdelivery and then executing it
+anyway is not a transition period, it is the vulnerability with a log line
+next to it. An **absent** `agentId`, by contrast, is a compatibility fact about
+which control-plane version a client is talking to, not evidence of anything
+adversarial, and step 1's server-first ordering exists precisely so that gap is
+temporary and one-directional: it can only be closed by the client refusing to
+tolerate it, never reopened by a client accepting a present-but-wrong value.
+
+Concretely, a client-side flag such as `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID`
+governs step 3's **compatibility decoder** only, never the normative producer
+schema and never mismatch handling. Rows are keyed on the flag's **effective
+value in the running process**:
+
+```text
+effective false  agentId missing -> compatibility decoder proceeds; agentId
+                  present and mismatched -> fails closed always;
+                  agent-id-binding-v1 NOT advertised
+effective true   agentId missing -> fails closed (named incompatibility error);
+                  agentId present and mismatched -> fails closed always;
+                  agent-id-binding-v1 advertised
+```
+
+**`agent-id-binding-v1` is advertised only once both rows fail closed on the
+running client**, which is a function of the flag's **effective value in that
+process**, not of the release's compiled-in default. A client shipped with the
+default `true` but started with the flag explicitly set to `false` is
+absence-tolerant and must not advertise the capability; the reverse holds too,
+so an earlier-release client explicitly configured to `true` may advertise it.
+Advertisement is computed from the resolved configuration at heartbeat time, not
+from a build constant, because the control plane uses it to decide what the
+connected agent enforces right now. A client tolerating absence is, by
+construction, not yet enforcing the identity check in the one case the
+rollout exists to bridge, and advertising the capability while in that state
+would tell the control plane the check is live when it is conditionally not.
+The **new** Node-free reference clients have no such flag at all: they are new
+implementations of a protocol version that already requires
+`signed-payload-b64-v1`, so there is no legacy install base of them to keep
+compatible, and they validate `agentId` unconditionally from their first
+release, advertising the capability immediately.
+
+A new client meeting a control plane that has not completed step 1 fails
+closed with a named incompatibility error at heartbeat or claim time, never
+silently accepting the field's absence as if step 1 had run: "absence
+tolerated" above means the *client's own gate* does not fail on absence, not
+that a control plane's failure to sign the field is itself invisible.
 
 ### 4. Trust jobs get their own contract file, not a discriminated union on the certificate job schema
 
@@ -256,7 +452,7 @@ every existing certificate job).
 
 Decision: a new file, `packages/contracts/certops/trust-job-payload.schema.json`,
 `schemaVersion: 1`, sibling to the certificate job schema and independently
-versioned. It composes the same shared `signedDispatchEnvelope` from decision 3
+versioned. It composes the same shared `signed-dispatch-payload` from decision 3
 and adds only what a trust operation needs: `trustAnchorId`, `action` (enum:
 `distribute-trust` | `revoke-trust`), `anchorType` (enum: `root` |
 `intermediate`), `fingerprintSha256`, `pem`, `requestedBy`, `metadata`.
@@ -538,18 +734,64 @@ targets the **5.1-compatible subset** as well as 7, because 7 is not built into
 many supported Windows Server installations and requiring it would contradict
 the no-runtime-installation goal.
 
-Ed25519 verification uses a bundled, verification-only `tokentimer-verify`
+**The declared list is exhaustive, and base64 decoding is the trap.** The
+obvious way to decode `payloadB64` in a shell script is `base64 -d`, which is
+an *undeclared fourth dependency*: it is coreutils on Linux, a different
+implementation with different flags on macOS and BusyBox, and its
+whitespace/padding tolerance varies, which matters precisely because decision 2
+requires canonical-base64 enforcement. The Bash client therefore decodes
+through **OpenSSL** (`openssl base64 -d -A`, already a declared prerequisite and
+already required for Ed25519 verification), not through a `base64` utility, and
+must be binary-safe about it: the decoded payload can contain any byte sequence
+including NULs, so it moves through **one byte-preserving stream in the normal
+path** (a pipe or a process substitution), never a shell variable, which cannot
+hold a NUL and would truncate silently at the first one. "One stream" describes
+where the bytes go, not a literal single decode reused for two purposes: the
+Ed25519 verify step consumes stdin and reports only a pass/fail verdict on its
+exit code, it does not re-emit the bytes it verified, so there is no verified
+byte stream available to hand to a JSON parser afterward even if that were
+desirable. The implementable sequence is two deterministic decodes of the same
+immutable `payloadB64`: the first, piped into the verifier, produces the
+verdict; **only if that verdict is pass**, a second decode of the same
+`payloadB64`, piped into `jq`, produces the parsed job. Both decodes are pure
+functions of the same input and are therefore byte-identical by construction,
+not by assumption, and no parsing or action of any kind happens before the
+verdict from the first decode is known. A **named file is not
+part of the normal path**: an earlier draft of this decision said "a file or a
+process substitution", which contradicted this decision's own command-allowlist
+test, since creating a file safely requires `mktemp` and `mktemp` is not one of
+the four declared commands. If a target platform ever forces a named file (a
+verifier build that cannot read stdin, say), the file becomes a **declared**
+dependency carrying stated obligations rather than implicit ones: exclusive
+creation (`set -C` / `O_EXCL`), a private mode set at creation rather than
+afterwards, one cleanup trap covering normal exit and every signal the client
+can receive, and a startup sweep for residue left by a crash. Those obligations
+are not hypothetical bookkeeping: decision 9's PFX journal exists because the
+process that must delete a sensitive file is the process that may die. The same
+rule applies to every other
+convenience utility a shell author would reach for: if it is not `bash`, `curl`,
+`jq` or `openssl`, it is not available, and this is asserted by test rather than
+by review (see the command-allowlist test in the acceptance criteria).
+
+**The two clients use two independent Ed25519 implementations, deliberately, and neither may fall back to the other's.** Bash verifies via `openssl pkeyutl -verify -rawin` (OpenSSL 3's `pkeyutl` supports Ed25519 directly; this is the same `openssl` already required for base64 decoding, not an added dependency). PowerShell verifies via a bundled, verification-only
+`tokentimer-verify`
 binary from a minimal in-repo Go module, because nothing built into Windows can
 verify Ed25519: stable .NET exposes no general Ed25519 API, and CNG exposes
-curve25519 for ECDH only, not EdDSA. That binary performs the byte-verification
+curve25519 for ECDH only, not EdDSA. **An earlier draft of this decision said Bash could use "`openssl pkeyutl -verify` or the bundled verifier," which is exactly the ambiguity this correction closes:** if either client could use either implementation, the two clients would not be testing two independent Ed25519 code paths against the same signed test vectors, which is the entire argument for shipping two reference clients instead of one. Bash therefore never bundles or shells out to `tokentimer-verify`, and PowerShell never shells out to `openssl` for the verify step (it may still use OpenSSL-equivalent tooling for other purposes if any exist, but not for Ed25519 verification). The Go binary performs the byte-verification
 step **only**: no JSON parsing, no time checks, no dynamic algorithm selection,
 no canonicalization. Everything else in the normative order of decision 2 stays
 in the script, where it is auditable.
 
 PowerShell 5.1 must hand the decoded payload to the verifier through a
-**byte-preserving binary stream or binary file**, never the PowerShell text
+**byte-preserving binary stream**, never the PowerShell text
 pipeline or a string conversion, since either can transcode the bytes before Go
-ever sees them. Parity tests must prove the wrapper-decoded byte array reaches
+ever sees them. **A named file is not part of the normal path here either**,
+for the same reason as the Bash side: if a target forces one, it is a declared
+dependency carrying the same obligations as decision 8's Bash file exception
+(exclusive creation, a private ACL set at creation, one cleanup trap covering
+normal exit and every terminating signal PowerShell can receive, and a startup
+sweep for crash residue), not a silent alternative with no obligations attached.
+Parity tests must prove the wrapper-decoded byte array reaches
 Go unchanged for non-ASCII, BOM, malformed-UTF-8 and invalid-JSON signed
 vectors.
 
@@ -583,19 +825,71 @@ signer identity and hashes cannot live only in the same script whose integrity i
 unspecified: an attacker replacing both files rewrites the expected identity too.
 Script and verifier are both Authenticode-signed and delivered through a signed
 installer/package, or through a signed release manifest pinned to an
-operator-pinned publisher certificate for tarball distribution. The script
-validates its **own** signature on invocation, requires
-`Get-AuthenticodeSignature` to return `Valid`, and pins signer identity as
-subject plus a set of accepted thumbprints so certificate renewal does not brick
-installed clients. RFC 3161 timestamping applies, and hashes are mapped per
-version and architecture. Revocation behavior is set by **installation policy,
-not at runtime**: under the default online policy an unreachable CRL/OCSP
-endpoint fails closed, and an air-gapped host must be deployed with the signed
-offline manifest or cached revocation material. A runtime override would be
-`--insecure` by another name. Published hashes are version/integrity checks,
-never the trust anchor. Reproducibility applies to the unsigned build, so hashes
-and provenance are published for both unsigned and signed artifacts, and the
-unsigned binary never ships in a production bundle.
+operator-pinned publisher certificate for tarball distribution.
+
+**Script tamper-detection must happen before the script's own code runs, and a
+self-check cannot provide that.** A script that validates its own Authenticode
+signature is checking integrity with code an attacker who edited the file has
+already had the opportunity to delete: the tampered copy simply does not contain
+the check. PowerShell's own execution policy does not close this either, and
+Microsoft says so directly — it is
+[explicitly not a security boundary](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies),
+only a guard against accidental execution, and it is bypassable by any user who
+can pass `-ExecutionPolicy Bypass` or pipe the file's text to the interpreter.
+
+The enforcing boundary must therefore sit **outside** the script. One of the
+following is required, not optional:
+
+```text
+a trusted launcher   a signed installer/bootstrap validates the script's
+                     signature and signer identity, and only then invokes it;
+                     the operator's entry point is the launcher, not the .ps1
+
+App Control/WDAC     enforced Windows App Control script enforcement, which
+                     validates signed scripts at load time inside the runtime
+                     itself, before any statement in the file executes
+```
+
+App Control script enforcement is the only mechanism here that Microsoft
+positions as an actual
+[security control for script execution](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/design/script-enforcement),
+and where an operator can deploy a WDAC policy it is the stronger of the two.
+The trusted launcher exists because a large fraction of target hosts have no
+App Control policy at all, and the client must still have a defined trust story
+there.
+
+The script's own self-check is retained as **defense in depth** — it catches an
+honest deployment mistake such as an unsigned or wrong-architecture copy, and it
+costs nothing — but it is documented as defense in depth and never as the
+boundary. The self-check requires `Get-AuthenticodeSignature` to return `Valid`
+and pins signer identity as subject plus a set of accepted thumbprints so
+certificate renewal does not brick installed clients. RFC 3161 timestamping
+applies, and hashes are mapped per version and architecture. Revocation behavior
+is set by **installation policy, not at runtime**: under the default online
+policy an unreachable CRL/OCSP endpoint fails closed, and an air-gapped host must
+be deployed with the signed offline manifest or cached revocation material. A
+runtime override would be `--insecure` by another name. Published hashes are
+version/integrity checks, never the trust anchor. Reproducibility applies to the
+unsigned build, so hashes and provenance are published for both unsigned and
+signed artifacts, and the unsigned binary never ships in a production bundle.
+
+**Signed `.ps1` files are constrained to ASCII-compatible UTF-8.** Authenticode
+hashing of a PowerShell script is sensitive to how the interpreter reads the
+file's bytes, and Microsoft documents signed scripts failing with a
+[hash mismatch across locales](https://learn.microsoft.com/en-us/troubleshoot/windows-client/system-management-components/signed-powershell-script-fails-hash-mismatch)
+when a UTF-8 script contains non-ASCII characters and the host's ANSI code page
+differs from the signing host's. A client whose signature validates in the build
+locale and fails on a French or Japanese Windows Server is worse than unsigned:
+it fails closed, correctly, for a reason that looks like an attack. The rule is
+therefore that shipped signed scripts contain **no non-ASCII bytes** — no
+smart quotes, no accented characters in comments, no box-drawing in help text —
+enforced by a CI guard rather than by review. Where non-ASCII content is
+genuinely required, the alternative is an explicitly documented signed-script
+encoding exception (UTF-8 with BOM, or UTF-16LE, whichever the signing toolchain
+and every supported host agree on), chosen deliberately and tested, never
+arrived at by accident. Either way the **released artifact** is validated on
+PowerShell 5.1 under at least two different system locales, because this failure
+is invisible in a single-locale build pipeline.
 
 FIPS-only hosts must fail with an explicit unsupported-algorithm error, detected
 **before** the verifier is invoked: Go's standard library will compute Ed25519
@@ -894,6 +1188,67 @@ security boundary; that is what `agent_kind` is for (decision 7). Wiring the gat
 into `agentDispatch.js`'s claim path is a follow-up change: the capability
 strings and schemas land first, the gate lands in a subsequent PR.
 
+**Three of these five strings are additionally gated at advertisement time,
+not only at claim time.** `windows-cert-store-v1`, `iis-binding-v1`, and
+`trust-anchor-deploy-v1` depend on real-host evidence (real IIS renewal/rollback, real
+Windows-store and Linux trust-store install/removal) that release planning treats as a hard tag gate. "The code ships with the
+capability undeclared until that evidence exists" is a release policy, and a
+policy with no mechanism is a policy an agent build can violate by simply
+having the underlying code and declaring the string.
+
+**Corrected 2026-08-02: the mechanism is a build-time manifest, not a
+runtime environment variable.** An earlier version of this decision specified
+`CERTOPS_AGENT_QUALIFIED_CAPABILITIES` as an environment variable, which
+cannot be release-controlled: whoever configures the agent's runtime
+environment - an operator, a Helm values file, a Compose override - is the
+one setting it, which is the exact actor this gate exists to take the
+decision away from. It also created a qualification loop with no fixed
+point: the three capabilities can only be marked qualified after a real-host
+test proves them, but a test needs a build that already advertises them to
+be tested at all, so "enable after evidence" and "test before enabling" each
+presuppose the other.
+
+The fix breaks the loop by moving the decision from runtime to build time and
+making the tested artifact the shipped artifact, never a rebuild of it.
+A **qualified-capabilities manifest** (a small JSON file, `qualified-capabilities.json`,
+committed to the release branch and embedded into the agent binary at build
+time via the existing build pipeline, the same way a version string is
+embedded) names the capability strings a specific release **candidate**
+build claims to qualify. The release process is then linear rather than
+circular: (1) cut a release-candidate build with a candidate manifest -
+which may name all three capabilities, some, or none, and is a normal code
+review decision, not evidence of anything yet; (2) run the real-host tests
+this record's exit criteria require against **that exact build artifact**,
+identified by its build hash, not against a rebuild or a "close enough"
+successor; (3) if every targeted capability's test passes, **promote that
+same artifact, unchanged, as the tagged release** - no recompilation, no
+manifest edit, no "now enable it" step, because the artifact being promoted
+is definitionally the one that was tested; (4) if a targeted capability's
+test fails, that capability is removed from the manifest and step (1) repeats
+with a new build, which is a different artifact under a different candidate
+hash, not the failed one with a flag flipped. A capability absent from the
+embedded manifest is never advertised, and therefore never claimed,
+regardless of whether the binary that could serve it exists; the underlying
+code stays testable in CI at all times, since CI builds its own manifest
+locally and is not bound by the release manifest. This is the general
+promotion discipline the CI-guard and exact-head-CI rules elsewhere in this
+program already use for other artifacts (the merge commit that was tested is
+the commit that ships): applied here to a manifest instead of a git SHA,
+because a runtime flag has no equivalent immutability.
+
+Acceptance: a release-candidate build with an empty manifest run against a
+real Windows/IIS host still completes ACL enforcement, machine-store deploy,
+and IIS binding locally, but never advertises the three gated capabilities
+and is therefore never offered a job requiring them, proving the gate is
+about advertisement and not about disabling the feature; a build with a
+populated manifest advertises exactly the capabilities named in it and no
+others; an unrecognized string in the manifest is rejected at build time
+rather than silently ignored; the promoted release artifact's build hash is
+recorded in the release record and equals the exact hash that was tested,
+asserted by CI rather than by process discipline alone; there is no code
+path, environment variable, or runtime flag anywhere in the agent that can
+change which capabilities a built binary advertises after it is built.
+
 **`certops.agents.diagnose` is a new named permission with a two-repo rollout.**
 Existing CertOps permissions (`certops.kill_switch.manage`,
 `certops.renewal_profile.manage`) are entries in `actionPolicy` with role
@@ -931,22 +1286,160 @@ failures is a separate concern from an agent-reported result.
 
 ### 16. The already-shipped production agent is fixed in the same wave
 
-The review that produced decision 2 found the identical unsafe pattern in shipped
-code: `handleSignedJob` in `packages/agent/src/index.js` reads `job.claimId` and
-`job.nonce` off the received object **before** `verifyJobSignature` runs, then
-passes them into `reportJobRejection` on a signature-verdict failure. That is
-exactly what decision 2 forbids, in the v1 agent that is already deployed.
+**Corrected 2026-08-02.** The first version of this decision misattributed the
+unsafe read to `handleSignedJob`. `handleSignedJob` already verifies first: it
+calls `verifyJobEnvelope`/`verifyJobSignature` before touching any field, and
+carries a comment saying so. The actual read is one frame up, in the caller.
 
-Decision: this is fixed as part of the envelope work, not deferred as follow-up.
+`handleClaimedJob` (`packages/agent/src/index.js`) derives `signedAttemptId`
+from the received object's `job.attemptId`/`job.claimId` — preferring
+`attemptId`, falling back to `claimId`, then to a local value — **before**
+`handleSignedJob`, and therefore `verifyJobSignature`, is ever called. That
+derived value then flows into every result `handleSignedJob` reports for that
+job, including a signature-verdict failure. This is the identical unsafe
+pattern decision 2 forbids, in the v1 agent that is already deployed, and it is
+also the reason the v2 envelope cannot simply be added beside the existing
+code: a v2 envelope carries no outer `jobId` (decision 1), so the caller's own
+`hasReportableJobId(job?.jobId)` guard — evaluated before either identifier
+read — would mark every v2 job `skipped` before verification ever ran.
+
+Decision: this is fixed as part of the envelope work, not deferred as
+follow-up, and the fix is a boundary move, not a reorder inside
+`handleSignedJob`. `handleClaimedJob` derives no identifier — not `jobId`, not
+`attemptId`, not `claimId` — from the wire object before a verdict is
+available. Any value it needs pre-gate (for example to correlate a local log
+line) is a local-only value that is never passed into a client call and never
+appears in a submitted result. `jobId` and `attemptId` for a submitted result
+are derived from the post-gate, verified payload fields, for both wire shapes.
 Shipping a hardened reference client next to a softer production agent
-implementing the same protocol would leave the weaker implementation as the real
-security posture. Verification runs strictly first, and no identifier is read,
-logged, or used to construct any result (a rejection included) until
-`verifyJobSignature` has returned an allowed verdict and the trusted-identity gate
-has separately passed. Regression tests cover both wire shapes and assert that no
-result is submitted on signature failure, that no field is read from the job
-object before verification, and that a semantic rejection is only ever built from
-post-gate identifiers.
+implementing the same protocol would leave the weaker implementation as the
+real security posture.
+
+Acceptance criterion, restated precisely because the first version's own
+criterion ("no field is read from the job object before verification") was
+true of `handleSignedJob` and false of its caller, which is exactly how the
+misattribution survived review: **no identifier is read from the wire object
+by `handleClaimedJob` or `handleSignedJob` before a signature verdict is
+available, for either wire shape.** Regression tests cover both shapes and
+assert that no result is submitted on signature failure, that neither function
+reads a job-object field before verification, and that a semantic rejection is
+only ever built from post-gate identifiers.
+
+### 17. Declared capabilities get an epoch; gated dispatch requires a fresh one
+
+**Added 2026-08-02, closing an audit finding about capability-gated dispatch
+correctness.** Verified against the
+pushed tree, not inferred: `certops_agents.declared_capabilities` is one
+`JSONB NOT NULL DEFAULT '[]'::jsonb` column (migration 36) with no epoch, no
+`capabilities_updated_at`, and no version counter anywhere in the repository.
+Heartbeat treats the field as three-valued — absent preserves the stored set,
+an explicit `[]` clears it, a non-empty array replaces it — and replace-never-
+union is correct and stays. The absent arm is the hole: an agent downgraded to
+a build that predates the field never sends it, and the stored set then never
+changes, for as long as that agent runs. Registration cannot correct it
+(`ON CONFLICT ... DO NOTHING`), so heartbeat is the only path that can ever
+change a live agent's declared capabilities, and it is also the path that can
+fail to. Claim time performs no freshness check at all: `claimJobs` reads
+`declared_capabilities` straight off the row with no `last_seen_at` predicate,
+no recency interval, and no epoch, so a capability-gated job can be offered on
+the strength of an assertion of unbounded age.
+
+This matters specifically for dispatch, because dispatch is dual-format, not
+dual-write: a stale `signed-payload-b64-v1` makes `useV2Envelope` true for an
+agent that can no longer parse a v2 envelope, and every job it claims then
+fails. The same hole applies to `evidence-claim-binding-v1` for `issue` jobs,
+reaching the exact stuck-in-`provisioning` failure migration 36 exists to
+prevent.
+
+**Decision: a capability epoch, not a version-based inference.** Two
+candidates were considered. (a) Treat an omitted `declaredCapabilities` as an
+implicit clear once the agent's protocol or agent version is known to support
+sending the field. Rejected: it breaks any genuinely old build that has not
+been touched since before the field existed, turning a correctness fix into a
+compatibility break for an unrelated population. (b) **Adopted.** Add
+`certops_agents.capabilities_updated_at` (`TIMESTAMPTZ`) and a named freshness
+bound, `CERTOPS_CAPABILITY_FRESHNESS_MS`.
+
+**Corrected 2026-08-02: the bound's reasoning was wrong on both the
+multiplier and the lease claim, and is replaced rather than patched.** The
+original text called 900000ms (15 minutes) "three times the 30-second
+heartbeat interval"; 15 minutes is thirty 30-second intervals, not three, an
+arithmetic error that happened to still name a plausible-sounding number. It
+also claimed the bound was "equal to the default lease TTL so a gated job's
+own lease cannot outlive the assertion that made it eligible" - that claim is
+false regardless of which multiplier was intended: an assertion admitted at
+age just under the freshness bound, paired with a lease granted for a full
+additional lease TTL, produces a lease that can outlive the assertion by
+nearly one full freshness-bound duration, not zero. The two quantities compose
+additively; no choice of bound alone makes one dominate the other, and this
+decision does not claim to bound lease/assertion skew at all.
+
+**The bound is instead derived from the existing agent-liveness SLO, not
+invented fresh.** `certops_agents`'s existing offline threshold,
+`CERTOPS_AGENT_OFFLINE_AFTER_MS` (default 600000ms, 10 minutes -
+`agentRegistry.js`), is the number this program already uses to answer "is
+this agent's last-reported state recent enough to act on." Capability
+freshness reuses that number rather than deriving a second, independently
+justified one: `CERTOPS_CAPABILITY_FRESHNESS_MS` defaults to **600000**
+(10 minutes), the same value, on the reasoning that an agent whose capability
+assertion is stale by more than the threshold that would already mark it
+`livenessState: "stale"` has no business being offered a capability-gated
+job, and a bound shorter than the liveness threshold would gate on
+capabilities before gating on reachability, which is backwards. The two
+remain separate signals with separate columns (decision text below is
+unchanged on this point): liveness asks whether the agent is reachable at
+all, freshness asks whether its last capability assertion is recent enough to
+trust for gating, and claim time advances `last_seen_at` independently of
+heartbeat, so they can and do diverge. `claimJobs`'s gated-selection predicate
+requires
+`now() - capabilities_updated_at <= freshness bound` before a job requiring a
+gated capability is offered; ungated jobs are unaffected. This fails closed on
+exactly the gated path: a stale assertion degrades to "no v2 job offered, or no
+gated job offered", never to "job offered on a guess".
+
+A capability set change on heartbeat also gets an audit event
+(`CERTOPS_AGENT_CAPABILITIES_CHANGED`, mirroring the existing
+`CERTOPS_AGENT_REGISTERED` audit for the initial declaration), so a downgrade
+is reconstructable after the fact rather than leaving no trail, which today's
+`recordHeartbeat` does not emit.
+
+**Column initialization: set at registration, no unsafe backfill.**
+`capabilities_updated_at` is written by `INSERT` at registration time
+(`registerAgent`, timestamped alongside the row's initial
+`declared_capabilities`, if any is sent at registration; the field's own
+absence-tolerant semantics at registration are unchanged by this decision),
+and updated thereafter by the heartbeat write path described above. It is
+**not** backfilled for agent rows that already exist at migration time: a
+migration cannot know when an existing row's currently-stored capability set
+was actually asserted, so writing `now()` at migration time would manufacture
+a false freshness signal for a set that could in truth be arbitrarily stale -
+precisely the failure this decision exists to close, reintroduced at the
+column's birth. Existing rows instead migrate with
+`capabilities_updated_at IS NULL`, and the gated-selection predicate treats
+`NULL` as maximally stale (`NULL` fails `now() - capabilities_updated_at <=
+freshness bound` under standard NULL-comparison semantics, and the query is
+written so a `NULL` cannot silently pass a `NOT (... > bound)` inversion
+either): a pre-existing agent is offered no gated job until its **next
+heartbeat that reports capabilities** sets the column for the first time,
+which is the earliest point at which freshness is actually knowable for that
+row. This is a one-time, self-healing transition cost - not a persistent
+gap - paid once per already-registered agent, and it is the correct price
+for not fabricating a timestamp the system cannot back up.
+
+Acceptance criteria: capability updates replace rather than union, asserted
+against a real database, not a mocked pool; the freshness bound is a named
+constant with a test on both sides of it; a downgraded agent that stops
+advertising `signed-payload-b64-v1` receives a v1 envelope or no job, never a
+v2 envelope, tested end to end from heartbeat through claim; the same for
+`evidence-claim-binding-v1` against an `issue` job; a capability-set change on
+heartbeat writes the new audit event; the existing test asserting that an
+omitted `declaredCapabilities` preserves the stored set is rewritten, not
+deleted, since the ungated preserve behavior is still correct and only the
+gated selection path changes; a migrated pre-existing row with
+`capabilities_updated_at IS NULL` is never offered a gated job, tested
+directly against a real database rather than inferred from the freshness-bound
+test alone; that same row is offered a gated job normally once a heartbeat
+sets the column.
 
 ## Alternatives considered
 
@@ -995,13 +1488,22 @@ The privilege-model rejections are decision 12.)
 - **Sequencing is fixed by decision 1's prerequisite chain**, and it is not the
   order the work was originally planned in: the heartbeat `declaredCapabilities`
   contract lands first (the envelope needs a re-advertisable capability), then
-  envelope v2 together with the required signed `agentId` and the decision-16
-  agent fix, then the Node-free client rewrite. The Windows platform work of
+  envelope v2 and the decision-16 agent fix (inseparable, since the fix is a
+  precondition for a v2 job to be claimable at all), **then, as its own later
+  step, mandatory signed `agentId` behind the staged flag** (decision 3's
+  four-step server-first rollout), then the Node-free client rewrite. Envelope
+  v2 does **not** ship together with mandatory `agentId`: these are deliberately
+  separate changes precisely because
+  a schema's `required` list and its emitting code must flip in the same
+  commit, which is a different commit than the one that makes v2 dispatch work
+  at all. An earlier version of this consequence said "together with", which
+  read as one atomic change and contradicted that split. The Windows platform work of
   decisions 9-13 is **independent of the reference client** and does not wait for
   the envelope; coupling them would delay a shipped-behavior security correction
   behind a protocol rewrite for no reason.
-- A shared contract-foundation change owns: the `signedDispatchEnvelope`
-  definition and the two per-action schemas, the new trust-job schema file, the
+- A shared contract-foundation change owns: the `signed-dispatch-payload`
+  definition, the v1 and v2 wire-wrapper schemas, and the two per-action
+  schemas, the new trust-job schema file, the
   `certops_trust_anchors` and ownership-reference migrations, the `agent_kind`
   column, the `operation`/`subject_type` `CHECK` widenings on `certificate_jobs`
   and `certificate_evidence`, the `unexpected_job_type` `rejectionReason` value,
