@@ -51,13 +51,63 @@ Decision: a new file, `packages/contracts/certops/trust-job-payload.schema.json`
 `schemaVersion: 1`, sibling to the certificate job schema and independently
 versioned. It carries only what a trust operation needs:
 `schemaVersion, jobId, workspaceId, trustAnchorId, action (enum:
-distribute-trust | revoke-trust), fingerprintSha256, pem` (present only for
-`distribute-trust`; `additionalProperties: false` still applies, so a
-`revoke-trust` payload carrying `pem` is rejected), `requestedAt`,
-`requestedBy`, `metadata`. The public-metadata redaction pattern
-(`publicMetadataEntry`) is shared by `$ref`-ing the same definitions file
-rather than copy-pasted, so the two schemas stay in sync on that one shared
-concern without being coupled on everything else.
+distribute-trust | revoke-trust), anchorType (enum: root | intermediate),
+fingerprintSha256, pem`, `requestedAt`, `requestedBy`, `metadata`.
+
+`anchorType` is **required and part of the signed payload**, because it is the
+routing decision: a root belongs in `LocalMachine\Root` and an intermediate in
+`LocalMachine\CA`, and placing an intermediate into `Root` would silently
+promote it to a trust anchor. That decision must not be inferred at execution
+time from the certificate's own `basicConstraints`/issuer fields, because the
+PEM is untrusted input and inference would make the destination store a
+property of the material rather than of the approved intent. The control plane
+decides `anchorType` at job creation, signs it, and the agent routes on the
+signed value only.
+
+The Windows store name is **derived from `anchorType` by the agent**, not
+carried in the payload: `root` maps to `Root`, `intermediate` maps to `CA`. A
+payload-supplied store name would be a second source of truth that could
+disagree with `anchorType`, and would let a caller name an arbitrary store.
+Non-Windows platforms map the same `anchorType` onto their own trust stores
+(for example an anchor directory plus a CA-bundle rebuild), so `anchorType`
+stays platform-neutral in the contract and platform-specific in the executor.
+
+`additionalProperties: false` alone does **not** keep `pem` off a revoke
+request: `pem` is a declared property, so `additionalProperties` never applies
+to it. The mutual exclusion is enforced explicitly with a conditional:
+
+```json
+"allOf": [
+  {
+    "if": { "required": ["action"],
+            "properties": { "action": { "const": "distribute-trust" } } },
+    "then": { "required": ["pem"] }
+  },
+  {
+    "if": { "required": ["action"],
+            "properties": { "action": { "const": "revoke-trust" } } },
+    "then": { "not": { "required": ["pem"] } }
+  }
+]
+```
+
+so `distribute-trust` must carry `pem` and `revoke-trust` is rejected if it
+carries one. Revocation is identified by `trustAnchorId` plus
+`fingerprintSha256`, which is all the agent needs to find and remove the
+anchor; accepting a PEM there would invite a "revoke this, but here is
+different material" ambiguity.
+
+The public-metadata redaction pattern (`publicMetadataEntry`) is **not**
+currently a shared definitions file: it is defined inline under
+`#/definitions/publicMetadataEntry` in `job-payload.schema.json`, and again in
+`executor-event.schema.json` and `evidence.schema.json`. The trust schema
+therefore either repeats that same inline definition (consistent with how the
+existing schemas already relate to each other) or a preparatory change first
+extracts it into a shared file and repoints the existing schemas at it. This
+ADR does not require the extraction; it records only that a cross-file `$ref`
+cannot be assumed to exist today, and that whichever route is taken the
+redaction pattern must stay byte-identical across the schemas that use it (the
+contract-integrity digests catch drift).
 
 The two schemas are siblings, not a union, because nothing in the codebase
 needs to validate "a job payload of either shape" against one Ajv compile
@@ -109,6 +159,7 @@ CREATE TABLE certops_trust_anchors (
   name TEXT NOT NULL,
   pem TEXT NOT NULL,
   fingerprint_sha256 TEXT NOT NULL CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+  anchor_type TEXT NOT NULL CHECK (anchor_type IN ('root', 'intermediate')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
   source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api', 'system')),
   public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -124,6 +175,13 @@ subject type). `fingerprintSha256` is carried on both the anchor row and the
 job payload so the agent can verify the anchor it is about to install/remove
 against the fingerprint the control plane signed, the same integrity pattern
 `certificatePemSha256` already establishes for certificate deploy jobs.
+
+`anchor_type` is stored on the anchor row as well as being signed into each
+trust job payload, so the intended destination store is auditable independently
+of any single job, and a disagreement between the anchor row and a signed job
+payload is a detectable inconsistency rather than a silent reroute. Evidence
+records the concrete store the agent actually wrote, so an audit can confirm
+the routing end to end rather than trusting the request alone.
 
 Trust anchor writes are additive-only at the row level: `revoke-trust` sets
 `status = 'revoked'` and `revoked_at`, it does not delete the row. A revoked
@@ -145,20 +203,35 @@ Windows offers two paths to get a certificate into `LocalMachine\My`:
   before import.
 
 Decision: CNG-native is the default and required path for any certificate the
-Windows agent itself requests (i.e., a `renew` or `issue` job with
-`keyMode: agent-local` targeting the Windows platform). PFX import is
-supported only for `deploy` jobs where the certificate material already
-exists off-host and is being placed onto a Windows target, the same shape
-ADR-0001's zero-custody model already permits for other platforms, since the
-control plane never holds the private key either way and the PFX bytes are
-agent-local, ephemeral, and immediately wrapped by the CNG store on import.
+Windows agent itself requests (i.e., a `renew` or `issue` job targeting a
+Windows target whose custody is the OS certificate store). Such jobs carry
+`keyMode: os-store-managed`, not `agent-local`.
+
+The distinction is semantic, not cosmetic. `agent-local` in
+`job-payload.schema.json` means the agent holds the key as agent-managed
+material on the filesystem (the `openssl genrsa`/`certbot` shape), which is why
+`jobs.js`'s `AGENT_DEPLOYABLE_KEY_MODES` admits `agent-local` and
+`proxy-agent-local` for file-deploy paths. A CNG-native key is categorically
+different: it is a non-exportable handle owned by the OS store, the agent
+cannot read its bytes, and any code path that assumes it can write the key to a
+`keyPath` is wrong for it. `os-store-managed` already exists in the `keyMode`
+enum for exactly this custody model, so the Windows cert-store work extends the
+deployable set with `os-store-managed` rather than overloading `agent-local`
+with a second, incompatible meaning.
+
+PFX import is supported only for `deploy` jobs where the certificate material
+already exists off-host and is being placed onto a Windows target, the same
+shape ADR-0001's zero-custody model already permits for other platforms, since
+the control plane never holds the private key either way and the PFX bytes are
+agent-side, ephemeral, and immediately wrapped by the CNG store on import.
 
 This mirrors ADR-0001's zero-custody invariant precisely: CNG-native gives
 Windows the same "the agent generates it, the agent holds it, nothing else
-ever sees it" property that Linux agent-local key generation already has via
-`openssl genrsa`/`certbot`. Defaulting to PFX would mean every Windows
-issuance briefly materializes a private key as file bytes, in exchange for no
-benefit over CNG for the case that matters most (agent-originated keys).
+ever sees it" property that Linux `agent-local` key generation already has via
+`openssl genrsa`/`certbot`, while keeping the custody *mode* honest about who
+can actually read the key. Defaulting to PFX would mean every Windows issuance
+briefly materializes a private key as file bytes, in exchange for no benefit
+over CNG for the case that matters most (agent-originated keys).
 
 ### 5. The Windows agent service runs as `LocalSystem`
 
