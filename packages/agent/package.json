@@ -27,6 +27,7 @@
     "!src/verify/fixtures/**",
     "vendor",
     "scripts/install-agent.sh",
+    "scripts/install-agent.ps1",
     "scripts/tokentimer-agent.service",
     "scripts/host-sandbox.js",
     "scripts/validate-server-url.js",
