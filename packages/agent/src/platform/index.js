@@ -221,6 +221,8 @@ function applyWindowsAcl(
     }
   }
 
+  assertTrustedOwner(targetPath, allowed, { label: targetPath, spawn });
+
   return {
     mechanism: "windows-acl",
     principals: granted,
@@ -305,6 +307,90 @@ function parseDaclSddl(sddl) {
 }
 
 /**
+ * Reads the owner SID of a path via .NET's `ObjectSecurity.GetOwner`,
+ * translated to a `SecurityIdentifier` rather than an `NTAccount`.
+ * Requesting the SID type directly (instead of reading the display name
+ * `Get-Acl` normally prints and translating it back) means the result is
+ * correct even on a localized host and even for an owner whose display
+ * name cannot be resolved (an orphaned SID from a deleted account).
+ *
+ * `icacls /save` was evaluated for this and rejected: its saved SDDL only
+ * ever contains the `D:` (DACL) component on this codebase's target OS
+ * versions, never `O:` (owner), so owner cannot be recovered from it.
+ *
+ * The path is passed through an environment variable rather than
+ * interpolated into the PowerShell command string, so a path containing
+ * quotes or `$` cannot affect what the script executes.
+ *
+ * @param {string} targetPath
+ * @param {{ spawn?: Function }} [options]
+ * @returns {string} the owner SID
+ */
+function readWindowsOwnerSid(targetPath, { spawn = spawnSync } = {}) {
+  const script =
+    "$p = $env:TOKENTIMER_ACL_PATH; " +
+    "$acl = Get-Acl -LiteralPath $p; " +
+    "$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value";
+  const result = spawn(
+    "powershell",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30000,
+      env: { ...process.env, TOKENTIMER_ACL_PATH: targetPath },
+    },
+  );
+  if (!result || (result.error && result.error.code === "ENOENT")) {
+    throw buildError(
+      "powershell is not available on this host, so the owner of " +
+        `${targetPath} cannot be verified; refusing to trust an unverifiable owner`,
+    );
+  }
+  if (result.error) {
+    throw buildError(
+      `powershell failed to run while reading the owner of ${targetPath}: ${result.error.message}`,
+    );
+  }
+  if (result.status !== 0) {
+    throw buildError(
+      `powershell exited ${result.status} while reading the owner of ${targetPath}: ` +
+        `${String(result.stderr || "").trim()}`,
+    );
+  }
+  const match = /(S-1-[0-9-]+)/.exec(String(result.stdout || ""));
+  if (!match) {
+    throw buildError(`could not parse an owner SID for ${targetPath}`);
+  }
+  return match[1];
+}
+
+/**
+ * Validates that a path's owner SID is inside the trusted allowlist,
+ * raising with the same fail-closed severity as a foreign DACL entry: an
+ * untrusted owner can rewrite the DACL at will (`WRITE_DAC`/`WRITE_OWNER`
+ * semantics), which makes a DACL check that ignores the owner no
+ * protection at all.
+ *
+ * @param {string} targetPath
+ * @param {Set<string>} allowed
+ * @param {{ label?: string, spawn?: Function }} [options]
+ * @returns {string} the validated owner SID
+ */
+function assertTrustedOwner(targetPath, allowed, { label = targetPath, spawn = spawnSync } = {}) {
+  const ownerSid = readWindowsOwnerSid(targetPath, { spawn });
+  if (!allowed.has(ownerSid)) {
+    throw buildError(
+      `refusing to use ${label}: its owner is ${ownerSid}, which is not one ` +
+        "of the trusted owners (the agent's own identity, SYSTEM, or " +
+        "Administrators); an untrusted owner can rewrite the ACL at will, " +
+        "which makes the DACL check above meaningless",
+    );
+  }
+  return ownerSid;
+}
+
+/**
  * Verifies that a path's DACL grants nothing outside the allowlist. Every
  * failure mode (unreadable ACL, unparseable SDDL, an extra principal) raises,
  * so a caller can never mistake "could not check" for "checked and fine".
@@ -356,6 +442,7 @@ function assertWindowsAcl(
         "Administrators are allowed)",
     );
   }
+  assertTrustedOwner(targetPath, allowed, { label, spawn });
   return {
     mechanism: "windows-acl",
     principals: parsed.aces.map((ace) => ace.sid),
@@ -463,10 +550,12 @@ module.exports = {
   applyRestrictivePermissions,
   applyWindowsAcl,
   assertRestrictivePermissions,
+  assertTrustedOwner,
   assertWindowsAcl,
   currentUserSid,
   isWindows,
   parseDaclSddl,
+  readWindowsOwnerSid,
   readWindowsSddl,
   resetPlatformCaches,
 };

@@ -15,12 +15,16 @@ const OWN_SID = "S-1-5-21-1-2-3-1001";
 /**
  * Builds a spawn stub. Each entry maps an executable name to a handler that
  * receives the arguments and returns { status, stdout, stderr } or an error.
+ * `powershell` defaults to reporting OWN_SID as the owner, since almost every
+ * test exercises a path the agent itself created and therefore legitimately
+ * owns; tests that care about a different owner override it explicitly.
  */
 function fakeSpawn(handlers) {
   const calls = [];
+  const merged = { powershell: () => ({ stdout: `${OWN_SID}\r\n` }), ...handlers };
   const spawn = (file, args) => {
     calls.push({ file, args });
-    const handler = handlers[file];
+    const handler = merged[file];
     if (!handler) return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
     return { status: 0, stdout: "", stderr: "", ...handler(args) };
   };
@@ -193,6 +197,7 @@ describe("platform: permission application", () => {
     const spawn = fakeSpawn({
       whoami: () => ({ stdout: `"nt authority\\system","${platform.SYSTEM_SID}"\r\n` }),
       icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;SY)`),
+      powershell: () => ({ stdout: `${platform.SYSTEM_SID}\r\n` }),
     });
     const result = platform.applyRestrictivePermissions("C:\\state\\credential", {
       platform: "win32",
@@ -234,6 +239,57 @@ describe("platform: permission application", () => {
     assert.throws(
       () => platform.currentUserSid({ spawn, useCache: false }),
       /could not parse a SID/,
+    );
+  });
+
+  it("fails closed when the resulting owner is not in the trusted allowlist", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
+      powershell: () => ({ stdout: "S-1-5-21-9-9-9-9999\r\n" }),
+    });
+    assert.throws(
+      () =>
+        platform.applyRestrictivePermissions("C:\\state\\credential", {
+          platform: "win32",
+          spawn,
+          tmpDir: os.tmpdir(),
+        }),
+      /owner is S-1-5-21-9-9-9-9999.*not one of the trusted owners/s,
+    );
+  });
+
+  it("accepts SYSTEM or Administrators as a trusted owner", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
+      powershell: () => ({ stdout: `${platform.ADMINISTRATORS_SID}\r\n` }),
+    });
+    const result = platform.applyRestrictivePermissions("C:\\state\\credential", {
+      platform: "win32",
+      spawn,
+      tmpDir: os.tmpdir(),
+    });
+    assert.equal(result.mechanism, "windows-acl");
+  });
+
+  it("fails closed when powershell is unavailable to verify the owner", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
+    });
+    const bareSpawn = (file, args) => {
+      if (file === "powershell") return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
+      return spawn(file, args);
+    };
+    assert.throws(
+      () =>
+        platform.applyRestrictivePermissions("C:\\state\\credential", {
+          platform: "win32",
+          spawn: bareSpawn,
+          tmpDir: os.tmpdir(),
+        }),
+      /powershell is not available on this host/,
     );
   });
 });
@@ -402,6 +458,43 @@ describe("platform: permission verification", () => {
     });
     assert.equal(result.mechanism, "windows-acl");
     assert.match(platform.readWindowsSddl(filePath), /^D:P/);
+  });
+
+  it("refuses a well-formed allowlisted DACL when the owner is untrusted", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
+      powershell: () => ({ stdout: "S-1-5-21-9-9-9-9999\r\n" }),
+    });
+    assert.throws(
+      () =>
+        platform.assertRestrictivePermissions(targetFile(), {
+          label: "credential file",
+          platform: "win32",
+          spawn,
+          tmpDir,
+        }),
+      /owner is S-1-5-21-9-9-9-9999.*not one of the trusted owners/s,
+    );
+  });
+
+  it("reads the owner via .NET's SID-typed GetOwner rather than a localized display name", () => {
+    const spawn = fakeSpawn({
+      whoami: whoamiHandler,
+      icacls: icaclsSaveHandler(`D:PAI(A;;FA;;;${OWN_SID})(A;;FA;;;SY)`),
+      powershell: (args) => {
+        assert.ok(args.includes("-Command"));
+        assert.match(args[args.length - 1], /GetOwner\(\[System\.Security\.Principal\.SecurityIdentifier\]\)/);
+        return { stdout: `${OWN_SID}\r\n` };
+      },
+    });
+    const result = platform.assertRestrictivePermissions(targetFile(), {
+      label: "credential file",
+      platform: "win32",
+      spawn,
+      tmpDir,
+    });
+    assert.equal(result.mechanism, "windows-acl");
   });
 });
 
