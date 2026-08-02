@@ -8,6 +8,9 @@ const path = require("node:path");
 const { migrations } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
+const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+);
 const baselineMinimumSchema = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -1236,6 +1239,119 @@ describe("migration 40 Windows IIS target descriptors", () => {
   });
 
   it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+});
+
+describe("migration 41 trust-anchor persistence", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_trust_anchors",
+  );
+
+  it("exists at version 41 and creates both trust-anchor tables", () => {
+    assert.ok(migration, "certops_trust_anchors migration expected");
+    assert.equal(migration.version, 41);
+    assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchors\b/);
+    assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchor_installations\b/);
+  });
+
+  it("scopes both tables to workspace_id", () => {
+    const workspaceScopedColumnCount = (
+      migration.sql.match(/workspace_id UUID NOT NULL REFERENCES workspaces\(id\)/g) || []
+    ).length;
+    assert.equal(workspaceScopedColumnCount, 2);
+  });
+
+  it("keys installations on host, store, fingerprint, and owner", () => {
+    assert.match(
+      migration.sql,
+      /uq_certops_trust_anchor_installations_identity\s*\n\s*ON certops_trust_anchor_installations\(workspace_id, host, store, fingerprint_sha256, owner\)/,
+    );
+  });
+
+  it("uses TEXT + CHECK for transition_state and provenance enums, never CREATE TYPE", () => {
+    assert.match(
+      migration.sql,
+      /transition_state TEXT NOT NULL DEFAULT 'pending_install'\s*\n\s*CHECK \(transition_state IN \('pending_install', 'installed', 'pending_remove', 'removed'\)\)/,
+    );
+    assert.match(
+      migration.sql,
+      /provenance TEXT NOT NULL\s*\n\s*CHECK \(provenance IN \('preexisting', 'tokentimer_installed'\)\)/,
+    );
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
+  });
+
+  it("never stores a private key alongside a trust anchor", () => {
+    assert.doesNotMatch(migration.sql, /\bprivate_key\b|\bkey_material\b/i);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+});
+
+describe("migration 42 trust-anchor job operation and subject type", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_trust_anchor_jobs",
+  );
+
+  it("exists at version 42 and widens both certificate_jobs constraints", () => {
+    assert.ok(migration, "certops_trust_anchor_jobs migration expected");
+    assert.equal(migration.version, 42);
+    assert.match(migration.sql, /certificate_jobs_operation_check/);
+    assert.match(migration.sql, /certificate_jobs_subject_type_check/);
+  });
+
+  it("keeps every previously accepted operation and subject type", () => {
+    for (const value of [
+      "issue",
+      "renew",
+      "deploy",
+      "reload",
+      "revoke",
+      "noop",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+    for (const value of [
+      "managed_certificate",
+      "certificate_instance",
+      "certificate_target",
+      "token",
+      "domain",
+      "endpoint",
+      "external",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+  });
+
+  it("adds distribute-trust/revoke-trust to operation and trust_anchor to subject_type", () => {
+    assert.match(migration.sql, /'distribute-trust'/);
+    assert.match(migration.sql, /'revoke-trust'/);
+    assert.match(migration.sql, /'trust_anchor'/);
+  });
+
+  it("accepts exactly the operations and subject types the service layer declares today", () => {
+    const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
+    assert.ok(operationDeclared, "operation IN (...) list expected");
+    const operationValues = operationDeclared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+
+    const subjectTypeDeclared = migration.sql.match(
+      /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
+    );
+    assert.ok(subjectTypeDeclared, "subject_type IN (...) list expected");
+    const subjectTypeValues = subjectTypeDeclared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...subjectTypeValues].sort(), [...SUBJECT_TYPES].sort());
+  });
+
+  it("uses only additive DDL, never CREATE TYPE", () => {
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
     assert.doesNotMatch(migration.sql, /DROP TABLE/i);
   });
 });
