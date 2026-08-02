@@ -37,6 +37,9 @@
       "format": "uuid",
       "description": "Owning workspace identifier."
     },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-envelope.schema.json#/properties/agentId"
+    },
     "certificateId": {
       "type": "string",
       "minLength": 1,

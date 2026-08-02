@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/signed-dispatch-envelope.schema.json",
+  "title": "CertOps Signed Dispatch Envelope",
+  "description": "Shared field definitions carried by every signed-dispatch job regardless of action (ADR-0012 decision 3). Composed by job-payload.schema.json (alongside its certificate-specific required fields, unchanged) and by protocol-smoke-payload.schema.json (which needs none of the certificate fields). This file is the single source of truth for the shape of these fields; job-payload.schema.json and protocol-smoke-payload.schema.json both $ref into it by $id rather than duplicating field definitions, so the two per-action schemas cannot drift apart on what a signed envelope field looks like. schemaVersion/jobId/workspaceId/action/mode/requestedAt are shared with the unsigned/bootstrap shape; nonce/signingKeyId/signature/claimId/attemptId/leaseExpiresAt/attemptCount/issuedAt/expiresAt/agentId exist only once a job is actually signed for dispatch. This definition intentionally carries no top-level 'required' list of its own: each composing schema (job-payload vs protocol-smoke) decides which of these fields it requires, since job-payload.schema.json keeps signed-dispatch fields schema-optional today (runtime enforcement is verifyJobSignature/findSignedFieldProblem, per the legacy-tolerance test in ADR-0012 decision 3) while protocol-smoke-payload.schema.json, being new, requires them from day one.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Unique public job identifier."
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Owning workspace identifier."
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "ADR-0012 decision 3: the agentId this job is signed for. Rollout is additive and server-first (see the ADR's four-step plan): the control plane starts signing this field into the shared canonical payload before any client requires or validates it. Schema-optional today on both composing schemas' own required lists during the rollout window; a client declaring the agent-id-binding-v1 capability validates it at the client-side trusted-identity gate regardless of schema requiredness."
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Generic shape only. Each composing schema layers its own stricter action property (a fixed enum for certificate jobs, a const for protocol_smoke) via allOf; this definition does not constrain which action values are valid."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["real", "dry_run"],
+      "description": "First-class immutable job execution mode set at creation. dry_run jobs must terminate as dry_run_complete, never succeeded."
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: job dispatch timestamp."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: signed job validity bound."
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: single-use nonce for signed job replay protection."
+    },
+    "signingKeyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: identifier of the control-plane operational signing key."
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 1024,
+      "description": "Signed agent dispatch: signature over the canonical job payload (v1) or over payloadB64's decoded bytes (v2, ADR-0012 decision 1)."
+    },
+    "claimId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: claim identifier the agent must echo back with the result (ownership re-proof)."
+    },
+    "attemptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Signed agent dispatch: server-assigned attempt id mirroring claimId, so a schema-minimal result report (attemptId only) still re-proves claim ownership."
+    },
+    "leaseExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Signed agent dispatch: current claim lease expiry, echoed on dispatch so the agent can plan lease renewal."
+    },
+    "attemptCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Signed agent dispatch: number of claim attempts made for this job so far."
+    }
+  }
+}

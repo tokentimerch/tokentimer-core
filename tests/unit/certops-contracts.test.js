@@ -15,6 +15,8 @@ const contractsManifest = require("../../contracts.manifest.json");
 const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
 const evidenceSchema = require("../../packages/contracts/certops/evidence.schema.json");
 const executorEventSchema = require("../../packages/contracts/certops/executor-event.schema.json");
+const signedDispatchEnvelopeSchema = require("../../packages/contracts/certops/signed-dispatch-envelope.schema.json");
+const protocolSmokePayloadSchema = require("../../packages/contracts/certops/protocol-smoke-payload.schema.json");
 
 const openApiSource = fs.readFileSync(
   path.join(repoRoot, "packages/contracts/openapi/openapi.yaml"),
@@ -160,7 +162,15 @@ const certopsSchemas = {
   "job-payload.schema.json": jobPayloadSchema,
   "evidence.schema.json": evidenceSchema,
   "executor-event.schema.json": executorEventSchema,
+  "protocol-smoke-payload.schema.json": protocolSmokePayloadSchema,
 };
+
+// Not part of certopsSchemas: this is a partial building-block definition
+// (no top-level additionalProperties of its own; each composing schema owns
+// that), so it must not be subject to the "every top-level schema is bounded"
+// assertion below. It still needs to be addSchema'd for $ref resolution
+// whenever job-payload/protocol-smoke are validated.
+const crossFileRefOnlySchemas = [signedDispatchEnvelopeSchema];
 
 function manifestPaths() {
   return new Set(
@@ -223,6 +233,9 @@ function createAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
 
+  for (const schema of crossFileRefOnlySchemas) {
+    ajv.addSchema(schema);
+  }
   for (const schema of Object.values(certopsSchemas)) {
     ajv.addSchema(schema);
   }
@@ -1507,5 +1520,159 @@ describe("CertOps contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("certificate_jobs"), false);
     assert.equal(certOpsRoutesSource.includes("certificate_evidence"), false);
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
+  });
+});
+
+describe("signed-dispatch envelope and the action-keyed discriminated union", () => {
+  const {
+    CERTIFICATE_ACTIONS,
+    PROTOCOL_SMOKE_ACTION,
+    selectSchemaForAction,
+    validateSignedJob,
+  } = require("../../packages/contracts/certops/validate-signed-job.cjs");
+
+  function baseCertificateJob(overrides = {}) {
+    return {
+      schemaVersion: 1,
+      jobId: "job-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      certificateId: "cert-1",
+      action: "renew",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  function baseSmokeJob(overrides = {}) {
+    return {
+      schemaVersion: 1,
+      jobId: "job-smoke-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      action: "protocol_smoke",
+      mode: "dry_run",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      payload: { mode: "dry_run", echo: "hello" },
+      ...overrides,
+    };
+  }
+
+  it("selects job-payload.schema.json for every certificate action", () => {
+    for (const action of CERTIFICATE_ACTIONS) {
+      const selection = selectSchemaForAction(action);
+      assert.ok(selection);
+      assert.match(selection.schemaId, /job-payload\.schema\.json$/);
+    }
+  });
+
+  it("selects protocol-smoke-payload.schema.json for protocol_smoke", () => {
+    const selection = selectSchemaForAction(PROTOCOL_SMOKE_ACTION);
+    assert.ok(selection);
+    assert.match(selection.schemaId, /protocol-smoke-payload\.schema\.json$/);
+  });
+
+  it("returns null for an unrecognized or missing action", () => {
+    assert.equal(selectSchemaForAction("distribute-trust"), null);
+    assert.equal(selectSchemaForAction(undefined), null);
+    assert.equal(selectSchemaForAction(42), null);
+  });
+
+  it("validates a well-formed certificate job against job-payload.schema.json", () => {
+    const result = validateSignedJob(baseCertificateJob());
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.match(result.schemaId, /job-payload\.schema\.json$/);
+  });
+
+  it("validates a well-formed protocol_smoke job against protocol-smoke-payload.schema.json", () => {
+    const result = validateSignedJob(baseSmokeJob());
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.match(result.schemaId, /protocol-smoke-payload\.schema\.json$/);
+  });
+
+  it("never validates a smoke job against the certificate schema: certificateId is not accepted", () => {
+    // additionalProperties: false on protocol-smoke-payload.schema.json
+    // means adding a certificate-shaped field must fail, proving the two
+    // schemas are not silently compatible with each other's shape.
+    const result = validateSignedJob(
+      baseSmokeJob({ certificateId: "cert-should-not-be-here" }),
+    );
+    assert.equal(result.valid, false);
+  });
+
+  it("never validates a certificate job against the smoke schema: missing certificateId/target/keyMode fails", () => {
+    const result = validateSignedJob({
+      schemaVersion: 1,
+      jobId: "job-2",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      action: "renew",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.schemaId, /job-payload\.schema\.json$/);
+  });
+
+  it("rejects a protocol_smoke job missing the required agentId (new-client requirement, ADR-0012 decision 3)", () => {
+    const job = baseSmokeJob();
+    delete job.agentId;
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, false);
+  });
+
+  it("still validates a certificate job WITHOUT agentId (legacy tolerance during the additive rollout)", () => {
+    // job-payload.schema.json keeps agentId schema-optional during the
+    // server-first rollout (ADR-0012 decision 3); runtime enforcement of the
+    // trusted-identity gate is a client-side concern, not a schema one.
+    const job = baseCertificateJob();
+    assert.equal("agentId" in job, false);
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  it("validates a certificate job WITH agentId identically (additive field, not a breaking one)", () => {
+    const result = validateSignedJob(
+      baseCertificateJob({ agentId: "22222222-2222-4222-8222-222222222222" }),
+    );
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  });
+
+  it("rejects protocol_smoke's mode when it is not dry_run: there is no 'real' variant", () => {
+    const job = baseSmokeJob();
+    job.payload.mode = "real";
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, false);
+  });
+
+  it("shares the signed-dispatch envelope fields identically across both schemas", () => {
+    const nonce = "n".repeat(20);
+    const certJob = validateSignedJob(
+      baseCertificateJob({
+        nonce,
+        signingKeyId: "ttsk_abc123",
+        signature: "s".repeat(88),
+        issuedAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: "2026-01-01T00:05:00.000Z",
+        claimId: "claim-1",
+        attemptId: "attempt-1",
+        leaseExpiresAt: "2026-01-01T00:05:00.000Z",
+        attemptCount: 1,
+      }),
+    );
+    const smokeJob = validateSignedJob(
+      baseSmokeJob({
+        nonce,
+        signingKeyId: "ttsk_abc123",
+        signature: "s".repeat(88),
+        issuedAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: "2026-01-01T00:05:00.000Z",
+        claimId: "claim-1",
+        attemptId: "attempt-1",
+        leaseExpiresAt: "2026-01-01T00:05:00.000Z",
+        attemptCount: 1,
+      }),
+    );
+    assert.equal(certJob.valid, true, JSON.stringify(certJob.errors));
+    assert.equal(smokeJob.valid, true, JSON.stringify(smokeJob.errors));
   });
 });

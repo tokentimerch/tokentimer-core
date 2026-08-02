@@ -176,6 +176,24 @@
           "status": "existing"
         },
         {
+          "id": "certops-signed-dispatch-envelope-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/signed-dispatch-envelope.schema.json",
+          "status": "new"
+        },
+        {
+          "id": "certops-protocol-smoke-payload-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/protocol-smoke-payload.schema.json",
+          "status": "new"
+        },
+        {
+          "id": "certops-signed-job-validator-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/validate-signed-job.cjs",
+          "status": "new"
+        },
+        {
           "id": "certops-evidence-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/evidence.schema.json",
