@@ -6,8 +6,8 @@
     "schemaVersion": 1,
     "protocolVersion": "1.0.0",
     "messageType": "claim",
-    "agentId": "<normalized-agent-id>",
-    "sentAt": "<normalized-timestamp>",
+    "agentId": "<generated-agent-id>",
+    "sentAt": "<timestamp>",
     "body": {
       "maxJobs": 1
     }

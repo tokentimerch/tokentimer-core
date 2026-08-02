@@ -6,12 +6,12 @@
     "schemaVersion": 1,
     "protocolVersion": "1.0.0",
     "messageType": "result",
-    "agentId": "<normalized-agent-id>",
-    "sentAt": "<normalized-timestamp>",
+    "agentId": "<generated-agent-id>",
+    "sentAt": "<timestamp>",
     "body": {
       "jobId": "job-1",
       "attemptId": "attempt-1",
-      "status": "succeeded",
+      "status": "dry_run_complete",
       "rejectionReason": null,
       "keyRotated": null,
       "errorMessage": null

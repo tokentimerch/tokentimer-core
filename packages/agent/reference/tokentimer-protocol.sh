@@ -4,50 +4,35 @@
 # docs/adr/0002-certops-agent-protocol.md for the wire contract this script
 # implements a minimal, dependency-light walkthrough of.
 #
-# Purpose: a portable, auditable reference implementation
-# that any integrator (or a support engineer debugging a live agent) can
-# read top to bottom without a Node/PowerShell runtime, to see exactly what
-# an agent sends/receives at each protocol step and how the Ed25519 signed
-# job dispatch is verified. It is NOT a production agent replacement: no
-# retry policy, no persistent claim/lease loop, no execution.
+# Purpose: a portable, auditable reference implementation that any integrator
+# (or a support engineer debugging a live agent) can read top to bottom
+# without a Node/PowerShell runtime, to see exactly what an agent sends and
+# receives at each protocol step and how the Ed25519 signed job dispatch is
+# verified. It is NOT a production agent replacement: no retry policy, no
+# persistent claim/lease loop, no execution engine.
 #
-# Mandatory Ed25519 verification: this script never ships an --insecure
-# escape that skips signature verification. If OpenSSL 3.x is not on PATH,
-# the script fails closed with a clear error instead of silently accepting
-# an unverified job.
+# Mandatory Ed25519 verification: this script never ships an --insecure escape
+# that skips signature verification. If OpenSSL 3.x is not on PATH, the script
+# fails closed with a clear error instead of silently accepting an unverified job.
 #
 # Credentials: read from the TOKENTIMER_AGENT_BOOTSTRAP_TOKEN /
 # TOKENTIMER_AGENT_CREDENTIAL environment variables, or from a file via
 # --bootstrap-token-file / --credential-file (mode 0600 enforced). Never
-# accepted as a plain --bootstrap-token/--credential argv value: argv is
-# visible in process listings on shared hosts.
+# accepted as plain argv token values: argv is visible in process listings.
 #
 # Usage:
-#   tokentimer-protocol.sh --mode executor --step register --api-url URL --workspace-id ID [options]
-#   tokentimer-protocol.sh --mode agent    --step register  --api-url URL [options]
-#   tokentimer-protocol.sh --mode agent    --step heartbeat --api-url URL --agent-id ID [options]
-#   tokentimer-protocol.sh --mode agent    --step claim     --api-url URL --agent-id ID [options]
-#   tokentimer-protocol.sh --mode agent    --step result    --api-url URL --agent-id ID --job-id ID --attempt-id ID --result-status STATUS [options]
-#   tokentimer-protocol.sh --mode agent    --step verify    --job-file JOB.json --pubkey-file PUB.pem --signing-key-id ID
-#   tokentimer-protocol.sh --mode agent    --step all       --api-url URL [options]   # register -> heartbeat -> claim -> (verify, if --job-file given) -> result
+#   tokentimer-protocol.sh --mode agent --step register  --api-url URL [options]
+#   tokentimer-protocol.sh --mode agent --step heartbeat --api-url URL --agent-id ID [options]
+#   tokentimer-protocol.sh --mode agent --step claim     --api-url URL --agent-id ID [options]
+#   tokentimer-protocol.sh --mode agent --step result    --api-url URL --agent-id ID --job-id ID --attempt-id ID --result-status STATUS [options]
+#   tokentimer-protocol.sh --mode agent --step verify    --job-file JOB.json --pubkey-file PUB.pem --signing-key-id ID [options]
+#   tokentimer-protocol.sh --mode agent --step all       --api-url URL [options]
 #
-# --mode is required and undefaulted: "executor" (external-executor event
-# surface, apps/api/routes/certops-executor.js) or "agent" (the outbound
-# machine-protocol surface this script primarily documents,
-# apps/api/routes/certops-agent.js). --step selects the protocol message,
-# or "all" to walk every step in sequence. --execute actually performs the
-# HTTP call; without it the script prints the request it WOULD send
-# (method, URL, headers with secrets redacted, body) and exits 0, matching
-# install-agent.sh's --dry-run convention. --json prints machine-readable
-# JSON on stdout (deterministic field order, see reference/fixtures/)
-# instead of the human-readable narration.
-#
-# Determinism note: two live runs against
-# a real control plane will NEVER produce byte-identical --json output,
-# because registrationId/nonce/timestamps differ every run by design. Do
-# not assert byte-identical live output. This script's own test suite
-# (reference/reference-client.test.js) instead normalizes away those
-# fields before diffing against reference/fixtures/*.json.
+# --mode is required and must be "agent". --step selects the protocol message,
+# or "all" to walk register -> heartbeat -> claim -> verify (claimed jobs when
+# --execute) -> result in sequence. --execute performs the HTTP call; without it
+# the script prints the request it would send (method, URL, redacted auth, body)
+# and exits 0. --json prints machine-readable JSON on stdout.
 
 set -euo pipefail
 
@@ -57,7 +42,6 @@ CANONICALIZE_JS="$SCRIPT_DIR/lib/canonicalize.cjs"
 MODE=""
 STEP=""
 API_URL=""
-WORKSPACE_ID=""
 AGENT_ID=""
 PROTOCOL_VERSION="1.0.0"
 BOOTSTRAP_TOKEN_FILE=""
@@ -74,54 +58,58 @@ ERROR_MESSAGE=""
 EXECUTE=0
 JSON_OUTPUT=0
 CA_BUNDLE=""
+SKIP_TIME_WINDOW=0
+
+LAST_HTTP_STATUS=""
+LAST_RESPONSE_BODY=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  tokentimer-protocol.sh --mode <executor|agent> --step STEP [options]
+  tokentimer-protocol.sh --mode agent --step STEP [options]
 
 Required:
-  --mode MODE            "executor" or "agent" (no default; must be explicit).
+  --mode agent           Agent protocol mode (required; only value accepted).
   --step STEP            all | register | heartbeat | claim | result | verify
                           (verify is local-only: no network call. "all" walks
-                          register -> heartbeat -> claim -> result in sequence,
-                          plus verify if --job-file is also given.)
+                          register -> heartbeat -> claim -> verify -> result;
+                          with --execute, claimed jobs are verified before any
+                          result is submitted.)
   --api-url URL          Control plane base URL (required for all steps but verify).
 
 Options:
-  --workspace-id ID      Required for executor-mode register.
-  --agent-id ID          Stable agent id (required for agent-mode heartbeat/claim/result;
+  --agent-id ID          Stable agent id (required for heartbeat/claim/result;
                           register generates one if omitted).
   --protocol-version V   Agent protocol semver this script speaks (default 1.0.0).
-  --bootstrap-token-file FILE   File containing the raw bootstrap token
-                                 (mode 0600 enforced). Alternative to the
-                                 TOKENTIMER_AGENT_BOOTSTRAP_TOKEN env var.
-  --credential-file FILE        File containing the raw agent credential
-                                 (mode 0600 enforced). Alternative to the
-                                 TOKENTIMER_AGENT_CREDENTIAL env var.
-  --job-file FILE        Signed job payload JSON (verify; also used by "all"
-                          and by "result" to source --job-id/--signing-key-id
-                          when those flags are omitted).
-  --pubkey-file FILE     Pinned Ed25519 public key PEM (verify).
-  --signing-key-id ID    Pinned signing key id to check the job against (verify).
+  --bootstrap-token-file FILE   Raw bootstrap token file (mode 0600 enforced).
+                                 Alternative to TOKENTIMER_AGENT_BOOTSTRAP_TOKEN.
+  --credential-file FILE        Raw agent credential file (mode 0600 enforced).
+                                 Alternative to TOKENTIMER_AGENT_CREDENTIAL.
+  --job-file FILE        Signed job payload JSON (verify; optional preview on
+                          dry-run "all"; not required when --execute claims jobs).
+  --pubkey-file FILE     Pinned Ed25519 public key PEM (verify; required for
+                          "all --execute" verified pipeline).
+  --signing-key-id ID    Pinned signing key id checked against each job (verify;
+                          required for "all --execute").
   --job-id ID            Job id being reported on (result).
   --attempt-id ID        Attempt id being reported on (result).
-  --result-status STATUS  succeeded | failed | rejected | dry_run_complete |
-                           orphaned_unknown_effect (result; required).
+  --result-status STATUS succeeded | failed | rejected | dry_run_complete |
+                           orphaned_unknown_effect (result).
   --rejection-reason R   Set alongside --result-status rejected/failed (result).
   --key-rotated true|false  Whether this attempt rotated the key (result).
   --error-message MSG    Human-readable failure detail (result).
   --ca-bundle FILE       Extra CA bundle passed to curl --cacert.
+  --skip-time-window     Skip issuedAt/expiresAt validation (fixture tests only).
   --execute              Actually perform the HTTP call. Without this flag,
                           the script only prints the request it would send.
   --json                 Machine-readable JSON output instead of narration.
   -h, --help             Show this help.
 
 Security:
-  Ed25519 signature verification ("verify" step, and always available to
-  "all") is mandatory and cannot be disabled from this script; there is no
-  --insecure flag. Requires OpenSSL 3.x on PATH (checked with a clear
-  failure if missing or too old).
+  Ed25519 signature verification is mandatory for verify and for "all --execute".
+  Requires OpenSSL 3.x on PATH and Node.js major version >=22 and <25 for
+  canonical JSON handling via reference/lib/canonicalize.cjs.
+  Plain http:// is accepted only for loopback hosts (localhost, 127.0.0.1, ::1).
 EOF
 }
 
@@ -150,6 +138,38 @@ require_openssl3() {
 
 require_node() {
   command -v node >/dev/null 2>&1 || fail "node is required for canonical-JSON handling (reference/lib/canonicalize.cjs); none found on PATH"
+  local version_line major
+  version_line=$(node -v 2>/dev/null || true)
+  major=$(printf '%s' "$version_line" | sed -n 's/^v\([0-9]\+\).*/\1/p')
+  [ -n "$major" ] || fail "could not parse Node.js version from '$version_line'"
+  if [ "$major" -lt 22 ] || [ "$major" -ge 25 ]; then
+    fail "Node.js $version_line is outside the required range >=22 and <25 (see packages/agent/package.json engines.node)"
+  fi
+}
+
+validate_api_url() {
+  case "$API_URL" in
+    *\"*|*\'*|*[\ \	]*|*\\*) fail "--api-url must not contain quotes, backslashes, or whitespace" ;;
+  esac
+  case "$API_URL" in
+    https://*) ;;
+    http://*)
+      local authority host
+      authority="${API_URL#http://}"
+      authority="${authority%%/*}"
+      if [[ "$authority" == \[*\]* ]]; then
+        host="${authority%\]*}"
+        host="${host#\[}"
+      else
+        host="${authority%%:*}"
+      fi
+      case "$host" in
+        localhost|127.0.0.1|::1) ;;
+        *) fail "plain http:// is only permitted for loopback hosts (localhost, 127.0.0.1, ::1); use https:// for remote control planes" ;;
+      esac
+      ;;
+    *) fail "--api-url must start with http:// or https://" ;;
+  esac
 }
 
 while [ $# -gt 0 ]; do
@@ -160,8 +180,6 @@ while [ $# -gt 0 ]; do
     --step=*) STEP="${1#--step=}"; shift ;;
     --api-url) API_URL="${2:-}"; shift 2 ;;
     --api-url=*) API_URL="${1#--api-url=}"; shift ;;
-    --workspace-id) WORKSPACE_ID="${2:-}"; shift 2 ;;
-    --workspace-id=*) WORKSPACE_ID="${1#--workspace-id=}"; shift ;;
     --agent-id) AGENT_ID="${2:-}"; shift 2 ;;
     --agent-id=*) AGENT_ID="${1#--agent-id=}"; shift ;;
     --protocol-version) PROTOCOL_VERSION="${2:-}"; shift 2 ;;
@@ -190,6 +208,7 @@ while [ $# -gt 0 ]; do
     --error-message=*) ERROR_MESSAGE="${1#--error-message=}"; shift ;;
     --ca-bundle) CA_BUNDLE="${2:-}"; shift 2 ;;
     --ca-bundle=*) CA_BUNDLE="${1#--ca-bundle=}"; shift ;;
+    --skip-time-window) SKIP_TIME_WINDOW=1; shift ;;
     --execute) EXECUTE=1; shift ;;
     --json) JSON_OUTPUT=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -197,35 +216,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$MODE" ] || fail "--mode is required (executor|agent, no default)"
-case "$MODE" in
-  executor|agent) : ;;
-  *) fail "--mode must be 'executor' or 'agent', got '$MODE'" ;;
-esac
+[ -n "$MODE" ] || fail "--mode is required (must be agent)"
+[ "$MODE" = "agent" ] || fail "--mode must be 'agent', got '$MODE'"
 [ -n "$STEP" ] || fail "--step is required (all|register|heartbeat|claim|result|verify)"
+
 case "$STEP" in
-  all|register|heartbeat|claim|result|verify) : ;;
+  all|register|heartbeat|claim|result|verify) ;;
   *) fail "--step must be one of all|register|heartbeat|claim|result|verify, got '$STEP'" ;;
 esac
 
 if [ "$STEP" != "verify" ]; then
   [ -n "$API_URL" ] || fail "--api-url is required for step '$STEP'"
-  case "$API_URL" in
-    https://*) : ;;
-    http://*) log "WARNING: --api-url uses plain http://; only appropriate for local/loopback control planes" ;;
-    *) fail "--api-url must start with http:// or https://" ;;
-  esac
-  case "$API_URL" in
-    *\"*|*\\*) fail "--api-url must not contain double quotes or backslashes" ;;
-  esac
+  validate_api_url
 fi
 
 read_secret_file() {
   local file="$1" label="$2"
   [ -f "$file" ] || fail "$label file not found: $file"
   local mode
-  mode=$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo "")
-  if [ -n "$mode" ] && [ "$mode" != "600" ]; then
+  mode=$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || true)
+  if [ -z "$mode" ]; then
+    fail "could not determine permissions for $label file $file; refusing to read credentials without a confirmed mode 0600"
+  fi
+  if [ "$mode" != "600" ]; then
     fail "$label file $file must be mode 0600 (found $mode); chmod 600 it before use"
   fi
   local value
@@ -245,7 +258,7 @@ resolve_bootstrap_token() {
   fi
   if [ "$EXECUTE" -eq 0 ]; then
     log "no bootstrap token supplied; dry-run preview only (a real --execute run requires TOKENTIMER_AGENT_BOOTSTRAP_TOKEN or --bootstrap-token-file)"
-    printf '%s' "<no-bootstrap-token-dry-run-only>"
+    printf '%s' '<no-bootstrap-token-dry-run-only>'
     return
   fi
   fail "no bootstrap token: set TOKENTIMER_AGENT_BOOTSTRAP_TOKEN or pass --bootstrap-token-file (never as a plain argv value)"
@@ -262,17 +275,13 @@ resolve_credential() {
   fi
   if [ "$EXECUTE" -eq 0 ]; then
     log "no credential supplied; dry-run preview only (a real --execute run requires TOKENTIMER_AGENT_CREDENTIAL or --credential-file)"
-    printf '%s' "<no-credential-dry-run-only>"
+    printf '%s' '<no-credential-dry-run-only>'
     return
   fi
   fail "no credential: set TOKENTIMER_AGENT_CREDENTIAL or pass --credential-file (never as a plain argv value)"
 }
 
 random_id() {
-  # 32 lowercase-hex chars, well inside the protocol's [A-Za-z0-9_.:-]+
-  # id patterns and long enough to serve as a unique nonce/registrationId
-  # for reference-client demo purposes only (not cryptographically vetted
-  # for production nonce use; the control plane is the source of truth).
   openssl rand -hex 16
 }
 
@@ -288,10 +297,9 @@ curl_common_args() {
   printf '%s\n' "${args[@]}"
 }
 
-# -------------------------------------------------------------------- verify
-# Does not exit on its own: prints the {"allowed":...} JSON line to stdout
-# and returns 0 (allowed) or 1 (rejected), so both the standalone "verify"
-# step and the "all" walkthrough can call it and decide what to do next.
+# verify: Ed25519 via OpenSSL pkeyutl on the canonical payload, then
+# issuedAt/expiresAt (and signingKeyId parity) via canonicalize.cjs verify.
+# Returns 0 when allowed, 1 when rejected; prints {"allowed":...} when --json.
 cmd_verify() {
   [ -n "$JOB_FILE" ] || fail "--job-file is required for verify"
   [ -n "$PUBKEY_FILE" ] || fail "--pubkey-file is required for verify"
@@ -301,16 +309,10 @@ cmd_verify() {
   require_openssl3
   require_node
 
-  local canonical_file signature_file
+  local canonical_file signature_file verify_args verify_out verify_status
   canonical_file=$(mktemp)
   signature_file=$(mktemp)
-  # RETURN traps are not function-scoped in bash: without unregistering it
-  # here, this trap would fire AGAIN when run_all() (a caller further up
-  # the stack) itself returns, by which point canonical_file/signature_file
-  # are out of scope and "set -u" turns that into an unbound-variable crash.
   trap 'rm -f "$canonical_file" "$signature_file"; trap - RETURN' RETURN
-
-  node "$CANONICALIZE_JS" canonicalize "$JOB_FILE" > "$canonical_file"
 
   local job_signing_key_id
   job_signing_key_id=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" signingKeyId)
@@ -323,24 +325,14 @@ cmd_verify() {
     return 1
   fi
 
+  node "$CANONICALIZE_JS" canonicalize "$JOB_FILE" > "$canonical_file"
+
   local job_signature
   job_signature=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" signature)
   printf '%s' "$job_signature" | openssl base64 -d -A > "$signature_file" \
     || fail "job signature is not valid base64"
 
-  # Ed25519's "PureEdDSA" scheme signs the raw message directly (no
-  # pre-hash), which is exactly what -rawin selects here; this matches
-  # node:crypto.verify(null, ...) in packages/agent/src/signing/index.js
-  # bit-for-bit, since both are the same algorithm, just two different
-  # implementations of it.
-  if openssl pkeyutl -verify -pubin -inkey "$PUBKEY_FILE" -rawin -in "$canonical_file" -sigfile "$signature_file" >/dev/null 2>&1; then
-    if [ "$JSON_OUTPUT" -eq 1 ]; then
-      printf '{"allowed":true}\n'
-    else
-      log "Signature OK: job is signed by the pinned key ($SIGNING_KEY_ID) and matches its canonical payload."
-    fi
-    return 0
-  else
+  if ! openssl pkeyutl -verify -pubin -inkey "$PUBKEY_FILE" -rawin -in "$canonical_file" -sigfile "$signature_file" >/dev/null 2>&1; then
     if [ "$JSON_OUTPUT" -eq 1 ]; then
       printf '{"allowed":false,"rejectionReason":"job_integrity_failed","detail":"Ed25519 verification failed"}\n'
     else
@@ -348,16 +340,33 @@ cmd_verify() {
     fi
     return 1
   fi
+
+  verify_args=("$CANONICALIZE_JS" verify "$JOB_FILE" "$PUBKEY_FILE" "$SIGNING_KEY_ID")
+  if [ "$SKIP_TIME_WINDOW" -eq 1 ]; then
+    verify_args+=(--skip-time-window)
+  fi
+  set +e
+  verify_out=$(node "${verify_args[@]}" 2>&1)
+  verify_status=$?
+  set -e
+  if [ "$verify_status" -ne 0 ]; then
+    if [ "$JSON_OUTPUT" -eq 1 ]; then
+      printf '%s\n' "$verify_out"
+    else
+      log "REJECTED: canonicalize.cjs verify failed (time window or payload integrity)."
+      log "$verify_out"
+    fi
+    return 1
+  fi
+
+  if [ "$JSON_OUTPUT" -eq 1 ]; then
+    printf '%s\n' "$verify_out"
+  else
+    log "Signature and validity window OK for pinned key ($SIGNING_KEY_ID)."
+  fi
+  return 0
 }
 
-# --------------------------------------------------------------- executor
-build_executor_register_body() {
-  cat <<JSON
-{"schemaVersion":1,"workspaceId":"$WORKSPACE_ID","apiTokenId":"reference-client-demo"}
-JSON
-}
-
-# ------------------------------------------------------------------- agent
 build_agent_register_body() {
   local registration_id
   registration_id="ref-$(random_id)"
@@ -367,34 +376,30 @@ JSON
 }
 
 build_agent_heartbeat_body() {
-  [ -n "$AGENT_ID" ] || fail "--agent-id is required for agent-mode heartbeat"
+  [ -n "$AGENT_ID" ] || fail "--agent-id is required for heartbeat"
   cat <<JSON
 {"schemaVersion":1,"protocolVersion":"$PROTOCOL_VERSION","messageType":"heartbeat","agentId":"$AGENT_ID","sentAt":"$(iso_now)","body":{"agentVersion":"reference-client"}}
 JSON
 }
 
 build_agent_claim_body() {
-  [ -n "$AGENT_ID" ] || fail "--agent-id is required for agent-mode claim"
+  [ -n "$AGENT_ID" ] || fail "--agent-id is required for claim"
   cat <<JSON
 {"schemaVersion":1,"protocolVersion":"$PROTOCOL_VERSION","messageType":"claim","agentId":"$AGENT_ID","sentAt":"$(iso_now)","body":{"maxJobs":1}}
 JSON
 }
 
 json_escape() {
-  # Minimal JSON string escaping for the free-text --error-message /
-  # --rejection-reason values this script accepts as CLI args (never for
-  # canonicalized/signed bytes -- that path only ever goes through
-  # canonicalize.cjs, which uses JSON.stringify).
   printf '%s' "$1" | node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(0,"utf8")))'
 }
 
 build_agent_result_body() {
-  [ -n "$AGENT_ID" ] || fail "--agent-id is required for agent-mode result"
-  [ -n "$JOB_ID" ] || fail "--job-id is required for agent-mode result (or pass --job-file to source it)"
-  [ -n "$ATTEMPT_ID" ] || fail "--attempt-id is required for agent-mode result"
-  [ -n "$RESULT_STATUS" ] || fail "--result-status is required for agent-mode result"
+  [ -n "$AGENT_ID" ] || fail "--agent-id is required for result"
+  [ -n "$JOB_ID" ] || fail "--job-id is required for result"
+  [ -n "$ATTEMPT_ID" ] || fail "--attempt-id is required for result"
+  [ -n "$RESULT_STATUS" ] || fail "--result-status is required for result"
   case "$RESULT_STATUS" in
-    succeeded|failed|rejected|dry_run_complete|orphaned_unknown_effect) : ;;
+    succeeded|failed|rejected|dry_run_complete|orphaned_unknown_effect) ;;
     *) fail "--result-status must be one of succeeded|failed|rejected|dry_run_complete|orphaned_unknown_effect, got '$RESULT_STATUS'" ;;
   esac
   local rejection_json key_rotated_json error_message_json
@@ -413,18 +418,17 @@ JSON
 
 route_for_step() {
   local step="$1"
-  case "$MODE:$step" in
-    executor:register) echo "/api/v1/certops/executor/observations" ;;
-    agent:register) echo "/api/v1/certops/agent/register" ;;
-    agent:heartbeat) echo "/api/v1/certops/agent/heartbeat" ;;
-    agent:claim) echo "/api/v1/certops/agent/jobs/claim" ;;
-    agent:result) echo "/api/v1/certops/agent/jobs/results" ;;
-    *) fail "no known route for mode '$MODE' step '$step' (executor mode only documents register/observations here; heartbeat/claim/result are agent-mode-only surfaces)" ;;
+  case "$step" in
+    register) echo "/api/v1/certops/agent/register" ;;
+    heartbeat) echo "/api/v1/certops/agent/heartbeat" ;;
+    claim) echo "/api/v1/certops/agent/jobs/claim" ;;
+    result) echo "/api/v1/certops/agent/jobs/results" ;;
+    *) fail "no known route for step '$step'" ;;
   esac
 }
 
 perform_request() {
-  local step="$1" body="$2" auth_header="$3" route url response status
+  local step="$1" body="$2" auth_header="$3" route url response status payload
   route=$(route_for_step "$step")
   url="${API_URL%/}$route"
 
@@ -436,6 +440,8 @@ perform_request() {
       log "[dry-run] Authorization: Bearer <redacted>"
       log "[dry-run] body: $body"
     fi
+    LAST_HTTP_STATUS="000"
+    LAST_RESPONSE_BODY=""
     return 0
   fi
 
@@ -443,7 +449,9 @@ perform_request() {
   response=$(curl "${common_args[@]}" -H "Authorization: Bearer $auth_header" -X POST -d "$body" -w '\n%{http_code}' "$url") \
     || fail "request to $url failed"
   status="${response##*$'\n'}"
-  local payload="${response%$'\n'*}"
+  payload="${response%$'\n'*}"
+  LAST_HTTP_STATUS="$status"
+  LAST_RESPONSE_BODY="$payload"
 
   if [ "$JSON_OUTPUT" -eq 1 ]; then
     printf '%s\n' "$payload"
@@ -459,69 +467,129 @@ perform_request() {
 
 run_step() {
   local step="$1" body auth_header
-  case "$MODE:$step" in
-    executor:register)
-      [ -n "$WORKSPACE_ID" ] || fail "--workspace-id is required for executor-mode register"
-      auth_header=$(resolve_bootstrap_token)
-      body=$(build_executor_register_body)
-      ;;
-    agent:register)
+  case "$step" in
+    register)
       auth_header=$(resolve_bootstrap_token)
       body=$(build_agent_register_body)
       ;;
-    agent:heartbeat)
+    heartbeat)
       auth_header=$(resolve_credential)
       body=$(build_agent_heartbeat_body)
       ;;
-    agent:claim)
+    claim)
       auth_header=$(resolve_credential)
       body=$(build_agent_claim_body)
       ;;
-    agent:result)
+    result)
       auth_header=$(resolve_credential)
       body=$(build_agent_result_body)
       ;;
     *)
-      fail "unsupported combination: --mode $MODE --step $step"
+      fail "unsupported step: $step"
       ;;
   esac
   perform_request "$step" "$body" "$auth_header"
 }
 
+require_execute_verify_materials() {
+  [ -n "$PUBKEY_FILE" ] || fail "--pubkey-file is required for 'all --execute' (verified claim pipeline)"
+  [ -n "$SIGNING_KEY_ID" ] || fail "--signing-key-id is required for 'all --execute' (verified claim pipeline)"
+  [ -f "$PUBKEY_FILE" ] || fail "public key file not found: $PUBKEY_FILE"
+}
+
+verify_and_submit_claimed_jobs() {
+  local job_count i job_file job_signing_key_id
+  require_node
+  job_count=$(node -e '
+    const input = process.argv[1];
+    let parsed;
+    try { parsed = JSON.parse(input); } catch { process.exit(3); }
+    if (!Array.isArray(parsed.jobs)) process.exit(3);
+    process.stdout.write(String(parsed.jobs.length));
+  ' "$LAST_RESPONSE_BODY") || fail "claim response is not valid JSON with a jobs array (expected { jobs: [ signedJob, ... ] })"
+
+  if [ "$job_count" -eq 0 ]; then
+    log "claim returned zero jobs; nothing to verify or report"
+    return 0
+  fi
+
+  for i in $(seq 0 $((job_count - 1))); do
+    job_file=$(mktemp)
+    node -e '
+      const parsed = JSON.parse(process.argv[1]);
+      const job = parsed.jobs[Number(process.argv[2])];
+      if (!job || typeof job !== "object") process.exit(4);
+      require("fs").writeFileSync(process.argv[3], JSON.stringify(job));
+    ' "$LAST_RESPONSE_BODY" "$i" "$job_file"
+
+    JOB_FILE="$job_file"
+    job_signing_key_id=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" signingKeyId)
+    if [ "$job_signing_key_id" != "$SIGNING_KEY_ID" ]; then
+      rm -f "$job_file"
+      fail "claimed job signingKeyId ($job_signing_key_id) does not match pinned --signing-key-id ($SIGNING_KEY_ID)"
+    fi
+
+    log "=== verify claimed job $((i + 1))/$job_count (jobId $(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" jobId)) ==="
+    if ! cmd_verify; then
+      rm -f "$job_file"
+      fail "verification failed for claimed job; aborting before result submission"
+    fi
+
+    JOB_ID=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" jobId)
+    ATTEMPT_ID=$(node -e '
+      const fs = require("fs");
+      const job = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const attempt = job.attemptId || job.claimId;
+      if (!attempt) process.exit(5);
+      process.stdout.write(String(attempt));
+    ' "$job_file") || fail "claimed job is missing attemptId/claimId required for result submission"
+
+    [ -n "$RESULT_STATUS" ] || RESULT_STATUS="dry_run_complete"
+    log "=== result for job $((i + 1))/$job_count ==="
+    run_step result || { rm -f "$job_file"; return 1; }
+    rm -f "$job_file"
+  done
+}
+
 run_all() {
-  [ "$MODE" = "agent" ] || fail "--step all is only defined for --mode agent (executor mode has a single register step; call it directly with --step register)"
+  if [ "$EXECUTE" -eq 1 ]; then
+    require_execute_verify_materials
+  fi
+
   if [ -z "$AGENT_ID" ]; then
     AGENT_ID="ref-agent-$(random_id)"
     log "generated --agent-id $AGENT_ID for this 'all' run (pass --agent-id explicitly to reuse an existing registration)"
   fi
-  # Source job-id/signing-key-id/result defaults from --job-file when the
-  # operator did not pass them explicitly, so "all --job-file X" is a
-  # complete, self-contained walkthrough.
-  if [ -n "$JOB_FILE" ] && [ -f "$JOB_FILE" ]; then
-    require_node
-    [ -n "$JOB_ID" ] || JOB_ID=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" jobId 2>/dev/null || echo "")
-    [ -n "$ATTEMPT_ID" ] || ATTEMPT_ID=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" attemptId 2>/dev/null || echo "ref-attempt-$(random_id)")
-    [ -n "$SIGNING_KEY_ID" ] || SIGNING_KEY_ID=$(node "$CANONICALIZE_JS" extract-field "$JOB_FILE" signingKeyId 2>/dev/null || echo "")
+
+  if [ "$EXECUTE" -eq 0 ]; then
+    [ -n "$JOB_ID" ] || JOB_ID="ref-job-$(random_id)"
+    [ -n "$ATTEMPT_ID" ] || ATTEMPT_ID="ref-attempt-$(random_id)"
+    [ -n "$RESULT_STATUS" ] || RESULT_STATUS="dry_run_complete"
   fi
-  [ -n "$JOB_ID" ] || JOB_ID="ref-job-$(random_id)"
-  [ -n "$ATTEMPT_ID" ] || ATTEMPT_ID="ref-attempt-$(random_id)"
-  [ -n "$RESULT_STATUS" ] || RESULT_STATUS="dry_run_complete"
 
   log "=== step 1/4: register ==="
-  run_step register
+  run_step register || exit 1
 
   log "=== step 2/4: heartbeat ==="
-  run_step heartbeat
+  run_step heartbeat || exit 1
 
   log "=== step 3/4: claim ==="
-  run_step claim
+  run_step claim || exit 1
 
-  if [ -n "$JOB_FILE" ] && [ -n "$PUBKEY_FILE" ] && [ -n "$SIGNING_KEY_ID" ]; then
-    log "=== step (extra): verify ==="
-    cmd_verify || log "verify rejected the job; continuing with the 'all' walkthrough anyway (this is a demo, not a real dispatch loop)"
+  if [ "$EXECUTE" -eq 1 ]; then
+    log "=== step 4/5: verify claimed jobs ==="
+    verify_and_submit_claimed_jobs || exit 1
+    return 0
   fi
 
-  log "=== step 4/4: result ==="
+  if [ -n "$JOB_FILE" ] && [ -f "$JOB_FILE" ] && [ -n "$PUBKEY_FILE" ] && [ -n "$SIGNING_KEY_ID" ]; then
+    log "=== step (preview): verify --job-file ==="
+    if ! cmd_verify; then
+      log "verify preview rejected the supplied --job-file; continuing dry-run walkthrough"
+    fi
+  fi
+
+  log "=== step 4/4: result (dry-run placeholder) ==="
   run_step result
 }
 

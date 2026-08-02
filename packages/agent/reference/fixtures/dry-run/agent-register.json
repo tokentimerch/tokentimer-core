@@ -6,12 +6,12 @@
     "schemaVersion": 1,
     "protocolVersion": "1.0.0",
     "messageType": "register",
-    "agentId": "<normalized-agent-id>",
-    "sentAt": "<normalized-timestamp>",
+    "agentId": "<generated-agent-id>",
+    "sentAt": "<timestamp>",
     "body": {
       "bootstrapTokenId": "reference-client-demo",
       "agentVersion": "reference-client",
-      "registrationId": "<normalized-registration-id>"
+      "registrationId": "<generated-registration-id>"
     }
   }
 }

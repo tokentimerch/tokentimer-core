@@ -1,37 +1,26 @@
-#requires -version 7
+#requires -Version 7
 <#
 .SYNOPSIS
   tokentimer-protocol.ps1 - PowerShell 7+ reference client for the CertOps
-  agent protocol (ADR-0002/0003). Mirrors tokentimer-protocol.sh's flag
-  contract exactly (-Mode, -Step, -Execute, -Json) so both scripts can
-  be read/compared side by side. See docs/certops/agent.md and
-  docs/adr/0002-certops-agent-protocol.md for the wire contract.
+  agent protocol (ADR-0002/0003). Mirrors tokentimer-protocol.sh flag
+  contract for the agent surface (-Step, -Execute, -Json). See
+  docs/certops/agent.md and docs/adr/0002-certops-agent-protocol.md.
 
 .DESCRIPTION
-  Purpose: a portable, auditable reference implementation
-  for Windows operators/integrators without a Bash environment. NOT a
-  production agent replacement: no retry policy, no persistent
-  claim/lease loop, no execution.
+  Portable, auditable reference implementation for Windows operators.
+  NOT a production agent: no retry policy, no persistent claim/lease loop.
 
-  Mandatory Ed25519 verification: this script never ships a switch that
-  skips signature verification. PowerShell's native crypto surface
-  (System.Security.Cryptography) does not yet reliably expose Ed25519
-  across supported Windows PowerShell 7 runtimes, so -Step verify shells
-  out to the pinned Node 22 helper (reference/lib/canonicalize.cjs, itself
-  a thin wrapper around packages/agent/src/signing/index.js -- the SAME
-  verifier the production agent uses) rather than reimplementing Ed25519
-  verification in .NET. This is the "pinned Node 22 helper" this issue's
-  scope calls for; the failure mode when Node is missing/too old is a
-  clear, named, fail-closed error, never a silent weaker fallback.
+  Mandatory Ed25519 verification uses the pinned Node helper at
+  reference/lib/canonicalize.cjs (self-contained; shells out for verify).
 
 .PARAMETER Mode
-  "executor" or "agent". Required, no default.
+  Must be "agent" (only supported mode).
 
 .PARAMETER Step
-  all | register | heartbeat | claim | result | verify. Required, no default.
-  "verify" is local-only (no network call). "all" walks
-  register -> heartbeat -> claim -> result in sequence, plus verify if
-  -JobFile is also given.
+  all | register | heartbeat | claim | result | verify. Required.
+  verify is local-only. all walks register -> heartbeat -> claim ->
+  verify (claimed jobs when -Execute; else optional -JobFile verify) ->
+  result.
 
 .EXAMPLE
   ./tokentimer-protocol.ps1 -Mode agent -Step register -ApiUrl https://example.test -Json
@@ -40,13 +29,13 @@
   ./tokentimer-protocol.ps1 -Mode agent -Step verify -JobFile job.json -PubKeyFile pub.pem -SigningKeyId signing-key-1
 
 .EXAMPLE
-  ./tokentimer-protocol.ps1 -Mode agent -Step all -ApiUrl https://example.test -JobFile job.json -PubKeyFile pub.pem -SigningKeyId signing-key-1
+  ./tokentimer-protocol.ps1 -Mode agent -Step all -ApiUrl https://example.test -Execute -PubKeyFile pub.pem -SigningKeyId signing-key-1
 #>
 
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("executor", "agent")]
+  [ValidateSet("agent")]
   [string]$Mode,
 
   [Parameter(Mandatory = $true)]
@@ -54,7 +43,6 @@ param(
   [string]$Step,
 
   [string]$ApiUrl,
-  [string]$WorkspaceId,
   [string]$AgentId,
   [string]$ProtocolVersion = "1.0.0",
   [string]$BootstrapTokenFile,
@@ -71,7 +59,8 @@ param(
   [string]$ErrorMessageText,
   [string]$CaBundle,
   [switch]$Execute,
-  [switch]$Json
+  [switch]$Json,
+  [switch]$SkipTimeWindow
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,12 +68,10 @@ Set-StrictMode -Version Latest
 
 $script:LastVerifyAllowed = $false
 $script:LastRequestOk = $false
+$script:LastResponse = $null
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CanonicalizeJs = Join-Path $ScriptDir "lib/canonicalize.cjs"
-# packages/agent/package.json engines.node ">=22.0.0 <25.0.0" (kept in sync
-# manually with that file; both express the same "pinned Node 22" contract).
-$RequiredNodeMajor = 22
 
 function Write-Log {
   param([string]$Message)
@@ -102,15 +89,15 @@ function Fail {
 function Assert-PinnedNode {
   $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
   if (-not $nodeCmd) {
-    Fail "node is required (pinned Node $RequiredNodeMajor+) for mandatory Ed25519 signature verification; none found on PATH"
+    Fail "node is required (>=22 and <25) for mandatory Ed25519 signature verification; none found on PATH"
   }
   $versionOutput = & node -v
   if ($versionOutput -notmatch '^v(\d+)\.') {
     Fail "could not parse Node version from 'node -v' output: $versionOutput"
   }
   $major = [int]$Matches[1]
-  if ($major -lt $RequiredNodeMajor) {
-    Fail "Node $versionOutput is too old; this script requires the pinned Node $RequiredNodeMajor+ helper (see packages/agent/package.json engines.node)"
+  if ($major -lt 22 -or $major -ge 25) {
+    Fail "Node $versionOutput is outside the required range >=22 and <25 (see packages/agent/package.json engines.node)"
   }
   Write-Log "Node check ok: $versionOutput"
 }
@@ -120,17 +107,18 @@ function Read-SecretFile {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
     Fail "$Label file not found: $Path"
   }
-  # Windows ACLs, not POSIX mode bits: best-effort check that no principal
-  # beyond the owner/Administrators/SYSTEM has explicit access, mirroring
-  # (in spirit, not bytes) install-agent.sh's `chmod 600` gate on POSIX.
-  $acl = Get-Acl -LiteralPath $Path
-  $unexpected = $acl.Access | Where-Object {
+  try {
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+  } catch {
+    Fail "could not inspect ACL for $Label file ${Path}: $($_.Exception.Message)"
+  }
+  $unexpected = @($acl.Access | Where-Object {
     $_.IdentityReference.Value -notmatch '\\(Administrators|SYSTEM)$' -and
     $_.IdentityReference.Value -ne $acl.Owner
-  }
-  if ($unexpected) {
+  })
+  if ($unexpected.Count -gt 0) {
     $names = ($unexpected | ForEach-Object { $_.IdentityReference.Value }) -join ", "
-    Write-Log "WARNING: $Label file $Path grants access to additional principals: $names (expected owner/Administrators/SYSTEM only)"
+    Fail "$Label file $Path grants access to additional principals: $names (expected owner/Administrators/SYSTEM only)"
   }
   $value = (Get-Content -LiteralPath $Path -Raw).Trim()
   if ([string]::IsNullOrEmpty($value)) {
@@ -159,9 +147,27 @@ function Resolve-Credential {
   Fail "no credential: set `$env:TOKENTIMER_AGENT_CREDENTIAL or pass -CredentialFile (never as a plain argument value)"
 }
 
+function Assert-ApiUrl {
+  if ($ApiUrl -notmatch '^https?://') {
+    Fail "-ApiUrl must start with http:// or https://"
+  }
+  if ($ApiUrl -match '^https://') { return }
+  try {
+    $uri = [Uri]$ApiUrl
+    $hostName = $uri.Host.ToLowerInvariant()
+    if ($hostName -in @('localhost', '127.0.0.1', '::1')) {
+      if (-not $Execute) {
+        Write-Log "WARNING: -ApiUrl uses plain http:// against loopback; acceptable for local control planes only"
+      }
+      return
+    }
+  } catch {
+    Fail "-ApiUrl is not a valid URI: $ApiUrl"
+  }
+  Fail "-ApiUrl uses plain http:// against a non-loopback host; use https:// or loopback (localhost, 127.0.0.1, ::1)"
+}
+
 function New-RandomId {
-  # 32 lowercase-hex chars; matches the Bash script's openssl-rand-based id
-  # shape for reference-client demo purposes only, not a production nonce.
   -join ((1..16) | ForEach-Object { "{0:x2}" -f (Get-Random -Maximum 256) })
 }
 
@@ -171,59 +177,65 @@ function Get-IsoNow {
 
 function Get-RouteForStep {
   param([string]$StepName)
-  switch ("$Mode`:$StepName") {
-    "executor:register" { "/api/v1/certops/executor/observations" }
-    "agent:register"     { "/api/v1/certops/agent/register" }
-    "agent:heartbeat"    { "/api/v1/certops/agent/heartbeat" }
-    "agent:claim"        { "/api/v1/certops/agent/jobs/claim" }
-    "agent:result"       { "/api/v1/certops/agent/jobs/results" }
-    default {
-      Fail "no known route for -Mode $Mode -Step $StepName (executor mode only documents register/observations here; heartbeat/claim/result are agent-mode-only surfaces)"
-    }
+  switch ($StepName) {
+    "register"  { return "/api/v1/certops/agent/register" }
+    "heartbeat" { return "/api/v1/certops/agent/heartbeat" }
+    "claim"     { return "/api/v1/certops/agent/jobs/claim" }
+    "result"    { return "/api/v1/certops/agent/jobs/results" }
+    default     { Fail "no known route for -Step $StepName" }
   }
 }
 
-<#
-.SYNOPSIS
-  Runs the "verify" step. Prints the {"allowed":...} JSON result and sets
-  $script:LastVerifyAllowed rather than using `return`, because assigning
-  a function's return value in PowerShell (`$x = Invoke-Verify`) captures
-  EVERYTHING the function writes to the success/output stream -- including
-  Write-Output calls made for -Json -- not just the explicit `return`
-  value. Callers that need the result call this as a bare statement (so
-  Write-Output reaches real stdout) and then read $script:LastVerifyAllowed.
-#>
+function Get-ClaimJobsFromResponse {
+  param($Response)
+  if ($null -eq $Response) { return @() }
+  $parsed = $Response
+  if ($parsed -is [string]) {
+    try {
+      $parsed = $parsed | ConvertFrom-Json
+    } catch {
+      Fail "claim response is not valid JSON"
+    }
+  }
+  if ($null -eq $parsed.jobs) { return @() }
+  $jobs = $parsed.jobs
+  if ($jobs -is [System.Collections.IEnumerable] -and -not ($jobs -is [string])) {
+    return @($jobs)
+  }
+  return @($jobs)
+}
+
 function Invoke-Verify {
-  if (-not $JobFile) { Fail "-JobFile is required for -Step verify" }
+  param(
+    [string]$JobPath
+  )
+  $jobPathToUse = if ($JobPath) { $JobPath } else { $JobFile }
+  if (-not $jobPathToUse) { Fail "-JobFile is required for -Step verify" }
   if (-not $PubKeyFile) { Fail "-PubKeyFile is required for -Step verify" }
   if (-not $SigningKeyId) { Fail "-SigningKeyId is required for -Step verify" }
-  if (-not (Test-Path -LiteralPath $JobFile -PathType Leaf)) { Fail "job file not found: $JobFile" }
+  if (-not (Test-Path -LiteralPath $jobPathToUse -PathType Leaf)) { Fail "job file not found: $jobPathToUse" }
   if (-not (Test-Path -LiteralPath $PubKeyFile -PathType Leaf)) { Fail "public key file not found: $PubKeyFile" }
   Assert-PinnedNode
 
-  $result = & node $CanonicalizeJs verify $JobFile $PubKeyFile $SigningKeyId 2>&1
+  $verifyArgs = @($CanonicalizeJs, "verify", $jobPathToUse, $PubKeyFile, $SigningKeyId)
+  if ($SkipTimeWindow) { $verifyArgs += "--skip-time-window" }
+
+  $result = & node @verifyArgs 2>&1
   $exitCode = $LASTEXITCODE
   if ($exitCode -eq 2) {
     Fail "canonicalize.cjs verify failed: $result"
   }
 
-  $parsed = $result | ConvertFrom-Json
+  $resultText = ($result | Out-String).Trim()
+  $parsed = $resultText | ConvertFrom-Json
   if ($Json) {
-    Write-Output $result
+    Write-Output $resultText
   } elseif ($parsed.allowed) {
     Write-Log "Signature OK: job is signed by the pinned key ($SigningKeyId) and matches its canonical payload."
   } else {
     Write-Log "REJECTED: $($parsed.rejectionReason) -- $($parsed.detail)"
   }
   $script:LastVerifyAllowed = [bool]$parsed.allowed
-}
-
-function Build-ExecutorRegisterBody {
-  [ordered]@{
-    schemaVersion = 1
-    workspaceId   = $WorkspaceId
-    apiTokenId    = "reference-client-demo"
-  }
 }
 
 function Build-AgentRegisterBody {
@@ -244,7 +256,7 @@ function Build-AgentRegisterBody {
 }
 
 function Build-AgentHeartbeatBody {
-  if (-not $AgentId) { Fail "-AgentId is required for -Mode agent -Step heartbeat" }
+  if (-not $AgentId) { Fail "-AgentId is required for -Step heartbeat" }
   [ordered]@{
     schemaVersion   = 1
     protocolVersion = $ProtocolVersion
@@ -256,7 +268,7 @@ function Build-AgentHeartbeatBody {
 }
 
 function Build-AgentClaimBody {
-  if (-not $AgentId) { Fail "-AgentId is required for -Mode agent -Step claim" }
+  if (-not $AgentId) { Fail "-AgentId is required for -Step claim" }
   [ordered]@{
     schemaVersion   = 1
     protocolVersion = $ProtocolVersion
@@ -268,10 +280,10 @@ function Build-AgentClaimBody {
 }
 
 function Build-AgentResultBody {
-  if (-not $AgentId) { Fail "-AgentId is required for -Mode agent -Step result" }
-  if (-not $JobId) { Fail "-JobId is required for -Mode agent -Step result (or pass -JobFile to source it)" }
-  if (-not $AttemptId) { Fail "-AttemptId is required for -Mode agent -Step result" }
-  if (-not $ResultStatus) { Fail "-ResultStatus is required for -Mode agent -Step result" }
+  if (-not $AgentId) { Fail "-AgentId is required for -Step result" }
+  if (-not $JobId) { Fail "-JobId is required for -Step result (or derive from a verified claimed job)" }
+  if (-not $AttemptId) { Fail "-AttemptId is required for -Step result (or derive from a verified claimed job)" }
+  if (-not $ResultStatus) { Fail "-ResultStatus is required for -Step result" }
   [ordered]@{
     schemaVersion   = 1
     protocolVersion = $ProtocolVersion
@@ -294,12 +306,14 @@ function Invoke-ProtocolRequest {
 
   $route = Get-RouteForStep -StepName $StepName
   $url = "$($ApiUrl.TrimEnd('/'))$route"
-  $bodyJson = $Body | ConvertTo-Json -Depth 10 -Compress
+  $bodyJson = $Body | ConvertTo-Json -Depth 20 -Compress
+
+  $script:LastResponse = $null
 
   if (-not $Execute) {
     if ($Json) {
       $dryRun = [ordered]@{ dryRun = $true; method = "POST"; url = $url; body = $Body }
-      Write-Output ($dryRun | ConvertTo-Json -Depth 10 -Compress)
+      Write-Output ($dryRun | ConvertTo-Json -Depth 20 -Compress)
     } else {
       Write-Log "[dry-run] POST $url"
       Write-Log "[dry-run] Authorization: Bearer <redacted>"
@@ -311,32 +325,23 @@ function Invoke-ProtocolRequest {
 
   $headers = @{ Authorization = "Bearer $AuthHeader"; "Content-Type" = "application/json" }
   $invokeArgs = @{
-    Uri                = $url
-    Method              = "Post"
-    Headers             = $headers
-    Body                = $bodyJson
-    ContentType         = "application/json"
-    SkipHttpErrorCheck  = $true
-    StatusCodeVariable  = "statusCode"
-  }
-  if ($CaBundle) {
-    # Invoke-RestMethod has no direct --cacert equivalent; -SslProtocol/cert
-    # pinning is out of scope for this reference client, so surface a clear
-    # limitation instead of silently ignoring -CaBundle.
-    Write-Log "WARNING: -CaBundle is not applied by this PowerShell client's HTTP call (Invoke-RestMethod has no direct CA-bundle override); use the Bash reference client's --ca-bundle, or trust the CA in the Windows certificate store, for a private-CA control plane."
+    Uri               = $url
+    Method            = "Post"
+    Headers           = $headers
+    Body              = $bodyJson
+    ContentType       = "application/json"
+    SkipHttpErrorCheck = $true
+    StatusCodeVariable = "statusCode"
   }
 
   $response = Invoke-RestMethod @invokeArgs
+  $script:LastResponse = $response
   if ($Json) {
-    Write-Output ($response | ConvertTo-Json -Depth 10 -Compress)
+    Write-Output ($response | ConvertTo-Json -Depth 20 -Compress)
   } else {
     Write-Log "HTTP $statusCode"
-    Write-Log ($response | ConvertTo-Json -Depth 10 -Compress)
+    Write-Log ($response | ConvertTo-Json -Depth 20 -Compress)
   }
-  # See Invoke-Verify's doc comment: set a script-scoped variable instead
-  # of `return`ing this, so callers can invoke this as a bare statement
-  # (letting the Write-Output calls above reach real stdout) rather than
-  # via `$ok = Invoke-ProtocolRequest ...`, which would swallow them.
   $script:LastRequestOk = ($statusCode -ge 200 -and $statusCode -lt 300)
 }
 
@@ -345,77 +350,140 @@ function Invoke-Step {
 
   $body = $null
   $authHeader = $null
-  switch ("$Mode`:$StepName") {
-    "executor:register" {
-      if (-not $WorkspaceId) { Fail "-WorkspaceId is required for -Mode executor -Step register" }
-      $authHeader = Resolve-BootstrapToken
-      $body = Build-ExecutorRegisterBody
-    }
-    "agent:register" {
+  switch ($StepName) {
+    "register" {
       $authHeader = Resolve-BootstrapToken
       $body = Build-AgentRegisterBody
     }
-    "agent:heartbeat" {
+    "heartbeat" {
       $authHeader = Resolve-Credential
       $body = Build-AgentHeartbeatBody
     }
-    "agent:claim" {
+    "claim" {
       $authHeader = Resolve-Credential
       $body = Build-AgentClaimBody
     }
-    "agent:result" {
+    "result" {
       $authHeader = Resolve-Credential
       $body = Build-AgentResultBody
     }
     default {
-      Fail "unsupported combination: -Mode $Mode -Step $StepName"
+      Fail "unsupported -Step $StepName"
     }
   }
 
   Invoke-ProtocolRequest -StepName $StepName -Body $body -AuthHeader $authHeader
 }
 
-function Invoke-All {
-  if ($Mode -ne "agent") {
-    Fail "-Step all is only defined for -Mode agent (executor mode has a single register step; call it directly with -Step register)"
+function Set-JobFieldsFromClaimedJob {
+  param($Job)
+  if ($null -eq $Job) { return }
+  if ($Job.jobId) { $script:JobId = [string]$Job.jobId }
+  if ($Job.attemptId) {
+    $script:AttemptId = [string]$Job.attemptId
+  } elseif ($Job.claimId) {
+    $script:AttemptId = [string]$Job.claimId
   }
+}
+
+function Invoke-VerifyJobObject {
+  param(
+    [Parameter(Mandatory = $true)]
+    $Job,
+    [Parameter(Mandatory = $true)]
+    [string]$TempPrefix,
+    [Parameter(Mandatory = $true)]
+    [bool]$FailOnReject
+  )
+  $tempJob = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "$TempPrefix-$(New-RandomId).json")
+  try {
+    $jobJson = $Job | ConvertTo-Json -Depth 30 -Compress
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($tempJob, $jobJson, $enc)
+    Invoke-Verify -JobPath $tempJob
+    if ($FailOnReject -and -not $script:LastVerifyAllowed) {
+      Fail "verify rejected a claimed job; aborting before result"
+    }
+  } finally {
+    if (Test-Path -LiteralPath $tempJob) {
+      Remove-Item -LiteralPath $tempJob -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Invoke-All {
+  if ($Execute) {
+    if (-not $PubKeyFile) { Fail "-PubKeyFile is required for -Step all with -Execute" }
+    if (-not $SigningKeyId) { Fail "-SigningKeyId is required for -Step all with -Execute" }
+  }
+
   if (-not $AgentId) {
     $script:AgentId = "ref-agent-$(New-RandomId)"
     Write-Log "generated -AgentId $AgentId for this 'all' run (pass -AgentId explicitly to reuse an existing registration)"
   }
-  # Source job-id/attempt-id/signing-key-id defaults from -JobFile when the
-  # operator did not pass them explicitly, so "all -JobFile X" is a
-  # complete, self-contained walkthrough.
-  if ($JobFile -and (Test-Path -LiteralPath $JobFile -PathType Leaf)) {
+
+  if ($JobFile -and (Test-Path -LiteralPath $JobFile -PathType Leaf) -and -not $Execute) {
     Assert-PinnedNode
     if (-not $JobId) {
-      $script:JobId = & node $CanonicalizeJs extract-field $JobFile jobId 2>$null
+      $extracted = & node $CanonicalizeJs extract-field $JobFile jobId 2>$null
+      if ($LASTEXITCODE -eq 0 -and $extracted) { $script:JobId = $extracted.Trim() }
     }
     if (-not $AttemptId) {
-      $script:AttemptId = "ref-attempt-$(New-RandomId)"
+      $extracted = & node $CanonicalizeJs extract-field $JobFile attemptId 2>$null
+      if ($LASTEXITCODE -eq 0 -and $extracted) {
+        $script:AttemptId = $extracted.Trim()
+      } else {
+        $script:AttemptId = "ref-attempt-$(New-RandomId)"
+      }
     }
     if (-not $SigningKeyId) {
-      $script:SigningKeyId = & node $CanonicalizeJs extract-field $JobFile signingKeyId 2>$null
+      $extracted = & node $CanonicalizeJs extract-field $JobFile signingKeyId 2>$null
+      if ($LASTEXITCODE -eq 0 -and $extracted) { $script:SigningKeyId = $extracted.Trim() }
     }
   }
+
   if (-not $JobId) { $script:JobId = "ref-job-$(New-RandomId)" }
   if (-not $AttemptId) { $script:AttemptId = "ref-attempt-$(New-RandomId)" }
   if (-not $ResultStatus) { $script:ResultStatus = "dry_run_complete" }
 
   Write-Log "=== step 1/4: register ==="
   Invoke-Step -StepName "register"
+  if ($Execute -and -not $script:LastRequestOk) { exit 1 }
 
   Write-Log "=== step 2/4: heartbeat ==="
   Invoke-Step -StepName "heartbeat"
+  if ($Execute -and -not $script:LastRequestOk) { exit 1 }
 
   Write-Log "=== step 3/4: claim ==="
   Invoke-Step -StepName "claim"
+  if ($Execute -and -not $script:LastRequestOk) { exit 1 }
+
+  if ($Execute) {
+    Write-Log "=== step 4/5: verify claimed jobs ==="
+    $claimedJobs = Get-ClaimJobsFromResponse -Response $script:LastResponse
+    if ($claimedJobs.Count -eq 0) {
+      Write-Log "claim returned zero jobs; nothing to verify or report"
+      return
+    }
+    $index = 0
+    foreach ($job in $claimedJobs) {
+      $index++
+      Write-Log "verify claimed job $index/$($claimedJobs.Count)"
+      Invoke-VerifyJobObject -Job $job -TempPrefix "tokentimer-claimed-job" -FailOnReject $true
+    }
+    Set-JobFieldsFromClaimedJob -Job $claimedJobs[0]
+    if (-not $ResultStatus) { $script:ResultStatus = "dry_run_complete" }
+    Write-Log "=== step 5/5: result ==="
+    Invoke-Step -StepName "result"
+    if (-not $script:LastRequestOk) { exit 1 }
+    return
+  }
 
   if ($JobFile -and $PubKeyFile -and $SigningKeyId) {
-    Write-Log "=== step (extra): verify ==="
+    Write-Log "=== step (extra): verify -JobFile ==="
     Invoke-Verify
     if (-not $script:LastVerifyAllowed) {
-      Write-Log "verify rejected the job; continuing with the 'all' walkthrough anyway (this is a demo, not a real dispatch loop)"
+      Write-Log "verify rejected the job; continuing dry-run walkthrough (pass -Execute for fail-closed verify)"
     }
   }
 
@@ -424,16 +492,17 @@ function Invoke-All {
 }
 
 function Main {
+  if ($CaBundle) {
+    Fail "-CaBundle is not supported by this PowerShell client; use the system trust store or the Bash reference client (--ca-bundle)"
+  }
+
   if ($Step -eq "verify") {
     Invoke-Verify
     exit ([int](-not $script:LastVerifyAllowed))
   }
 
   if (-not $ApiUrl) { Fail "-ApiUrl is required for -Step $Step" }
-  if ($ApiUrl -notmatch '^https?://') { Fail "-ApiUrl must start with http:// or https://" }
-  if ($ApiUrl -like "http://*") {
-    Write-Log "WARNING: -ApiUrl uses plain http://; only appropriate for local/loopback control planes"
-  }
+  Assert-ApiUrl
 
   if ($Step -eq "all") {
     Invoke-All
@@ -441,7 +510,7 @@ function Main {
   }
 
   Invoke-Step -StepName $Step
-  if (-not $script:LastRequestOk) { exit 1 }
+  if ($Execute -and -not $script:LastRequestOk) { exit 1 }
 }
 
 Main
