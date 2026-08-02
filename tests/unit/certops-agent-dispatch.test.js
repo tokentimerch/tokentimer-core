@@ -778,7 +778,11 @@ describe("agentDispatch.recordHeartbeat", () => {
     );
   });
 
-  it("preserves the stored capability set when a heartbeat omits declaredCapabilities", async () => {
+  // Capability declaration is three-valued. These three tests pin each arm,
+  // because collapsing "omitted" into "empty" would make capability removal
+  // impossible and leave a downgraded agent eligible for jobs it can no
+  // longer execute.
+  const heartbeatCapabilityParam = async (body) => {
     const updates = [];
     const dbPool = createMockPool((sql, params) => {
       updates.push({ sql, params });
@@ -797,7 +801,7 @@ describe("agentDispatch.recordHeartbeat", () => {
       dbPool,
       agent: agentFixture(),
       envelope: { clockOffsetMs: null },
-      body: { agentVersion: "0.2.0" },
+      body,
       deps: {
         getActiveSigningKeyPublicInfo: async () => null,
         getSigningKeyRotationNotice: async () => null,
@@ -808,12 +812,58 @@ describe("agentDispatch.recordHeartbeat", () => {
     const heartbeatWrites = updates.filter(({ sql }) =>
       sql.includes("last_seen_at = NOW()"),
     );
-    const declaredCapabilitiesParam = heartbeatWrites[0].params[11];
-    // The SQL's own CASE ... WHEN $12::jsonb = '[]'::jsonb THEN declared_capabilities
-    // is what actually preserves the stored value; here we only assert the
-    // app layer sends the empty-array sentinel rather than omitting the
-    // parameter or sending null.
-    assert.deepEqual(JSON.parse(declaredCapabilitiesParam), []);
+    assert.equal(heartbeatWrites.length, 1);
+    return { sql: heartbeatWrites[0].sql, param: heartbeatWrites[0].params[11] };
+  };
+
+  it("preserves the stored capability set when a heartbeat omits declaredCapabilities", async () => {
+    const { sql, param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+    });
+
+    // NULL is the wire representation of "omitted": the SQL's
+    // CASE ... WHEN $12::jsonb IS NULL THEN declared_capabilities arm is what
+    // preserves the stored value, so the app layer must send null here rather
+    // than an empty array (which now means "clear").
+    assert.equal(param, null);
+    assert.match(sql, /WHEN \$12::jsonb IS NULL THEN declared_capabilities/);
+  });
+
+  it("clears the stored capability set when a heartbeat sends an explicit empty array", async () => {
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+      declaredCapabilities: [],
+    });
+
+    // Present-but-empty is a deliberate declaration of "I support nothing",
+    // not a no-op, so it must reach the UPDATE as [] and overwrite the
+    // stored set.
+    assert.equal(typeof param, "string");
+    assert.deepEqual(JSON.parse(param), []);
+  });
+
+  it("replaces the stored capability set on a downgrade that drops one capability", async () => {
+    // An agent that previously declared two capabilities and is rolled back
+    // to a build supporting only one must end up with exactly the one, so it
+    // stops matching jobs gated on the capability it lost.
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.1.0",
+      declaredCapabilities: ["evidence-claim-binding-v1"],
+    });
+
+    assert.deepEqual(JSON.parse(param), ["evidence-claim-binding-v1"]);
+  });
+
+  it("drops non-string and empty capability entries before replacing the set", async () => {
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+      declaredCapabilities: ["windows-cert-store-v1", "", null, 7, "iis-binding-v1"],
+    });
+
+    assert.deepEqual(JSON.parse(param), [
+      "windows-cert-store-v1",
+      "iis-binding-v1",
+    ]);
   });
 
   it("rejects a sequence regression before any heartbeat write", async () => {

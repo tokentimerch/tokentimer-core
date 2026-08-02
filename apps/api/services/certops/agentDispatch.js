@@ -591,7 +591,16 @@ async function recordHeartbeat({
     body.declaredCommandProfileNames,
     64,
   );
-  const declaredCapabilities = normalizeStringList(body.declaredCapabilities, 64);
+  // Capability declaration is three-valued, unlike the legacy list fields
+  // above: omitted preserves the stored set, an explicitly-sent empty array
+  // clears it, and a non-empty array replaces it. Collapsing "absent" and
+  // "empty" into one preserve-only rule would make capability *removal*
+  // impossible, so an agent downgraded to a build that no longer supports a
+  // capability would stay eligible for jobs it can no longer execute. NULL
+  // is the wire representation of "omitted" for the UPDATE below.
+  const declaredCapabilities = Array.isArray(body.declaredCapabilities)
+    ? JSON.stringify(normalizeStringList(body.declaredCapabilities, 64))
+    : null;
 
   return await withTransaction(dbPool, async (client) => {
     // Sequence enforcement runs after auth (route middleware) and before
@@ -624,7 +633,7 @@ async function recordHeartbeat({
                 ELSE $10::jsonb
               END,
               declared_capabilities = CASE
-                WHEN $12::jsonb = '[]'::jsonb THEN declared_capabilities
+                WHEN $12::jsonb IS NULL THEN declared_capabilities
                 ELSE $12::jsonb
               END,
               protocol_version = COALESCE($11, protocol_version),
@@ -645,7 +654,7 @@ async function recordHeartbeat({
         JSON.stringify(declaredTargetSelectors),
         JSON.stringify(declaredCommandProfileNames),
         envelope.protocolVersion || null,
-        JSON.stringify(declaredCapabilities),
+        declaredCapabilities,
       ],
     );
 
