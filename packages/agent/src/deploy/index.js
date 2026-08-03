@@ -1094,6 +1094,7 @@ async function deployCertificateAndKey({
     } catch (err) {
       if (err?.code !== "ENOENT") {
         if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+        if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
         return failure(
           "read-existing",
           `deploy: could not read existing certificate: ${err?.message || err}`,
@@ -1117,6 +1118,7 @@ async function deployCertificateAndKey({
       } catch (err) {
         if (err?.code !== "ENOENT") {
           if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+          if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
           return failure(
             "read-existing",
             `deploy: could not read existing chain: ${err?.message || err}`,
@@ -1136,6 +1138,7 @@ async function deployCertificateAndKey({
         existingChain.equals(Buffer.from(chainPem, "utf8")));
     if (certUnchanged && keyUnchanged && chainUnchanged) {
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
       counters.idempotentSkips += 1;
       return {
         deployed: false,
@@ -1179,6 +1182,7 @@ async function deployCertificateAndKey({
       }
     } catch (err) {
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
       return failure("backup", `deploy: could not write backup: ${err?.message || err}`);
     }
 
@@ -1255,6 +1259,7 @@ async function deployCertificateAndKey({
     } catch (err) {
       const rolledBack = await rollbackPair();
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
       return failure(
         "write",
         `deploy: atomic key+certificate write failed: ${err?.message || err}`,
@@ -1277,6 +1282,7 @@ async function deployCertificateAndKey({
     }
 
     if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+    if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
 
     // Retention pruning runs AFTER the deploy is already durably committed
     // and is best-effort (see pruneDeployBackups docblock) -- it must never
