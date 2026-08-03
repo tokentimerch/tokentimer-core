@@ -28,6 +28,7 @@ const {
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   createCertificateJob,
   isTerminalJobStatus,
+  isTrustAnchorOperation,
 } = require("./jobs");
 const {
   CERTOPS_WORKSPACE_PAUSED,
@@ -332,6 +333,18 @@ async function createRenewalJobForCertificate({
   mode = "real",
   auditWriter = writeAudit,
 }) {
+  // By-construction exclusion (ADR-0012 decision 14): the renewal scheduler
+  // creates exactly one operation, hardcoded below. isTrustAnchorOperation
+  // can never be true for a literal "renew" and this assertion exists so
+  // that stays true even if a future refactor parameterized the operation
+  // instead of hardcoding it, at which point this throws in tests rather
+  // than silently letting a trust job get picked up as a renewal.
+  if (isTrustAnchorOperation("renew")) {
+    throw new Error(
+      "renewalScheduler: 'renew' must never be a trust-anchor operation",
+    );
+  }
+
   // Resolve the immutable execution contract BEFORE opening the insert
   // transaction. Incomplete profiles never create a job row.
   const payload = buildRenewalJobPayload({ certificate });

@@ -154,12 +154,7 @@ describe("CertOps certificate renewal-state derivation", () => {
   });
 
   it("reports not-eligible for key custody no agent can write back to", () => {
-    for (const keyMode of [
-      "os-store-managed",
-      "vault-managed",
-      "external-unknown",
-      null,
-    ]) {
+    for (const keyMode of ["vault-managed", "external-unknown", null]) {
       const renewal = deriveCertificateRenewalState(
         certificateRow({ key_mode: keyMode }),
         { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
@@ -174,6 +169,22 @@ describe("CertOps certificate renewal-state derivation", () => {
   it("treats proxy-agent-local custody as renewable", () => {
     const renewal = deriveCertificateRenewalState(
       certificateRow({ key_mode: "proxy-agent-local" }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "auto");
+  });
+
+  it("treats os-store-managed custody as renewable now that the predicate recognizes it", () => {
+    // os-store-managed used to sit in the "no agent can write back to" bucket
+    // above. The shared custody predicate (jobs.isAgentDeployableKeyMode) now
+    // recognizes it as agent-deployable, since the agent (not an external
+    // appliance/HSM/vault) is what will rotate a Windows cert store entry.
+    // The real store/site/binding deploy path is not wired yet (Windows
+    // execution lands separately); this only asserts the eligibility signal
+    // agrees with the shared predicate.
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({ key_mode: "os-store-managed" }),
       { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
     );
 
@@ -343,7 +354,7 @@ describe("CertOps certificate renewal-state projection", () => {
             certificateRow({ id: "cert-auto" }),
             certificateRow({
               id: "cert-observed",
-              key_mode: "os-store-managed",
+              key_mode: "vault-managed",
             }),
           ],
         };

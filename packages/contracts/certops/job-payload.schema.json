@@ -124,7 +124,8 @@
             "kubernetes",
             "appliance",
             "load-balancer",
-            "external"
+            "external",
+            "windows-iis"
           ]
         },
         "reference": {
@@ -153,8 +154,37 @@
             "null"
           ],
           "pattern": "^[a-f0-9]{64}$"
+        },
+        "store": {
+          "$ref": "#/definitions/windowsStoreName"
+        },
+        "binding": {
+          "$ref": "#/definitions/windowsIisBinding"
+        },
+        "thumbprintSha1": {
+          "$ref": "#/definitions/windowsThumbprintSha1"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "store",
+              "binding"
+            ]
+          }
+        }
+      ]
     },
     "keyMode": {
       "type": "string",
@@ -316,7 +346,8 @@
               "kubernetes",
               "appliance",
               "load-balancer",
-              "external"
+              "external",
+              "windows-iis"
             ]
           },
           "reference": {
@@ -417,8 +448,37 @@
             "minimum": 1,
             "maximum": 64,
             "description": "Optional bounded count of retained backups per destination basename."
+          },
+          "store": {
+            "$ref": "#/definitions/windowsStoreName"
+          },
+          "binding": {
+            "$ref": "#/definitions/windowsIisBinding"
+          },
+          "thumbprintSha1": {
+            "$ref": "#/definitions/windowsThumbprintSha1"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "windows-iis"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "store",
+                "binding"
+              ]
+            }
+          }
+        ]
       }
     },
     "keyPath": {
@@ -499,6 +559,54 @@
     }
   },
   "definitions": {
+    "windowsStoreName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9 _.-]{1,64}$",
+      "description": "Windows machine certificate store name for a windows-iis target (e.g. My, WebHosting, or an operator-defined custom store). Not the trust-anchor Root/CA stores, which are derived server-side from anchorType (see trust-job-payload.schema.json) rather than accepted here."
+    },
+    "windowsIisBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site",
+        "port"
+      ],
+      "properties": {
+        "site": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9 _.:-]{1,256}$",
+          "description": "IIS site name or numeric site id."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port the binding listens on."
+        },
+        "sniHost": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$",
+          "description": "Optional SNI hostname selecting the certificate under a wildcard binding (*:port, 0.0.0.0:port, [::]:port)."
+        }
+      }
+    },
+    "windowsThumbprintSha1": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[A-Fa-f0-9]{40}$",
+      "description": "SHA-1 hex thumbprint identifying a certificate in a Windows certificate store or IIS binding. Not a security digest; Windows stores and IIS key on SHA-1 thumbprints natively."
+    },
     "publicMetadataEntry": {
       "type": "object",
       "additionalProperties": false,
