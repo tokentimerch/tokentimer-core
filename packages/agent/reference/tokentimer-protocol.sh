@@ -119,10 +119,14 @@ readonly EXIT_PREGATE=4
 readonly EXIT_SIZE_LIMIT=5
 
 print_help() {
-  # Reprints the usage block above verbatim so --help stays in sync with
-  # the header comment: sed/awk are not declared dependencies, so this is
-  # a plain heredoc rather than an extraction from the comment block.
-  cat <<'EOF_HELP'
+  # Reprints the usage block above verbatim so --help stays in sync
+  # with the header comment. `cat` is not one of this client's four
+  # declared external dependencies (bash, curl, jq, openssl -- ADR-0012
+  # decision 8), so the heredoc is captured with the bash builtins
+  # `read -d ''` and re-emitted with `printf`, never handed to an
+  # external process.
+  local help_text
+  IFS= read -r -d '' help_text <<'EOF_HELP' || true
 tokentimer-protocol.sh - Node-free bash reference client for the
 TokenTimer CertOps agent protocol.
 
@@ -162,6 +166,7 @@ Flags:
 Exit codes: 0 ok, 1 signature verification failed, 2 usage error,
 3 network/HTTP error, 4 local pre-gate failure, 5 size limit exceeded.
 EOF_HELP
+  printf '%s\n' "$help_text"
 }
 
 # --- logging ---------------------------------------------------------------
@@ -372,14 +377,13 @@ check_secret_file_mode() {
   if [ ! -f "$path" ]; then
     die_usage "credential/bootstrap-token file not found: $path"
   fi
-  local perms
-  perms=$(TZ=UTC0 stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null || echo "")
-  if [ -n "$perms" ]; then
-    local other_group="${perms: -2}"
-    if [ "$other_group" != "00" ]; then
-      log_info "warning: $path is readable by group or other (mode $perms); tighten it to 600"
-    fi
-  fi
+  # No permission-mode advisory here: reading octal mode bits needs
+  # `stat` (GNU) or `stat -f` (BSD), and this client's declared
+  # dependency list is exactly bash, curl, jq, and openssl (ADR-0012
+  # decision 8) -- a "just advisory" warning is not worth a fifth,
+  # undeclared external command. Callers are responsible for setting
+  # restrictive permissions on credential/bootstrap-token files
+  # themselves; this function only guards existence.
 }
 
 load_secret_file() {
@@ -431,7 +435,7 @@ http_post_json() {
   # parameter stays uniform).
   local url="$1" token="$2" body="$3" max_bytes="$4"
   local config
-  config=$(cat <<EOF_CONFIG
+  IFS= read -r -d '' config <<EOF_CONFIG || true
 url = "$(curl_config_escape "$url")"
 request = "POST"
 header = "content-type: application/json"
@@ -441,7 +445,6 @@ silent
 show-error
 max-time = 30
 EOF_CONFIG
-)
   TOKENTIMER_HTTP_STATUS=""
   TOKENTIMER_HTTP_BODY=""
   bounded_read_capture "$(( max_bytes + 3 ))" < <(
@@ -849,7 +852,8 @@ build_envelope() {
   local message_type="$1" body_json="$2" sequence="${3:-}" clock_offset="${4:-}"
   local sent_at
   sent_at=$(now_iso8601)
-  jq -nc \
+  local out
+  out=$(jq -nc \
     --arg schemaVersion "$TOKENTIMER_SCHEMA_VERSION" \
     --arg protocolVersion "$TOKENTIMER_PROTOCOL_VERSION" \
     --arg messageType "$message_type" \
@@ -863,9 +867,19 @@ build_envelope() {
       agentId: $agentId,
       sentAt: $sentAt,
       body: $body
-    }' \
-    | if [ -n "$sequence" ]; then jq -c --argjson sequence "$sequence" '. + {sequence: $sequence}'; else cat; fi \
-    | if [ -n "$clock_offset" ]; then jq -c --argjson clockOffsetMs "$clock_offset" '. + {clockOffsetMs: $clockOffsetMs}'; else cat; fi
+    }')
+  # Each optional field is applied as its own jq call only when needed,
+  # rather than piping unconditionally through a passthrough stage: `cat`
+  # is not one of this client's four declared external dependencies
+  # (bash, curl, jq, openssl -- ADR-0012 decision 8), so there is no
+  # builtin-only identity stage to fall back to inside a pipeline.
+  if [ -n "$sequence" ]; then
+    out=$(printf '%s' "$out" | jq -c --argjson sequence "$sequence" '. + {sequence: $sequence}')
+  fi
+  if [ -n "$clock_offset" ]; then
+    out=$(printf '%s' "$out" | jq -c --argjson clockOffsetMs "$clock_offset" '. + {clockOffsetMs: $clockOffsetMs}')
+  fi
+  printf '%s' "$out"
 }
 
 require_server_url() {
@@ -996,9 +1010,12 @@ step_verify() {
     if [ ! -f "$TOKENTIMER_ENVELOPE_FILE" ]; then
       die_usage "--envelope-file not found: $TOKENTIMER_ENVELOPE_FILE"
     fi
-    envelope_json=$(cat "$TOKENTIMER_ENVELOPE_FILE")
+    # `cat` is not a declared dependency; `read -d ''` is a bash builtin
+    # that reads to EOF just as well (the "|| true" absorbs read's
+    # normal EOF-without-delimiter exit status).
+    IFS= read -r -d '' envelope_json < "$TOKENTIMER_ENVELOPE_FILE" || true
   else
-    envelope_json=$(cat)
+    IFS= read -r -d '' envelope_json || true
   fi
   verify_v2_envelope "$envelope_json" "$TOKENTIMER_PUBKEY_PATH" "$TOKENTIMER_SIGNING_KEY_ID" \
     "$TOKENTIMER_WORKSPACE_ID" "$TOKENTIMER_AGENT_ID" 0
