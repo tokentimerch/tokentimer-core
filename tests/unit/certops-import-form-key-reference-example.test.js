@@ -10,12 +10,12 @@ const FORM_SOURCE_PATH = path.resolve(
   "../../apps/dashboard/src/components/certops/ImportCertificateForm.jsx",
 );
 
-// ARC-07: UI placeholders, docs, fixtures, and mocks must contain no
-// private-key path as keyReference. A prior placeholder read
+// UI placeholders, docs, fixtures, and mocks must contain no private-key
+// path as keyReference. A prior placeholder read
 // "agent-id:/etc/ssl/private/wildcard.key", which taught users to type a
 // private-key file path into the one field the zero-custody design promises
 // never becomes a leak vector.
-describe("ImportCertificateForm keyReference example (C5 / ARC-07)", () => {
+describe("ImportCertificateForm keyReference example (C5)", () => {
   const source = fs.readFileSync(FORM_SOURCE_PATH, "utf8");
 
   it("does not show a private-key-shaped filesystem path as the keyReference placeholder", () => {

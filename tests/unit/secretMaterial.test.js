@@ -737,9 +737,8 @@ describe("secretMaterial.redactGenericSecrets", () => {
 });
 
 // C1: base64url-wrapped key material, and gzip/RFC 1950 zlib compressed
-// input. See ARC-01 through ARC-05 in
-// tokentimer-canvas/plans/certops-post-ship-manual-acceptance-checklist.md.
-describe("secretMaterial base64url detection (C1 / ARC-01)", () => {
+// input.
+describe("secretMaterial base64url detection (C1)", () => {
   it("detects a base64url-wrapped private key PEM", () => {
     const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64url");
     assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
@@ -772,9 +771,9 @@ describe("secretMaterial base64url detection (C1 / ARC-01)", () => {
   });
 });
 
-// C1: compressed detector. See ARC-02 through ARC-05.
-describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () => {
-  it("recognizes and decompresses a gzip stream, then scans the result (ARC-02)", () => {
+// C1: compressed detector.
+describe("secretMaterial compressed-input detection (C1)", () => {
+  it("recognizes and decompresses a gzip stream, then scans the result", () => {
     const gz = zlib.gzipSync(Buffer.from(pem("EC PRIVATE KEY")));
     const result = classifyCompressedBuffer(gz);
     assert.equal(result.classification, COMPRESSION_CLASSIFICATION.DECOMPRESSED);
@@ -782,13 +781,13 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(gz.toString("base64")), true);
   });
 
-  it("recognizes and decompresses a common zlib header, then scans the result (ARC-02)", () => {
+  it("recognizes and decompresses a common zlib header, then scans the result", () => {
     const zl = zlib.deflateSync(Buffer.from(pem("RSA PRIVATE KEY")));
     assert.equal(zl[0], 0x78, "sanity: common zlib preset header starts with 0x78");
     assert.strictEqual(containsPrivateKeyMaterial(zl), true);
   });
 
-  it("recognizes a zlib stream using a smaller window size, not just the four common presets (ARC-02)", () => {
+  it("recognizes a zlib stream using a smaller window size, not just the four common presets", () => {
     const smallWindow = zlib.deflateSync(Buffer.from(pem("PRIVATE KEY")), {
       windowBits: 8,
     });
@@ -798,7 +797,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(smallWindow), true);
   });
 
-  it("recognizes an FDICT-flagged zlib header but never attempts decompression, and fails closed (ARC-03)", () => {
+  it("recognizes an FDICT-flagged zlib header but never attempts decompression, and fails closed", () => {
     const withDict = zlib.deflateSync(
       Buffer.from("hello world hello world hello world"),
       { dictionary: Buffer.from("hello world") },
@@ -813,7 +812,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     );
   });
 
-  it("rejects a corrupted stream that starts with a valid gzip header (ARC-03)", () => {
+  it("rejects a corrupted stream that starts with a valid gzip header", () => {
     const corrupt = Buffer.concat([
       Buffer.from([0x1f, 0x8b, 0x08, 0x00]),
       Buffer.alloc(30, 0xff),
@@ -823,7 +822,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(corrupt), true);
   });
 
-  it("rejects compressed input over the 1 MiB bound without attempting decompression (ARC-03)", () => {
+  it("rejects compressed input over the 1 MiB bound without attempting decompression", () => {
     const over = Buffer.concat([
       Buffer.from([0x1f, 0x8b]),
       Buffer.alloc(MAX_COMPRESSED_INPUT_LENGTH + 10, 0),
@@ -833,7 +832,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(over), true);
   });
 
-  it("rejects output that would exceed the compressedLength x 4 ratio bound (ARC-03)", () => {
+  it("rejects output that would exceed the compressedLength x 4 ratio bound", () => {
     const compressible = Buffer.alloc(200 * 1024, 0x41);
     const bomb = zlib.deflateSync(compressible);
     assert.ok(bomb.length * 4 < compressible.length, "sanity: fixture expands past 4x");
@@ -842,7 +841,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(bomb), true);
   });
 
-  it("accepts a small compressed input whose true decompressed size is within the ratio bound (ARC-03 control)", () => {
+  it("accepts a small compressed input whose true decompressed size is within the ratio bound", () => {
     const smallOk = Buffer.from("not very compressible text 12345!@#$%");
     const compressed = zlib.deflateSync(smallOk);
     const result = classifyCompressedBuffer(compressed);
@@ -850,7 +849,7 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(compressed), false);
   });
 
-  it("rejects output that would exceed the absolute 4 MiB ceiling (ARC-03)", () => {
+  it("rejects output that would exceed the absolute 4 MiB ceiling", () => {
     const hugeSource = Buffer.alloc(1024 * 1024 - 100, 0x43);
     const compressed = zlib.deflateSync(hugeSource);
     assert.ok(
@@ -863,12 +862,12 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(compressed), true);
   });
 
-  it("proceeds to the ordinary scan for an uncompressed base64 payload, with no false rejection (ARC-04)", () => {
+  it("proceeds to the ordinary scan for an uncompressed base64 payload, with no false rejection", () => {
     const ordinaryCert = Buffer.from(pem("CERTIFICATE")).toString("base64");
     assert.strictEqual(containsPrivateKeyMaterial(ordinaryCert), false);
   });
 
-  it("does not attempt raw headerless deflate; scans it directly instead (ARC-04)", () => {
+  it("does not attempt raw headerless deflate; scans it directly instead", () => {
     const rawDeflate = zlib.deflateRawSync(
       Buffer.from("just some public metadata, not a key"),
     );
@@ -877,21 +876,46 @@ describe("secretMaterial compressed-input detection (C1 / ARC-02..ARC-05)", () =
     assert.strictEqual(containsPrivateKeyMaterial(rawDeflate), false);
   });
 
-  it("treats a near-miss header (first byte 0x78, failing checksum) as ordinary input (ARC-04)", () => {
+  it("treats a near-miss header (first byte 0x78, failing checksum) as ordinary input", () => {
     const nearMiss = Buffer.from([0x78, 0x00, 0x01, 0x02]);
     assert.notEqual(((0x78 << 8) | 0x00) % 31, 0, "sanity: fixture fails the modulo-31 check");
     const result = classifyCompressedBuffer(nearMiss);
     assert.equal(result.classification, COMPRESSION_CLASSIFICATION.NOT_COMPRESSED);
   });
 
-  it("does not recursively unwrap a nested (gzip-of-gzip) payload (ARC-05)", () => {
+  it("fails closed on a nested (gzip-of-gzip) payload instead of unwrapping it", () => {
+    // Nesting compression must not let key material evade the ratio/size
+    // ceilings that apply to a single layer: the outer gzip here is a small,
+    // innocuous-looking blob, but it hides a real private key one layer
+    // further in. Silently accepting this (as a single-pass decompression
+    // followed by a scan of the still-compressed inner bytes previously
+    // did) is a fail-open bypass, not a safe default.
     const innerGz = zlib.gzipSync(Buffer.from(pem("PRIVATE KEY")));
     const nestedGz = zlib.gzipSync(innerGz);
     const result = classifyCompressedBuffer(nestedGz);
+    assert.equal(result.classification, COMPRESSION_CLASSIFICATION.REJECTED);
+    assert.strictEqual(result.decoded, null);
+    assert.strictEqual(containsPrivateKeyMaterial(nestedGz), true);
+    assert.throws(
+      () => assertNoPrivateKeyMaterial(nestedGz),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  });
+
+  it("fails closed on a nested zlib-of-gzip payload as well, not just gzip-of-gzip", () => {
+    const innerGz = zlib.gzipSync(Buffer.from(pem("EC PRIVATE KEY")));
+    const nestedZlib = zlib.deflateSync(innerGz);
+    const result = classifyCompressedBuffer(nestedZlib);
+    assert.equal(result.classification, COMPRESSION_CLASSIFICATION.REJECTED);
+    assert.strictEqual(containsPrivateKeyMaterial(nestedZlib), true);
+  });
+
+  it("still accepts single-level compression whose decompressed output is ordinary, non-compressed content", () => {
+    // Control for the two nested-compression cases above: a normal,
+    // single-wrap gzip payload must still decompress and scan cleanly.
+    const gz = zlib.gzipSync(Buffer.from(pem("PRIVATE KEY")));
+    const result = classifyCompressedBuffer(gz);
     assert.equal(result.classification, COMPRESSION_CLASSIFICATION.DECOMPRESSED);
-    // The single-pass result is still gzip bytes (the real key needs a
-    // second unwrap to reach); detection must not find it, proving there is
-    // no recursive decompression happening under the hood.
-    assert.strictEqual(containsPrivateKeyMaterial(nestedGz), false);
+    assert.strictEqual(containsPrivateKeyMaterial(gz), true);
   });
 });

@@ -25,11 +25,11 @@ const FAKE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
 const pem = (label) =>
   `-----BEGIN ${label}-----\n${FAKE_BODY}\n-----END ${label}-----`;
 
-// C3 (ARC-08): apps/worker/src/logger.js wires Winston directly into
+// C3: apps/worker/src/logger.js wires Winston directly into
 // @tokentimer/log-scrub's sanitizeLogRecord (an ES module import, so this
 // suite exercises the same function through the CommonJS package entry
 // point rather than importing the worker's ESM logger module directly).
-describe("worker logger redaction parity (C3 / ARC-08)", () => {
+describe("worker logger redaction parity (C3)", () => {
   it("wires apps/worker/src/logger.js through @tokentimer/log-scrub's sanitizeLogRecord", () => {
     const workerLoggerSource = fs.readFileSync(workerLoggerPath, "utf8");
     assert.match(workerLoggerSource, /@tokentimer\/log-scrub/);

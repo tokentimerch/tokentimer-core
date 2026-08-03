@@ -1511,9 +1511,8 @@ describe("CertOps contract skeletons", () => {
 });
 
 // C6: keyReference has one unified maximum length everywhere it is
-// validated. See ARC-09 in
-// tokentimer-canvas/plans/certops-post-ship-manual-acceptance-checklist.md.
-describe("keyReference maxLength parity (C6 / ARC-09)", () => {
+// validated.
+describe("keyReference maxLength parity (C6)", () => {
   const {
     KEY_REFERENCE_MAX_LENGTH,
   } = require("../../apps/api/services/certops/inventory");

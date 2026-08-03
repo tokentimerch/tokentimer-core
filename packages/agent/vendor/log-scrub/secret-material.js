@@ -34,23 +34,29 @@ const zlib = require("zlib");
  *
  * Compressed input: a base64/base64url/hex-decoded (or raw) buffer that begins
  * with a recognized gzip (`1F 8B`) or RFC 1950 zlib header is decompressed
- * exactly once (never recursively) and the result is scanned in its place.
- * Recognition of a zlib header is algorithmic against the two-byte header
- * (CMF, FLG), not an enumerated allow-list of common compression-level byte
- * pairs, so a smaller window size or a set preset-dictionary flag is still
- * recognized as compressed input. Two independent bounds apply once a
- * recognized header is found: the compressed buffer itself must not exceed
+ * exactly once and the result is scanned in its place. Recognition of a zlib
+ * header is algorithmic against the two-byte header (CMF, FLG), not an
+ * enumerated allow-list of common compression-level byte pairs, so a smaller
+ * window size or a set preset-dictionary flag is still recognized as
+ * compressed input. Two independent bounds apply once a recognized header is
+ * found: the compressed buffer itself must not exceed
  * `MAX_COMPRESSED_INPUT_LENGTH`, and the decompression call's own output-size
  * parameter is capped to `min(MAX_DECOMPRESSED_OUTPUT_LENGTH, compressedLength
  * * DECOMPRESSED_OUTPUT_RATIO)` so the library itself refuses to materialize a
  * decompression bomb. A stream with the preset-dictionary flag (`FDICT`) set,
- * a stream whose compressed length or decoded-output bound is exceeded, and a
- * stream that presents a valid header but fails to decompress cleanly all
- * report the same fail-closed outcome as detected key material, never a
- * silent fall-through to the ordinary content scan. A buffer with neither
- * recognized header proceeds directly to the ordinary scan: that is the
- * default path for the overwhelming majority of legitimate, uncompressed
- * base64 traffic and is not itself a failure mode.
+ * a stream whose compressed length or decoded-output bound is exceeded, a
+ * stream that presents a valid header but fails to decompress cleanly, and a
+ * stream whose decompressed output is itself gzip/zlib-shaped (nested
+ * compression) all report the same fail-closed outcome as detected key
+ * material, never a silent fall-through to the ordinary content scan.
+ * Rejecting nested compression outright (rather than unwrapping a second
+ * time) closes an evasion path where an attacker gzips a payload twice to
+ * slip key material past the ratio/size ceilings on the outer layer while
+ * the inner layer, which actually holds the material, never gets bounds-
+ * checked or scanned. A buffer with neither recognized header proceeds
+ * directly to the ordinary scan: that is the default path for the
+ * overwhelming majority of legitimate, uncompressed base64 traffic and is
+ * not itself a failure mode.
  */
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
@@ -583,11 +589,16 @@ const COMPRESSION_CLASSIFICATION = Object.freeze({
 
 /**
  * Classifies a buffer for the compressed-input branch. Two outcomes besides
- * "not compressed": a single successful decompression pass (never re-fed
- * into this function, closing the bomb-inside-bomb vector), or a fail-closed
- * rejection covering an oversized compressed buffer, a preset-dictionary
- * (`FDICT`) stream, a bound-exceeding decompression, and a stream that
- * presents a valid header but fails to decompress. `FDICT` is external
+ * "not compressed": a single successful decompression pass whose output is
+ * itself not compressed, or a fail-closed rejection covering an oversized
+ * compressed buffer, a preset-dictionary (`FDICT`) stream, a bound-exceeding
+ * decompression, a stream that presents a valid header but fails to
+ * decompress, and a stream whose decompressed output is itself gzip/zlib-
+ * shaped. That last case is deliberate: unwrapping a second time would let
+ * an attacker nest compression to hide key material below the ratio/size
+ * ceilings applied to the outer layer, or simply to waste CPU, so nested
+ * compression is treated the same as any other suspicious input and
+ * rejected rather than recursively decompressed. `FDICT` is external
  * material this detector does not have, so decompression is never attempted
  * for it; the caller must not treat REJECTED as "not found."
  * @param {Buffer} buffer
@@ -621,6 +632,11 @@ function classifyCompressedBuffer(buffer) {
     const decoded = isGzip
       ? zlib.gunzipSync(buffer, { maxOutputLength })
       : zlib.inflateSync(buffer, { maxOutputLength });
+    if (looksGzipHeader(decoded) || looksZlibHeader(decoded)) {
+      // Nested compression (gzip-of-gzip, zlib-of-gzip, etc.): fail closed
+      // instead of unwrapping again. See the function-level note above.
+      return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+    }
     return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded };
   } catch (_err) {
     // Covers both a corrupt/truncated stream and the library refusing to

@@ -25,9 +25,8 @@ function assertSourceRefRejected(value) {
 }
 
 // C2 (zero-custody): keyReference is a material-locality pointer, not free
-// text. See ARC-06 in
-// tokentimer-canvas/plans/certops-post-ship-manual-acceptance-checklist.md.
-describe("normalizeKeyReference locality schemes (C2 / ARC-06)", () => {
+// text.
+describe("normalizeKeyReference locality schemes (C2)", () => {
   it("accepts every scheme actually emitted or exercised elsewhere in this codebase", () => {
     // file:// - apps/api/services/certops/agentObservations.js writer format
     assert.equal(
@@ -110,10 +109,10 @@ describe("normalizeKeyReference locality schemes (C2 / ARC-06)", () => {
 // scheme allow-list (it is free text describing observation provenance, not
 // a material-locality pointer), but it is still persisted verbatim and
 // echoed back in API responses, so it gets the same content-based secret
-// checks. Regression coverage added after a live-stack ARC-10 artifact scan
-// found a canary generic secret placed in sourceRef survived unredacted into
-// the managed_certificates.source_ref column and the import response body.
-describe("normalizeSourceRef non-secret provenance (C1/C2 / ARC-10)", () => {
+// checks. Regression coverage added after a live-stack artifact scan found a
+// canary generic secret placed in sourceRef survived unredacted into the
+// managed_certificates.source_ref column and the import response body.
+describe("normalizeSourceRef non-secret provenance (C1/C2)", () => {
   it("passes through an ordinary opaque source reference unchanged", () => {
     assert.equal(
       normalizeSourceRef("provision-certops-demo:seed-01.tokentimer.test"),
@@ -129,8 +128,8 @@ describe("normalizeSourceRef non-secret provenance (C1/C2 / ARC-10)", () => {
     // high-entropy token (e.g. a raw AWS access key ID with no surrounding
     // `key=`/`key:`) is not flagged by this check for either field; for
     // keyReference that gap is closed by the mandatory scheme allow-list
-    // instead, which sourceRef intentionally has none of. See the ARC-10
-    // report for this known scope boundary.
+    // instead, which sourceRef intentionally has none of. This is a known,
+    // deliberate scope boundary of the sourceRef check, not an oversight.
     assertSourceRefRejected("import-job?password=supersecret123");
     assertSourceRefRejected("scan-result token=eyJhbGciOiJIUzI1NiJ9.abc.def");
   });

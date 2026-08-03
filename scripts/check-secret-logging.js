@@ -229,8 +229,8 @@ function checkSanitizerPresence() {
   }
 }
 
-// ARC-08: the worker logger must redact secret-bearing failures equivalently
-// to the API logger. apps/worker/src/logger.js wires Winston straight into
+// The worker logger must redact secret-bearing failures equivalently to the
+// API logger. apps/worker/src/logger.js wires Winston directly into
 // @tokentimer/log-scrub's sanitizeLogRecord rather than declaring its own
 // field list, so this check exercises the actual shared function against
 // the same REQUIRED_REDACTION_FIELDS the API logger is held to, instead of
