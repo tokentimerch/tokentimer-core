@@ -25,6 +25,7 @@
     "src",
     "!src/**/*.test.js",
     "!src/verify/fixtures/**",
+    "!src/signing/fixtures/**",
     "vendor",
     "scripts/install-agent.sh",
     "scripts/tokentimer-agent.service",
@@ -41,7 +42,8 @@
   "devDependencies": {
     "ajv": "8.18.0",
     "ajv-formats": "3.0.1",
-    "eslint": "9.39.2"
+    "eslint": "9.39.2",
+    "fast-check": "3.23.2"
   },
   "engines": {
     "node": ">=22.0.0 <25.0.0"

@@ -71,6 +71,13 @@ describe("Auto-sync worker integration", function () {
     expect(result.rows[0].processed).to.equal(0);
   });
 
+  // skip-reason: no-host - spawns the real apps/worker/src/auto-sync-worker.js
+  // process against a live Postgres instance, not available in every
+  // environment this suite runs in. Note for a maintainer:
+  // apps/worker/src/auto-sync-worker.js already calls
+  // isAutoSyncProviderAllowed() before running a scan, so this may be safe
+  // to re-enable once run against a live docker-compose stack; left skipped
+  // here rather than enabled without that verification.
   it.skip("rejects enterprise-only providers without running a scan", async () => {
     await TestUtils.execQuery(
       "DELETE FROM auto_sync_configs WHERE workspace_id = $1",

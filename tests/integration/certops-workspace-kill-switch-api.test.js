@@ -341,6 +341,9 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("rejects internal worker credentials from reading or changing settings", async function () {
+    // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
+    // test environment, so the internal-worker-credential path this test
+    // exercises cannot be driven end to end here.
     if (!INTERNAL_WORKER_KEY) this.skip();
     const authorization = `Bearer ${INTERNAL_WORKER_KEY}`;
     const stateBefore = await TestUtils.execQuery(
@@ -379,6 +382,9 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("rejects worker settings key material before the session-user denial", async function () {
+    // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
+    // test environment, so the internal-worker-credential path this test
+    // exercises cannot be driven end to end here.
     if (!INTERNAL_WORKER_KEY) this.skip();
     const rejectionAuditsBefore = await keyRejectionAudits(fixture.workspaceId);
     const privateKey = "-----BEGIN PRIVATE KEY-----\nworker-secret\n-----END PRIVATE KEY-----";
@@ -525,6 +531,9 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("keeps a same-request idempotent manual-job replay to one audit", async function () {
+    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // environment, so the real-PostgreSQL CertOps pause/manual-job path this
+    // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
     const subjectId = `manual-idempotency-${crypto.randomUUID()}`;
     const body = {
@@ -584,6 +593,9 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("keeps machine event and evidence ingestion available for pre-existing work while paused", async function () {
+    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // environment, so the real-PostgreSQL CertOps pause/manual-job path this
+    // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
     const paused = await request(BASE)
       .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
@@ -711,6 +723,9 @@ describe("CertOps workspace kill-switch API", function () {
   });
 
   it("serializes real PostgreSQL pause and manual-job races in both commit orders", async function () {
+    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // environment, so the real-PostgreSQL CertOps pause/manual-job path this
+    // test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
     const subjectAfterPause = `pause-first-${crypto.randomUUID()}`;
     const pauseAuditEntered = deferred();
