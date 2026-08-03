@@ -2934,6 +2934,192 @@ const migrations = [
         ON certops_diagnostic_bootstrap_requests(expires_at);
     `,
   },
+  {
+    version: 42,
+    name: "certops_windows_iis_target_descriptors",
+    sql: `
+      -- Windows execution surface (ADR-0012 decisions 1, 9, 10): an IIS
+      -- deploy destination is a machine certificate store plus a site
+      -- binding (site, port, optional SNI host), keyed on thumbprint rather
+      -- than a filesystem path. certificate_targets is where every other
+      -- target-type-specific descriptor already lives (hostname, url,
+      -- deployment_reference), so these columns join that set rather than
+      -- starting a parallel table: a windows-iis row is still one
+      -- certificate_targets row, just with a different subset of columns
+      -- populated, the same shape every other target_type already uses.
+      --
+      -- All four columns are nullable and unconstrained against target_type
+      -- at the database layer: enforcing "populated only for windows-iis" as
+      -- a CHECK would need a multi-column conditional CHECK that duplicates
+      -- the validation validateTargetConfig (packages/agent/src/deploy) and
+      -- renewalProfile.js's validateTarget already own, and having both
+      -- enforce it invites them to drift. The database stores; the service
+      -- layer validates.
+      ALTER TABLE certificate_targets
+        ADD COLUMN IF NOT EXISTS windows_store TEXT NULL
+          CHECK (windows_store IS NULL OR windows_store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        ADD COLUMN IF NOT EXISTS windows_site TEXT NULL
+          CHECK (windows_site IS NULL OR windows_site ~ '^[A-Za-z0-9 _.:-]{1,256}$'),
+        ADD COLUMN IF NOT EXISTS windows_port INTEGER NULL
+          CHECK (windows_port IS NULL OR windows_port BETWEEN 1 AND 65535),
+        ADD COLUMN IF NOT EXISTS windows_sni_host TEXT NULL
+          CHECK (
+            windows_sni_host IS NULL
+            OR windows_sni_host ~ '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+          );
+
+      -- "windows-iis" joins the target_type vocabulary the same way every
+      -- earlier target type did (see the certificate_targets_source_check
+      -- pattern above): widen the enum additively, never CREATE TYPE.
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_target_type_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_target_type_check CHECK (
+          target_type IN (
+            'endpoint', 'domain', 'host', 'kubernetes-secret',
+            'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other',
+            'windows-iis'
+          )
+        );
+    `,
+  },
+  {
+    version: 43,
+    name: "certops_trust_anchors",
+    sql: `
+      -- Trust-anchor persistence shape (ADR-0012 decisions 4-6), groundwork
+      -- for trust distribution execution (a later change). Two tables,
+      -- matching the ADR's split between what a trust anchor IS and where
+      -- it has been installed:
+      --
+      -- certops_trust_anchors: one row per distinct root/intermediate CA
+      -- certificate a workspace has approved for distribution, identified by
+      -- its SHA-256 fingerprint. This is the approved-material record, not a
+      -- per-host installation record.
+      --
+      -- certops_trust_anchor_installations: one row per (host, store,
+      -- fingerprint, owner) tuple, tracking whether that specific anchor is
+      -- actually present in that specific machine trust store on that
+      -- specific host, who put it there, and its current transition state.
+      -- A single trust anchor can be distributed to many hosts, and a single
+      -- host can receive many anchors, so this is the join, not a foreign key
+      -- on certops_trust_anchors.
+      --
+      -- Both tables are additive and carry no execution logic: nothing in
+      -- this migration creates jobs, dispatches to agents, or runs
+      -- netsh/WebAdministration/IISAdministration calls (ADR-0012's "these
+      -- are implementation choices, not contract" rule applies here too).
+      CREATE TABLE IF NOT EXISTS certops_trust_anchors (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        host TEXT NOT NULL
+          CHECK (char_length(btrim(host)) BETWEEN 1 AND 255),
+        store TEXT NOT NULL
+          CHECK (store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        anchor_type TEXT NOT NULL
+          CHECK (anchor_type IN ('root', 'intermediate')),
+        fingerprint_sha256 TEXT NOT NULL
+          CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        subject_common_name TEXT NULL
+          CHECK (subject_common_name IS NULL OR char_length(btrim(subject_common_name)) BETWEEN 1 AND 255),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'revoked', 'expired')),
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_trust_anchors_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchors_workspace
+        ON certops_trust_anchors(workspace_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchors_workspace_host_store_fingerprint
+        ON certops_trust_anchors(workspace_id, host, store, fingerprint_sha256);
+
+      CREATE TABLE IF NOT EXISTS certops_trust_anchor_installations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        trust_anchor_id UUID NOT NULL,
+        host TEXT NOT NULL
+          CHECK (char_length(btrim(host)) BETWEEN 1 AND 255),
+        store TEXT NOT NULL
+          CHECK (store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        fingerprint_sha256 TEXT NOT NULL
+          CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        owner TEXT NOT NULL
+          CHECK (char_length(btrim(owner)) BETWEEN 1 AND 128),
+        -- Durable transition-state: an install/remove is dispatched to an
+        -- agent and only reaches its terminal state (installed/removed) once
+        -- the agent reports success, mirroring how certificate_jobs never
+        -- assumes an in-flight operation succeeded.
+        transition_state TEXT NOT NULL DEFAULT 'pending_install'
+          CHECK (transition_state IN ('pending_install', 'installed', 'pending_remove', 'removed')),
+        -- Provenance: was this anchor already present in the store before
+        -- TokenTimer touched it (discovered, not installed by us) or did
+        -- TokenTimer put it there. A 'removed' installation must never
+        -- delete a 'preexisting' anchor a different owner relies on; this
+        -- column is how a revoke path would tell the two apart.
+        provenance TEXT NOT NULL
+          CHECK (provenance IN ('preexisting', 'tokentimer_installed')),
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_trust_anchor_installations_anchor
+          FOREIGN KEY (workspace_id, trust_anchor_id)
+          REFERENCES certops_trust_anchors(workspace_id, id)
+          ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_workspace
+        ON certops_trust_anchor_installations(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_anchor
+        ON certops_trust_anchor_installations(workspace_id, trust_anchor_id);
+      -- One ownership row per (host, store, fingerprint, owner) tuple, per
+      -- the ADR's persistence shape: the same anchor installed by two
+      -- different owners on the same host/store is two rows, each tracking
+      -- its own transition state and provenance independently.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchor_installations_identity
+        ON certops_trust_anchor_installations(workspace_id, host, store, fingerprint_sha256, owner);
+    `,
+  },
+  {
+    version: 44,
+    name: "certops_trust_anchor_jobs",
+    sql: `
+      -- Trust-anchor operations (ADR-0012 decisions 4-6 and 14): a job that
+      -- installs (distribute-trust) or removes (revoke-trust) a CA
+      -- certificate from a machine trust store. A trust anchor has no
+      -- private key and no renewal, so this is a distinct operation family
+      -- from every certificate operation already in this CHECK, and
+      -- 'trust_anchor' is a distinct subject_type from every certificate
+      -- subject already in that CHECK, referencing a
+      -- certops_trust_anchors.id (cast to text) rather than a
+      -- managed_certificates.id.
+      --
+      -- This re-adds certificate_jobs_operation_check with the union of
+      -- every operation any migration has ever named, not just this one's:
+      -- migration 40 added 'protocol_smoke' to the same constraint, and a
+      -- DROP/ADD here that only listed this migration's own two new values
+      -- would silently regress that support the moment this migration runs
+      -- after it.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_operation_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_operation_check CHECK (
+          operation IN (
+            'issue', 'renew', 'deploy', 'reload', 'revoke', 'noop',
+            'protocol_smoke', 'distribute-trust', 'revoke-trust'
+          )
+        );
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_subject_type_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_subject_type_check CHECK (
+          subject_type IS NULL OR subject_type IN (
+            'managed_certificate', 'certificate_instance', 'certificate_target',
+            'token', 'domain', 'endpoint', 'external', 'trust_anchor'
+          )
+        );
+    `,
+  },
 ];
 
 async function runMigrations() {
