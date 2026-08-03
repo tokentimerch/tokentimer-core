@@ -49,6 +49,35 @@ const SIGNING_REJECTION_REASONS = Object.freeze({
 });
 
 /**
+ * ADR-0012 decision 3, gate step 11's rejection reasons. Both fail the
+ * agentId binding check strictly ABOVE the trusted-identity gate, so
+ * neither ever appears in a reported resultBody (the "signature-verdict
+ * failure produces no result" rule applies to this check exactly as it
+ * does to JOB_INTEGRITY_FAILED); they are kept in their own object rather
+ * than folded into SIGNING_REJECTION_REASONS so it stays true that every
+ * entry there mirrors an agent-protocol.schema.json resultBody.rejectionReason
+ * value, which these two intentionally are not.
+ */
+const AGENT_ID_BINDING_REJECTION_REASONS = Object.freeze({
+  // Signed agentId present but not equal to this agent's own bound
+  // identity: always fails closed, unconditionally, regardless of
+  // CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID.
+  AGENT_ID_MISMATCH: "agent_id_mismatch",
+  // Signed agentId absent AND the effective flag is true: distinct from a
+  // generic integrity failure so operators/tests can tell "this control
+  // plane never signed agentId" apart from "the signature did not verify".
+  AGENT_ID_REQUIRED_BUT_MISSING: "agent_id_required_but_missing",
+});
+
+/**
+ * ADR-0012 decision 3's capability, advertised only from the flag's
+ * effective runtime value (see checkAgentIdBinding / src/index.js's
+ * resolveDeclaredCapabilities), never from a compiled-in default.
+ */
+const AGENT_ID_BINDING_CAPABILITY = "agent-id-binding-v1";
+
+
+/**
  * ADR-0012 decision 1: "exact-byte signed envelope" capability. An agent
  * that declares this capability receives v2 envelopes ({ envelopeVersion: 2,
  * payloadB64, signatureB64, signingKeyId }) instead of the legacy v1
@@ -809,6 +838,75 @@ function checkJobTimeWindow({
 }
 
 /**
+ * ADR-0012 decision 3, gate step 11: validates the signed job's `agentId`
+ * against this agent's own bound identity, AFTER signature verification
+ * (verifyJobEnvelope) has already returned an "allowed" verdict and BEFORE
+ * any identifier is read for reporting -- same trusted-identity-gate
+ * placement as checkJobTimeWindow, called from the same post-verdict step
+ * in src/index.js.
+ *
+ * Two independent failure modes, deliberately not collapsed into one:
+ *   - MISMATCH (job.agentId is present but !== boundAgentId): always fails
+ *     closed, unconditionally, regardless of requireSignedAgentId. A
+ *     mismatch means a job correctly signed for a different agent was
+ *     delivered here; tolerating it under any flag state would be the
+ *     misdelivery this check exists to catch, not a compatibility gap.
+ *   - ABSENCE (job.agentId is missing): governed entirely by
+ *     requireSignedAgentId. false => the compatibility decoder tolerates
+ *     it and this function returns allowed; true => absence also fails
+ *     closed, with the distinct AGENT_ID_REQUIRED_BUT_MISSING reason
+ *     rather than a generic integrity failure, so operators/tests can
+ *     tell "this control plane never signed agentId" apart from "the
+ *     signature did not verify".
+ *
+ * @param {object} params
+ * @param {object} params.job the VERIFIED job (post signature verdict)
+ * @param {string} params.boundAgentId this agent's own registered agentId
+ * @param {boolean} params.requireSignedAgentId effective runtime value of
+ *   CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (never the compiled-in default)
+ * @returns {{ allowed: true } | { allowed: false, rejectionReason: string, detail: string }}
+ */
+function checkAgentIdBinding({ job, boundAgentId, requireSignedAgentId }) {
+  if (typeof boundAgentId !== "string" || boundAgentId.length === 0) {
+    throw new Error(
+      "signing: checkAgentIdBinding requires a non-empty boundAgentId " +
+        "string (this agent's own registered identity)",
+    );
+  }
+
+  const signedAgentId =
+    isPlainObject(job) && typeof job.agentId === "string" && job.agentId.length > 0
+      ? job.agentId
+      : null;
+
+  if (signedAgentId === null) {
+    if (requireSignedAgentId) {
+      return reject(
+        AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_REQUIRED_BUT_MISSING,
+        "Job carries no signed agentId, and CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID " +
+          "is effectively true; this control plane must sign agentId into " +
+          "every dispatched job before this agent will accept one.",
+      );
+    }
+    // Absence-tolerant compatibility decoder (effective flag false): an
+    // older, not-yet-upgraded control plane has not started emitting
+    // agentId yet. Proceed; agent-id-binding-v1 must not be advertised
+    // while this branch is reachable (see src/index.js).
+    return { allowed: true };
+  }
+
+  if (signedAgentId !== boundAgentId) {
+    return reject(
+      AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH,
+      `Job was signed for agentId "${signedAgentId}" but this agent's bound ` +
+        `identity is "${boundAgentId}"; refusing a job signed for a different agent.`,
+    );
+  }
+
+  return { allowed: true };
+}
+
+/**
  * TEST / CONTROL-PLANE-SIDE UTILITY ONLY. The agent itself never generates
  * or holds a signing private key; the private key lives exclusively in the
  * control plane (ADR-0003). This helper exists so the fake control-plane
@@ -852,6 +950,8 @@ function signJobPayload({ job, privateKeyPem }) {
 
 module.exports = {
   SIGNING_REJECTION_REASONS,
+  AGENT_ID_BINDING_REJECTION_REASONS,
+  AGENT_ID_BINDING_CAPABILITY,
   DEFAULT_TIME_WINDOW_TOLERANCE_MS,
   SIGNED_PAYLOAD_B64_CAPABILITY,
   ENVELOPE_VERSION_1,
@@ -864,6 +964,7 @@ module.exports = {
   verifyV2Envelope,
   verifyJobEnvelope,
   checkJobTimeWindow,
+  checkAgentIdBinding,
   generateSigningKeyPair,
   signJobPayload,
   _test: {

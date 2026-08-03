@@ -75,6 +75,14 @@ function engineWith(policy = {}, options = {}) {
 
 const silentLog = () => {};
 
+/**
+ * Fixed, non-empty stand-in for a real agent's registered identity (see the
+ * matching constant/comment in ../index.test.js). checkAgentIdBinding
+ * requires a non-empty boundAgentId unconditionally; these tests do not
+ * themselves exercise ADR-0012 decision 3's agentId binding.
+ */
+const TEST_BOUND_AGENT_ID = "agent-test-bound-1";
+
 describe("agent runtime: lease, journal, multi-target transaction", () => {
   let workDir;
   let signingKey;
@@ -167,6 +175,7 @@ describe("agent runtime: lease, journal, multi-target transaction", () => {
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(outcome.status, "blocked");
@@ -185,6 +194,7 @@ describe("agent runtime: lease, journal, multi-target transaction", () => {
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(outcome.status, "blocked");
@@ -264,6 +274,7 @@ describe("agent runtime: lease, journal, multi-target transaction", () => {
       policyEngine: permissiveEngine(),
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(outcome.status, "orphaned_unknown_effect");

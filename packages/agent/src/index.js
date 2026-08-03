@@ -105,7 +105,7 @@ const {
   hasReportableJobId,
 } = require("./claimed-job");
 const { defaultAgentLogger } = require("./logging");
-const { verifyJobEnvelope, checkJobTimeWindow } = require("./signing");
+const { verifyJobEnvelope, checkJobTimeWindow, checkAgentIdBinding, AGENT_ID_BINDING_CAPABILITY } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { checkNtpSynced } = require("./ntp");
@@ -259,6 +259,25 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload
  * is inert until execution is actually turned on.
  */
 const AGENT_DECLARED_CAPABILITIES = Object.freeze(["evidence-claim-binding-v1"]);
+
+/**
+ * ADR-0012 decision 3, step 4: agent-id-binding-v1 is advertised only from
+ * the EFFECTIVE runtime value of requireSignedAgentId (config.requireSignedAgentId,
+ * itself already resolved from env/config.json against the compiled-in
+ * default inside packages/agent/src/config/index.js), never from that
+ * compiled-in default directly. This matters because the same build binary
+ * ships with the flag defaulting to false but must correctly advertise the
+ * capability the moment an operator flips it to true at runtime, and must
+ * stop advertising it if a config override brings it back to false, with no
+ * rebuild in either direction. When effective value is false, absence of
+ * agentId is still tolerated by the compatibility decoder (see
+ * checkAgentIdBinding), so advertising the capability then would overclaim.
+ */
+function resolveDeclaredCapabilities(requireSignedAgentId) {
+  return requireSignedAgentId
+    ? Object.freeze([...AGENT_DECLARED_CAPABILITIES, AGENT_ID_BINDING_CAPABILITY])
+    : AGENT_DECLARED_CAPABILITIES;
+}
 
 /**
  * Claim scope in observe-only mode (execution disabled): empty. An
@@ -1231,6 +1250,10 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
  * @param {object|null} [params.executionContext] from
  *   buildExecutionContext; null or { enabled: false } means "observe-only":
  *   verification still runs, only the post-verdict action differs
+ * @param {string} params.boundAgentId this agent's own registered agentId
+ *   (ADR-0012 decision 3, gate step 11)
+ * @param {boolean} [params.requireSignedAgentId] effective runtime value
+ *   of CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (default false)
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -1239,6 +1262,8 @@ async function handleClaimedJob({
   policyEngine,
   client,
   executionContext = null,
+  boundAgentId,
+  requireSignedAgentId = false,
   log = null,
 }) {
   const executionEnabled =
@@ -1250,6 +1275,8 @@ async function handleClaimedJob({
     client,
     executionContext,
     executionEnabled,
+    boundAgentId,
+    requireSignedAgentId,
     log,
   });
 }
@@ -1343,13 +1370,22 @@ function verifiedJobIdentity(verifiedJob) {
  * @param {object} params
  * @param {object} params.job raw, unverified claimed job/envelope
  * @param {{signingKeyId: string, publicKeyPem: string}|null} params.pinnedSigningKey
+ * @param {string} params.boundAgentId this agent's own registered agentId
+ *   (ADR-0012 decision 3, gate step 11)
+ * @param {boolean} params.requireSignedAgentId effective runtime value of
+ *   CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (never the compiled-in default)
  * @returns {
  *   { outcome: "no_pinned_key" } |
  *   { outcome: "rejected", rejectionReason: string, detail: string } |
  *   { outcome: "verified", job: object }
  * }
  */
-function verifyClaimedJobEnvelope({ job, pinnedSigningKey }) {
+function verifyClaimedJobEnvelope({
+  job,
+  pinnedSigningKey,
+  boundAgentId,
+  requireSignedAgentId,
+}) {
   // No pinned key => integrity of ANY job cannot be established in either
   // direction. This sits ABOVE the gate (ADR-0012 decision 2): it is a
   // local agent-side precondition failure ("this agent cannot execute or
@@ -1379,6 +1415,26 @@ function verifyClaimedJobEnvelope({ job, pinnedSigningKey }) {
       detail: verdict.detail,
     };
   }
+
+  // ADR-0012 decision 3, gate step 11: agentId binding, still ABOVE the
+  // report boundary -- same "no result on failure" rule as the signature
+  // verdict above, because a mismatch or (flag-gated) absence is exactly
+  // as untrustworthy as a bad signature for the purpose of building a
+  // report. checkAgentIdBinding never reads anything from `job` except
+  // agentId, and only from the now-verified job object.
+  const bindingVerdict = checkAgentIdBinding({
+    job: verdict.job,
+    boundAgentId,
+    requireSignedAgentId,
+  });
+  if (!bindingVerdict.allowed) {
+    return {
+      outcome: "rejected",
+      rejectionReason: bindingVerdict.rejectionReason,
+      detail: bindingVerdict.detail,
+    };
+  }
+
   return { outcome: "verified", job: verdict.job };
 }
 
@@ -1420,6 +1476,10 @@ function verifyClaimedJobEnvelope({ job, pinnedSigningKey }) {
  * @param {object} params.client
  * @param {object|null} params.executionContext
  * @param {boolean} params.executionEnabled
+ * @param {string} params.boundAgentId this agent's own registered agentId
+ *   (ADR-0012 decision 3, gate step 11)
+ * @param {boolean} [params.requireSignedAgentId] effective runtime value
+ *   of CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (default false)
  * @param {(msg: string, details?: *) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -1429,6 +1489,8 @@ async function handleSignedJob({
   client,
   executionContext,
   executionEnabled,
+  boundAgentId,
+  requireSignedAgentId = false,
   log,
 }) {
   const pinnedSigningKey = executionEnabled
@@ -1438,6 +1500,8 @@ async function handleSignedJob({
   const verifyResult = verifyClaimedJobEnvelope({
     job: claimedJob,
     pinnedSigningKey,
+    boundAgentId,
+    requireSignedAgentId,
   });
 
   if (verifyResult.outcome === "no_pinned_key") {
@@ -3886,7 +3950,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     nodeVersion: process.version,
     declaredTargetSelectors: config.declaredTargetSelectors,
     declaredCommandProfileNames: config.declaredCommandProfileNames,
-    declaredCapabilities: AGENT_DECLARED_CAPABILITIES,
+    declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
     registrationId,
     supportedDnsProviders: listConfiguredDnsProviderIds(config.dnsProviders),
   }), config.protocolVersion);
@@ -4145,12 +4209,14 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         supportedDnsProviders,
         // Re-declared on every heartbeat so an in-place binary
         // upgrade's new capabilities reach the control plane without
-        // re-enrollment. Always the same non-empty set this build declares
-        // at registration (see AGENT_DECLARED_CAPABILITIES). Sending [] here
-        // would be a declaration that this build supports nothing, which the
-        // control plane honours by clearing the stored set; this build never
-        // does that, because its capability set is a non-empty constant.
-        declaredCapabilities: AGENT_DECLARED_CAPABILITIES,
+        // re-enrollment, and so a runtime flip of
+        // CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (ADR-0012 decision 3, step 4)
+        // is reflected without a restart. Sending [] here would be a
+        // declaration that this build supports nothing, which the control
+        // plane honours by clearing the stored set; resolveDeclaredCapabilities
+        // never returns an empty set, only the base set or the base set plus
+        // agent-id-binding-v1.
+        declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
         // key-rotation lag. in observe-only bootstrap mode these stay null.
@@ -4222,6 +4288,8 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               policyEngine,
               client,
               executionContext,
+              boundAgentId: registeredAgentId,
+              requireSignedAgentId: config.requireSignedAgentId,
               log: (msg) => defaultAgentLogger.error(msg),
             });
             if (outcome && outcome.retired === true) {
@@ -4293,4 +4361,6 @@ module.exports = {
   DEFAULT_JOB_LEASE_MS,
   MAX_LEASE_TRANSIENT_RETRIES,
   LEASE_HEARTBEAT_INTERVAL_MS,
+  AGENT_DECLARED_CAPABILITIES,
+  resolveDeclaredCapabilities,
 };
