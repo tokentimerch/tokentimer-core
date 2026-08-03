@@ -70,3 +70,49 @@ make an agent do arbitrary things.
     with the job's current claim is rejected outright. This preserves the
     agent-local authority principle above while making evidence attributable to a
     single attempt, which reconciliation now depends on.
+- Addendum (2026-08-03, release 0.12.0): `agentId` binding and diagnostic-agent
+  isolation (ADR-0012 decisions 2, 3, and 7; wire shapes in ADR-0003's own
+  addendum).
+  - **`agentId` becomes a signed field, staged.** `agentId` is now part of
+    `signed-dispatch-payload.schema.json` and is stamped into every dispatch
+    the server produces, but it is enforced additively behind
+    `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` (server) and a matching
+    agent-side gate, `checkAgentIdBinding`, which runs after signature
+    verification and payload parsing but rejects a job whose signed
+    `agentId` disagrees with the agent's own bound ID (ADR-0012 decision 3's
+    trusted-identity boundary). While the effective flag is false the gate is
+    absence-tolerant: a payload with no `agentId` at all still passes, so
+    agents built before this addendum keep working through the rollout. The
+    agent advertises `agent-id-binding-v1` only once the *effective* flag
+    value is true for it, not merely once the release default is true,
+    keeping the capability an honest signal of enforced behavior rather than
+    shipped-code-version.
+  - **Diagnostic agents are a distinct, immutable kind.** `certops_agents`
+    gained `agent_kind` (`normal` | `diagnostic`), assigned exactly once by
+    the server at row creation with no update path afterward: an agent
+    cannot be reclassified post-registration by either side. Diagnostic
+    agents exist to let an operator verify the signed-dispatch pipeline
+    end-to-end without a diagnostic run ever being able to claim, or be
+    mistaken for, real certificate work.
+  - **`protocol_smoke` is its own job operation**, disjoint from `issue` /
+    `renew` / `revoke`. `createCertificateJob` refuses to create a
+    `protocol_smoke` job outside the dedicated bootstrap path below, so
+    these jobs are excluded by construction, not by a downstream filter,
+    from certificate quotas, per-CA limits, approval flows, renewal alerts,
+    and fleet-health metrics.
+  - **`POST .../certops/agents/diagnostic-bootstrap`** is session-authenticated
+    (an operator action, not an agent-facing route) and single-use: it mints
+    a diagnostic agent, its credential, and its one `protocol_smoke` job in
+    one transaction, keyed non-replayably on `(workspace_id, request_id)`. A
+    retried request against an already-consumed key fails closed with
+    `diagnostic_bootstrap_already_consumed` rather than minting a second
+    agent or replaying the first credential.
+  - **Orphan retirement.** A diagnostic agent that never heartbeats again
+    (registration lost in transit, or the operator abandoning the flow) is
+    retired by a worker sweep: its credential is revoked and its bootstrap
+    record's agent/job references are cleared, so it does not linger as a
+    stale row an operator has to notice and clean up manually.
+  - Issuing a diagnostic-bootstrap credential requires the
+    `certops.agents.diagnose` permission, held at the `admin` role tier
+    (alongside the kill switch and renewal-profile management), and the
+    route is rate-limited like other credential-minting routes.
