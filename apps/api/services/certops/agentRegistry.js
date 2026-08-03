@@ -59,7 +59,6 @@ const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 const AGENT_KIND_NORMAL = "normal";
 const AGENT_KIND_DIAGNOSTIC = "diagnostic";
 const AGENT_KINDS = Object.freeze([AGENT_KIND_NORMAL, AGENT_KIND_DIAGNOSTIC]);
-const AGENT_KIND_SET = new Set(AGENT_KINDS);
 
 // ADR-0012 decision 7: a diagnostic agent that never heartbeats again (the
 // common case: an operator ran the reference client once to test
