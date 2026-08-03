@@ -984,7 +984,14 @@ Windows offers two paths to get a certificate into `LocalMachine\My`:
   key pair directly inside the CNG machine key store (backed by the Microsoft
   Software KSP unless a hardware KSP is configured) and `certreq -accept` binds
   the CA's response to it. The private key never exists as a file; it is a CNG
-  key handle, non-exportable by default.
+  key handle, and the request template marks it non-exportable, which the KSP
+  enforces at the `NCrypt` API surface (no call returns the raw key bytes). Absent
+  a TPM- or HSM-backed KSP, this is a software-enforced boundary the Microsoft
+  Software KSP provides, not a hardware guarantee: it stops any caller that goes
+  through the documented CNG API, not a party with kernel-level or physical access
+  to the host. That is the correct default for this agent's threat model, which
+  assumes the host itself is not compromised at that level; decision 19 covers
+  where a genuinely hardware-backed guarantee is required instead.
 - **PFX import**: a key pair is generated off-host, or agent-side by the local
   ACME client tooling when it cannot be pointed at a CNG-generated CSR, and
   imported as a PFX/PKCS#12 bundle via `Import-PfxCertificate`. The private key
@@ -1000,8 +1007,9 @@ The distinction is semantic, not cosmetic. `agent-local` in
 on the filesystem (the `openssl genrsa`/`certbot` shape), which is why
 `jobs.js`'s `AGENT_DEPLOYABLE_KEY_MODES` admits `agent-local` and
 `proxy-agent-local` for file-deploy paths. A CNG-native key is categorically
-different: it is a non-exportable handle owned by the OS store, the agent cannot
-read its bytes, and any code path that assumes it can write the key to a
+different: it is a non-exportable CNG handle owned by the OS store rather than a
+file, so the agent cannot read its bytes through the documented CNG API, and any
+code path that assumes it can write the key to a
 `keyPath` is wrong for it. `os-store-managed` already exists in the `keyMode`
 enum for exactly this custody model, so the Windows cert-store work extends the
 deployable set with `os-store-managed` rather than overloading `agent-local` with
@@ -1036,7 +1044,9 @@ are agent-side and ephemeral, bound by the following:
   `SYSTEM` only, inheritance disabled.
 - **Non-exportable import.** Import always runs without `-Exportable` (its
   default is non-exportable), so the store-side key ends up with the same
-  "cannot be read back out" property CNG-native keys have natively.
+  KSP-enforced "no call returns the raw key bytes" property CNG-native keys
+  have natively, and the same caveat applies: this is a software-enforced
+  boundary absent a TPM/HSM-backed KSP, not a hardware guarantee.
 - **Crash recovery, not just an exit path.** A `finally` block cannot survive
   `SIGKILL` or a host reset, so cleanup is a journal plus a sweep: every
   temporary PFX is journaled (path and job metadata only, **never** the
@@ -1517,8 +1527,9 @@ sets the column.
 
 ### 18. Superseded certificate retention is a named, bounded window, not an open-ended one
 
-**Closes open question 8.** Wave 2b's cleanup path needs a stated answer to
-"how long does the certificate a rotation just replaced stay in the machine
+**Closes open question 8.** The superseded-certificate cleanup path needs a
+stated answer to "how long does the certificate a rotation just replaced stay
+in the machine
 store and CNG key container after the new one is bound", because an unbounded
 answer leaves stale key material in the store indefinitely and an
 unconditional immediate-delete answer removes an operator's only rollback
@@ -1567,7 +1578,7 @@ key material" outcome this decision exists to close.
 - TokenTimer's own ownership record for the old certificate was written at the
   time this agent installed it (decision 9's install-time ownership
   recording; an agent must never delete material it did not install, per
-  Wave 2b's ownership-aware retention rule).
+  the ownership-aware retention rule this decision establishes).
 - No IIS or `http.sys` binding, on this host, still references the old
   thumbprint.
 - No active job or rollback journal entry (the same journal decision 9
@@ -1652,7 +1663,7 @@ schema names the field `jobOrRollbackJournalRefs` with a per-reference state
 rather than a boolean "has been referenced."
 
 **The ledger is swept at agent startup and on the same periodic schedule as
-Wave 2b's reconciliation sweep, not only periodically.** A startup sweep
+decision 6's ownership-reference reconciliation sweep, not only periodically.** A startup sweep
 exists for the same reason decision 9's PFX startup sweep exists: a crash
 between writing the ledger row and completing a later state transition must
 be resumed on next start rather than left stuck, and a row's `lifecycleState`
@@ -1671,7 +1682,7 @@ model: the PFX staging sweep runs at agent startup and clears transient
 staging-directory residue before any claim is accepted; this retention window
 and its ledger govern the separately-lived superseded *store* certificate and
 its CNG key container after a completed, verified rotation, on the schedule
-Wave 2b's reconciliation sweep already runs.
+decision 6's reconciliation sweep already runs.
 
 Acceptance: a rotation followed immediately by a query finds the superseded
 certificate and key container still present and still passing the ownership
@@ -1722,9 +1733,9 @@ decided elsewhere in this ADR and restated here as one checked set rather than
 scattered facts:
 
 - CNG-native keys (decision 9's default path) remain non-exportable OS-store
-  handles and never become raw process buffers at all; there is no allocation
-  to protect because the private key never enters process memory in the first
-  place.
+  handles behind the KSP's `NCrypt` API and never become raw process buffers at
+  all; there is no allocation to protect because the private key never enters
+  process memory in the first place, through the documented API surface.
 - Linux/filesystem key bytes are held as `Buffer`, never as a JavaScript
   string, since a string is immutable and cannot be zeroized; this is
   existing practice, restated as a requirement rather than a convention.
