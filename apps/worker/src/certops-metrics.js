@@ -52,3 +52,10 @@ export const gCertopsRenewalScheduler = new client.Gauge({
   labelNames: ["outcome"],
   registers: [metricsRegister],
 });
+
+export const gCertopsDiagnosticAgentsRetired = new client.Gauge({
+  name: "certops_diagnostic_agents_retired",
+  help: "Diagnostic agents processed by the last inactivity-TTL sweep, by outcome",
+  labelNames: ["outcome"],
+  registers: [metricsRegister],
+});
