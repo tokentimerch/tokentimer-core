@@ -307,6 +307,40 @@ describe('EvidenceTimeline', () => {
     expect(screen.getAllByText('Redacted')).toHaveLength(1);
   });
 
+  it('shows the Claim ID chip when the API returns claimId (admin/owner viewer)', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ claimId: '22222222-2222-4222-8222-222222222222' }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Claim ID')).toBeInTheDocument();
+    expect(
+      screen.getByText('22222222-2222-4222-8222-222222222222')
+    ).toBeInTheDocument();
+  });
+
+  it('hides the Claim ID chip when the API omits claimId (non-admin viewer)', () => {
+    // The API omits `claimId` entirely for non-admin/owner workspace members;
+    // this mirrors that redacted response shape rather than sending it and
+    // hiding it client-side.
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
+  });
+
   it('renders the failure reason for a failed job', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({

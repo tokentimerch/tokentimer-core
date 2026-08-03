@@ -7624,6 +7624,12 @@ components:
           type: string
           format: uuid
           nullable: true
+          description: |-
+            The current lease token an agent must reprove on every renew/report
+            call before it can act on this job. Only returned to workspace
+            admins/owners; other workspace members (who can still read this
+            endpoint) get this field omitted, since the raw value is reusable
+            proof of lease ownership for as long as the lease is open.
         claimedByAgentId:
           type: string
           format: uuid

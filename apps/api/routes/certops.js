@@ -200,6 +200,32 @@ function redactDeploymentPathForViewers(req, certificateOrList) {
     : strip(certificateOrList);
 }
 
+/**
+ * Strips `claimId` from a job-detail projection before it reaches anyone
+ * below admin/owner.
+ *
+ * claimId is the lease token an agent must reprove on every renew/report
+ * call before it can act on a host (see the agent claim/renew/report
+ * routes and lease_renewed_at handling in services/certops/jobs.js) - closer
+ * to a credential than to ordinary job metadata like status or timestamps.
+ * The job-detail read route is intentionally not manager-gated (any
+ * workspace member can follow a job's timeline), so this keeps the same
+ * viewer-can-read / value-can-be-sensitive split that
+ * `redactDeploymentPathForViewers` uses for deployment paths, but at the
+ * stricter admin threshold: unlike a filesystem path, this value is
+ * reusable proof of lease ownership for as long as the lease is open, so a
+ * manager who can create jobs still isn't the right audience for it.
+ */
+function redactClaimIdForNonAdmins(req, jobDetailProjection) {
+  if (!jobDetailProjection || !jobDetailProjection.claimId) {
+    return jobDetailProjection;
+  }
+  if (req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
+    return jobDetailProjection;
+  }
+  return { ...jobDetailProjection, claimId: undefined };
+}
+
 function requireCertOpsTokenManager(req, res, next) {
   if (req.isWorkerCall || !req.user?.id) {
     return res.status(403).json({
@@ -669,7 +695,9 @@ function createManualCertificateJobHandler({
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
       });
-      return res.status(201).json({ job: jobDetail(job) });
+      return res
+        .status(201)
+        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -1011,7 +1039,7 @@ function createControllerProvisionIntentHandler({
         actorUserId: req.user?.id || null,
       });
       return res.status(result.duplicate ? 200 : 201).json({
-        job: jobDetail(result.job),
+        job: redactClaimIdForNonAdmins(req, jobDetail(result.job)),
         managedCertificateId: result.managedCertificateId,
         targetId: result.targetId,
         duplicate: Boolean(result.duplicate),
@@ -2090,7 +2118,10 @@ router.get(
       }
 
       return res.json({
-        job: { ...jobDetail(job), claimedByAgentSigningKeyId },
+        job: redactClaimIdForNonAdmins(req, {
+          ...jobDetail(job),
+          claimedByAgentSigningKeyId,
+        }),
       });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
@@ -2901,7 +2932,9 @@ router.post(
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
       });
-      return res.status(201).json({ job: jobDetail(job) });
+      return res
+        .status(201)
+        .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -3030,4 +3063,6 @@ module.exports._test = {
   loadRenewalSetupIntents,
   projectRenewalSetupState,
   apiTokenMetadata,
+  jobDetail,
+  redactClaimIdForNonAdmins,
 };
