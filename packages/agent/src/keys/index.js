@@ -23,13 +23,16 @@
  *
  * Module style follows the sibling policy/evidence modules: CommonJS,
  * node builtins only (node:crypto, node:fs, node:path), self-contained
- * plain-data functions with no sibling-module imports beyond the shared
- * detector seam already used by ../evidence.
+ * plain-data functions. The only sibling-module imports are the shared
+ * private-key-material detector (used by ../evidence too) and the shared
+ * platform permission module (used by ../config too) for cross-platform
+ * directory/file permission enforcement.
  */
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { applyRestrictivePermissions } = require("../platform/index.js");
 
 // Single source of truth for content-based private-key-material detection.
 // Vendored from @tokentimer/log-scrub so the installed agent never depends
@@ -82,21 +85,18 @@ function guardReturnValue(value) {
 }
 
 /**
- * Ensures the parent directory of keyPath exists with 0700 permissions,
- * re-asserting the mode on every call (same defense-in-depth discipline as
- * config/ensureConfigDir; best-effort on win32 where POSIX modes are not
- * meaningful).
+ * Ensures the parent directory of keyPath exists with restrictive
+ * permissions, re-asserting them on every call (same defense-in-depth
+ * discipline as config/ensureConfigDir). POSIX: 0700. win32: a real ACL
+ * with inheritance removed, granting only the agent's own identity plus
+ * SYSTEM, verified against a trusted-owner allowlist.
  * @param {string} keyPath
  * @returns {void}
  */
 function ensureKeyDir(keyPath) {
   const dir = path.dirname(keyPath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  try {
-    fs.chmodSync(dir, 0o700);
-  } catch (_err) {
-    // Best-effort on win32; see config/ensureConfigDir for rationale.
-  }
+  applyRestrictivePermissions(dir, { kind: "directory", mode: 0o700 });
 }
 
 /**
@@ -202,11 +202,10 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
     // Exclusive create for both fresh and staging paths; never follows a
     // racing symlink into existence between classify and write.
     fs.writeFileSync(writePath, privatePemBuffer, { mode: 0o600, flag: "wx" });
-    try {
-      fs.chmodSync(writePath, 0o600);
-    } catch (_err) {
-      // Best-effort on win32; see ensureKeyDir.
-    }
+    // POSIX re-asserts the mode; win32 gets a real restricted ACL. A
+    // failure here is fatal: an unprotected private key file is not an
+    // acceptable outcome of a successful write.
+    applyRestrictivePermissions(writePath, { kind: "file", mode: 0o600 });
   } finally {
     // Zeroize what we can: the exported PEM bytes. The KeyObject's internal
     // OpenSSL memory and any engine-internal copies cannot be zeroized from

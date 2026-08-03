@@ -29,6 +29,11 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { normalizePropagationConfig } = require("../dns/propagate.js");
 const {
+  applyRestrictivePermissions,
+  assertRestrictivePermissions,
+} = require("../platform/index.js");
+const { fsyncDirectorySync } = require("../platform/durability.js");
+const {
   assertNoPrivateKeyMaterial,
 } = require("../../vendor/log-scrub/secret-material.js");
 
@@ -90,23 +95,10 @@ const REDACTED_CREDENTIAL_PLACEHOLDER = "[AGENT_CREDENTIAL_REDACTED]";
 
 function fsyncParentDirectory(filePath) {
   // fsync on a directory is the durable part of an atomic rename on POSIX.
-  // Windows does not support opening directories this way, so this remains
-  // best effort there while the atomic rename still prevents torn files.
-  let directoryFd;
-  try {
-    directoryFd = fs.openSync(path.dirname(filePath), "r");
-    fs.fsyncSync(directoryFd);
-  } catch (_err) {
-    // Best effort across platforms/filesystems.
-  } finally {
-    if (directoryFd !== undefined) {
-      try {
-        fs.closeSync(directoryFd);
-      } catch (_err) {
-        // Best effort close.
-      }
-    }
-  }
+  // Windows cannot open a directory this way at all, so the fsync is recorded
+  // as a durability limit (see src/platform/durability.js) rather than being
+  // swallowed: the agent reports what it could not guarantee.
+  fsyncDirectorySync(path.dirname(filePath));
 }
 
 function writeFileAtomically(filePath, contents, mode) {
@@ -119,11 +111,10 @@ function writeFileAtomically(filePath, contents, mode) {
     fs.closeSync(fd);
     fd = undefined;
     fs.renameSync(temporaryPath, filePath);
-    try {
-      fs.chmodSync(filePath, mode);
-    } catch (_err) {
-      // Best effort on win32; see ensureConfigDir.
-    }
+    // POSIX re-asserts the mode; win32 gets a real restricted ACL. A failure
+    // here is fatal: an unprotected credential/config file is not an
+    // acceptable outcome of a successful write.
+    applyRestrictivePermissions(filePath, { kind: "file", mode });
     fsyncParentDirectory(filePath);
   } catch (err) {
     if (fd !== undefined) {
@@ -207,21 +198,16 @@ function resolveConfigDir(explicitDir) {
 }
 
 /**
- * Ensures the config directory exists with 0700 permissions, re-asserting
- * the mode on every call (defense in depth against a prior looser mode).
+ * Ensures the config directory exists with restrictive permissions,
+ * re-asserting them on every call (defense in depth against a prior looser
+ * mode). On win32 this is a real ACL: inheritance removed, owner plus SYSTEM
+ * only, inheritable so state files created inside start out restricted.
  * @param {string} configDir
  * @returns {void}
  */
 function ensureConfigDir(configDir) {
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
-  try {
-    fs.chmodSync(configDir, 0o700);
-  } catch (_err) {
-    // POSIX modes are not meaningful on win32 (no chmod-equivalent ACL model
-    // here), so enforcement is best-effort there. This is a defense-in-depth
-    // measure for the POSIX hosts the agent primarily runs on; nothing on
-    // win32 depends on this call succeeding.
-  }
+  applyRestrictivePermissions(configDir, { kind: "directory", mode: 0o700 });
 }
 
 function readConfigFile(configDir) {
@@ -462,41 +448,12 @@ function readDnsCredentialsFile(providerId, config) {
 
   const credentialsPath = entry.credentialsFile;
 
-  if (process.platform !== "win32") {
-    let stats;
-    try {
-      stats = fs.lstatSync(credentialsPath);
-    } catch (err) {
-      throw new Error(
-        `tokentimer-agent: failed to stat DNS credentials file ${credentialsPath}: ${err.message}`,
-      );
-    }
-    if (stats.isSymbolicLink() || !stats.isFile()) {
-      throw new Error(
-        `tokentimer-agent: DNS credentials file ${credentialsPath} must be a regular non-symlink file`,
-      );
-    }
-    // Same permission posture as the agent credential file: secrets are
-    // 0600. A group/other-readable credentials file is a misconfiguration
-    // the agent refuses to use rather than silently accepting.
-    if ((stats.mode & 0o077) !== 0) {
-      throw new Error(
-        `tokentimer-agent: refusing to read DNS credentials file ${credentialsPath}: ` +
-          "it is readable by group/other (chmod 600 it)",
-      );
-    }
-    // Must be owned by the agent user (or root, so operators can provision
-    // credentials without a login shell for the service account).
-    if (typeof process.getuid === "function") {
-      const uid = process.getuid();
-      if (stats.uid !== uid && stats.uid !== 0) {
-        throw new Error(
-          `tokentimer-agent: refusing to read DNS credentials file ${credentialsPath}: ` +
-            "it is not owned by the agent user or root",
-        );
-      }
-    }
-  }
+  // Cross-platform permission preflight: POSIX mode/ownership on POSIX, real
+  // ACL inspection on win32. Previously the whole check was skipped on win32,
+  // which meant a world-readable DNS credentials file was accepted there.
+  assertRestrictivePermissions(credentialsPath, {
+    label: "DNS credentials file",
+  });
 
   let raw;
   try {
@@ -607,36 +564,11 @@ function resolveAcmeAccountCredentials(accountRef, config) {
 
   const credentialsPath = entry.credentialsFile;
 
-  if (process.platform !== "win32") {
-    let stats;
-    try {
-      stats = fs.lstatSync(credentialsPath);
-    } catch (err) {
-      throw new Error(
-        `tokentimer-agent: failed to stat ACME account credentials file ${credentialsPath}: ${err.message}`,
-      );
-    }
-    if (stats.isSymbolicLink() || !stats.isFile()) {
-      throw new Error(
-        `tokentimer-agent: ACME account credentials file ${credentialsPath} must be a regular non-symlink file`,
-      );
-    }
-    if ((stats.mode & 0o077) !== 0) {
-      throw new Error(
-        `tokentimer-agent: refusing to read ACME account credentials file ${credentialsPath}: ` +
-          "it is readable by group/other (chmod 600 it)",
-      );
-    }
-    if (typeof process.getuid === "function") {
-      const uid = process.getuid();
-      if (stats.uid !== uid && stats.uid !== 0) {
-        throw new Error(
-          `tokentimer-agent: refusing to read ACME account credentials file ${credentialsPath}: ` +
-            "it is not owned by the agent user or root",
-        );
-      }
-    }
-  }
+  // Same cross-platform preflight as the DNS credentials file: enforced on
+  // win32 via ACL inspection rather than skipped.
+  assertRestrictivePermissions(credentialsPath, {
+    label: "ACME account credentials file",
+  });
 
   let raw;
   try {

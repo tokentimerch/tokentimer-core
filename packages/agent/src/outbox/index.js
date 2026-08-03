@@ -13,33 +13,30 @@
  *
  * Storage conventions match src/config: 0700 directory, 0600 files,
  * atomic write + rename. Entries are public result/evidence payloads only
- * (never private keys).
+ * (never private keys). Permission enforcement is delegated to the shared
+ * src/platform module: POSIX chmod, or a real restricted ACL on win32
+ * (inheritance removed, owner-plus-SYSTEM only, verified against a
+ * trusted-owner allowlist), rather than a best-effort chmod that silently
+ * did nothing on win32.
  */
 
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { applyRestrictivePermissions } = require("../platform/index.js");
+const { fsyncDirectorySync } = require("../platform/durability.js");
 
 const OUTBOX_DIR_NAME = "outbox";
 const ENTRY_FILE_SUFFIX = ".json";
 const MAX_ENTRY_BYTES = 512 * 1024;
 
 function fsyncParentDirectory(filePath) {
-  let directoryFd;
-  try {
-    directoryFd = fs.openSync(path.dirname(filePath), "r");
-    fs.fsyncSync(directoryFd);
-  } catch (_err) {
-    // Best effort across platforms/filesystems.
-  } finally {
-    if (directoryFd !== undefined) {
-      try {
-        fs.closeSync(directoryFd);
-      } catch (_err) {
-        // Best effort close.
-      }
-    }
-  }
+  // fsync on a directory is the durable part of an atomic rename on POSIX.
+  // Windows cannot open a directory this way at all, so the fsync is
+  // recorded as a durability limit (see src/platform/durability.js) rather
+  // than being swallowed by an empty catch: the agent reports what it
+  // could not guarantee instead of pretending it succeeded.
+  fsyncDirectorySync(path.dirname(filePath));
 }
 
 function writeFileAtomically(filePath, contents, mode) {
@@ -52,11 +49,10 @@ function writeFileAtomically(filePath, contents, mode) {
     fs.closeSync(fd);
     fd = undefined;
     fs.renameSync(temporaryPath, filePath);
-    try {
-      fs.chmodSync(filePath, mode);
-    } catch (_err) {
-      // Best effort on win32.
-    }
+    // POSIX re-asserts the mode; win32 gets a real restricted ACL. A
+    // failure here is fatal: an unprotected outbox entry is not an
+    // acceptable outcome of a successful write.
+    applyRestrictivePermissions(filePath, { kind: "file", mode });
     fsyncParentDirectory(filePath);
   } catch (err) {
     if (fd !== undefined) {
@@ -84,17 +80,15 @@ function resolveOutboxDir(configDir) {
 }
 
 /**
- * Ensures the outbox directory exists with 0700 permissions.
+ * Ensures the outbox directory exists with restrictive permissions,
+ * re-asserting them on every call. POSIX: 0700. win32: a real ACL with
+ * inheritance removed, granting only the agent's own identity plus SYSTEM.
  * @param {string} outboxDir
  * @returns {string} outboxDir
  */
 function ensureOutboxDir(outboxDir) {
   fs.mkdirSync(outboxDir, { recursive: true, mode: 0o700 });
-  try {
-    fs.chmodSync(outboxDir, 0o700);
-  } catch (_err) {
-    // Best effort on win32.
-  }
+  applyRestrictivePermissions(outboxDir, { kind: "directory", mode: 0o700 });
   return outboxDir;
 }
 
