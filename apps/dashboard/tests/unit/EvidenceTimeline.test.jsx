@@ -104,7 +104,7 @@ describe('EvidenceTimeline', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders an unknown future evidence/event type as a safe fallback without a raw JSON dump or secret leak (ARC-19)', () => {
+  it('renders an unknown future evidence/event type as a safe fallback without a raw JSON dump or secret leak', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
       logEntries: [
