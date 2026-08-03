@@ -319,6 +319,62 @@ const domainCheckerLookupLimiter = rateLimit({
   },
 });
 
+// Per-workspace limit on diagnostic-bootstrap requests (ADR-0012 decision
+// 7). Keyed on workspace, not user or IP: the surface exists to gate how
+// many diagnostic agents+jobs a workspace can mint per window regardless of
+// which admin/owner is calling, mirroring domainCheckerLookupLimiter's
+// workspace-keyed shape above rather than the per-user API limiter's.
+const diagnosticBootstrapLimiter = rateLimit({
+  windowMs: intEnv(
+    "CERTOPS_DIAGNOSTIC_BOOTSTRAP_RATE_LIMIT_WINDOW_MS",
+    60 * 60 * 1000,
+  ),
+  max: Math.max(
+    1,
+    intEnv("CERTOPS_DIAGNOSTIC_BOOTSTRAP_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 5),
+  ),
+  message:
+    "Diagnostic agent bootstrap is rate limited for this workspace. Please wait before trying again.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: (req) => {
+    const workspaceId = req.workspace?.id || req.params?.id || "unknown";
+    return `certops-diagnostic-bootstrap:${workspaceId}`;
+  },
+  handler: (req, res) => {
+    const windowMs = intEnv(
+      "CERTOPS_DIAGNOSTIC_BOOTSTRAP_RATE_LIMIT_WINDOW_MS",
+      60 * 60 * 1000,
+    );
+    const fallbackRetrySec = Math.max(1, Math.ceil(windowMs / 1000));
+    const resetTime = req.rateLimit?.resetTime;
+    const retryAfterSeconds =
+      resetTime instanceof Date
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : fallbackRetrySec;
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "certops_diagnostic_bootstrap",
+      userId: req.user?.id || null,
+      workspaceId: req.workspace?.id || req.params?.id || null,
+      ip: resolveClientIp(req),
+      userAgent: req.get("User-Agent"),
+      retryAfterSeconds,
+    });
+    res.set("Retry-After", String(retryAfterSeconds));
+    res.status(429).json({
+      error:
+        "Diagnostic agent bootstrap is rate limited for this workspace. Please wait before trying again.",
+      code: "CERTOPS_DIAGNOSTIC_BOOTSTRAP_RATE_LIMITED",
+      retry_after_seconds: retryAfterSeconds,
+    });
+  },
+});
+
+function getDiagnosticBootstrapLimiter() {
+  return diagnosticBootstrapLimiter;
+}
+
 let resolvedApiLimiter;
 /**
  * Returns the API rate-limit middleware (resolved once per process).
@@ -386,6 +442,7 @@ module.exports = {
   planAwareApiLimiter,
   getApiLimiter,
   getDomainCheckerLookupLimiter,
+  getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
   noRateLimit,
   applyGlobalRateLimit,

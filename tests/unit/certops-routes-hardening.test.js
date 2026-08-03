@@ -166,6 +166,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/agents/:agentId/retire",
+      "POST /api/v1/workspaces/:id/certops/agents/diagnostic-bootstrap",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/renewal-setup",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
@@ -838,6 +839,61 @@ describe("CertOps route hardening", () => {
         `${routePath} is a passive read and must remain available while paused`,
       );
     }
+  });
+
+  it("gates diagnostic-bootstrap on admin role, a human session, and its own rate limiter", () => {
+    // Bootstrap mints a new machine credential (ADR-0012 decision 7), so it
+    // needs the same "human session, not a worker credential" posture as the
+    // kill switch and renewal profile, plus a workspace-scoped rate limiter
+    // dedicated to this route (not the general API limiter alone).
+    const block = routeBlock(
+      "post",
+      "/api/v1/workspaces/:id/certops/agents/diagnostic-bootstrap",
+    );
+    assert.match(block, /authorize\("certops\.agents\.diagnose"\)/);
+    assert.match(block, /requireCertOpsSessionUser/);
+    assert.match(block, /getDiagnosticBootstrapLimiter\(\)/);
+    assert.ok(
+      block.indexOf("rejectKeyMaterial") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "diagnostic-bootstrap must reject private key material before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "diagnostic-bootstrap must check the rollout gate before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsSessionUser") <
+        block.indexOf('authorize("certops.agents.diagnose")'),
+      "diagnostic-bootstrap must require a human session before role authorization",
+    );
+  });
+
+  it("documents diagnostic-bootstrap and the admin RBAC entry backing it", () => {
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/agents/diagnostic-bootstrap",
+      "POST",
+    );
+    for (const schemaName of [
+      "CertOpsDiagnosticBootstrapRequest",
+      "CertOpsDiagnosticBootstrapResponse",
+    ]) {
+      assert.ok(
+        openApiSource.includes(`    ${schemaName}:`),
+        `${schemaName} must be defined under components.schemas`,
+      );
+    }
+
+    const rbacSource = fs.readFileSync(
+      path.resolve(__dirname, "../../apps/api/services/rbac.js"),
+      "utf8",
+    );
+    assert.match(
+      rbacSource,
+      /"certops\.agents\.diagnose":\s*"admin"/,
+      "diagnostic bootstrap mints a new machine credential, so it must be admin-gated",
+    );
   });
 
   it("keeps token and agent-bootstrap-token revoke/retire available while paused", () => {

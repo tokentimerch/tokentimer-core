@@ -2843,6 +2843,97 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS capabilities_updated_at TIMESTAMPTZ NULL;
     `,
   },
+  {
+    version: 40,
+    name: "certops_diagnostic_agent_isolation",
+    sql: `
+      -- Diagnostic-agent isolation surface (ADR-0012 decisions 2 and 7).
+      --
+      -- protocol_smoke is a dedicated wire action used only to test agent
+      -- protocol connectivity (claim/verify/report) without performing any
+      -- certificate work: no keygen, no ACME order, no filesystem write. It
+      -- is always dispatched with mode = 'dry_run' and, per the existing
+      -- mode/status guard above (certops_job_mode_and_dry_run_complete),
+      -- can therefore never terminate as 'succeeded' -- only
+      -- 'dry_run_complete' or 'rejected'.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_operation_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_operation_check CHECK (
+          operation IN (
+            'issue', 'renew', 'deploy', 'reload', 'revoke', 'noop',
+            'protocol_smoke'
+          )
+        );
+
+      -- agent_kind is server-assigned exactly once, at row creation, and is
+      -- never updated afterward: there is deliberately no UPDATE path that
+      -- changes it for an existing agent. This makes it a trustworthy trust
+      -- boundary in a way declared_capabilities (client-supplied on every
+      -- register/heartbeat) can never be: dispatch keys the protocol_smoke
+      -- gate on this column, not on anything the agent itself asserts, so
+      -- a normal agent cannot make itself eligible for a diagnostic job (or
+      -- vice versa) by lying about what it supports.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS agent_kind TEXT NOT NULL DEFAULT 'normal';
+      ALTER TABLE certops_agents
+        DROP CONSTRAINT IF EXISTS certops_agents_agent_kind_check;
+      ALTER TABLE certops_agents
+        ADD CONSTRAINT certops_agents_agent_kind_check CHECK (
+          agent_kind IN ('normal', 'diagnostic')
+        );
+      CREATE INDEX IF NOT EXISTS idx_certops_agents_workspace_agent_kind
+        ON certops_agents(workspace_id, agent_kind, status);
+    `,
+  },
+  {
+    version: 41,
+    name: "certops_diagnostic_bootstrap_requests",
+    sql: `
+      -- Single-use, non-replayable record for the session-authenticated
+      -- diagnostic-bootstrap endpoint (POST .../certops/agents/diagnostic-bootstrap).
+      --
+      -- Unlike certops_agent_registration_replays (which deliberately DOES
+      -- replay a lost response for a machine-credential register call),
+      -- a diagnostic bootstrap must never silently reissue
+      -- {agentId, credential, job}: a retried request with the same
+      -- request_id has to fail with diagnostic_bootstrap_already_consumed.
+      -- The UNIQUE(workspace_id, request_id) index below is what makes that
+      -- true: the row is inserted and the agent + smoke job are created in
+      -- the same transaction, so a second attempt with the same request_id
+      -- hits the unique constraint before anything else happens, and can
+      -- never observe (or create) a half-finished bootstrap.
+      --
+      -- expires_at is retained as a documented 15-minute request window and
+      -- as a future janitor-cleanup boundary for this audit trail; it is
+      -- not a re-arm mechanism, because a consumed row is never deleted and
+      -- the UNIQUE index makes single-use permanent, which is a strictly
+      -- stronger guarantee than "usable again after 15 minutes".
+      CREATE TABLE IF NOT EXISTS certops_diagnostic_bootstrap_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        request_id TEXT NOT NULL
+          CHECK (char_length(btrim(request_id)) BETWEEN 1 AND 128),
+        requested_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        agent_row_id UUID NULL,
+        job_id UUID NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_diagnostic_bootstrap_agent
+          FOREIGN KEY (workspace_id, agent_row_id)
+          REFERENCES certops_agents(workspace_id, id)
+          ON DELETE SET NULL (agent_row_id),
+        CONSTRAINT fk_certops_diagnostic_bootstrap_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE SET NULL (job_id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_diagnostic_bootstrap_workspace_request
+        ON certops_diagnostic_bootstrap_requests(workspace_id, request_id);
+      CREATE INDEX IF NOT EXISTS idx_certops_diagnostic_bootstrap_expires
+        ON certops_diagnostic_bootstrap_requests(expires_at);
+    `,
+  },
 ];
 
 async function runMigrations() {

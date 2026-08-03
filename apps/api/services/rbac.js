@@ -46,6 +46,13 @@ const actionPolicy = {
   // host at the next renewal, so it sits above ordinary CertOps job creation
   // (workspace_manager) and alongside the kill switch.
   "certops.renewal_profile.manage": "admin",
+  // Diagnostic bootstrap mints a new machine credential and lets a
+  // reference client authenticate against this workspace's agent protocol
+  // (ADR-0012 decision 7). Low blast radius by construction (protocol_smoke
+  // only, no certificate access), but it is still credential issuance, so
+  // it sits at admin alongside the kill switch and renewal profile rather
+  // than at the workspace_manager level ordinary job creation uses.
+  "certops.agents.diagnose": "admin",
 };
 
 /**

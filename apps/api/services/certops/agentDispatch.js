@@ -970,13 +970,21 @@ async function claimJobs({
               declared_command_profile_names,
               supported_dns_providers,
               declared_capabilities,
-              capabilities_updated_at
+              capabilities_updated_at,
+              agent_kind
          FROM certops_agents
         WHERE id = $1
         FOR UPDATE`,
       [agent.id],
     );
     const caps = agentCaps.rows[0] || {};
+    // ADR-0012 decision 7: agent_kind is server-assigned at registration and
+    // never updated afterward, unlike declared_capabilities/supportedActions
+    // (both client-supplied on every call). The protocol_smoke gate below is
+    // keyed on this column alone, so a normal agent cannot make itself
+    // eligible for a diagnostic job (or vice versa) by declaring, or
+    // withholding, any capability.
+    const agentKind = caps.agent_kind === "diagnostic" ? "diagnostic" : "normal";
     const targetSelectors = jsonbTextArray(caps.declared_target_selectors);
     const commandProfiles = jsonbTextArray(caps.declared_command_profile_names);
     const dnsProviders =
@@ -1061,6 +1069,10 @@ async function claimJobs({
             required_command_profile IS NULL
             OR required_command_profile = ANY($6::text[])
           )
+          AND (
+            ($9::text = 'diagnostic' AND operation = 'protocol_smoke')
+            OR ($9::text <> 'diagnostic' AND operation <> 'protocol_smoke')
+          )
         ORDER BY created_at
         LIMIT $7
         FOR UPDATE SKIP LOCKED`,
@@ -1073,6 +1085,7 @@ async function claimJobs({
         commandProfiles,
         maxJobs,
         canBindEvidenceToClaim,
+        agentKind,
       ],
     );
 

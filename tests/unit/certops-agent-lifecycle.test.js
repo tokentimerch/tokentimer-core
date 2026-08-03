@@ -479,6 +479,10 @@ describe("CertOps agents list route", () => {
       agentVersion: "1.2.3",
       protocolVersion: "1.0.0",
       status: "active",
+      // Server-assigned, defaults to normal for every pre-existing and
+      // ordinarily-registered agent (ADR-0012 decision 7); only the
+      // diagnostic-bootstrap service ever sets this to 'diagnostic'.
+      agentKind: "normal",
       lastSeenAt: "2026-07-01T12:00:00.000Z",
       clockOffsetMs: 25,
       ntpSynced: null,
