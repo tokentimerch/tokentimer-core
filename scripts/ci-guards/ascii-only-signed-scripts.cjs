@@ -2,22 +2,14 @@
 "use strict";
 
 // Guard: closes the "ASCII-only over signed .ps1 sources" finding from
-// the M5c CI-guard backlog (tokentimer-canvas plan, "Quality and CI
-// backlog" item #1). Microsoft documents signed PowerShell scripts
-// containing non-ASCII UTF-8 content failing Authenticode hash
+// the CertOps CI-guard backlog. Microsoft documents signed PowerShell
+// scripts containing non-ASCII UTF-8 content failing Authenticode hash
 // validation across locales when the signing host's code page differs
 // from the verifying host's
 // (https://learn.microsoft.com/en-us/troubleshoot/windows-client/system-management-components/signed-powershell-script-fails-hash-mismatch).
 // Every file matching packages/agent/reference/*.ps1 must therefore
 // contain only ASCII bytes (0x00-0x7F): no smart quotes, no accented
 // characters, no box-drawing.
-//
-// IMPORTANT - this guard becomes meaningful once
-// packages/agent/reference/*.ps1 exist; until then it is a structural
-// no-op, not a proof of anything. No .ps1 file exists yet under that
-// path on this branch (see Wave 1c in the M5c plan), so the glob below
-// matches nothing today and this guard passes vacuously rather than
-// failing for files that were never supposed to exist yet.
 
 const fs = require("node:fs");
 const path = require("node:path");

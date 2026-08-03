@@ -2,23 +2,11 @@
 "use strict";
 
 // Guard: closes the "neither shipped client invokes Node" finding from
-// the M5c CI-guard backlog (tokentimer-canvas plan, "Quality and CI
-// backlog" item #1). The two Node-free reference clients,
+// the CertOps CI-guard backlog. The two Node-free reference clients,
 // packages/agent/reference/tokentimer-protocol.sh and .ps1, exist
 // specifically so an operator can talk to the protocol without a Node
 // runtime; this guard statically checks their source for anything that
 // would shell out to node/nodejs or a Node-based script file.
-//
-// IMPORTANT - this guard becomes meaningful once
-// packages/agent/reference/*.sh|.ps1 exist; until then it is a
-// structural no-op, not a proof of anything. Neither file exists yet
-// on this branch (see Wave 1c in the M5c plan), so today this guard
-// only proves "the guard itself runs without error", not "the clients
-// never invoke Node" - there are no clients yet to check. It exits 0
-// vacuously in that case rather than failing, because failing for
-// files that were never supposed to exist yet would be noise, not
-// signal. Once the files land, this stops being vacuous automatically
-// (same file paths, no guard change needed).
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -32,9 +20,18 @@ const TARGET_FILES = [
 ];
 
 // Patterns that indicate shelling out to Node or a Node-authored script
-// file, in either shell or PowerShell syntax.
+// file, in either shell or PowerShell syntax. The word-boundary check on
+// "node" also matches a hyphenated compound adjective like "Node-free"
+// (the client's own self-description, confirmed present in both clients'
+// help text/heredocs): "node" is followed by "-" then a letter, which
+// still satisfies \b since \b sits between the word char "e" and the
+// non-word char "-". The negative lookahead below excludes exactly that
+// shape (a bare hyphen immediately after "node"/"node.exe" with no
+// intervening whitespace), which is never how a real invocation is
+// written, while "node -e", "node--inspect" preceded by a space, and
+// "node.exe" still match normally.
 const FORBIDDEN_PATTERNS = [
-  { id: "node-command", re: /(^|[^\w./-])node(\.exe)?\b/gi },
+  { id: "node-command", re: /(^|[^\w./-])node(\.exe)?\b(?!-)/gi },
   { id: "nodejs-command", re: /\bnodejs\b/gi },
   { id: "require-call", re: /\brequire\s*\(/g },
   { id: "cjs-file-invocation", re: /[^\s"']+\.cjs\b/gi },
@@ -45,7 +42,71 @@ const FORBIDDEN_PATTERNS = [
   { id: "pnpm-command", re: /\bpnpm\b/gi },
 ];
 
+// Sentinel self-test: proves FORBIDDEN_PATTERNS still catches an actual
+// invocation in each id's own idiom, and still tolerates the one known
+// benign near-miss ("Node-free", the clients' own self-description).
+// Without this, a future edit that quietly weakens or over-widens a
+// pattern (exactly what happened with the "Node-free" false positive
+// this guard once had) would only be caught if someone happened to
+// re-introduce a real violation locally - a silent regression
+// otherwise. Runs against in-memory sample strings, not the real
+// client files, so it exercises the same two dialects (bash,
+// PowerShell) both clients are written in without needing a fixture
+// file for either.
+const SENTINEL_POSITIVE_CASES = [
+  { id: "node-command", sample: 'exec node "$SCRIPT_PATH"' },
+  { id: "node-command", sample: "& node.exe .\\helper.ps1" },
+  { id: "nodejs-command", sample: "command -v nodejs" },
+  { id: "require-call", sample: "x=require('fs')" },
+  { id: "cjs-file-invocation", sample: "node guard.cjs" },
+  { id: "mjs-file-invocation", sample: "import('./thing.mjs')" },
+  { id: "js-file-invocation", sample: "run helper.js" },
+  { id: "npx-command", sample: "npx tsx foo.ts" },
+  { id: "npm-command", sample: "npm run build" },
+  { id: "pnpm-command", sample: "pnpm exec node" },
+];
+
+const SENTINEL_NEGATIVE_CASES = [
+  { id: "node-command", sample: 'local desc="Node-free bash reference client"' },
+  { id: "node-command", sample: "# Node-free PowerShell reference client" },
+];
+
+function selfTestPatterns() {
+  const failures = [];
+  for (const { id, sample } of SENTINEL_POSITIVE_CASES) {
+    const pattern = FORBIDDEN_PATTERNS.find((p) => p.id === id);
+    pattern.re.lastIndex = 0;
+    if (!pattern.re.test(sample)) {
+      failures.push(
+        `sentinel: pattern "${id}" failed to match its own positive sample ${JSON.stringify(sample)}; this pattern may have regressed`,
+      );
+    }
+  }
+  for (const { id, sample } of SENTINEL_NEGATIVE_CASES) {
+    const pattern = FORBIDDEN_PATTERNS.find((p) => p.id === id);
+    pattern.re.lastIndex = 0;
+    if (pattern.re.test(sample)) {
+      failures.push(
+        `sentinel: pattern "${id}" incorrectly matched the known-benign sample ${JSON.stringify(sample)}; this would false-positive on the clients' own self-description`,
+      );
+    }
+  }
+  return failures;
+}
+
 function main() {
+  const selfTestFailures = selfTestPatterns();
+  if (selfTestFailures.length > 0) {
+    for (const f of selfTestFailures) {
+      console.error(`::error::no-node-invocation: ${f}`);
+    }
+    console.error(
+      "no-node-invocation: the guard's own detection patterns failed a sentinel self-test; " +
+        "a pass against the real client files below cannot be trusted until this is fixed",
+    );
+    process.exit(1);
+  }
+
   const violations = [];
   let anyFound = false;
 
@@ -84,7 +145,7 @@ function main() {
 
   if (!anyFound) {
     console.log(
-      "no-node-invocation: ok (vacuous pass - packages/agent/reference/*.sh|.ps1 do not exist yet)",
+      "no-node-invocation: ok (vacuous pass - neither reference client file exists at its expected path)",
     );
     return;
   }
