@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed (2026-08-02). Amended five times on the same day against successive external
-audits and **still pending sign-off**: decisions 2, 3 and 16 first (Finding A's
+**Accepted (2026-08-03).** Proposed 2026-08-02; amended seven times against
+successive external audits, five on 2026-08-02 and two more on 2026-08-03,
+before acceptance: decisions 2, 3 and 16 first (Finding A's
 misattribution, the observe-only carve-out, and `agentId` absence-versus-mismatch),
 then decisions 2, 3, 4 and 8 again (the signed-payload/wire-wrapper split,
 `agentId`'s requiredness sequencing and effective-flag capability gating, the
@@ -50,9 +51,47 @@ fall back to the other's Ed25519 implementation and erase the independence
 the two-client design exists to provide; Bash now uses `openssl pkeyutl
 -verify` exclusively and PowerShell uses the bundled `tokentimer-verify`
 exclusively, with neither permitted to call the other's path.
-This record must be accepted before the Windows execution-surface,
-signed-envelope and trust-anchor work described below can begin; the PRs that
-implement this feature set follow this decision rather than re-deciding it.
+**A sixth amendment (2026-08-03) closes the three remaining open questions**
+rather than leaving them as unresolved prose: decision 8 gains a stated
+PowerShell trust default (the signed launcher, with enforced WDAC as the
+documented hardened alternative, closing open question 5); a new decision 18
+sets a named, bounded superseded-certificate retention window
+(`windows.supersededRetentionHours`, default 168 hours, range 24-720, zero
+rejected) with an explicit multi-condition deletion gate, closing open
+question 8; and a new decision 19 states this record does not require
+`mlock`/`VirtualLock` for agent-side key memory and does not claim locked or
+non-pageable memory anywhere it is not actually held, relying instead on
+non-exportable custody (CNG-native by default), buffer-not-string handling,
+zeroization on every path, disabled core dumps, and a documented residual
+swap/pagefile risk, closing open question 9. **This adds no wire-protocol or
+control-plane database change; decision 18 adds agent configuration and
+persistent local lifecycle state, while decision 19 adds service-packaging
+and runbook requirements.**
+**A seventh amendment (2026-08-03) corrected four issues found in the sixth
+amendment itself, all in decisions 18 and 19.** (1) Decision 18's clock-skew
+grace was "a small fixed" value with no number; it is now the named,
+existing 300-second constant (`DEFAULT_NONCE_TTL_SECONDS` /
+`NONCE_TTL_GRACE_SECONDS`, both already 300 elsewhere in this program), not a
+newly invented figure. (2) Decision 18 stated "retained for 168 hours" as
+though that duration were unconditional, when the decision's own
+earlier-of-two-clocks rule means the actual retained duration is frequently
+shorter; corrected to "retained for up to 168 hours". (3) Decision 18 gained
+a specified restart-safe superseded-material ledger (persisted fields, ACL
+discipline, atomic writes, startup-and-periodic sweeps, and explicit
+active/closed rollback-journal-reference semantics), since safe cleanup
+cannot survive an agent restart between cutover and the cleanup deadline
+without one, and the sixth amendment's text implied the ledger's existence
+without ever specifying it. (4) Decision 19's "core dumps are disabled"
+clause named no platform-specific mechanism or verification method; it now
+names the Windows Error Reporting `LocalDumps` registry key (`DumpType=0` or
+absent) and the Linux `LimitCORE=0`/`RLIMIT_CORE` mechanism, each with its
+own verification command, rather than an unqualified claim.
+**This record is accepted as of 2026-08-03 following this seventh amendment;
+the Windows execution-surface, signed-envelope and trust-anchor work
+described below may now begin.** The PRs that implement this feature set
+follow this decision rather than re-deciding it; any future change to a
+decision here is a new, explicitly logged amendment, not a silent
+divergence in code.
 
 ## Context
 
@@ -858,6 +897,41 @@ The trusted launcher exists because a large fraction of target hosts have no
 App Control policy at all, and the client must still have a defined trust story
 there.
 
+**(Closes open question 5.) The signed launcher is the documented default;
+enforced WDAC is the documented hardened alternative, not a second default.**
+The launcher works on an ordinary supported Windows Server installation with
+no additional platform configuration, which describes most target hosts;
+WDAC is the stronger boundary but is not normally deployed or centrally
+manageable on them. The runbook therefore always invokes the trusted launcher
+rather than the `.ps1` file directly, and direct `.ps1` invocation is
+documented as unsupported, not merely undocumented. The launcher verifies the
+script's Authenticode signature, signer identity/thumbprint, architecture,
+timestamp, and the configured revocation policy, and only then invokes
+PowerShell; the script's own `Get-AuthenticodeSignature` self-check remains
+defense in depth only, exactly as stated above. Where an operator has an
+enforced WDAC policy already deployed, WDAC becomes the primary boundary for
+that host and the launcher may still run ahead of it as defense in depth, but
+is not presented to that operator as an additional mandatory layer, since the
+runtime-level check already subsumes it. Revocation behavior does not change
+by having a default: the default online policy fails closed on an unreachable
+CRL/OCSP endpoint, and an air-gapped install requires the signed offline
+manifest or cached revocation material, per the revocation-policy text above.
+The runbook must never recommend `-ExecutionPolicy Bypass` as a workaround for
+either path, since that flag is precisely the non-boundary decision 8 already
+rejects.
+
+Acceptance, in addition to the criteria stated earlier in this decision: a
+fresh-host installation that follows only the default (launcher) runbook
+succeeds with no manual WDAC configuration; a modified script is rejected
+before any script code executes under **both** supported trust
+configurations, tested separately (the launcher refuses to invoke an edited
+script; an enforced WDAC policy independently refuses to load it), so a test
+proving only the launcher's own check fires is not sufficient; a wrong
+signer, an unsigned script, a revoked signer, and a wrong-architecture binary
+each fail closed under the default path; the runbook text contains no
+`-ExecutionPolicy Bypass` recommendation anywhere, asserted by a guard over
+the shipped documentation rather than left to review.
+
 The script's own self-check is retained as **defense in depth** — it catches an
 honest deployment mistake such as an unsigned or wrong-architecture copy, and it
 costs nothing — but it is documented as defense in depth and never as the
@@ -1440,6 +1514,293 @@ gated selection path changes; a migrated pre-existing row with
 directly against a real database rather than inferred from the freshness-bound
 test alone; that same row is offered a gated job normally once a heartbeat
 sets the column.
+
+### 18. Superseded certificate retention is a named, bounded window, not an open-ended one
+
+**Closes open question 8.** Wave 2b's cleanup path needs a stated answer to
+"how long does the certificate a rotation just replaced stay in the machine
+store and CNG key container after the new one is bound", because an unbounded
+answer leaves stale key material in the store indefinitely and an
+unconditional immediate-delete answer removes an operator's only rollback
+target the moment it might be needed. It also needs a **restart-safe** answer,
+because the agent process that observes cutover and the agent process that
+later runs cleanup are not guaranteed to be the same process: a service
+restart, an upgrade, or a crash can land between the two, and a design whose
+only record of "this predecessor is now eligible for cleanup" lives in
+in-memory state loses that record exactly when it matters.
+
+Decision: **superseded IIS certificate material is retained for up to 168
+hours (7 days) after the replacement binding passes its own local TLS
+verification**, configured as `windows.supersededRetentionHours`, agent-local
+policy per ADR-0002 rather than a control-plane value. "Up to" is precise
+wording, not a hedge: the earlier-of-two-clocks rule below means the actual
+retained duration is frequently shorter than 168 hours, and a reader who
+takes "retained for 168 hours" as an unconditional duration would be
+describing a different, wrong decision. The first release permits a
+configured range of **24-720 hours**; a value of zero is rejected at
+configuration-load time, not silently clamped, because zero collapses
+retention to unconditional immediate deletion, which decision 9's own
+no-secure-erasure caveat already establishes as an operation this record does
+not promise is safe.
+
+**Cleanup eligibility is the earlier of two clocks, not the later:**
+
+```text
+verifiedCutoverAt + retentionWindow
+old certificate's notAfter + a fixed 300-second clock-skew grace
+```
+
+**The grace is named, not "small and fixed" left unquantified: 300 seconds
+(5 minutes), reusing the program's existing clock-skew tolerance rather than
+inventing a second one.** `apps/api/services/certops/jobSigning.js`'s
+`DEFAULT_NONCE_TTL_SECONDS` and `leaseTiming.js`'s `NONCE_TTL_GRACE_SECONDS`
+are both already `300`, and section 7.4 of the architecture plan already
+calls for "one documented clock-skew tolerance constant," not a family of
+similar-but-different ones invented per feature. The second clock exists
+because a certificate already past its own `notAfter` provides no rollback
+value regardless of how recently it was replaced; holding expired material
+for a full week past cutover for no benefit is exactly the "indefinite stale
+key material" outcome this decision exists to close.
+
+**Deletion requires every one of the following, not any one of them:**
+
+- TokenTimer's own ownership record for the old certificate was written at the
+  time this agent installed it (decision 9's install-time ownership
+  recording; an agent must never delete material it did not install, per
+  Wave 2b's ownership-aware retention rule).
+- No IIS or `http.sys` binding, on this host, still references the old
+  thumbprint.
+- No active job or rollback journal entry (the same journal decision 9
+  requires for PFX staging) still references it.
+- No other certificate or ownership record still references the same CNG key
+  container, so a key shared across more than one binding is never removed
+  out from under a survivor.
+- The replacement certificate remains correctly bound and independently
+  passes a local TLS handshake at the moment cleanup runs, not only at the
+  moment of cutover, so a rebind that silently regressed between cutover and
+  the cleanup sweep blocks its own predecessor's removal instead of deleting
+  the last-known-good material.
+- The cleanup deadline (the earlier of the two clocks above) has actually
+  elapsed.
+
+Any one condition failing means cleanup does not run for that certificate in
+that sweep; the sweep retries on its next scheduled pass rather than treating
+a blocked cleanup as an error requiring operator action, since a still-bound
+predecessor is the safe failure mode, not the confidentiality-costing one. A
+sweep that defers cleanup writes a durable, named deferral reason
+(`ownership_unrecorded`, `binding_still_present`, `active_reference_present`,
+`shared_key_container`, `replacement_handshake_failed`, or
+`deadline_not_reached`) against the ledger row described below, and exposes a
+count of currently-deferred rows per reason as a metric, so a certificate
+stuck in deferral forever is a visible, alertable condition rather than a
+silent infinite retry with no operator-facing signal.
+
+**A restart-safe, agent-local superseded-material ledger is the mechanism,
+not an implied consequence of "the agent remembers."** Each superseded
+certificate gets one persisted ledger row, written in the same operation that
+completes cutover verification, carrying:
+
+```text
+oldThumbprint, replacementThumbprint      identify the pair this row governs
+cngKeyContainerId                          the old certificate's CNG key
+                                            container identifier, so the
+                                            shared-container check (above)
+                                            is a lookup, not a live store scan
+verifiedCutoverAt                          set once, at successful cutover
+                                            verification, never rewritten
+oldNotAfter                                copied from the old certificate at
+                                            ledger-write time, so eligibility
+                                            never depends on the old
+                                            certificate still being readable
+                                            from the store at cleanup time
+ownershipProvenance                        tokentimer_installed / preexisting,
+                                            copied from decision 9's
+                                            install-time ownership record
+jobOrRollbackJournalRefs                   zero or more references into
+                                            decision 9's PFX/rollback journal,
+                                            each individually active or
+                                            closed (below)
+lifecycleState                             pending_retention / eligible /
+                                            deferred / removed, a durable
+                                            state machine, not a computed
+                                            value re-derived from scratch
+                                            every sweep
+```
+
+The ledger is **agent-created state** under decision 10's ACL matrix: written
+with the same restrictive, protected DACL as the config directory, the
+credential file, and the PFX staging directory, so a row governing which
+certificate is safe to delete carries the same tamper-resistance as the
+credential material decision 10 already protects. Writes are **atomic**
+(sibling-temp-file-plus-rename, the same pattern decision 10's directory-fsync
+discussion already establishes for this agent), because a torn or
+partially-written ledger row is worse than a missing one: a missing row fails
+closed (nothing is known to be eligible, nothing is deleted), while a torn row
+could parse as a plausible-looking but wrong value.
+
+**Rollback-journal references are explicitly active or closed, not merely
+present or absent.** A reference recorded while a rollback (decision 13's
+IIS rebind-and-verify path) is in flight is **active**; once that rollback
+either completes or is abandoned by its own protocol, the reference is
+explicitly marked **closed**, in the same write that closes the rollback
+journal entry itself. Deletion's "no active job or rollback journal entry"
+condition above checks for **active** references only: a closed historical
+reference is provenance, kept for evidence and audit, and must not block
+cleanup forever, which an implementation that treated "any reference, ever"
+as blocking would do by construction. This distinction is why the ledger
+schema names the field `jobOrRollbackJournalRefs` with a per-reference state
+rather than a boolean "has been referenced."
+
+**The ledger is swept at agent startup and on the same periodic schedule as
+Wave 2b's reconciliation sweep, not only periodically.** A startup sweep
+exists for the same reason decision 9's PFX startup sweep exists: a crash
+between writing the ledger row and completing a later state transition must
+be resumed on next start rather than left stuck, and a row's `lifecycleState`
+is exactly what lets the startup sweep resume correctly, since it re-reads
+the durable state rather than trying to reconstruct "was this mid-cleanup
+when we died" from partial filesystem or store evidence. **This is why a
+process restart between cutover and the cleanup deadline is safe by
+construction rather than by accident:** every fact cleanup eligibility depends
+on (`verifiedCutoverAt`, `oldNotAfter`, ownership, journal-reference state) is
+in the ledger row, not in the process that computed it, so the row surviving
+the restart is sufficient for a later sweep, in a different process
+lifetime, to reach the identical cleanup decision.
+
+This is additive to, not a replacement for, decision 9's PFX journal-and-sweep
+model: the PFX staging sweep runs at agent startup and clears transient
+staging-directory residue before any claim is accepted; this retention window
+and its ledger govern the separately-lived superseded *store* certificate and
+its CNG key container after a completed, verified rotation, on the schedule
+Wave 2b's reconciliation sweep already runs.
+
+Acceptance: a rotation followed immediately by a query finds the superseded
+certificate and key container still present and still passing the ownership
+check, with a `pending_retention` ledger row recording `verifiedCutoverAt`;
+the same query after the configured window (or after the superseded
+certificate's own `notAfter` plus the named 300-second grace, whichever is
+sooner, simulated via an injectable clock in tests rather than a real
+seven-day wait) finds both removed and the ledger row `removed`; a
+certificate the agent did not install is never removed by this path
+regardless of age, tested by seeding a `preexisting`-equivalent record with
+no agent-owned installation row; a CNG key container still referenced by a
+second, distinct certificate or ownership record is never removed while that
+reference exists; a deliberately broken rebind (replacement fails its local
+handshake at sweep time) blocks cleanup of the predecessor, is retried on the
+next sweep rather than failing the sweep outright, and writes the
+`replacement_handshake_failed` deferral reason; an active rollback-journal
+reference blocks cleanup while a **closed** one for the same certificate does
+not; a configuration value of `0` is rejected at load with a named error, and
+values outside `24-720` are rejected the same way, not clamped into range,
+with `24`, `168`, and `720` accepted and `0`, `23`, and `721` rejected; a
+simulated process kill between writing the ledger row at cutover and the
+cleanup sweep running, followed by a restart, still reaches the correct
+cleanup decision from the persisted row alone; a deferred-forever case (an
+ownership check that never resolves) exposes a non-zero deferred-count metric
+under its named reason rather than retrying invisibly with no operator signal.
+
+### 19. Key-memory handling is documented as a residual-risk boundary, not a locked-memory guarantee
+
+**Closes open question 9.** certctl's `keymem.go` locks agent-side private-key
+memory (`VirtualLock`/an mlock-equivalent) against swap-to-disk exposure.
+Whether this agent needs the equivalent control was left open rather than
+silently unaddressed.
+
+Decision: **this record does not require `mlock`/`VirtualLock`, and the agent
+must not claim locked or non-pageable memory for key material anywhere it
+does not actually hold it.** Locking a single Node `Buffer` would be false
+assurance rather than a real control: V8, OpenSSL, the JSON/PEM parsing path,
+and underlying system calls can all produce additional copies of the same key
+bytes outside that one locked allocation, so a lock on one buffer protects one
+buffer, not the key. Adding a native locking dependency to buy a guarantee the
+rest of the path does not honor is a cost with no matching benefit, and an
+advertised "keys are locked in memory" claim that is actually "one buffer,
+sometimes" is worse than no claim, for the same reason decision 9 refuses a
+secure-erasure claim it cannot back.
+
+The controls this record requires instead, all already true or already
+decided elsewhere in this ADR and restated here as one checked set rather than
+scattered facts:
+
+- CNG-native keys (decision 9's default path) remain non-exportable OS-store
+  handles and never become raw process buffers at all; there is no allocation
+  to protect because the private key never enters process memory in the first
+  place.
+- Linux/filesystem key bytes are held as `Buffer`, never as a JavaScript
+  string, since a string is immutable and cannot be zeroized; this is
+  existing practice, restated as a requirement rather than a convention.
+- Any agent-owned key buffer that does exist has the narrowest practical
+  lifetime and is zeroized in a `finally` block covering both the success
+  path and every failure path, not only the success path.
+- No unnecessary private-key export from a `KeyObject` or a CNG handle; export
+  happens only where a consuming API leaves no alternative, per decision 9's
+  PFX-import cases.
+- **Core dumps are disabled for the production agent Windows Service and its
+  Linux daemon equivalent, by a named, platform-specific mechanism, not by an
+  unspecified "disabled" claim**, since a core dump is an alternate, unlocked
+  copy of process memory that no in-process buffer discipline can prevent:
+  - **Windows.** The Windows Error Reporting `LocalDumps` key for the agent's
+    service executable is either absent or configured with `DumpType=0`
+    (no dump), under
+    `HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\<agent-service-exe-name>`;
+    the installer sets this explicitly rather than relying on the
+    machine-wide default, since a machine-wide default is exactly the kind
+    of ambient configuration decision 10 already refuses to depend on
+    elsewhere. Verified by reading that registry value back after install and
+    asserting it is either absent or `0`, not by triggering an actual crash
+    in CI.
+  - **Linux.** The systemd unit sets `LimitCORE=0` (equivalently, the
+    process's `RLIMIT_CORE` soft and hard limits are both `0` before the
+    Node process starts handling key material), which is authoritative
+    regardless of the distribution's `core_pattern`/`ulimit -c` defaults,
+    since decision 10's Windows ACL discussion already establishes the
+    principle that an ambient OS default is not a control this agent may
+    rely on silently. Verified by reading the running service's
+    `/proc/<pid>/limits` `Max core file size` row and asserting both the
+    soft and hard limits are `0`, not by inspecting the unit file alone,
+    since a unit file can be present and still not be the one actually
+    governing the running process.
+- Operator runbooks recommend encrypted swap/pagefile, or disabling swap
+  entirely where local policy requires it, as the actual mitigation for the
+  risk `mlock` would otherwise address, stated as a documented residual-risk
+  recommendation rather than left unmentioned.
+- Keys, passwords, and PFX bytes are excluded from logs, error messages,
+  evidence records, diagnostics output, and child-process arguments, which
+  this record already requires elsewhere (decision 8's credential handling,
+  decision 9's in-memory PFX password) and restates here as part of the same
+  key-memory posture rather than a separate concern.
+- PFX fallback keeps decision 9's journal, protected staging directory,
+  startup sweep, and bounded-exposure evidence unchanged; this decision adds
+  no new obligation there and removes none.
+- Where a host's policy genuinely requires non-pageable key memory as a hard
+  requirement, the answer is a hardware- or OS-backed non-exportable key
+  provider (CNG, an HSM, a TPM-backed key, PKCS#11), not `agent-local`
+  filesystem custody with a partial software lock bolted on. That policy
+  requirement is a reason to choose a different custody mode entirely, not a
+  reason to add `mlock` to the filesystem path.
+
+A future locked-memory implementation is not ruled out, but must ship as its
+own explicitly versioned capability, must protect the complete allocation
+path rather than one buffer, must fail closed rather than silently degrade
+where the underlying platform call is unavailable, and must be provable (a
+test asserting no unlocked copy of the key bytes exists at any point in the
+path) before it is advertised as a guarantee. A best-effort lock that the
+agent cannot prove held is not advertised as a security property at all.
+
+Acceptance: the CNG-native flow produces no raw key file and no export call
+anywhere in its path, asserted by test; the Linux key-generation path never
+assigns key bytes to a JavaScript string at any point, asserted by test; every
+agent-owned key buffer is zeroized on both its success path and every failure
+path it has, asserted by test rather than by inspection; the production
+service's deployed configuration disables core dumps, verified on Windows by
+reading back the `LocalDumps` registry value for the agent's service
+executable (absent or `DumpType=0`) and on Linux by reading the running
+service's `/proc/<pid>/limits` `Max core file size` row (both soft and hard
+limits `0`), neither asserted from the installer/unit-file source alone; a
+canary key/password value seeded at the start of a key-handling test run does
+not appear in process arguments, environment, logs, evidence, or crash
+diagnostics captured during that run; the shipped documentation states the
+residual swap/pagefile risk plainly rather than implying a stronger guarantee
+than this decision makes.
 
 ## Alternatives considered
 
