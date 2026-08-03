@@ -6,6 +6,8 @@
  */
 "use strict";
 
+const zlib = require("zlib");
+
 /**
  * TokenTimer shared secret-material detector.
  *
@@ -21,14 +23,34 @@
  *   - private key material  -> REJECT (hard 422 at the API boundary)
  *   - other generic secrets -> REDACT (so legitimate operational output is kept)
  *
- * Scope note: PEM private-key blocks (all common variants), base64-wrapped PEM,
- * PKCS#8/PKCS#1/SEC1 DER private keys, PKCS#12/PFX-like DER bundles, and JKS
- * keystores (by magic header) are detected here. PKCS#12/PFX detection is
- * intentionally a conservative structural sniff for the PFX version field, not
- * a full ASN.1 parser; JKS detection is likewise a magic-header sniff rather
- * than a full keystore parser; a JKS container is rejected outright since its
- * entire purpose is to hold private key material. Do not weaken these
+ * Scope note: PEM private-key blocks (all common variants), base64- and
+ * base64url-wrapped PEM, PKCS#8/PKCS#1/SEC1 DER private keys, PKCS#12/PFX-like
+ * DER bundles, and JKS keystores (by magic header) are detected here. PKCS#12/PFX
+ * detection is intentionally a conservative structural sniff for the PFX version
+ * field, not a full ASN.1 parser; JKS detection is likewise a magic-header sniff
+ * rather than a full keystore parser; a JKS container is rejected outright since
+ * its entire purpose is to hold private key material. Do not weaken these
  * patterns without updating tests/unit/secretMaterial.test.js.
+ *
+ * Compressed input: a base64/base64url/hex-decoded (or raw) buffer that begins
+ * with a recognized gzip (`1F 8B`) or RFC 1950 zlib header is decompressed
+ * exactly once (never recursively) and the result is scanned in its place.
+ * Recognition of a zlib header is algorithmic against the two-byte header
+ * (CMF, FLG), not an enumerated allow-list of common compression-level byte
+ * pairs, so a smaller window size or a set preset-dictionary flag is still
+ * recognized as compressed input. Two independent bounds apply once a
+ * recognized header is found: the compressed buffer itself must not exceed
+ * `MAX_COMPRESSED_INPUT_LENGTH`, and the decompression call's own output-size
+ * parameter is capped to `min(MAX_DECOMPRESSED_OUTPUT_LENGTH, compressedLength
+ * * DECOMPRESSED_OUTPUT_RATIO)` so the library itself refuses to materialize a
+ * decompression bomb. A stream with the preset-dictionary flag (`FDICT`) set,
+ * a stream whose compressed length or decoded-output bound is exceeded, and a
+ * stream that presents a valid header but fails to decompress cleanly all
+ * report the same fail-closed outcome as detected key material, never a
+ * silent fall-through to the ordinary content scan. A buffer with neither
+ * recognized header proceeds directly to the ordinary scan: that is the
+ * default path for the overwhelming majority of legitimate, uncompressed
+ * base64 traffic and is not itself a failure mode.
  */
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
@@ -194,9 +216,17 @@ function fieldNameLooksGenericSecret(fieldName) {
   );
 }
 
+// Standard base64 uses `+`/`/`; base64url uses `-`/`_` in the same
+// positions. An attacker who controls the plaintext can always pad a PEM to
+// force at least one of the four variant characters to appear, so both
+// alphabets must decode, not just the standard one (C1: base64url evasion).
+const BASE64_STANDARD_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+const BASE64_URL_PATTERN = /^[A-Za-z0-9_-]+={0,2}$/;
+
 /**
- * Returns true if the string looks like base64 and is long enough to plausibly
- * wrap a bounded DER envelope or PEM block. Whitespace is tolerated.
+ * Returns true if the string looks like base64 or base64url and is long
+ * enough to plausibly wrap a bounded DER envelope or PEM block. Whitespace is
+ * tolerated.
  * @param {string} value
  * @returns {boolean}
  */
@@ -204,7 +234,21 @@ function looksBase64(value) {
   if (typeof value !== "string") return false;
   const compact = value.replace(/\s+/g, "");
   if (compact.length < 16) return false;
-  return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
+  return (
+    BASE64_STANDARD_PATTERN.test(compact) || BASE64_URL_PATTERN.test(compact)
+  );
+}
+
+/**
+ * A string using the base64url alphabet (`-`/`_`) is never valid standard
+ * base64 input to Node's decoder in the same pass, so the two alphabets must
+ * be told apart before decoding rather than decoded with a single fixed
+ * encoding name.
+ * @param {string} compact
+ * @returns {"base64url"|"base64"}
+ */
+function base64VariantFor(compact) {
+  return /[-_]/.test(compact) ? "base64url" : "base64";
 }
 
 /**
@@ -466,8 +510,9 @@ function looksJksKeystore(value) {
 
 function base64DecodeIfLikely(value) {
   if (!looksBase64(value)) return null;
+  const compact = value.replace(/\s+/g, "");
   try {
-    return Buffer.from(value.replace(/\s+/g, ""), "base64");
+    return Buffer.from(compact, base64VariantFor(compact));
   } catch (_err) {
     return null;
   }
@@ -485,7 +530,108 @@ function hexDecodeIfLikely(value) {
   }
 }
 
-function bufferContainsPrivateKey(value) {
+// Bounds for the compressed-input branch (C1). Both apply once a recognized
+// gzip/zlib header is found; neither is optional. The compressed buffer
+// itself must not exceed this many bytes before decompression is even
+// attempted (an oversized "compressed" blob is rejected outright, never
+// decompressed).
+const MAX_COMPRESSED_INPUT_LENGTH = 1024 * 1024; // 1 MiB
+// The decoded-output bound is a ratio check, not a flat cap on its own: a
+// small compressed input is bounded to a small multiple of its own size, and
+// only an input already close to MAX_COMPRESSED_INPUT_LENGTH can reach this
+// absolute ceiling.
+const MAX_DECOMPRESSED_OUTPUT_LENGTH = 4 * 1024 * 1024; // 4 MiB
+const DECOMPRESSED_OUTPUT_RATIO = 4;
+
+function looksGzipHeader(buffer) {
+  return (
+    Buffer.isBuffer(buffer) &&
+    buffer.length >= 2 &&
+    buffer[0] === 0x1f &&
+    buffer[1] === 0x8b
+  );
+}
+
+/**
+ * RFC 1950 zlib header recognition, checked algorithmically against the
+ * two-byte header (CMF, FLG) rather than matched against the four common
+ * compression-level byte pairs (`78 01`/`78 5E`/`78 9C`/`78 DA`): a valid
+ * zlib stream may use a smaller window size (encoded in the CMF nibble) or
+ * set the preset-dictionary flag (encoded in FLG), either of which produces
+ * a header outside those four presets while remaining fully decodable.
+ * @param {Buffer} buffer
+ * @returns {boolean}
+ */
+function looksZlibHeader(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 2) return false;
+  const cmf = buffer[0];
+  const flg = buffer[1];
+  if ((cmf & 0x0f) !== 8) return false; // compression method must be "deflate"
+  if (cmf >> 4 > 7) return false; // windowBits - 8 must be at most 7
+  return ((cmf << 8) | flg) % 31 === 0; // RFC 1950 header self-check
+}
+
+function zlibHeaderHasPresetDictionary(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.length >= 2 && (buffer[1] & 0x20) !== 0;
+}
+
+const COMPRESSION_CLASSIFICATION = Object.freeze({
+  NOT_COMPRESSED: "not_compressed",
+  DECOMPRESSED: "decompressed",
+  REJECTED: "rejected",
+});
+
+/**
+ * Classifies a buffer for the compressed-input branch. Two outcomes besides
+ * "not compressed": a single successful decompression pass (never re-fed
+ * into this function, closing the bomb-inside-bomb vector), or a fail-closed
+ * rejection covering an oversized compressed buffer, a preset-dictionary
+ * (`FDICT`) stream, a bound-exceeding decompression, and a stream that
+ * presents a valid header but fails to decompress. `FDICT` is external
+ * material this detector does not have, so decompression is never attempted
+ * for it; the caller must not treat REJECTED as "not found."
+ * @param {Buffer} buffer
+ * @returns {{classification: string, decoded: Buffer|null}}
+ */
+function classifyCompressedBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer)) {
+    return { classification: COMPRESSION_CLASSIFICATION.NOT_COMPRESSED, decoded: null };
+  }
+
+  const isGzip = looksGzipHeader(buffer);
+  const isZlib = !isGzip && looksZlibHeader(buffer);
+  if (!isGzip && !isZlib) {
+    return { classification: COMPRESSION_CLASSIFICATION.NOT_COMPRESSED, decoded: null };
+  }
+
+  if (buffer.length > MAX_COMPRESSED_INPUT_LENGTH) {
+    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+  }
+
+  if (isZlib && zlibHeaderHasPresetDictionary(buffer)) {
+    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+  }
+
+  const maxOutputLength = Math.min(
+    MAX_DECOMPRESSED_OUTPUT_LENGTH,
+    buffer.length * DECOMPRESSED_OUTPUT_RATIO,
+  );
+
+  try {
+    const decoded = isGzip
+      ? zlib.gunzipSync(buffer, { maxOutputLength })
+      : zlib.inflateSync(buffer, { maxOutputLength });
+    return { classification: COMPRESSION_CLASSIFICATION.DECOMPRESSED, decoded };
+  } catch (_err) {
+    // Covers both a corrupt/truncated stream and the library refusing to
+    // exceed maxOutputLength while decompressing: both are "claims to be
+    // compressed, cannot be safely materialized," the same inconclusive
+    // outcome as a stream this detector chose not to even attempt (FDICT).
+    return { classification: COMPRESSION_CLASSIFICATION.REJECTED, decoded: null };
+  }
+}
+
+function ordinaryBufferContainsPrivateKey(value) {
   if (!Buffer.isBuffer(value)) return false;
   if (
     looksPkcs12Bundle(value) ||
@@ -496,6 +642,23 @@ function bufferContainsPrivateKey(value) {
     return true;
   }
   return PRIVATE_KEY_PEM_PATTERN.test(value.toString("utf8"));
+}
+
+function bufferContainsPrivateKey(value) {
+  if (!Buffer.isBuffer(value)) return false;
+
+  const compressed = classifyCompressedBuffer(value);
+  if (compressed.classification === COMPRESSION_CLASSIFICATION.REJECTED) {
+    return true;
+  }
+  if (compressed.classification === COMPRESSION_CLASSIFICATION.DECOMPRESSED) {
+    // Single pass only: scan the decompressed bytes directly rather than
+    // re-entering this function, so a nested compressed payload is never
+    // recursively unwrapped.
+    return ordinaryBufferContainsPrivateKey(compressed.decoded);
+  }
+
+  return ordinaryBufferContainsPrivateKey(value);
 }
 
 /**
@@ -869,4 +1032,12 @@ module.exports = {
   redactPrivateKeyMaterial,
   redactGenericSecrets,
   redactGenericSecretsWithReport,
+  COMPRESSION_CLASSIFICATION,
+  MAX_COMPRESSED_INPUT_LENGTH,
+  MAX_DECOMPRESSED_OUTPUT_LENGTH,
+  DECOMPRESSED_OUTPUT_RATIO,
+  looksGzipHeader,
+  looksZlibHeader,
+  zlibHeaderHasPresetDictionary,
+  classifyCompressedBuffer,
 };

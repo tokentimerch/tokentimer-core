@@ -27,6 +27,7 @@ const {
   CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
+  CERTOPS_SOURCE_REF_INVALID,
   getManagedCertificate,
   importPublicCertificates,
   listCertificateInstances,
@@ -354,6 +355,13 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "keyReference must be a non-secret reference",
       code: CERTOPS_KEY_REFERENCE_INVALID,
+    });
+  }
+
+  if (err?.code === CERTOPS_SOURCE_REF_INVALID) {
+    return res.status(400).json({
+      error: "sourceRef must be a non-secret reference",
+      code: CERTOPS_SOURCE_REF_INVALID,
     });
   }
 

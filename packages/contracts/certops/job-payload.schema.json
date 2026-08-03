@@ -122,7 +122,7 @@
     },
     "keyReference": {
       "type": ["string", "null"],
-      "maxLength": 512,
+      "maxLength": 256,
       "description": "Opaque non-secret reference to external execution-plane key custody."
     },
     "commandRef": {

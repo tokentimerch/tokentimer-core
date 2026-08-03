@@ -1509,3 +1509,23 @@ describe("CertOps contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
   });
 });
+
+// C6: keyReference has one unified maximum length everywhere it is
+// validated. See ARC-09 in
+// tokentimer-canvas/plans/certops-post-ship-manual-acceptance-checklist.md.
+describe("keyReference maxLength parity (C6 / ARC-09)", () => {
+  const {
+    KEY_REFERENCE_MAX_LENGTH,
+  } = require("../../apps/api/services/certops/inventory");
+
+  it("keeps job-payload.schema.json in parity with the runtime validator's bound", () => {
+    assert.equal(jobPayloadSchema.properties.keyReference.maxLength, KEY_REFERENCE_MAX_LENGTH);
+  });
+
+  it("keeps every OpenAPI keyReference field in parity with the runtime validator's bound", () => {
+    const managedCertificate = openApiComponentSchema("CertOpsManagedCertificate");
+    const writeRequest = openApiComponentSchema("CertOpsCertificateWriteRequest");
+    assert.equal(managedCertificate.properties.keyReference.maxLength, KEY_REFERENCE_MAX_LENGTH);
+    assert.equal(writeRequest.properties.keyReference.maxLength, KEY_REFERENCE_MAX_LENGTH);
+  });
+});

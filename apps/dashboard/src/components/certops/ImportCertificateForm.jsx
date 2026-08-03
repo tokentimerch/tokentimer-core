@@ -224,7 +224,7 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
             setKeyReference(event.target.value);
             if (scanError) setScanError('');
           }}
-          placeholder='e.g. agent-id:/etc/ssl/private/wildcard.key or pkcs11 URI'
+          placeholder='e.g. vault://pki/web-wildcard or pkcs11:token=HSM-1;object=web-wildcard'
           rows={2}
           fontFamily='mono'
           fontSize='sm'
