@@ -74,6 +74,11 @@ function CertOpsSubNav() {
             borderColor={border}
             _hover={{ bg: hoverBg, textDecoration: 'none' }}
             _activeLink={{ bg: activeBg, color: 'white' }}
+            _focusVisible={{
+              boxShadow: 'outline',
+              zIndex: 1,
+              textDecoration: 'none',
+            }}
           >
             {tab.label}
           </Box>

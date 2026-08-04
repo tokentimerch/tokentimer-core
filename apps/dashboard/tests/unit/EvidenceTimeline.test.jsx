@@ -104,6 +104,63 @@ describe('EvidenceTimeline', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders an unknown future evidence/event type as a safe fallback without a raw JSON dump or secret leak', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.some_future_event_type_v9',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          message: 'Unrecognized event occurred',
+          metadata: {
+            apiKey: 'sk_live_should_never_render_1234567890',
+            nested: { password: 'super-secret-password' },
+          },
+        },
+      ],
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'future.unknown_evidence_kind',
+          observedAt: '2026-01-02T00:00:00.000Z',
+          subjectType: 'certificate',
+          subjectId: 'cert-1',
+          metadata: {
+            token: 'ttagent_should_never_render_abcdef',
+            credential: { secret: 'do-not-leak-me' },
+          },
+        },
+      ],
+      loading: false,
+      error: '',
+    });
+
+    // Must not throw for an unrecognized type.
+    expect(() =>
+      renderWithProviders(<EvidenceTimeline jobId='job-1' />)
+    ).not.toThrow();
+
+    // Falls back to the raw type string as a label (bounded fallback), not a crash or blank render.
+    expect(
+      screen.getAllByText('job.some_future_event_type_v9').length
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('future.unknown_evidence_kind').length
+    ).toBeGreaterThan(0);
+
+    // Never dumps the raw metadata object (which would include the key names/JSON braces).
+    expect(screen.queryByText(/apiKey/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/credential/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\{.*apiKey.*\}/)).not.toBeInTheDocument();
+
+    // Never leaks the actual secret values anywhere in the rendered output.
+    expect(screen.queryByText(/sk_live_should_never_render/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/super-secret-password/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ttagent_should_never_render/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/do-not-leak-me/)).not.toBeInTheDocument();
+  });
+
   it('renders merged log and evidence items in chronological order', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
