@@ -141,7 +141,13 @@ $script:ProtocolVersion = "1.0.0"
 $script:SchemaVersion = 1
 
 $script:MaxClaimResponseBytes = 1048576
-$script:MaxEncodedPayloadChars = 65536
+# ADR-0012's ninth amendment (2026-08-04): 65536 was the tightest value that
+# still decodes to exactly the 49152-byte decoded bound, which made the
+# decoded-byte check below mathematically unreachable. 98304 gives real
+# headroom (floor(98304/4)*3 = 73728 decoded bytes) so a payload between the
+# two bounds is actually rejected by the decoded-byte check that enforces the
+# real content-size policy, matching packages/agent/src/signing/index.js.
+$script:MaxEncodedPayloadChars = 98304
 $script:MaxDecodedPayloadBytes = 49152
 $script:DefaultClockSkewToleranceSeconds = 300
 
