@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -33,6 +33,7 @@ const STATUS_COLOR_SCHEMES = {
 };
 
 const CHIP_MIN_HEIGHT = '32px';
+export const ASSET_SEARCH_DEBOUNCE_MS = 300;
 
 const STATUS_CHIP_LAYOUT = {
   variant: 'unstyled',
@@ -213,6 +214,66 @@ function ScrollableChipRow({ children, isMobileLayout }) {
   );
 }
 
+function AssetSearchInput({
+  value,
+  onCommit,
+  inputBg,
+  inputBorder,
+  placeholderColor,
+  searchIconColor,
+}) {
+  const externalValue = value || '';
+  const [draft, setDraft] = useState(externalValue);
+  const pendingRef = useRef(false);
+  const onCommitRef = useRef(onCommit);
+
+  useEffect(() => {
+    onCommitRef.current = onCommit;
+  }, [onCommit]);
+
+  useEffect(() => {
+    if (pendingRef.current) {
+      if (externalValue === draft) pendingRef.current = false;
+      return;
+    }
+
+    setDraft(current => (current === externalValue ? current : externalValue));
+  }, [draft, externalValue]);
+
+  useEffect(() => {
+    if (!pendingRef.current || draft === externalValue) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      if (pendingRef.current) onCommitRef.current(draft);
+    }, ASSET_SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [draft, externalValue]);
+
+  return (
+    <InputGroup maxW={{ base: '100%', lg: '320px' }} size='sm'>
+      <InputLeftElement pointerEvents='none' h='32px'>
+        <Search size={16} color={searchIconColor} />
+      </InputLeftElement>
+      <Input
+        value={draft}
+        onChange={event => {
+          pendingRef.current = true;
+          setDraft(event.target.value);
+        }}
+        placeholder='Search assets, domains, owners...'
+        size='sm'
+        bg={inputBg}
+        borderColor={inputBorder}
+        borderRadius='md'
+        pl='36px'
+        minH={CHIP_MIN_HEIGHT}
+        _placeholder={{ color: placeholderColor }}
+      />
+    </InputGroup>
+  );
+}
+
 export default function AssetFilters({
   statusFilter,
   setStatusFilter,
@@ -270,33 +331,23 @@ export default function AssetFilters({
           w={{ base: '100%', lg: 'auto' }}
           flexShrink={0}
         >
-          <InputGroup maxW={{ base: '100%', lg: '320px' }} size='sm'>
-            <InputLeftElement pointerEvents='none' h='32px'>
-              <Search size={16} color={searchIconColor} />
-            </InputLeftElement>
-            <Input
-              value={panelQueries.__global || ''}
-              onChange={event => {
-                const nextValue = event.target.value;
-                setPanelQueries(prev => ({
-                  ...prev,
-                  __global: nextValue,
-                }));
-                if (typeof onGlobalSearchChange === 'function') {
-                  onGlobalSearchChange(nextValue);
-                }
-                notifyFilterReset();
-              }}
-              placeholder='Search assets, domains, owners...'
-              size='sm'
-              bg={inputBg}
-              borderColor={inputBorder}
-              borderRadius='md'
-              pl='36px'
-              minH={CHIP_MIN_HEIGHT}
-              _placeholder={{ color: placeholderColor }}
-            />
-          </InputGroup>
+          <AssetSearchInput
+            value={panelQueries.__global || ''}
+            onCommit={nextValue => {
+              setPanelQueries(prev => ({
+                ...prev,
+                __global: nextValue,
+              }));
+              if (typeof onGlobalSearchChange === 'function') {
+                onGlobalSearchChange(nextValue);
+              }
+              notifyFilterReset();
+            }}
+            inputBg={inputBg}
+            inputBorder={inputBorder}
+            placeholderColor={placeholderColor}
+            searchIconColor={searchIconColor}
+          />
           {(retiredCount > 0 || showRetired) &&
           typeof onToggleShowRetired === 'function' ? (
             <Button

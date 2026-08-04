@@ -892,8 +892,11 @@ function App() {
   const [categoryCounts, setCategoryCounts] = useState({}); // { [category]: number }
   const [limit] = useState(500);
   const [_offset, setOffset] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const setCommittedSearchQuery = useCallback(
+    value => setDebouncedQuery(String(value || '').trim()),
+    []
+  );
   const [selectedCategories, setSelectedCategories] = useState([]); // array of values
   const [serverSort, setServerSort] = useState('expiration_asc');
 
@@ -1395,12 +1398,6 @@ function App() {
     },
     [selectedCategories, debouncedQuery, location.search]
   );
-
-  // Debounce global query
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   // Restore pending welcome from previous navigation (robust to URL churn)
   useEffect(() => {
@@ -2995,7 +2992,7 @@ function App() {
                                   setSelectedToken={setSelectedToken}
                                   handleCloseTokenModal={handleCloseTokenModal}
                                   // Thread global filtering/search/sort state into wrapper
-                                  setSearchQuery={setSearchQuery}
+                                  setSearchQuery={setCommittedSearchQuery}
                                   showProductTour={showProductTour}
                                   setShowProductTour={setShowProductTour}
                                   tourType={tourType}
