@@ -293,9 +293,10 @@
             "dns_provider_not_allowlisted",
             "key_export_requested",
             "clock_drift_suspected",
+            "unexpected_job_type",
             null
           ],
-          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule."
+          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why."
         },
         "keyRotated": {
           "type": ["boolean", "null"],

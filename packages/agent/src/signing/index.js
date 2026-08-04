@@ -49,6 +49,239 @@ const SIGNING_REJECTION_REASONS = Object.freeze({
 });
 
 /**
+ * ADR-0012 decision 1: "exact-byte signed envelope" capability. An agent
+ * that declares this capability receives v2 envelopes ({ envelopeVersion: 2,
+ * payloadB64, signatureB64, signingKeyId }) instead of the legacy v1
+ * canonical-JSON-signed job object. See verifyJobEnvelope below.
+ */
+const SIGNED_PAYLOAD_B64_CAPABILITY = "signed-payload-b64-v1";
+
+const ENVELOPE_VERSION_1 = 1;
+const ENVELOPE_VERSION_2 = 2;
+
+// ADR-0012 decision 1's pinned numeric limits, stated there so two
+// implementations cannot disagree. encoded/decoded are checked in that
+// order: the encoded-length bound is enforced BEFORE any base64 decode is
+// attempted, so a hostile encoded string never causes an oversized
+// allocation; the decoded-byte bound is the actual content-size policy
+// (ADR-0012's real "max job payload size" decision). The two bounds are
+// deliberately NOT the tightest-possible pair for each other: an earlier
+// revision set the encoded bound to the exact floor(chars/4)*3 = bytes
+// value for 49152, which made the decoded check mathematically unreachable
+// (no string of at most 65536 valid base64 characters can ever decode to
+// more than 49152 bytes, so the decoded check could never be the one that
+// actually rejects anything). 98304 gives the encoded check real headroom
+// -- floor(98304/4)*3 = 73728 bytes, well above 49152 -- so a payload
+// between 49153 and 73728 decoded bytes passes the coarse pre-decode gate
+// and is then correctly rejected, with the specific "decoded payload too
+// large" reason, by the check that actually enforces the ADR's content-size
+// policy. Only a payload whose encoded form is implausibly large even for
+// an oversized-but-legitimate-looking request is now rejected before decode
+// (the allocation-safety purpose the encoded bound alone exists for).
+const V2_MAX_ENCODED_PAYLOAD_CHARS = 98304;
+const V2_MAX_DECODED_PAYLOAD_BYTES = 49152;
+// Ed25519 signatures are exactly 64 bytes; this is not a range like v1's
+// SIGNATURE_LENGTH_MIN/MAX (which bounds a base64 STRING length), it is an
+// exact decoded-byte-length check performed after base64-decoding.
+const V2_SIGNATURE_DECODED_BYTES = 64;
+
+// Standard (unpadded-tolerant but RFC 4648 padded) base64 alphabet only; no
+// base64url, no whitespace, per ADR-0012's "standard Base64, padding,
+// whitespace" rule. A payload with embedded whitespace or url-safe
+// characters is rejected at this pattern check, before any decode attempt.
+// Canonicality itself (no non-minimal padding, no non-zero padding bits) is
+// NOT provable by pattern alone and is instead enforced by decode-then-
+// re-encode-and-compare (ADR-0012 decision 2, step 4; see
+// assertCanonicalBase64 below).
+const V2_BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+const UTF8_BOM_BYTES = Buffer.from([0xef, 0xbb, 0xbf]);
+
+/**
+ * Decodes a base64 string and verifies it round-trips to the SAME string
+ * (ADR-0012 decision 2, step 4: "re-encode and compare, to enforce canonical
+ * base64"). This catches non-canonical encodings a naive decoder accepts
+ * silently: non-zero padding bits, non-minimal padding, or alternate valid
+ * encodings of the same bytes. Two implementations that only agree on "does
+ * this decode" can still disagree on WHICH bytes a non-canonical string
+ * decodes to being the "real" ones; requiring canonical encoding removes the
+ * ambiguity entirely rather than picking a side.
+ *
+ * @param {string} value already pattern-checked against V2_BASE64_PATTERN
+ * @returns {Buffer|null} decoded bytes, or null when not canonical
+ */
+function decodeCanonicalBase64(value) {
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.toString("base64") !== value) return null;
+  return decoded;
+}
+
+/**
+ * Strict single-JSON-value scanner (ADR-0012 decision 2, steps 7-8: "parse
+ * exactly one JSON value" + "require end-of-input immediately after that
+ * value"). Native JSON.parse tolerates leading/trailing whitespace around a
+ * document (valid per RFC 8259) and cannot itself report whether trailing
+ * content followed the value it parsed; strict UTF-8 decoding cannot detect
+ * trailing content either, because whitespace or a second JSON document are
+ * both valid UTF-8. This scanner independently walks the JSON grammar to
+ * find exactly where the first value ends, and the caller requires that
+ * position to be the exact end of the string -- not even trailing
+ * whitespace survives. It is a structural boundary-finder only (JSON.parse
+ * still does the real, spec-complete parse); a text this scanner accepts
+ * but considers malformed is treated as end-of-input having failed, never
+ * silently handed to JSON.parse anyway.
+ *
+ * @param {string} text
+ * @returns {number} index one past the end of the first value, or -1 if the
+ *   text does not begin with a structurally well-formed JSON value
+ */
+function scanSingleJsonValueEnd(text) {
+  const len = text.length;
+  let i = 0;
+
+  function isWs(ch) {
+    return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+  }
+  function skipWs() {
+    while (i < len && isWs(text[i])) i++;
+  }
+  function parseValue() {
+    if (i >= len) return false;
+    const c = text[i];
+    if (c === "{") return parseObject();
+    if (c === "[") return parseArray();
+    if (c === '"') return parseString();
+    if (c === "-" || (c >= "0" && c <= "9")) return parseNumber();
+    if (text.startsWith("true", i)) {
+      i += 4;
+      return true;
+    }
+    if (text.startsWith("false", i)) {
+      i += 5;
+      return true;
+    }
+    if (text.startsWith("null", i)) {
+      i += 4;
+      return true;
+    }
+    return false;
+  }
+  function parseString() {
+    // text[i] === '"' on entry
+    i++;
+    while (i < len) {
+      const c = text[i];
+      if (c === '"') {
+        i++;
+        return true;
+      }
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      // Raw control characters (0x00-0x1F) are illegal inside a JSON
+      // string; JSON.parse enforces this fully, this scanner only needs to
+      // avoid mis-locating the closing quote, which control chars cannot do.
+      i++;
+    }
+    return false;
+  }
+  function parseNumber() {
+    const start = i;
+    if (text[i] === "-") i++;
+    if (i >= len || text[i] < "0" || text[i] > "9") return false;
+    while (i < len && text[i] >= "0" && text[i] <= "9") i++;
+    if (i < len && text[i] === ".") {
+      i++;
+      if (i >= len || text[i] < "0" || text[i] > "9") return false;
+      while (i < len && text[i] >= "0" && text[i] <= "9") i++;
+    }
+    if (i < len && (text[i] === "e" || text[i] === "E")) {
+      i++;
+      if (i < len && (text[i] === "+" || text[i] === "-")) i++;
+      if (i >= len || text[i] < "0" || text[i] > "9") return false;
+      while (i < len && text[i] >= "0" && text[i] <= "9") i++;
+    }
+    return i > start;
+  }
+  function parseObject() {
+    i++; // {
+    skipWs();
+    if (i < len && text[i] === "}") {
+      i++;
+      return true;
+    }
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      skipWs();
+      if (i >= len || text[i] !== '"' || !parseString()) return false;
+      skipWs();
+      if (i >= len || text[i] !== ":") return false;
+      i++;
+      skipWs();
+      if (!parseValue()) return false;
+      skipWs();
+      if (i >= len) return false;
+      if (text[i] === ",") {
+        i++;
+        continue;
+      }
+      if (text[i] === "}") {
+        i++;
+        return true;
+      }
+      return false;
+    }
+  }
+  function parseArray() {
+    i++; // [
+    skipWs();
+    if (i < len && text[i] === "]") {
+      i++;
+      return true;
+    }
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      skipWs();
+      if (!parseValue()) return false;
+      skipWs();
+      if (i >= len) return false;
+      if (text[i] === ",") {
+        i++;
+        continue;
+      }
+      if (text[i] === "]") {
+        i++;
+        return true;
+      }
+      return false;
+    }
+  }
+
+  return parseValue() ? i : -1;
+}
+
+/**
+ * Parses `text` as EXACTLY one JSON value with nothing following it, not
+ * even whitespace (ADR-0012 decision 2, steps 7-8). Returns the parsed
+ * value, or throws when the text is not a single, fully-consumed JSON
+ * document.
+ *
+ * @param {string} text
+ * @returns {unknown}
+ */
+function parseSingleJsonValueStrict(text) {
+  const endIndex = scanSingleJsonValueEnd(text);
+  if (endIndex !== text.length) {
+    throw new Error(
+      "payload is not exactly one JSON value with nothing after it " +
+        "(trailing content, including whitespace, is rejected)",
+    );
+  }
+  return JSON.parse(text);
+}
+
+/**
  * Default clock tolerance applied to the [issuedAt, expiresAt] window.
  *
  * Why 30000 ms: HTTP Date-based offset estimation (see the clock module) has
@@ -237,6 +470,298 @@ function verifyJobSignature({ job, publicKeyPem, pinnedSigningKeyId }) {
 }
 
 /**
+ * Verifies the v2 "exact-byte signed envelope" (ADR-0012 decision 1).
+ *
+ * STRICT ORDER, never relaxed: base64 shape check -> size-bounded decode ->
+ * Ed25519 verify of the RAW DECODED BYTES -> (only once verified) strict
+ * UTF-8 decode -> JSON.parse -> the payload's own signingKeyId must equal
+ * the wrapper's (ADR-0012 decision 2 step 13 / decision 3). No
+ * canonicalization step exists in this path by design: the signed bytes
+ * ARE the wire bytes, so there is nothing to re-derive. A verifier in any
+ * language needs only "base64-decode, then verify the raw bytes" to
+ * interoperate with this contract.
+ *
+ * Never throws on untrusted (envelope) input for the same reason
+ * verifyJobSignature does not: throws only on programmer error (missing/
+ * invalid publicKeyPem or pinnedSigningKeyId).
+ *
+ * @param {object} params
+ * @param {object} params.envelope untrusted { envelopeVersion, payloadB64,
+ *   signatureB64, signingKeyId } from a claim response
+ * @param {string} params.publicKeyPem pinned Ed25519 public key (SPKI PEM)
+ * @param {string} params.pinnedSigningKeyId pinned signing key id
+ * @returns {{ allowed: true, job: object } | { allowed: false, rejectionReason: string, detail: string }}
+ */
+function verifyV2Envelope({ envelope, publicKeyPem, pinnedSigningKeyId }) {
+  if (typeof publicKeyPem !== "string" || publicKeyPem.length === 0) {
+    throw new Error(
+      "signing: verifyV2Envelope requires a publicKeyPem string (pinned " +
+        "control-plane signing public key); refusing to run without one",
+    );
+  }
+  if (
+    typeof pinnedSigningKeyId !== "string" ||
+    pinnedSigningKeyId.length === 0
+  ) {
+    throw new Error(
+      "signing: verifyV2Envelope requires a pinnedSigningKeyId string",
+    );
+  }
+
+  if (!isPlainObject(envelope)) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope must be a plain object.",
+    );
+  }
+  if (
+    typeof envelope.signingKeyId !== "string" ||
+    !SIGNING_KEY_ID_PATTERN.test(envelope.signingKeyId)
+  ) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope signingKeyId is missing or malformed.",
+    );
+  }
+  if (envelope.signingKeyId !== pinnedSigningKeyId) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `Signing key id mismatch: envelope was signed with key id ` +
+        `"${envelope.signingKeyId}" but this agent pins key id ` +
+        `"${pinnedSigningKeyId}".`,
+    );
+  }
+  if (
+    typeof envelope.payloadB64 !== "string" ||
+    envelope.payloadB64.length === 0 ||
+    envelope.payloadB64.length > V2_MAX_ENCODED_PAYLOAD_CHARS ||
+    !V2_BASE64_PATTERN.test(envelope.payloadB64)
+  ) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope payloadB64 is missing, exceeds ${V2_MAX_ENCODED_PAYLOAD_CHARS} ` +
+        "encoded chars, or is not well-formed standard base64.",
+    );
+  }
+  if (
+    typeof envelope.signatureB64 !== "string" ||
+    envelope.signatureB64.length === 0 ||
+    !V2_BASE64_PATTERN.test(envelope.signatureB64)
+  ) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope signatureB64 is missing or not well-formed standard base64.",
+    );
+  }
+
+  // Step 3 (decode) + step 4 (re-encode and compare, to enforce canonical
+  // base64) of ADR-0012 decision 2's normative order.
+  const payloadBytes = decodeCanonicalBase64(envelope.payloadB64);
+  if (payloadBytes === null) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope payloadB64 is not canonical base64 (decode-then-re-encode " +
+        "did not round-trip).",
+    );
+  }
+  const signatureBytes = decodeCanonicalBase64(envelope.signatureB64);
+  if (signatureBytes === null) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope signatureB64 is not canonical base64 (decode-then-re-encode " +
+        "did not round-trip).",
+    );
+  }
+
+  // The encoded-length check above already bounds this decode; this is a
+  // second, exact check on the DECODED byte count (ADR-0012's pinned
+  // "decoded payload 49,152 bytes" limit), not a re-derivation of the same
+  // fact from a different unit.
+  if (payloadBytes.length > V2_MAX_DECODED_PAYLOAD_BYTES) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope payloadB64 decodes to ${payloadBytes.length} bytes, ` +
+        `exceeding the maximum of ${V2_MAX_DECODED_PAYLOAD_BYTES}.`,
+    );
+  }
+  // Ed25519 signatures are EXACTLY 64 bytes decoded; not a range.
+  if (signatureBytes.length !== V2_SIGNATURE_DECODED_BYTES) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope signatureB64 decodes to ${signatureBytes.length} bytes; ` +
+        `Ed25519 signatures must decode to exactly ${V2_SIGNATURE_DECODED_BYTES}.`,
+    );
+  }
+
+  let publicKey;
+  try {
+    publicKey = crypto.createPublicKey(publicKeyPem);
+  } catch (err) {
+    throw new Error(
+      `signing: verifyV2Envelope was given an unparseable publicKeyPem: ${err.message}`,
+    );
+  }
+
+  // Step 5: verify the exact decoded bytes against the pinned public key.
+  // No JSON parsing, no canonicalization: this is the entire point of the
+  // v2 envelope.
+  let verified = false;
+  try {
+    verified = crypto.verify(null, payloadBytes, publicKey, signatureBytes);
+  } catch (err) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope signature could not be verified (${err.message}).`,
+    );
+  }
+
+  if (!verified) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope signature verification failed: the Ed25519 signature " +
+        "does not match payloadB64's decoded bytes under the pinned signing key.",
+    );
+  }
+
+  // Step 6: decode UTF-8 strictly, rejecting invalid sequences AND a BOM.
+  // "fatal: true" makes Node's TextDecoder reject malformed UTF-8 outright
+  // rather than silently substituting U+FFFD. A leading BOM is valid UTF-8
+  // (it is codepoint U+FEFF) so TextDecoder alone would accept it; it is
+  // rejected explicitly because canonical control-plane output never emits
+  // one, and a payload that does deviates from what was actually signed in
+  // spirit even though the bytes themselves verified -- the BOM is data the
+  // signer did not intend, not a decoding nicety.
+  if (payloadBytes.length >= 3 && payloadBytes.subarray(0, 3).equals(UTF8_BOM_BYTES)) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope payload is verified but begins with a UTF-8 BOM, which " +
+        "canonical control-plane output never emits.",
+    );
+  }
+  let payloadText;
+  try {
+    payloadText = new TextDecoder("utf-8", { fatal: true }).decode(
+      payloadBytes,
+    );
+  } catch (err) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope payload is verified but not valid strict UTF-8 (${err.message}).`,
+    );
+  }
+
+  // Steps 7-8: parse exactly one JSON value, then require end-of-input
+  // immediately after it. Whitespace or a second document after the value
+  // are both valid UTF-8 and would survive step 6 alone; this scanner is
+  // the dedicated check for that trailing-content case.
+  let job;
+  try {
+    job = parseSingleJsonValueStrict(payloadText);
+  } catch (err) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `v2 envelope payload is verified and valid UTF-8, but not exactly one ` +
+        `JSON value with nothing after it (${err.message}).`,
+    );
+  }
+  if (!isPlainObject(job)) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope payload verified and parsed, but is not a JSON object.",
+    );
+  }
+
+  // Step 13: the signed payload carries its own signingKeyId (per
+  // signed-dispatch-payload.schema.json), distinct from the wrapper's
+  // pre-verification selection hint checked above. ADR-0012 decision 3:
+  // "the wrapper's copy is the pre-verification selection hint, the
+  // payload's copy is the authenticated value, and step 13 requires them
+  // to agree." The wrapper hint is already proven equal to
+  // pinnedSigningKeyId above, so checking the payload's copy against
+  // pinnedSigningKeyId here is equivalent to checking it against the
+  // wrapper's copy, and catches a payload whose authenticated content
+  // disagrees with (or omits) the key id the wrapper claimed for it, even
+  // though the bytes are genuinely signed by the pinned key.
+  if (
+    typeof job.signingKeyId !== "string" ||
+    !SIGNING_KEY_ID_PATTERN.test(job.signingKeyId)
+  ) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      "v2 envelope payload verified and parsed, but its signed " +
+        "signingKeyId is missing or malformed.",
+    );
+  }
+  if (job.signingKeyId !== pinnedSigningKeyId) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `Signing key id mismatch: the verified payload's own signingKeyId ` +
+        `"${job.signingKeyId}" does not match the wrapper's signingKeyId ` +
+        `"${envelope.signingKeyId}" (this agent pins key id ` +
+        `"${pinnedSigningKeyId}").`,
+    );
+  }
+
+  return { allowed: true, job };
+}
+
+/**
+ * Dual-format entry point: detects whether an untrusted claimed job is a v1
+ * job object (legacy canonical-JSON signing) or a v2 envelope
+ * ({ envelopeVersion: 2, ... }), and verifies it through the matching path.
+ *
+ * The `job` returned on success is always the fully-populated, verified job
+ * object subsequent steps (checkJobTimeWindow, replay, policy) operate on:
+ * for v1 that is the wire object itself; for v2 it is the payload decoded
+ * from inside payloadB64 (the wire envelope carries no other usable
+ * fields -- ADR-0012 decision 3, "no sibling objects in v2").
+ *
+ * @param {object} params
+ * @param {object} params.claimed untrusted claimed job/envelope from the wire
+ * @param {string} params.publicKeyPem pinned Ed25519 public key (SPKI PEM)
+ * @param {string} params.pinnedSigningKeyId pinned signing key id
+ * @returns {{ allowed: true, job: object } | { allowed: false, rejectionReason: string, detail: string }}
+ */
+function verifyJobEnvelope({ claimed, publicKeyPem, pinnedSigningKeyId }) {
+  const isV2 =
+    isPlainObject(claimed) && claimed.envelopeVersion === ENVELOPE_VERSION_2;
+  if (isV2) {
+    return verifyV2Envelope({
+      envelope: claimed,
+      publicKeyPem,
+      pinnedSigningKeyId,
+    });
+  }
+
+  // v1: an explicit envelopeVersion of 1, or (the common legacy case) no
+  // envelopeVersion field at all, both take the canonical-JSON path. Any
+  // other envelopeVersion value (unknown future version) is NOT silently
+  // treated as v1: falling through to canonical-JSON verification of an
+  // object shaped like a v2 envelope would fail signature verification
+  // anyway, but failing on the explicit "unrecognized version" reason is
+  // clearer for operators than a generic integrity failure.
+  if (
+    isPlainObject(claimed) &&
+    claimed.envelopeVersion !== undefined &&
+    claimed.envelopeVersion !== ENVELOPE_VERSION_1
+  ) {
+    return reject(
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+      `Unrecognized envelopeVersion "${claimed.envelopeVersion}"; this agent ` +
+        `understands ${ENVELOPE_VERSION_1} and ${ENVELOPE_VERSION_2}.`,
+    );
+  }
+
+  const verdict = verifyJobSignature({
+    job: claimed,
+    publicKeyPem,
+    pinnedSigningKeyId,
+  });
+  if (!verdict.allowed) return verdict;
+  return { allowed: true, job: claimed };
+}
+
+/**
  * Validates that the current time falls inside the job's signed validity
  * window [issuedAt - toleranceMs, expiresAt + toleranceMs].
  *
@@ -374,9 +899,22 @@ function signJobPayload({ job, privateKeyPem }) {
 module.exports = {
   SIGNING_REJECTION_REASONS,
   DEFAULT_TIME_WINDOW_TOLERANCE_MS,
+  SIGNED_PAYLOAD_B64_CAPABILITY,
+  ENVELOPE_VERSION_1,
+  ENVELOPE_VERSION_2,
+  V2_MAX_ENCODED_PAYLOAD_CHARS,
+  V2_MAX_DECODED_PAYLOAD_BYTES,
+  V2_SIGNATURE_DECODED_BYTES,
   canonicalizeJobPayload,
   verifyJobSignature,
+  verifyV2Envelope,
+  verifyJobEnvelope,
   checkJobTimeWindow,
   generateSigningKeyPair,
   signJobPayload,
+  _test: {
+    decodeCanonicalBase64,
+    scanSingleJsonValueEnd,
+    parseSingleJsonValueStrict,
+  },
 };

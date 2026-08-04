@@ -21,6 +21,8 @@ const {
   consumeNonce,
   extendJobNonceExpiry,
   sweepExpiredNonces,
+  ENVELOPE_VERSION_1,
+  ENVELOPE_VERSION_2,
   _test,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobSigning.js"),
@@ -30,6 +32,7 @@ const {
 // control plane signs, the agent accepts (and tampering is rejected).
 const {
   verifyJobSignature,
+  verifyV2Envelope,
 } = require(
   path.resolve(__dirname, "../../packages/agent/src/signing/index.js"),
 );
@@ -704,6 +707,128 @@ describe("certops job signing service", () => {
           pinnedSigningKeyId: signingKeyId,
         }),
         { allowed: true },
+      );
+    });
+
+    it("dispatches a v1 envelope by default: a flat signed job object, no envelopeVersion wrapper", async () => {
+      const client = createMemoryClient();
+      await ensureActiveSigningKey({ client });
+      const dispatched = await signJobForDispatch({
+        client,
+        job: baseJob(),
+        workspaceId: WORKSPACE_A,
+      });
+      assert.equal(dispatched.envelopeVersion, undefined);
+      assert.equal(typeof dispatched.jobId, "string");
+      assert.equal(typeof dispatched.signature, "string");
+      assert.equal(dispatched.payloadB64, undefined);
+    });
+
+    it("v2's payloadB64 is the byte-identical canonical serialization v1 signs, not an independent JSON.stringify (canonicalize-once parity, ADR-0012 decision 1)", async () => {
+      const client = createMemoryClient();
+      await ensureActiveSigningKey({ client });
+
+      const dispatched = await signJobForDispatch({
+        client,
+        job: baseJob(),
+        workspaceId: WORKSPACE_A,
+        envelopeVersion: ENVELOPE_VERSION_2,
+      });
+
+      const decodedPayload = Buffer.from(
+        dispatched.payloadB64,
+        "base64",
+      ).toString("utf8");
+      const decodedJob = JSON.parse(decodedPayload);
+      // The decisive assertion: re-canonicalizing the decoded job must
+      // reproduce payloadB64's bytes exactly. This fails if the server
+      // ever again signs a v2 payload built from a plain JSON.stringify
+      // (or any other serialization) instead of the shared canonical
+      // form v1 uses -- the two formats would then sign different bytes
+      // for the same signedJob, defeating "canonicalize once, sign once".
+      assert.equal(
+        _test.canonicalizeJobPayload(decodedJob),
+        decodedPayload,
+      );
+    });
+
+    it("dispatches a v2 envelope { envelopeVersion, payloadB64, signatureB64, signingKeyId } that the agent's v2 verifier accepts, with no sibling job fields (ADR-0012 decision 1)", async () => {
+      const client = createMemoryClient();
+      const { signingKeyId, publicKeyPem } = await ensureActiveSigningKey({
+        client,
+      });
+
+      const dispatched = await signJobForDispatch({
+        client,
+        job: baseJob(),
+        workspaceId: WORKSPACE_A,
+        agentId: "22222222-2222-4222-8222-222222222222",
+        envelopeVersion: ENVELOPE_VERSION_2,
+      });
+
+      assert.deepEqual(Object.keys(dispatched).sort(), [
+        "envelopeVersion",
+        "payloadB64",
+        "signatureB64",
+        "signingKeyId",
+      ]);
+      assert.equal(dispatched.envelopeVersion, ENVELOPE_VERSION_2);
+      assert.equal(dispatched.signingKeyId, signingKeyId);
+
+      const verdict = verifyV2Envelope({
+        envelope: dispatched,
+        publicKeyPem,
+        pinnedSigningKeyId: signingKeyId,
+      });
+      assert.equal(verdict.allowed, true);
+      assert.equal(verdict.job.jobId, "job-0001");
+      assert.equal(verdict.job.signingKeyId, signingKeyId);
+    });
+
+    it("v1 and v2 dispatch of the identical job carry the identical signed field set (dual-format, not dual-write: one payload, canonicalized once, signed once)", async () => {
+      const client = createMemoryClient();
+      const { signingKeyId } = await ensureActiveSigningKey({ client });
+
+      // signJobForDispatch mutates nothing shared between calls (nonce and
+      // issuedAt/expiresAt are freshly minted per call), so this compares
+      // the field SET each format carries, not byte-identical envelopes.
+      const v1 = await signJobForDispatch({
+        client,
+        job: baseJob(),
+        workspaceId: WORKSPACE_A,
+        envelopeVersion: ENVELOPE_VERSION_1,
+      });
+      const v2 = await signJobForDispatch({
+        client,
+        job: baseJob(),
+        workspaceId: WORKSPACE_A,
+        envelopeVersion: ENVELOPE_VERSION_2,
+      });
+
+      const v2DecodedJob = JSON.parse(
+        Buffer.from(v2.payloadB64, "base64").toString("utf8"),
+      );
+      const v1Fields = Object.keys(v1)
+        .filter((key) => key !== "signature")
+        .sort();
+      const v2Fields = Object.keys(v2DecodedJob).sort();
+      assert.deepEqual(v1Fields, v2Fields);
+      assert.equal(v2DecodedJob.signingKeyId, signingKeyId);
+      assert.equal(v1.signingKeyId, signingKeyId);
+    });
+
+    it("rejects an unsupported envelopeVersion", async () => {
+      const client = createMemoryClient();
+      await ensureActiveSigningKey({ client });
+      await assert.rejects(
+        () =>
+          signJobForDispatch({
+            client,
+            job: baseJob(),
+            workspaceId: WORKSPACE_A,
+            envelopeVersion: 3,
+          }),
+        (err) => err.code === CERTOPS_SIGNING_PAYLOAD_INVALID,
       );
     });
   });

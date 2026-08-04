@@ -131,10 +131,12 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED',
   'CERTOPS_AGENT_REGISTERED',
+  'CERTOPS_AGENT_CAPABILITIES_CHANGED',
   'CERTOPS_AGENT_RETIRED',
   'CERTOPS_RENEWAL_PROFILE_DERIVED',
   'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED',
   'CERTOPS_RENEWAL_PROFILE_UPDATED',
+  'CERTOPS_RENEWAL_PROFILE_DETACHED',
   'CERTOPS_WORKSPACE_PAUSED',
   'CERTOPS_WORKSPACE_RESUMED',
   'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
@@ -813,6 +815,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.profileId) parts.push(`ID: ${md.profileId}`);
       if (md.managedCertificateId)
         parts.push(`Certificate: ${md.managedCertificateId}`);
+      if (md.commonName) parts.push(`CN: ${md.commonName}`);
       // What the profile actually runs, and where. These are the fields that
       // decide the real-world effect of every future renewal.
       if (md.commandRef) parts.push(`Command: ${md.commandRef}`);
@@ -826,6 +829,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         const changed = Object.keys(md.changes);
         if (changed.length > 0) parts.push(`Changed: ${changed.join(', ')}`);
       }
+      // Detach-only: how many pending derivation intents this detach voided,
+      // so a standing-authority withdrawal shows its actual blast radius.
+      if (md.invalidatedIntents != null)
+        parts.push(`Invalidated intents: ${md.invalidatedIntents}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -865,6 +872,31 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.bootstrapTokenId)
         parts.push(`Bootstrap token: ${md.bootstrapTokenId}`);
       if (md.signingKeyId) parts.push(`Signing key: ${md.signingKeyId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsAgentCapabilitiesChangedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      const previous = Array.isArray(md.previousCapabilities)
+        ? md.previousCapabilities
+        : [];
+      const current = Array.isArray(md.declaredCapabilities)
+        ? md.declaredCapabilities
+        : [];
+      const previousSet = new Set(previous);
+      const currentSet = new Set(current);
+      const added = current.filter(item => !previousSet.has(item));
+      const removed = previous.filter(item => !currentSet.has(item));
+      if (added.length > 0) parts.push(`Added: ${formatArrayValue(added)}`);
+      if (removed.length > 0)
+        parts.push(`Removed: ${formatArrayValue(removed)}`);
+      parts.push(`Capabilities: ${current.length > 0 ? formatArrayValue(current) : '(none)'}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -1492,7 +1524,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
     if (
       action === 'CERTOPS_RENEWAL_PROFILE_DERIVED' ||
-      action === 'CERTOPS_RENEWAL_PROFILE_UPDATED'
+      action === 'CERTOPS_RENEWAL_PROFILE_UPDATED' ||
+      action === 'CERTOPS_RENEWAL_PROFILE_DETACHED'
     ) {
       const formatted = formatCertOpsRenewalProfileMetadata(ev);
       if (formatted) return formatted;
@@ -1500,6 +1533,11 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
     if (action === 'CERTOPS_AGENT_REGISTERED') {
       const formatted = formatCertOpsAgentRegisteredMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_AGENT_CAPABILITIES_CHANGED') {
+      const formatted = formatCertOpsAgentCapabilitiesChangedMetadata(ev);
       if (formatted) return formatted;
     }
 

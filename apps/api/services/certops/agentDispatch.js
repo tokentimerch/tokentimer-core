@@ -19,6 +19,8 @@ const {
 } = require("./agentCredentials");
 const {
   CERTOPS_NONCE_REPLAYED,
+  ENVELOPE_VERSION_1,
+  ENVELOPE_VERSION_2,
   acknowledgeSigningKey,
   ensureActiveSigningKey,
   getActiveSigningKeyPublicInfo,
@@ -70,6 +72,7 @@ const {
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
+  certopsCapabilityFreshnessMs,
   computeAgentCompatibility,
 } = require("./agentRegistry");
 
@@ -144,6 +147,57 @@ function wireActionForOperation(operation) {
 // issuance that could never be reconciled, leaving the certificate stuck in
 // 'provisioning' with a succeeded job and no way forward.
 const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
+
+// ADR-0012 decision 1: an agent that declares this capability at
+// registration/heartbeat receives the v2 "exact-byte" signed envelope
+// ({ envelopeVersion: 2, payloadB64, signatureB64, signingKeyId }) instead of
+// the legacy v1 canonical-JSON-signed job object. Dual-format dispatch is
+// per-agent, decided fresh on every claim from the agent's current declared
+// capabilities (not sticky), so an agent upgrade takes effect on its very
+// next poll with no separate migration step.
+const SIGNED_PAYLOAD_B64_CAPABILITY = "signed-payload-b64-v1";
+
+// ADR-0012 decision 17: a declared capability is only trusted for gated
+// selection while its assertion is fresh. `capabilities_updated_at` is set
+// at registration and on every heartbeat write that touches
+// declared_capabilities (including a no-op replace); it is NEVER backfilled
+// for pre-existing rows (migration adds the column NULL, on purpose - see
+// the migration's own comment). NULL therefore means "never asserted since
+// this column existed" and must fail the freshness check, not pass it.
+//
+// The freshness bound itself (CERTOPS_CAPABILITY_FRESHNESS_MS) lives in
+// agentRegistry.js, reusing that file's existing CERTOPS_AGENT_OFFLINE_AFTER_MS
+// value/reasoning as its own independently named constant: an agent whose
+// last capability assertion is older than the point at which it would
+// already be considered liveness-stale has no business being offered a
+// capability-gated job. This is NOT "3x the 30s heartbeat interval" - that
+// reasoning was considered and explicitly rejected (ADR-0012 decision 17).
+
+/**
+ * Reusable freshness check for capability-gated claim selection (ADR-0012
+ * decision 17). A capability string only counts toward a gate when it is
+ * BOTH present in the declared set AND its assertion is fresh; a stale or
+ * never-asserted (`capabilitiesUpdatedAt === null`) row fails closed to
+ * "gate not satisfied" regardless of what the (stale) array still contains.
+ *
+ * Any future capability-restricted claim gate should call this rather than
+ * re-deriving its own freshness arithmetic.
+ */
+function hasFreshCapability({
+  declaredCapabilities,
+  capabilitiesUpdatedAt,
+  capability,
+  env = process.env,
+  now = Date.now(),
+}) {
+  if (!jsonbTextArray(declaredCapabilities).includes(capability)) return false;
+  if (!capabilitiesUpdatedAt) return false;
+  const updatedAtMs = new Date(capabilitiesUpdatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) return false;
+  const ageMs = now - updatedAtMs;
+  if (ageMs < 0) return true; // clock skew in the agent's favor is not a staleness signal
+  return ageMs <= certopsCapabilityFreshnessMs(env);
+}
 
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
@@ -413,10 +467,11 @@ async function registerAgent({
          declared_capabilities,
          status,
          bootstrap_token_id,
-         last_sequence
+         last_sequence,
+         capabilities_updated_at
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
-               $15::jsonb, 'active', $13, $14)
+               $15::jsonb, 'active', $13, $14, NOW())
        ON CONFLICT (workspace_id, agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
@@ -565,6 +620,7 @@ async function recordHeartbeat({
     deps.getSigningKeyRotationNotice || getSigningKeyRotationNotice;
   const ackSigningKey = deps.acknowledgeSigningKey || acknowledgeSigningKey;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
+  const auditWriter = deps.writeAudit || writeAudit;
 
   const clockOffsetMs = Number.isInteger(envelope.clockOffsetMs)
     ? envelope.clockOffsetMs
@@ -598,8 +654,11 @@ async function recordHeartbeat({
   // impossible, so an agent downgraded to a build that no longer supports a
   // capability would stay eligible for jobs it can no longer execute. NULL
   // is the wire representation of "omitted" for the UPDATE below.
-  const declaredCapabilities = Array.isArray(body.declaredCapabilities)
-    ? JSON.stringify(normalizeStringList(body.declaredCapabilities, 64))
+  const declaredCapabilitiesList = Array.isArray(body.declaredCapabilities)
+    ? normalizeStringList(body.declaredCapabilities, 64)
+    : null;
+  const declaredCapabilities = declaredCapabilitiesList
+    ? JSON.stringify(declaredCapabilitiesList)
     : null;
 
   return await withTransaction(dbPool, async (client) => {
@@ -607,6 +666,26 @@ async function recordHeartbeat({
     // the heartbeat write; a regression rejects the message with no
     // last_seen_at (or any other) update.
     await enforceSequence({ client, agentRowId: agent.id, envelope });
+
+    // ADR-0012 decision 17 requires an audit event on a capability SET
+    // CHANGE, not on every heartbeat that merely re-sends the field. The
+    // agent re-declares declaredCapabilities on every heartbeat by design
+    // (an in-place binary upgrade needs to pick up a new capability without
+    // re-enrollment), so most heartbeats send the exact same non-empty
+    // constant list the agent always sends. Auditing on "field present on
+    // the wire" rather than "value differs from what's stored" fires this
+    // event on essentially every heartbeat, forever, for every agent - the
+    // pre-write read below exists specifically so the two can be told apart.
+    let previousCapabilities = null;
+    if (declaredCapabilities !== null) {
+      const previous = await client.query(
+        `SELECT declared_capabilities FROM certops_agents WHERE id = $1`,
+        [agent.id],
+      );
+      previousCapabilities = jsonbTextArray(
+        previous.rows[0]?.declared_capabilities,
+      );
+    }
 
     const result = await client.query(
       `UPDATE certops_agents
@@ -636,6 +715,16 @@ async function recordHeartbeat({
                 WHEN $12::jsonb IS NULL THEN declared_capabilities
                 ELSE $12::jsonb
               END,
+              -- Epoch for the freshness check ADR-0012 decision 17 adds at
+              -- claim time. Mirrors the value CASE exactly: absent (NULL)
+              -- preserves the existing timestamp untouched, and BOTH an
+              -- explicit [] and a non-empty array stamp NOW(), because both
+              -- are real assertions of "this is my current capability set as
+              -- of right now" even when the set does not change.
+              capabilities_updated_at = CASE
+                WHEN $12::jsonb IS NULL THEN capabilities_updated_at
+                ELSE NOW()
+              END,
               protocol_version = COALESCE($11, protocol_version),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
               updated_at = NOW()
@@ -662,6 +751,35 @@ async function recordHeartbeat({
     if (!row) {
       // Retired between auth and write: freeze, same as the route-level rule.
       throw serviceError("Agent is retired", CERTOPS_AGENT_RETIRED);
+    }
+
+    // Mirrors CERTOPS_AGENT_REGISTERED's audit shape (registration is the
+    // only other place declared_capabilities is written). Fired only when
+    // the set actually differs from what was stored - never on the
+    // absent-preserves no-op path, and never on a heartbeat that re-sends
+    // the same set it sent last time - so a real downgrade (or any real
+    // capability change) is reconstructable after the fact without burying
+    // it under one audit row per heartbeat for every agent. Order-insensitive
+    // by design: this is a set, not a sequence, so a capability list that
+    // comes back in a different order is not itself a change worth an event.
+    const capabilitiesActuallyChanged =
+      declaredCapabilities !== null &&
+      !sameStringSet(previousCapabilities, declaredCapabilitiesList);
+    if (capabilitiesActuallyChanged) {
+      await auditWriter({
+        client,
+        actorUserId: null,
+        subjectUserId: null,
+        action: "CERTOPS_AGENT_CAPABILITIES_CHANGED",
+        targetType: "certops_agent",
+        targetId: null,
+        workspaceId: agent.workspaceId,
+        metadata: {
+          agentId: agent.agentId,
+          previousCapabilities,
+          declaredCapabilities: declaredCapabilitiesList,
+        },
+      });
     }
 
     if (pinnedSigningKeyId) {
@@ -705,6 +823,19 @@ function normalizeStringList(value, maxItems) {
 function jsonbTextArray(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => typeof item === "string");
+}
+
+/**
+ * Order-insensitive equality for two string arrays, treating both as sets.
+ * Used to decide whether a heartbeat's re-declared declaredCapabilities is
+ * an actual change worth auditing (ADR-0012 decision 17) versus the agent
+ * simply re-sending the same constant list it sends on every heartbeat.
+ */
+function sameStringSet(a, b) {
+  const listA = Array.isArray(a) ? [...a].sort() : [];
+  const listB = Array.isArray(b) ? [...b].sort() : [];
+  if (listA.length !== listB.length) return false;
+  return listA.every((item, index) => item === listB[index]);
 }
 
 /**
@@ -861,7 +992,8 @@ async function claimJobs({
       `SELECT declared_target_selectors,
               declared_command_profile_names,
               supported_dns_providers,
-              declared_capabilities
+              declared_capabilities,
+              capabilities_updated_at
          FROM certops_agents
         WHERE id = $1
         FOR UPDATE`,
@@ -874,9 +1006,25 @@ async function claimJobs({
       supportedDnsProviders.length > 0
         ? supportedDnsProviders
         : jsonbTextArray(caps.supported_dns_providers);
-    const canBindEvidenceToClaim = jsonbTextArray(
-      caps.declared_capabilities,
-    ).includes(EVIDENCE_CLAIM_BINDING_CAPABILITY);
+    // ADR-0012 decision 17: capability-restricted claim selection is gated
+    // on freshness, not just presence in the (possibly stale) declared
+    // array. A capability whose last assertion is older than
+    // CERTOPS_CAPABILITY_FRESHNESS_MS - or that was never asserted at all
+    // (capabilities_updated_at IS NULL, e.g. a pre-existing row that has not
+    // yet heartbeated since this column was added) - is treated as absent
+    // for gating purposes, even though the array itself may still list it.
+    const canBindEvidenceToClaim = hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: EVIDENCE_CLAIM_BINDING_CAPABILITY,
+      env,
+    });
+    const useV2Envelope = hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: SIGNED_PAYLOAD_B64_CAPABILITY,
+      env,
+    });
 
     // B2/B5: agent lane only; match assigned agent, target selector, DNS
     // provider, and command profile when the job requires them.
@@ -1089,6 +1237,9 @@ async function claimJobs({
         // Nonce validity covers lease + reaper hard grace + delivery grace
         // (leaseTiming.dispatchNonceTtlSeconds) and is extended on renew.
         nonceTtlSeconds,
+        envelopeVersion: useV2Envelope
+          ? ENVELOPE_VERSION_2
+          : ENVELOPE_VERSION_1,
       });
       jobs.push(signedJob);
     }
@@ -2135,6 +2286,8 @@ module.exports = {
     serviceError,
     wireActionForOperation,
     EVIDENCE_CLAIM_BINDING_CAPABILITY,
+    SIGNED_PAYLOAD_B64_CAPABILITY,
+    hasFreshCapability,
     withTransaction,
   },
 };

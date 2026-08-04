@@ -7,8 +7,13 @@ const crypto = require("node:crypto");
 const {
   SIGNING_REJECTION_REASONS,
   DEFAULT_TIME_WINDOW_TOLERANCE_MS,
+  ENVELOPE_VERSION_2,
+  V2_MAX_ENCODED_PAYLOAD_CHARS,
+  V2_MAX_DECODED_PAYLOAD_BYTES,
   canonicalizeJobPayload,
   verifyJobSignature,
+  verifyV2Envelope,
+  verifyJobEnvelope,
   checkJobTimeWindow,
   generateSigningKeyPair,
   signJobPayload,
@@ -433,5 +438,480 @@ describe("generateSigningKeyPair / signJobPayload (test-side utilities)", () => 
       () => signJobPayload({ job: { jobId: "job-1" } }),
       /privateKeyPem/,
     );
+  });
+});
+
+function buildV2Envelope({ job, privateKeyPem, signingKeyId, overrides = {} }) {
+  const payloadBytes = Buffer.from(JSON.stringify(job), "utf8");
+  const signatureBytes = crypto.sign(
+    null,
+    payloadBytes,
+    crypto.createPrivateKey(privateKeyPem),
+  );
+  return {
+    envelopeVersion: ENVELOPE_VERSION_2,
+    payloadB64: payloadBytes.toString("base64"),
+    signatureB64: signatureBytes.toString("base64"),
+    signingKeyId,
+    ...overrides,
+  };
+}
+
+describe("verifyV2Envelope", () => {
+  it("verifies a well-formed v2 envelope and returns the decoded job", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = {
+      jobId: "job-1",
+      workspaceId: "ws-1",
+      agentId: "agent-1",
+      signingKeyId,
+    };
+    const envelope = buildV2Envelope({ job, privateKeyPem, signingKeyId });
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.deepEqual(verdict, { allowed: true, job });
+  });
+
+  it("rejects a v2 payload whose own signingKeyId disagrees with the wrapper's, even though the signature verifies (ADR-0012 decision 2 step 13 / decision 3)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    // The payload is genuinely signed by the pinned key (verification
+    // succeeds), but its OWN signingKeyId field -- part of the signed
+    // bytes -- names a different key id than the wrapper's hint. Decision
+    // 3: "the wrapper's copy is the pre-verification selection hint, the
+    // payload's copy is the authenticated value, and step 13 requires them
+    // to agree."
+    const job = {
+      jobId: "job-1",
+      signingKeyId: "signing-key-different-from-wrapper",
+    };
+    const envelope = buildV2Envelope({ job, privateKeyPem, signingKeyId });
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+    assert.match(verdict.detail, /Signing key id mismatch/);
+  });
+
+  it("rejects a v2 payload that omits signingKeyId entirely, even though the signature verifies", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = { jobId: "job-1" }; // no signingKeyId field at all
+    const envelope = buildV2Envelope({ job, privateKeyPem, signingKeyId });
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+    assert.match(verdict.detail, /signingKeyId is missing or malformed/);
+  });
+
+  it("rejects a tampered payload (signature no longer matches)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const envelope = buildV2Envelope({
+      job: { jobId: "job-1" },
+      privateKeyPem,
+      signingKeyId,
+    });
+    envelope.payloadB64 = Buffer.from(
+      JSON.stringify({ jobId: "job-EVIL" }),
+      "utf8",
+    ).toString("base64");
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+  });
+
+  it("rejects a signingKeyId mismatch before touching payload bytes", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const envelope = buildV2Envelope({
+      job: { jobId: "job-1" },
+      privateKeyPem,
+      signingKeyId,
+    });
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: "some-other-key-id",
+    });
+    assert.equal(verdict.allowed, false);
+    assert.match(verdict.detail, /Signing key id mismatch/);
+  });
+
+  it("rejects payloadB64 with embedded whitespace (not standard base64)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const envelope = buildV2Envelope({
+      job: { jobId: "job-1" },
+      privateKeyPem,
+      signingKeyId,
+    });
+    envelope.payloadB64 = envelope.payloadB64.slice(0, 4) + " " + envelope.payloadB64.slice(4);
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects base64url-encoded payloadB64 (- and _ are not standard base64)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    // These specific bytes provably base64-encode to "++++////" (every
+    // group forces the top two 6-bit values, 62 and 63), so both '+' and
+    // '/' are guaranteed present and the base64url substitution below is
+    // guaranteed to actually change the string. Ascending byte sequences do
+    // NOT reliably produce both characters (verified: bytes 0..47, 0..63,
+    // and 0..95 all encode without a single '/'), so this fixed sequence is
+    // used instead of a derived one. This buffer's content is not meant to
+    // be valid JSON; the test only exercises the base64-alphabet check,
+    // which runs before any JSON parsing is attempted.
+    const rawBytes = Buffer.from([0xfb, 0xef, 0xbe, 0xff, 0xff, 0xff]);
+    const signatureBytes = crypto.sign(
+      null,
+      rawBytes,
+      crypto.createPrivateKey(privateKeyPem),
+    );
+    const payloadB64 = rawBytes.toString("base64");
+    assert.match(payloadB64, /\+/);
+    assert.match(payloadB64, /\//);
+    const envelope = {
+      envelopeVersion: ENVELOPE_VERSION_2,
+      payloadB64: payloadB64.replace(/\+/g, "-").replace(/\//g, "_"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId,
+    };
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects non-canonical base64 (decode-then-re-encode does not round-trip)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const envelope = buildV2Envelope({
+      job: { jobId: "job-1" },
+      privateKeyPem,
+      signingKeyId,
+    });
+    // Flipping the last significant base64 char before padding often
+    // produces a non-canonical-but-same-length string (extra padding bits
+    // set); if this particular flip happens to still be canonical the
+    // signature check below still catches it, so the test only asserts the
+    // overall rejection outcome, not which specific check caught it.
+    const chars = envelope.payloadB64.split("");
+    const idx = chars.findIndex((c) => c !== "=");
+    chars[idx] = chars[idx] === "A" ? "B" : "A";
+    envelope.payloadB64 = chars.join("");
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects payloadB64 exceeding the maximum encoded length", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const hugeJob = { jobId: "job-1", filler: "x".repeat(200000) };
+    const envelope = buildV2Envelope({
+      job: hugeJob,
+      privateKeyPem,
+      signingKeyId,
+    });
+    assert.ok(envelope.payloadB64.length > V2_MAX_ENCODED_PAYLOAD_CHARS);
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+  });
+
+  it("actually reaches and enforces the decoded-byte limit for a payload within the encoded-char bound (reachability, not just equivalence)", () => {
+    // Regression for a bug where V2_MAX_ENCODED_PAYLOAD_CHARS was set to the
+    // exact floor(chars/4)*3 equivalent of V2_MAX_DECODED_PAYLOAD_BYTES
+    // (65536 encoded chars, decoding to exactly 49152 bytes): with that
+    // pairing, no payload could ever pass the encoded-length check and then
+    // fail the decoded-byte check, so the decoded check was unreachable dead
+    // code. This constructs a job whose encoded form is comfortably under
+    // V2_MAX_ENCODED_PAYLOAD_CHARS but whose decoded form exceeds
+    // V2_MAX_DECODED_PAYLOAD_BYTES, and asserts the rejection is specifically
+    // the decoded-size one, not the encoded-length one.
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    // A raw filler string this long, once JSON-escaped and base64-encoded,
+    // comfortably clears V2_MAX_DECODED_PAYLOAD_BYTES while staying well
+    // under V2_MAX_ENCODED_PAYLOAD_CHARS -- the gap the two bounds must
+    // leave open for this test to be meaningful.
+    const fillerLength = V2_MAX_DECODED_PAYLOAD_BYTES + 5000;
+    const oversizedDecodedJob = {
+      jobId: "job-1",
+      filler: "x".repeat(fillerLength),
+    };
+    const envelope = buildV2Envelope({
+      job: oversizedDecodedJob,
+      privateKeyPem,
+      signingKeyId,
+    });
+    assert.ok(
+      envelope.payloadB64.length <= V2_MAX_ENCODED_PAYLOAD_CHARS,
+      "test fixture must pass the encoded-length gate to prove the decoded gate is reachable",
+    );
+    const decodedByteLength = Buffer.from(
+      envelope.payloadB64,
+      "base64",
+    ).length;
+    assert.ok(decodedByteLength > V2_MAX_DECODED_PAYLOAD_BYTES);
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+    assert.match(verdict.detail, /decodes to \d+ bytes/);
+  });
+
+  it("rejects a signature that is not exactly 64 decoded bytes", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const envelope = buildV2Envelope({
+      job: { jobId: "job-1" },
+      privateKeyPem,
+      signingKeyId,
+    });
+    envelope.signatureB64 = Buffer.from("too-short").toString("base64");
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects a payload with a leading UTF-8 BOM even though the signature verifies", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const bomBytes = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(JSON.stringify({ jobId: "job-1" }), "utf8"),
+    ]);
+    const signatureBytes = crypto.sign(
+      null,
+      bomBytes,
+      crypto.createPrivateKey(privateKeyPem),
+    );
+    const envelope = {
+      envelopeVersion: ENVELOPE_VERSION_2,
+      payloadB64: bomBytes.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId,
+    };
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.match(verdict.detail, /BOM/);
+  });
+
+  it("rejects trailing content after the JSON value, even whitespace-only, though the signature verifies", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const withTrailingWs = Buffer.concat([
+      Buffer.from(JSON.stringify({ jobId: "job-1" }), "utf8"),
+      Buffer.from("\n"),
+    ]);
+    const signatureBytes = crypto.sign(
+      null,
+      withTrailingWs,
+      crypto.createPrivateKey(privateKeyPem),
+    );
+    const envelope = {
+      envelopeVersion: ENVELOPE_VERSION_2,
+      payloadB64: withTrailingWs.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId,
+    };
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects malformed UTF-8 in the payload bytes, though the signature verifies", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    // 0xff is not valid UTF-8 in any position.
+    const invalidUtf8 = Buffer.from([0x7b, 0xff, 0x7d]);
+    const signatureBytes = crypto.sign(
+      null,
+      invalidUtf8,
+      crypto.createPrivateKey(privateKeyPem),
+    );
+    const envelope = {
+      envelopeVersion: ENVELOPE_VERSION_2,
+      payloadB64: invalidUtf8.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId,
+    };
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("rejects a verified payload that is valid JSON but not a JSON object (e.g. an array)", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const arrayBytes = Buffer.from(JSON.stringify([1, 2, 3]), "utf8");
+    const signatureBytes = crypto.sign(
+      null,
+      arrayBytes,
+      crypto.createPrivateKey(privateKeyPem),
+    );
+    const envelope = {
+      envelopeVersion: ENVELOPE_VERSION_2,
+      payloadB64: arrayBytes.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId,
+    };
+
+    const verdict = verifyV2Envelope({
+      envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+  });
+
+  it("throws on programmer error (missing publicKeyPem or pinnedSigningKeyId)", () => {
+    const envelope = { envelopeVersion: ENVELOPE_VERSION_2 };
+    assert.throws(
+      () => verifyV2Envelope({ envelope, pinnedSigningKeyId: "k" }),
+      /publicKeyPem/,
+    );
+    assert.throws(
+      () => verifyV2Envelope({ envelope, publicKeyPem: "pem" }),
+      /pinnedSigningKeyId/,
+    );
+  });
+});
+
+describe("verifyJobEnvelope (dual-format dispatcher)", () => {
+  it("routes an envelopeVersion:2 object to the v2 path", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = { jobId: "job-1", signingKeyId };
+    const envelope = buildV2Envelope({ job, privateKeyPem, signingKeyId });
+
+    const verdict = verifyJobEnvelope({
+      claimed: envelope,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.deepEqual(verdict, { allowed: true, job });
+  });
+
+  it("routes a legacy job object with no envelopeVersion to the v1 path", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = buildSignedJob({ privateKeyPem, signingKeyId });
+
+    const verdict = verifyJobEnvelope({
+      claimed: job,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, true);
+    assert.deepEqual(verdict.job, job);
+  });
+
+  it("routes an explicit envelopeVersion:1 job object to the v1 path", () => {
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = buildSignedJob({
+      privateKeyPem,
+      signingKeyId,
+      overrides: { envelopeVersion: 1 },
+    });
+
+    const verdict = verifyJobEnvelope({
+      claimed: job,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, true);
+  });
+
+  it("rejects an unrecognized envelopeVersion with a clear reason, never silently falling back to v1", () => {
+    const { publicKeyPem, signingKeyId } = generateSigningKeyPair();
+    const verdict = verifyJobEnvelope({
+      claimed: { envelopeVersion: 99, jobId: "job-1" },
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
+    );
+    assert.match(verdict.detail, /Unrecognized envelopeVersion/);
   });
 });

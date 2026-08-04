@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json",
+  "title": "CertOps Signed Dispatch Wire Wrapper v1",
+  "description": "The v1 (legacy) wire shape for a signed dispatch: ONE FLAT OBJECT carrying the signed payload's own fields (signed-dispatch-payload.schema.json) plus a top-level signature. Verification recomputes canonical JSON over that object with the top-level signature key excluded, which is why signature belongs to this wrapper and not to the signed payload. There is no separate v1 top-level schema object here because v1 has no wrapper fields of its own beyond signature: the per-action schemas (job-payload.schema.json, protocol-smoke-payload.schema.json) ARE the v1 wire schemas, and they $ref the signature definition below rather than each defining their own. v2 is a real wrapper with its own fields and has its own file, signed-dispatch-wire-v2.schema.json. Dual-format dispatch (ADR-0012 decision 1) keeps v1 alive for as long as agents exist that do not advertise signed-payload-b64-v1.",
+  "type": "object",
+  "properties": {
+    "signature": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 1024,
+      "description": "Base64 Ed25519 signature over the canonical JSON of this same object with the top-level signature key removed. WIRE-ONLY: a v2 payloadB64 decode must not contain this field, because in v2 the signature travels beside the signed bytes as signatureB64 rather than inside them (ADR-0012 decision 1)."
+    }
+  }
+}

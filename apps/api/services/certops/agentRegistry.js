@@ -51,6 +51,28 @@ const DEFAULT_CLOCK_DRIFT_ALERT_MS = 30_000;
 // showing a crashed/unresponsive agent as "active" between sweeps.
 const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 
+// ADR-0012 decision 17: capability-gated claim selection at
+// agentDispatch.js's claimJobs needs a freshness bound for
+// certops_agents.capabilities_updated_at. The bound is not an independently
+// invented number - it reuses this file's own existing agent-liveness SLO
+// (DEFAULT_AGENT_OFFLINE_AFTER_MS above), on the reasoning that an agent
+// whose last capability assertion is stale by more than the threshold that
+// would already mark it `livenessState: "stale"` has no business being
+// offered a capability-gated job. It is deliberately its OWN named constant
+// (not a direct reference to DEFAULT_AGENT_OFFLINE_AFTER_MS) so the two can
+// be tuned independently later; they simply start equal. This is NOT "3x
+// the 30-second heartbeat interval" - that arithmetic was considered and is
+// explicitly rejected by ADR-0012 decision 17.
+const DEFAULT_CERTOPS_CAPABILITY_FRESHNESS_MS = 10 * 60 * 1000;
+
+function certopsCapabilityFreshnessMs(env = process.env) {
+  return Number.parseInt(
+    env.CERTOPS_CAPABILITY_FRESHNESS_MS ||
+      String(DEFAULT_CERTOPS_CAPABILITY_FRESHNESS_MS),
+    10,
+  );
+}
+
 // The workspace admin surface must never see credential_prefix or
 // credential_hash; only these columns leave the service layer.
 const AGENT_SAFE_SELECT_FIELDS = `
@@ -540,6 +562,8 @@ module.exports = {
   CERTOPS_AGENT_NOT_FOUND,
   CERTOPS_AGENT_RETIRE_REASON_INVALID,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,
+  DEFAULT_CERTOPS_CAPABILITY_FRESHNESS_MS,
+  certopsCapabilityFreshnessMs,
   computeAgentCompatibility,
   countActivelyLeasedJobs,
   fenceAgentInFlightWork,

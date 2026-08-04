@@ -92,6 +92,22 @@ described below may now begin.** The PRs that implement this feature set
 follow this decision rather than re-deciding it; any future change to a
 decision here is a new, explicitly logged amendment, not a silent
 divergence in code.
+**An eighth amendment (2026-08-04, post-acceptance) corrects decision 1's
+numeric limits table.** The encoded-payload bound was originally set to
+65,536 characters, the tightest value that still decodes to at most the
+49,152-byte decoded-payload bound (`floor(65536/4)*3 = 49152` exactly).
+That exact equivalence made the decoded-byte check mathematically
+unreachable: no base64 string within a byte-for-byte-equal encoded ceiling
+can ever decode to more bytes than that same ceiling already permits, so
+the check that is supposed to enforce the real content-size policy could
+never be the one that actually rejected anything, in either implementation.
+The encoded bound is now 98,304 characters (decoding to at most 73,728
+bytes), leaving real headroom above the unchanged 49,152-byte decoded bound
+so a payload between the two sizes is correctly caught by the decoded-byte
+check with its own specific rejection reason, rather than always being
+caught first, if at all, by the coarser pre-decode length check. The
+decoded-payload bound itself, the ADR's actual content-size policy, is
+unchanged.
 
 ## Context
 
@@ -188,11 +204,22 @@ stated so two implementations cannot disagree:
 
 ```text
 claim response body    1 MiB, enforced WHILE READING, not after buffering
-encoded payload        65,536 characters
+encoded payload        98,304 characters
 decoded payload        49,152 bytes
 signature             64 bytes decoded, exactly
 clock skew            heartbeat-derived clockOffsetMs, 300s default tolerance
 ```
+
+The encoded bound is deliberately looser than the tightest value that would
+still decode to at most 49,152 bytes (65,536 characters, `floor(65536/4)*3 =
+49152` exactly): a bound that tight makes the decoded-byte check
+mathematically unreachable, since no base64 string within a byte-for-byte-
+equal encoded ceiling can ever decode past that same ceiling. 98,304 leaves
+real headroom (`floor(98304/4)*3 = 73,728` decoded bytes) so a
+between-the-two-bounds payload passes the coarse, pre-decode encoded check
+and is then actually rejected by the decoded-byte check that enforces the
+real content-size policy, with that check's own, more specific rejection
+reason.
 
 Rejecting an oversized body after buffering it still performs the allocation
 the bound exists to prevent, hence "while reading".

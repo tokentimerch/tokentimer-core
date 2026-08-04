@@ -59,6 +59,7 @@
     "check:secret-logging": "node scripts/check-secret-logging.js",
     "check:certops-keygen-ban": "node scripts/check-certops-keygen-ban.js",
     "check:certops-dns-providers": "node scripts/check-certops-dns-providers.js",
+    "verify:ci-guards": "node scripts/ci-guards/run-all.cjs",
     "// --- Integration test Docker stack (deploy/compose/docker-compose.test.yml) ---": "",
     "test:up": "docker compose -f deploy/compose/docker-compose.test.yml up --build -d",
     "test:down": "docker compose -f deploy/compose/docker-compose.test.yml down --volumes --remove-orphans",

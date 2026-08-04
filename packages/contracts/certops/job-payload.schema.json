@@ -18,7 +18,10 @@
   "properties": {
     "mode": {
       "type": "string",
-      "enum": ["real", "dry_run"],
+      "enum": [
+        "real",
+        "dry_run"
+      ],
       "description": "First-class immutable job execution mode set at creation. dry_run jobs must terminate as dry_run_complete, never succeeded. See COORDINATION-B4.md."
     },
     "schemaVersion": {
@@ -37,6 +40,9 @@
       "format": "uuid",
       "description": "Owning workspace identifier."
     },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
     "certificateId": {
       "type": "string",
       "minLength": 1,
@@ -45,13 +51,22 @@
       "description": "Managed certificate identifier."
     },
     "tokenId": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1,
       "description": "Optional link to the existing tokens table."
     },
     "action": {
       "type": "string",
-      "enum": ["renew", "deploy", "reload", "revoke", "noop"],
+      "enum": [
+        "renew",
+        "deploy",
+        "reload",
+        "revoke",
+        "noop"
+      ],
       "description": "Public certificate lifecycle action requested by the control plane."
     },
     "requestedAt": {
@@ -59,20 +74,35 @@
       "format": "date-time"
     },
     "requestedBy": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["actorType"],
+      "required": [
+        "actorType"
+      ],
       "properties": {
         "actorType": {
           "type": "string",
-          "enum": ["user", "system", "automation"]
+          "enum": [
+            "user",
+            "system",
+            "automation"
+          ]
         },
         "actorId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128
         },
         "displayName": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 256
         }
       }
@@ -80,11 +110,21 @@
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "reference"],
+      "required": [
+        "type",
+        "reference"
+      ],
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["domain", "endpoint", "kubernetes", "appliance", "load-balancer", "external"]
+          "enum": [
+            "domain",
+            "endpoint",
+            "kubernetes",
+            "appliance",
+            "load-balancer",
+            "external"
+          ]
         },
         "reference": {
           "type": "string",
@@ -93,15 +133,24 @@
           "description": "Non-secret deployment or observation reference."
         },
         "managedCertificateId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128
         },
         "certificateInstanceId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128
         },
         "fingerprintSha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         }
       }
@@ -141,7 +190,10 @@
     },
     "acmeKind": {
       "type": "string",
-      "enum": ["certbot", "acme.sh"],
+      "enum": [
+        "certbot",
+        "acme.sh"
+      ],
       "description": "ACME client adapter the agent should use. Defaults to certbot when absent."
     },
     "keyRotation": {
@@ -217,7 +269,10 @@
     },
     "keyAlgorithm": {
       "type": "string",
-      "enum": ["rsa", "ecdsa"],
+      "enum": [
+        "rsa",
+        "ecdsa"
+      ],
       "description": "Approved private-key algorithm from the renewal profile. Agent maps this with keySize onto a local generateKeyPair algorithm id."
     },
     "keySize": {
@@ -244,7 +299,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "reference"],
+        "required": [
+          "type",
+          "reference"
+        ],
         "properties": {
           "type": {
             "type": "string",
@@ -263,59 +321,95 @@
             "maxLength": 512
           },
           "certPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512
           },
           "keyPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "pattern": "^/",
             "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
           },
           "reloadService": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9_.:@-]{1,128}$"
           },
           "chainPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "description": "Optional absolute destination for the intermediate chain PEM (agent-local / forward-compatible)."
           },
           "certMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for certPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
           },
           "keyMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for keyPath (octal string like \"0600\" or integer). World-writable modes are rejected at runtime."
           },
           "chainMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for chainPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
           },
           "owner": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 32,
             "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
             "description": "Optional POSIX username for deployed cert/key/chain ownership."
           },
           "group": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 32,
             "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
             "description": "Optional POSIX group name for deployed cert/key/chain ownership."
           },
           "backupDir": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "pattern": "^/",
             "description": "Optional absolute directory for timestamped backups of replaced files."
           },
           "backupRetentionCount": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "maximum": 64,
             "description": "Optional bounded count of retained backups per destination basename."
@@ -373,10 +467,7 @@
       "description": "Reserved for signed agent dispatch: identifier of the control-plane operational signing key. Optional and not required for validation today."
     },
     "signature": {
-      "type": "string",
-      "minLength": 64,
-      "maxLength": 1024,
-      "description": "Reserved for signed agent dispatch: signature over the canonical job payload. Optional and not required for validation today."
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
     },
     "claimId": {
       "type": "string",
@@ -407,7 +498,10 @@
     "publicMetadataEntry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "value"],
+      "required": [
+        "name",
+        "value"
+      ],
       "properties": {
         "name": {
           "type": "string",

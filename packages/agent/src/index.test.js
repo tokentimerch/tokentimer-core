@@ -12,9 +12,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const {
   handleClaimedJob,
+  UNVERIFIED_JOB_ID_PLACEHOLDER,
   buildExecutionContext,
   buildJobPolicyDescriptor,
   resolveJobCertPath,
@@ -155,61 +157,28 @@ describe("buildJobPolicyDescriptor", () => {
   });
 });
 
-describe("handleClaimedJob", () => {
-  it("reports rejected + evidence when agent-local policy rejects the job", async () => {
+/**
+ * ADR-0012 decision 2: "there is no observe-only carve-out" from the one
+ * normative verification order. `handleClaimedJob` with NO executionContext
+ * at all (true bootstrap: no config.execution ever configured) has no
+ * possible source for a pinned signing key, so it always lands in
+ * decision 2's one above-the-gate exception ("no signing key pinned at
+ * all" -> report "blocked"), regardless of what the raw job looks like.
+ * This is a deliberate behavior change from the pre-fix code, which used
+ * to run the raw wire object through validateClaimedJob (a bootstrap-only
+ * schema with no signature/verification concept at all) and could report
+ * "rejected" built from unverified fields -- exactly the pattern this ADR
+ * forbids. See the "observe-only signature verification" describe block
+ * below for the (legitimate, still-supported) case where observe-only mode
+ * DOES have a pinned key and therefore runs full verification.
+ */
+describe("handleClaimedJob (true bootstrap: no executionContext at all)", () => {
+  it("reports blocked with the raw job's own identifiers for a v1-shaped job (no signing key pinned)", async () => {
     const client = createRecordingClient();
     const policyEngine = engineWith({}, { declaredTargetSelectors: [] });
 
     const outcome = await handleClaimedJob({
-      job: claimedJob({ target: { type: "domain", reference: "not-in-scope.example.com" } }),
-      policyEngine,
-      client,
-      log: silentLog,
-    });
-
-    assert.equal(outcome.status, "rejected");
-    assert.equal(outcome.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
-
-    assert.equal(client.calls.reportEvidence.length, 1);
-    const evidence = client.calls.reportEvidence[0];
-    assert.equal(evidence.jobId, "job-1");
-    assert.equal(evidence.evidenceItems[0].eventType, "policy.checked");
-    assert.deepEqual(evidence.evidenceItems[0].metadata, [
-      { name: "rejectionReason", value: REJECTION_REASONS.TARGET_OUT_OF_SCOPE },
-    ]);
-
-    assert.equal(client.calls.reportResult.length, 1);
-    const result = client.calls.reportResult[0];
-    assert.equal(result.jobId, "job-1");
-    assert.equal(result.status, "rejected");
-    assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
-    assert.match(result.attemptId, /^local-job-1-/);
-  });
-
-  it("reports job_integrity_failed for unknown custody-shaped claimed-job fields", async () => {
-    const client = createRecordingClient();
-    const policyEngine = engineWith(
-      { allowedPaths: ["/"] },
-      { declaredTargetSelectors: ["example.com"] },
-    );
-
-    const outcome = await handleClaimedJob({
-      job: claimedJob({ jobId: "job-2", exportPrivateKey: true }),
-      policyEngine,
-      client,
-      log: silentLog,
-    });
-
-    assert.equal(outcome.status, "rejected");
-    assert.equal(outcome.rejectionReason, "job_integrity_failed");
-  });
-
-  it("reports blocked (not executed) when policy allows the job but execution is not enabled", async () => {
-    const client = createRecordingClient();
-    const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
-
-    const outcome = await handleClaimedJob({
-      job: claimedJob({ jobId: "job-3" }),
+      job: claimedJob({ jobId: "job-1", claimId: "claim-1", nonce: "nonce-0123456789abcdef" }),
       policyEngine,
       client,
       log: silentLog,
@@ -220,50 +189,34 @@ describe("handleClaimedJob", () => {
     assert.equal(client.calls.reportResult.length, 1);
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "blocked");
-    assert.match(result.attemptId, /^local-job-3-/);
-    assert.match(result.errorMessage, /execution is not enabled/);
+    assert.equal(result.jobId, "job-1");
+    assert.equal(result.claimId, "claim-1");
+    assert.equal(result.nonce, "nonce-0123456789abcdef");
+    assert.match(result.errorMessage, /no control-plane signing key is pinned/);
   });
 
-  it("rejects a bootstrap-mode job carrying signed-dispatch fields with job_integrity_failed", async () => {
-    const client = createRecordingClient();
-    const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
-
-    // claimId/nonce are signed-dispatch fields; bootstrap mode (no
-    // executionContext) must strictly reject them instead of echoing them.
-    const outcome = await handleClaimedJob({
-      job: {
-        jobId: "job-unsigned",
-        claimId: "claim-unsigned-1",
-        nonce: "nonce-unsigned-0123456789abcdef",
-        target: { type: "domain", reference: "example.com" },
-      },
-      policyEngine,
-      client,
-      log: silentLog,
-    });
-
-    assert.equal(outcome.status, "rejected");
-    assert.equal(outcome.rejectionReason, "job_integrity_failed");
-    const result = client.calls.reportResult[0];
-    assert.equal(result.status, "rejected");
-    assert.equal(result.rejectionReason, "job_integrity_failed");
-    assert.match(result.attemptId, /^local-job-unsigned-/);
-  });
-
-  it("skips jobs without a jobId without reporting anything", async () => {
+  it("reports blocked with a local, non-attacker-influenced placeholder jobId when the raw job has none (e.g. a v2 envelope)", async () => {
+    // A v2 envelope carries no outer jobId at all (ADR-0012 decision 1);
+    // this must never resolve to "skipped, nothing reported" the way a
+    // missing job.jobId used to short-circuit BEFORE any verification
+    // attempt (that early read is exactly decision 16's fix target).
     const client = createRecordingClient();
     const policyEngine = engineWith();
 
     const outcome = await handleClaimedJob({
-      job: { ...claimedJob(), jobId: undefined },
+      job: { envelopeVersion: 2, payloadB64: "irrelevant", signatureB64: "irrelevant", signingKeyId: "irrelevant" },
       policyEngine,
       client,
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "skipped");
-    assert.equal(client.calls.reportResult.length, 0);
-    assert.equal(client.calls.reportEvidence.length, 0);
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.reportResult.length, 1);
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "blocked");
+    assert.equal(result.jobId, UNVERIFIED_JOB_ID_PLACEHOLDER);
+    assert.equal(result.claimId, null);
+    assert.equal(result.nonce, null);
   });
 });
 
@@ -705,7 +658,11 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     );
   }
 
-  it("rejects an unsigned job with job_integrity_failed while execution is enabled", async () => {
+  it("submits NO result for an unsigned job while execution is enabled (trusted-identity gate)", async () => {
+    // ADR-0012 decision 2: a signature-verdict failure must not produce a
+    // result of any kind, because claimId/nonce live inside the payload the
+    // verdict just declared untrustworthy. The job fails locally and its
+    // lease expires.
     const client = createRecordingClient();
     const job = makeSignedJob();
     delete job.signature;
@@ -719,16 +676,18 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.status, "failed");
     assert.equal(outcome.rejectionReason, "job_integrity_failed");
-    assert.equal(client.calls.reportResult[0].status, "rejected");
-    assert.equal(client.calls.reportEvidence.length, 1);
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  it("rejects a tampered job with job_integrity_failed", async () => {
+  it("submits NO result for a tampered job, and never echoes its claimId/nonce", async () => {
     const client = createRecordingClient();
     const job = makeSignedJob();
     job.action = "renew"; // mutate after signing
+    job.claimId = "attacker-chosen-claim";
+    job.nonce = "attackerchosennonce123456";
 
     const outcome = await handleClaimedJob({
       job,
@@ -738,8 +697,15 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.status, "failed");
     assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    // The attacker-controlled identifiers must not reach the control plane
+    // through any call this attempt made.
+    const transmitted = JSON.stringify(client.calls);
+    assert.ok(!transmitted.includes("attacker-chosen-claim"));
+    assert.ok(!transmitted.includes("attackerchosennonce123456"));
   });
 
   it("rejects a replayed job with job_replay_rejected on the second dispatch", async () => {
@@ -898,14 +864,18 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(result.nonce, job.nonce);
   });
 
-  it("passes job.claimId/job.nonce through on a rejection report", async () => {
+  it("passes job.claimId/job.nonce through on a below-the-gate rejection report", async () => {
+    // The pass-through property is asserted through a SEMANTIC rejection
+    // (agent-local policy denies the target), which sits below the
+    // trusted-identity gate. A signature-verdict failure cannot be used
+    // here: per ADR-0012 decision 2 it submits no result at all, so there
+    // would be nothing to inspect.
     const client = createRecordingClient();
     const job = makeSignedJob({ claimId: "claim-rej-1" });
-    job.action = "renew"; // mutate after signing -> job_integrity_failed
 
     const outcome = await handleClaimedJob({
       job,
-      policyEngine: permissiveEngine(),
+      policyEngine: permissiveEngine([]), // target selector not declared
       client,
       executionContext: makeExecutionContext(),
       log: silentLog,
@@ -914,7 +884,6 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(outcome.status, "rejected");
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "rejected");
-    assert.equal(result.rejectionReason, "job_integrity_failed");
     assert.equal(result.claimId, "claim-rej-1");
     assert.equal(result.nonce, job.nonce);
   });
@@ -1767,9 +1736,15 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     });
   });
 
-  it("strictly rejects a signed-dispatch job when executionContext is null", async () => {
+  it("reports blocked (no pinned key available) for a signed-dispatch job when executionContext is null", async () => {
+    // executionContext === null means there is no possible source for a
+    // pinned signing key (ADR-0012 decision 2's one above-the-gate
+    // exception), so this lands in the same "blocked" case as execution-
+    // enabled-but-unpinned above -- it must NOT run the raw job through any
+    // bootstrap-only schema validator, and it must NOT report "rejected"
+    // built from unverified fields (the pre-fix behavior this replaces).
     const client = createRecordingClient();
-    const job = makeSignedJob(); // signed-dispatch fields are not valid bootstrap input
+    const job = makeSignedJob();
 
     const outcome = await handleClaimedJob({
       job,
@@ -1779,11 +1754,14 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    // Without execution enabled the strict bootstrap validator rejects the
-    // unknown signed-dispatch fields outright; the job is never executed.
-    assert.equal(outcome.status, "rejected");
-    assert.equal(outcome.rejectionReason, "job_integrity_failed");
-    assert.equal(client.calls.reportResult[0].status, "rejected");
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.reportResult.length, 1);
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "blocked");
+    assert.equal(result.jobId, job.jobId);
+    assert.equal(result.nonce, job.nonce);
+    assert.match(result.errorMessage, /no control-plane signing key is pinned/);
+    assert.equal(client.calls.reportEvidence.length, 0);
   });
 
   it("buildExecutionContext returns null when execution is absent or disabled and throws on a corrupted replay store", () => {
@@ -1980,6 +1958,249 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /not available locally|not configured locally/i);
+  });
+});
+
+/**
+ * ADR-0012 decision 2: "There is no observe-only carve-out from this
+ * order." These tests exercise handleClaimedJob's observe-only branch
+ * (executionContext.enabled === false, but a pinnedSigningKey IS available
+ * to it -- a legitimate configuration distinct from the true-bootstrap,
+ * no-executionContext-at-all case covered above) through the exact same
+ * verify-then-derive-identity boundary as the execution-enabled tests
+ * above, closing the Finding B gap where this branch used to call
+ * validateClaimedJob directly on the raw, unverified wire object with no
+ * signature check at all.
+ */
+describe("observe-only signature verification (ADR-0012 decision 2 Finding B closure)", () => {
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function observeOnlyContext({ pinned = true } = {}) {
+    return {
+      enabled: false,
+      pinnedSigningKey: pinned
+        ? { signingKeyId: signingKey.signingKeyId, publicKeyPem: signingKey.publicKeyPem }
+        : null,
+    };
+  }
+
+  function baseJobFields(overrides = {}) {
+    const nowMs = Date.now();
+    return {
+      schemaVersion: 1,
+      jobId: "job-observe-1",
+      workspaceId: "11111111-2222-3333-4444-555555555555",
+      certificateId: "cert-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs - 1000).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(36).slice(2)}-0123456789abcdef`,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+  }
+
+  function makeSignedJobV1(overrides = {}) {
+    const job = baseJobFields(overrides);
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function makeV2Envelope(overrides = {}) {
+    const job = baseJobFields(overrides);
+    const payloadBytes = Buffer.from(JSON.stringify(job), "utf8");
+    const signatureBytes = crypto.sign(
+      null,
+      payloadBytes,
+      crypto.createPrivateKey(signingKey.privateKeyPem),
+    );
+    const envelope = {
+      envelopeVersion: 2,
+      payloadB64: payloadBytes.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId: signingKey.signingKeyId,
+    };
+    return { envelope, job };
+  }
+
+  function permissiveEngine(selectors = ["example.com"]) {
+    return engineWith({ allowedPaths: [workDir] }, { declaredTargetSelectors: selectors });
+  }
+
+  it("submits NO result for a tampered v1 job in observe-only mode (same silent failure as execution-enabled)", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1();
+    job.claimId = "attacker-chosen-claim";
+    job.nonce = "attacker-chosen-nonce-0123456789";
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    const transmitted = JSON.stringify(client.calls);
+    assert.ok(!transmitted.includes("attacker-chosen-claim"));
+    assert.ok(!transmitted.includes("attacker-chosen-nonce"));
+  });
+
+  it("submits NO result for a v2 envelope with a bad signature in observe-only mode, proving no early skip for v2's missing outer jobId", async () => {
+    const client = createRecordingClient();
+    const { envelope } = makeV2Envelope();
+    const corrupted = { ...envelope, signatureB64: Buffer.alloc(64, 1).toString("base64") };
+    assert.equal(corrupted.jobId, undefined);
+
+    const outcome = await handleClaimedJob({
+      job: corrupted,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("reports a policy rejection built from post-gate identifiers for a valid v1 job in observe-only mode", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1({ claimId: "claim-observe-1" });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: engineWith({}, { declaredTargetSelectors: [] }),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+    assert.equal(client.calls.reportEvidence.length, 1);
+    assert.equal(client.calls.reportResult.length, 1);
+    const result = client.calls.reportResult[0];
+    assert.equal(result.jobId, job.jobId);
+    assert.equal(result.claimId, "claim-observe-1");
+    assert.equal(result.nonce, job.nonce);
+    assert.equal(result.status, "rejected");
+  });
+
+  it("reports key_export_requested for a valid job that requests key export, in observe-only mode", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1({ exportPrivateKey: true });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, REJECTION_REASONS.KEY_EXPORT_REQUESTED);
+  });
+
+  it("reports blocked when policy allows a verified v1 job but execution is not enabled", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.reportEvidence.length, 0);
+    assert.equal(client.calls.reportResult.length, 1);
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "blocked");
+    assert.equal(result.jobId, job.jobId);
+    assert.match(result.errorMessage, /execution is not enabled/);
+  });
+
+  it("processes a valid v2 envelope in observe-only mode using the decoded payload's identifiers (the wire envelope has none)", async () => {
+    const client = createRecordingClient();
+    const { envelope, job } = makeV2Envelope({ claimId: "claim-v2-observe" });
+    assert.equal(envelope.jobId, undefined);
+
+    const outcome = await handleClaimedJob({
+      job: envelope,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.reportResult.length, 1);
+    const result = client.calls.reportResult[0];
+    assert.equal(result.jobId, job.jobId);
+    assert.equal(result.claimId, "claim-v2-observe");
+    assert.equal(result.nonce, job.nonce);
+  });
+
+  it("reports blocked with the raw job's own identifiers when no signing key is pinned at all, in observe-only mode (v1)", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1({ claimId: "claim-nopin-1" });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext({ pinned: false }),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.jobId, job.jobId);
+    assert.equal(result.claimId, "claim-nopin-1");
+    assert.equal(result.nonce, job.nonce);
+    assert.match(result.errorMessage, /no control-plane signing key is pinned/);
+  });
+
+  it("reports blocked with the local placeholder jobId when no signing key is pinned at all, in observe-only mode (v2, no outer jobId)", async () => {
+    const client = createRecordingClient();
+    const { envelope } = makeV2Envelope();
+
+    const outcome = await handleClaimedJob({
+      job: envelope,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: observeOnlyContext({ pinned: false }),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.jobId, UNVERIFIED_JOB_ID_PLACEHOLDER);
+    assert.equal(result.claimId, null);
+    assert.equal(result.nonce, null);
   });
 });
 

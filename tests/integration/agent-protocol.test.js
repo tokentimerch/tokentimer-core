@@ -286,7 +286,7 @@ describe("agent protocol trust layer (signed dispatch)", function () {
     expect(result.detail).to.match(/key id mismatch/i);
   });
 
-  it("rejections report uniformly through the result path with the policy-compatible shape", async () => {
+  it("integrity verdicts keep the policy-compatible shape, but are NOT transmitted as results", async () => {
     const world = await setupSignedWorld();
     world.app.dispatchTamperedJob();
     const job = await claimOneJob(world.agent);
@@ -297,24 +297,35 @@ describe("agent protocol trust layer (signed dispatch)", function () {
       pinnedSigningKeyId: world.pinnedSigningKeyId,
       replayCache: world.replayCache,
     });
-    // Shape parity with the policy module's rejection results, so the
-    // downstream evidence/result reporting handles both uniformly.
+    // Shape parity with the policy module's rejection results, so downstream
+    // handling of a verdict stays uniform regardless of which gate produced
+    // it. Shape parity is about local handling only; it does NOT imply the
+    // verdict travels the result path.
     expect(Object.keys(rejection).sort()).to.deep.equal([
       "allowed",
       "detail",
       "rejectionReason",
     ]);
+    expect(rejection.rejectionReason).to.equal("job_integrity_failed");
 
+    // ADR-0012 decision 2: an integrity verdict is terminal and silent. The
+    // claim response carries no unsigned handle, so claimId/nonce would have
+    // to come from the payload the verdict just declared untrustworthy.
+    // The agent submits nothing and lets the lease expire.
+    expect(world.app.state.results).to.have.length(0);
+
+    // A SEMANTIC rejection, decided below the trusted-identity gate, is what
+    // legitimately travels the result path.
     const resultResponse = await world.agent.reportResult({
       jobId: job.jobId,
       attemptId: `attempt-${crypto.randomUUID()}`,
       status: "rejected",
-      rejectionReason: rejection.rejectionReason,
+      rejectionReason: "target_out_of_scope",
     });
     expect(resultResponse.status).to.equal(202);
     expect(world.app.state.results).to.have.length(1);
     expect(world.app.state.results[0].body.rejectionReason).to.equal(
-      "job_integrity_failed",
+      "target_out_of_scope",
     );
   });
 
