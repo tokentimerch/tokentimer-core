@@ -5,7 +5,7 @@ Engineering health and quality targets, tracked alongside the
 These items are worked on in parallel with feature development and may
 ship in any release -- version numbers below are targets, not hard gates.
 
-Last updated: 2026-07-24
+Last updated: 2026-08-04
 
 ---
 
@@ -70,15 +70,21 @@ rejects key material at every write surface (CI-enforced).
 - [x] **Agent-side renewal**: ACME (RFC 8555), filesystem deploy, reload
   helpers, basic rollback. Key generation happens only on the agent, never on
   the control plane.
-- [ ] **Windows agent execution surface**: IIS certificate-binding and Windows
-  certificate-store deployment targets, CNG-native (non-exportable) key
-  custody, ACL-protected agent credentials and superseded-material retention,
-  trust-anchor ownership reconciliation. Dual-format (v1/v2 exact-byte)
+- [x] **Signed-dispatch pipeline hardening**: dual-format (v1/v2 exact-byte)
   signed job dispatch with a capability-freshness window, required `agentId`
   binding on signed payloads, and isolated diagnostic agents
   (`protocol_smoke`) so an operator can verify the signed-dispatch pipeline
   without ever letting a diagnostic run claim real certificate work. Node-free
   Bash and PowerShell reference clients ship alongside the Node agent.
+  Windows/IIS target descriptor columns and validation also shipped as part
+  of this wave. See ADR-0012.
+- [ ] **Windows execution surface (Wave 2b/3, targeting 0.13.0)**: IIS
+  certificate-binding and Windows certificate-store deployment targets
+  actually driven end to end, CNG-native (non-exportable) key custody, ACL-
+  protected agent credentials and superseded-material retention, trust-anchor
+  ownership reconciliation. Decided in ADR-0012 but not yet implemented in the
+  Windows agent; deferred out of the 0.12.0 signed-dispatch wave because it
+  requires real-Windows-host verification evidence, not source review alone.
 - [ ] **Consolidation guards** (non-blocking, lands incrementally):
   shared SSRF egress module, versioned encryption envelopes, audit hash chain,
   enum/type-drift and control-plane-keygen CI guards.
