@@ -132,5 +132,10 @@
     ]
   },
   "author": "TokenTimer <support@tokentimer.ch>",
-  "license": "BUSL-1.1"
+  "license": "BUSL-1.1",
+  "pnpm": {
+    "overrides": {
+      "react-router": "8.3.0"
+    }
+  }
 }
