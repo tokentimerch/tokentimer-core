@@ -1,11 +1,15 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 
 const {
   SIGNING_REJECTION_REASONS,
+  AGENT_ID_BINDING_REJECTION_REASONS,
+  AGENT_ID_BINDING_CAPABILITY,
+  getAgentIdBindingMetrics,
+  resetAgentIdBindingMetrics,
   DEFAULT_TIME_WINDOW_TOLERANCE_MS,
   ENVELOPE_VERSION_2,
   V2_MAX_ENCODED_PAYLOAD_CHARS,
@@ -15,6 +19,7 @@ const {
   verifyV2Envelope,
   verifyJobEnvelope,
   checkJobTimeWindow,
+  checkAgentIdBinding,
   generateSigningKeyPair,
   signJobPayload,
 } = require("./index.js");
@@ -913,5 +918,170 @@ describe("verifyJobEnvelope (dual-format dispatcher)", () => {
       SIGNING_REJECTION_REASONS.JOB_INTEGRITY_FAILED,
     );
     assert.match(verdict.detail, /Unrecognized envelopeVersion/);
+  });
+
+  it("legacy v1 tolerance: a fixture signed with agentId present verifies through the real v1 path", () => {
+    // ADR-0012 decision 3 step 1: server-side agentId emission lands in the
+    // same shared signed payload v1 already verifies; this proves the v1
+    // path needs no change to carry the new field through to the returned
+    // job untouched, ready for checkAgentIdBinding's gate step 11.
+    const { publicKeyPem, privateKeyPem, signingKeyId } =
+      generateSigningKeyPair();
+    const job = buildSignedJob({
+      privateKeyPem,
+      signingKeyId,
+      overrides: { agentId: "agent-legacy-1" },
+    });
+
+    const verdict = verifyJobEnvelope({
+      claimed: job,
+      publicKeyPem,
+      pinnedSigningKeyId: signingKeyId,
+    });
+    assert.equal(verdict.allowed, true);
+    assert.equal(verdict.job.agentId, "agent-legacy-1");
+  });
+});
+
+describe("checkAgentIdBinding (ADR-0012 decision 3, gate step 11)", () => {
+  const BOUND_AGENT_ID = "agent-bound-1";
+
+  it("absence-tolerant (effective false): accepts a verified job whose payload has no agentId at all", () => {
+    const verdict = checkAgentIdBinding({
+      job: { jobId: "job-1" },
+      boundAgentId: BOUND_AGENT_ID,
+      requireSignedAgentId: false,
+    });
+    assert.deepEqual(verdict, { allowed: true });
+  });
+
+  it("absence-strict (effective true): the same no-agentId job is rejected with a named incompatibility error, not a generic verification failure", () => {
+    const verdict = checkAgentIdBinding({
+      job: { jobId: "job-1" },
+      boundAgentId: BOUND_AGENT_ID,
+      requireSignedAgentId: true,
+    });
+    assert.equal(verdict.allowed, false);
+    assert.equal(
+      verdict.rejectionReason,
+      AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_REQUIRED_BUT_MISSING,
+    );
+    // Distinct from every SIGNING_REJECTION_REASONS value, in particular
+    // job_integrity_failed: this must never be mistaken for a generic
+    // signature/verification failure.
+    assert.ok(
+      !Object.values(SIGNING_REJECTION_REASONS).includes(
+        verdict.rejectionReason,
+      ),
+    );
+  });
+
+  it("mismatch: a job signed for agent A delivered to agent B fails closed regardless of requireSignedAgentId", () => {
+    for (const requireSignedAgentId of [false, true]) {
+      const verdict = checkAgentIdBinding({
+        job: { jobId: "job-1", agentId: "agent-A" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId,
+      });
+      assert.equal(verdict.allowed, false);
+      assert.equal(
+        verdict.rejectionReason,
+        AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH,
+      );
+    }
+  });
+
+  describe("mismatch observability (getAgentIdBindingMetrics)", () => {
+    beforeEach(() => {
+      resetAgentIdBindingMetrics();
+    });
+
+    it("increments the mismatches counter on every mismatch rejection, regardless of requireSignedAgentId", () => {
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 0 });
+
+      checkAgentIdBinding({
+        job: { jobId: "job-1", agentId: "agent-A" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: false,
+      });
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 1 });
+
+      checkAgentIdBinding({
+        job: { jobId: "job-2", agentId: "agent-A" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: true,
+      });
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 2 });
+    });
+
+    it("does NOT increment the mismatches counter for absence (missing agentId), in either flag state", () => {
+      checkAgentIdBinding({
+        job: { jobId: "job-1" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: false,
+      });
+      checkAgentIdBinding({
+        job: { jobId: "job-2" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: true,
+      });
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 0 });
+    });
+
+    it("does NOT increment the mismatches counter on an allowed (matching) verdict", () => {
+      checkAgentIdBinding({
+        job: { jobId: "job-1", agentId: "agent-B" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: true,
+      });
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 0 });
+    });
+
+    it("resetAgentIdBindingMetrics clears the counter back to zero", () => {
+      checkAgentIdBinding({
+        job: { jobId: "job-1", agentId: "agent-A" },
+        boundAgentId: "agent-B",
+        requireSignedAgentId: false,
+      });
+      assert.equal(getAgentIdBindingMetrics().mismatches, 1);
+
+      resetAgentIdBindingMetrics();
+      assert.deepEqual(getAgentIdBindingMetrics(), { mismatches: 0 });
+    });
+
+    it("getAgentIdBindingMetrics returns a copy, not a live reference", () => {
+      const snapshot = getAgentIdBindingMetrics();
+      snapshot.mismatches = 999;
+      assert.equal(getAgentIdBindingMetrics().mismatches, 0);
+    });
+  });
+
+  it("accepts a job whose signed agentId matches boundAgentId, in both flag states", () => {
+    for (const requireSignedAgentId of [false, true]) {
+      const verdict = checkAgentIdBinding({
+        job: { jobId: "job-1", agentId: BOUND_AGENT_ID },
+        boundAgentId: BOUND_AGENT_ID,
+        requireSignedAgentId,
+      });
+      assert.deepEqual(verdict, { allowed: true });
+    }
+  });
+
+  it("throws on programmer error: missing or empty boundAgentId", () => {
+    for (const bad of [undefined, null, "", 42]) {
+      assert.throws(
+        () =>
+          checkAgentIdBinding({
+            job: { jobId: "job-1" },
+            boundAgentId: bad,
+            requireSignedAgentId: false,
+          }),
+        /boundAgentId/,
+      );
+    }
+  });
+
+  it("AGENT_ID_BINDING_CAPABILITY is the exact capability string agent-id-binding-v1", () => {
+    assert.equal(AGENT_ID_BINDING_CAPABILITY, "agent-id-binding-v1");
   });
 });

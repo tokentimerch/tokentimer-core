@@ -40,6 +40,7 @@ const {
   resolveJobSans,
   mapJobKeyAlgorithm,
   resolveJobDeployTargets,
+  resolveDeclaredCapabilities,
 } = require("./index.js");
 const {
   markSideEffectReached,
@@ -60,7 +61,15 @@ const {
   readSigningKeyPin,
   listConfiguredDnsProviderIds,
 } = require("./config");
-const { generateSigningKeyPair, signJobPayload, verifyJobSignature } = require("./signing");
+const {
+  generateSigningKeyPair,
+  signJobPayload,
+  verifyJobSignature,
+  AGENT_ID_BINDING_CAPABILITY,
+  AGENT_ID_BINDING_REJECTION_REASONS,
+  getAgentIdBindingMetrics,
+  resetAgentIdBindingMetrics,
+} = require("./signing");
 const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
@@ -79,6 +88,17 @@ function makeTempConfigDir() {
     fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-index-test-")),
   );
 }
+
+/**
+ * Fixed, non-empty stand-in for a real agent's registered identity, used as
+ * boundAgentId across tests that exercise handleClaimedJob's post-verdict
+ * gate but do not themselves test ADR-0012 decision 3's agentId binding
+ * (checkAgentIdBinding requires a non-empty boundAgentId unconditionally,
+ * since a real agent always knows its own identity by the time it verifies
+ * a job). Tests that DO exercise agentId binding declare their own distinct
+ * bound/signed ids instead of using this constant.
+ */
+const TEST_BOUND_AGENT_ID = "agent-test-bound-1";
 
 function createRecordingClient() {
   const calls = { register: [], reportResult: [], reportEvidence: [], renewLease: [] };
@@ -849,6 +869,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(first.status, "succeeded");
@@ -858,6 +879,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(second.status, "rejected");
@@ -877,6 +899,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -911,6 +934,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -932,6 +956,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -963,6 +988,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
         policyEngine: permissiveEngine(),
         client,
         executionContext: makeExecutionContext(),
+        boundAgentId: TEST_BOUND_AGENT_ID,
         log: silentLog,
       });
       assert.equal(client.calls.reportResult.length, 1, overrides.jobId);
@@ -984,6 +1010,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext({ dryRun: false }),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1008,6 +1035,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine([]), // target selector not declared
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1043,6 +1071,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1091,6 +1120,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1162,6 +1192,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext({ dryRun: false }),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1195,6 +1226,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext({ dryRun: false }),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -1556,6 +1588,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(revokeOutcome.status, "blocked");
@@ -1565,6 +1598,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine,
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(deployOutcome.status, "blocked");
@@ -1598,6 +1632,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2029,6 +2064,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2222,6 +2258,7 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
       policyEngine: engineWith({}, { declaredTargetSelectors: [] }),
       client,
       executionContext: observeOnlyContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2245,6 +2282,7 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
       policyEngine: permissiveEngine(),
       client,
       executionContext: observeOnlyContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2261,6 +2299,7 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
       policyEngine: permissiveEngine(),
       client,
       executionContext: observeOnlyContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2283,6 +2322,7 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
       policyEngine: permissiveEngine(),
       client,
       executionContext: observeOnlyContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
 
@@ -2331,6 +2371,327 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
     assert.equal(result.jobId, UNVERIFIED_JOB_ID_PLACEHOLDER);
     assert.equal(result.claimId, null);
     assert.equal(result.nonce, null);
+  });
+});
+
+/**
+ * ADR-0012 decision 3, gate step 11, exercised through the full
+ * handleClaimedJob path rather than checkAgentIdBinding directly: a job
+ * signed for one agent's identity must fail closed at the gate before any
+ * result is submitted, for both wire shapes the agent accepts (v1's signed
+ * object and v2's payloadB64 envelope), and regardless of
+ * requireSignedAgentId, since a mismatch is never tolerated by that flag.
+ */
+describe("agentId mismatch fails closed at the gate (ADR-0012 decision 3, both wire shapes)", () => {
+  let workDir;
+  let signingKey;
+  const AGENT_A = "agent-A";
+  const AGENT_B = "agent-B";
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext() {
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun: true,
+        keysDir: path.join(workDir, "keys"),
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
+        clockDriftToleranceMs: 30000,
+      },
+      pinnedSigningKey: {
+        signingKeyId: signingKey.signingKeyId,
+        publicKeyPem: signingKey.publicKeyPem,
+      },
+    };
+    return buildExecutionContext({ config });
+  }
+
+  function baseJobFields(overrides = {}) {
+    const nowMs = Date.now();
+    return {
+      schemaVersion: 1,
+      jobId: "job-mismatch-1",
+      workspaceId: "11111111-2222-3333-4444-555555555555",
+      agentId: AGENT_A,
+      certificateId: "cert-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs - 1000).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(36).slice(2)}-0123456789abcdef`,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+  }
+
+  function makeSignedJobV1(overrides = {}) {
+    const job = baseJobFields(overrides);
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function makeV2Envelope(overrides = {}) {
+    const job = baseJobFields(overrides);
+    const payloadBytes = Buffer.from(JSON.stringify(job), "utf8");
+    const signatureBytes = crypto.sign(
+      null,
+      payloadBytes,
+      crypto.createPrivateKey(signingKey.privateKeyPem),
+    );
+    return {
+      envelopeVersion: 2,
+      payloadB64: payloadBytes.toString("base64"),
+      signatureB64: signatureBytes.toString("base64"),
+      signingKeyId: signingKey.signingKeyId,
+    };
+  }
+
+  function permissiveEngine() {
+    return engineWith({ allowedPaths: [workDir] }, { declaredTargetSelectors: ["example.com"] });
+  }
+
+  for (const requireSignedAgentId of [false, true]) {
+    it(`v1 wire shape: job signed for ${AGENT_A} delivered to ${AGENT_B} fails at the gate before any action (requireSignedAgentId=${requireSignedAgentId})`, async () => {
+      const client = createRecordingClient();
+      const job = makeSignedJobV1();
+
+      const outcome = await handleClaimedJob({
+        job,
+        policyEngine: permissiveEngine(),
+        client,
+        executionContext: makeExecutionContext(),
+        boundAgentId: AGENT_B,
+        requireSignedAgentId,
+        log: silentLog,
+      });
+
+      assert.equal(outcome.status, "failed");
+      assert.equal(outcome.rejectionReason, "agent_id_mismatch");
+      assert.equal(client.calls.reportResult.length, 0);
+      assert.equal(client.calls.reportEvidence.length, 0);
+    });
+
+    it(`v2 wire shape: job signed for ${AGENT_A} delivered to ${AGENT_B} fails at the gate before any action (requireSignedAgentId=${requireSignedAgentId})`, async () => {
+      const client = createRecordingClient();
+      const envelope = makeV2Envelope();
+
+      const outcome = await handleClaimedJob({
+        job: envelope,
+        policyEngine: permissiveEngine(),
+        client,
+        executionContext: makeExecutionContext(),
+        boundAgentId: AGENT_B,
+        requireSignedAgentId,
+        log: silentLog,
+      });
+
+      assert.equal(outcome.status, "failed");
+      assert.equal(outcome.rejectionReason, "agent_id_mismatch");
+      assert.equal(client.calls.reportResult.length, 0);
+      assert.equal(client.calls.reportEvidence.length, 0);
+    });
+  }
+});
+
+/**
+ * Mismatch observability: an agentId mismatch must be distinguishable, at
+ * scale, from every other rejection reason -- both in the log stream (a
+ * stable, distinct message, never the generic "failed signature
+ * verification" line used for every other rejection) and in the paired
+ * counter checkAgentIdBinding maintains (packages/agent/src/signing/
+ * index.js's getAgentIdBindingMetrics). Exercised through the full
+ * handleClaimedJob path, same as the describe block above, so this proves
+ * the wiring between checkAgentIdBinding's verdict and src/index.js's log
+ * call, not just checkAgentIdBinding in isolation (already covered by
+ * signing.test.js).
+ */
+describe("agentId mismatch observability (log + counter, ADR-0012 decision 3)", () => {
+  let workDir;
+  let signingKey;
+  const AGENT_A = "agent-A";
+  const AGENT_B = "agent-B";
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+    resetAgentIdBindingMetrics();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext() {
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun: true,
+        keysDir: path.join(workDir, "keys"),
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
+        clockDriftToleranceMs: 30000,
+      },
+      pinnedSigningKey: {
+        signingKeyId: signingKey.signingKeyId,
+        publicKeyPem: signingKey.publicKeyPem,
+      },
+    };
+    return buildExecutionContext({ config });
+  }
+
+  function makeSignedJobV1(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: "job-mismatch-observability-1",
+      workspaceId: "11111111-2222-3333-4444-555555555555",
+      agentId: AGENT_A,
+      certificateId: "cert-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs - 1000).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(36).slice(2)}-0123456789abcdef`,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function permissiveEngine() {
+    return engineWith({ allowedPaths: [workDir] }, { declaredTargetSelectors: ["example.com"] });
+  }
+
+  function createRecordingLog() {
+    const calls = [];
+    const log = (message, details) => {
+      calls.push({ message, details });
+    };
+    return { calls, log };
+  }
+
+  it("emits a stable, distinct log line for a mismatch, never the generic signature-verification message", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1();
+    const { calls, log } = createRecordingLog();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_B,
+      requireSignedAgentId: false,
+      log,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.rejectionReason, AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH);
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].message, /agent-id binding gate/);
+    assert.match(calls[0].message, /agentId mismatch/);
+    assert.doesNotMatch(calls[0].message, /failed signature verification/);
+    assert.equal(calls[0].details.rejectionReason, AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH);
+    assert.equal(calls[0].details.boundAgentId, AGENT_B);
+  });
+
+  it("increments getAgentIdBindingMetrics().mismatches through the full handleClaimedJob path", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1();
+    const { log } = createRecordingLog();
+
+    assert.equal(getAgentIdBindingMetrics().mismatches, 0);
+
+    await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_B,
+      requireSignedAgentId: false,
+      log,
+    });
+
+    assert.equal(getAgentIdBindingMetrics().mismatches, 1);
+  });
+
+  it("uses the generic signature-verification message for a non-mismatch rejection (e.g. a tampered signature), not the mismatch-specific one", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1();
+    job.signature = job.signature.slice(0, -4) + "abcd"; // tamper: signature no longer verifies
+    const { calls, log } = createRecordingLog();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_A,
+      requireSignedAgentId: false,
+      log,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.notEqual(outcome.rejectionReason, AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].message, /failed signature verification/);
+    assert.equal(getAgentIdBindingMetrics().mismatches, 0);
+  });
+});
+
+/**
+ * ADR-0012 decision 3, step 4: agent-id-binding-v1 must be advertised from
+ * the EFFECTIVE runtime value of requireSignedAgentId, never from the
+ * compiled-in default. The shipped default is currently false, so the
+ * "default true" direction is proven by calling resolveDeclaredCapabilities
+ * directly with the override value it would receive at runtime (its only
+ * argument IS the already-resolved effective value; there is no separate
+ * "default" input for it to read), which is exactly the mechanism under
+ * test: the function has no way to reach for a compiled-in default even if
+ * it wanted to.
+ */
+describe("resolveDeclaredCapabilities advertises agent-id-binding-v1 from the effective value only", () => {
+  it("effective false (default false, no override) does NOT advertise agent-id-binding-v1", () => {
+    const capabilities = resolveDeclaredCapabilities(false);
+    assert.ok(!capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
+  });
+
+  it("effective true (default false, overridden true) DOES advertise agent-id-binding-v1", () => {
+    const capabilities = resolveDeclaredCapabilities(true);
+    assert.ok(capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
+  });
+
+  it("effective false (simulated default true, overridden false) does NOT advertise agent-id-binding-v1", () => {
+    // Simulates a future release where the compiled-in default has flipped to
+    // true but this process's effective value was overridden back to false
+    // (env var or config.json). resolveDeclaredCapabilities takes only the
+    // effective value, so this proves the mechanism cannot see the compiled
+    // default at all, today or after that future flip.
+    const simulatedEffectiveValue = false;
+    const capabilities = resolveDeclaredCapabilities(simulatedEffectiveValue);
+    assert.ok(!capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
+  });
+
+  it("base capability set is always present regardless of the effective value", () => {
+    for (const requireSignedAgentId of [false, true]) {
+      const capabilities = resolveDeclaredCapabilities(requireSignedAgentId);
+      assert.ok(capabilities.includes("evidence-claim-binding-v1"));
+    }
   });
 });
 
@@ -2584,6 +2945,7 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext(),
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(outcome.status, "blocked");
@@ -2671,6 +3033,7 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
       policyEngine: permissiveEngine(),
       client,
       executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
       log: silentLog,
     });
     assert.equal(outcome.status, "orphaned_unknown_effect");

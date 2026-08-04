@@ -274,6 +274,7 @@ function validJobPayload() {
     schemaVersion: 1,
     jobId: "job-1",
     workspaceId: "11111111-1111-4111-8111-111111111111",
+    agentId: "22222222-2222-4222-8222-222222222222",
     certificateId: "cert-1",
     action: "renew",
     target: {
@@ -1593,6 +1594,7 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
       schemaVersion: 1,
       jobId: "job-1",
       workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: "22222222-2222-4222-8222-222222222222",
       certificateId: "cert-1",
       action: "renew",
       target: { type: "domain", reference: "example.com" },
@@ -1677,18 +1679,18 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     assert.equal(result.valid, false);
   });
 
-  it("still validates a certificate job WITHOUT agentId (compatibility only; 1b-3 makes it required)", () => {
-    // job-payload.schema.json does NOT require agentId as of the schema-split
-    // change (1b-1), because the control plane does not emit it yet. It becomes
-    // required ATOMICALLY with server-side emission in 1b-3 -- the producer
-    // schema is never optional-then-required across releases, since a schema
-    // that permits omitting the field cannot catch a dispatch path that forgot
-    // it. Consumer-side absence tolerance lives in the compatibility decoder
-    // gated on CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID, never here.
+  it("rejects a certificate job WITHOUT agentId (required, atomic with server-side emission)", () => {
+    // job-payload.schema.json now requires agentId, added in the same
+    // commit as the control plane's server-side emission of the field
+    // (ADR-0012 decision 3). The producer schema is never optional-then-
+    // required across releases, since a schema that permits omitting the
+    // field cannot catch a dispatch path that forgot it. Consumer-side
+    // absence tolerance lives in the compatibility decoder gated on
+    // CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID, never here.
     const job = baseCertificateJob();
-    assert.equal("agentId" in job, false);
+    delete job.agentId;
     const result = validateSignedJob(job);
-    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.equal(result.valid, false, "expected validation to fail without agentId");
   });
 
   it("validates a certificate job WITH agentId identically (additive field, not a breaking one)", () => {
@@ -1709,6 +1711,7 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     const nonce = "n".repeat(20);
     const certJob = validateSignedJob(
       baseCertificateJob({
+        agentId: "22222222-2222-4222-8222-222222222222",
         nonce,
         signingKeyId: "ttsk_abc123",
         signature: "s".repeat(88),

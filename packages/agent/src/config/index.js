@@ -80,6 +80,22 @@ const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
 const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
+// ADR-0012 decision 3, step 3/4 of the agentId rollout. Governs ONLY the
+// compatibility decoder's tolerance for a signed job missing agentId
+// entirely; it has zero effect on a present-but-mismatched agentId (always
+// fails closed) and zero effect on the control-plane producer schema
+// (already unconditionally required). See docs/CONFIGURATION.md for the
+// operator guidance on when it is safe to flip this to true.
+//
+// SUNSET: this flag (and the absence-tolerant decoder branch it gates, see
+// packages/agent/src/signing/index.js's checkAgentIdBinding) exists only to
+// bridge a control plane that has not yet completed step 1 of the rollout
+// above. Flip the compiled-in default here to `true` once step 1 has been
+// deployed and confirmed fleet-wide (targets 0.12.0); remove the flag and
+// the absence-tolerant branch entirely one release after that (0.13.0 or
+// later), once no fleet still needs the override back to `false`. Do not
+// remove on a calendar date alone -- only once both conditions hold.
+const DEFAULT_REQUIRE_SIGNED_AGENT_ID = false;
 const KEYS_DIR_NAME = "keys";
 const REPLAY_STORE_FILE_NAME = "replay-store.json";
 const OUTBOX_DIR_NAME = "outbox";
@@ -800,6 +816,7 @@ function validateExecutionObject(execution, configDir) {
  *   discovery: {directories: string[], intervalMs: number}|null,
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
+ *   requireSignedAgentId: boolean,
  *   execution: {
  *     enabled: boolean,
  *     dryRun: boolean,
@@ -886,6 +903,21 @@ function loadAgentConfig({ configDir } = {}) {
     "TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP",
   );
 
+  // ADR-0012 decision 3 compatibility decoder flag. Env var takes
+  // precedence over config.json so an operator can flip it fleet-wide
+  // without touching every agent's config file; config.json lets a single
+  // host override the fleet default. This is the EFFECTIVE runtime value:
+  // the agent-id-binding-v1 capability advertisement and the verification
+  // gate's absence-tolerance both read this field, never the compiled-in
+  // DEFAULT_REQUIRE_SIGNED_AGENT_ID constant directly.
+  const requireSignedAgentId = parseBooleanEnv(
+    process.env.CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID,
+    typeof fileConfig.requireSignedAgentId === "boolean"
+      ? fileConfig.requireSignedAgentId
+      : DEFAULT_REQUIRE_SIGNED_AGENT_ID,
+    "CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID",
+  );
+
   // Signed-job execution config; null means execution not configured
   // (treated everywhere as { enabled: false }).
   const execution = validateExecutionObject(fileConfig.execution, resolvedDir);
@@ -918,6 +950,7 @@ function loadAgentConfig({ configDir } = {}) {
     discovery,
     caBundlePath,
     allowInsecureLocalHttp,
+    requireSignedAgentId,
     execution,
     pinnedSigningKey,
     dnsProviders,
@@ -1477,4 +1510,5 @@ module.exports = {
   MAX_CA_BUNDLE_BYTES,
   OUTBOX_DIR_NAME,
   normalizeDnsPropagationConfig,
+  DEFAULT_REQUIRE_SIGNED_AGENT_ID,
 };
