@@ -388,3 +388,28 @@ bounded completed evidence or a safe failure through the executor routes above.
 Successful completion means the owned cert-manager `Certificate` was created,
 reconciled, or already matched; issuance completion arrives later through the
 observation route.
+
+## 10. Not covered here: the agent protocol and job-detail reads
+
+This document is scoped to the two machine transports above: the generic
+executor (events/evidence) and the Kubernetes controller (observations/
+provisioning). Two related but distinct surfaces live elsewhere:
+
+- **The agent protocol** (`register`/`heartbeat`/`claim`/`result`/`evidence`
+  over `/api/v1/certops/agent/*`) is a different, outbound-only transport with
+  its own claims, leases, attempts, signatures, and nonces, none of which this
+  executor/controller surface implements (see the disclaimer in section 9).
+  `declaredCapabilities`, the `normal`/`diagnostic` `agentId` binding,
+  `protocol_smoke` diagnostic jobs, and the dual-format v1/v2 signed-dispatch
+  envelope (`signed-payload-b64-v1`) are all agent-protocol concepts,
+  documented in `docs/certops/agent.md`, not here.
+- **Job-detail reads** (`GET /api/v1/workspaces/:id/certops/jobs[/:jobId]`)
+  are a session-authenticated, human-operator API for the dashboard, not a
+  machine-token executor route. The single-job response surfaces the agent
+  protocol's own claim/lease bookkeeping for that job for operator visibility:
+  `claimId`, `claimedByAgentId`, `claimedByControllerClusterId`,
+  `claimedByAgentSigningKeyId` (best-effort, the claiming agent's *current*
+  pinned signing key, not necessarily the key pinned at the moment of that
+  specific claim), `leaseExpiresAt`, `leaseRenewedAt`, `attemptCount`, and
+  `maxAttempts` (`CertOpsJobDetail` in `openapi.yaml`). These render as chips
+  and plain text in the dashboard's `EvidenceTimeline.jsx`.

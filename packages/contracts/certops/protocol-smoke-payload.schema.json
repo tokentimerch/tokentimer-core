@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/protocol-smoke-payload.schema.json",
+  "title": "CertOps Protocol Smoke Job Payload",
+  "description": "Signed dispatch payload for a diagnostic protocol_smoke job (ADR-0012 decisions 3 and 7). Dispatched ONLY to agents whose server-assigned agent_kind is 'diagnostic' (never client-declared); exists so a Node-free reference client can exercise claim/verify/report without ever being offered certificate work. Composes the shared signed-dispatch-payload definition (schemaVersion/jobId/workspaceId/agentId/mode/requestedAt plus the signed-dispatch fields) and adds nothing certificate-shaped: no certificateId, target, keyMode, certificatePem, or any key-custody field. additionalProperties: false at every level, so a smoke job can never be mistaken for, or grown into, a certificate job. The wire-only signature field is referenced from signed-dispatch-wire-v1.schema.json rather than defined here, because a signature is never part of the content it signs; a v2 payloadB64 decode validated against this schema must not carry that field at all. agentId is required here from day one because this schema is new: it ships with the protocol_smoke action itself, which only becomes dispatchable once the control plane already emits agentId, so there is no pre-existing deployed client whose tolerance must be preserved and no rollout window to bridge.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "workspaceId",
+    "agentId",
+    "action",
+    "mode",
+    "requestedAt",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/schemaVersion"
+    },
+    "jobId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+    },
+    "workspaceId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/workspaceId"
+    },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
+    "action": {
+      "type": "string",
+      "const": "protocol_smoke",
+      "description": "Fixed action value. A dedicated wire action, not a reuse of 'noop' (a real production action in EXECUTABLE_JOB_ACTIONS), so a diagnostic client and a production agent never share an action string (ADR-0012 decision 7)."
+    },
+    "mode": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/mode"
+    },
+    "requestedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/requestedAt"
+    },
+    "issuedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/issuedAt"
+    },
+    "expiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/expiresAt"
+    },
+    "nonce": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/nonce"
+    },
+    "signingKeyId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/signingKeyId"
+    },
+    "signature": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
+    },
+    "claimId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/claimId"
+    },
+    "attemptId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptId"
+    },
+    "leaseExpiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/leaseExpiresAt"
+    },
+    "attemptCount": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptCount"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "echo"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "dry_run",
+          "description": "protocol_smoke never has a 'real' variant; it is diagnostic-only by construction, not merely by convention."
+        },
+        "echo": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Operator-supplied opaque string the diagnostic client's result should echo back, so a manual smoke test can visually confirm round-trip integrity without inspecting server state."
+        }
+      }
+    }
+  }
+}

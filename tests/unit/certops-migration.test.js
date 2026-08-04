@@ -501,7 +501,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("defines the operational notifications migration as the newest migration", () => {
+  it("defines the operational notifications migration at a stable, unique version", () => {
     const opNotificationsMigration = migrations.find(
       (migration) => migration.name === "operational_notifications_schema",
     );
@@ -509,10 +509,12 @@ describe("CertOps inventory migration", () => {
       opNotificationsMigration,
       "expected operational_notifications_schema migration",
     );
+    assert.equal(opNotificationsMigration.version, 39);
     assert.equal(
-      opNotificationsMigration.version,
-      Math.max(...migrations.map((migration) => migration.version)),
-      "operational_notifications_schema must be the newest migration",
+      migrations.filter((migration) => migration.version === opNotificationsMigration.version)
+        .length,
+      1,
+      "migration version 39 must not be reused by a later migration",
     );
     assert.match(
       opNotificationsMigration.sql,

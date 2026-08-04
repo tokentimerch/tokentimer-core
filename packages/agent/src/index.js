@@ -105,7 +105,7 @@ const {
   hasReportableJobId,
 } = require("./claimed-job");
 const { defaultAgentLogger } = require("./logging");
-const { verifyJobSignature, checkJobTimeWindow } = require("./signing");
+const { verifyJobEnvelope, checkJobTimeWindow } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { checkNtpSynced } = require("./ntp");
@@ -166,8 +166,9 @@ function buildJobPolicyDescriptor(job) {
  * Policy descriptor mapping for the signed-dispatch path. Signed jobs carry
  * execution fields (issuedAt/expiresAt/nonce/signature/commandRef/...) that
  * the frozen bootstrap job shape does not allow; their full field validation
- * happens inside verifyJobSignature (findSignedFieldProblem) BEFORE this
- * mapping runs, so only the policy-dimension projection is done here.
+ * happens inside verifyJobEnvelope (verifyJobSignature's findSignedFieldProblem
+ * for v1, or the v2 envelope checks for v2) BEFORE this mapping runs, so only
+ * the policy-dimension projection is done here.
  *
  * @param {object} job signature-verified claimed job payload
  * @returns {object} policy jobDescriptor
@@ -1189,19 +1190,32 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
 /**
  * Handles a single claimed job.
  *
- * Without an execution context (observe-only bootstrap mode, executionContext null or
- * enabled:false): evaluate agent-local policy, then report either a policy
- * rejection (with evidence) or a "blocked" result explaining that execution
- * is not enabled. This branch is byte-for-byte the observe-only bootstrap behavior.
+ * ADR-0012 decision 2: "There is no observe-only carve-out from this
+ * order." Verification (steps 1-14 of the one normative order) runs
+ * UNCONDITIONALLY and IDENTICALLY regardless of executionEnabled; the
+ * fields a report is built from are never read from the raw wire object
+ * (`job`) in either branch. `executionEnabled` matters only at step 15
+ * ("act"): execute the verified job, or report a policy
+ * rejection/`blocked` from the verified job's own fields instead.
  *
- * With an enabled execution context: run the full trust chain in
- * order -- signature verify -> replay check -> clock window check -> policy
- * evaluateJob -> replay consume -> executeJob. Any { allowed: false }
- * verdict reports policy.checked evidence + a "rejected" result with that
- * rejectionReason. A job missing its signed-dispatch fields is rejected
- * with job_integrity_failed (unsigned jobs must never execute). If no
- * signing key is pinned yet, jobs are "blocked" (never executed) until
- * registration pins one.
+ * This function itself reads no identifier off `job` at all (not
+ * `job.jobId`, not `job.attemptId`, not `job.claimId`): it hands the RAW,
+ * unverified job straight to handleSignedJob, which performs signature
+ * verification FIRST and derives jobId/attemptId from the verified payload
+ * only after a verdict is available (ADR-0012 decision 16 -- the fix for
+ * the previously-misattributed unsafe read that lived here). The one
+ * documented exception, reporting "blocked" when no signing key is pinned
+ * at all, is handled inside handleSignedJob itself (see its doc comment);
+ * that path never proves or disproves a signature, so it is not part of
+ * the verification order this function must not short-circuit.
+ *
+ * A signature-verdict failure (which includes a job missing its
+ * signed-dispatch fields) is terminal and SILENT in both branches: no
+ * result and no evidence are submitted, because claimId/nonce would have
+ * to come from the payload the verdict just declared untrustworthy. Below
+ * the gate, execution-enabled mode runs the job; observe-only mode reports
+ * a policy rejection (or "blocked" if policy allows but execution is not
+ * configured) built from the now-verified payload's own fields.
  *
  * Never throws for per-job failures; errors are reported through the
  * protocol client and logged.
@@ -1209,11 +1223,14 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
  * Exported for direct unit testing.
  *
  * @param {object} params
- * @param {object} params.job claimed job payload
+ * @param {object} params.job claimed job payload (RAW, unverified; v1 flat
+ *   signed job object or v2 { envelopeVersion: 2, payloadB64, ... }
+ *   envelope -- either way, no field of it is read here)
  * @param {object} params.policyEngine from createPolicyEngine
  * @param {object} params.client from createProtocolClient
  * @param {object|null} [params.executionContext] from
- *   buildExecutionContext; null preserves observe-only bootstrap behavior
+ *   buildExecutionContext; null or { enabled: false } means "observe-only":
+ *   verification still runs, only the post-verdict action differs
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -1224,138 +1241,283 @@ async function handleClaimedJob({
   executionContext = null,
   log = null,
 }) {
-  const reportableJobId = hasReportableJobId(job?.jobId) ? job.jobId : null;
   const executionEnabled =
     executionContext !== null && executionContext.enabled === true;
 
-  if (executionEnabled) {
-    if (!reportableJobId) {
-      emitLog(log, "claimed job missing a reportable jobId; skipping");
-      return { status: "skipped", rejectionReason: "job_integrity_failed" };
+  return handleSignedJob({
+    job,
+    policyEngine,
+    client,
+    executionContext,
+    executionEnabled,
+    log,
+  });
+}
+
+/**
+ * jobId placeholder used ONLY for the no-pinned-key "blocked" report, and
+ * only when the raw wire object carries no usable outer jobId at all (a v2
+ * envelope never does -- ADR-0012 decision 1 -- and a v1 job's jobId can
+ * always be missing/malformed too). A fixed, LOCAL-ONLY string, never
+ * derived from wire content, so it is not attacker-influenced content:
+ * agent-protocol.schema.json's resultBody.jobId requires a non-empty
+ * `^[A-Za-z0-9_.:-]+$` string, so "no jobId available" cannot itself be
+ * represented on the wire and needs a stand-in that obviously is one.
+ */
+const UNVERIFIED_JOB_ID_PLACEHOLDER = "unverified-no-pinned-key";
+
+/**
+ * Best-effort identifiers read from the RAW, UNVERIFIED job/envelope, for
+ * the no-pinned-key "blocked" report ONLY (ADR-0012 decision 2's one
+ * documented exception to "verify before reading"). Reading `claimed`
+ * directly is safe here, and ONLY here, because no signature has proven
+ * the payload false: no verdict will ever be computed while no key is
+ * pinned, so these values are merely echoed back to the authority that
+ * issued them, and the server's own nonce ledger (bound to
+ * (jobId, workspaceId, agentRowId)) decides whether the report binds. A
+ * fabricated value therefore cannot cause a false state transition; it
+ * simply fails to consume and the submission is refused.
+ *
+ * For a v2 envelope, claimId/nonce/jobId are always absent here (those
+ * fields live inside the unverified payloadB64); that is a strictly more
+ * conservative outcome than v1's, not a regression.
+ *
+ * @param {object} claimed raw, unverified claimed job/envelope
+ * @returns {{ jobId: string|null, claimId: string|null, nonce: string|null }}
+ */
+function rawBestEffortIdentity(claimed) {
+  return {
+    jobId: hasReportableJobId(claimed?.jobId) ? claimed.jobId : null,
+    claimId:
+      typeof claimed?.claimId === "string" && claimed.claimId.length > 0
+        ? claimed.claimId
+        : null,
+    nonce:
+      typeof claimed?.nonce === "string" && claimed.nonce.length > 0
+        ? claimed.nonce
+        : null,
+  };
+}
+
+/**
+ * Derives the identifiers every post-gate report is built from, from the
+ * VERIFIED job object ONLY (ADR-0012 decision 2 trusted-identity gate /
+ * decision 16's fix). NEVER call this with the raw, pre-verification job.
+ *
+ * @param {object} verifiedJob job returned by an "allowed" verifyJobEnvelope verdict
+ * @returns {{ jobId: string|null, claimId: string|null, nonce: string|null, attemptId: string }}
+ */
+function verifiedJobIdentity(verifiedJob) {
+  const jobId = hasReportableJobId(verifiedJob?.jobId) ? verifiedJob.jobId : null;
+  const claimId =
+    typeof verifiedJob?.claimId === "string" && verifiedJob.claimId.length > 0
+      ? verifiedJob.claimId
+      : null;
+  const nonce =
+    typeof verifiedJob?.nonce === "string" && verifiedJob.nonce.length > 0
+      ? verifiedJob.nonce
+      : null;
+  // Signed dispatch assigns attemptId server-side (mirroring claimId);
+  // prefer it, then claimId itself, then a local fallback so result
+  // reporting stays schema-valid and idempotency-debuggable.
+  const attemptId =
+    typeof verifiedJob?.attemptId === "string" && verifiedJob.attemptId.length > 0
+      ? verifiedJob.attemptId
+      : claimId || localAttemptId(jobId || UNVERIFIED_JOB_ID_PLACEHOLDER);
+  return { jobId, claimId, nonce, attemptId };
+}
+
+/**
+ * Runs ADR-0012 decision 2's one normative verification order (steps
+ * 1-14) against a RAW, unverified claimed job/envelope, given whatever
+ * pinned signing key context is available. Shared by handleSignedJob
+ * (execution-enabled) and handleObserveOnlyJob (observe-only) so neither
+ * branch implements its own copy of the verify-then-derive-identity
+ * boundary -- "there is no observe-only carve-out from this order"
+ * (decision 2), closing the finding recorded against handleClaimedJob in
+ * decision 16.
+ *
+ * Callers must not read ANY field from `job` themselves. Every trustworthy
+ * field is on the returned `job` after a "verified" outcome.
+ *
+ * @param {object} params
+ * @param {object} params.job raw, unverified claimed job/envelope
+ * @param {{signingKeyId: string, publicKeyPem: string}|null} params.pinnedSigningKey
+ * @returns {
+ *   { outcome: "no_pinned_key" } |
+ *   { outcome: "rejected", rejectionReason: string, detail: string } |
+ *   { outcome: "verified", job: object }
+ * }
+ */
+function verifyClaimedJobEnvelope({ job, pinnedSigningKey }) {
+  // No pinned key => integrity of ANY job cannot be established in either
+  // direction. This sits ABOVE the gate (ADR-0012 decision 2): it is a
+  // local agent-side precondition failure ("this agent cannot execute or
+  // verify anything yet"), not a verdict about the job itself, which is
+  // why the caller may still report it (using ONLY rawBestEffortIdentity,
+  // never anything derived here).
+  if (!pinnedSigningKey) {
+    return { outcome: "no_pinned_key" };
+  }
+
+  // Signature/envelope verification, strictly first, over the job exactly
+  // as received (ADR-0012 decision 1: dual-format dispatch). No field of
+  // `job` is read before this returns allowed. For a v1 job this verifies
+  // the canonical-JSON signature over the object itself; for a v2 envelope
+  // this verifies the Ed25519 signature over payloadB64's raw decoded
+  // bytes BEFORE ever parsing them as JSON, then returns the
+  // decoded-and-parsed job.
+  const verdict = verifyJobEnvelope({
+    claimed: job,
+    publicKeyPem: pinnedSigningKey.publicKeyPem,
+    pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
+  });
+  if (!verdict.allowed) {
+    return {
+      outcome: "rejected",
+      rejectionReason: verdict.rejectionReason,
+      detail: verdict.detail,
+    };
+  }
+  return { outcome: "verified", job: verdict.job };
+}
+
+/**
+ * Trust chain for a claimed job, execution-enabled OR observe-only alike.
+ * Order per ADR-0003 and ADR-0012 decision 2 (the one normative
+ * verification order): signature verify -> trusted-identity extraction ->
+ * replay check -> clock window check -> policy -> replay consume ->
+ * execute. The replay nonce is consumed only after every gate passed, so a
+ * rejected job does not burn its nonce, but it IS consumed before
+ * execution starts, so a crash mid-execution can never allow a replay.
+ *
+ * TRUSTED-IDENTITY GATE (ADR-0012 decision 2 / decision 16): jobId,
+ * claimId and nonce are read only AFTER verifyClaimedJobEnvelope has
+ * returned a "verified" outcome, and ONLY from its returned job -- never
+ * from `claimedJob` (the raw wire object) or from a caller-supplied
+ * jobId/attemptId, because those would be exactly the previously-shipped
+ * unsafe read this decision closes. Nothing above that gate may construct
+ * a result of any kind, because in a signature-failure mode the very
+ * fields a report would be built from are what an attacker controls. A
+ * signature failure therefore fails locally and lets the lease expire
+ * rather than submitting a rejected result; there is no unsigned claim
+ * handle in the claim response to bind such a report to. Integrity-failure
+ * telemetry would require a separate opaque handle, which is a protocol
+ * addition and deliberately out of scope here.
+ *
+ * `executionEnabled` affects nothing above the gate; it only selects step
+ * 15 ("act") below it: execute the verified job (via the outbox-backed
+ * reporting path), or delegate to handleObserveOnlyJob for the exact same
+ * post-gate reporting a legitimate observe-only agent needs (policy
+ * rejection or "blocked"), using direct client calls since observe-only
+ * mode has no outbox.
+ *
+ * @param {object} params
+ * @param {object} params.job RAW, unverified claimed job payload (v1 flat
+ *   signed job object or v2 envelope) -- no field of it is read here
+ *   before a verdict exists
+ * @param {object} params.policyEngine
+ * @param {object} params.client
+ * @param {object|null} params.executionContext
+ * @param {boolean} params.executionEnabled
+ * @param {(msg: string, details?: *) => void} [params.log]
+ * @returns {Promise<{ status: string, rejectionReason: string|null }>}
+ */
+async function handleSignedJob({
+  job: claimedJob,
+  policyEngine,
+  client,
+  executionContext,
+  executionEnabled,
+  log,
+}) {
+  const pinnedSigningKey = executionEnabled
+    ? executionContext.pinnedSigningKey
+    : (executionContext?.pinnedSigningKey ?? null);
+
+  const verifyResult = verifyClaimedJobEnvelope({
+    job: claimedJob,
+    pinnedSigningKey,
+  });
+
+  if (verifyResult.outcome === "no_pinned_key") {
+    const raw = rawBestEffortIdentity(claimedJob);
+    const jobId = raw.jobId || UNVERIFIED_JOB_ID_PLACEHOLDER;
+    const attemptId = raw.claimId || localAttemptId(jobId);
+    const blockedResult = {
+      jobId,
+      attemptId,
+      claimId: raw.claimId,
+      nonce: raw.nonce,
+      status: "blocked",
+      errorMessage:
+        (executionEnabled
+          ? "execution is enabled but no control-plane signing key is pinned "
+          : "no control-plane signing key is pinned ") +
+        "yet (the register response did not carry one); unsigned or " +
+        "unverifiable jobs are never executed",
+    };
+    if (!executionEnabled) {
+      await client.reportResult(blockedResult);
+      return { status: "blocked", rejectionReason: null };
     }
-    // Signed dispatch assigns attemptId server-side (mirroring claimId);
-    // prefer it, then claimId itself, then a local fallback so result
-    // reporting stays schema-valid and idempotency-debuggable.
-    const signedAttemptId =
-      typeof job.attemptId === "string" && job.attemptId.length > 0
-        ? job.attemptId
-        : typeof job.claimId === "string" && job.claimId.length > 0
-          ? job.claimId
-          : localAttemptId(reportableJobId);
-    return handleSignedJob({
-      job,
-      jobId: reportableJobId,
-      attemptId: signedAttemptId,
-      policyEngine,
+    const { execution, outboxDir } = executionContext;
+    const resolvedOutboxDir = outboxDir || execution.outboxDir;
+    if (typeof resolvedOutboxDir !== "string" || resolvedOutboxDir.length === 0) {
+      throw new Error(
+        "tokentimer-agent: execution outboxDir is required when execution is enabled",
+      );
+    }
+    return persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
       client,
-      executionContext,
+      result: blockedResult,
       log,
     });
   }
 
-  let validated;
-  try {
-    validated = validateClaimedJob(job);
-  } catch (err) {
-    emitLog(log, "rejected malformed claimed job before policy evaluation", err);
-    if (!reportableJobId) {
-      return { status: "skipped", rejectionReason: "job_integrity_failed" };
-    }
-    try {
-      const attemptId = localAttemptId(reportableJobId);
-      const evidenceBody = buildPolicyRejectionEvidence({
-        rejectionReason: "job_integrity_failed",
-        detail: "Claimed job failed agent-side shape and policy-dimension validation.",
-        jobId: reportableJobId,
-      });
-      assertEvidencePayloadSafe(evidenceBody);
-      await client.reportEvidence(evidenceBody);
-      await client.reportResult({
-        jobId: reportableJobId,
-        attemptId,
-        status: "rejected",
-        rejectionReason: "job_integrity_failed",
-      });
-      return { status: "rejected", rejectionReason: "job_integrity_failed" };
-    } catch (reportError) {
-      emitLog(log, "failed to report malformed claimed job", reportError);
-      return { status: "failed", rejectionReason: "job_integrity_failed" };
-    }
+  if (verifyResult.outcome === "rejected") {
+    // Deliberately no result and no evidence: see the trusted-identity
+    // gate note above. Fail locally and let the lease expire. No jobId is
+    // available to log here (that is the entire point -- nothing on the
+    // wire object is trusted yet), so the message stays job-agnostic.
+    emitLog(
+      log,
+      "tokentimer-agent: claimed job failed signature verification; " +
+        "submitting no result and letting the lease expire " +
+        `(${verifyResult.rejectionReason})`,
+    );
+    return {
+      status: "failed",
+      rejectionReason: verifyResult.rejectionReason,
+    };
   }
 
-  const { job: validatedJob, policyDescriptor } = validated;
-  const attemptId = localAttemptId(validatedJob.jobId);
-  try {
-    const verdict = policyEngine.evaluateJob(policyDescriptor);
-    if (!verdict.allowed) {
-      emitLog(log, `job ${validatedJob.jobId} rejected by agent-local policy`, {
-        rejectionReason: verdict.rejectionReason,
-      });
-      const evidenceBody = buildPolicyRejectionEvidence({
-        rejectionReason: verdict.rejectionReason,
-        detail: verdict.detail,
-        jobId: validatedJob.jobId,
-      });
-      assertEvidencePayloadSafe(evidenceBody);
-      await client.reportEvidence(evidenceBody);
-      await client.reportResult({
-        jobId: validatedJob.jobId,
-        attemptId,
-        status: "rejected",
-        rejectionReason: verdict.rejectionReason,
-      });
-      return { status: "rejected", rejectionReason: verdict.rejectionReason };
-    }
-
-    // Execution is not configured on this agent: report "blocked" rather
-    // than silently dropping so the control plane sees an explicit
-    // terminal state.
-    await client.reportResult({
-      jobId: validatedJob.jobId,
-      attemptId,
-      status: "blocked",
-      errorMessage: "agent execution is not enabled on this agent",
-    });
-    return { status: "blocked", rejectionReason: null };
-  } catch (err) {
-    emitLog(log, `failed while handling claimed job ${validatedJob.jobId}`, err);
-    return { status: "failed", rejectionReason: null };
+  // TRUSTED-IDENTITY GATE PASSED. Only now are jobId, the server-assigned
+  // claim id, and the single-use dispatch nonce read -- and only from the
+  // VERIFIED job -- so every result built below is bound to identifiers
+  // that carry a verified signature (ADR-0003 / ADR-0012 decision 16).
+  const job = verifyResult.job;
+  const { jobId, claimId, nonce, attemptId } = verifiedJobIdentity(job);
+  if (!jobId) {
+    // The signature verified, but the authenticated payload itself has no
+    // usable jobId (a control-plane contract violation, not an attack --
+    // decision 3 requires jobId in the shared signed payload, so this is
+    // defense in depth). reportResult requires a non-empty jobId, so there
+    // is nothing safe to report with; fail locally like a verdict failure.
+    emitLog(
+      log,
+      "tokentimer-agent: verified job carries no reportable jobId; " +
+        "submitting no result and letting the lease expire",
+    );
+    return { status: "failed", rejectionReason: "job_integrity_failed" };
   }
-}
 
-/**
- * Trust chain for a claimed job when execution is enabled. Order per
- * ADR-0003 (and tests/integration/agent-protocol.test.js
- * runVerificationChain): signature verify -> replay check -> clock window
- * check -> policy -> replay consume -> execute. The replay nonce is
- * consumed only after every gate passed, so a rejected job does not burn
- * its nonce, but it IS consumed before execution starts, so a crash
- * mid-execution can never allow a replay.
- *
- * @param {object} params see handleClaimedJob
- * @returns {Promise<{ status: string, rejectionReason: string|null }>}
- */
-async function handleSignedJob({
-  job,
-  jobId,
-  attemptId,
-  policyEngine,
-  client,
-  executionContext,
-  log,
-}) {
-  const { pinnedSigningKey, replayCache, clockEstimator, execution, outboxDir } =
-    executionContext;
-  // Server-assigned claim id and single-use dispatch nonce: forwarded on
-  // every result so the control plane can re-prove claim ownership and
-  // consume the nonce in its replay ledger (ADR-0003).
-  const claimId =
-    typeof job?.claimId === "string" && job.claimId.length > 0
-      ? job.claimId
-      : null;
-  const nonce =
-    typeof job?.nonce === "string" && job.nonce.length > 0 ? job.nonce : null;
+  if (!executionEnabled) {
+    return handleObserveOnlyJob({ job, jobId, claimId, nonce, attemptId, policyEngine, client, log });
+  }
 
+  const { replayCache, clockEstimator, execution, outboxDir } = executionContext;
   const resolvedOutboxDir = outboxDir || execution.outboxDir;
   if (typeof resolvedOutboxDir !== "string" || resolvedOutboxDir.length === 0) {
     throw new Error(
@@ -1373,41 +1535,7 @@ async function handleSignedJob({
     outboxDir: resolvedOutboxDir,
   };
 
-  // No pinned key => integrity of ANY job cannot be established. Blocked,
-  // not rejected: this is an agent-side precondition failure, not a verdict
-  // about the job itself.
-  if (!pinnedSigningKey) {
-    return persistAndTransmitOutcome({
-      outboxDir: resolvedOutboxDir,
-      client,
-      result: {
-        jobId,
-        attemptId,
-        claimId,
-        nonce,
-        status: "blocked",
-        errorMessage:
-          "execution is enabled but no control-plane signing key is pinned " +
-          "yet (the register response did not carry one); unsigned or " +
-          "unverifiable jobs are never executed",
-      },
-      log,
-    });
-  }
-
-  // 1. Signature (covers the base-payload fallback: a job without signed
-  // fields fails field validation inside verifyJobSignature and is
-  // rejected with job_integrity_failed).
-  const signatureVerdict = verifyJobSignature({
-    job,
-    publicKeyPem: pinnedSigningKey.publicKeyPem,
-    pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
-  });
-  if (!signatureVerdict.allowed) {
-    return reportJobRejection({ ...rejectionArgs, verdict: signatureVerdict });
-  }
-
-  // 2. Replay check (no consume yet).
+  // 3. Replay check (no consume yet).
   const replayVerdict = replayCache.check({
     nonce: job.nonce,
     jobId,
@@ -1417,7 +1545,7 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: replayVerdict });
   }
 
-  // 3. Clock window with drift compensation.
+  // 4. Clock window with drift compensation.
   const windowVerdict = checkJobTimeWindow({
     job,
     nowMs: Date.now(),
@@ -1428,13 +1556,13 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: windowVerdict });
   }
 
-  // 4. Agent-local policy (default deny; ADR-0002 local policy wins).
+  // 5. Agent-local policy (default deny; ADR-0002 local policy wins).
   const policyVerdict = policyEngine.evaluateJob(buildSignedJobPolicyDescriptor(job));
   if (!policyVerdict.allowed) {
     return reportJobRejection({ ...rejectionArgs, verdict: policyVerdict });
   }
 
-  // 5. Consume the nonce before executing (see function doc comment).
+  // 6. Consume the nonce before executing (see function doc comment).
   const consumeVerdict = replayCache.consume({
     nonce: job.nonce,
     jobId,
@@ -1596,6 +1724,84 @@ async function handleSignedJob({
     ...transmitted,
     retired: outcome.retired === true,
   };
+}
+
+/**
+ * Post-gate action for observe-only mode (executionContext null or
+ * `enabled: false`): report a policy rejection, or "blocked" when policy
+ * allows the job but execution is not configured on this agent. Always
+ * called AFTER handleSignedJob's trusted-identity gate has passed, so
+ * `jobId`/`claimId`/`nonce` here are already verified-payload values, not
+ * raw wire content (ADR-0012 decision 2's closure of the observe-only
+ * carve-out finding against decision 16).
+ *
+ * Mirrors byte-for-byte what the previous observe-only branch reported for
+ * a legitimately-validated job; only the verification-gating around it
+ * changed (this function is never reached on a signature-verdict failure).
+ *
+ * @param {object} params
+ * @param {object} params.job VERIFIED job payload
+ * @param {string} params.jobId verified jobId
+ * @param {string|null} params.claimId verified claimId
+ * @param {string|null} params.nonce verified nonce
+ * @param {string} params.attemptId
+ * @param {object} params.policyEngine
+ * @param {object} params.client
+ * @param {(msg: string, details?: *) => void} [params.log]
+ * @returns {Promise<{ status: string, rejectionReason: string|null }>}
+ */
+async function handleObserveOnlyJob({
+  job,
+  jobId,
+  claimId,
+  nonce,
+  attemptId,
+  policyEngine,
+  client,
+  log,
+}) {
+  try {
+    const policyDescriptor = buildSignedJobPolicyDescriptor(job);
+    const verdict = policyEngine.evaluateJob(policyDescriptor);
+    if (!verdict.allowed) {
+      emitLog(log, `job ${jobId} rejected by agent-local policy`, {
+        rejectionReason: verdict.rejectionReason,
+      });
+      const evidenceBody = buildPolicyRejectionEvidence({
+        rejectionReason: verdict.rejectionReason,
+        detail: verdict.detail,
+        jobId,
+        claimId,
+      });
+      assertEvidencePayloadSafe(evidenceBody);
+      await client.reportEvidence(evidenceBody);
+      await client.reportResult({
+        jobId,
+        attemptId,
+        claimId,
+        nonce,
+        status: "rejected",
+        rejectionReason: verdict.rejectionReason,
+      });
+      return { status: "rejected", rejectionReason: verdict.rejectionReason };
+    }
+
+    // Execution is not configured on this agent: report "blocked" rather
+    // than silently dropping so the control plane sees an explicit
+    // terminal state.
+    await client.reportResult({
+      jobId,
+      attemptId,
+      claimId,
+      nonce,
+      status: "blocked",
+      errorMessage: "agent execution is not enabled on this agent",
+    });
+    return { status: "blocked", rejectionReason: null };
+  } catch (err) {
+    emitLog(log, `failed while handling claimed job ${jobId}`, err);
+    return { status: "failed", rejectionReason: null };
+  }
 }
 
 /**
@@ -4056,6 +4262,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
 module.exports = {
   runAgent,
   handleClaimedJob,
+  UNVERIFIED_JOB_ID_PLACEHOLDER,
   executeJob,
   executeDeployJob,
   runDeployReloadVerify,

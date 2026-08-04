@@ -127,6 +127,21 @@ matrix may work but are not covered by CI or release sign-off.
 | acme.sh | Latest tagged release at release time (pinned commit recorded in CI config) | Uses the shipped `dns_certops` dnsapi hook; requires acme.sh's own `dnsapi` loading support (stable across acme.sh releases). |
 | Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems are not supported by `install-agent.sh`. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
+| PostgreSQL (control plane) | `13+`, or `pgcrypto` on an older server | CertOps migrations (including 42-44) use `gen_random_uuid()`, native since PostgreSQL 13. |
+
+### Wire-contract compatibility (upgrade ordering)
+
+This stack changes the agent<->control-plane wire contract several times.
+Each change is additive and capability-gated, but the *order* you upgrade
+components in still matters:
+
+| Change | Minimum server version | Upgrade order | What happens if you get it backwards |
+| --- | --- | --- | --- |
+| `declaredCapabilities` on heartbeat (not just register) | the release that admits `declaredCapabilities` in `heartbeatBody` | Upgrade the server first. An older server's `heartbeatBody` schema is `additionalProperties: false` with no `declaredCapabilities`, so it rejects the field outright rather than ignoring it. | A heartbeat carrying capabilities fails schema validation against an un-upgraded server. |
+| Envelope v2 (`signed-payload-b64-v1`) | the release that ships dual-format dispatch | Either order; this is dispatch-time, not connection-time. An agent advertising the capability gets v2 once its capability declaration is fresh (`CERTOPS_CAPABILITY_FRESHNESS_MS`); every other agent gets v1. | None: an agent that never advertises the capability, or whose declaration goes stale, simply keeps getting v1. |
+| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* flip `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` (agent-side) to `true`. | Flipping the agent-side flag before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent. |
+| `agent-id-binding-v1` capability (reference clients) | same release as required `agentId` above | Reference clients advertise this capability only once their local `agentId` enforcement is actually the effective behavior, not merely because the shipped code supports it. | A client advertising the capability while its own enforcement flag is still off would falsely promise a guarantee it is not enforcing. |
+| Enterprise pin | `tokentimer-enterprise` at the matching core version | Bump and pin core and enterprise together; do not let one lag. | Enterprise CI can silently stop skipping edition-gated core tests it must skip if the cross-repo marker it depends on drifts from core. |
 
 ### Config directory
 
@@ -315,7 +330,7 @@ Flow:
   rejects a heartbeat carrying an unrecognized field with a 400 instead of
   ignoring it; upgrading agents ahead of the server turns every heartbeat
   from those agents into a hard failure until the server catches up.
-  With execution enabled, `clockOffsetMs` is the clock
+  When execution enabled, `clockOffsetMs` is the clock
   estimator's current median and `pinnedSigningKeyId` is the pinned key id;
   in observe-only mode both stay null. `ntpSynced` is independent of
   execution mode: it comes from `src/ntp` running
@@ -326,6 +341,25 @@ Flow:
   or unparseable output), never a guessed default. An HTTP 410 response
   means the control plane retired this agent: it exits cleanly, no
   respawn loop.
+  **Capability freshness window:** `claim` does not dispatch a
+  capability-gated job format (currently `signed-payload-b64-v1` -> v2
+  signed envelope) off the mere fact that the agent once declared the
+  capability. `certops_agents.capabilities_updated_at` is stamped on every
+  heartbeat/register that includes `declaredCapabilities`, and dispatch
+  only trusts a capability whose `capabilities_updated_at` is within
+  `CERTOPS_CAPABILITY_FRESHNESS_MS` (default 600000ms / 10 minutes,
+  matching `CERTOPS_AGENT_OFFLINE_AFTER_MS`'s existing liveness threshold
+  rather than an independently chosen number) of "now". An agent that
+  stops heartbeating for longer than that window is dispatched the legacy
+  v1 envelope on its next successful claim, not v2, even though its
+  `declaredCapabilities` row still lists `signed-payload-b64-v1` from
+  before it went quiet; capability freshness and agent liveness
+  (`livenessState`) are two separate signals on separate columns, but they
+  share this one threshold value. This means an agent that heartbeats
+  again after a gap longer than the freshness window is briefly dispatched
+  v1 until that heartbeat lands, then v2 again from the next claim onward
+  -- no special recovery step is needed, the agent's own next heartbeat
+  is what restores it.
 - **claim**: every `pollIntervalMs`, requests up to `maxJobs` (the main loop
   uses 1) and processes each returned job.
 - **result/evidence**: terminal job outcome (`succeeded`, `failed`,
@@ -434,11 +468,21 @@ verifies every job against it (`verifyJobSignature`):
 
 1. Structural checks on `signature` (base64, 64-1024 chars), `signingKeyId`,
    `nonce` (16-128 chars, `[A-Za-z0-9_.:-]`), `issuedAt`, `expiresAt`. A job
-   missing any of these (e.g. a plain unsigned payload) is rejected with
-   `job_integrity_failed`: unsigned jobs never execute.
+   missing any of these (e.g. a plain unsigned payload) fails integrity:
+   unsigned jobs never execute.
 2. `job.signingKeyId` must equal the pinned key id. A mismatch (rotation lag
-   or forgery) rejects with `job_integrity_failed`.
+   or forgery) fails integrity.
 3. `crypto.verify` over the canonical payload bytes.
+
+An integrity failure at any of those three steps is **terminal and silent**:
+the agent submits **no** result and lets the lease expire. `claimId` and
+`nonce` live inside the signed payload and the claim response carries no
+unsigned handle, so a report would have to be built from the very fields the
+verdict just declared untrustworthy. Operators therefore see such a job as an
+expired lease plus a local agent log line, not as a `rejected` result. A
+*semantic* rejection decided after verification (target out of scope, command
+not allowlisted, and so on) does travel the result path, bound to the verified
+`claimId`/`nonce`.
 
 A present-but-corrupted pin file fails startup loudly (never silently
 unpinned). If execution is enabled but no key is pinned yet, jobs are
@@ -534,9 +578,10 @@ reopen the replay window. Semantics:
 `checkJobTimeWindow` validates `now + clockOffsetMs` against
 `[issuedAt - tolerance, expiresAt + tolerance]` with
 `execution.clockDriftToleranceMs` (default 30000 ms) slack. `expiresAt`
-before `issuedAt` is malformed regardless of any clock and rejects with
-`job_integrity_failed`; a future-dated or expired job rejects with
-`clock_drift_suspected` (both are plausibly clock-related, and a genuinely
+before `issuedAt` is malformed regardless of any clock and fails integrity
+(terminal and silent, no result submitted); a future-dated or expired job
+rejects with `clock_drift_suspected`, which is a below-the-gate rejection and
+therefore IS reported (both are plausibly clock-related, and a genuinely
 replayed job is independently caught by the replay cache).
 
 ### Agent-local policy
@@ -1012,10 +1057,10 @@ payload; the executable job-type contract has since landed
 control plane now dispatches signed jobs, so most deviations are resolved.
 Current behavior:
 
-- Unsigned jobs are rejected with `job_integrity_failed` whenever execution
-  is enabled; a payload without `signature`/`nonce`/`signingKeyId`/
-  `issuedAt`/`expiresAt` fails signed-field validation. Signed dispatch is
-  what the control plane's claim route produces.
+- Unsigned jobs never execute whenever execution is enabled; a payload without
+  `signature`/`nonce`/`signingKeyId`/`issuedAt`/`expiresAt` fails signed-field
+  validation, and that failure is terminal and silent (no result, lease
+  expires). Signed dispatch is what the control plane's claim route produces.
 - When `job.sans` is absent: the CSR CN and the ACME `-d` domain come
   from `job.target.reference`. When present, the full SAN list is used.
 - `certPath` / `keyPath` / `chainPath` resolution: an explicit
@@ -1085,12 +1130,14 @@ Common terminal states and what to look for:
   `pinnedSigningKeyId` will be null until then.
 - **Job `blocked`, "does not execute jobs yet" message**: `execution.enabled` is not
   true. This is the expected observe-only behavior, not an error.
-- **`rejected` with `job_integrity_failed`**: missing/malformed signed
-  fields, a signing key id mismatch (rotation lag or forgery), a signature
-  that does not verify against the canonical payload, or a malformed
-  validity window (`expiresAt` before `issuedAt`). The `policy.checked`
-  evidence item's summary carries the specific detail. If it persists after
-  a control-plane key rotation, re-register to re-pin.
+- **No result at all, lease expired, `job_integrity_failed` in the agent log**:
+  missing/malformed signed fields, a signing key id mismatch (rotation lag or
+  forgery), a signature that does not verify against the canonical payload, or
+  a malformed validity window (`expiresAt` before `issuedAt`). This is
+  deliberate: an integrity verdict is terminal and silent, so there is no
+  `rejected` result and no `policy.checked` evidence item to read. Look for the
+  detail in the agent's own log. If it persists after a control-plane key
+  rotation, re-register to re-pin.
 - **`rejected` with `clock_drift_suspected`**: the adjusted time fell
   outside `[issuedAt - tolerance, expiresAt + tolerance]`. Check NTP sync on
   the agent host, and compare the heartbeat's `clockOffsetMs` against

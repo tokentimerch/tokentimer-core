@@ -2861,6 +2861,43 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 40,
+    name: "certops_agents_capabilities_freshness_epoch",
+    sql: `
+      -- ADR-0012 decision 17: certops_agents.declared_capabilities had no
+      -- epoch and no freshness check at claim time. An agent downgraded to a
+      -- build that stops sending a capability (or never re-sends one) could
+      -- keep matching capability-gated jobs on an assertion of unbounded
+      -- age, because heartbeat's own three-valued semantics (absent
+      -- preserves, explicit [] clears, non-empty replaces - unchanged by
+      -- this migration) have no notion of "how long ago was this last
+      -- asserted".
+      --
+      -- capabilities_updated_at is written by INSERT at registration
+      -- (always, since registration always sends a declared_capabilities
+      -- value, defaulting to an empty array) and by the heartbeat UPDATE on
+      -- every write that touches declared_capabilities, including a no-op
+      -- replace where the new value equals the old one - because the write
+      -- is itself a fresh assertion "this is still my current set as of
+      -- right now", independent of whether the set changed.
+      --
+      -- Deliberately NOT backfilled here. A migration cannot know when an
+      -- already-existing row's currently-stored capability set was actually
+      -- asserted, so stamping NOW() at migration time would manufacture a
+      -- false freshness signal for a set that could in truth be arbitrarily
+      -- stale - precisely the failure this column exists to close,
+      -- reintroduced at its own birth. Existing rows migrate with
+      -- capabilities_updated_at IS NULL, and the claim-time freshness
+      -- predicate (CERTOPS_CAPABILITY_FRESHNESS_MS, agentDispatch.js) treats
+      -- NULL as maximally stale: such a row is offered no capability-gated
+      -- job until its next heartbeat that reports capabilities sets this
+      -- column for the first time. This is the only DDL for existing rows;
+      -- no migration-time UPDATE touches this column's value.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS capabilities_updated_at TIMESTAMPTZ NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

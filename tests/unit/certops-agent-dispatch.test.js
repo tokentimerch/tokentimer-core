@@ -813,11 +813,23 @@ describe("agentDispatch.recordHeartbeat", () => {
       sql.includes("last_seen_at = NOW()"),
     );
     assert.equal(heartbeatWrites.length, 1);
-    return { sql: heartbeatWrites[0].sql, param: heartbeatWrites[0].params[11] };
+    return {
+      sql: heartbeatWrites[0].sql,
+      param: heartbeatWrites[0].params[11],
+      audits: dbPool.state.audits,
+    };
   };
 
-  it("preserves the stored capability set when a heartbeat omits declaredCapabilities", async () => {
-    const { sql, param } = await heartbeatCapabilityParam({
+  // ADR-0012 decision 17: this test used to pin ONLY the value-preserving
+  // arm and left the freshness epoch (capabilities_updated_at) and the
+  // absence of an audit event unchecked. Rewritten, not deleted: the
+  // ungated preserve-arm behavior it originally covered is still correct
+  // and unchanged by decision 17, so it stays asserted below; the new
+  // assertions cover what decision 17 adds on the very same absent-arm
+  // path (the epoch must be preserved too, and nothing should be audited
+  // for a message that wrote nothing).
+  it("preserves the stored capability set and its freshness epoch when a heartbeat omits declaredCapabilities, and audits nothing", async () => {
+    const { sql, param, audits } = await heartbeatCapabilityParam({
       agentVersion: "0.2.0",
     });
 
@@ -827,31 +839,228 @@ describe("agentDispatch.recordHeartbeat", () => {
     // than an empty array (which now means "clear").
     assert.equal(param, null);
     assert.match(sql, /WHEN \$12::jsonb IS NULL THEN declared_capabilities/);
+
+    // The freshness epoch the claim-time gate reads must be preserved on
+    // exactly the same condition as the value: an omitted declaration
+    // asserts nothing, so it must not manufacture a fresh timestamp for a
+    // capability set that did not just get re-declared.
+    assert.match(
+      sql,
+      /WHEN \$12::jsonb IS NULL THEN capabilities_updated_at/,
+    );
+
+    // No write to declared_capabilities happened, so there is nothing to
+    // audit; the absent-preserves path must stay silent.
+    assert.deepEqual(audits, []);
   });
 
-  it("clears the stored capability set when a heartbeat sends an explicit empty array", async () => {
-    const { param } = await heartbeatCapabilityParam({
-      agentVersion: "0.2.0",
-      declaredCapabilities: [],
+  it("clears the stored capability set when a heartbeat sends an explicit empty array, stamping a fresh epoch and an audit event", async () => {
+    // heartbeatCapabilityParam's shared mock never returns a real previous
+    // value for the pre-write read (see the dedicated mock below and in the
+    // "audits the previous and new capability sets together" test), which
+    // would make this look like []->[] - a no-op under the corrected
+    // change-detection - rather than the real scenario this test means to
+    // cover: an agent that WAS declaring something now explicitly clears it.
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT declared_capabilities FROM certops_agents")) {
+        return { rows: [{ declared_capabilities: ["evidence-claim-binding-v1"] }] };
+      }
+      return {
+        rows: [
+          {
+            id: "agent-row-1",
+            status: "active",
+            last_seen_at: new Date("2026-07-22T10:00:00.000Z"),
+          },
+        ],
+      };
     });
+
+    await recordHeartbeat({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { clockOffsetMs: null },
+      body: { agentVersion: "0.2.0", declaredCapabilities: [] },
+      deps: {
+        getActiveSigningKeyPublicInfo: async () => null,
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
+      },
+    });
+
+    const heartbeatWrites = dbPool.state.queries.filter(({ text }) =>
+      text.includes("last_seen_at = NOW()"),
+    );
+    assert.equal(heartbeatWrites.length, 1);
+    const param = heartbeatWrites[0].params[11];
 
     // Present-but-empty is a deliberate declaration of "I support nothing",
     // not a no-op, so it must reach the UPDATE as [] and overwrite the
     // stored set.
     assert.equal(typeof param, "string");
     assert.deepEqual(JSON.parse(param), []);
+
+    // An explicit [] is still a real assertion ("I support nothing, as of
+    // now"), so the freshness epoch advances, and since the stored set was
+    // non-empty this is a genuine change, audited exactly like a non-empty
+    // replace.
+    assert.match(heartbeatWrites[0].text, /capabilities_updated_at = CASE/);
+    assert.equal(dbPool.state.audits.length, 1);
+    assert.equal(
+      dbPool.state.audits[0].action,
+      "CERTOPS_AGENT_CAPABILITIES_CHANGED",
+    );
+    assert.deepEqual(dbPool.state.audits[0].metadata.declaredCapabilities, []);
+    assert.deepEqual(dbPool.state.audits[0].metadata.previousCapabilities, [
+      "evidence-claim-binding-v1",
+    ]);
+  });
+
+  it("does NOT audit a heartbeat that re-sends the exact same capability set it already stored", async () => {
+    // This is the production shape, not an edge case: the agent re-declares
+    // its constant declaredCapabilities on every heartbeat by design (see
+    // packages/agent/src/index.js), so almost every heartbeat from a real
+    // fleet looks exactly like this - same set, sent again. Auditing this
+    // as "changed" would write one CERTOPS_AGENT_CAPABILITIES_CHANGED row
+    // per agent per heartbeat interval, forever.
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT declared_capabilities FROM certops_agents")) {
+        return {
+          rows: [
+            {
+              declared_capabilities: [
+                "evidence-claim-binding-v1",
+                "windows-cert-store-v1",
+              ],
+            },
+          ],
+        };
+      }
+      return {
+        rows: [
+          {
+            id: "agent-row-1",
+            status: "active",
+            last_seen_at: new Date("2026-07-22T10:00:00.000Z"),
+          },
+        ],
+      };
+    });
+
+    await recordHeartbeat({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { clockOffsetMs: null },
+      body: {
+        agentVersion: "0.2.0",
+        // Same two capabilities, reversed order - still the same set.
+        declaredCapabilities: ["windows-cert-store-v1", "evidence-claim-binding-v1"],
+      },
+      deps: {
+        getActiveSigningKeyPublicInfo: async () => null,
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
+      },
+    });
+
+    const heartbeatWrites = dbPool.state.queries.filter(({ text }) =>
+      text.includes("last_seen_at = NOW()"),
+    );
+    assert.equal(heartbeatWrites.length, 1);
+
+    // The value write and the freshness-epoch stamp still happen - this is
+    // still a real assertion of "this is my current set as of right now" -
+    // only the audit event is suppressed.
+    assert.match(
+      heartbeatWrites[0].text,
+      /WHEN \$12::jsonb IS NULL THEN capabilities_updated_at/,
+    );
+    assert.deepEqual(dbPool.state.audits, []);
   });
 
   it("replaces the stored capability set on a downgrade that drops one capability", async () => {
     // An agent that previously declared two capabilities and is rolled back
-    // to a build supporting only one must end up with exactly the one, so it
-    // stops matching jobs gated on the capability it lost.
-    const { param } = await heartbeatCapabilityParam({
+    // to a build supporting only one is stored with exactly the one it
+    // still supports. This test only proves the SQL/parameter shape reaches
+    // the UPDATE correctly against a MOCKED pool; it does not and cannot
+    // exercise the actual claim-time consequence (that the dropped
+    // capability stops matching gated job selection), since no real
+    // predicate is evaluated here. That end-to-end behavior, against a real
+    // database, is covered by
+    // tests/integration/certops-issuance-claim-gating.test.js.
+    const { param, sql, audits } = await heartbeatCapabilityParam({
       agentVersion: "0.1.0",
       declaredCapabilities: ["evidence-claim-binding-v1"],
     });
 
     assert.deepEqual(JSON.parse(param), ["evidence-claim-binding-v1"]);
+    // A real write happened: the freshness epoch must advance and the
+    // capability change must be audited (ADR-0012 decision 17).
+    assert.match(
+      sql,
+      /WHEN \$12::jsonb IS NULL THEN capabilities_updated_at/,
+    );
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, "CERTOPS_AGENT_CAPABILITIES_CHANGED");
+    assert.deepEqual(audits[0].metadata.declaredCapabilities, [
+      "evidence-claim-binding-v1",
+    ]);
+  });
+
+  it("audits the previous and new capability sets together when a heartbeat changes declaredCapabilities", async () => {
+    // heartbeatCapabilityParam's shared mock never returns a real previous
+    // value for the pre-write read, so the previousCapabilities half of the
+    // audit payload needs its own fixture that distinguishes the read from
+    // the write.
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT declared_capabilities FROM certops_agents")) {
+        return {
+          rows: [
+            {
+              declared_capabilities: [
+                "evidence-claim-binding-v1",
+                "windows-cert-store-v1",
+              ],
+            },
+          ],
+        };
+      }
+      return {
+        rows: [
+          {
+            id: "agent-row-1",
+            status: "active",
+            last_seen_at: new Date("2026-07-22T10:00:00.000Z"),
+          },
+        ],
+      };
+    });
+
+    await recordHeartbeat({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { clockOffsetMs: null },
+      body: {
+        agentVersion: "0.1.0",
+        declaredCapabilities: ["evidence-claim-binding-v1"],
+      },
+      deps: {
+        getActiveSigningKeyPublicInfo: async () => null,
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
+      },
+    });
+
+    assert.equal(dbPool.state.audits.length, 1);
+    const [event] = dbPool.state.audits;
+    assert.equal(event.action, "CERTOPS_AGENT_CAPABILITIES_CHANGED");
+    assert.deepEqual(event.metadata.previousCapabilities, [
+      "evidence-claim-binding-v1",
+      "windows-cert-store-v1",
+    ]);
+    assert.deepEqual(event.metadata.declaredCapabilities, [
+      "evidence-claim-binding-v1",
+    ]);
   });
 
   it("drops non-string and empty capability entries before replacing the set", async () => {
@@ -1516,6 +1725,270 @@ describe("agentDispatch.claimJobs", () => {
     });
     assert.deepEqual(result, { jobs: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  // ADR-0012 decision 17: capability-gated selection must fail closed on a
+  // stale or never-asserted capabilities_updated_at, even though the array
+  // itself still lists the capability. Exercised here at the wiring level
+  // (claimJobs reads capabilities_updated_at and calls hasFreshCapability);
+  // the SQL-predicate-level behavior (which rows the real database actually
+  // selects) is covered against a real database in
+  // tests/integration/certops-issuance-claim-gating.test.js.
+  it("treats a stale capabilities_updated_at as gate-failing, so canBindEvidenceToClaim is false even though the array still lists the capability", async () => {
+    let claimParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: [dispatchTest.EVIDENCE_CLAIM_BINDING_CAPABILITY],
+              // Older than the default 10-minute freshness bound.
+              capabilities_updated_at: new Date(
+                Date.now() - 11 * 60 * 1000,
+              ),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    // Param index 7 is the canBindEvidenceToClaim boolean bound into the
+    // gated-selection predicate (see the SELECT ... FOR UPDATE SKIP LOCKED
+    // query in claimJobs).
+    assert.equal(claimParams[7], false);
+  });
+
+  it("treats a fresh capabilities_updated_at as gate-passing when the capability is present", async () => {
+    let claimParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: [dispatchTest.EVIDENCE_CLAIM_BINDING_CAPABILITY],
+              capabilities_updated_at: new Date(Date.now() - 60 * 1000),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.equal(claimParams[7], true);
+  });
+
+  it("treats a NULL capabilities_updated_at (migrated pre-existing row, never backfilled) as gate-failing", async () => {
+    let claimParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: [dispatchTest.EVIDENCE_CLAIM_BINDING_CAPABILITY],
+              capabilities_updated_at: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.equal(claimParams[7], false);
+  });
+
+  it("honors a custom CERTOPS_CAPABILITY_FRESHNESS_MS bound from env", async () => {
+    let claimParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: [dispatchTest.EVIDENCE_CLAIM_BINDING_CAPABILITY],
+              // 2 minutes old: passes the default 10-minute bound but fails
+              // a tightened 1-minute bound.
+              capabilities_updated_at: new Date(Date.now() - 2 * 60 * 1000),
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: { CERTOPS_CAPABILITY_FRESHNESS_MS: String(60 * 1000) },
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.equal(claimParams[7], false);
+  });
+});
+
+describe("agentDispatch.hasFreshCapability (ADR-0012 decision 17)", () => {
+  const { hasFreshCapability } = dispatchTest;
+  const CAP = "evidence-claim-binding-v1";
+  const NOW = Date.parse("2026-08-02T12:00:00.000Z");
+
+  it("is true when the capability is present and its assertion is within the bound", () => {
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: new Date(NOW - 5 * 60 * 1000),
+        capability: CAP,
+        env: {},
+        now: NOW,
+      }),
+      true,
+    );
+  });
+
+  it("is false when the capability is absent, regardless of freshness", () => {
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: ["some-other-capability-v1"],
+        capabilitiesUpdatedAt: new Date(NOW),
+        capability: CAP,
+        env: {},
+        now: NOW,
+      }),
+      false,
+    );
+  });
+
+  it("is false when the assertion is older than the freshness bound (default 10 minutes)", () => {
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: new Date(NOW - (10 * 60 * 1000 + 1)),
+        capability: CAP,
+        env: {},
+        now: NOW,
+      }),
+      false,
+    );
+  });
+
+  it("is true right at the freshness bound (just-under passes)", () => {
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: new Date(NOW - (10 * 60 * 1000 - 1)),
+        capability: CAP,
+        env: {},
+        now: NOW,
+      }),
+      true,
+    );
+  });
+
+  it("is false when capabilitiesUpdatedAt is null (never asserted since the column existed)", () => {
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: null,
+        capability: CAP,
+        env: {},
+        now: NOW,
+      }),
+      false,
+    );
+  });
+
+  it("honors CERTOPS_CAPABILITY_FRESHNESS_MS from env instead of the default", () => {
+    const twoMinutesAgo = new Date(NOW - 2 * 60 * 1000);
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: twoMinutesAgo,
+        capability: CAP,
+        env: { CERTOPS_CAPABILITY_FRESHNESS_MS: String(60 * 1000) },
+        now: NOW,
+      }),
+      false,
+      "2 minutes old must fail a tightened 1-minute bound",
+    );
+    assert.equal(
+      hasFreshCapability({
+        declaredCapabilities: [CAP],
+        capabilitiesUpdatedAt: twoMinutesAgo,
+        capability: CAP,
+        env: { CERTOPS_CAPABILITY_FRESHNESS_MS: String(5 * 60 * 1000) },
+        now: NOW,
+      }),
+      true,
+      "2 minutes old must pass a loosened 5-minute bound",
+    );
   });
 });
 

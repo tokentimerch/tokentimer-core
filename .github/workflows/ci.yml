@@ -176,6 +176,9 @@ jobs:
       - name: Validate secret logging hygiene
         run: pnpm run check:secret-logging
 
+      - name: Run CI guards (leak-scan, encoding, migrations, no-node-invocation, ASCII signing)
+        run: pnpm run verify:ci-guards
+
       - name: Validate CertOps zero-custody keygen ban
         run: pnpm run check:certops-keygen-ban
 
