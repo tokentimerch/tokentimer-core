@@ -339,6 +339,34 @@ describe("CertOps evidence service", () => {
     );
   });
 
+  it("accepts trust.distributed and trust.revoked evidence against a trust_anchor subject (ADR-0012 decision 15)", async () => {
+    // Regression for the migration-44 gap where certificate_evidence's own
+    // separate subject_type/evidence_type CHECK constraints were never
+    // widened alongside certificate_jobs's: the service-layer validation
+    // (EVIDENCE_TYPE_SET / SUBJECT_TYPE_SET) must accept the same trust
+    // vocabulary the widened DB constraints now allow, or the first
+    // trust-job evidence write would be rejected before it ever reaches
+    // the database.
+    const client = createMemoryClient();
+    const job = await createJob(client);
+
+    for (const evidenceType of ["trust.distributed", "trust.revoked"]) {
+      const evidence = await createCertificateEvidence({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        evidenceType,
+        subjectType: "trust_anchor",
+        subjectId: "11111111-1111-1111-1111-111111111111",
+        metadata: { fingerprintSha256: "a".repeat(64) },
+      });
+
+      assert.equal(evidence.evidenceType, evidenceType);
+      assert.equal(evidence.subjectType, "trust_anchor");
+      assertNoCustodyKeys(evidence);
+    }
+  });
+
   it("rejects dangerous metadata recursively before persistence", async () => {
     const client = createMemoryClient();
     const job = await createJob(client);

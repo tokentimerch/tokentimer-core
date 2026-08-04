@@ -41,8 +41,20 @@ const TARGET_TYPES = Object.freeze([
   "appliance",
   "load-balancer",
   "external",
+  "windows-iis",
 ]);
 const TARGET_TYPE_SET = new Set(TARGET_TYPES);
+
+// windows-iis target validation (ADR-0012). Mirrors
+// packages/agent/src/deploy/index.js's WINDOWS_* patterns; duplicated
+// rather than imported because apps/api and packages/agent are
+// independently deployed/versioned surfaces with no shared runtime
+// dependency between them.
+const WINDOWS_STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const WINDOWS_IIS_SITE_PATTERN = /^[A-Za-z0-9 _.:-]{1,256}$/;
+const WINDOWS_SNI_HOST_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const WINDOWS_THUMBPRINT_SHA1_PATTERN = /^[A-Fa-f0-9]{40}$/;
 
 const SAN_POLICY_MODES = Object.freeze(["exact", "template", "inherit"]);
 const SAN_POLICY_MODE_SET = new Set(SAN_POLICY_MODES);
@@ -148,6 +160,65 @@ function optionalAbsolutePath(value, fieldName) {
   return pathValue;
 }
 
+/**
+ * Validates the store/binding shape of a windows-iis target (ADR-0012).
+ * Unlike the Linux/filesystem TARGET_TYPES, a windows-iis target has no
+ * certPath/keyPath/chainPath: its destination is a machine certificate
+ * store plus an IIS site binding, so this returns a distinct result shape
+ * rather than reusing the certPath-based fields with them left null.
+ */
+function validateWindowsBinding(value, fieldName) {
+  const store = requireString(
+    value.store,
+    `${fieldName}.store`,
+    64,
+    WINDOWS_STORE_NAME_PATTERN,
+  );
+
+  const binding = value.binding;
+  if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
+    throw profileError(`renewalProfile.${fieldName}.binding is invalid`);
+  }
+  const site = requireString(
+    binding.site,
+    `${fieldName}.binding.site`,
+    256,
+    WINDOWS_IIS_SITE_PATTERN,
+  );
+  if (
+    !Number.isInteger(binding.port) ||
+    binding.port < 1 ||
+    binding.port > 65535
+  ) {
+    throw profileError(`renewalProfile.${fieldName}.binding.port is invalid`);
+  }
+  const sniHost =
+    binding.sniHost === undefined || binding.sniHost === null
+      ? null
+      : requireString(
+          binding.sniHost,
+          `${fieldName}.binding.sniHost`,
+          255,
+          WINDOWS_SNI_HOST_PATTERN,
+        );
+
+  const thumbprintSha1 =
+    value.thumbprintSha1 === undefined || value.thumbprintSha1 === null
+      ? null
+      : requireString(
+          value.thumbprintSha1,
+          `${fieldName}.thumbprintSha1`,
+          40,
+          WINDOWS_THUMBPRINT_SHA1_PATTERN,
+        );
+
+  return {
+    store,
+    binding: { site, port: binding.port, sniHost },
+    thumbprintSha1,
+  };
+}
+
 function validateTarget(value, fieldName) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw profileError(`renewalProfile.${fieldName} is invalid`);
@@ -160,6 +231,18 @@ function validateTarget(value, fieldName) {
     `${fieldName}.reference`,
     512,
   );
+
+  if (value.type === "windows-iis") {
+    // No certPath/keyPath/chainPath/reloadService/owner/group/backupDir:
+    // those describe a filesystem deploy destination, which a machine
+    // certificate store + IIS binding is not. Keeping this branch fully
+    // separate (rather than folding store/binding into the shape below
+    // alongside always-null path fields) keeps a windows-iis profile from
+    // ever looking like a half-filled-in filesystem target.
+    const windowsFields = validateWindowsBinding(value, fieldName);
+    return { type: value.type, reference, ...windowsFields };
+  }
+
   const certPath =
     value.certPath === undefined || value.certPath === null
       ? null

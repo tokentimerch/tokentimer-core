@@ -37,6 +37,7 @@ const {
   RENEWAL_PROFILE_SCHEMA_VERSION,
   validateRenewalProfile,
 } = require("./renewalProfile");
+const { isTrustAnchorOperation } = require("./jobs");
 const { writeAudit } = require("../audit");
 
 // A derived profile is named after the certificate it was derived from, so an
@@ -69,6 +70,12 @@ const DERIVATION_REASON_ALREADY_LINKED = "already_linked";
 const DERIVATION_REASON_DERIVATION_FAILED = "derivation_failed";
 const DERIVATION_REASON_PROFILE_OPERATOR_OWNED = "profile_operator_owned";
 const DERIVATION_REASON_LINK_CONFLICT = "certificate_link_conflict";
+// A trust-anchor job (distribute-trust/revoke-trust) has no certificate and
+// no renewal (ADR-0012 decisions 4-6): this is the type-level guard that
+// keeps one from ever reaching profile derivation, independent of the
+// subject_type check its only current caller already applies, so the
+// exclusion holds even if a future caller skips that check.
+const DERIVATION_REASON_TRUST_ANCHOR_OPERATION = "trust_anchor_operation";
 
 function derivationError(message) {
   const error = new Error(message);
@@ -84,6 +91,57 @@ function isPlainObject(value) {
   return (
     typeof value === "object" && value !== null && !Array.isArray(value)
   );
+}
+
+/**
+ * Build the store/site/binding deployment target for a Windows (os-store-
+ * managed) issuance (ADR-0012 decisions 1 and 10). A windows-iis target has
+ * no certPath/keyPath/chainPath: the renewal destination is a machine
+ * certificate store plus an IIS site binding, keyed on thumbprint rather
+ * than a filesystem path, so this returns a wholly distinct shape rather
+ * than the certPath-based one with paths left null (matching
+ * renewalProfile.js's validateTarget windows-iis branch, which the returned
+ * shape must validate against).
+ */
+function buildWindowsDeploymentTarget(sourceTarget, targetReference) {
+  const store = text(sourceTarget.store);
+  if (!store) {
+    throw derivationError(
+      "Issue job payload has no store, so the Windows renewal has no " +
+        "certificate-store destination",
+    );
+  }
+  const binding = isPlainObject(sourceTarget.binding)
+    ? sourceTarget.binding
+    : null;
+  const site = binding ? text(binding.site) : null;
+  if (!binding || !site) {
+    throw derivationError(
+      "Issue job payload has no binding.site, so the IIS binding to " +
+        "update on renewal is unknown",
+    );
+  }
+  if (
+    !Number.isSafeInteger(binding.port) ||
+    binding.port < 1 ||
+    binding.port > 65535
+  ) {
+    throw derivationError(
+      "Issue job payload has no valid binding.port, so the IIS binding to " +
+        "update on renewal is unknown",
+    );
+  }
+  const sniHost = text(binding.sniHost);
+  return {
+    type: "windows-iis",
+    reference: targetReference,
+    store,
+    binding: {
+      site,
+      port: binding.port,
+      ...(sniHost ? { sniHost } : {}),
+    },
+  };
 }
 
 /**
@@ -147,38 +205,9 @@ function deriveRenewalProfileFromIssuedCertificate({
       "Issue job payload has no dnsProvider/dnsZone, so DNS-01 renewal cannot be reproduced",
     );
   }
-  const certPath = text(payload.certPath);
-  if (!certPath) {
-    throw derivationError(
-      "Issue job payload has no certPath, so the renewal has no deployment destination",
-    );
-  }
 
   const targetReference =
     text(payload.target?.reference) || commonName;
-  const targetType = text(payload.target?.type) || "domain";
-
-  // Carry the deployment shape the issuance actually used, including the paths
-  // and reload hook, so the renewal writes to the same place with the same
-  // permissions. Anything absent stays absent rather than being defaulted: the
-  // agent applies its own documented defaults, and inventing different ones
-  // here would silently change file ownership on renewal.
-  const deploymentTarget = {
-    type: targetType,
-    reference: targetReference,
-    certPath,
-  };
-  const optionalTargetFields = [
-    "keyPath",
-    "chainPath",
-    "reloadService",
-    "certMode",
-    "keyMode",
-    "chainMode",
-    "owner",
-    "group",
-    "backupDir",
-  ];
   const sourceTarget = isPlainObject(payload.deploymentTargets?.[0])
     ? payload.deploymentTargets[0]
     : payload;
@@ -198,14 +227,10 @@ function deriveRenewalProfileFromIssuedCertificate({
         "from the first would silently drop the rest",
     );
   }
-  for (const field of optionalTargetFields) {
-    const value = sourceTarget[field] ?? payload[field];
-    if (value !== undefined && value !== null && value !== "") {
-      deploymentTarget[field] = value;
-    }
-  }
+  const targetType =
+    text(payload.target?.type) || text(sourceTarget.type) || "domain";
 
-  const candidate = {
+  const sharedProfileFields = {
     schemaVersion: RENEWAL_PROFILE_SCHEMA_VERSION,
     profileName: `${DERIVED_PROFILE_PREFIX}: ${commonName}`,
     // 'exact' rather than 'inherit': the SAN set is pinned to what the CA
@@ -233,6 +258,71 @@ function deriveRenewalProfileFromIssuedCertificate({
       commandRef,
     },
     dns: { provider: dnsProvider, zone: dnsZone },
+  };
+
+  // A Windows (os-store-managed) issuance deploys to a machine certificate
+  // store plus an IIS site binding, keyed on thumbprint, not to a filesystem
+  // path (ADR-0012 decisions 1 and 10). Branching here, on the same
+  // target.type discriminator validateTarget already uses, keeps a
+  // store/binding profile from ever being built with a Linux certPath shape
+  // bolted on, and vice versa.
+  if (targetType === "windows-iis") {
+    const windowsTarget = buildWindowsDeploymentTarget(
+      sourceTarget,
+      targetReference,
+    );
+    const windowsCandidate = {
+      ...sharedProfileFields,
+      deploymentTargets: [windowsTarget],
+      target: { ...windowsTarget },
+      verification: {
+        host: text(payload.verifyHost),
+        port: Number.isSafeInteger(payload.verifyPort)
+          ? payload.verifyPort
+          : null,
+        requireMatch: Boolean(text(payload.verifyHost)),
+      },
+    };
+    return validateRenewalProfile(windowsCandidate);
+  }
+
+  const certPath = text(payload.certPath);
+  if (!certPath) {
+    throw derivationError(
+      "Issue job payload has no certPath, so the renewal has no deployment destination",
+    );
+  }
+
+  // Carry the deployment shape the issuance actually used, including the paths
+  // and reload hook, so the renewal writes to the same place with the same
+  // permissions. Anything absent stays absent rather than being defaulted: the
+  // agent applies its own documented defaults, and inventing different ones
+  // here would silently change file ownership on renewal.
+  const deploymentTarget = {
+    type: targetType,
+    reference: targetReference,
+    certPath,
+  };
+  const optionalTargetFields = [
+    "keyPath",
+    "chainPath",
+    "reloadService",
+    "certMode",
+    "keyMode",
+    "chainMode",
+    "owner",
+    "group",
+    "backupDir",
+  ];
+  for (const field of optionalTargetFields) {
+    const value = sourceTarget[field] ?? payload[field];
+    if (value !== undefined && value !== null && value !== "") {
+      deploymentTarget[field] = value;
+    }
+  }
+
+  const candidate = {
+    ...sharedProfileFields,
     deploymentTargets: [deploymentTarget],
     target: {
       type: targetType,
@@ -278,10 +368,31 @@ async function ensureDerivedRenewalProfile({
   certificateId,
   payload,
   certificate,
+  operation = null,
   renewBeforeDays = null,
   logger = null,
   auditWriter = writeAudit,
 } = {}) {
+  // Type-level guard, not a convention: a trust-anchor job passed here (it
+  // never legitimately would be, since its subject_type is 'trust_anchor'
+  // rather than 'managed_certificate') is refused before any query runs,
+  // rather than relying on every future caller to have checked subject_type
+  // first.
+  if (isTrustAnchorOperation(operation)) {
+    if (logger?.warn) {
+      logger.warn("certops-renewal-profile-derivation-skipped-trust-anchor", {
+        workspaceId,
+        certificateId,
+        operation,
+      });
+    }
+    return {
+      profileId: null,
+      created: false,
+      reason: DERIVATION_REASON_TRUST_ANCHOR_OPERATION,
+    };
+  }
+
   const linked = await client.query(
     `SELECT profile_id FROM managed_certificates
       WHERE workspace_id = $1 AND id = $2::uuid`,
@@ -466,8 +577,10 @@ module.exports = {
   DERIVATION_REASON_DERIVATION_FAILED,
   DERIVATION_REASON_LINK_CONFLICT,
   DERIVATION_REASON_PROFILE_OPERATOR_OWNED,
+  DERIVATION_REASON_TRUST_ANCHOR_OPERATION,
   DERIVED_PROFILE_PREFIX,
   OPERATOR_OWNED_METADATA_KEY,
+  buildWindowsDeploymentTarget,
   deriveRenewalProfileFromIssuedCertificate,
   ensureDerivedRenewalProfile,
 };

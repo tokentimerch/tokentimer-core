@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/trust-job-payload.schema.json",
+  "title": "CertOps Trust Anchor Job Payload",
+  "description": "Signed dispatch payload for a distribute-trust or revoke-trust job (ADR-0012 decisions 4 and 6). A trust anchor has no private key and no renewal, so this is a sibling contract file, not a discriminated branch on job-payload.schema.json: forcing a trust job through the certificate schema would mean either making certificateId/keyMode conditionally required (which makes every future certificate-job field ask whether it applies under the trust branch too) or relaxing job-payload.schema.json's required array, weakening validation for every existing certificate job. Composes the shared signed-dispatch-payload definition (schemaVersion/jobId/workspaceId/agentId/mode/requestedAt plus the signed-dispatch fields) and adds only what a trust operation needs: trustAnchorId, anchorType, fingerprintSha256, pem, requestedBy, metadata. additionalProperties: false at every level, so a trust job can never be mistaken for, or grown into, a certificate job. agentId is required here from day one because this schema is new, the same rationale protocol-smoke-payload.schema.json documents. The wire-only signature field is referenced from signed-dispatch-wire-v1.schema.json rather than defined here, because a signature is never part of the content it signs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "workspaceId",
+    "agentId",
+    "trustAnchorId",
+    "action",
+    "anchorType",
+    "fingerprintSha256",
+    "mode",
+    "requestedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/schemaVersion"
+    },
+    "jobId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+    },
+    "workspaceId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/workspaceId"
+    },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
+    "trustAnchorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "certops_trust_anchors.id (text-cast), the row this job distributes to or revokes from a machine trust store. Also the value stored in certificate_jobs.subject_id for a trust job (subject_type 'trust_anchor', ADR-0012 decision 5)."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "distribute-trust",
+        "revoke-trust"
+      ],
+      "description": "Agent-facing action mirrors the control-plane operation 1:1 (ADR-0012 decision 14): a trust job's control-plane intent and agent-side action are the same concept, with no multi-step lifecycle to distinguish the way issue/renew needed one."
+    },
+    "anchorType": {
+      "type": "string",
+      "enum": [
+        "root",
+        "intermediate"
+      ],
+      "description": "Required and part of the signed payload: the routing decision for WHICH machine trust store the anchor belongs in. A root belongs in LocalMachine\\Root and an intermediate in LocalMachine\\CA; this must not be inferred at execution time from the certificate's own basicConstraints/issuer fields, because the PEM is untrusted input and inference would make the destination store a property of the material rather than of the approved intent. The agent derives the concrete Windows store name from this value; a store name is never accepted as a payload field, which would be a second, disagreeable source of truth (ADR-0012 decision 4)."
+    },
+    "fingerprintSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the trust anchor PEM, carried on both the certops_trust_anchors row and every job payload referencing it, so the agent can verify the anchor it is about to install or remove against the fingerprint the control plane signed."
+    },
+    "pem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "pattern": "^-----BEGIN CERTIFICATE-----",
+      "description": "Public CA certificate PEM to install. Required for distribute-trust and rejected for revoke-trust (see allOf below): revocation is identified by trustAnchorId plus fingerprintSha256 alone, which is all the agent needs to find and remove the anchor, and accepting a PEM there would invite a 'revoke this, but here is different material' ambiguity."
+    },
+    "requestedBy": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "actorType"
+      ],
+      "properties": {
+        "actorType": {
+          "type": "string",
+          "enum": [
+            "user",
+            "system",
+            "automation"
+          ]
+        },
+        "actorId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        }
+      }
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
+    },
+    "mode": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/mode"
+    },
+    "requestedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/requestedAt"
+    },
+    "issuedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/issuedAt"
+    },
+    "expiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/expiresAt"
+    },
+    "nonce": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/nonce"
+    },
+    "signingKeyId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/signingKeyId"
+    },
+    "signature": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
+    },
+    "claimId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/claimId"
+    },
+    "attemptId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptId"
+    },
+    "leaseExpiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/leaseExpiresAt"
+    },
+    "attemptCount": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptCount"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "distribute-trust"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "pem"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "revoke-trust"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "pem"
+          ]
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -44,6 +44,11 @@ const {
     "../../apps/api/services/certops/renewalProfile.js",
   ),
 );
+const {
+  isTrustAnchorOperation,
+} = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+);
 
 function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim();
@@ -353,6 +358,11 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(job.payload.dnsZone, "example.com");
     assert.strictEqual(job.payload.certPath, "/etc/ssl/certs/app.pem");
     assert.strictEqual(job.payload.keyRotation, false);
+
+    // By-construction exclusion (ADR-0012 decision 14): every job the
+    // scheduler ever creates carries this literal operation, so it can never
+    // be a trust-anchor operation regardless of certificate/profile shape.
+    assert.equal(isTrustAnchorOperation(job.operation), false);
 
     const client = pool.clients[1];
     const sqls = client.queries.map((q) => q.sql);

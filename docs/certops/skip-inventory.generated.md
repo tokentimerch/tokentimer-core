@@ -25,8 +25,8 @@ Total skips found: 43
 | `packages/agent/src/config/config.test.js` | 1237 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 1249 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 1262 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/deploy/deploy.test.js` | 396 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/deploy/deploy.test.js` | 425 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/deploy/deploy.test.js` | 526 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/deploy/deploy.test.js` | 555 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 343 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 372 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `no-host` |

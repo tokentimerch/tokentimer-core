@@ -137,6 +137,16 @@ function parseOwnerGroupName(value, fieldName) {
 
 // Valid target.type values, per
 // packages/contracts/certops/job-payload.schema.json target.type enum.
+//
+// "windows-iis" (ADR-0012) is validation-only in this change: it re-uses the
+// same validateTargetConfig re-validation contract every other target type
+// gets, but deployCertificate/deployCertificateAndKey below stay filesystem
+// (certPath-write) only. Real IIS/machine-store execution (importing into
+// the named store, rebinding the IIS site, TLS-handshake verification,
+// rollback) is a separate follow-up, wired through the windows-cert-store-v1
+// and iis-binding-v1 capabilities (see ../capabilities); landing the target
+// type and its typed shape now, without a matching executor, keeps this a
+// pure additive contract change with no half-implemented execution path.
 const VALID_TARGET_TYPES = Object.freeze([
   "domain",
   "endpoint",
@@ -144,7 +154,35 @@ const VALID_TARGET_TYPES = Object.freeze([
   "appliance",
   "load-balancer",
   "external",
+  "windows-iis",
 ]);
+
+// Windows machine certificate store name (e.g. "My", "WebHosting", or an
+// operator-defined custom store). Deliberately a pattern, not a closed
+// enum: ADR-0012 decision 4 fixes the TWO stores a *trust anchor* can land
+// in (Root/CA, derived from anchorType, never payload-supplied), but a
+// certificate DEPLOY target's personal store is operator-configured and
+// Windows does not restrict custom store names to a small fixed set.
+const WINDOWS_STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+
+// IIS site identifier: either the site name ("Default Web Site") or a
+// numeric site ID as IIS itself accepts either. Printable, no control
+// characters or path-separator-like characters that would suggest a
+// filesystem path leaked into this field by mistake.
+const WINDOWS_IIS_SITE_PATTERN = /^[A-Za-z0-9 _.:-]{1,256}$/;
+
+// RFC 1123-ish hostname for the optional SNI host on a binding. Reuses the
+// same pragmatic shape config.js already applies to server hostnames,
+// duplicated rather than imported per this package's self-contained-module
+// convention.
+const WINDOWS_SNI_HOST_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+
+// SHA-1 hex thumbprint, the identifier Windows certificate stores and IIS
+// bindings key on. Lowercase-normalized by the caller before this check
+// would be nicer, but the wire value is validated byte-for-byte instead so
+// a case mismatch is surfaced rather than silently normalized.
+const WINDOWS_THUMBPRINT_SHA1_PATTERN = /^[A-Fa-f0-9]{40}$/;
 
 // --- Per-destination async mutex ------------------------------------------
 
@@ -247,6 +285,76 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
 }
 
+/**
+ * Validates the typed store/site/binding/thumbprint shape of a
+ * "windows-iis" deploy target. Validation-only per this change's scope
+ * (see VALID_TARGET_TYPES comment): does not touch the filesystem and is
+ * not wired to any executor yet.
+ *
+ * Expected shape:
+ *   {
+ *     type: "windows-iis",
+ *     reference: string,
+ *     store: string,                 // machine cert store name (e.g. "My")
+ *     binding: {
+ *       site: string,                 // IIS site name or numeric id
+ *       port: number,                 // 1-65535
+ *       sniHost?: string,             // optional SNI hostname
+ *     },
+ *     thumbprintSha1?: string,        // optional 40-hex-char SHA-1
+ *   }
+ *
+ * @param {object} target
+ * @returns {{ valid: true } | { valid: false, detail: string }}
+ */
+function validateWindowsIisTarget(target) {
+  if (!isNonEmptyString(target.store) || !WINDOWS_STORE_NAME_PATTERN.test(target.store)) {
+    return invalid(
+      `deploy: target.store must be a valid Windows certificate store name (got ${JSON.stringify(target.store)})`,
+    );
+  }
+
+  const binding = target.binding;
+  if (binding === null || typeof binding !== "object" || Array.isArray(binding)) {
+    return invalid("deploy: target.binding must be an object");
+  }
+  if (!isNonEmptyString(binding.site) || !WINDOWS_IIS_SITE_PATTERN.test(binding.site)) {
+    return invalid(
+      `deploy: target.binding.site must be a valid IIS site name or id (got ${JSON.stringify(binding.site)})`,
+    );
+  }
+  if (
+    !Number.isInteger(binding.port) ||
+    binding.port < 1 ||
+    binding.port > 65535
+  ) {
+    return invalid(
+      `deploy: target.binding.port must be an integer between 1 and 65535 (got ${JSON.stringify(binding.port)})`,
+    );
+  }
+  if (binding.sniHost !== undefined && binding.sniHost !== null) {
+    if (
+      !isNonEmptyString(binding.sniHost) ||
+      binding.sniHost.length > 255 ||
+      !WINDOWS_SNI_HOST_PATTERN.test(binding.sniHost)
+    ) {
+      return invalid(
+        `deploy: target.binding.sniHost must be a valid hostname (got ${JSON.stringify(binding.sniHost)})`,
+      );
+    }
+  }
+
+  if (target.thumbprintSha1 !== undefined && target.thumbprintSha1 !== null) {
+    if (!WINDOWS_THUMBPRINT_SHA1_PATTERN.test(target.thumbprintSha1)) {
+      return invalid(
+        `deploy: target.thumbprintSha1 must be a 40-character hex SHA-1 thumbprint (got ${JSON.stringify(target.thumbprintSha1)})`,
+      );
+    }
+  }
+
+  return { valid: true };
+}
+
 function isExistingDirectory(fsImpl, dirPath) {
   try {
     return fsImpl.statSync(dirPath).isDirectory();
@@ -300,6 +408,17 @@ function validateTargetConfig(target, { checkPath, _fsOverrides } = {}) {
   }
   if (!isNonEmptyString(target.reference)) {
     return invalid("deploy: target.reference must be a non-empty string");
+  }
+
+  // windows-iis has no filesystem certPath/keyPath/chainPath/backupDir: its
+  // destination is a machine cert store plus an IIS binding, not a path the
+  // agent-local path policy allowlists. Re-validating it against the
+  // filesystem checks below would be meaningless (there is no parent
+  // directory to check) and checkPath was never designed to arbitrate a
+  // store/site/port tuple, so it dispatches to its own typed validator and
+  // returns before any of the path-field logic runs.
+  if (target.type === "windows-iis") {
+    return validateWindowsIisTarget(target);
   }
 
   const pathFields = [["certPath", target.certPath, true]];
@@ -1419,4 +1538,5 @@ module.exports = {
   DEPLOYED_CERT_DEFAULT_MODE,
   DEPLOYED_KEY_DEFAULT_MODE,
   VALID_TARGET_TYPES,
+  validateWindowsIisTarget,
 };

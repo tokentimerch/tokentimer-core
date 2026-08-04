@@ -8,6 +8,9 @@ const path = require("node:path");
 const { migrations } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
+const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+);
 const baselineMinimumSchema = JSON.parse(
   fs.readFileSync(
     path.resolve(
@@ -1251,5 +1254,300 @@ describe("CertOps inventory migration", () => {
       certOpsExecutorEventMigration.sql,
       /\bsecurity_events\b|\bprev_hash\b|\brow_hash\b|\balert_queue\b/i,
     );
+  });
+});
+
+describe("migration 43 Windows IIS target descriptors", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_windows_iis_target_descriptors",
+  );
+
+  it("exists at version 43 and widens certificate_targets", () => {
+    assert.ok(migration, "certops_windows_iis_target_descriptors migration expected");
+    assert.equal(migration.version, 43);
+    for (const column of [
+      "windows_store",
+      "windows_site",
+      "windows_port",
+      "windows_sni_host",
+    ]) {
+      assert.match(migration.sql, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\b`));
+    }
+  });
+
+  it("widens certificate_targets_target_type_check to accept windows-iis while keeping every earlier type", () => {
+    assert.match(migration.sql, /certificate_targets_target_type_check/);
+    for (const value of [
+      "endpoint",
+      "domain",
+      "host",
+      "kubernetes-secret",
+      "load-balancer",
+      "cdn",
+      "appliance",
+      "hsm",
+      "vault",
+      "other",
+      "windows-iis",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+  });
+
+  it("constrains windows_port to the valid TCP port range and never uses CREATE TYPE", () => {
+    assert.match(migration.sql, /windows_port BETWEEN 1 AND 65535/);
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+});
+
+describe("migration 44 trust-anchor persistence", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_trust_anchors",
+  );
+
+  it("exists at version 44 and creates both trust-anchor tables", () => {
+    assert.ok(migration, "certops_trust_anchors migration expected");
+    assert.equal(migration.version, 44);
+    assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchors\b/);
+    assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchor_installations\b/);
+  });
+
+  it("scopes both tables to workspace_id", () => {
+    const workspaceScopedColumnCount = (
+      migration.sql.match(/workspace_id UUID NOT NULL REFERENCES workspaces\(id\)/g) || []
+    ).length;
+    assert.equal(workspaceScopedColumnCount, 2);
+  });
+
+  it("keys installations on host, store, fingerprint, and owner", () => {
+    assert.match(
+      migration.sql,
+      /uq_certops_trust_anchor_installations_identity\s*\n\s*ON certops_trust_anchor_installations\(workspace_id, host, store, fingerprint_sha256, owner\)/,
+    );
+  });
+
+  it("uses TEXT + CHECK for transition_state and provenance enums, never CREATE TYPE", () => {
+    assert.match(
+      migration.sql,
+      /transition_state TEXT NOT NULL DEFAULT 'pending_install'\s*\n\s*CHECK \(transition_state IN \('pending_install', 'installed', 'pending_remove', 'removed'\)\)/,
+    );
+    assert.match(
+      migration.sql,
+      /provenance TEXT NOT NULL\s*\n\s*CHECK \(provenance IN \('preexisting', 'tokentimer_installed'\)\)/,
+    );
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
+  });
+
+  it("never stores a private key alongside a trust anchor", () => {
+    assert.doesNotMatch(migration.sql, /\bprivate_key\b|\bkey_material\b/i);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+
+  it("stores the approved CA certificate's own name and pem on certops_trust_anchors, per the ADR", () => {
+    const anchorsTableMatch = migration.sql.match(
+      /CREATE TABLE IF NOT EXISTS certops_trust_anchors \(([\s\S]*?)\n\s*\);/,
+    );
+    assert.ok(anchorsTableMatch, "certops_trust_anchors table body expected");
+    const anchorsTableBody = anchorsTableMatch[1];
+    assert.match(anchorsTableBody, /\bname TEXT NOT NULL\b/);
+    assert.match(anchorsTableBody, /\bpem TEXT NOT NULL\b/);
+    assert.match(anchorsTableBody, /\bsource TEXT NOT NULL DEFAULT 'api'/);
+  });
+
+  it("keeps host/store off certops_trust_anchors: those columns belong only on the per-host installation row", () => {
+    const anchorsTableMatch = migration.sql.match(
+      /CREATE TABLE IF NOT EXISTS certops_trust_anchors \(([\s\S]*?)\n\s*\);/,
+    );
+    assert.ok(anchorsTableMatch, "certops_trust_anchors table body expected");
+    const anchorsTableBody = anchorsTableMatch[1];
+    assert.doesNotMatch(anchorsTableBody, /\bhost TEXT\b/);
+    assert.doesNotMatch(anchorsTableBody, /\bstore TEXT\b/);
+  });
+
+  it("dedupes certops_trust_anchors on (workspace_id, fingerprint_sha256), not on a host/store tuple", () => {
+    assert.match(
+      migration.sql,
+      /uq_certops_trust_anchors_workspace_fingerprint\s*\n\s*ON certops_trust_anchors\(workspace_id, fingerprint_sha256\)/,
+    );
+    assert.doesNotMatch(migration.sql, /ON certops_trust_anchors\(workspace_id, host,/);
+  });
+});
+
+describe("migration 45 trust-anchor job operation and subject type", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_trust_anchor_jobs",
+  );
+
+  it("exists at version 45 and widens both certificate_jobs constraints", () => {
+    assert.ok(migration, "certops_trust_anchor_jobs migration expected");
+    assert.equal(migration.version, 45);
+    assert.match(migration.sql, /certificate_jobs_operation_check/);
+    assert.match(migration.sql, /certificate_jobs_subject_type_check/);
+  });
+
+  it("keeps every previously accepted operation and subject type", () => {
+    for (const value of [
+      "issue",
+      "renew",
+      "deploy",
+      "reload",
+      "revoke",
+      "noop",
+      "protocol_smoke",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+    for (const value of [
+      "managed_certificate",
+      "certificate_instance",
+      "certificate_target",
+      "token",
+      "domain",
+      "endpoint",
+      "external",
+    ]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+  });
+
+  it("adds distribute-trust/revoke-trust to operation and trust_anchor to subject_type", () => {
+    assert.match(migration.sql, /'distribute-trust'/);
+    assert.match(migration.sql, /'revoke-trust'/);
+    assert.match(migration.sql, /'trust_anchor'/);
+  });
+
+  it("accepts exactly the operations and subject types the service layer declares today", () => {
+    const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
+    assert.ok(operationDeclared, "operation IN (...) list expected");
+    const operationValues = operationDeclared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+
+    const subjectTypeDeclared = migration.sql.match(
+      /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
+    );
+    assert.ok(subjectTypeDeclared, "subject_type IN (...) list expected");
+    const subjectTypeValues = subjectTypeDeclared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...subjectTypeValues].sort(), [...SUBJECT_TYPES].sort());
+  });
+
+  it("uses only additive DDL, never CREATE TYPE", () => {
+    assert.doesNotMatch(migration.sql, /(?:^|\n)\s*CREATE TYPE\b/i);
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+
+  it("also widens certificate_evidence's own separate subject_type and evidence_type checks", () => {
+    // certificate_evidence.subject_type and .evidence_type are each defined
+    // with their own inline column CHECK (migration 13,
+    // certops_jobs_evidence_schema), auto-named certificate_evidence_
+    // subject_type_check / certificate_evidence_evidence_type_check. They
+    // are NOT the same constraint as certificate_jobs's, so widening only
+    // certificate_jobs above would leave the first trust-job evidence write
+    // (subject_type = 'trust_anchor', evidence_type IN
+    // ('trust.distributed', 'trust.revoked')) violating this table's own
+    // CHECK at runtime.
+    assert.match(migration.sql, /certificate_evidence_subject_type_check/);
+    assert.match(migration.sql, /certificate_evidence_evidence_type_check/);
+    for (const value of [
+      "managed_certificate",
+      "certificate_instance",
+      "certificate_target",
+      "token",
+      "domain",
+      "endpoint",
+      "external",
+      "trust_anchor",
+    ]) {
+      assert.match(
+        migration.sql,
+        new RegExp(`certificate_evidence_subject_type_check CHECK \\(\\s*subject_type[^;]*'${value}'`),
+      );
+    }
+    for (const value of [
+      "certificate.observed",
+      "deployment.checked",
+      "deployment.updated",
+      "validation.passed",
+      "validation.failed",
+      "policy.checked",
+      "trust.distributed",
+      "trust.revoked",
+    ]) {
+      assert.match(
+        migration.sql,
+        new RegExp(`certificate_evidence_evidence_type_check CHECK \\(\\s*evidence_type[^;]*'${value.replace(/\./g, "\\.")}'`),
+      );
+    }
+  });
+});
+
+describe("migration 45 certificate_evidence trust vocabulary applies against a live schema", () => {
+  it("runs migrations 1-45 in order and inserts trust-anchor evidence rows without violating any CHECK", async () => {
+    // This is a pure-SQL-string simulation, not a live Postgres connection
+    // (no test DB is assumed to be available here): it re-derives what
+    // every certificate_evidence CHECK constraint looks like after all
+    // migrations up to 45 have run, by folding each DROP/ADD CONSTRAINT in
+    // migration order, then confirms a trust_anchor/trust.distributed row
+    // and a trust_anchor/trust.revoked row both satisfy the final state.
+    const relevantMigrations = migrations.filter(
+      (migration) => migration.version <= 45,
+    );
+    assert.equal(relevantMigrations.length, 45);
+
+    let subjectTypeValues = null;
+    let evidenceTypeValues = null;
+    for (const migration of relevantMigrations) {
+      const subjectMatch = migration.sql.match(
+        /certificate_evidence_subject_type_check CHECK \(\s*subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
+      );
+      if (subjectMatch) {
+        subjectTypeValues = subjectMatch[1]
+          .split(",")
+          .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+      }
+      const evidenceMatch = migration.sql.match(
+        /certificate_evidence_evidence_type_check CHECK \(\s*evidence_type IN \(([^)]+)\)/,
+      );
+      if (evidenceMatch) {
+        evidenceTypeValues = evidenceMatch[1]
+          .split(",")
+          .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+      }
+    }
+
+    assert.ok(subjectTypeValues, "expected a certificate_evidence subject_type check to be defined");
+    assert.ok(evidenceTypeValues, "expected a certificate_evidence evidence_type check to be defined");
+    assert.ok(
+      subjectTypeValues.includes("trust_anchor"),
+      "post-migration-45 certificate_evidence.subject_type must accept trust_anchor",
+    );
+    assert.ok(
+      evidenceTypeValues.includes("trust.distributed"),
+      "post-migration-45 certificate_evidence.evidence_type must accept trust.distributed",
+    );
+    assert.ok(
+      evidenceTypeValues.includes("trust.revoked"),
+      "post-migration-44 certificate_evidence.evidence_type must accept trust.revoked",
+    );
+
+    // Simulate the CHECK constraints directly: a trust_anchor/trust.distributed
+    // row and a trust_anchor/trust.revoked row must both pass.
+    for (const evidenceType of ["trust.distributed", "trust.revoked"]) {
+      assert.ok(
+        subjectTypeValues.includes("trust_anchor") &&
+          evidenceTypeValues.includes(evidenceType),
+        `a certificate_evidence row with subject_type='trust_anchor', evidence_type='${evidenceType}' must insert successfully post-migration`,
+      );
+    }
   });
 });

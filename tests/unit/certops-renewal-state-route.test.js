@@ -180,6 +180,22 @@ describe("CertOps certificate renewal-state derivation", () => {
     assert.equal(renewal.state, "auto");
   });
 
+  it("keeps os-store-managed not-eligible until the Windows executor exists", () => {
+    // The agent would be the right custodian for a Windows certificate-store
+    // key, but the real store/site/binding execution path is not wired up
+    // in this build (jobs.isAgentDeployableKeyMode deliberately excludes
+    // it), so this custody mode stays in the not-eligible bucket above
+    // rather than being reported renewable. This is intentional pending the
+    // real executor, which should flip this key mode back to
+    // agent-deployable in the same change that adds it.
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({ key_mode: "os-store-managed" }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "not-eligible");
+  });
+
   it("reports disabled when the profile switched auto-renewal off", () => {
     for (const profileStatus of ["disabled", "archived"]) {
       const renewal = deriveCertificateRenewalState(
@@ -343,7 +359,7 @@ describe("CertOps certificate renewal-state projection", () => {
             certificateRow({ id: "cert-auto" }),
             certificateRow({
               id: "cert-observed",
-              key_mode: "os-store-managed",
+              key_mode: "vault-managed",
             }),
           ],
         };

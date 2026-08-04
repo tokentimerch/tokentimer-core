@@ -7,14 +7,20 @@ const path = require("node:path");
 const {
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+  CERTOPS_JOB_INVALID,
   CERTOPS_JOB_NOT_FOUND,
+  CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
+  JOB_OPERATIONS,
   PRIVATE_KEY_MATERIAL_REJECTED,
+  SUBJECT_TYPES,
+  TRUST_ANCHOR_OPERATIONS,
   appendCertificateJobLog,
   createCertificateJob,
   getCertificateJobById,
+  isTrustAnchorOperation,
   jobCreationRequestFingerprint,
   listCertificateJobLog,
   listCertificateJobs,
@@ -1924,6 +1930,182 @@ describe("CertOps jobs service", () => {
       env,
     });
     assert.ok(otherCa.id);
+  });
+});
+
+describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decisions 4-6, 14)", () => {
+  it("adds distribute-trust/revoke-trust to the operation vocabulary and trust_anchor to the subject vocabulary", () => {
+    assert.ok(JOB_OPERATIONS.includes("distribute-trust"));
+    assert.ok(JOB_OPERATIONS.includes("revoke-trust"));
+    assert.ok(SUBJECT_TYPES.includes("trust_anchor"));
+    assert.deepEqual(
+      [...TRUST_ANCHOR_OPERATIONS].sort(),
+      ["distribute-trust", "revoke-trust"],
+    );
+  });
+
+  it("isTrustAnchorOperation recognizes only the two trust operations", () => {
+    assert.equal(isTrustAnchorOperation("distribute-trust"), true);
+    assert.equal(isTrustAnchorOperation("revoke-trust"), true);
+    for (const operation of ["issue", "renew", "deploy", "reload", "revoke", "noop"]) {
+      assert.equal(isTrustAnchorOperation(operation), false);
+    }
+    assert.equal(isTrustAnchorOperation(null), false);
+    assert.equal(isTrustAnchorOperation(undefined), false);
+  });
+
+  it("creates a distribute-trust job with a trust_anchor subject", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "distribute-trust",
+      source: "api",
+      subjectType: "trust_anchor",
+      subjectId: "anchor-1",
+      payload: {},
+    });
+    assert.equal(job.operation, "distribute-trust");
+    assert.equal(job.subjectType, "trust_anchor");
+    assert.equal(job.subjectId, "anchor-1");
+  });
+
+  it("rejects a pem-named field on a distribute-trust job's stored payload, the same as it would on a certificate job", async () => {
+    // The signed pem the agent needs to install lives on the dispatch-time
+    // wire payload (trust-job-payload.schema.json), attached only when the
+    // job is signed and handed to the agent, never in the row this function
+    // persists. Proving that boundary here is what stands in for a
+    // logs/evidence redaction test: nothing that reaches storage (and from
+    // there, logs or evidence exports) ever carries a pem-named field for a
+    // trust job, exactly as for a certificate job's certificatePem.
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "distribute-trust",
+          source: "api",
+          subjectType: "trust_anchor",
+          subjectId: "anchor-1",
+          payload: {
+            pem: "-----BEGIN CERTIFICATE-----\nRkFLRQ==\n-----END CERTIFICATE-----",
+          },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  });
+
+  it("creates a revoke-trust job with a trust_anchor subject", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "revoke-trust",
+      source: "api",
+      subjectType: "trust_anchor",
+      subjectId: "anchor-1",
+      payload: {},
+    });
+    assert.equal(job.operation, "revoke-trust");
+    assert.equal(job.subjectType, "trust_anchor");
+  });
+
+  it("rejects a distribute-trust job with no subject at all", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "distribute-trust",
+          source: "api",
+          payload: {},
+        }),
+      (error) => error?.code === CERTOPS_JOB_INVALID,
+    );
+  });
+
+  it("rejects a distribute-trust job whose subjectType is managed_certificate", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "distribute-trust",
+          source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
+          payload: {},
+        }),
+      (error) => error?.code === CERTOPS_JOB_INVALID,
+    );
+  });
+
+  it("rejects an ordinary certificate job (renew) whose subjectType is trust_anchor", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "api",
+          subjectType: "trust_anchor",
+          subjectId: "anchor-1",
+          payload: { certificateId: "cert-1", caEndpoint: "https://acme.example/directory" },
+        }),
+      (error) => error?.code === CERTOPS_JOB_INVALID,
+    );
+  });
+
+  it("by construction: refuses an automation-sourced trust-anchor job, so the renewal scheduler can never create one", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "distribute-trust",
+          source: "automation",
+          subjectType: "trust_anchor",
+          subjectId: "anchor-1",
+          payload: {},
+        }),
+      (error) => error?.code === CERTOPS_JOB_OPERATION_INVALID,
+    );
+  });
+
+  it("still allows automation-sourced renew jobs (the scheduler's own lane is untouched)", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "automation",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: {
+        certificateId: "cert-1",
+        caEndpoint: "https://acme.example/directory",
+        renewalProfile: {
+          schemaVersion: 1,
+          target: { type: "domain", reference: "cert-1", certPath: "/etc/ssl/live/cert-1/cert.pem" },
+          deploymentTargets: [{ type: "domain", reference: "cert-1", certPath: "/etc/ssl/live/cert-1/cert.pem" }],
+          ca: { endpoint: "https://acme.example/directory", accountRef: null, eabRef: null },
+          acme: { kind: "certbot", commandRef: "cmd" },
+          dns: { provider: "cloudflare", zone: "example.com" },
+          sanPolicy: { mode: "exact", sans: ["cert-1"], allowWildcards: false },
+          keyAlgorithm: "ecdsa",
+          keySize: 256,
+          keyRotationPolicy: { rotateOnRenew: true },
+          preferredChain: null,
+          verification: { host: null, port: null, requireMatch: false },
+        },
+      },
+    });
+    assert.equal(job.operation, "renew");
   });
 });
 
