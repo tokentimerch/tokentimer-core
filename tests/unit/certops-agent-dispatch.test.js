@@ -736,6 +736,136 @@ describe("agentDispatch.recordHeartbeat", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
+  it("re-declares capabilities on heartbeat, so an in-place upgrade advertises new ones without re-enrollment", async () => {
+    const updates = [];
+    const dbPool = createMockPool((sql, params) => {
+      updates.push({ sql, params });
+      return {
+        rows: [
+          {
+            id: "agent-row-1",
+            status: "active",
+            last_seen_at: new Date("2026-07-22T10:00:00.000Z"),
+          },
+        ],
+      };
+    });
+
+    await recordHeartbeat({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { clockOffsetMs: null },
+      body: {
+        agentVersion: "0.2.0",
+        declaredCapabilities: ["evidence-claim-binding-v1", "windows-cert-store-v1"],
+      },
+      deps: {
+        getActiveSigningKeyPublicInfo: async () => null,
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
+      },
+    });
+
+    const heartbeatWrites = updates.filter(({ sql }) =>
+      sql.includes("last_seen_at = NOW()"),
+    );
+    assert.equal(heartbeatWrites.length, 1);
+    assert.match(heartbeatWrites[0].sql, /declared_capabilities = CASE/);
+    const declaredCapabilitiesParam = heartbeatWrites[0].params[11];
+    assert.deepEqual(
+      JSON.parse(declaredCapabilitiesParam),
+      ["evidence-claim-binding-v1", "windows-cert-store-v1"],
+    );
+  });
+
+  // Capability declaration is three-valued. These three tests pin each arm,
+  // because collapsing "omitted" into "empty" would make capability removal
+  // impossible and leave a downgraded agent eligible for jobs it can no
+  // longer execute.
+  const heartbeatCapabilityParam = async (body) => {
+    const updates = [];
+    const dbPool = createMockPool((sql, params) => {
+      updates.push({ sql, params });
+      return {
+        rows: [
+          {
+            id: "agent-row-1",
+            status: "active",
+            last_seen_at: new Date("2026-07-22T10:00:00.000Z"),
+          },
+        ],
+      };
+    });
+
+    await recordHeartbeat({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { clockOffsetMs: null },
+      body,
+      deps: {
+        getActiveSigningKeyPublicInfo: async () => null,
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
+      },
+    });
+
+    const heartbeatWrites = updates.filter(({ sql }) =>
+      sql.includes("last_seen_at = NOW()"),
+    );
+    assert.equal(heartbeatWrites.length, 1);
+    return { sql: heartbeatWrites[0].sql, param: heartbeatWrites[0].params[11] };
+  };
+
+  it("preserves the stored capability set when a heartbeat omits declaredCapabilities", async () => {
+    const { sql, param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+    });
+
+    // NULL is the wire representation of "omitted": the SQL's
+    // CASE ... WHEN $12::jsonb IS NULL THEN declared_capabilities arm is what
+    // preserves the stored value, so the app layer must send null here rather
+    // than an empty array (which now means "clear").
+    assert.equal(param, null);
+    assert.match(sql, /WHEN \$12::jsonb IS NULL THEN declared_capabilities/);
+  });
+
+  it("clears the stored capability set when a heartbeat sends an explicit empty array", async () => {
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+      declaredCapabilities: [],
+    });
+
+    // Present-but-empty is a deliberate declaration of "I support nothing",
+    // not a no-op, so it must reach the UPDATE as [] and overwrite the
+    // stored set.
+    assert.equal(typeof param, "string");
+    assert.deepEqual(JSON.parse(param), []);
+  });
+
+  it("replaces the stored capability set on a downgrade that drops one capability", async () => {
+    // An agent that previously declared two capabilities and is rolled back
+    // to a build supporting only one must end up with exactly the one, so it
+    // stops matching jobs gated on the capability it lost.
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.1.0",
+      declaredCapabilities: ["evidence-claim-binding-v1"],
+    });
+
+    assert.deepEqual(JSON.parse(param), ["evidence-claim-binding-v1"]);
+  });
+
+  it("drops non-string and empty capability entries before replacing the set", async () => {
+    const { param } = await heartbeatCapabilityParam({
+      agentVersion: "0.2.0",
+      declaredCapabilities: ["windows-cert-store-v1", "", null, 7, "iis-binding-v1"],
+    });
+
+    assert.deepEqual(JSON.parse(param), [
+      "windows-cert-store-v1",
+      "iis-binding-v1",
+    ]);
+  });
+
   it("rejects a sequence regression before any heartbeat write", async () => {
     const dbPool = createMockPool((sql) => {
       if (sql.includes("SET last_sequence")) {
@@ -1116,7 +1246,7 @@ describe("agentDispatch.claimJobs", () => {
     );
   });
 
-  it("excludes controller-lane jobs from agent claims (B2)", async () => {
+  it("excludes controller-lane jobs from agent claims", async () => {
     let claimSql = null;
     const dbPool = createMockPool((sql) => {
       if (sql.includes("SELECT last_sequence")) {
@@ -1150,7 +1280,7 @@ describe("agentDispatch.claimJobs", () => {
     assert.match(claimSql, /executor_kind = 'agent'/);
   });
 
-  it("attaches public certificate PEM and hash for deploy jobs (B15)", async () => {
+  it("attaches public certificate PEM and hash for deploy jobs", async () => {
     const pem =
       "-----BEGIN CERTIFICATE-----\nMIIBdeploy\n-----END CERTIFICATE-----\n";
     const dbPool = createMockPool((sql) => {
@@ -1226,7 +1356,7 @@ describe("agentDispatch.claimJobs", () => {
     assert.equal(result.jobs[0].target.fingerprintSha256, "a".repeat(64));
   });
 
-  it("blocks deploy jobs when public certificate inventory is missing (B15)", async () => {
+  it("blocks deploy jobs when public certificate inventory is missing", async () => {
     let blocked = false;
     const dbPool = createMockPool((sql) => {
       if (sql.includes("SELECT last_sequence")) {
@@ -1390,7 +1520,7 @@ describe("agentDispatch.claimJobs", () => {
 });
 
 describe("agentDispatch.renewJobLease", () => {
-  it("transitions claimed→running, extends lease, and extends the nonce (B6/B7)", async () => {
+  it("transitions claimed→running, extends lease, and extends the nonce", async () => {
     let extendedNonce = null;
     const dbPool = createMockPool((sql, params) => {
       if (sql.includes("SELECT last_sequence")) {

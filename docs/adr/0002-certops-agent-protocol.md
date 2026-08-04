@@ -48,19 +48,17 @@ make an agent do arbitrary things.
     predicate, not a rejection: the operator-visible symptom of an out-of-date
     agent is an unclaimed `pending` job rather than an error. Capability names are
     contract surfaces under the README's change-control rule.
-  - **Registration is currently the only declaration point, and that is a real
-    constraint rather than an accident of wording.** `heartbeatBody` is
-    `additionalProperties: false` and defines no `declaredCapabilities`, so a
-    heartbeat carrying capabilities is schema-invalid and both ends enforce the
-    schema. The control plane does have a heartbeat-side write for the column,
-    guarded so an empty array preserves the stored value, but it is unreachable
-    until the contract admits the field. The consequence for operators is the
-    part that matters: **upgrading an agent binary in place does not grant it a
-    new capability**, because the capability set was fixed at enrollment.
-    Re-declaration on heartbeat is the natural fix and is a contract change
-    (`supportedDnsProviders` is the precedent for a re-advertisable field). Until
-    then the only remedy is re-enrollment, which loses the agent's identity and
-    key pin, so this must not be documented as "upgrade, then run a renew job".
+  - **Registration was the only declaration point until 0.12.0.**
+    `heartbeatBody` now also admits `declaredCapabilities` (three-valued: omitted preserves, `[]` clears, non-empty replaces)
+    (`packages/contracts/certops/agent-protocol.schema.json`), so an in-place
+    agent binary upgrade can advertise a newly-supported capability without
+    re-enrollment. Before this, `heartbeatBody` was `additionalProperties: false`
+    and defined no `declaredCapabilities`, so a heartbeat carrying capabilities
+    was schema-invalid; the server-side write existed (guarded so an empty
+    array preserves the stored value) but was unreachable until the contract
+    admitted the field. Re-enrollment (which loses the agent's identity and
+    key pin) is no longer the only remedy for a capability gap; it remains the
+    remedy only for an agent build old enough to predate this addendum.
   - The first such capability is `evidence-claim-binding-v1`, required to claim
     `issue` jobs and `renew` jobs whose subject certificate is still
     `provisioning`. See
@@ -72,3 +70,49 @@ make an agent do arbitrary things.
     with the job's current claim is rejected outright. This preserves the
     agent-local authority principle above while making evidence attributable to a
     single attempt, which reconciliation now depends on.
+- Addendum (2026-08-03, release 0.12.0): `agentId` binding and diagnostic-agent
+  isolation (ADR-0012 decisions 2, 3, and 7; wire shapes in ADR-0003's own
+  addendum).
+  - **`agentId` becomes a signed field, staged.** `agentId` is now part of
+    `signed-dispatch-payload.schema.json` and is stamped into every dispatch
+    the server produces, but it is enforced additively behind
+    `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` (server) and a matching
+    agent-side gate, `checkAgentIdBinding`, which runs after signature
+    verification and payload parsing but rejects a job whose signed
+    `agentId` disagrees with the agent's own bound ID (ADR-0012 decision 3's
+    trusted-identity boundary). While the effective flag is false the gate is
+    absence-tolerant: a payload with no `agentId` at all still passes, so
+    agents built before this addendum keep working through the rollout. The
+    agent advertises `agent-id-binding-v1` only once the *effective* flag
+    value is true for it, not merely once the release default is true,
+    keeping the capability an honest signal of enforced behavior rather than
+    shipped-code-version.
+  - **Diagnostic agents are a distinct, immutable kind.** `certops_agents`
+    gained `agent_kind` (`normal` | `diagnostic`), assigned exactly once by
+    the server at row creation with no update path afterward: an agent
+    cannot be reclassified post-registration by either side. Diagnostic
+    agents exist to let an operator verify the signed-dispatch pipeline
+    end-to-end without a diagnostic run ever being able to claim, or be
+    mistaken for, real certificate work.
+  - **`protocol_smoke` is its own job operation**, disjoint from `issue` /
+    `renew` / `revoke`. `createCertificateJob` refuses to create a
+    `protocol_smoke` job outside the dedicated bootstrap path below, so
+    these jobs are excluded by construction, not by a downstream filter,
+    from certificate quotas, per-CA limits, approval flows, renewal alerts,
+    and fleet-health metrics.
+  - **`POST .../certops/agents/diagnostic-bootstrap`** is session-authenticated
+    (an operator action, not an agent-facing route) and single-use: it mints
+    a diagnostic agent, its credential, and its one `protocol_smoke` job in
+    one transaction, keyed non-replayably on `(workspace_id, request_id)`. A
+    retried request against an already-consumed key fails closed with
+    `diagnostic_bootstrap_already_consumed` rather than minting a second
+    agent or replaying the first credential.
+  - **Orphan retirement.** A diagnostic agent that never heartbeats again
+    (registration lost in transit, or the operator abandoning the flow) is
+    retired by a worker sweep: its credential is revoked and its bootstrap
+    record's agent/job references are cleared, so it does not linger as a
+    stale row an operator has to notice and clean up manually.
+  - Issuing a diagnostic-bootstrap credential requires the
+    `certops.agents.diagnose` permission, held at the `admin` role tier
+    (alongside the kill switch and renewal-profile management), and the
+    route is rate-limited like other credential-minting routes.
