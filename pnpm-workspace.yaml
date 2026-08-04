@@ -7,7 +7,7 @@ overrides:
   fast-xml-builder: 1.2.0
   fast-xml-parser: 5.7.3
   minimatch: 10.2.5
-  brace-expansion: 5.0.8
+  brace-expansion: 5.0.9
   path-to-regexp: 8.4.0
   yaml: 1.10.3
   js-yaml: 4.3.0
@@ -21,15 +21,16 @@ overrides:
   follow-redirects: 1.16.0
   postcss: 8.5.12
   qs: 6.15.2
-  ip-address: 10.2.0
+  ip-address: 10.4.0
   form-data: 4.0.6
   ws: 8.21.0
   # Low-severity DoS when an invalid limit silently disables size enforcement
   # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
   body-parser: 2.3.0
   # AJV pulls fast-uri; pin past GHSA-q3j6-qgpj-74h6 / GHSA-v39h-62p7-jpjc /
-  # GHSA-4c8g-83qw-93j6 / GHSA-v2hh-gcrm-f6hx (path traversal + host confusion).
-  fast-uri: 3.1.4
+  # GHSA-4c8g-83qw-93j6 / GHSA-v2hh-gcrm-f6hx / GHSA-7p8r-x3mc-p8w7 (path
+  # traversal + host confusion, including backslash-authority confusion).
+  fast-uri: 3.1.5
 
 allowBuilds:
   esbuild: true

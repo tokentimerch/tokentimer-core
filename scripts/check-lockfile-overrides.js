@@ -19,7 +19,7 @@ const REQUIRED_PINS = {
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
   minimatch: { "*": "10.2.5" },
-  "brace-expansion": { "*": "5.0.8" },
+  "brace-expansion": { "*": "5.0.9" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
   "js-yaml": { "*": "4.3.0" },
@@ -32,10 +32,11 @@ const REQUIRED_PINS = {
   "follow-redirects": { "*": "1.16.0" },
   postcss: { "*": "8.5.12" },
   qs: { "*": "6.15.2" },
-  "ip-address": { "*": "10.2.0" },
+  "ip-address": { "*": "10.4.0" },
   "form-data": { "*": "4.0.6" },
   "js-yaml": { "*": "4.3.0" },
   ws: { "*": "8.21.0" },
+  "fast-uri": { "*": "3.1.5" },
 };
 
 function fail(message) {
