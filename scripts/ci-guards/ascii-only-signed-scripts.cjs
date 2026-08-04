@@ -9,12 +9,6 @@
 // (https://learn.microsoft.com/en-us/troubleshoot/windows-client/system-management-components/signed-powershell-script-fails-hash-mismatch).
 // Every such file must therefore contain only ASCII bytes (0x00-0x7F):
 // no smart quotes, no accented characters, no box-drawing.
-//
-// IMPORTANT - this guard becomes meaningful once
-// packages/agent/reference/*.ps1 exist; until then it is a structural
-// no-op, not a proof of anything. If no .ps1 file exists yet under that
-// path, the glob below matches nothing and this guard passes vacuously
-// rather than failing for files that were never supposed to exist yet.
 
 const fs = require("node:fs");
 const path = require("node:path");
