@@ -896,7 +896,9 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (added.length > 0) parts.push(`Added: ${formatArrayValue(added)}`);
       if (removed.length > 0)
         parts.push(`Removed: ${formatArrayValue(removed)}`);
-      parts.push(`Capabilities: ${current.length > 0 ? formatArrayValue(current) : '(none)'}`);
+      parts.push(
+        `Capabilities: ${current.length > 0 ? formatArrayValue(current) : '(none)'}`
+      );
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
