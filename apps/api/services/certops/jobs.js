@@ -149,6 +149,14 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
 // yet. It is a control-plane-only operation: the agent never sees it, because
 // signed dispatch translates it to the wire-level action "renew" (identical
 // execution). See docs/adr/0008-certops-upfront-issuance.md.
+// "protocol_smoke" is a diagnostic-only operation (ADR-0012 decisions 2 and
+// 7): it never touches certificate material, is only ever assigned to an
+// agent whose server-assigned agent_kind is 'diagnostic' (see
+// agentDispatch.js claimJobs), and can only be created by the dedicated
+// diagnostic-bootstrap service (createCertificateJob refuses it below), so
+// it is excluded from certificate quotas, per-CA limits, approval flows,
+// and renewal alerts by construction rather than by an operation-name
+// exclusion list scattered across those subsystems.
 const JOB_OPERATIONS = Object.freeze([
   "issue",
   "renew",
@@ -156,6 +164,7 @@ const JOB_OPERATIONS = Object.freeze([
   "reload",
   "revoke",
   "noop",
+  "protocol_smoke",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -637,6 +646,10 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
   revoke: new Set(),
   noop: new Set(),
+  // Adds nothing certificate-shaped (packages/contracts/certops/
+  // protocol-smoke-payload.schema.json): a smoke job can never be mistaken
+  // for, or grown into, a certificate job.
+  protocol_smoke: new Set(),
 });
 
 // Fields an operation cannot function without. Only `issue` is covered today:
@@ -1338,6 +1351,40 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
+  // protocol_smoke is diagnostic-only and must never enter through the
+  // general-purpose job-creation path: allowing it here would let a
+  // protocol_smoke job pick up an approval gate, a per-CA cap check, a
+  // renewal-profile requirement, or a managed-certificate default the way
+  // any other operation can, defeating the exclusion this operation exists
+  // to have by construction. Only the diagnostic-bootstrap service
+  // (services/certops/diagnosticBootstrap.js) creates these jobs, via its
+  // own dedicated insert, and passes this flag explicitly.
+  if (operation === "protocol_smoke" && options.allowDiagnosticOperation !== true) {
+    throw serviceError(
+      "protocol_smoke jobs can only be created by the CertOps diagnostic-bootstrap service",
+      CERTOPS_JOB_OPERATION_INVALID,
+    );
+  }
+  // protocol_smoke is always dispatched dry-run (ADR-0012 decision 7): this
+  // is what makes assertModeAllowsTerminalStatus below reject a later
+  // "succeeded" report for this job, the same guard that already stops any
+  // other dry_run job from terminating that way. A caller cannot opt a
+  // smoke job into mode: "real" and reach a code path that never runs a
+  // real ACME order or filesystem write anyway.
+  if (
+    operation === "protocol_smoke" &&
+    options.mode !== undefined &&
+    options.mode !== null &&
+    options.mode !== "dry_run"
+  ) {
+    throw serviceError(
+      "protocol_smoke jobs must use mode: dry_run",
+      CERTOPS_JOB_MODE_INVALID,
+    );
+  }
+  if (operation === "protocol_smoke") {
+    options = { ...options, mode: "dry_run" };
+  }
   // Per-job approval gate: a job that requires human approval starts at
   // pending_approval and only reaches the claimable 'pending' status through
   // services/certops/jobApprovals.approveJob. The flag only chooses the

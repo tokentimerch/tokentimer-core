@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const {
@@ -51,6 +52,30 @@ const DEFAULT_CLOCK_DRIFT_ALERT_MS = 30_000;
 // showing a crashed/unresponsive agent as "active" between sweeps.
 const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 
+// ADR-0012 decision 7. agent_kind is server-assigned exactly once, at row
+// creation (registerAgent for 'normal', createDiagnosticBootstrap for
+// 'diagnostic'), and there is deliberately no code path that updates it on
+// an existing row.
+const AGENT_KIND_NORMAL = "normal";
+const AGENT_KIND_DIAGNOSTIC = "diagnostic";
+const AGENT_KINDS = Object.freeze([AGENT_KIND_NORMAL, AGENT_KIND_DIAGNOSTIC]);
+
+// ADR-0012 decision 7: a diagnostic agent that never heartbeats again (the
+// common case: an operator ran the reference client once to test
+// connectivity and closed it) must not linger in the fleet forever. Distinct
+// from DEFAULT_AGENT_OFFLINE_AFTER_MS, which only ever flips status to
+// 'offline' and never retires anything.
+const DEFAULT_DIAGNOSTIC_AGENT_INACTIVITY_TTL_MS = 24 * 60 * 60 * 1000;
+
+function diagnosticAgentInactivityTtlMs(env = process.env) {
+  const raw = Number.parseInt(
+    env.CERTOPS_DIAGNOSTIC_AGENT_INACTIVITY_TTL_MS,
+    10,
+  );
+  if (Number.isSafeInteger(raw) && raw > 0) return raw;
+  return DEFAULT_DIAGNOSTIC_AGENT_INACTIVITY_TTL_MS;
+}
+
 // ADR-0012 decision 17: capability-gated claim selection at
 // agentDispatch.js's claimJobs needs a freshness bound for
 // certops_agents.capabilities_updated_at. The bound is not an independently
@@ -85,6 +110,7 @@ const AGENT_SAFE_SELECT_FIELDS = `
   agent_version,
   protocol_version,
   status,
+  agent_kind,
   last_seen_at,
   clock_offset_ms,
   ntp_synced,
@@ -94,10 +120,42 @@ const AGENT_SAFE_SELECT_FIELDS = `
   retire_reason
 `;
 
+// Idempotent revocation guard for retireAgent below. Generates a fresh
+// cryptographically random value in Node (not SQL): gen_random_bytes()
+// needs the pgcrypto extension, which nothing in this schema's migrations
+// installs, whereas Node's own crypto module has no such dependency and the
+// value never needs to be derived from anything the database holds.
+function randomCredentialRevocationHash() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
 function serviceError(message, code) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+// Same BEGIN/COMMIT/ROLLBACK convention as agentDispatch.js and
+// diagnosticBootstrap.js's local helpers of the same name: a caller that
+// does not already hold a transaction (options.client) gets one of its own,
+// so reconcileDiagnosticAgentOrphan's writes commit or roll back together.
+async function withTransaction(dbPool, fn) {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is more useful to the caller.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function dateToIso(value) {
@@ -304,6 +362,9 @@ function agentMetadataFromRow(row, env = process.env) {
     agentVersion: row.agent_version,
     protocolVersion: row.protocol_version,
     status: row.status,
+    agentKind: row.agent_kind === AGENT_KIND_DIAGNOSTIC
+      ? AGENT_KIND_DIAGNOSTIC
+      : AGENT_KIND_NORMAL,
     lastSeenAt: dateToIso(row.last_seen_at),
     clockOffsetMs: row.clock_offset_ms === null ? null : Number(row.clock_offset_ms),
     ntpSynced: typeof row.ntp_synced === "boolean" ? row.ntp_synced : null,
@@ -527,6 +588,24 @@ async function retireAgent(options) {
             retired_at = NOW(),
             retired_by_user_id = $3,
             retire_reason = $4,
+            -- ADR-0012 decision 7: a retired diagnostic agent must fail at
+            -- authentication, not merely at authorization on individual
+            -- routes afterward - unlike the frozen-retired rule that
+            -- deliberately still lets a retired *normal* agent authenticate
+            -- so the route layer can answer 410 (see agent-auth.js).
+            -- credential_hash is NOT NULL + unique, so revocation overwrites
+            -- it with a fresh cryptographically random value rather than
+            -- NULL: validateAgentCredential's timingSafeEqual comparison
+            -- against a candidate hash derived from the agent's real
+            -- (unrecoverable, sha256-hashed-at-source) plaintext credential
+            -- can then never match. Both the status flip and the hash
+            -- overwrite are written by this one UPDATE, so there is no row
+            -- state, and no window, where status already reads 'retired'
+            -- but credential_hash still matches the live credential.
+            credential_hash = CASE
+              WHEN agent_kind = 'diagnostic' THEN $5
+              ELSE credential_hash
+            END,
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
@@ -537,6 +616,7 @@ async function retireAgent(options) {
       options.agentId,
       options.retiredBy || null,
       options.reason || null,
+      randomCredentialRevocationHash(),
     ],
   );
 
@@ -557,25 +637,274 @@ async function retireAgent(options) {
   return { agent: existing, retiredNow: false, fenced };
 }
 
+// ADR-0012 decision 7's four orphan-retirement branches, keyed on the
+// diagnostic agent's single protocol_smoke job. A lost registration
+// response, or an operator who ran the reference client once and never
+// heartbeated again, must not leave a permanently-active fleet row; but a
+// job that is genuinely mid-execution must not be yanked out from under a
+// live claim either. Exactly one of these four is safe to act on for any
+// given (agent, job) pair at the moment this function is called:
+//   pending_unclaimed  - nothing was ever leased: cancel the job and retire
+//                        the agent atomically, no claim to race.
+//   active_unexpired   - a client may be executing right now: defer.
+//   active_expired     - the lease reaper's terminalization, inlined here
+//                        instead of waited-for, then retire the agent.
+//   terminal           - the job already reached a terminal status (or the
+//                        transaction that would have created one never
+//                        happened): retire the agent normally.
+const DIAGNOSTIC_ORPHAN_BRANCH = Object.freeze({
+  PENDING_UNCLAIMED: "pending_unclaimed",
+  ACTIVE_UNEXPIRED: "active_unexpired",
+  ACTIVE_EXPIRED: "active_expired",
+  TERMINAL: "terminal",
+});
+
+const DIAGNOSTIC_AGENT_RETIRED_JOB_ERROR_CODE = "CERTOPS_DIAGNOSTIC_AGENT_RETIRED";
+
+function classifyDiagnosticOrphanBranch(job) {
+  if (!job) return DIAGNOSTIC_ORPHAN_BRANCH.TERMINAL;
+  if (job.status === "pending") {
+    return DIAGNOSTIC_ORPHAN_BRANCH.PENDING_UNCLAIMED;
+  }
+  if (job.status === "claimed" || job.status === "running") {
+    const leaseExpiresAt = job.lease_expires_at ? new Date(job.lease_expires_at) : null;
+    const leaseExpired = !leaseExpiresAt || leaseExpiresAt.getTime() <= Date.now();
+    return leaseExpired
+      ? DIAGNOSTIC_ORPHAN_BRANCH.ACTIVE_EXPIRED
+      : DIAGNOSTIC_ORPHAN_BRANCH.ACTIVE_UNEXPIRED;
+  }
+  return DIAGNOSTIC_ORPHAN_BRANCH.TERMINAL;
+}
+
+// Finds the one protocol_smoke job this diagnostic agent's bootstrap created.
+// FOR UPDATE so a concurrent claim (agentDispatch.js claimJobs) and this
+// reconciliation can never both believe they hold the deciding vote on the
+// same job row.
+async function loadAssignedProtocolSmokeJobForUpdate(db, workspaceId, agentId) {
+  const result = await db.query(
+    `SELECT id, status, lease_expires_at
+       FROM certificate_jobs
+      WHERE workspace_id = $1
+        AND assigned_agent_id = $2
+        AND operation = 'protocol_smoke'
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [workspaceId, agentId],
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Reconciles exactly one diagnostic agent against the four-branch state
+ * machine above, then retires it unless the branch is active_unexpired.
+ * Callers (the inactivity sweep, or a test) are expected to have already
+ * decided *that* this agent is a retirement candidate (e.g. past the 24-hour
+ * inactivity TTL); this function only decides *how* to retire it safely.
+ *
+ * Runs inside options.client's transaction when provided (the inactivity
+ * sweep runs it inside its own per-agent transaction so one agent's
+ * reconciliation can never block or partially apply another's). When no
+ * client is supplied, this function opens and owns its own transaction via
+ * withTransaction, so a direct caller (a route, a one-off script, a test)
+ * still gets the cancel-job-then-retire-agent sequence atomically instead
+ * of as separate autocommitted statements: a crash or error partway through
+ * must never leave the job cancelled but the agent still active, or the
+ * agent retired but the job untouched.
+ */
+async function reconcileDiagnosticAgentOrphan(options) {
+  if (!options.client) {
+    const dbPool = options.dbPool || pool;
+    return withTransaction(dbPool, (client) =>
+      reconcileDiagnosticAgentOrphan({ ...options, client }),
+    );
+  }
+
+  const db = options.client;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+
+  const agentResult = await db.query(
+    `SELECT id, agent_kind, status
+       FROM certops_agents
+      WHERE workspace_id = $1
+        AND id = $2
+      FOR UPDATE`,
+    [workspaceId, options.agentId],
+  );
+  const agentRow = agentResult.rows[0];
+  if (!agentRow) return { notFound: true };
+  if (agentRow.agent_kind !== AGENT_KIND_DIAGNOSTIC) {
+    return { notApplicable: true, reason: "agent_kind is not diagnostic" };
+  }
+  if (agentRow.status === "retired") {
+    return { alreadyRetired: true };
+  }
+
+  const job = await loadAssignedProtocolSmokeJobForUpdate(
+    db,
+    workspaceId,
+    options.agentId,
+  );
+  const branch = classifyDiagnosticOrphanBranch(job);
+
+  if (branch === DIAGNOSTIC_ORPHAN_BRANCH.ACTIVE_UNEXPIRED) {
+    return { deferred: true, branch, jobId: job ? job.id : null };
+  }
+
+  const reason =
+    options.reason ||
+    "Diagnostic agent retired by the inactivity sweep (ADR-0012 decision 7)";
+
+  if (branch === DIAGNOSTIC_ORPHAN_BRANCH.PENDING_UNCLAIMED) {
+    // Nothing was ever leased, so there is no in-flight claim to race:
+    // cancel-and-retire is safe to do unconditionally in this transaction.
+    await db.query(
+      `UPDATE certificate_jobs
+          SET status = 'cancelled',
+              lease_expires_at = NOW(),
+              error_code = $2,
+              error_message = $3,
+              completed_at = COALESCE(completed_at, NOW()),
+              canceled_at = COALESCE(canceled_at, NOW()),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [job.id, DIAGNOSTIC_AGENT_RETIRED_JOB_ERROR_CODE, reason],
+    );
+  } else if (branch === DIAGNOSTIC_ORPHAN_BRANCH.ACTIVE_EXPIRED) {
+    // Same terminalization the lease reaper applies to any expired lease
+    // (claimed -> cancelled, running -> orphaned_unknown_effect), inlined
+    // here rather than waited-for so retirement is not blocked on the next
+    // reaper pass. protocol_smoke is excluded from renewal alerting
+    // (RENEWAL_ALERTING_OPERATIONS), so no outbox alert is owed here.
+    const terminalStatus =
+      job.status === "running" ? "orphaned_unknown_effect" : "cancelled";
+    await db.query(
+      `UPDATE certificate_jobs
+          SET status = $2,
+              needs_operator_reconciliation = ($2 = 'orphaned_unknown_effect'),
+              reconciliation_reason = CASE WHEN $2 = 'orphaned_unknown_effect' THEN $3 ELSE NULL END,
+              lease_expires_at = NOW(),
+              error_code = $4,
+              error_message = $3,
+              completed_at = COALESCE(completed_at, NOW()),
+              canceled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(canceled_at, NOW()) ELSE canceled_at END,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [
+        job.id,
+        terminalStatus,
+        reason,
+        terminalStatus === "orphaned_unknown_effect"
+          ? "CERTOPS_DIAGNOSTIC_AGENT_RETIRED_UNKNOWN_EFFECT"
+          : DIAGNOSTIC_AGENT_RETIRED_JOB_ERROR_CODE,
+      ],
+    );
+  }
+  // TERMINAL: the job (if any) is already in a terminal status; nothing to
+  // do to it before retiring the agent.
+
+  const retireResult = await retireAgent({
+    client: db,
+    workspaceId,
+    agentId: options.agentId,
+    retiredBy: options.retiredBy ?? null,
+    reason,
+  });
+
+  return {
+    retired: true,
+    branch,
+    jobId: job ? job.id : null,
+    agent: retireResult.agent,
+  };
+}
+
+/**
+ * The 24-hour inactivity sweep itself: finds every non-retired diagnostic
+ * agent whose last_seen_at is older than the TTL and reconciles each one in
+ * its own transaction via reconcileDiagnosticAgentOrphan. A freshly
+ * registered diagnostic agent that has never heartbeated has last_seen_at
+ * set at INSERT time (see diagnosticBootstrap.js), so it is timed from
+ * registration, not left permanently exempt for lack of a heartbeat.
+ */
+async function sweepInactiveDiagnosticAgents(options = {}) {
+  const dbPool = options.dbPool || pool;
+  const ttlMs = diagnosticAgentInactivityTtlMs(options.env);
+  const batchSize = Number.isSafeInteger(options.batchSize) && options.batchSize > 0
+    ? options.batchSize
+    : 200;
+
+  const candidates = await dbPool.query(
+    `SELECT id, workspace_id
+       FROM certops_agents
+      WHERE agent_kind = 'diagnostic'
+        AND status <> 'retired'
+        AND last_seen_at < NOW() - make_interval(secs => $1)
+      ORDER BY last_seen_at ASC
+      LIMIT $2`,
+    [Math.floor(ttlMs / 1000), batchSize],
+  );
+
+  const results = [];
+  for (const row of candidates.rows) {
+    const client = await dbPool.connect();
+    try {
+      await client.query("BEGIN");
+      const outcome = await reconcileDiagnosticAgentOrphan({
+        client,
+        workspaceId: row.workspace_id,
+        agentId: row.id,
+        reason:
+          "Diagnostic agent exceeded its 24-hour inactivity TTL (ADR-0012 decision 7)",
+      });
+      await client.query("COMMIT");
+      results.push({ agentId: row.id, workspaceId: row.workspace_id, ...outcome });
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // The original error is more useful to the caller.
+      }
+      results.push({
+        agentId: row.id,
+        workspaceId: row.workspace_id,
+        error: error.message,
+      });
+    } finally {
+      client.release();
+    }
+  }
+  return results;
+}
+
 module.exports = {
+  AGENT_KIND_DIAGNOSTIC,
+  AGENT_KIND_NORMAL,
+  AGENT_KINDS,
   CERTOPS_AGENT_INVALID,
   CERTOPS_AGENT_NOT_FOUND,
   CERTOPS_AGENT_RETIRE_REASON_INVALID,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,
   DEFAULT_CERTOPS_CAPABILITY_FRESHNESS_MS,
+  DEFAULT_DIAGNOSTIC_AGENT_INACTIVITY_TTL_MS,
+  DIAGNOSTIC_ORPHAN_BRANCH,
   certopsCapabilityFreshnessMs,
   computeAgentCompatibility,
   countActivelyLeasedJobs,
+  diagnosticAgentInactivityTtlMs,
   fenceAgentInFlightWork,
   getAgentById,
   listAgents,
   normalizeRequiredRetireReason,
   readCompatibilityConfig,
+  reconcileDiagnosticAgentOrphan,
   retireAgent,
+  sweepInactiveDiagnosticAgents,
 };
 
 module.exports._test = {
   agentMetadataFromRow,
+  classifyDiagnosticOrphanBranch,
   compareSemver,
   computeAgentCompatibility,
   normalizeRequiredRetireReason,

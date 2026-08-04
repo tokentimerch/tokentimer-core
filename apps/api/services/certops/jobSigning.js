@@ -351,6 +351,10 @@ async function acknowledgeSigningKey(options = {}) {
  * Retire the previous (retiring) signing key once the active fleet has
  * acknowledged the replacement, or when an operator forces incomplete
  * rotation after a grace period.
+ *
+ * The fleet count excludes diagnostic-kind agents (ADR-0012 decision 7):
+ * they are not part of production certificate work, so they must not be
+ * able to stall or distort a real rotation's completion gate.
  */
 async function completeSigningKeyRotation(options = {}) {
   const db = options.client || pool;
@@ -371,7 +375,8 @@ async function completeSigningKeyRotation(options = {}) {
   const fleet = await db.query(
     `SELECT COUNT(*)::int AS active_agents
        FROM certops_agents
-      WHERE status = 'active'`,
+      WHERE status = 'active'
+        AND agent_kind <> 'diagnostic'`,
   );
   const acks = await db.query(
     `SELECT COUNT(DISTINCT agent_id)::int AS ack_count
@@ -441,7 +446,8 @@ async function getSigningKeyRotationStatus(options = {}) {
     const fleet = await db.query(
       `SELECT COUNT(*)::int AS active_agents
          FROM certops_agents
-        WHERE status = 'active'`,
+        WHERE status = 'active'
+          AND agent_kind <> 'diagnostic'`,
     );
     const acks = await db.query(
       `SELECT COUNT(DISTINCT agent_id)::int AS ack_count
