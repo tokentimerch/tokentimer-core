@@ -146,7 +146,13 @@ readonly TOKENTIMER_CLAIM_PATH="/api/v1/certops/agent/jobs/claim"
 readonly TOKENTIMER_RESULTS_PATH="/api/v1/certops/agent/jobs/results"
 
 readonly TOKENTIMER_MAX_CLAIM_RESPONSE_BYTES=1048576
-readonly TOKENTIMER_MAX_ENCODED_PAYLOAD_CHARS=65536
+# ADR-0012's ninth amendment (2026-08-04): 65536 was the tightest value that
+# still decodes to exactly the 49152-byte decoded bound, which made the
+# decoded-byte check below mathematically unreachable. 98304 gives real
+# headroom (floor(98304/4)*3 = 73728 decoded bytes) so a payload between the
+# two bounds is actually rejected by the decoded-byte check that enforces the
+# real content-size policy, matching packages/agent/src/signing/index.js.
+readonly TOKENTIMER_MAX_ENCODED_PAYLOAD_CHARS=98304
 readonly TOKENTIMER_MAX_DECODED_PAYLOAD_BYTES=49152
 readonly TOKENTIMER_SIGNATURE_DECODED_BYTES=64
 readonly TOKENTIMER_DEFAULT_CLOCK_SKEW_TOLERANCE_S=300
