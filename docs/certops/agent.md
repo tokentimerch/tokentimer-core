@@ -971,6 +971,15 @@ Layers, from outermost in:
   detector (`apps/api/utils/secretMaterial.js`) before it leaves the module.
   Private key PEM buffers are zeroized after writes (documented JS limit:
   KeyObject/OpenSSL internal memory cannot be zeroized from JS).
+- **Memory residency**: the agent does not call `mlock`/`VirtualLock` and
+  makes no locked-memory guarantee anywhere in this document; pinning one
+  Node `Buffer` would be false assurance against the copies the runtime,
+  OpenSSL, and the OS itself make elsewhere in the path. Key bytes can still
+  reach the OS swap file/pagefile for as long as the process holds them
+  before zeroization. Operators handling private keys on this host should
+  enable OS-level swap/pagefile encryption (for example, an encrypted swap
+  partition on Linux or BitLocker-protected pagefile on Windows) to cover
+  this residual risk.
 - **Evidence**: `buildEvidenceItem`/`buildEvidenceBody` reject values
   containing private key material and defensively redact generic secret
   patterns; metadata names must match the schema's deny-pattern (no

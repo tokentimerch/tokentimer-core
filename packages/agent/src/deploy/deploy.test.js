@@ -681,6 +681,69 @@ describe("deployCertificateAndKey", () => {
     assert.equal(fs.readFileSync(keyPath, "utf8"), OTHER_KEY_PEM);
     assert.equal(fs.existsSync(certPath), false);
   });
+
+  it("zeroizes the existingKey buffer in memory even when the deploy fails partway through", async () => {
+    // Regression test: existingKey is the Buffer holding the PREVIOUS live
+    // key's bytes (read for backup/idempotency purposes), not the buffer
+    // returned to any caller. It must never survive a failed deploy in
+    // memory, exactly as it is scrubbed on the success path. This test
+    // reads the actual bytes of the buffer the module operated on -- it
+    // does not just check that some zeroize function was invoked.
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "server.crt");
+    const keyPath = path.join(dir, "server.key");
+    const stagedKeyPath = path.join(dir, "staged.key");
+    fs.writeFileSync(certPath, OTHER_CERT_PEM, { mode: 0o600 });
+    fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagedKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+    const resolvedKeyPath = fs.realpathSync(keyPath);
+
+    const realFsp = require("node:fs/promises");
+    let capturedExistingKeyBuffer = null;
+
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagedKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        readFile: async (filePath, ...rest) => {
+          const buf = await realFsp.readFile(filePath, ...rest);
+          if (
+            Buffer.isBuffer(buf) &&
+            path.resolve(String(filePath)) === resolvedKeyPath
+          ) {
+            // Capture the exact buffer instance the module reads the
+            // existing live key into, so we can inspect its bytes after
+            // the deploy has failed and unwound.
+            capturedExistingKeyBuffer = buf;
+          }
+          return buf;
+        },
+        // Simulates a downstream failure (e.g. the atomic rename step)
+        // that happens AFTER the existing key has already been loaded
+        // into memory -- the failure path this regression protects.
+        rename: () => Promise.reject(new Error("injected downstream failure after key load")),
+      },
+    });
+
+    assert.equal(result.deployed, false);
+    assert.equal(result.stage, "write");
+    assert.ok(capturedExistingKeyBuffer, "test setup: existingKey buffer was not captured");
+    assert.ok(capturedExistingKeyBuffer.length > 0);
+    assert.ok(
+      capturedExistingKeyBuffer.every((byte) => byte === 0),
+      "existingKey buffer must be zeroized in memory after a failed deploy, not just on success",
+    );
+    // Live file on disk is untouched by the in-memory zeroize (rollback
+    // restores it from the backup independently).
+    assert.equal(fs.readFileSync(keyPath, "utf8"), OTHER_KEY_PEM);
+  });
 });
 
 describe("deployCertificate chainPath", () => {
