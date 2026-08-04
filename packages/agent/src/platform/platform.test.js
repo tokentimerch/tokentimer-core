@@ -436,6 +436,7 @@ describe("platform: permission verification", () => {
     );
   });
 
+  // skip-reason: no-host - requires a real POSIX filesystem
   it("refuses a group/other-readable file on POSIX", { skip: IS_WIN32 }, () => {
     const filePath = targetFile();
     fs.chmodSync(filePath, 0o644);
@@ -449,6 +450,7 @@ describe("platform: permission verification", () => {
     );
   });
 
+  // skip-reason: no-host - requires a real Windows filesystem ACL
   it("enforces a real restricted ACL end to end on win32", { skip: !IS_WIN32 }, () => {
     const filePath = targetFile();
     platform.applyRestrictivePermissions(filePath);

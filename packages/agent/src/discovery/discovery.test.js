@@ -303,6 +303,8 @@ describe("discoverCertificatesInDirectory", () => {
     try {
       fs.symlinkSync(targetPath, linkPath, "file");
     } catch (err) {
+      // skip-reason: no-host - symlink creation is unavailable on this host
+      // (commonly Windows without Developer Mode / elevated privileges).
       t.skip(`symlink creation is unavailable: ${err.code || err.message}`);
       return;
     }
@@ -336,6 +338,8 @@ describe("discoverCertificatesInDirectory", () => {
 
   it(
     "parses a real self-signed certificate and extracts public fields, normalizing the fingerprint",
+    // skip-reason: no-host - needs a real openssl binary on PATH, not
+    // available on every CI/dev host.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const dir = makeTempDir();
@@ -363,6 +367,8 @@ describe("discoverCertificatesInDirectory", () => {
 
   it(
     "never reads private key bytes into the returned certificate entry, even when it peeks the key",
+    // skip-reason: no-host - needs a real openssl binary on PATH, not
+    // available on every CI/dev host.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const dir = makeTempDir();

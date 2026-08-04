@@ -41,12 +41,44 @@ function pct(hit, found) {
   return (hit / found) * 100;
 }
 
+// Loads per-package floors from scripts/coverage-floors.cjs (the
+// `why:`-commented, guarded config file; see
+// scripts/ci-guards/coverage-floor-why.cjs) when --config and --package
+// are both given. Explicit --lines/--branches/--functions/--statements
+// flags still take precedence when present, so direct ad hoc invocations
+// keep working unchanged.
+function loadConfigFloors() {
+  const configPath = argValue("--config");
+  const pkg = argValue("--package");
+  if (!configPath || !pkg) return null;
+  const resolved = path.resolve(configPath);
+  const config = require(resolved);
+  const floors = config[pkg];
+  if (!floors) {
+    console.error(
+      `coverage-check: package "${pkg}" not found in ${resolved} (available: ${Object.keys(config).join(", ")})`,
+    );
+    process.exit(1);
+  }
+  return floors;
+}
+
 function main() {
   const lcovPath = path.resolve(argValue("--lcov", "coverage/lcov.info"));
-  const minLines = parseNum("--lines", 0);
-  const minBranches = parseNum("--branches", 0);
-  const minFunctions = parseNum("--functions", 0);
-  const minStatements = parseNum("--statements", minLines);
+  const configFloors = loadConfigFloors();
+  const minLines = parseNum("--lines", configFloors ? configFloors.lines : 0);
+  const minBranches = parseNum(
+    "--branches",
+    configFloors ? configFloors.branches : 0,
+  );
+  const minFunctions = parseNum(
+    "--functions",
+    configFloors ? configFloors.functions : 0,
+  );
+  const minStatements = parseNum(
+    "--statements",
+    configFloors ? configFloors.statements : minLines,
+  );
 
   if (!fs.existsSync(lcovPath)) {
     console.error(`coverage-check: lcov file not found at ${lcovPath}`);

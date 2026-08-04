@@ -176,6 +176,7 @@ describe("generateKeyPairToFile", () => {
     assert.throws(() => generateKeyPairToFile({}), /keyPath must be a non-empty string/);
   });
 
+  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
   it("sets 0600 on the key file and 0700 on the parent dir on non-win32", { skip: IS_WIN32 }, () => {
     const dir = makeTempKeyDir();
     const keyPath = path.join(dir, "perm.key.pem");
@@ -203,6 +204,8 @@ describe("generateKeyPairToFile", () => {
     assert.ok(fs.existsSync(second.stagedKeyPath));
   });
 
+  // skip-reason: no-host - symlink creation on win32 needs Developer Mode
+  // or elevated privileges, not reliably available in CI.
   it("refuses to write through a symlink at the key path", { skip: IS_WIN32 }, () => {
     const dir = makeTempKeyDir();
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -491,6 +494,8 @@ describe("generateCsr", () => {
     }
   });
 
+  // skip-reason: no-host - needs a real openssl binary on PATH, not
+  // available on every CI/dev host.
   it("verifies the CSR with openssl when available", { skip: !opensslAvailable() }, () => {
     const dir = makeTempKeyDir();
     const keyPath = path.join(dir, "openssl.key.pem");

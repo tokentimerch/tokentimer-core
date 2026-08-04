@@ -1,0 +1,79 @@
+{
+  "generatedBy": "scripts/generate-golden-fixtures.cjs",
+  "note": "Do not hand-edit. Regenerate with `node scripts/generate-golden-fixtures.cjs --update-golden`. Every byte in this file is deterministically derived from seed and pinnedClockIso below; the consumer test re-derives and byte-compares.",
+  "seed": "tokentimer-certops-envelope-v2-golden-fixtures-v1",
+  "pinnedClockIso": "2025-01-01T00:00:00.000Z",
+  "pinnedSigningKeyId": "signing-key-golden-v2-fixture-a",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA6sD768Z8h6C8N4C7nN15OR8PVcBhfXZdX4dNEkCP8xE=\n-----END PUBLIC KEY-----\n",
+  "job": {
+    "jobId": "golden-fixture-job-1",
+    "workspaceId": "golden-fixture-workspace-1",
+    "agentId": "golden-fixture-agent-1",
+    "issuedAt": "2025-01-01T00:00:00.000Z",
+    "signingKeyId": "signing-key-golden-v2-fixture-a"
+  },
+  "vectors": [
+    {
+      "name": "valid",
+      "description": "well-formed v2 envelope signed by the pinned key",
+      "envelope": {
+        "envelopeVersion": 2,
+        "payloadB64": "eyJqb2JJZCI6ImdvbGRlbi1maXh0dXJlLWpvYi0xIiwid29ya3NwYWNlSWQiOiJnb2xkZW4tZml4dHVyZS13b3Jrc3BhY2UtMSIsImFnZW50SWQiOiJnb2xkZW4tZml4dHVyZS1hZ2VudC0xIiwiaXNzdWVkQXQiOiIyMDI1LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJzaWduaW5nS2V5SWQiOiJzaWduaW5nLWtleS1nb2xkZW4tdjItZml4dHVyZS1hIn0=",
+        "signatureB64": "M2UFxYUk3ORHoMB+skiwQ8Ln3op4QQB+Mfz6QG9pWMMqKbVUuqkXlUgHLERLELw0/hW5D7mNGbiLYrteg58wBA==",
+        "signingKeyId": "signing-key-golden-v2-fixture-a"
+      },
+      "expected": {
+        "allowed": true,
+        "job": {
+          "jobId": "golden-fixture-job-1",
+          "workspaceId": "golden-fixture-workspace-1",
+          "agentId": "golden-fixture-agent-1",
+          "issuedAt": "2025-01-01T00:00:00.000Z",
+          "signingKeyId": "signing-key-golden-v2-fixture-a"
+        }
+      }
+    },
+    {
+      "name": "tampered-payload",
+      "description": "payloadB64 replaced after signing; signature no longer matches",
+      "envelope": {
+        "envelopeVersion": 2,
+        "payloadB64": "eyJqb2JJZCI6ImdvbGRlbi1maXh0dXJlLWpvYi1UQU1QRVJFRCIsIndvcmtzcGFjZUlkIjoiZ29sZGVuLWZpeHR1cmUtd29ya3NwYWNlLTEiLCJhZ2VudElkIjoiZ29sZGVuLWZpeHR1cmUtYWdlbnQtMSIsImlzc3VlZEF0IjoiMjAyNS0wMS0wMVQwMDowMDowMC4wMDBaIiwic2lnbmluZ0tleUlkIjoic2lnbmluZy1rZXktZ29sZGVuLXYyLWZpeHR1cmUtYSJ9",
+        "signatureB64": "M2UFxYUk3ORHoMB+skiwQ8Ln3op4QQB+Mfz6QG9pWMMqKbVUuqkXlUgHLERLELw0/hW5D7mNGbiLYrteg58wBA==",
+        "signingKeyId": "signing-key-golden-v2-fixture-a"
+      },
+      "expected": {
+        "allowed": false,
+        "rejectionReason": "job_integrity_failed"
+      }
+    },
+    {
+      "name": "tampered-signature",
+      "description": "valid payload, signatureB64 corrupted by flipping its last byte",
+      "envelope": {
+        "envelopeVersion": 2,
+        "payloadB64": "eyJqb2JJZCI6ImdvbGRlbi1maXh0dXJlLWpvYi0xIiwid29ya3NwYWNlSWQiOiJnb2xkZW4tZml4dHVyZS13b3Jrc3BhY2UtMSIsImFnZW50SWQiOiJnb2xkZW4tZml4dHVyZS1hZ2VudC0xIiwiaXNzdWVkQXQiOiIyMDI1LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJzaWduaW5nS2V5SWQiOiJzaWduaW5nLWtleS1nb2xkZW4tdjItZml4dHVyZS1hIn0=",
+        "signatureB64": "M2UFxYUk3ORHoMB+skiwQ8Ln3op4QQB+Mfz6QG9pWMMqKbVUuqkXlUgHLERLELw0/hW5D7mNGbiLYrteg58w+w==",
+        "signingKeyId": "signing-key-golden-v2-fixture-a"
+      },
+      "expected": {
+        "allowed": false,
+        "rejectionReason": "job_integrity_failed"
+      }
+    },
+    {
+      "name": "wrong-key",
+      "description": "signed by a different Ed25519 key than the one pinned under this signingKeyId",
+      "envelope": {
+        "envelopeVersion": 2,
+        "payloadB64": "eyJqb2JJZCI6ImdvbGRlbi1maXh0dXJlLWpvYi0xIiwid29ya3NwYWNlSWQiOiJnb2xkZW4tZml4dHVyZS13b3Jrc3BhY2UtMSIsImFnZW50SWQiOiJnb2xkZW4tZml4dHVyZS1hZ2VudC0xIiwiaXNzdWVkQXQiOiIyMDI1LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJzaWduaW5nS2V5SWQiOiJzaWduaW5nLWtleS1nb2xkZW4tdjItZml4dHVyZS1hIn0=",
+        "signatureB64": "/kedVHzYxf3SZkW2tu+wftbcQjgVmPX5MKkT2rXwB1wLEt/72yi0oaizDb4VXHzn4cbMq/sWtJDhiRNgtZPTBw==",
+        "signingKeyId": "signing-key-golden-v2-fixture-a"
+      },
+      "expected": {
+        "allowed": false,
+        "rejectionReason": "job_integrity_failed"
+      }
+    }
+  ]
+}

@@ -140,6 +140,7 @@ describe("persistence", () => {
     assert.equal(replayed.rejectionReason, REPLAY_REJECTION_REASON);
   });
 
+  // skip-reason: no-host - POSIX file mode bits are not meaningful on win32.
   it("writes the store file with 0600 permissions on non-win32", { skip: IS_WIN32 }, () => {
     const storePath = makeStorePath();
     const cache = createReplayCache({ storePath, now: () => NOW_MS });
