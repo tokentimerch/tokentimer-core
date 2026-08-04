@@ -320,6 +320,20 @@ jobs:
           API_BASE_URL: http://localhost:4000
         run: node --test tests/contract/api-endpoints.test.js
 
+      - name: Run CertOps post-migration integrity check against the seeded database
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_NAME: tokentimer
+          DB_USER: tokentimer
+          DB_PASSWORD: password
+        # --allow-missing-tables is temporary: the trust-anchor schema this
+        # script's assertions 1 and 2 target has not landed in this branch
+        # yet, so those two assertions report "skip" rather than pass/fail.
+        # Drop the flag once that schema lands, so a skip here goes back to
+        # failing the build the way every other assertion already does.
+        run: pnpm run certops:integrity-check -- --allow-missing-tables
+
       - name: Run integration tests (Mocha + JUnit)
         env:
           TEST_API_URL: http://localhost:4000

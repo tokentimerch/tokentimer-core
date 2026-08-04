@@ -313,6 +313,7 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
 
   it("reaches Running and survives a Stop-Service / Start-Service cycle", (t) => {
     if (skipReason) {
+      // skip-reason: no-host - requires an elevated Windows host to install a real service
       t.skip(skipReason);
       return;
     }
