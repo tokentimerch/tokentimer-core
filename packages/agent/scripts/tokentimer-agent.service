@@ -48,6 +48,20 @@ RestartSec=5
 RestartPreventExitStatus=86
 SuccessExitStatus=86
 
+# Core dumps disabled (ADR-0012 decision 19): both the soft AND hard
+# RLIMIT_CORE must be 0 before the Node process starts handling key
+# material, authoritatively, regardless of this distribution's
+# core_pattern/ulimit -c default. Setting only the soft limit (e.g. via a
+# ulimit call in a wrapper script) is not equivalent: a process may raise
+# its own soft limit back up to the hard ceiling at any time, so an
+# ambient or wrapper-set soft-only 0 with hard left at its distribution
+# default (commonly "unlimited") is not the guarantee this decision
+# requires. LimitCORE=0 sets systemd's own default of "soft=hard" to 0,
+# closing that gap before exec. Verified by reading the running process's
+# /proc/<pid>/limits "Max core file size" row, not by inspecting this unit
+# file alone -- see KEY-03 in the manual acceptance checklist.
+LimitCORE=0
+
 # Hardening. ProtectSystem=strict makes the whole filesystem read-only for
 # the service except ReadWritePaths. The base unit only opens the state dir
 # (which also covers ACME tool state under state/acme/); install-agent.sh
