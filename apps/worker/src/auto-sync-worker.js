@@ -26,7 +26,6 @@ import {
   formatImportErrorDetail,
   recordAutoSyncCompleted,
   recordAutoSyncFailure,
-  recordAutoSyncRecovery,
   summarizeImportErrors,
 } from "./shared/autoSyncFailure.js";
 
@@ -439,17 +438,6 @@ async function runAutoSync() {
             error: syncError,
             importErrors,
           });
-
-          // A 'success' run fully recovers the integration; reset the
-          // consecutive-failure counter and clear any open bell incident.
-          // 'partial' runs leave the counter untouched (not a full failure,
-          // but not a clean recovery either).
-          if (syncStatus === "success") {
-            await recordAutoSyncRecovery(client, {
-              configId: id,
-              workspaceId: workspace_id,
-            });
-          }
 
           cAutoSync.inc({ provider, status: syncStatus });
           cAutoSyncItems.inc({ provider }, importedCount);

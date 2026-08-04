@@ -2808,61 +2808,6 @@ const migrations = [
   },
   {
     version: 39,
-    name: "operational_notifications_schema",
-    sql: `
-      -- Operational failure notifications (delivery blocked/degraded, auto-sync
-      -- failures, ...) surfaced in the in-app bell and, for critical severity,
-      -- escalated by email. Producers raise/resolve rows by a stable
-      -- dedupe_key scoped to the still-open incident; the partial unique index
-      -- collapses repeated raises for the same open incident into one row
-      -- (updated in place) instead of creating duplicates, while still
-      -- allowing a new row once the prior incident of the same key resolves.
-      CREATE TABLE IF NOT EXISTS operational_notifications (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
-        category TEXT NOT NULL CHECK (category IN ('delivery', 'auto_sync')),
-        type TEXT NOT NULL,
-        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
-        dedupe_key TEXT NOT NULL,
-        title TEXT NOT NULL,
-        message TEXT NULL,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        resolved_at TIMESTAMPTZ NULL,
-        email_sent_at TIMESTAMPTZ NULL
-      );
-
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_operational_notifications_open_dedupe
-        ON operational_notifications(workspace_id, dedupe_key)
-        WHERE resolved_at IS NULL;
-      CREATE INDEX IF NOT EXISTS idx_operational_notifications_workspace_created
-        ON operational_notifications(workspace_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_operational_notifications_workspace_unresolved
-        ON operational_notifications(workspace_id, resolved_at, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_operational_notifications_email_pending
-        ON operational_notifications(severity, email_sent_at)
-        WHERE severity = 'critical' AND email_sent_at IS NULL AND resolved_at IS NULL;
-
-      -- Per-user read state for the bell. A notification row can be read
-      -- independently by every workspace member who can see it.
-      CREATE TABLE IF NOT EXISTS operational_notification_reads (
-        notification_id UUID NOT NULL REFERENCES operational_notifications(id) ON DELETE CASCADE,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (notification_id, user_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_operational_notification_reads_user
-        ON operational_notification_reads(user_id);
-
-      -- Consecutive auto-sync failure counter, reset to 0 on success.
-      ALTER TABLE auto_sync_configs
-        ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0;
-    `,
-  },
-  {
-    version: 40,
     name: "certops_agents_capabilities_freshness_epoch",
     sql: `
       -- ADR-0012 decision 17: certops_agents.declared_capabilities had no
@@ -2899,7 +2844,7 @@ const migrations = [
     `,
   },
   {
-    version: 41,
+    version: 40,
     name: "certops_diagnostic_agent_isolation",
     sql: `
       -- Diagnostic-agent isolation surface (ADR-0012 decisions 2 and 7).
@@ -2942,7 +2887,7 @@ const migrations = [
     `,
   },
   {
-    version: 42,
+    version: 41,
     name: "certops_diagnostic_bootstrap_requests",
     sql: `
       -- Single-use, non-replayable record for the session-authenticated
@@ -2990,7 +2935,7 @@ const migrations = [
     `,
   },
   {
-    version: 43,
+    version: 42,
     name: "certops_windows_iis_target_descriptors",
     sql: `
       -- Windows execution surface (ADR-0012 decisions 1, 9, 10): an IIS
@@ -3039,7 +2984,7 @@ const migrations = [
     `,
   },
   {
-    version: 44,
+    version: 43,
     name: "certops_trust_anchors",
     sql: `
       -- Trust-anchor persistence shape (ADR-0012 decisions 4-6), groundwork
@@ -3153,7 +3098,7 @@ const migrations = [
     `,
   },
   {
-    version: 45,
+    version: 44,
     name: "certops_trust_anchor_jobs",
     sql: `
       -- Trust-anchor operations (ADR-0012 decisions 4-6 and 14): a job that
@@ -3167,7 +3112,7 @@ const migrations = [
       -- managed_certificates.id.
       -- This re-adds certificate_jobs_operation_check with the union of
       -- every operation any migration has ever named, not just this one's:
-      -- migration 41 added 'protocol_smoke' to the same constraint, and a
+      -- migration 40 added 'protocol_smoke' to the same constraint, and a
       -- DROP/ADD here that only listed this migration's own two new values
       -- would silently regress that support the moment this migration runs
       -- after it.

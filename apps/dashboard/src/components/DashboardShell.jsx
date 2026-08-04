@@ -197,9 +197,6 @@ export default function DashboardShell({
   workspaceLabel,
   onWorkspaceSelect,
   dashboardNotifications = [],
-  dashboardUnreadCount,
-  onNotificationClick,
-  onMarkAllNotificationsRead,
   onLogout,
   onAccountClick,
   isViewer = false,
@@ -896,9 +893,7 @@ export default function DashboardShell({
 
             <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
-                {(dashboardUnreadCount !== undefined
-                  ? dashboardUnreadCount > 0
-                  : dashboardNotifications.length > 0) && (
+                {dashboardNotifications.length > 0 && (
                   <Box
                     position='absolute'
                     top='7px'
@@ -930,70 +925,34 @@ export default function DashboardShell({
                       </Text>
                     </Box>
                   ) : (
-                    <>
-                      {typeof onMarkAllNotificationsRead === 'function' && (
-                        <Box
-                          px={3}
-                          py={1.5}
-                          borderBottom='1px solid'
-                          borderColor={borderColor}
+                    dashboardNotifications.map(notification => {
+                      const isClickable = Boolean(notification?.href);
+                      return (
+                        <MenuItem
+                          key={notification.id}
+                          onClick={() => {
+                            if (notification?.href) navigate(notification.href);
+                          }}
+                          cursor={isClickable ? 'pointer' : 'default'}
+                          {...(isClickable
+                            ? userMenuItemStyles
+                            : inactiveMenuItemStyles)}
                         >
-                          <Text
-                            as='button'
-                            fontSize='xs'
-                            fontWeight='medium'
-                            color={mutedTextColor}
-                            onClick={onMarkAllNotificationsRead}
-                            _hover={{ textDecoration: 'underline' }}
-                          >
-                            Mark all as read
-                          </Text>
-                        </Box>
-                      )}
-                      {dashboardNotifications.map(notification => {
-                        const isClickable = Boolean(notification?.href);
-                        const isUnread = notification?.isRead === false;
-                        return (
-                          <MenuItem
-                            key={notification.id}
-                            onClick={() => {
-                              if (typeof onNotificationClick === 'function') {
-                                onNotificationClick(notification);
-                              } else if (notification?.href) {
-                                navigate(notification.href);
-                              }
-                            }}
-                            cursor={isClickable ? 'pointer' : 'default'}
-                            {...(isClickable
-                              ? userMenuItemStyles
-                              : inactiveMenuItemStyles)}
-                          >
-                            <HStack align='start' spacing={2} width='100%'>
-                              {isUnread && (
-                                <Circle
-                                  size='6px'
-                                  bg='#f87171'
-                                  mt='6px'
-                                  flexShrink={0}
-                                />
-                              )}
-                              <VStack align='start' spacing={0} flex='1'>
-                                <Text
-                                  color={textColor}
-                                  fontSize='sm'
-                                  fontWeight={isUnread ? 'semibold' : 'medium'}
-                                >
-                                  {notification.text}
-                                </Text>
-                                <Text color={mutedTextColor} fontSize='xs'>
-                                  {notificationActionHint(notification)}
-                                </Text>
-                              </VStack>
-                            </HStack>
-                          </MenuItem>
-                        );
-                      })}
-                    </>
+                          <VStack align='start' spacing={0}>
+                            <Text
+                              color={textColor}
+                              fontSize='sm'
+                              fontWeight='medium'
+                            >
+                              {notification.text}
+                            </Text>
+                            <Text color={mutedTextColor} fontSize='xs'>
+                              {notificationActionHint(notification)}
+                            </Text>
+                          </VStack>
+                        </MenuItem>
+                      );
+                    })
                   )}
                 </MenuList>
               </Portal>
