@@ -12,8 +12,6 @@ const { TestUtils, request, expect } = require("./test-server");
 const { logger } = require("./logger");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
-/* @enterprise-baseline-patched */
-
 
 // ---------------------------------------------------------------------------
 // 1. Auto-Sync CRUD
@@ -92,15 +90,7 @@ describe("Auto-Sync CRUD", function () {
       .expect(401);
   });
 
-  // skip-reason: no-host - exercises the real Postgres + API integration
-  // stack (workspace/session fixtures, live auto_sync_configs rows) that is
-  // not available in every environment this suite runs in. Note for a
-  // maintainer: apps/api/routes/admin.js already implements the
-  // FEATURE_NOT_AVAILABLE (403) gate this block asserts on
-  // (isCoreAutoSyncProvider), so this may be safe to re-enable once run
-  // against a live docker-compose stack; left skipped here rather than
-  // enabled without that verification.
-  describe.skip("core edition gates for enterprise-only providers", function () {
+  describe("core edition gates for enterprise-only providers", function () {
     it("POST /auto-sync - should reject enterprise-only providers in core (403)", async () => {
       const res = await request(BASE)
         .post(`/api/v1/workspaces/${workspaceId}/auto-sync`)
