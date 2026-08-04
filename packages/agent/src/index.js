@@ -386,6 +386,26 @@ const LEASE_TRANSIENT_BACKOFF_MS = 200;
 const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /**
+ * VERIFY-RACE-01: max retries for a live verify probe that connects fine
+ * but reports the *previous* certificate's fingerprint. `maybeReloadForJob`
+ * returns as soon as `systemctl reload`/equivalent exits, which only
+ * guarantees the reload was requested, not that every worker/connection has
+ * cut over to the new certificate. On some services (multi-worker nginx
+ * with long-lived keepalive connections, blue/green LBs, etc.) a probe run
+ * immediately after reload can land on a worker that has not yet rotated,
+ * observed empirically at ~9ms post-reload while ~1500ms post-reload was
+ * reliably safe. Retrying only this specific outcome absorbs that gap
+ * without masking a genuinely wrong deploy.
+ */
+const MAX_VERIFY_TRANSIENT_RETRIES = 4;
+/**
+ * Fixed backoff schedule between transient verify-mismatch retries (ms).
+ * Cumulative worst case is 2500ms, comfortably past the ~1500ms
+ * empirically-safe mark with margin for slower reload paths.
+ */
+const VERIFY_TRANSIENT_RETRY_DELAYS_MS = [250, 500, 750, 1000];
+
+/**
  * Mutable lease session shared across accept + execute for one job attempt.
  * @returns {{ lastConfirmedExpiresAtMs: number|null, consecutiveTransientFailures: number, abort: object|null }}
  */
@@ -401,6 +421,61 @@ function sleepMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+/**
+ * VERIFY-RACE-01 mitigation: retries `probeImpl` (defaults to the real
+ * `verifyDeployedCertificate`) when, and only when, the probe connected
+ * successfully and got back an actual certificate whose fingerprint simply
+ * does not match yet. That specific shape (`actualFingerprintSha256` is a
+ * non-null string different from the expected one) is the signature of the
+ * reload-cutover race: the endpoint is reachable and serving *some*
+ * certificate, it just has not rotated to the new one on every path yet.
+ *
+ * Every other failure shape -- connect failures, handshake timeouts, no
+ * certificate presented at all (`actualFingerprintSha256 === null`) -- is
+ * NOT retried. Those are not known to self-heal on a short timer and
+ * retrying them would only extend a genuinely broken deploy's failure
+ * latency by several seconds for no benefit.
+ *
+ * Authorization/policy rejections never reach this function at all: the
+ * `checkVerifyHost` gate at the call site runs first and returns its own
+ * fail-fast outcome before `probeImpl` is ever invoked.
+ *
+ * @param {object} probeOptions forwarded verbatim to `probeImpl`.
+ * @param {object} [opts]
+ * @param {Function} [opts.probeImpl] injection point for tests; defaults to
+ *   `verifyDeployedCertificate`.
+ * @param {number} [opts.maxRetries] defaults to MAX_VERIFY_TRANSIENT_RETRIES.
+ * @param {number[]} [opts.retryDelaysMs] defaults to
+ *   VERIFY_TRANSIENT_RETRY_DELAYS_MS.
+ * @param {Function} [opts.sleep] injection point for tests; defaults to
+ *   sleepMs.
+ * @returns {Promise<ReturnType<typeof verifyDeployedCertificate>>}
+ */
+async function verifyDeployedCertificateWithRetry(
+  probeOptions,
+  {
+    probeImpl = verifyDeployedCertificate,
+    maxRetries = MAX_VERIFY_TRANSIENT_RETRIES,
+    retryDelaysMs = VERIFY_TRANSIENT_RETRY_DELAYS_MS,
+    sleep = sleepMs,
+  } = {},
+) {
+  let result;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    result = await probeImpl(probeOptions);
+    if (result.verified === true) return result;
+
+    const isTransientMismatch =
+      typeof result.actualFingerprintSha256 === "string" &&
+      result.actualFingerprintSha256.length > 0;
+    if (!isTransientMismatch || attempt === maxRetries) return result;
+
+    const delay = retryDelaysMs[attempt] ?? retryDelaysMs[retryDelaysMs.length - 1];
+    await sleep(delay);
+  }
+  return result;
 }
 
 function extractLeaseExpiresAtMs(response, nowMs) {
@@ -3558,7 +3633,7 @@ async function runDeployReloadVerify({
       return { ...withRollbackNote(failedOutcome, rollback), deployResult };
     }
 
-    const probe = await verifyDeployedCertificate({
+    const probe = await verifyDeployedCertificateWithRetry({
       host: job.verifyHost,
       port: typeof job.verifyPort === "number" ? job.verifyPort : undefined,
       expectedFingerprintSha256: fingerprint,
@@ -4427,6 +4502,9 @@ module.exports = {
   DEFAULT_JOB_LEASE_MS,
   MAX_LEASE_TRANSIENT_RETRIES,
   LEASE_HEARTBEAT_INTERVAL_MS,
+  verifyDeployedCertificateWithRetry,
+  MAX_VERIFY_TRANSIENT_RETRIES,
+  VERIFY_TRANSIENT_RETRY_DELAYS_MS,
   AGENT_CANDIDATE_CAPABILITIES,
   AGENT_DECLARED_CAPABILITIES,
   resolveDeclaredCapabilities,
