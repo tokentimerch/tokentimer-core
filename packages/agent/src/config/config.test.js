@@ -29,8 +29,20 @@ const {
   resolveAcmeAccountCredentials,
   KNOWN_DNS_PROVIDER_IDS,
 } = require("./index.js");
+const {
+  applyRestrictivePermissions,
+  assertRestrictivePermissions,
+  readWindowsSddl,
+} = require("../platform/index.js");
 
 const IS_WIN32 = process.platform === "win32";
+const { spawnSync } = require("node:child_process");
+
+/** Asserts a directory's ACL grants nothing outside the agent allowlist. */
+function assertRestrictivePermissionsOnDir(dir) {
+  const sddl = readWindowsSddl(dir);
+  assert.doesNotMatch(sddl, /;WD\)|;BU\)|;AU\)/);
+}
 
 const tempDirs = [];
 
@@ -119,6 +131,24 @@ describe("ensureConfigDir", () => {
     ensureConfigDir(dir);
     const mode = fs.statSync(dir).mode & 0o777;
     assert.equal(mode, 0o700);
+  });
+
+  it("applies a real restricted ACL on win32", { skip: !IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const sddl = readWindowsSddl(dir);
+    assert.match(sddl, /^D:P/);
+    assertRestrictivePermissionsOnDir(dir);
+  });
+
+  it("re-asserts the ACL when a foreign principal was granted (win32)", { skip: !IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    spawnSync("icacls", [dir, "/grant", "*S-1-1-0:(F)"], { encoding: "utf8" });
+    // SDDL renders Everyone as the WD alias, which the parser maps to S-1-1-0.
+    assert.match(readWindowsSddl(dir), /;WD\)/);
+    ensureConfigDir(dir);
+    assert.doesNotMatch(readWindowsSddl(dir), /;WD\)/);
   });
 
   it("is idempotent and safe to call repeatedly", () => {
@@ -1105,6 +1135,24 @@ describe("readDnsCredentialsFile", () => {
       /readable by group\/other/,
     );
   });
+
+  it("refuses a credentials file whose ACL grants Everyone (win32)", { skip: !IS_WIN32 }, () => {
+    const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
+    applyRestrictivePermissions(credentialsPath);
+    spawnSync("icacls", [credentialsPath, "/grant", "*S-1-1-0:(F)"], { encoding: "utf8" });
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", configFor(credentialsPath)),
+      /grants access to S-1-1-0/,
+    );
+  });
+
+  it("accepts a credentials file restricted to the agent and SYSTEM (win32)", { skip: !IS_WIN32 }, () => {
+    const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
+    applyRestrictivePermissions(credentialsPath);
+    assert.deepEqual(readDnsCredentialsFile("cloudflare", configFor(credentialsPath)), {
+      apiToken: "cf-token",
+    });
+  });
 });
 
 describe("validateAcmeAccountsObject", () => {
@@ -1180,6 +1228,32 @@ describe("resolveAcmeAccountCredentials", () => {
     assert.throws(
       () => resolveAcmeAccountCredentials("le-eab", configFor(credentialsPath)),
       /readable by group\/other/,
+    );
+  });
+
+  it("refuses an ACL granting Everyone and never falls back to a skip (win32)", { skip: !IS_WIN32 }, () => {
+    const credentialsPath = writeEabFile(
+      JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),
+    );
+    applyRestrictivePermissions(credentialsPath);
+    spawnSync("icacls", [credentialsPath, "/grant", "*S-1-1-0:(F)"], { encoding: "utf8" });
+    assert.throws(
+      () => resolveAcmeAccountCredentials("le-eab", configFor(credentialsPath)),
+      /grants access to S-1-1-0/,
+    );
+  });
+
+  it("fails closed when the ACL cannot be inspected at all (win32)", { skip: !IS_WIN32 }, () => {
+    const credentialsPath = writeEabFile(
+      JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),
+    );
+    assert.throws(
+      () =>
+        assertRestrictivePermissions(credentialsPath, {
+          label: "ACME account credentials file",
+          spawn: () => ({ status: 1, stdout: "", stderr: "" }),
+        }),
+      /icacls exited 1/,
     );
   });
 });

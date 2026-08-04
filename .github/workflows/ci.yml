@@ -398,6 +398,52 @@ jobs:
       - name: Validate local dev postgres compose
         run: DB_PASSWORD=password docker compose -f deploy/compose/docker-compose.postgres.yml config -q
 
+  windows_agent_quality:
+    name: Windows Agent Quality Checks
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint agent package
+        run: pnpm run lint:agent
+
+      - name: Validate shipped agent sources (includes install-agent.ps1 parse + UTF-8-no-BOM check)
+        run: pnpm run build:agent
+
+      - name: Run agent package tests (Windows ACL/durability/platform suite)
+        run: pnpm run test:agent
+
+      - name: Dry-run install-agent.ps1
+        shell: pwsh
+        run: |
+          ./packages/agent/scripts/install-agent.ps1 `
+            --api-url https://example.com `
+            --workspace-id ws_ci_dry_run `
+            --bootstrap-token ttboot_ci_dry_run_placeholder_token_value `
+            --write-path "C:\certs\ci-example" `
+            --reload-service nginx `
+            --dry-run
+
+      - name: Dry-run install-agent.ps1 --uninstall
+        shell: pwsh
+        run: ./packages/agent/scripts/install-agent.ps1 --uninstall --dry-run
+
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest

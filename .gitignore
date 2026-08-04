@@ -8,6 +8,10 @@ dist/
 build/
 .next/
 out/
+# Windows service host binaries are built on demand by
+# packages/agent/scripts/build-windows-service-host.js (see pack:release);
+# never commit the compiled output.
+packages/agent/bin/*.exe
 
 # Environment files
 .env

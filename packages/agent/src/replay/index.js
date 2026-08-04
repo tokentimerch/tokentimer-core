@@ -9,9 +9,10 @@
  * (checkJobTimeWindow) so each can be tested in isolation.
  *
  * Persistence: the store is a JSON file written with mode 0o600, following
- * the config module's permission conventions (mode asserted at write time
- * and re-asserted via chmod; best-effort on win32, where POSIX modes are not
- * meaningful -- see packages/agent/src/config/index.js for the same caveat).
+ * the config module's permission conventions (POSIX: chmod; win32: a real
+ * restricted ACL via src/platform/index.js, verified against a
+ * trusted-owner allowlist -- see packages/agent/src/config/index.js for the
+ * cross-platform write path this module mirrors).
  * Persisting across restarts matters because a job's validity window can
  * outlive an agent process: without persistence, restarting the agent would
  * reopen the replay window for every not-yet-expired captured job.
@@ -42,6 +43,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { applyRestrictivePermissions } = require("../platform/index.js");
+const { fsyncDirectorySync } = require("../platform/durability.js");
 
 const REPLAY_REJECTION_REASON = "job_replay_rejected";
 
@@ -174,7 +177,7 @@ function loadStore(storePath) {
  *
  * @param {object} params
  * @param {string} params.storePath JSON file path for the persisted store;
- *   written with mode 0o600 (config-module convention; best-effort on win32)
+ *   written with mode 0o600 (config-module convention; a real ACL on win32)
  * @param {number} [params.maxEntries=5000] hard bound on stored entries;
  *   when reached (after sweeping expired entries), new jobs are rejected
  *   rather than evicting unexpired nonces (see module doc for why)
@@ -224,9 +227,13 @@ function createReplayCache({
 
   function persist() {
     const dir = path.dirname(storePath);
-    // 0700 dir / 0600 file per the config module's conventions; chmod is
-    // best-effort on win32 (no POSIX mode semantics there).
+    // 0700 dir / 0600 file. POSIX: chmod. win32: a real ACL with
+    // inheritance removed, granting only the agent's own identity plus
+    // SYSTEM, verified against a trusted-owner allowlist (see
+    // src/platform/index.js) -- not the previous best-effort chmod that
+    // silently did nothing there.
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    applyRestrictivePermissions(dir, { kind: "directory", mode: 0o700 });
     const serialized = JSON.stringify({
       schemaVersion: STORE_SCHEMA_VERSION,
       entries: [...entries.values()],
@@ -261,11 +268,13 @@ function createReplayCache({
       }
       throw err;
     }
-    try {
-      fs.chmodSync(storePath, 0o600);
-    } catch (_err) {
-      // Best-effort on win32; see packages/agent/src/config/index.js.
-    }
+    // POSIX re-asserts the mode; win32 gets a real restricted ACL. A
+    // failure here is fatal, matching config/writeFileAtomically.
+    applyRestrictivePermissions(storePath, { kind: "file", mode: 0o600 });
+    // fsync on the directory is the durable part of the rename on POSIX.
+    // Windows cannot fsync a directory handle at all; that limitation is
+    // recorded (never swallowed) by durability.fsyncDirectorySync.
+    fsyncDirectorySync(dir);
   }
 
   /**

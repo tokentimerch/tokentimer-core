@@ -22,6 +22,7 @@
     "build:controller": "pnpm --filter @tokentimer/k8s-controller build",
     "build:dashboard": "pnpm --filter @tokentimer/dashboard build",
     "build:agent": "pnpm --filter @tokentimer/agent build",
+    "build:agent:windows-service-host": "pnpm --filter @tokentimer/agent build:windows-service-host",
     "start": "pnpm run start:api",
     "start:api": "pnpm --filter @tokentimer/api start",
     "start:worker": "pnpm --filter @tokentimer/worker start",

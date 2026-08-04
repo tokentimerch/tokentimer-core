@@ -1107,6 +1107,33 @@ Windows:
 - The default config directory is `%APPDATA%\tokentimer-agent`.
 - Absolute-path detection accepts POSIX (`/...`), Windows drive (`C:\...`),
   and UNC (`\\...`) forms.
+- **Windows service host.** `install-agent.ps1` does not point the
+  `TokenTimerAgent` service's `binPath` directly at `node.exe`: a plain Node
+  process never calls `StartServiceCtrlDispatcher`, so the Service Control
+  Manager fails the start (error 1053) and the configured failure/restart
+  policy turns that into a restart loop. `binPath` instead points at a small
+  native host, `packages/agent/windows-service-host` (Go, cross-compiled for
+  both supported architectures by `build:windows-service-host`, shipped in
+  the package's own `bin/`), which answers the SCM's start/stop/interrogate
+  protocol on the agent's behalf, launches `node.exe` plus the agent entry
+  point as its child process, and translates a stop/shutdown request into a
+  graceful `CTRL_BREAK_EVENT` with a bounded wait before force-killing the
+  child. See ADR-0012 decision 11.
+- **Windows build-number floor.** `install-agent.ps1` fails closed before
+  doing anything else if `[System.Environment]::OSVersion.Version.Build` is
+  below 14393 (Windows Server 2016 / Windows 10 1607), the first widely-
+  deployed release with both WDAC (ADR-0012 decision 8's documented
+  hardened PowerShell-trust alternative) and CNG non-exportable key custody
+  (decision 1) generally available. This is a preflight check only; it does
+  not change what the agent itself requires at runtime.
+- **Registry-persisted bootstrap token is cleared after registration.** The
+  installer writes the bootstrap token into the service's own
+  `HKLM:\SYSTEM\CurrentControlSet\Services\TokenTimerAgent\Environment`
+  value so the service process inherits it as an environment variable, then
+  deletes the on-disk `bootstrap.env` file. The agent itself rewrites that
+  registry value (dropping the token, keeping the config-dir entry) once
+  registration succeeds, so the secret does not outlive its single-use
+  purpose by lingering in the registry after a successful exchange.
 
 ## 9. Troubleshooting
 

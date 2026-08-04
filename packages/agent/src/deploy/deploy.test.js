@@ -31,8 +31,21 @@ const tempDirs = [];
 
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-deploy-test-"));
-  tempDirs.push(dir);
-  return dir;
+  // Canonicalize immediately: on some Windows hosts (notably GitHub-hosted
+  // runners) `os.tmpdir()` resolves through a short 8.3 alias component
+  // (e.g. `RUNNER~1`) while deployCertificate's symlink-aware containment
+  // re-check resolves through `fs.promises.realpath`, which Node documents
+  // as the promisified form of `fs.realpath.native` (the real Win32
+  // `GetFinalPathNameByHandle` call) and therefore expands 8.3 aliases to
+  // their long form (`runneradmin`). Plain `fs.realpathSync` is Node's own
+  // JS-based, cross-platform implementation: it resolves symlinks but does
+  // NOT perform that Win32-specific expansion, so it would silently leave
+  // the short form in place and reproduce the exact mismatch this is
+  // fixing. `.native` is required here to match what the production code
+  // actually compares against.
+  const realDir = fs.realpathSync.native(dir);
+  tempDirs.push(realDir);
+  return realDir;
 }
 
 /**

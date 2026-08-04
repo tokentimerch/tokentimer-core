@@ -14,6 +14,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { applyRestrictivePermissions } = require("../platform/index.js");
 
 const JOURNAL_DIR_NAME = "job-journal";
 const JOURNAL_FILE_MODE = 0o600;
@@ -59,17 +60,15 @@ function journalPathFor(stateDir, jobId, attemptId) {
 }
 
 /**
- * Ensures the journal directory exists with restrictive mode.
+ * Ensures the journal directory exists with restrictive permissions,
+ * re-asserting them on every call. POSIX: 0700. win32: a real ACL with
+ * inheritance removed, granting only the agent's own identity plus SYSTEM.
  * @param {string} stateDir
  */
 function ensureJournalDir(stateDir) {
   const dir = journalDirFor(stateDir);
   fs.mkdirSync(dir, { recursive: true, mode: JOURNAL_DIR_MODE });
-  try {
-    fs.chmodSync(dir, JOURNAL_DIR_MODE);
-  } catch (_err) {
-    // win32 may ignore mode bits
-  }
+  applyRestrictivePermissions(dir, { kind: "directory", mode: JOURNAL_DIR_MODE });
   return dir;
 }
 
@@ -113,11 +112,10 @@ function markSideEffectReached({
   };
   const tmp = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(entry)}\n`, { mode: JOURNAL_FILE_MODE });
-  try {
-    fs.chmodSync(tmp, JOURNAL_FILE_MODE);
-  } catch (_err) {
-    // win32
-  }
+  // POSIX re-asserts the mode; win32 gets a real restricted ACL. A failure
+  // here is fatal: an unprotected journal entry is not an acceptable
+  // outcome of a successful write.
+  applyRestrictivePermissions(tmp, { kind: "file", mode: JOURNAL_FILE_MODE });
   fs.renameSync(tmp, filePath);
   return { path: filePath, created: true, entry };
 }

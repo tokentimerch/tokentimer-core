@@ -215,3 +215,179 @@ describe("installer packaging smoke (B9)", () => {
     fs.rmSync(noInstallRoot, { recursive: true, force: true });
   });
 });
+
+/**
+ * Windows service lifecycle smoke test (H-blocker regression guard).
+ *
+ * Registers a *real* "TokenTimerAgent" service pointed at the built
+ * windows-service-host binary + a mock agent child, then asserts it
+ * actually reaches the Running state and survives a Stop-Service /
+ * Start-Service cycle. This is the regression the reviewer flagged: a
+ * plain node.exe binPath never calls StartServiceCtrlDispatcher, so the
+ * SCM fails the start (error 1053) after ~30s and the failure/restart
+ * policy in install-agent.ps1 turns that into a restart loop. Exercising
+ * the real SCM (not a mock) is the only way to catch that class of bug.
+ *
+ * Uses the mock agent (windows-service-host/testdata/mock-agent.js)
+ * rather than the real agent entrypoint so this test needs no network,
+ * API URL, or bootstrap token: it is scoped to the SCM handshake and
+ * process-lifecycle contract the host provides, which is exactly what
+ * regressed. install-agent.ps1's own binPath-construction logic is
+ * exercised indirectly, by hand-building the identical
+ * "<host.exe>" "<node.exe>" "<entry.js>" argv shape it produces.
+ *
+ * Requires: Windows + an elevated (Administrator) process, because
+ * creating/starting a LocalSystem service and writing HKLM requires
+ * elevation. Skips (does not fail) otherwise, e.g. on Linux/macOS CI
+ * runners or an unelevated local shell; the Windows-specific CI job is
+ * expected to run this as Administrator.
+ */
+describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
+  const SERVICE_NAME = "TokenTimerAgent";
+  const REG_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${SERVICE_NAME}`;
+
+  function isWindowsElevated() {
+    if (process.platform !== "win32") return false;
+    // `net session` requires Administrator and fails fast (no prompt) when
+    // run unelevated; this is the standard no-dependency elevation probe.
+    const probe = spawnSync("net", ["session"], { encoding: "utf8" });
+    return probe.status === 0;
+  }
+
+  function getServiceStatus() {
+    const result = spawnSync("sc.exe", ["query", SERVICE_NAME], { encoding: "utf8" });
+    if (result.status !== 0) return null;
+    const match = /STATE\s*:\s*\d+\s+(\w+)/.exec(result.stdout || "");
+    return match ? match[1] : null;
+  }
+
+  function waitForStatus(target, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (getServiceStatus() === target) return true;
+      // Deliberately synchronous polling: this test has no event loop
+      // work to interleave with, and node:test's own timeout is the
+      // real ceiling on total runtime.
+      spawnSync(process.execPath, ["-e", "setTimeout(()=>{}, 300)"], { timeout: 1000 });
+    }
+    return false;
+  }
+
+  let skipReason = null;
+  let hostExe;
+  let mockAgentJs;
+  let serviceConfigDir;
+
+  before(() => {
+    if (!isWindowsElevated()) {
+      skipReason = "requires an elevated (Administrator) Windows process";
+      return;
+    }
+    if (getServiceStatus() !== null) {
+      // Refuse to touch a pre-existing service of this name: it could be
+      // a real dev install on this machine, and this test deletes the
+      // service it creates when done.
+      skipReason = `a "${SERVICE_NAME}" service already exists on this host; skipping rather than risk clobbering it`;
+      return;
+    }
+
+    const { main: buildWindowsServiceHost, hostBinaryName } = require("./build-windows-service-host.js");
+    buildWindowsServiceHost();
+    const goarch = process.arch === "arm64" ? "arm64" : "amd64";
+    hostExe = path.join(packageRoot, "bin", hostBinaryName(goarch));
+    assert.ok(fs.existsSync(hostExe), `expected built host binary at ${hostExe}`);
+
+    mockAgentJs = path.join(packageRoot, "windows-service-host", "testdata", "mock-agent.js");
+    assert.ok(fs.existsSync(mockAgentJs), `expected mock agent fixture at ${mockAgentJs}`);
+
+    serviceConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-svc-state-"));
+  });
+
+  after(() => {
+    if (getServiceStatus() !== null) {
+      spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
+      spawnSync("sc.exe", ["delete", SERVICE_NAME], { encoding: "utf8" });
+    }
+    if (serviceConfigDir) fs.rmSync(serviceConfigDir, { recursive: true, force: true });
+  });
+
+  it("reaches Running and survives a Stop-Service / Start-Service cycle", (t) => {
+    if (skipReason) {
+      t.skip(skipReason);
+      return;
+    }
+
+    const quotedHost = `"${hostExe}"`;
+    const quotedNode = `"${process.execPath}"`;
+    const quotedEntry = `"${mockAgentJs}"`;
+    const binPath = `${quotedHost} ${quotedNode} ${quotedEntry}`;
+
+    const create = spawnSync("sc.exe", [
+      "create", SERVICE_NAME,
+      "type=", "own",
+      "start=", "demand",
+      "obj=", "LocalSystem",
+      "DisplayName=", "TokenTimer Agent Smoke Test",
+      "binPath=", binPath,
+    ], { encoding: "utf8" });
+    assert.equal(create.status, 0, `sc.exe create failed:\n${create.stdout}\n${create.stderr}`);
+
+    // Mirrors Set-ServiceEnvironment in install-agent.ps1, including a
+    // bootstrap-token-shaped value, so the Task 2 assertion below exercises
+    // the exact registry shape the real installer produces.
+    const setEnv = spawnSync("reg.exe", [
+      "add", REG_KEY,
+      "/v", "Environment",
+      "/t", "REG_MULTI_SZ",
+      "/d", `TOKENTIMER_AGENT_CONFIG_DIR=${serviceConfigDir}\\0TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_smoketest`,
+      "/f",
+    ], { encoding: "utf8" });
+    assert.equal(setEnv.status, 0, `reg.exe add failed:\n${setEnv.stdout}\n${setEnv.stderr}`);
+
+    const start = spawnSync("sc.exe", ["start", SERVICE_NAME], { encoding: "utf8" });
+    assert.equal(start.status, 0, `sc.exe start failed:\n${start.stdout}\n${start.stderr}`);
+
+    assert.ok(
+      waitForStatus("RUNNING", 15000),
+      `service never reached RUNNING (last status: ${getServiceStatus()}); this is exactly the ` +
+        "error-1053 regression this test guards against if it fails",
+    );
+
+    // --- Task 2 (bootstrap token retention) integration assertion ---
+    // Exercise the real reg.exe path (not the mocked-spawn unit tests in
+    // platform.test.js) against the Environment value the service is
+    // actually running with.
+    const { clearWindowsServiceBootstrapToken } = require("../src/platform/index.js");
+    const scrubResult = clearWindowsServiceBootstrapToken({ configDir: serviceConfigDir });
+    assert.deepEqual(scrubResult, { attempted: true, cleared: true });
+
+    const queryAfterScrub = spawnSync(
+      "reg.exe",
+      ["query", REG_KEY, "/v", "Environment"],
+      { encoding: "utf8" },
+    );
+    assert.equal(queryAfterScrub.status, 0);
+    assert.doesNotMatch(
+      queryAfterScrub.stdout,
+      /TOKENTIMER_AGENT_BOOTSTRAP_TOKEN/,
+      "bootstrap token must not remain in the service Environment registry value after scrub",
+    );
+    assert.match(
+      queryAfterScrub.stdout,
+      /TOKENTIMER_AGENT_CONFIG_DIR/,
+      "scrub must preserve the non-secret config dir entry",
+    );
+
+    // --- Task 1 (SCM handshake) Stop/Start cycle assertion ---
+    const stop = spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
+    assert.equal(stop.status, 0, `sc.exe stop failed:\n${stop.stdout}\n${stop.stderr}`);
+    assert.ok(waitForStatus("STOPPED", 15000), `service never reached STOPPED (last status: ${getServiceStatus()})`);
+
+    const restart = spawnSync("sc.exe", ["start", SERVICE_NAME], { encoding: "utf8" });
+    assert.equal(restart.status, 0, `sc.exe start (restart) failed:\n${restart.stdout}\n${restart.stderr}`);
+    assert.ok(
+      waitForStatus("RUNNING", 15000),
+      `service did not come back RUNNING after Stop-Service/Start-Service (last status: ${getServiceStatus()})`,
+    );
+  });
+});
