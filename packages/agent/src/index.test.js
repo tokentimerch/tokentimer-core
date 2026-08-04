@@ -41,6 +41,9 @@ const {
   mapJobKeyAlgorithm,
   resolveJobDeployTargets,
   resolveDeclaredCapabilities,
+  verifyDeployedCertificateWithRetry,
+  MAX_VERIFY_TRANSIENT_RETRIES,
+  VERIFY_TRANSIENT_RETRY_DELAYS_MS,
 } = require("./index.js");
 const {
   markSideEffectReached,
@@ -3526,3 +3529,131 @@ describe("renew chain deployment", () => {
     assert.match(outcome.errorMessage, /Skipping renew, Next renewal time is/);
   });
 });
+
+describe("verifyDeployedCertificateWithRetry (VERIFY-RACE-01)", () => {
+  function fakeSleep(delays) {
+    return async (ms) => {
+      delays.push(ms);
+    };
+  }
+
+  it("returns immediately on a first-attempt verified probe (no retry, no sleep)", async () => {
+    const delays = [];
+    let calls = 0;
+    const probeImpl = async () => {
+      calls++;
+      return { verified: true, actualFingerprintSha256: "abc123" };
+    };
+
+    const result = await verifyDeployedCertificateWithRetry(
+      { host: "example.com", expectedFingerprintSha256: "abc123" },
+      { probeImpl, sleep: fakeSleep(delays) },
+    );
+
+    assert.equal(result.verified, true);
+    assert.equal(calls, 1);
+    assert.deepEqual(delays, []);
+  });
+
+  it("retries on a fingerprint mismatch with an actual certificate, then succeeds once the endpoint cuts over", async () => {
+    const delays = [];
+    let calls = 0;
+    const probeImpl = async () => {
+      calls++;
+      if (calls < 3) {
+        return {
+          verified: false,
+          actualFingerprintSha256: "stale-fingerprint",
+          detail: "Fingerprint mismatch",
+        };
+      }
+      return { verified: true, actualFingerprintSha256: "new-fingerprint" };
+    };
+
+    const result = await verifyDeployedCertificateWithRetry(
+      { host: "example.com", expectedFingerprintSha256: "new-fingerprint" },
+      { probeImpl, sleep: fakeSleep(delays) },
+    );
+
+    assert.equal(result.verified, true);
+    assert.equal(calls, 3);
+    // Two retries happened before the third (successful) attempt, using the
+    // configured backoff schedule's first two delays.
+    assert.deepEqual(delays, VERIFY_TRANSIENT_RETRY_DELAYS_MS.slice(0, 2));
+  });
+
+  it("exhausts retries and returns the last mismatch outcome if the endpoint never cuts over", async () => {
+    const delays = [];
+    let calls = 0;
+    const probeImpl = async () => {
+      calls++;
+      return {
+        verified: false,
+        actualFingerprintSha256: "still-stale",
+        detail: "Fingerprint mismatch",
+      };
+    };
+
+    const result = await verifyDeployedCertificateWithRetry(
+      { host: "example.com", expectedFingerprintSha256: "expected" },
+      { probeImpl, sleep: fakeSleep(delays) },
+    );
+
+    assert.equal(result.verified, false);
+    assert.equal(result.actualFingerprintSha256, "still-stale");
+    // maxRetries retries after the first attempt = maxRetries + 1 calls.
+    assert.equal(calls, MAX_VERIFY_TRANSIENT_RETRIES + 1);
+    assert.equal(delays.length, MAX_VERIFY_TRANSIENT_RETRIES);
+  });
+
+  it("does not retry a connect/handshake failure (no certificate presented at all)", async () => {
+    const delays = [];
+    let calls = 0;
+    const probeImpl = async () => {
+      calls++;
+      return {
+        verified: false,
+        actualFingerprintSha256: null,
+        detail: "Connection refused",
+      };
+    };
+
+    const result = await verifyDeployedCertificateWithRetry(
+      { host: "example.com", expectedFingerprintSha256: "expected" },
+      { probeImpl, sleep: fakeSleep(delays) },
+    );
+
+    assert.equal(result.verified, false);
+    assert.equal(result.actualFingerprintSha256, null);
+    assert.equal(calls, 1);
+    assert.deepEqual(delays, []);
+  });
+
+  it("respects a custom maxRetries/retryDelaysMs override", async () => {
+    const delays = [];
+    let calls = 0;
+    const probeImpl = async () => {
+      calls++;
+      return {
+        verified: false,
+        actualFingerprintSha256: "stale",
+        detail: "Fingerprint mismatch",
+      };
+    };
+
+    const result = await verifyDeployedCertificateWithRetry(
+      { host: "example.com", expectedFingerprintSha256: "expected" },
+      {
+        probeImpl,
+        sleep: fakeSleep(delays),
+        maxRetries: 1,
+        retryDelaysMs: [42],
+      },
+    );
+
+    assert.equal(result.verified, false);
+    assert.equal(calls, 2);
+    assert.deepEqual(delays, [42]);
+  });
+});
+
