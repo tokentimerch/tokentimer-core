@@ -25,7 +25,7 @@ const {
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/issuance.js"),
 );
-const { JOB_OPERATIONS } = require(
+const { JOB_OPERATIONS, isTrustAnchorOperation } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
 const dispatch = require(
@@ -733,6 +733,26 @@ describe("certops provisioning reconciliation", () => {
     );
     assert.equal(state.updates.length, 0);
   });
+
+  it("skips a trust-anchor job (subject_type trust_anchor), even one that also carries operation distribute-trust", async () => {
+    // By-construction exclusion (ADR-0012 decisions 4-6): a trust job's
+    // subject_type is never 'managed_certificate', so it must never reach
+    // the FOR UPDATE lock, the certificate promotion, or renewal-profile
+    // derivation this function drives.
+    const { state, client } = reconcileClient();
+    const result = await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: {
+        ...jobFixture,
+        operation: "distribute-trust",
+        subject_type: "trust_anchor",
+        subject_id: "anchor-1",
+      },
+    });
+    assert.equal(result, null);
+    assert.equal(state.updates.length, 0);
+  });
 });
 
 describe("refreshRenewedCertificateEvidence (renewal of an already-active certificate)", () => {
@@ -968,11 +988,13 @@ describe("migration 34 issue job operation", () => {
     }
   });
 
-  it("accepts exactly the operations the service layer declared at the time", () => {
+  it("accepts exactly the operations the service layer declared at the time (later widened by migration 41 for protocol_smoke and migration 45 for trust-anchor operations)", () => {
     // Migration 34 is a historical snapshot: it widened the constraint to the
     // operations the service layer declared as of that migration. Migration
-    // 40 widens the same constraint again for protocol_smoke (ADR-0012
-    // decision 7), so this assertion excludes operations introduced by later
+    // 41 widens the same constraint again for protocol_smoke (ADR-0012
+    // decision 7) and migration 45 widens it a third time for
+    // distribute-trust/revoke-trust (ADR-0012 decisions 4-6), so this
+    // assertion excludes every operation introduced by those later
     // migrations rather than comparing against the current live
     // JOB_OPERATIONS, which would make this historical test fail every time
     // a later migration adds a new operation.
@@ -982,7 +1004,7 @@ describe("migration 34 issue job operation", () => {
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
     const operationsAsOfMigration34 = JOB_OPERATIONS.filter(
-      (operation) => operation !== "protocol_smoke",
+      (operation) => operation !== "protocol_smoke" && !isTrustAnchorOperation(operation),
     );
     assert.deepEqual([...values].sort(), [...operationsAsOfMigration34].sort());
   });

@@ -20,23 +20,13 @@
  * tests/integration/certops-jobs-evidence.test.js, which already covers the
  * same rejection behavior end-to-end against a real Postgres instance.
  *
- * Trust-anchor caveat: the exact target this pattern was ultimately written
- * for, a `distribute-trust` job carrying a `pem` field against a
- * subject_type of 'trust_anchor', does not exist on this branch.
- * SUBJECT_TYPES (apps/api/services/certops/jobs.js) has no 'trust_anchor'
- * entry today; that entry, and the certificate_evidence.subject_type CHECK
- * constraint widening it requires, are added by a later migration (see
- * docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md).
- * Passing subjectType: "trust_anchor" here is rejected by this branch's own
- * SUBJECT_TYPE_SET validation before any database write is attempted, so
- * there is no way to construct a real trust_anchor row on this branch
- * without changing SUBJECT_TYPES itself, which is out of scope for this
- * change. Chosen strategy (option b): test the real writers against the
- * subject types this branch actually supports (managed_certificate), proving
- * the general pem-rejection and generic-secret-redaction mechanisms against
- * unmodified production code, and assert below that 'trust_anchor' is still
- * absent from SUBJECT_TYPES as a loud reminder to add the trust_anchor
- * variant of this test once the migration that introduces it lands.
+ * Trust-anchor: PR #125 added SUBJECT_TYPES.trust_anchor and the
+ * distribute-trust/revoke-trust operations. The tests below exercise the
+ * real distribute-trust/revoke-trust write path the same way the
+ * managed_certificate tests above exercise the certificate write path,
+ * proving createCertificateJob's forbidden-field rejection also holds for
+ * a trust_anchor subject and the operation this pattern was originally
+ * written for.
  */
 
 const { describe, it } = require("node:test");
@@ -190,12 +180,58 @@ function insertCountFor(queryLog, table) {
 }
 
 describe("CertOps job/evidence persistence never stores raw pem or private-key material", () => {
-  it("SUBJECT_TYPES still has no trust_anchor entry (reminder to add the PR #125 variant of this test)", () => {
-    // See the header comment: this assertion is meant to start failing the
-    // moment SUBJECT_TYPES gains 'trust_anchor', which is exactly the signal
-    // that a trust_anchor-specific version of the tests below should be
-    // added alongside it.
-    assert.equal(SUBJECT_TYPES.includes("trust_anchor"), false);
+  it("SUBJECT_TYPES now has a trust_anchor entry (PR #125)", () => {
+    assert.equal(SUBJECT_TYPES.includes("trust_anchor"), true);
+  });
+
+  it("createCertificateJob rejects a distribute-trust job whose payload carries a pem field, before any row is persisted", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE,
+          operation: "distribute-trust",
+          subjectType: "trust_anchor",
+          subjectId: "anchor-1",
+          payload: { pem: PRIVATE_KEY_PEM },
+        }),
+      (error) => error.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.equal(client.jobs.length, 0);
+    assert.equal(insertCountFor(client.queryLog, "certificate_jobs"), 0);
+  });
+
+  it("createCertificateEvidence rejects a raw private-key PEM block in evidence against a trust_anchor subject, before any row is persisted", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE,
+      operation: "distribute-trust",
+      subjectType: "trust_anchor",
+      subjectId: "anchor-1",
+      payload: { trustAnchorId: "anchor-1" },
+    });
+    const evidenceInsertsBefore = insertCountFor(client.queryLog, "certificate_evidence");
+
+    await assert.rejects(
+      () =>
+        createCertificateEvidence({
+          client,
+          workspaceId: WORKSPACE,
+          jobId: job.id,
+          evidenceType: "trust.distributed",
+          subjectType: "trust_anchor",
+          subjectId: "anchor-1",
+          metadata: { output: PRIVATE_KEY_PEM },
+        }),
+      (error) => error.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.equal(client.evidence.length, 0);
+    assert.equal(
+      insertCountFor(client.queryLog, "certificate_evidence"),
+      evidenceInsertsBefore,
+    );
   });
 
   it("createCertificateJob rejects a payload field literally named pem, before any row is persisted", async () => {

@@ -226,6 +226,121 @@ describe("renewal profile derivation from an issued certificate", () => {
   });
 });
 
+/**
+ * A realistic Windows (os-store-managed) issue-job payload: a machine
+ * certificate store plus an IIS site binding, keyed on thumbprint, instead
+ * of a Linux certPath (ADR-0012 decisions 1 and 10).
+ */
+function windowsIssuePayload(overrides = {}) {
+  return {
+    certificateId: CERT_ID,
+    target: { type: "windows-iis", reference: "web-01.example.com" },
+    sans: ["web-01.example.com"],
+    caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
+    commandRef: "win-acme-dns-cloudflare",
+    acmeKind: "certbot",
+    dnsProvider: "cloudflare",
+    dnsZone: "example.com",
+    store: "My",
+    binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
+    keyAlgorithm: "ecdsa",
+    keySize: 256,
+    ...overrides,
+  };
+}
+
+describe("renewal profile derivation for a Windows (os-store-managed) issuance", () => {
+  it("derives a store/site/binding profile with no certPath anywhere", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: windowsIssuePayload(),
+      certificate: issuedCertificate(),
+    });
+
+    assert.equal(profile.target.type, "windows-iis");
+    assert.equal(profile.target.store, "My");
+    assert.deepEqual(profile.target.binding, {
+      site: "Default Web Site",
+      port: 443,
+      sniHost: "web-01.example.com",
+    });
+    assert.equal(profile.deploymentTargets.length, 1);
+    assert.equal(profile.deploymentTargets[0].store, "My");
+    assert.equal(profile.deploymentTargets[0].binding.site, "Default Web Site");
+
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(profile.target, "certPath"),
+      false,
+      "a windows-iis target must never carry the Linux certPath field",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        profile.deploymentTargets[0],
+        "certPath",
+      ),
+      false,
+    );
+    assert.equal(JSON.stringify(profile).includes("certPath"), false);
+  });
+
+  it("omits sniHost when the issuance used a non-SNI binding", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: windowsIssuePayload({
+        binding: { site: "Default Web Site", port: 443 },
+      }),
+      certificate: issuedCertificate(),
+    });
+    assert.equal(profile.target.binding.sniHost, null);
+  });
+
+  it("names each missing Windows field rather than falling back to certPath", () => {
+    for (const [field, pattern] of [
+      ["store", /store/],
+      ["binding", /binding\.site/],
+    ]) {
+      assert.throws(
+        () =>
+          deriveRenewalProfileFromIssuedCertificate({
+            payload: windowsIssuePayload({ [field]: undefined }),
+            certificate: issuedCertificate(),
+          }),
+        (error) => {
+          assert.equal(error.code, CERTOPS_RENEWAL_PROFILE_INCOMPLETE);
+          assert.match(error.message, pattern);
+          return true;
+        },
+        `missing ${field} must be reported`,
+      );
+    }
+  });
+
+  it("rejects a binding.port outside 1-65535", () => {
+    assert.throws(
+      () =>
+        deriveRenewalProfileFromIssuedCertificate({
+          payload: windowsIssuePayload({
+            binding: { site: "Default Web Site", port: 70000 },
+          }),
+          certificate: issuedCertificate(),
+        }),
+      (error) => {
+        assert.equal(error.code, CERTOPS_RENEWAL_PROFILE_INCOMPLETE);
+        assert.match(error.message, /binding\.port/);
+        return true;
+      },
+    );
+  });
+
+  it("routes on target.type, not on the presence of certPath, when both are absent", () => {
+    // A Windows issuance never sets certPath at all; the branch must be
+    // reached from target.type alone.
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: windowsIssuePayload(),
+      certificate: issuedCertificate(),
+    });
+    assert.equal(profile.target.type, "windows-iis");
+  });
+});
+
 function createClient({ existingProfileId = null, inserted = true } = {}) {
   const state = { queries: [] };
   const client = {
@@ -255,6 +370,48 @@ function createClient({ existingProfileId = null, inserted = true } = {}) {
 }
 
 describe("derived renewal profile persistence", () => {
+  it("skips derivation entirely for a trust-anchor operation, without querying the database", async () => {
+    // By-construction exclusion (ADR-0012 decisions 4-6, 14): this must be
+    // refused before the "already linked" SELECT even runs, so a caller that
+    // accidentally passed a trust job here can never reach a query, let
+    // alone a write.
+    const { state, client } = createClient();
+    for (const operation of ["distribute-trust", "revoke-trust"]) {
+      const result = await ensureDerivedRenewalProfile({
+        client,
+        workspaceId: WORKSPACE,
+        certificateId: CERT_ID,
+        payload: issuePayload(),
+        certificate: issuedCertificate(),
+        operation,
+      });
+      assert.equal(result.profileId, null);
+      assert.equal(result.created, false);
+      assert.equal(result.reason, "trust_anchor_operation");
+    }
+    assert.equal(
+      state.queries.length,
+      0,
+      "a trust-anchor operation must never reach the database",
+    );
+  });
+
+  it("still derives normally when operation is renew or absent", async () => {
+    for (const operation of ["renew", undefined, null]) {
+      const { client } = createClient();
+      const result = await ensureDerivedRenewalProfile({
+        client,
+        workspaceId: WORKSPACE,
+        certificateId: CERT_ID,
+        payload: issuePayload(),
+        certificate: issuedCertificate(),
+        operation,
+      });
+      assert.equal(result.profileId, PROFILE_ID);
+      assert.equal(result.created, true);
+    }
+  });
+
   it("creates the profile and links the certificate to it", async () => {
     const { state, client } = createClient();
     const result = await ensureDerivedRenewalProfile({

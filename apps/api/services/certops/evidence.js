@@ -37,6 +37,11 @@ const EVIDENCE_TYPES = Object.freeze([
   "validation.passed",
   "validation.failed",
   "policy.checked",
+  // Trust-anchor distribution/revocation evidence (ADR-0012 decision 15),
+  // following the existing <domain>.<verb> naming convention. Paired with
+  // subject_type 'trust_anchor' (SUBJECT_TYPES, imported from jobs.js).
+  "trust.distributed",
+  "trust.revoked",
 ]);
 const EVIDENCE_TYPE_SET = new Set(EVIDENCE_TYPES);
 const SUBJECT_TYPE_SET = new Set(SUBJECT_TYPES);

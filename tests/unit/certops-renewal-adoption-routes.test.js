@@ -205,6 +205,26 @@ describe("CertOps adoption route refusals", () => {
 
   it("refuses a key mode no agent can deploy to with 409", async () => {
     const client = adoptionClient({
+      certificate: certificateRow({ key_mode: "vault-managed" }),
+    });
+
+    const { response } = await adoptAndMapErrors({ client });
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(
+      response.body.code,
+      "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE",
+    );
+  });
+
+  it("refuses an os-store-managed certificate with 409 until the Windows executor exists", async () => {
+    // The agent would technically be the right custodian for a Windows
+    // certificate-store key, but the real store/site/binding execution
+    // path is not wired up in this build, so this stays refused rather
+    // than adopted into a renewal that can never actually deploy. This is
+    // intentional pending the real executor, which should flip this key
+    // mode back to agent-deployable in the same change that adds it.
+    const client = adoptionClient({
       certificate: certificateRow({ key_mode: "os-store-managed" }),
     });
 

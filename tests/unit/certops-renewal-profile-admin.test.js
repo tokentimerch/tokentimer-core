@@ -752,7 +752,6 @@ describe("CertOps upcoming renewals coverage", () => {
       "appliance-managed",
       "hsm-managed",
       "vault-managed",
-      "os-store-managed",
       "external-unknown",
     ]) {
       const { item } = await listOne({ key_mode: keyMode });
@@ -769,6 +768,18 @@ describe("CertOps upcoming renewals coverage", () => {
 
     assert.equal(item.autoRenewEnabled, true);
     assert.equal(item.blockedReason, null);
+  });
+
+  it("treats os-store-managed custody as not_agent_deployable until the Windows executor exists", async () => {
+    // The agent would be the right custodian for a Windows certificate-store
+    // key, but the real store/site/binding execution path is not wired up
+    // in this build, so this stays refused rather than reported renewable.
+    // This is intentional pending the real executor, which should flip this
+    // key mode back to agent-deployable in the same change that adds it.
+    const { item } = await listOne({ key_mode: "os-store-managed" });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "not_agent_deployable");
   });
 
   it("treats proxy-agent-local custody as renewable", async () => {
@@ -788,6 +799,7 @@ describe("CertOps upcoming renewals coverage", () => {
       null,
       "external-unknown",
       "vault-managed",
+      "os-store-managed",
       "agent-local",
       "proxy-agent-local",
     ]) {

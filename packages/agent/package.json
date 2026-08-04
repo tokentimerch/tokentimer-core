@@ -13,7 +13,8 @@
   },
   "scripts": {
     "start": "node bin/tokentimer-agent.js",
-    "build": "node scripts/check-shipped-sources.js",
+    "build": "node scripts/build-qualified-capabilities.js && node scripts/check-shipped-sources.js",
+    "build:qualified-capabilities": "node scripts/build-qualified-capabilities.js",
     "build:windows-service-host": "node scripts/build-windows-service-host.js",
     "sync-vendor": "node scripts/sync-vendor.js",
     "pack:release": "node scripts/pack-release.js",

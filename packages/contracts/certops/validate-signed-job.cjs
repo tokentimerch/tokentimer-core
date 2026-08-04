@@ -2,25 +2,33 @@
 
 /**
  * Discriminated-union validator selecting between job-payload.schema.json
- * (certificate lifecycle actions) and protocol-smoke-payload.schema.json
- * (the diagnostic-only protocol_smoke action), keyed on the payload's own
- * "action" field (ADR-0012 decision 3).
+ * (certificate lifecycle actions), protocol-smoke-payload.schema.json (the
+ * diagnostic-only protocol_smoke action), and trust-job-payload.schema.json
+ * (distribute-trust/revoke-trust trust-anchor actions, ADR-0012 decision 4),
+ * keyed on the payload's own "action" field (ADR-0012 decision 3).
  *
  * WHY a discriminated union rather than one relaxed schema: job-payload.
  * schema.json requires certificateId/target/keyMode (all about certificate
- * custody), and a protocol_smoke job deliberately has none of them. Adding a
- * bare required key to job-payload.schema.json to admit smoke jobs would
- * weaken certificate validation to admit a shape that carries no certificate;
- * relaxing job-payload's required array would weaken it for every existing
- * certificate job. Instead each action family keeps its own schema, and this
- * module is the single place that decides which one applies -- so a smoke
- * job is never validated against the certificate schema and vice versa.
+ * custody), a protocol_smoke job deliberately has none of them, and a trust
+ * job has no certificate at all (a trust anchor has no private key and no
+ * renewal). Adding a bare required key to job-payload.schema.json to admit
+ * either shape would weaken certificate validation to admit payloads that
+ * carry no certificate; relaxing job-payload's required array would weaken
+ * it for every existing certificate job. Instead each action family keeps
+ * its own schema, and this module is the single place that decides which
+ * one applies -- so a smoke or trust job is never validated against the
+ * certificate schema and vice versa.
  *
  * SINGLE SOURCE OF TRUTH shared by BOTH sides of the signature boundary in
  * spirit (mirroring canonical-json.cjs's pattern): the control plane and any
  * future agent-side strict validator should both resolve "which schema does
  * this action use" through this module rather than re-deriving the mapping
- * ad hoc, so the two action families cannot silently drift apart.
+ * ad hoc, so the action families cannot silently drift apart. This is also
+ * the module the renewal scheduler and ADR-0010 profile derivation should
+ * consult (via TRUST_ANCHOR_ACTIONS or CERTIFICATE_ACTIONS) when they need
+ * to exclude trust-anchor jobs by construction, rather than re-deriving
+ * "is this a trust action" from a separate list that could drift from this
+ * one.
  *
  * NOTE on the .cjs extension: packages/contracts/package.json declares
  * "type": "module", so this module ships as .cjs to stay requireable from
@@ -38,6 +46,7 @@
 
 const JOB_PAYLOAD_SCHEMA = require("./job-payload.schema.json");
 const PROTOCOL_SMOKE_PAYLOAD_SCHEMA = require("./protocol-smoke-payload.schema.json");
+const TRUST_JOB_PAYLOAD_SCHEMA = require("./trust-job-payload.schema.json");
 const SIGNED_DISPATCH_PAYLOAD_SCHEMA = require("./signed-dispatch-payload.schema.json");
 const SIGNED_DISPATCH_WIRE_V1_SCHEMA = require("./signed-dispatch-wire-v1.schema.json");
 const SIGNED_DISPATCH_WIRE_V2_SCHEMA = require("./signed-dispatch-wire-v2.schema.json");
@@ -54,6 +63,14 @@ const CERTIFICATE_ACTIONS = Object.freeze([
   "noop",
 ]);
 const PROTOCOL_SMOKE_ACTION = "protocol_smoke";
+// Trust-anchor actions from trust-job-payload.schema.json's own "action"
+// enum (ADR-0012 decisions 4 and 6). A trust job has no certificate,
+// keyMode, or renewal, so it is a third family here rather than a shape
+// squeezed into CERTIFICATE_ACTIONS: the renewal scheduler and ADR-0010
+// profile derivation both guard on "is this a certificate action" (or the
+// inverse "is this a trust-anchor action"), and that guard is only
+// correct if trust actions are never a subset of CERTIFICATE_ACTIONS.
+const TRUST_ANCHOR_ACTIONS = Object.freeze(["distribute-trust", "revoke-trust"]);
 
 let ajvInstance = null;
 
@@ -79,6 +96,7 @@ function getAjv() {
   ajv.addSchema(SIGNED_DISPATCH_WIRE_V2_SCHEMA);
   ajv.addSchema(JOB_PAYLOAD_SCHEMA);
   ajv.addSchema(PROTOCOL_SMOKE_PAYLOAD_SCHEMA);
+  ajv.addSchema(TRUST_JOB_PAYLOAD_SCHEMA);
 
   ajvInstance = ajv;
   return ajvInstance;
@@ -102,6 +120,12 @@ function selectSchemaForAction(action) {
   }
   if (CERTIFICATE_ACTIONS.includes(action)) {
     return { schema: JOB_PAYLOAD_SCHEMA, schemaId: JOB_PAYLOAD_SCHEMA.$id };
+  }
+  if (TRUST_ANCHOR_ACTIONS.includes(action)) {
+    return {
+      schema: TRUST_JOB_PAYLOAD_SCHEMA,
+      schemaId: TRUST_JOB_PAYLOAD_SCHEMA.$id,
+    };
   }
   return null;
 }
@@ -131,7 +155,8 @@ function validateSignedJob(job) {
           message:
             typeof action === "string"
               ? `unrecognized action "${action}": matches neither the certificate ` +
-                `action family (${CERTIFICATE_ACTIONS.join(", ")}) nor "${PROTOCOL_SMOKE_ACTION}"`
+                `action family (${CERTIFICATE_ACTIONS.join(", ")}), "${PROTOCOL_SMOKE_ACTION}", ` +
+                `nor the trust-anchor action family (${TRUST_ANCHOR_ACTIONS.join(", ")})`
               : "job.action is missing or not a string; cannot select a schema",
         },
       ],
@@ -158,12 +183,14 @@ function validateSignedJob(job) {
 module.exports = {
   CERTIFICATE_ACTIONS,
   PROTOCOL_SMOKE_ACTION,
+  TRUST_ANCHOR_ACTIONS,
   selectSchemaForAction,
   validateSignedJob,
   _test: {
     getAjv,
     JOB_PAYLOAD_SCHEMA,
     PROTOCOL_SMOKE_PAYLOAD_SCHEMA,
+    TRUST_JOB_PAYLOAD_SCHEMA,
     SIGNED_DISPATCH_PAYLOAD_SCHEMA,
     SIGNED_DISPATCH_WIRE_V1_SCHEMA,
     SIGNED_DISPATCH_WIRE_V2_SCHEMA,
