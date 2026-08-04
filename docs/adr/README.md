@@ -54,6 +54,7 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0009](0009-certops-durable-side-effects-and-alert-policy.md) | CertOps durable side effects and renewal alert policy | Accepted |
 | [0010](0010-certops-derived-renewal-profiles.md) | CertOps renewal profiles are derived at issuance | Accepted, amended 2026-07-26 |
 | [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
+| [0012](0012-certops-windows-execution-surface-and-trust-anchors.md) | Windows execution surface, trust-anchor operations, signed-dispatch envelope, and CNG-vs-PFX custody | Accepted, amended 2026-08-03 |
 
 ADR-0001 through ADR-0005 were authored as early skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to
@@ -86,6 +87,14 @@ none of them were audited: a certificate TokenTimer issued and now renews by
 itself had a one-row trail. ADR-0011 owns which machine-initiated events are
 written, that they commit with the state change they describe, and why job
 successes and replays deliberately produce nothing.
+
+ADR-0012 decides five questions that blocked the Windows execution-surface and
+trust-anchor work from starting implementation: how a non-JavaScript client
+verifies a signed job (the exact-byte v2 envelope, replacing canonical-JSON
+reconstruction), the trust-job schema shape, CNG-native-vs-PFX key custody on
+Windows, the Windows agent privilege and ACL model, and what stops a diagnostic
+protocol client from claiming real certificate work (a server-assigned
+`agent_kind`, not a client-declared capability).
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.
