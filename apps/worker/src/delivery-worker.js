@@ -40,6 +40,11 @@ import {
   shouldDiscardRetiredCertificateAlert,
 } from "./shared/retiredCertificateAlerts.js";
 import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
+import {
+  raiseOperationalNotification,
+  resolveOperationalNotification,
+  sendOperationalIncidentEmail,
+} from "./shared/opNotifications.js";
 
 const { isValidEmail } = emailAddress;
 
@@ -1062,6 +1067,53 @@ const MAX_ATTEMPTS_PER_CHANNEL = Number.isFinite(
 )
   ? Number(process.env.ALERT_MAX_ATTEMPTS)
   : 20;
+
+const DEGRADED_ATTEMPTS_THRESHOLD = Number.isFinite(
+  Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD),
+)
+  ? Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD)
+  : 5;
+
+function isPlanLimitError(errorMessage) {
+  return /PLAN_LIMIT|limit_exceeded/i.test(String(errorMessage || ""));
+}
+
+async function raiseDeliveryBlockedIncident(client, alert, message, failedChannels, reason) {
+  if (!alert.workspace_id) return;
+  const planLimited = isPlanLimitError(message);
+  const title = planLimited
+    ? `Delivery paused (plan limit): ${alert.name || `Token #${alert.token_id}`}`
+    : `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`;
+  const metadata = {
+    alert_queue_id: alert.id,
+    failed_channels: failedChannels,
+    workspace_name: alert.workspace_name,
+    token_name: alert.name,
+    reason,
+  };
+  const notificationId = await raiseOperationalNotification(client, {
+    workspaceId: alert.workspace_id,
+    tokenId: alert.token_id,
+    category: "delivery",
+    type: planLimited ? "delivery_plan_limited" : "delivery_blocked",
+    severity: planLimited ? "info" : "critical",
+    dedupeKey: `delivery_blocked:${alert.id}`,
+    title,
+    message,
+    metadata,
+  });
+  if (notificationId && !planLimited) {
+    await sendOperationalIncidentEmail(client, {
+      notificationId,
+      workspaceId: alert.workspace_id,
+      tokenId: alert.token_id,
+      category: "delivery",
+      title,
+      message,
+      metadata,
+    });
+  }
+}
 
 async function writeAudit(
   client,
@@ -2610,6 +2662,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               "Skipped sent terminal write: another worker took ownership",
               { alertId: alert.id },
             );
+          } else if (alert.workspace_id) {
+            await resolveOperationalNotification(client, alert.workspace_id, `delivery_blocked:${alert.id}`);
+            await resolveOperationalNotification(client, alert.workspace_id, `delivery_degraded:${alert.id}`);
           }
           // Emit an audit event for partial successes to aid diagnostics
           if (webhookPartialErrors.length > 0) {
@@ -2730,6 +2785,42 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               "Skipped failed/blocked terminal write: another worker took ownership",
               { alertId: alert.id },
             );
+          } else if (reachedMaxAttempts || blockDueToWhatsApp) {
+            await raiseDeliveryBlockedIncident(
+              client,
+              alert,
+              errorMessages || "Maximum delivery attempts reached",
+              failedChannels,
+              blockDueToWhatsApp ? "whatsapp_permanent_failure" : "max_attempts",
+            );
+          } else if (
+            alert.workspace_id &&
+            !isPlanLimitError(errorMessages) &&
+            nextAttemptTimestamp &&
+            (newAttemptsEmail >= DEGRADED_ATTEMPTS_THRESHOLD ||
+              newAttemptsWebhooks >= DEGRADED_ATTEMPTS_THRESHOLD ||
+              newAttemptsWhatsApp >= DEGRADED_ATTEMPTS_THRESHOLD)
+          ) {
+            await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: "delivery_degraded",
+              severity: "warning",
+              dedupeKey: `delivery_degraded:${alert.id}`,
+              title: `Delivery retrying: ${alert.name || `Token #${alert.token_id}`}`,
+              message: errorMessages || "Delivery attempts are still failing",
+              metadata: {
+                alert_queue_id: alert.id,
+                failed_channels: failedChannels,
+                attempts_email: newAttemptsEmail,
+                attempts_webhooks: newAttemptsWebhooks,
+                attempts_whatsapp: newAttemptsWhatsApp,
+                next_attempt_at: nextAttemptTimestamp.toISOString(),
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
           }
           if (!reachedMaxAttempts && nextAttemptTimestamp) {
             try {

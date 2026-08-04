@@ -3824,6 +3824,80 @@ const migrations = [
         WHERE action = 'ALERT_SENT' AND target_type = 'token';
     `,
   },
+  {
+    version: 56,
+    name: "operational_notifications_schema",
+    sql: `
+      -- Operational failure notifications (delivery blocked/degraded, auto-sync
+      -- failures, ...) surfaced in the in-app bell and, for critical severity,
+      -- escalated by email. Producers raise/resolve rows by a stable
+      -- dedupe_key scoped to the still-open incident; the partial unique index
+      -- collapses repeated raises for the same open incident into one row
+      -- (updated in place) instead of creating duplicates, while still
+      -- allowing a new row once the prior incident of the same key resolves.
+      CREATE TABLE IF NOT EXISTS operational_notifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        category TEXT NOT NULL CHECK (category IN ('delivery', 'auto_sync')),
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+        dedupe_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ NULL,
+        email_sent_at TIMESTAMPTZ NULL,
+        email_claim_id UUID NULL,
+        email_claimed_at TIMESTAMPTZ NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_operational_notifications_open_dedupe
+        ON operational_notifications(workspace_id, dedupe_key)
+        WHERE resolved_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_operational_notifications_workspace_created
+        ON operational_notifications(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_operational_notifications_workspace_unresolved
+        ON operational_notifications(workspace_id, resolved_at, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_operational_notifications_email_pending
+        ON operational_notifications(severity, email_sent_at)
+        WHERE severity = 'critical' AND email_sent_at IS NULL AND resolved_at IS NULL;
+
+      -- Per-user read state for the bell. A notification row can be read
+      -- independently by every workspace member who can see it.
+      CREATE TABLE IF NOT EXISTS operational_notification_reads (
+        notification_id UUID NOT NULL REFERENCES operational_notifications(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (notification_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_operational_notification_reads_user
+        ON operational_notification_reads(user_id);
+
+      -- A material escalation makes the existing incident unread again for
+      -- everyone who read its earlier severity. The incident row stays intact.
+      CREATE OR REPLACE FUNCTION reset_operational_notification_reads_on_escalation()
+      RETURNS trigger AS $$
+      BEGIN
+        IF (CASE NEW.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) >
+           (CASE OLD.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) THEN
+          DELETE FROM operational_notification_reads WHERE notification_id = NEW.id;
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_operational_notification_escalation_unread
+        AFTER UPDATE OF severity ON operational_notifications
+        FOR EACH ROW
+        EXECUTE FUNCTION reset_operational_notification_reads_on_escalation();
+
+      -- Consecutive auto-sync failure counter, reset to 0 on success.
+      ALTER TABLE auto_sync_configs
+        ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 async function runMigrations() {
