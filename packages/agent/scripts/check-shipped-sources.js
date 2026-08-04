@@ -38,6 +38,17 @@ const sourceRoots = [
 const REQUIRE_PATTERN =
   /(?:require\s*\(\s*|import\s*\(\s*|from\s+)(['"])([^'"]+)\1/g;
 
+// Doc-comment prose (e.g. `apart from "the signature did not verify"`) can
+// coincidentally match the `from "..."` shape of an ES-module import. Strip
+// block and line comments before scanning so only real require/import calls
+// are checked. This is a lexical approximation (does not skip strings that
+// happen to contain `//` or `/*`), which is acceptable here: the source
+// files this check scans do not construct import specifiers from string
+// literals containing comment delimiters.
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
 function collectShippedJavaScript(directory) {
   if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -78,9 +89,10 @@ for (const file of files) {
   if (result.status !== 0) process.exit(result.status || 1);
 
   const source = fs.readFileSync(file, "utf8");
+  const scannable = stripComments(source);
   REQUIRE_PATTERN.lastIndex = 0;
   let match;
-  while ((match = REQUIRE_PATTERN.exec(source))) {
+  while ((match = REQUIRE_PATTERN.exec(scannable))) {
     const specifier = match[2];
     const problem = assertImportStaysInsidePackage(file, specifier);
     if (problem) {

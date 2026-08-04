@@ -1,6 +1,6 @@
 "use strict";
 
-const zlib = require("zlib");
+const zlib = require("node:zlib");
 
 /**
  * TokenTimer shared secret-material detector.
