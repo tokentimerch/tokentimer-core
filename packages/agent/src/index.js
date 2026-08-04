@@ -87,6 +87,7 @@ const {
   resolveAcmeAccountCredentials,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
+const { isWindows, clearWindowsServiceBootstrapToken } = require("./platform");
 const {
   createProtocolClient,
   createCaAwareFetch,
@@ -121,6 +122,7 @@ const {
   removeDeployedArtifacts,
   getDeployMetrics,
 } = require("./deploy");
+const { durabilityMetadataEntries } = require("./platform/durability.js");
 const {
   markSideEffectReached,
   scanUnresolvedJournalEntries,
@@ -3375,6 +3377,7 @@ async function runDeployReloadVerify({
         ...Object.entries(metricsForType)
           .filter(([, value]) => typeof value === "number")
           .map(([name, value]) => ({ name: `deployMetric_${name}`, value })),
+        ...durabilityMetadataEntries(),
       ],
     }),
   ]);
@@ -3827,19 +3830,41 @@ async function runDiscoveryScan({ directories, client, log = null }) {
  * @param {object} params.config from loadAgentConfig
  * @param {string} params.configDir
  * @param {NodeJS.ProcessEnv} [params.env]
+ * @param {(...args: unknown[]) => void} [params.log]
+ * @param {{ isWindows: Function, clearWindowsServiceBootstrapToken: Function }} [params.platformModule]
+ *   injection seam for tests; defaults to the real ./platform module.
  * @returns {Promise<string>} the assigned agentId
  */
-async function registerIfNeeded({ client, config, configDir, env = process.env }) {
+async function registerIfNeeded({
+  client,
+  config,
+  configDir,
+  env = process.env,
+  log = console.error,
+  platformModule = { isWindows, clearWindowsServiceBootstrapToken },
+}) {
   // Already-registered paths: an earlier run exchanged the bootstrap token,
   // but systemd may still have re-exported it from a leftover bootstrap.env.
   // Scrub it here too so a registered agent never keeps the (already spent)
-  // token in its environment or on disk.
+  // token in its environment, on disk, or (Windows service installs) in the
+  // service's own registry Environment value.
   const scrubBootstrapToken = () => {
     if (env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN !== undefined) {
       delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN;
       delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID;
     }
     deleteBootstrapEnvFile(configDir);
+    if (platformModule.isWindows()) {
+      const result = platformModule.clearWindowsServiceBootstrapToken({ configDir });
+      if (result.attempted && !result.cleared) {
+        log(
+          `tokentimer-agent: could not confirm the Windows service registry ` +
+            `Environment value no longer holds the bootstrap token (${result.reason}); ` +
+            "if this agent runs as the TokenTimerAgent service, check " +
+            "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent\\Environment manually.",
+        );
+      }
+    }
   };
 
   const recovered = recoverPendingRegistration(configDir);
@@ -3898,12 +3923,12 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
   clearRegistrationId(configDir);
   // The bootstrap token is single-use and has now been exchanged for a
   // stored per-agent credential. Scrub it from this process's environment
-  // (so it can never leak into child processes or diagnostics) and remove
-  // the installer-written bootstrap.env file (so systemd stops re-exporting
-  // it on every later start).
-  delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN;
-  delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID;
-  deleteBootstrapEnvFile(configDir);
+  // (so it can never leak into child processes or diagnostics), remove the
+  // installer-written bootstrap.env file (so systemd/the Windows service
+  // stop re-exporting it on every later start), and clear it out of the
+  // Windows service's own registry Environment value if this is a service
+  // install.
+  scrubBootstrapToken();
   // Trust-on-first-use pinning (ADR-0003): when the register response
   // carries the control plane's job-signing key info, persist it so every
   // later run verifies jobs against the same key. Public material only.

@@ -67,7 +67,17 @@ const {
 } = require("./protocol");
 
 function makeTempConfigDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-index-test-"));
+  // .native is required on Windows: os.tmpdir() can resolve through a
+  // short 8.3 alias (e.g. GitHub-hosted runners' RUNNER~1), while
+  // deployCertificate's realpath-based containment re-check resolves
+  // through fs.promises.realpath (documented as the promisified form of
+  // fs.realpath.native). Plain fs.realpathSync does not perform that
+  // Win32 short-name expansion, so it would leave any checkPath allowlist
+  // built from this dir on a different spelling than what production
+  // code compares against.
+  return fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-index-test-")),
+  );
 }
 
 function createRecordingClient() {
@@ -392,6 +402,37 @@ describe("registerIfNeeded", () => {
     assert.equal(client.calls.register.length, 0);
   });
 
+  it("clears the Windows service registry Environment value on the already-registered path too", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com", agentId: "agent-existing" }),
+      "utf8",
+    );
+    writeCredential(dir, "ttagent_agent-existing_0123456789abcdef");
+
+    const clearCalls = [];
+    const platformModule = {
+      isWindows: () => true,
+      clearWindowsServiceBootstrapToken: (options) => {
+        clearCalls.push(options);
+        return { attempted: true, cleared: true };
+      },
+    };
+
+    const client = createRecordingClient();
+    const agentId = await registerIfNeeded({
+      client,
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: {},
+      platformModule,
+    });
+
+    assert.equal(agentId, "agent-existing");
+    assert.equal(clearCalls.length, 1);
+    assert.equal(clearCalls[0].configDir, dir);
+  });
+
   it("fails loudly when a credential exists but agentId is missing (inconsistent dir)", async () => {
     fs.writeFileSync(
       path.join(dir, "config.json"),
@@ -474,6 +515,95 @@ describe("registerIfNeeded", () => {
     const persisted = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
     assert.equal(persisted.agentId, "agent-assigned-1");
     assert.equal(readCredential(dir), "ttagent_agent-assigned-1_0123456789abcdef");
+  });
+
+  it("clears the Windows service registry Environment value after a successful registration", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com" }),
+      "utf8",
+    );
+
+    const clearCalls = [];
+    const platformModule = {
+      isWindows: () => true,
+      clearWindowsServiceBootstrapToken: (options) => {
+        clearCalls.push(options);
+        return { attempted: true, cleared: true };
+      },
+    };
+
+    const client = createRecordingClient();
+    await registerIfNeeded({
+      client,
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      platformModule,
+    });
+
+    assert.equal(clearCalls.length, 1);
+    assert.equal(clearCalls[0].configDir, dir);
+  });
+
+  it("logs, but does not throw, when the Windows registry scrub cannot confirm success", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com" }),
+      "utf8",
+    );
+
+    const logCalls = [];
+    const platformModule = {
+      isWindows: () => true,
+      clearWindowsServiceBootstrapToken: () => ({
+        attempted: true,
+        cleared: false,
+        reason: "reg.exe add exited 1",
+      }),
+    };
+
+    const client = createRecordingClient();
+    const agentId = await registerIfNeeded({
+      client,
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      platformModule,
+      log: (...args) => logCalls.push(args),
+    });
+
+    assert.equal(agentId, "agent-assigned-1");
+    assert.equal(logCalls.length, 1);
+    assert.match(logCalls[0][0], /reg\.exe add exited 1/);
+  });
+
+  it("never calls the Windows registry scrub on a non-Windows platform", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com" }),
+      "utf8",
+    );
+
+    const clearCalls = [];
+    const platformModule = {
+      isWindows: () => false,
+      clearWindowsServiceBootstrapToken: (options) => {
+        clearCalls.push(options);
+        return { attempted: false, cleared: false };
+      },
+    };
+
+    const client = createRecordingClient();
+    await registerIfNeeded({
+      client,
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-raw-token" },
+      platformModule,
+    });
+
+    assert.equal(clearCalls.length, 0);
   });
 
   it("advertises configured DNS provider ids on register", async () => {

@@ -45,16 +45,19 @@
  * etc.). Wiring is left to src/index.js.
  *
  * Windows note: directory fsync is not supported on win32 (fs.open on a
- * directory fails with EISDIR/EPERM), so the post-rename directory fsync is
- * best-effort and skipped there; the file-content fsync before rename still
- * runs on every platform. Likewise POSIX modes (0o600/0o644) are asserted
- * best-effort on win32, mirroring the config module's convention.
+ * directory fails with EISDIR/EPERM), so the post-rename directory fsync
+ * failure is recorded via src/platform/durability.js (never silently
+ * swallowed) rather than failing an otherwise-complete deploy; the
+ * file-content fsync before rename still runs on every platform. Likewise
+ * POSIX modes (0o600/0o644) are asserted best-effort on win32, mirroring
+ * the config module's convention.
  */
 
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { fsyncDirectory } = require("../platform/durability.js");
 
 // Mirrors discovery/index.js's PRIVATE_KEY_PEM_HEADER_PATTERN (which itself
 // mirrors apps/api/utils/secretMaterial.js). Duplicated, not imported, to
@@ -375,33 +378,18 @@ function validateTargetConfig(target, { checkPath, _fsOverrides } = {}) {
 
 /**
  * fsyncs a directory so a preceding rename in it becomes durable. On win32
- * directories cannot be opened for fsync (EISDIR/EPERM/EACCES), so this is
- * documented best-effort: it swallows the error there (and on any other
- * platform quirk) rather than failing an otherwise-complete deploy. The
+ * directories cannot be opened for fsync (EISDIR/EPERM/EACCES); that
+ * limitation is recorded via src/platform/durability.js (never silently
+ * swallowed) so it can be attached to deploy evidence, rather than being
+ * indistinguishable from a fully durable write in the evidence trail. The
  * file-content fsync before rename is NOT best-effort and runs everywhere.
  *
  * @param {typeof fsp} fspImpl
  * @param {string} dirPath
- * @returns {Promise<void>}
+ * @returns {Promise<{ durable: boolean, limit: null | object }>}
  */
 async function fsyncDirBestEffort(fspImpl, dirPath) {
-  let handle;
-  try {
-    handle = await fspImpl.open(dirPath, "r");
-    await handle.sync();
-  } catch (_err) {
-    // win32 (and some filesystems) cannot fsync a directory; the rename is
-    // still atomic on the same volume, just not guaranteed durable across
-    // an immediate power loss. Documented platform limitation.
-  } finally {
-    if (handle) {
-      try {
-        await handle.close();
-      } catch (_err) {
-        // best-effort close
-      }
-    }
-  }
+  return fsyncDirectory(fspImpl, dirPath);
 }
 
 /**

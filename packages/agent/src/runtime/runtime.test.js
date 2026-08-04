@@ -33,7 +33,10 @@ const {
 } = require("../protocol");
 
 function makeTempConfigDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-runtime-test-"));
+  // See index.test.js's makeTempConfigDir for why .native is required.
+  return fs.realpathSync.native(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-runtime-test-")),
+  );
 }
 
 function createRecordingClient() {

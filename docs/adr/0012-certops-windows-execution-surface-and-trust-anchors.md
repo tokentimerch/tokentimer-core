@@ -92,7 +92,15 @@ described below may now begin.** The PRs that implement this feature set
 follow this decision rather than re-deciding it; any future change to a
 decision here is a new, explicitly logged amendment, not a silent
 divergence in code.
-**An eighth amendment (2026-08-04, post-acceptance) corrects decision 1's
+**An eighth amendment (2026-08-03, post-acceptance) corrected decision 11**:
+the original decision assumed a plain native Windows Service was sufficient
+to run the Node.js agent, but a Node process cannot itself answer the
+Service Control Manager's start/stop protocol
+(`StartServiceCtrlDispatcher`), which would have made the service fail to
+start on a real host. Decision 11 now documents the small native service
+host that answers the SCM on the agent's behalf and runs the Node process
+as its supervised child.
+**A ninth amendment (2026-08-04, post-acceptance) corrects decision 1's
 numeric limits table.** The encoded-payload bound was originally set to
 65,536 characters, the tightest value that still decodes to at most the
 49,152-byte decoded-payload bound (`floor(65536/4)*3 = 49152` exactly).
@@ -1210,6 +1218,25 @@ protocol, not a narrower account:
   IIS-binding action produces evidence and an audit event, so `LocalSystem`
   breadth is paired with a durable trail of what it actually did, which is the
   control the account name cannot provide by itself.
+
+**Amended 2026-08-03: the service's binPath is a native host process, not
+node.exe directly.** A plain Node.js process never calls the Win32
+`StartServiceCtrlDispatcher` API, so the Service Control Manager cannot start
+it as a service at all (it fails the start after its startup timeout,
+Windows error 1053); this was an open gap in the original decision, not a
+choice it made. The install script now points the service's `binPath` at a
+small native host built from `packages/agent/windows-service-host` (Go,
+using `golang.org/x/sys/windows/svc`), which itself answers the SCM's
+start/stop/interrogate protocol, running under the same `LocalSystem`
+account, then launches `node.exe` plus the agent entry point as its child
+process. A stop or shutdown request is translated into a `CTRL_BREAK_EVENT`
+delivered to the child, giving the agent a chance to shut down gracefully,
+with a bounded wait before the host force-terminates the child. The host
+adds no new standing privilege: it runs in the same `LocalSystem` account
+this decision already established and performs no certificate, trust-store,
+or IIS operation itself. It is built, signed and shipped alongside the
+existing agent package, carrying the same provenance and ACL treatment
+already applied to that package's own files.
 
 ### 12. Rejected privilege models
 

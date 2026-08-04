@@ -14,6 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const { main: buildWindowsServiceHost } = require("./build-windows-service-host.js");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
@@ -125,6 +126,12 @@ function main(argv = process.argv.slice(2)) {
 
   const { outDir } = parseArgs(argv);
   fs.mkdirSync(outDir, { recursive: true });
+
+  // The Windows service host binaries ship inside bin/ (see package.json's
+  // "files"), so they must exist before npm pack runs; build them fresh
+  // here rather than trusting a stale bin/*.exe left over from a previous
+  // run to still match the current windows-service-host/ source.
+  buildWindowsServiceHost();
 
   const pack = spawnSync(
     "npm",
