@@ -21,6 +21,18 @@ Field-name redaction and explicit sanitized logging are wired for the current
 inventory boundary paths. A broader logger content-scrub layer for arbitrary log
 message content is a follow-up, not something the inventory assumes globally.
 
+Content-based detection also covers compressed input: a base64/hex-decoded or
+raw buffer that begins with a recognized gzip/zlib header is decompressed once
+and the result is scanned in its place, subject to compressed-length and
+decompressed-output ceilings (`classifyCompressedBuffer` in
+`packages/log-scrub/secret-material.js`). If that decompressed output is
+itself gzip/zlib-shaped (nested compression), the detector fails closed and
+rejects the input outright rather than unwrapping a second time and treating
+the result as ordinary scannable plaintext. Silently unwrapping nested
+compression would let an attacker hide key material below the ratio/size
+ceilings applied to the outer layer, which is exactly the kind of silent
+fall-through this invariant does not allow.
+
 The one private key the platform does hold is the platform operational signing
 key (Ed25519) used to sign jobs. It is never used for certificate issuance and
 never holds customer key material. See ADR-0003.

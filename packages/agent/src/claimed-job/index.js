@@ -110,7 +110,7 @@ function validateClaimedJob(job) {
   requireDate(job.requestedAt, "requestedAt");
 
   if (job.tokenId !== undefined && job.tokenId !== null && (!Number.isInteger(job.tokenId) || job.tokenId < 1)) fail("tokenId is invalid");
-  if (job.keyReference !== undefined && job.keyReference !== null) requireString(job.keyReference, "keyReference", { max: 512 });
+  if (job.keyReference !== undefined && job.keyReference !== null) requireString(job.keyReference, "keyReference", { max: 256 });
   if (job.requestedBy !== undefined && job.requestedBy !== null) {
     requireExactKeys(job.requestedBy, new Set(["actorType", "actorId", "displayName"]), ["actorType"], "requestedBy");
     if (!["user", "system", "automation"].includes(job.requestedBy.actorType)) fail("requestedBy.actorType is invalid");

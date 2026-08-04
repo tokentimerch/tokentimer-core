@@ -6,6 +6,8 @@ const path = require("node:path");
 const here = __dirname;
 const repoRoot = path.resolve(here, "..");
 const loggerPath = path.join(repoRoot, "apps/api/utils/logger.js");
+const workerLoggerPath = path.join(repoRoot, "apps/worker/src/logger.js");
+const logScrubPackagePath = path.join(repoRoot, "packages/log-scrub");
 const scanRoots = [
   path.join(repoRoot, "apps/api"),
   path.join(repoRoot, "apps/worker/src"),
@@ -227,6 +229,61 @@ function checkSanitizerPresence() {
   }
 }
 
+// The worker logger must redact secret-bearing failures equivalently to the
+// API logger. apps/worker/src/logger.js wires Winston directly into
+// @tokentimer/log-scrub's sanitizeLogRecord rather than declaring its own
+// field list, so this check exercises the actual shared function against
+// the same REQUIRED_REDACTION_FIELDS the API logger is held to, instead of
+// grepping for a field-list literal that the worker file doesn't have.
+function checkWorkerLoggerParity() {
+  if (!fs.existsSync(workerLoggerPath)) {
+    fail(`missing ${workerLoggerPath}`);
+  }
+  const workerLoggerSource = fs.readFileSync(workerLoggerPath, "utf8");
+  const usesSharedScrubber =
+    /@tokentimer\/log-scrub/.test(workerLoggerSource) &&
+    /sanitizeLogRecord\b/.test(workerLoggerSource);
+  if (!usesSharedScrubber) {
+    fail(
+      "apps/worker/src/logger.js must sanitize every record through @tokentimer/log-scrub's sanitizeLogRecord",
+    );
+  }
+
+  let sanitizeLogRecord;
+  try {
+    ({ sanitizeLogRecord } = require(logScrubPackagePath));
+  } catch (error) {
+    fail(`unable to load packages/log-scrub to verify worker parity: ${error.message}`);
+    return;
+  }
+
+  const probe = {};
+  for (const field of REQUIRED_REDACTION_FIELDS) {
+    probe[field.aliases[0]] = "worker-secret-probe-value";
+  }
+  probe.message = "worker-secret-probe-value";
+
+  const sanitized = sanitizeLogRecord(probe);
+  const missing = [];
+  for (const field of REQUIRED_REDACTION_FIELDS) {
+    const key = field.aliases[0];
+    const value = sanitized[key];
+    const stillLeaking =
+      typeof value === "string" && value.includes("worker-secret-probe-value");
+    if (stillLeaking) missing.push(field.name);
+  }
+  if (missing.length > 0) {
+    fail(
+      `packages/log-scrub sanitizeLogRecord (used by the worker logger) fails to redact required fields: ${missing.join(", ")}`,
+    );
+  }
+  if (sanitized.message !== "worker-secret-probe-value") {
+    fail(
+      "packages/log-scrub sanitizeLogRecord must not redact the message field itself",
+    );
+  }
+}
+
 function checkRawCredentialLogging() {
   const violations = [];
   for (const root of scanRoots) {
@@ -362,6 +419,7 @@ function checkIntegrationErrorPaths() {
 }
 
 checkSanitizerPresence();
+checkWorkerLoggerParity();
 checkRawCredentialLogging();
 checkAuditPersistence();
 checkIntegrationErrorPaths();

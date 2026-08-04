@@ -6,7 +6,7 @@ const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   parsePublicCertificateMaterial,
 } = require("./parser");
-const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID =
@@ -63,6 +63,78 @@ const PEM_MARKER_PATTERN = /-----\s*(?:BEGIN|END)\b/i;
 const SECRET_ASSIGNMENT_PATTERN =
   /\b(?:password|secret|token|credential|private_key|privatekey|key_material)\s*=/i;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+// C2 (zero-custody): keyReference is a material-locality pointer, not free
+// text -- it answers which execution plane holds the key, never where to
+// open it. A bare credential (GitHub PAT, AWS access key, Slack token, JWT,
+// high-entropy password) has none of these scheme prefixes, so allow-listing
+// them rejects most bare-credential shapes outright without needing the
+// secret detector at all. Every prefix here is evidenced elsewhere in this
+// codebase: `file://` and `k8s:` are emitted by the shipped agent/controller
+// observation writers (agentObservations.js, controllerProvisioning.js,
+// controllerObservations.js); `vault:`, `hsm:`, and `external-unknown:` are
+// exercised by tests/integration/certops-inventory.test.js; `pkcs11:` is the
+// URI format the import UI documents (ImportCertificateForm.jsx).
+const KEY_REFERENCE_ALLOWED_SCHEME_PREFIXES = Object.freeze([
+  "file://",
+  "k8s:",
+  "vault:",
+  "hsm:",
+  "external-unknown:",
+  "pkcs11:",
+]);
+
+// RFC 7512 PKCS#11 URI attribute keys. All of them are structural
+// identifiers (a token label, a slot number, an object label, a module
+// path...) and none of them ever carries the key material itself. This
+// allow-list intentionally omits `pin-value`: RFC 7512 defines that query
+// attribute as an inline PIN, which is exactly the kind of secret this
+// validator must keep rejecting even inside an otherwise well-formed URI.
+const PKCS11_URI_SAFE_ATTRIBUTE_KEYS = new Set([
+  "token",
+  "manufacturer",
+  "serial",
+  "model",
+  "library-manufacturer",
+  "library-description",
+  "library-version",
+  "object",
+  "type",
+  "id",
+  "slot-id",
+  "slot-manufacturer",
+  "slot-description",
+  "module-name",
+  "module-path",
+  "pin-source",
+]);
+
+/**
+ * True if `value` is a `pkcs11:` URI built exclusively from RFC 7512
+ * attribute keys that never carry secret material. Used to exempt the
+ * generic secret-assignment checks from firing on the URI's own structural
+ * syntax (its `token=<label>` attribute textually matches a "token
+ * assignment," but the label is not a credential).
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isSafePkcs11Uri(value) {
+  const body = value.slice("pkcs11:".length);
+  const [pathPart, queryPart] = body.split("?");
+  const segments = [
+    ...(pathPart ? pathPart.split(";") : []),
+    ...(queryPart ? queryPart.split("&") : []),
+  ];
+  let sawAttribute = false;
+  for (const segment of segments) {
+    if (!segment) continue;
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex <= 0) return false;
+    const key = segment.slice(0, separatorIndex).toLowerCase();
+    if (!PKCS11_URI_SAFE_ATTRIBUTE_KEYS.has(key)) return false;
+    sawAttribute = true;
+  }
+  return sawAttribute;
+}
 const RETIRE_STATUSES = new Set(["revoked", "decommissioned"]);
 const RETIRE_STATUS_SQL_LIST = "'revoked', 'decommissioned'";
 
@@ -203,6 +275,46 @@ function keyReferenceError() {
   return err;
 }
 
+// sourceRef is documented in the OpenAPI contract as an "opaque non-secret
+// source reference" (packages/contracts/openapi/openapi.yaml), but unlike
+// keyReference it has no scheme allow-list: it is free text describing where
+// an observation came from (an import job id, a monitor URL, a
+// cert-manager resource name...), not a material-locality pointer. It still
+// gets persisted verbatim and echoed back in API responses, so the same
+// content-based private-key and generic-secret checks that guard
+// keyReference apply here too, just without the scheme requirement.
+const SOURCE_REF_MAX_LENGTH = 512;
+const CERTOPS_SOURCE_REF_INVALID = "CERTOPS_SOURCE_REF_INVALID";
+
+function sourceRefError() {
+  const err = new Error("CertOps sourceRef must be a non-secret reference");
+  err.code = CERTOPS_SOURCE_REF_INVALID;
+  return err;
+}
+
+function normalizeSourceRef(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw sourceRefError();
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > SOURCE_REF_MAX_LENGTH) throw sourceRefError();
+  if (containsPrivateKeyMaterial(trimmed)) throw sourceRefError();
+  if (PEM_MARKER_PATTERN.test(trimmed)) throw sourceRefError();
+  if (CONTROL_CHARACTER_PATTERN.test(trimmed)) throw sourceRefError();
+  if (SECRET_ASSIGNMENT_PATTERN.test(trimmed)) throw sourceRefError();
+  if (containsGenericSecretMaterial(trimmed)) throw sourceRefError();
+
+  return trimmed;
+}
+
+function keyReferenceSchemePrefix(value) {
+  return (
+    KEY_REFERENCE_ALLOWED_SCHEME_PREFIXES.find((prefix) => value.startsWith(prefix)) ||
+    null
+  );
+}
+
 function normalizeKeyReference(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") throw keyReferenceError();
@@ -212,8 +324,30 @@ function normalizeKeyReference(value) {
   if (trimmed.length > KEY_REFERENCE_MAX_LENGTH) throw keyReferenceError();
   if (containsPrivateKeyMaterial(trimmed)) throw keyReferenceError();
   if (PEM_MARKER_PATTERN.test(trimmed)) throw keyReferenceError();
-  if (SECRET_ASSIGNMENT_PATTERN.test(trimmed)) throw keyReferenceError();
   if (CONTROL_CHARACTER_PATTERN.test(trimmed)) throw keyReferenceError();
+
+  const schemePrefix = keyReferenceSchemePrefix(trimmed);
+  if (!schemePrefix) throw keyReferenceError();
+
+  // A well-formed `pkcs11:` URI textually contains `token=<label>` (RFC
+  // 7512), which otherwise reads exactly like the "secret assignment" shape
+  // both checks below exist to catch. Recognizing the URI structurally, and
+  // requiring every one of its attributes to come from the safe RFC 7512 set
+  // (never `pin-value`), lets a real PKCS#11 reference through without
+  // weakening those checks for anything else.
+  if (schemePrefix === "pkcs11:" && isSafePkcs11Uri(trimmed)) {
+    return trimmed;
+  }
+
+  // Scheme-allowlisting and the generic-secret checks are not alternatives;
+  // both apply, in that order. A value can be scheme-valid and still carry a
+  // credential-shaped payload after the prefix (for example
+  // "vault://pki/Authorization: Bearer <token>"), so both the narrow
+  // assignment pattern and the full generic-secret detector run against the
+  // portion after the scheme, without ever echoing the rejected value back.
+  const remainder = trimmed.slice(schemePrefix.length);
+  if (SECRET_ASSIGNMENT_PATTERN.test(remainder)) throw keyReferenceError();
+  if (containsGenericSecretMaterial(remainder)) throw keyReferenceError();
 
   return trimmed;
 }
@@ -640,7 +774,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
     options.tokenId || null,
     options.status || "discovered",
     options.source || "import",
-    options.sourceRef || null,
+    normalizeSourceRef(options.sourceRef),
     chooseCertificateName(certificate, options.name),
     certificate.commonName || null,
     certificate.subjectAltNames || [],
@@ -754,7 +888,7 @@ async function upsertManagedCertificateByMonitorSource(
   options,
   chainIndex,
 ) {
-  const sourceRef = options.sourceRef || null;
+  const sourceRef = normalizeSourceRef(options.sourceRef);
   if (!sourceRef) {
     throw new Error("sourceRef is required for monitor-source upsert");
   }
@@ -876,7 +1010,7 @@ async function upsertManagedCertificateByMonitorSource(
  * Mirrors cert-manager target upsert identity semantics.
  */
 async function upsertAgentFilesystemTarget(client, options) {
-  const sourceRef = options.sourceRef || null;
+  const sourceRef = normalizeSourceRef(options.sourceRef);
   if (!sourceRef) {
     throw new Error("sourceRef is required for agent filesystem target upsert");
   }
@@ -934,7 +1068,7 @@ async function upsertAgentFilesystemInstance(client, options) {
       options.managedCertificateId,
       options.targetId,
       options.status || "discovered",
-      options.sourceRef || null,
+      normalizeSourceRef(options.sourceRef),
       options.fingerprintSha256,
       options.serialNumber || null,
       options.subject || null,
@@ -955,7 +1089,7 @@ async function upsertAgentFilesystemInstance(client, options) {
  * or observation metadata that a cert-manager observer has already recorded.
  */
 async function upsertManagedCertificateForControllerProvisioning(client, options) {
-  const sourceRef = options.sourceRef || null;
+  const sourceRef = normalizeSourceRef(options.sourceRef);
   if (!sourceRef) {
     throw new Error("sourceRef is required for controller provisioning upsert");
   }
@@ -1447,6 +1581,9 @@ module.exports = {
   CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
+  CERTOPS_SOURCE_REF_INVALID,
+  KEY_REFERENCE_MAX_LENGTH,
+  SOURCE_REF_MAX_LENGTH,
   MANAGED_CERTIFICATE_SOURCES,
   MANAGED_CERTIFICATE_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -1470,6 +1607,7 @@ module.exports = {
   managedCertificateFilterSql,
   normalizeKeyMode,
   normalizeKeyReference,
+  normalizeSourceRef,
   normalizeLimit,
   normalizeOffset,
   retireManagedCertificate,
