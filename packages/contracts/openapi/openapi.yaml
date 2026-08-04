@@ -7620,6 +7620,47 @@ components:
           type: string
           maxLength: 1024
           nullable: true
+        claimId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |-
+            The current lease token an agent must reprove on every renew/report
+            call before it can act on this job. Only returned to workspace
+            admins/owners; other workspace members (who can still read this
+            endpoint) get this field omitted, since the raw value is reusable
+            proof of lease ownership for as long as the lease is open.
+        claimedByAgentId:
+          type: string
+          format: uuid
+          nullable: true
+        claimedByControllerClusterId:
+          type: string
+          nullable: true
+        leaseExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        leaseRenewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        attemptCount:
+          type: integer
+          minimum: 0
+        maxAttempts:
+          type: integer
+          minimum: 0
+        claimedByAgentSigningKeyId:
+          type: string
+          nullable: true
+          description: |-
+            Best-effort proxy for "which signing key backed this job's dispatch": the
+            claiming agent's *currently* pinned signing key, resolved by the single-job
+            GET .../certops/jobs/{jobId} route only (absent on job-creation responses).
+            There is no per-attempt signing-key column in the schema, so this reflects
+            the agent's key at read time, not necessarily the key pinned at the moment
+            of the specific claim being viewed.
     CertOpsJobDetailResponse:
       type: object
       additionalProperties: false

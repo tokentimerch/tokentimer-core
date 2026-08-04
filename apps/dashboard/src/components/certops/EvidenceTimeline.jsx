@@ -331,7 +331,42 @@ export default function EvidenceTimeline({ jobId, onClose }) {
                 label={subjectTypeLabel(job.subjectType) || 'Subject'}
               />
             ) : null}
+            {job.claimId ? (
+              <CopyableId id={job.claimId} label='Claim ID' />
+            ) : null}
+            {job.claimedByAgentId ? (
+              <CopyableId id={job.claimedByAgentId} label='Claimed by agent' />
+            ) : null}
+            {job.claimedByControllerClusterId ? (
+              <CopyableId
+                id={job.claimedByControllerClusterId}
+                label='Claimed by controller'
+              />
+            ) : null}
+            {job.claimedByAgentSigningKeyId ? (
+              <CopyableId
+                id={job.claimedByAgentSigningKeyId}
+                label="Agent's pinned signing key"
+              />
+            ) : null}
           </HStack>
+          {job.claimId || job.leaseExpiresAt || job.attemptCount ? (
+            <HStack spacing={3} flexWrap='wrap'>
+              {job.leaseExpiresAt ? (
+                <Text fontSize='xs' color={muted}>
+                  Lease expires {formatDateTime(job.leaseExpiresAt)}
+                </Text>
+              ) : null}
+              {typeof job.attemptCount === 'number' ? (
+                <Text fontSize='xs' color={muted}>
+                  Attempt {job.attemptCount}
+                  {typeof job.maxAttempts === 'number'
+                    ? ` of ${job.maxAttempts}`
+                    : ''}
+                </Text>
+              ) : null}
+            </HStack>
+          ) : null}
         </VStack>
         {typeof onClose === 'function' ? (
           <IconButton
