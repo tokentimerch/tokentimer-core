@@ -3,7 +3,10 @@
 const router = require("express").Router();
 
 const { pool } = require("../db/database");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  getApiLimiter,
+  getDiagnosticBootstrapLimiter,
+} = require("../middleware/rateLimit");
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   rejectKeyMaterial,
@@ -64,6 +67,11 @@ const {
   normalizeRequiredRetireReason,
   retireAgent,
 } = require("../services/certops/agentRegistry");
+const {
+  CERTOPS_DIAGNOSTIC_BOOTSTRAP_ALREADY_CONSUMED,
+  CERTOPS_DIAGNOSTIC_BOOTSTRAP_REQUEST_ID_INVALID,
+  createDiagnosticBootstrap,
+} = require("../services/certops/diagnosticBootstrap");
 const {
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
@@ -435,6 +443,25 @@ function handleCertOpsError(res, err) {
     return res.status(404).json({
       error: "CertOps agent not found",
       code: CERTOPS_AGENT_NOT_FOUND,
+    });
+  }
+
+  if (err?.code === CERTOPS_DIAGNOSTIC_BOOTSTRAP_REQUEST_ID_INVALID) {
+    return res.status(400).json({
+      error: "requestId is required and must be at most 128 characters",
+      code: CERTOPS_DIAGNOSTIC_BOOTSTRAP_REQUEST_ID_INVALID,
+    });
+  }
+
+  // Deliberately not a 409/replay body: a retried bootstrap must never
+  // resemble a state the caller can recover from by retrying again, and it
+  // must never suggest the original {agentId, credential, job} might still
+  // be recoverable from the server (see ADR-0012 decision 7 and the
+  // diagnosticBootstrap.js module comment).
+  if (err?.code === CERTOPS_DIAGNOSTIC_BOOTSTRAP_ALREADY_CONSUMED) {
+    return res.status(409).json({
+      error: "This diagnostic bootstrap request was already consumed",
+      code: CERTOPS_DIAGNOSTIC_BOOTSTRAP_ALREADY_CONSUMED,
     });
   }
 
@@ -1692,6 +1719,41 @@ router.post(
       });
       return res.status(500).json({
         error: "Failed to revoke CertOps agent bootstrap token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agents/diagnostic-bootstrap",
+  getDiagnosticBootstrapLimiter(),
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  authorize("certops.agents.diagnose"),
+  async (req, res) => {
+    try {
+      const result = await createDiagnosticBootstrap({
+        workspaceId: req.workspace.id,
+        requestId: req.body?.requestId,
+        requestedByUserId: req.user.id,
+        env: process.env,
+      });
+      return res.status(201).json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps diagnostic agent bootstrap failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to bootstrap CertOps diagnostic agent",
         code: "INTERNAL_ERROR",
       });
     }

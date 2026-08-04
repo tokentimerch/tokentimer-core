@@ -14,6 +14,16 @@ const CERTOPS_MACHINE_RATE_LIMIT_STORE_REQUIRED =
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_MAX = 120;
 const RAW_TOKEN_PATTERN = /^ttx_([a-f0-9]{16})_([a-f0-9]{64})$/;
+// Pre-auth traffic on the CertOps agent routes (register, heartbeat, claim,
+// lease, results) never carries a ttx_ workspace API token - it carries an
+// agent bootstrap token (ttboot_) or an agent credential (ttagent_), neither
+// of which RAW_TOKEN_PATTERN recognizes. Structural prefix extraction below
+// needs both shapes too, or every agent-route pre-auth request falls through
+// to the IP-only fallback and every caller behind the same IP collides on
+// one shared bucket, regardless of which distinct token each one is using.
+const RAW_AGENT_BOOTSTRAP_TOKEN_PATTERN =
+  /^ttboot_([a-f0-9]{16})_([a-f0-9]{64})$/;
+const RAW_AGENT_CREDENTIAL_PATTERN = /^ttagent_([a-f0-9]{16})_([a-f0-9]{64})$/;
 const UUID_SEGMENT_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
@@ -166,13 +176,25 @@ function authorizationHeader(req) {
 }
 
 function tokenPrefixFromAuthorization(req) {
-  const match = /^Bearer\s+(ttx_[a-f0-9]{16}_[a-f0-9]{64})$/i.exec(
-    authorizationHeader(req),
-  );
-  if (!match || match[1] !== match[1].toLowerCase()) return null;
+  const match = /^Bearer\s+(\S+)$/i.exec(authorizationHeader(req));
+  if (!match) return null;
+  const rawToken = match[1];
+  if (rawToken !== rawToken.toLowerCase()) return null;
 
-  const tokenMatch = RAW_TOKEN_PATTERN.exec(match[1]);
-  return tokenMatch ? `ttx_${tokenMatch[1]}` : null;
+  // Try every machine-credential shape this server issues pre-auth callers
+  // may present here: workspace API tokens (ttx_) on executor routes, and
+  // agent bootstrap tokens (ttboot_) / agent credentials (ttagent_) on agent
+  // routes. Each match yields only the public prefix, never the secret half.
+  const apiTokenMatch = RAW_TOKEN_PATTERN.exec(rawToken);
+  if (apiTokenMatch) return `ttx_${apiTokenMatch[1]}`;
+
+  const bootstrapMatch = RAW_AGENT_BOOTSTRAP_TOKEN_PATTERN.exec(rawToken);
+  if (bootstrapMatch) return `ttboot_${bootstrapMatch[1]}`;
+
+  const credentialMatch = RAW_AGENT_CREDENTIAL_PATTERN.exec(rawToken);
+  if (credentialMatch) return `ttagent_${credentialMatch[1]}`;
+
+  return null;
 }
 
 function preAuthWorkspaceId(req, options = {}) {

@@ -430,6 +430,27 @@ describe("certops job signing service", () => {
       assert.equal(old.status, "retiring");
     });
 
+    it("excludes diagnostic agents from the fleet count backing the rotation gate (ADR-0012 decision 7)", async () => {
+      const client = createMemoryClient();
+      await ensureActiveSigningKey({ client });
+      await beginSigningKeyRotation({ client });
+
+      await getSigningKeyRotationStatus({ client });
+      await completeSigningKeyRotation({ client, force: true });
+
+      const fleetQueries = client.queries.filter((entry) =>
+        entry.sql.includes("FROM certops_agents"),
+      );
+      assert.ok(fleetQueries.length > 0, "expected at least one fleet query");
+      for (const entry of fleetQueries) {
+        assert.match(
+          entry.sql,
+          /agent_kind\s*<>\s*'diagnostic'/,
+          `fleet query must exclude diagnostic agents: ${entry.sql}`,
+        );
+      }
+    });
+
     it("completes once the whole fleet acknowledged the new key", async () => {
       const client = createMemoryClient();
       await ensureActiveSigningKey({ client });

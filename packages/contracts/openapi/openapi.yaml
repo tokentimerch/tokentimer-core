@@ -5365,6 +5365,90 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agents/diagnostic-bootstrap:
+    post:
+      tags: [CertOps]
+      summary: Bootstrap a CertOps diagnostic agent
+      operationId: createCertOpsDiagnosticBootstrap
+      description: >-
+        Session-authenticated (requires certops.agents.diagnose, admin-only).
+        Atomically consumes a single-use requestId, creates an agent with
+        agent_kind "diagnostic", and creates its protocol_smoke job, all in
+        one transaction. The response's credential is returned exactly once
+        and is not recoverable afterward. Retrying with the same requestId
+        never replays the original agentId/credential/job; it fails with
+        diagnostic_bootstrap_already_consumed. Requests are rate limited per
+        workspace. Diagnostic agents that stay inactive for 24 hours are
+        retired automatically; retirement revokes the credential in the same
+        transaction that marks the agent retired, so a retired diagnostic
+        agent's credential fails authentication immediately, not just
+        authorization.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsDiagnosticBootstrapRequest"
+      responses:
+        "201":
+          description: Diagnostic agent and its protocol_smoke job were created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsDiagnosticBootstrapResponse"
+        "400":
+          description: requestId is missing or too long
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: requestId is required and must be at most 128 characters
+                code: CERTOPS_DIAGNOSTIC_BOOTSTRAP_REQUEST_ID_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "409":
+          description: This exact requestId was already consumed by a prior bootstrap call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: This diagnostic bootstrap request was already consumed
+                code: diagnostic_bootstrap_already_consumed
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: Diagnostic bootstrap is rate limited for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Diagnostic agent bootstrap is rate limited for this workspace. Please wait before trying again.
+                code: CERTOPS_DIAGNOSTIC_BOOTSTRAP_RATE_LIMITED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/certops/jobs/{jobId}/events:
     post:
       tags: [CertOps Agent]
@@ -9061,6 +9145,10 @@ components:
         status:
           type: string
           enum: [active, offline, retired]
+        agentKind:
+          type: string
+          enum: [normal, diagnostic]
+          description: Server-assigned at creation and never client-settable. A "diagnostic" agent can only ever be offered protocol_smoke jobs, regardless of what it declares in its capabilities (ADR-0012 decision 7).
         lastSeenAt:
           type: string
           format: date-time
@@ -9109,6 +9197,50 @@ components:
       properties:
         agent:
           $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+    CertOpsDiagnosticBootstrapRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId]
+      properties:
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Caller-chosen idempotency key. The same requestId can only ever succeed once; every retry after the first fails with diagnostic_bootstrap_already_consumed rather than replaying the original agent/credential/job.
+    CertOpsDiagnosticBootstrapResponse:
+      type: object
+      additionalProperties: false
+      required: [agentId, credential, protocolVersion, job]
+      properties:
+        agentId:
+          type: string
+          description: Stable protocol-level agent identifier for the new diagnostic agent.
+        credential:
+          type: string
+          description: Plaintext bearer credential for the diagnostic agent. Returned exactly once; the server stores only its hash and cannot recover it later.
+        protocolVersion:
+          type: string
+        signingKeyId:
+          type: string
+          nullable: true
+        signingPublicKeyPem:
+          type: string
+          nullable: true
+        job:
+          type: object
+          additionalProperties: false
+          required: [id, operation, mode, status]
+          properties:
+            id:
+              type: string
+            operation:
+              type: string
+              enum: [protocol_smoke]
+            mode:
+              type: string
+              enum: [dry_run]
+            status:
+              type: string
     CertOpsAgentProtocolEnvelope:
       type: object
       description: Agent-protocol message envelope. Mirrors packages/contracts/certops/agent-protocol.schema.json (the authoritative schema, additionalProperties false there); the per-messageType body is constrained in the operation-specific request schemas below. Messages never carry private key material.

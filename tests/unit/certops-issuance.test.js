@@ -968,12 +968,22 @@ describe("migration 34 issue job operation", () => {
     }
   });
 
-  it("accepts exactly the operations the service layer declares", () => {
+  it("accepts exactly the operations the service layer declared at the time", () => {
+    // Migration 34 is a historical snapshot: it widened the constraint to the
+    // operations the service layer declared as of that migration. Migration
+    // 40 widens the same constraint again for protocol_smoke (ADR-0012
+    // decision 7), so this assertion excludes operations introduced by later
+    // migrations rather than comparing against the current live
+    // JOB_OPERATIONS, which would make this historical test fail every time
+    // a later migration adds a new operation.
     const declared = migration.sql.match(/operation IN \(([^)]+)\)/);
     assert.ok(declared, "operation IN (...) list expected");
     const values = declared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...values].sort(), [...JOB_OPERATIONS].sort());
+    const operationsAsOfMigration34 = JOB_OPERATIONS.filter(
+      (operation) => operation !== "protocol_smoke",
+    );
+    assert.deepEqual([...values].sort(), [...operationsAsOfMigration34].sort());
   });
 });

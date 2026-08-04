@@ -424,6 +424,81 @@ describe("CertOps machine-token rate limiter", () => {
     }
   });
 
+  it("extracts the public prefix from agent bootstrap tokens and agent credentials, not just ttx_", () => {
+    const bootstrapToken = `ttboot_${TOKEN_ID}_${TOKEN_SECRET}`;
+    const credentialToken = `ttagent_${TOKEN_ID}_${TOKEN_SECRET}`;
+
+    assert.equal(
+      tokenPrefixFromAuthorization(
+        createRequest({ authorization: `Bearer ${bootstrapToken}` }),
+      ),
+      `ttboot_${TOKEN_ID}`,
+    );
+    assert.equal(
+      tokenPrefixFromAuthorization(
+        createRequest({ authorization: `Bearer ${credentialToken}` }),
+      ),
+      `ttagent_${TOKEN_ID}`,
+    );
+
+    for (const authorization of [
+      `Bearer ttboot__${TOKEN_SECRET}`,
+      `Bearer ttagent_${TOKEN_ID}_`,
+      `Bearer TTBOOT_${TOKEN_ID}_${TOKEN_SECRET}`,
+      `Bearer ttagent_${TOKEN_ID}_${"A".repeat(64)}`,
+    ]) {
+      assert.equal(
+        tokenPrefixFromAuthorization(createRequest({ authorization })),
+        null,
+      );
+    }
+  });
+
+  // Regression for the CertOps agent register/claim lockout: those routes
+  // authenticate with a bootstrap token (ttboot_) or an agent credential
+  // (ttagent_), never a workspace API token (ttx_), and never carry a
+  // :workspaceId route param. Before tokenPrefixFromAuthorization recognized
+  // those two token shapes, every pre-auth call on those routes fell through
+  // to the IP-only fallback, so two entirely different agents (different
+  // bootstrap tokens, different workspaces) calling register from behind the
+  // same IP collided on one shared bucket and could lock each other out
+  // despite neither one having exceeded its own budget.
+  it("does not let two different agent bootstrap tokens behind the same IP lock each other out", async () => {
+    const middleware = createCertOpsMachineTokenPreAuthRateLimit({ max: 1 });
+    const sharedIp = "203.0.113.55";
+    const firstAgentRegister = createRequest({
+      authorization: `Bearer ttboot_${TOKEN_ID}_${TOKEN_SECRET}`,
+      ip: sharedIp,
+      path: "/api/v1/certops/agent/register",
+      originalUrl: "/api/v1/certops/agent/register",
+      baseUrl: "",
+      route: { path: "/api/v1/certops/agent/register" },
+    });
+    const secondAgentRegister = createRequest({
+      authorization: `Bearer ttboot_fedcba9876543210_${TOKEN_SECRET}`,
+      ip: sharedIp,
+      path: "/api/v1/certops/agent/register",
+      originalUrl: "/api/v1/certops/agent/register",
+      baseUrl: "",
+      route: { path: "/api/v1/certops/agent/register" },
+    });
+
+    assert.equal(
+      (await runMiddleware(middleware, firstAgentRegister)).nextCalled,
+      true,
+    );
+    // A second, distinct bootstrap token from the same IP must still get
+    // through: it is a different caller, not a retry of the first one.
+    assert.equal(
+      (await runMiddleware(middleware, secondAgentRegister)).nextCalled,
+      true,
+    );
+
+    // The first token's own retry is still correctly rate limited once it
+    // is over its own budget (real protection is preserved).
+    assertRateLimited(await runMiddleware(middleware, firstAgentRegister));
+  });
+
   it("uses public prefix or IP fallback for pre-auth keys without retaining raw authorization", () => {
     const validKey = machineTokenPreAuthRateLimitKey(
       createRequest({

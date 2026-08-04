@@ -22,6 +22,10 @@
  *      rows (registrationCredentialCrypto.js).
  *   5. Renewal scheduler: plan renew jobs for expiring certificates
  *      (apps/api/services/certops/renewalScheduler.js).
+ *   6. Diagnostic-agent inactivity sweep: retire diagnostic agents past their
+ *      24-hour inactivity TTL via the four-branch orphan-retirement state
+ *      machine (apps/api/services/certops/agentRegistry.js, ADR-0012
+ *      decision 7).
  *
  * Zero-custody: nothing here reads or writes private key material.
  */
@@ -38,6 +42,7 @@ import {
   gCertopsRegistrationReplaysSwept,
   gCertopsRenewalJobsCreated,
   gCertopsRenewalScheduler,
+  gCertopsDiagnosticAgentsRetired,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
@@ -77,6 +82,10 @@ const {
   JOB_STATUSES,
   isTerminalJobStatus,
 } = require("../../api/services/certops/jobs.js");
+
+const {
+  sweepInactiveDiagnosticAgents,
+} = require("../../api/services/certops/agentRegistry.js");
 
 const TERMINAL_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => isTerminalJobStatus(status)),
@@ -127,6 +136,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "outbox-drain": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_TIMEOUT_MS",
+  }),
+  "diagnostic-agent-inactivity-sweep": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_TIMEOUT_MS",
   }),
 });
 
@@ -1138,6 +1151,7 @@ export async function runCertOpsMaintenance({
   registrationReplaySweeper = sweepExpiredRegistrationReplays,
   renewalSweeper = runRenewalSchedulerSweep,
   outboxDrainer = drainCertOpsOutbox,
+  diagnosticAgentSweeper = sweepInactiveDiagnosticAgents,
   pushMetricsFn = pushMetrics,
 } = {}) {
   log.info("CertOps maintenance worker started");
@@ -1260,6 +1274,36 @@ export async function runCertOpsMaintenance({
     },
   );
 
+  // ADR-0012 decision 7: this sweep is the only path that retires a
+  // diagnostic agent past its 24-hour inactivity TTL. It is deliberately
+  // separate from the stale-agents sweep above: that one only ever flips
+  // status to 'offline' and never retires anything, for any agent kind.
+  results.diagnosticAgentInactivitySweep = await runIsolated(
+    "diagnostic-agent-inactivity-sweep",
+    log,
+    async () => {
+      const outcomes = await diagnosticAgentSweeper({ dbPool, env });
+      const retired = outcomes.filter((o) => o.retired).length;
+      const deferred = outcomes.filter((o) => o.deferred).length;
+      const errors = outcomes.filter((o) => o.error).length;
+      return { candidates: outcomes.length, retired, deferred, errors };
+    },
+    {
+      enabled: isSweepEnabled("diagnostic-agent-inactivity-sweep", env),
+      timeoutMs: resolveSweepTimeoutMs(
+        "diagnostic-agent-inactivity-sweep",
+        env,
+      ),
+    },
+  );
+  if (results.diagnosticAgentInactivitySweep.status === "success") {
+    const { retired, deferred, errors } =
+      results.diagnosticAgentInactivitySweep.result;
+    safeGaugeSet(gCertopsDiagnosticAgentsRetired, { outcome: "retired" }, retired);
+    safeGaugeSet(gCertopsDiagnosticAgentsRetired, { outcome: "deferred" }, deferred);
+    safeGaugeSet(gCertopsDiagnosticAgentsRetired, { outcome: "error" }, errors);
+  }
+
   log.info("CertOps maintenance worker finished", {
     leaseReaper:
       results.leaseReaper.status === "success"
@@ -1285,6 +1329,10 @@ export async function runCertOpsMaintenance({
       results.outboxDrain.status === "success"
         ? results.outboxDrain.result
         : results.outboxDrain.status,
+    diagnosticAgentInactivitySweep:
+      results.diagnosticAgentInactivitySweep.status === "success"
+        ? results.diagnosticAgentInactivitySweep.result
+        : results.diagnosticAgentInactivitySweep.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>
