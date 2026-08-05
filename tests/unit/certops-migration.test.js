@@ -1197,9 +1197,20 @@ describe("CertOps inventory migration", () => {
 });
 
 describe("migration 42 Windows IIS target descriptors", () => {
+  const agentHostMigration = migrations.find(
+    (entry) => entry.name === "certificate_targets_target_type_agent_host",
+  );
   const migration = migrations.find(
     (entry) => entry.name === "certops_windows_iis_target_descriptors",
   );
+
+  function getCertificateTargetTypes(entry) {
+    const constraint = entry.sql.match(
+      /ADD CONSTRAINT certificate_targets_target_type_check CHECK \(\s*target_type IN \(([\s\S]*?)\)\s*\)/,
+    );
+    assert.ok(constraint, "certificate target-type CHECK constraint expected");
+    return [...constraint[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  }
 
   it("exists at version 42 and widens certificate_targets", () => {
     assert.ok(migration, "certops_windows_iis_target_descriptors migration expected");
@@ -1215,22 +1226,13 @@ describe("migration 42 Windows IIS target descriptors", () => {
   });
 
   it("widens certificate_targets_target_type_check to accept windows-iis while keeping every earlier type", () => {
-    assert.match(migration.sql, /certificate_targets_target_type_check/);
-    for (const value of [
-      "endpoint",
-      "domain",
-      "host",
-      "kubernetes-secret",
-      "load-balancer",
-      "cdn",
-      "appliance",
-      "hsm",
-      "vault",
-      "other",
+    assert.ok(agentHostMigration, "migration 32 agent-host vocabulary expected");
+    const earlierTypes = getCertificateTargetTypes(agentHostMigration);
+    assert.ok(earlierTypes.includes("agent-host"));
+    assert.deepEqual(getCertificateTargetTypes(migration), [
+      ...earlierTypes,
       "windows-iis",
-    ]) {
-      assert.match(migration.sql, new RegExp(`'${value}'`));
-    }
+    ]);
   });
 
   it("constrains windows_port to the valid TCP port range and never uses CREATE TYPE", () => {
