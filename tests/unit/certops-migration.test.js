@@ -504,6 +504,67 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("defines the operational notifications migration at a stable, unique version", () => {
+    const opNotificationsMigration = migrations.find(
+      (migration) => migration.name === "operational_notifications_schema",
+    );
+    assert.ok(
+      opNotificationsMigration,
+      "expected operational_notifications_schema migration",
+    );
+    assert.equal(opNotificationsMigration.version, 39);
+    assert.equal(
+      migrations.filter((migration) => migration.version === opNotificationsMigration.version)
+        .length,
+      1,
+      "migration version 39 must not be reused by a later migration",
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE TABLE IF NOT EXISTS operational_notifications \(/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /token_id INTEGER NULL REFERENCES tokens\(id\) ON DELETE SET NULL/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /category TEXT NOT NULL CHECK \(category IN \('delivery', 'auto_sync'\)\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /severity TEXT NOT NULL CHECK \(severity IN \('info', 'warning', 'critical'\)\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_operational_notifications_open_dedupe\s+ON operational_notifications\(workspace_id, dedupe_key\)\s+WHERE resolved_at IS NULL/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE TABLE IF NOT EXISTS operational_notification_reads \(/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /PRIMARY KEY \(notification_id, user_id\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /ALTER TABLE auto_sync_configs\s+ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0/,
+    );
+    assert.doesNotMatch(
+      opNotificationsMigration.sql,
+      /CREATE TABLE (?!IF NOT EXISTS)/,
+    );
+    assert.doesNotMatch(
+      opNotificationsMigration.sql,
+      /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
+    );
+  });
+
   it("defines the additive workspace kill-switch migration", () => {
     assert.ok(
       certOpsWorkspaceKillSwitchMigration,
@@ -1196,14 +1257,14 @@ describe("CertOps inventory migration", () => {
   });
 });
 
-describe("migration 42 Windows IIS target descriptors", () => {
+describe("migration 43 Windows IIS target descriptors", () => {
   const migration = migrations.find(
     (entry) => entry.name === "certops_windows_iis_target_descriptors",
   );
 
-  it("exists at version 42 and widens certificate_targets", () => {
+  it("exists at version 43 and widens certificate_targets", () => {
     assert.ok(migration, "certops_windows_iis_target_descriptors migration expected");
-    assert.equal(migration.version, 42);
+    assert.equal(migration.version, 43);
     for (const column of [
       "windows_store",
       "windows_site",
@@ -1243,14 +1304,14 @@ describe("migration 42 Windows IIS target descriptors", () => {
   });
 });
 
-describe("migration 43 trust-anchor persistence", () => {
+describe("migration 44 trust-anchor persistence", () => {
   const migration = migrations.find(
     (entry) => entry.name === "certops_trust_anchors",
   );
 
-  it("exists at version 43 and creates both trust-anchor tables", () => {
+  it("exists at version 44 and creates both trust-anchor tables", () => {
     assert.ok(migration, "certops_trust_anchors migration expected");
-    assert.equal(migration.version, 43);
+    assert.equal(migration.version, 44);
     assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchors\b/);
     assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS certops_trust_anchor_installations\b/);
   });
@@ -1319,14 +1380,14 @@ describe("migration 43 trust-anchor persistence", () => {
   });
 });
 
-describe("migration 44 trust-anchor job operation and subject type", () => {
+describe("migration 45 trust-anchor job operation and subject type", () => {
   const migration = migrations.find(
     (entry) => entry.name === "certops_trust_anchor_jobs",
   );
 
-  it("exists at version 44 and widens both certificate_jobs constraints", () => {
+  it("exists at version 45 and widens both certificate_jobs constraints", () => {
     assert.ok(migration, "certops_trust_anchor_jobs migration expected");
-    assert.equal(migration.version, 44);
+    assert.equal(migration.version, 45);
     assert.match(migration.sql, /certificate_jobs_operation_check/);
     assert.match(migration.sql, /certificate_jobs_subject_type_check/);
   });
@@ -1430,18 +1491,18 @@ describe("migration 44 trust-anchor job operation and subject type", () => {
   });
 });
 
-describe("migration 44 certificate_evidence trust vocabulary applies against a live schema", () => {
-  it("runs migrations 1-44 in order and inserts trust-anchor evidence rows without violating any CHECK", async () => {
+describe("migration 45 certificate_evidence trust vocabulary applies against a live schema", () => {
+  it("runs migrations 1-45 in order and inserts trust-anchor evidence rows without violating any CHECK", async () => {
     // This is a pure-SQL-string simulation, not a live Postgres connection
     // (no test DB is assumed to be available here): it re-derives what
     // every certificate_evidence CHECK constraint looks like after all
-    // migrations up to 44 have run, by folding each DROP/ADD CONSTRAINT in
+    // migrations up to 45 have run, by folding each DROP/ADD CONSTRAINT in
     // migration order, then confirms a trust_anchor/trust.distributed row
     // and a trust_anchor/trust.revoked row both satisfy the final state.
     const relevantMigrations = migrations.filter(
-      (migration) => migration.version <= 44,
+      (migration) => migration.version <= 45,
     );
-    assert.equal(relevantMigrations.length, 44);
+    assert.equal(relevantMigrations.length, 45);
 
     let subjectTypeValues = null;
     let evidenceTypeValues = null;

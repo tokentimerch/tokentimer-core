@@ -988,11 +988,11 @@ describe("migration 34 issue job operation", () => {
     }
   });
 
-  it("accepts exactly the operations the service layer declared at the time (later widened by migration 40 for protocol_smoke and migration 44 for trust-anchor operations)", () => {
+  it("accepts exactly the operations the service layer declared at the time (later widened by migration 41 for protocol_smoke and migration 45 for trust-anchor operations)", () => {
     // Migration 34 is a historical snapshot: it widened the constraint to the
     // operations the service layer declared as of that migration. Migration
-    // 40 widens the same constraint again for protocol_smoke (ADR-0012
-    // decision 7) and migration 44 widens it a third time for
+    // 41 widens the same constraint again for protocol_smoke (ADR-0012
+    // decision 7) and migration 45 widens it a third time for
     // distribute-trust/revoke-trust (ADR-0012 decisions 4-6), so this
     // assertion excludes every operation introduced by those later
     // migrations rather than comparing against the current live
