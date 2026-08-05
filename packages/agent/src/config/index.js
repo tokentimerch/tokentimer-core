@@ -1139,11 +1139,29 @@ function readSigningKeyPin(configDir) {
  * Reads the credential file, returning null if it does not exist.
  * Never logs the raw value; callers must also avoid logging the return
  * value directly (use redactCredentialForLogging for any log call site).
+ *
+ * This file is agent-created and agent-written-only (writeCredential below
+ * always routes through applyRestrictivePermissions), so its owner/DACL is
+ * re-verified on every read, exactly like the DNS credentials file above --
+ * a live Windows-host check found this file was the one credential-shaped
+ * path in the module that skipped the check, silently trusting whatever
+ * bytes sat at this path regardless of who owned it. An untrusted owner
+ * here means either a
+ * hijacked install or a substituted file, never something safe to read
+ * silently: the agent authenticates to the control plane with whatever this
+ * function returns.
  * @param {string} configDir
  * @returns {string|null}
  */
 function readCredential(configDir) {
   const credentialPath = path.join(configDir, CREDENTIAL_FILE_NAME);
+  if (!fs.existsSync(credentialPath)) return null;
+
+  assertRestrictivePermissions(credentialPath, {
+    label: "credential file",
+    requireProtected: true,
+  });
+
   let raw;
   try {
     raw = fs.readFileSync(credentialPath, "utf8");
