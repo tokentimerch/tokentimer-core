@@ -1,6 +1,6 @@
 "use strict";
 
-// Real-host verification for WRET-04: real restart-across-cleanup
+// Real-host verification for real restart-across-cleanup
 // survival. Creates a ledger row in one process, "kills" that process
 // (just exits normally here, simulating the crash boundary via a fresh
 // process invocation), then a SECOND, independent node process re-reads
@@ -8,8 +8,8 @@
 // on-disk row (no in-memory state carried over).
 //
 // Usage:
-//   node wret-04-restart.js create <ledgerDir>   (process 1)
-//   node wret-04-restart.js resume <ledgerDir>   (process 2, fresh)
+//   node windows-retention-restart.js create <ledgerDir>   (process 1)
+//   node windows-retention-restart.js resume <ledgerDir>   (process 2, fresh)
 
 const retMod = require("C:\\TokenTimerAgentTest\\src\\windows-retention\\index.js");
 
@@ -21,7 +21,7 @@ async function create(ledgerDir) {
     ledgerDir,
     oldThumbprint: THUMBPRINT,
     replacementThumbprint: "BB".repeat(20),
-    cngKeyContainerId: "tokentimer-wret04-restart-test",
+    cngKeyContainerId: "tokentimer-retention-restart-test",
     verifiedCutoverAt: now.toISOString(),
     oldNotAfter: new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30).toISOString(),
     ownershipProvenance: "tokentimer_installed",

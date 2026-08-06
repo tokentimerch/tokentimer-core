@@ -119,14 +119,14 @@ const NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT = `
 SSL Certificate bindings:
 -------------------------
 
-    Hostname:port                : wiis05.tokentimer-verify.local:10443
+    Hostname:port                : sni-precision.tokentimer-verify.local:10443
     Certificate Hash             : daa61c502810ca0952df77a0d4194c32085b5abd
     Application ID               : {65f12961-a6a1-4736-a36e-af476fd0d37a}
     Certificate Store Name       : My
 `;
 
 const NETSH_SHOW_SSLCERT_MIXED_OUTPUT = `${NETSH_SHOW_SSLCERT_OUTPUT}
-    Hostname:port                : wiis05.tokentimer-verify.local:10443
+    Hostname:port                : sni-precision.tokentimer-verify.local:10443
     Certificate Hash             : daa61c502810ca0952df77a0d4194c32085b5abd
     Application ID               : {65f12961-a6a1-4736-a36e-af476fd0d37a}
     Certificate Store Name       : My
@@ -256,7 +256,7 @@ describe("parseNetshSslcertBindings", () => {
   it("parses a real hostname-keyed (SNI, hostnameport=) binding block, not just IP:port ones (2026-08-05 real-host finding)", () => {
     const bindings = parseNetshSslcertBindings(NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT);
     assert.equal(bindings.length, 1);
-    assert.equal(bindings[0].ipPort, "wiis05.tokentimer-verify.local:10443");
+    assert.equal(bindings[0].ipPort, "sni-precision.tokentimer-verify.local:10443");
     assert.equal(bindings[0].keyedBy, "hostnameport");
     assert.equal(bindings[0].thumbprint, "DAA61C502810CA0952DF77A0D4194C32085B5ABD");
     assert.equal(bindings[0].storeName, "My");

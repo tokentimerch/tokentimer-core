@@ -1,12 +1,12 @@
 "use strict";
 
-// Real-host verification for WIIS-04: real rollback on verify failure.
+// Real-host verification for real rollback on verify failure.
 // Deliberately deploys a certificatePem whose thumbprint has no matching
 // certificate+key actually present in the store, so the real post-bind TLS
 // handshake genuinely fails, and confirms deployIisBinding rolls back to
 // the prior thumbprint via a real netsh call (confirmed independently).
 //
-// Usage: node wiis-04-rollback.js <workDir>
+// Usage: node windows-iis-rollback.js <workDir>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -27,7 +27,7 @@ async function main() {
     binding: { address: "0.0.0.0", port: 8443, store: "My", site: "Default Web Site" },
   });
   const priorThumbprint = currentBeforeResult.thumbprint;
-  console.log("Binding before WIIS-04 attempt:", priorThumbprint);
+  console.log("Binding before rollback attempt:", priorThumbprint);
 
   const danglingCertPem = fs.readFileSync(path.join(workDir, "dangling.cer"), "utf8");
 
@@ -38,7 +38,7 @@ async function main() {
     verifyTimeoutMs: 4000,
   });
   console.log("deployIisBinding result:", JSON.stringify(deployResult, null, 2));
-  fs.writeFileSync(path.join(workDir, "wiis-04-result.json"), JSON.stringify(deployResult, null, 2));
+  fs.writeFileSync(path.join(workDir, "iis-rollback-result.json"), JSON.stringify(deployResult, null, 2));
 
   // On a real host, netsh's own add-sslcert validation rejects a
   // certificate whose key association is broken BEFORE any TLS handshake
@@ -63,7 +63,7 @@ async function main() {
   const confirmResult = await queryCurrentBinding({ binding });
   console.log("post-rollback queryCurrentBinding:", JSON.stringify(confirmResult));
   const rawNetsh = childProcess.execFileSync("netsh", ["http", "show", "sslcert", "ipport=0.0.0.0:8443"], { encoding: "utf8" });
-  fs.writeFileSync(path.join(workDir, "wiis-04-confirm.txt"), rawNetsh);
+  fs.writeFileSync(path.join(workDir, "iis-rollback-confirm.txt"), rawNetsh);
 
   if (confirmResult.ok && confirmResult.thumbprint === priorThumbprint) {
     console.log("OK: netsh independently confirms the binding is back on the pre-deploy thumbprint", priorThumbprint);

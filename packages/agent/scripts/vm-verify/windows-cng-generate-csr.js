@@ -1,8 +1,8 @@
 "use strict";
 
-// Real-host verification for WCNG-01 (real CNG-native CSR generation) and
-// WCNG-04 (invalid INF rejected before touching the store).
-// Run on the Windows VM: node wcng-01-generate-csr.js <workDir> <outCsrPath>
+// Real-host verification for real CNG-native CSR generation, and for an
+// invalid INF being rejected before it ever touches the store.
+// Run on the Windows VM: node windows-cng-generate-csr.js <workDir> <outCsrPath>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -16,12 +16,12 @@ async function main() {
   const outCsrPath = process.argv[3] || "C:\\TokenTimerAgentTest\\work\\real.csr";
   fs.mkdirSync(workDir, { recursive: true });
 
-  console.log("=== WCNG-04: invalid INF is rejected before touching the store ===");
+  console.log("=== invalid INF is rejected before touching the store ===");
   try {
     await generateCsrViaCng({
       commonName: "",
       altNames: [],
-      jobId: "wcng04-invalid",
+      jobId: "csr-generate-invalid",
       workDir,
     });
     console.log("FAIL: expected rejection for empty commonName, but call succeeded");
@@ -39,12 +39,12 @@ async function main() {
   const keyListBefore = execFileSync("certutil", ["-key", "-csp", CNG_KSP], { encoding: "utf8" });
 
   console.log("");
-  console.log("=== WCNG-01: real CNG-native CSR generation ===");
-  const commonName = "wcng01.tokentimer-verify.local";
+  console.log("=== real CNG-native CSR generation ===");
+  const commonName = "csr-gen.tokentimer-verify.local";
   const result = await generateCsrViaCng({
     commonName,
     altNames: [commonName],
-    jobId: "wcng01-real",
+    jobId: "csr-generate-real",
     workDir,
   });
 
@@ -89,7 +89,7 @@ async function main() {
   }
 
   console.log("");
-  console.log("containerName for WCNG-02:", result.containerName);
+  console.log("containerName (feed into the acceptance driver next):", result.containerName);
   fs.writeFileSync(path.join(workDir, "container-name.txt"), result.containerName);
 }
 

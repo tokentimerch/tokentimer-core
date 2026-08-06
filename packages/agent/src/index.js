@@ -433,7 +433,7 @@ const LEASE_TRANSIENT_BACKOFF_MS = 200;
 const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /**
- * VERIFY-RACE-01: max retries for a live verify probe that connects fine
+ * Max retries for a live verify probe that connects fine
  * but reports the *previous* certificate's fingerprint. `maybeReloadForJob`
  * returns as soon as `systemctl reload`/equivalent exits, which only
  * guarantees the reload was requested, not that every worker/connection has
@@ -471,7 +471,7 @@ function sleepMs(ms) {
 }
 
 /**
- * VERIFY-RACE-01 mitigation: retries `probeImpl` (defaults to the real
+ * Retries `probeImpl` (defaults to the real
  * `verifyDeployedCertificate`) when, and only when, the probe connected
  * successfully and got back an actual certificate whose fingerprint simply
  * does not match yet. That specific shape (`actualFingerprintSha256` is a

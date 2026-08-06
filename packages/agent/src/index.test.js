@@ -4279,7 +4279,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
   });
 });
 
-describe("verifyDeployedCertificateWithRetry (VERIFY-RACE-01)", () => {
+describe("verifyDeployedCertificateWithRetry", () => {
   function fakeSleep(delays) {
     return async (ms) => {
       delays.push(ms);

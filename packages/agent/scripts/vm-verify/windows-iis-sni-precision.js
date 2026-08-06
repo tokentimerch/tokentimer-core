@@ -1,11 +1,11 @@
 "use strict";
 
-// Real-host verification for WIIS-05: binding-tuple precision. Repeats a
+// Real-host verification for binding-tuple precision. Repeats a
 // deploy for an SNI-qualified binding and confirms only that targeted
 // binding changes; the unrelated hostname-less binding on a different port
 // (set up earlier at 9443) stays provably untouched.
 //
-// Usage: node wiis-05-sni-precision.js <workDir> <certPemPath>
+// Usage: node windows-iis-sni-precision.js <workDir> <certPemPath>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -23,12 +23,12 @@ async function main() {
   const sniBinding = {
     address: "0.0.0.0",
     port: 10443,
-    sniHost: "wiis05.tokentimer-verify.local",
+    sniHost: "sni-precision.tokentimer-verify.local",
     store: "My",
     site: "Default Web Site",
   };
 
-  console.log("=== WIIS-05: SNI-qualified binding deploy ===");
+  console.log("=== SNI-qualified binding deploy ===");
   const result = await deployIisBinding({ binding: sniBinding, certificatePem });
   console.log("deployIisBinding:", JSON.stringify(result, null, 2));
   if (result.ok !== true) {

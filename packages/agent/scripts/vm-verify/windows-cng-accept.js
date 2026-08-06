@@ -1,8 +1,8 @@
 "use strict";
 
-// Real-host verification for WCNG-02 (real CNG-native acceptance) and
-// WCNG-05 (thumbprint utility cross-check).
-// Usage: node wcng-02-accept.js <workDir> <certPemPath>
+// Real-host verification for real CNG-native acceptance, and a thumbprint
+// utility cross-check against Node's own crypto module.
+// Usage: node windows-cng-accept.js <workDir> <certPemPath>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -17,7 +17,7 @@ async function main() {
   const certPemPath = process.argv[3] || "C:\\TokenTimerAgentTest\\work\\real.cer";
   const certificatePem = fs.readFileSync(certPemPath, "utf8");
 
-  console.log("=== WCNG-05: thumbprint utility cross-check (before accept) ===");
+  console.log("=== thumbprint utility cross-check (before accept) ===");
   const ourThumbprint = computeSha1ThumbprintFromPem(certificatePem);
   const nodeFingerprint = new crypto.X509Certificate(certificatePem).fingerprint.replace(/:/g, "");
   console.log("computeSha1ThumbprintFromPem:", ourThumbprint);
@@ -30,7 +30,7 @@ async function main() {
   }
 
   console.log("");
-  console.log("=== WCNG-02: real CNG-native acceptance ===");
+  console.log("=== real CNG-native acceptance ===");
   const result = await acceptCertificateViaCng({ certificatePem, workDir });
   if (result.ok === false) {
     console.log("FAIL: acceptCertificateViaCng returned ok:false ->", JSON.stringify(result, null, 2));

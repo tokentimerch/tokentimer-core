@@ -1,11 +1,11 @@
 "use strict";
 
-// Real-host verification for WRET-01 (real ledger row lifecycle on NTFS,
-// real ACL), WRET-02 (real sweep against a real superseded cert from the
-// WIIS cutover above), WRET-03 (real active-reference deferral), WRET-05
-// (retention-boundary values against real validateRetentionHours).
+// Real-host verification for a real ledger row lifecycle on NTFS with a
+// real ACL, a real sweep against a real superseded cert from the IIS
+// cutover above, real active-reference deferral, and retention-boundary
+// values against real validateRetentionHours.
 //
-// Usage: node wret-01-05-lifecycle.js <ledgerDir>
+// Usage: node windows-retention-lifecycle.js <ledgerDir>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -28,7 +28,7 @@ function checkAcl(targetPath) {
 async function main() {
   const ledgerDir = process.argv[2] || "C:\\TokenTimerAgentTest\\state\\windows-retention";
 
-  console.log("=== WRET-05: retention-boundary values against the real, deployed validateRetentionHours ===");
+  console.log("=== retention-boundary values against the real, deployed validateRetentionHours ===");
   const acceptedValues = [24, 168, 720];
   const rejectedValues = [0, 23, 721];
   for (const v of acceptedValues) {
@@ -51,12 +51,12 @@ async function main() {
   }
 
   console.log("");
-  console.log("=== WRET-01: real ledger row lifecycle on real NTFS + real ACL ===");
-  // Old (superseded) cert is the WIIS baseline cert; new (replacement) is
-  // the real WCNG-02 CA-issued cert deployed over it.
-  const oldThumbprint = "EEBB3A5845965C7F2A9F67540D53D5662564180B"; // wiis-old self-signed
-  const replacementThumbprint = "DAA61C502810CA0952DF77A0D4194C32085B5ABD"; // real CA-issued (WCNG-02)
-  const cngKeyContainerId = "tokentimer-wcng01-real-1875df97";
+  console.log("=== real ledger row lifecycle on real NTFS + real ACL ===");
+  // Old (superseded) cert is the IIS-bind-verify baseline cert; new
+  // (replacement) is the real CNG-accepted CA-issued cert deployed over it.
+  const oldThumbprint = "EEBB3A5845965C7F2A9F67540D53D5662564180B"; // iis baseline self-signed
+  const replacementThumbprint = "DAA61C502810CA0952DF77A0D4194C32085B5ABD"; // real CA-issued (cng-accept)
+  const cngKeyContainerId = "tokentimer-csr-generate-real-1875df97";
 
   // Clean any pre-existing row from a prior run of this script.
   const rowPath = retMod.ledgerRowPath(ledgerDir, oldThumbprint);
@@ -74,7 +74,7 @@ async function main() {
     verifiedCutoverAt,
     oldNotAfter,
     ownershipProvenance: "tokentimer_installed",
-    jobOrRollbackJournalRefs: [{ ref: "job-wret-01", active: true }],
+    jobOrRollbackJournalRefs: [{ ref: "job-retention-lifecycle-01", active: true }],
   });
   console.log("createLedgerRow ->", JSON.stringify(row, null, 2));
 
@@ -89,7 +89,7 @@ async function main() {
   console.log("=== real ACL check via icacls (decision 10: owner+SYSTEM only) ===");
   const acl = checkAcl(rowPath);
   console.log(acl);
-  fs.writeFileSync(path.join(ledgerDir, "..", "wret-01-icacls.txt"), acl);
+  fs.writeFileSync(path.join(ledgerDir, "..", "retention-lifecycle-icacls.txt"), acl);
 
   console.log("=== real interrupted-write repro: kill mid-write, confirm atomic rename means no partial file ever appears ===");
   // writeLedgerRow always writes to a *.tmp file then renames; simulate an
@@ -109,7 +109,7 @@ async function main() {
   fs.unlinkSync(fakeTmpPath);
 
   console.log("");
-  console.log("=== WRET-01 continued: readLedgerRow round-trips the same row from disk ===");
+  console.log("=== readLedgerRow round-trips the same row from disk ===");
   const reRead = readLedgerRow(ledgerDir, oldThumbprint);
   console.log("readLedgerRow ->", JSON.stringify(reRead, null, 2));
   if (JSON.stringify(reRead) !== JSON.stringify(row)) {
@@ -120,7 +120,7 @@ async function main() {
   }
 
   console.log("");
-  console.log("=== WRET-03: real active-reference deferral ===");
+  console.log("=== real active-reference deferral ===");
   const activeRefEligibility = evaluateEligibility(reRead, {
     retentionHours: 24,
     bindingStillReferencesOldThumbprint: false,
@@ -138,7 +138,7 @@ async function main() {
 
   console.log("");
   console.log("=== close the journal ref, confirm eligibility flips ===");
-  const closedRow = retMod.closeJournalReference(ledgerDir, oldThumbprint, "job-wret-01");
+  const closedRow = retMod.closeJournalReference(ledgerDir, oldThumbprint, "job-retention-lifecycle-01");
   console.log("closeJournalReference ->", JSON.stringify(closedRow));
   const afterCloseEligibility = evaluateEligibility(closedRow, {
     retentionHours: 24,
@@ -150,7 +150,7 @@ async function main() {
   console.log("evaluateEligibility after closing the ref:", JSON.stringify(afterCloseEligibility));
 
   console.log("");
-  console.log("=== WRET-02: real sweep against this real (simulated-superseded) cert ===");
+  console.log("=== real sweep against this real (simulated-superseded) cert ===");
   let cleanupCalled = false;
   const sweepResult = await sweepLedger({
     ledgerDir,

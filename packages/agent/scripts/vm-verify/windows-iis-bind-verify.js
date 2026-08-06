@@ -1,10 +1,10 @@
 "use strict";
 
-// Real-host verification for WIIS-01 (real binding query), WIIS-02 (real
-// bind/rebind), WIIS-03 (full deploy orchestration with real TLS
-// verification), WIIS-06 (no blanket reset, via a command-audit wrapper).
+// Real-host verification for a real binding query, real bind/rebind, full
+// deploy orchestration with real TLS verification, and no blanket reset
+// (via a command-audit wrapper).
 //
-// Usage: node wiis-01-03-bind-verify.js <workDir> <newCertPemPath>
+// Usage: node windows-iis-bind-verify.js <workDir> <newCertPemPath>
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -32,7 +32,7 @@ async function main() {
     site: "Default Web Site",
   };
 
-  console.log("=== WIIS-01: real binding query against hand-created netsh entry ===");
+  console.log("=== real binding query against hand-created netsh entry ===");
   const queryResult = await queryCurrentBinding({ binding, execFileImpl: auditedExecFile });
   console.log("queryCurrentBinding:", JSON.stringify(queryResult));
   if (!queryResult.ok || queryResult.thumbprint !== oldThumbprint.toUpperCase()) {
@@ -43,14 +43,14 @@ async function main() {
   console.log("OK: queryCurrentBinding matches the hand-created netsh entry");
 
   console.log("");
-  console.log("=== WIIS-02/03: real deploy orchestration (query -> bind -> real TLS verify) ===");
+  console.log("=== real deploy orchestration (query -> bind -> real TLS verify) ===");
   const deployResult = await deployIisBinding({
     binding,
     certificatePem,
     execFileImpl: auditedExecFile,
   });
   console.log("deployIisBinding:", JSON.stringify(deployResult, null, 2));
-  fs.writeFileSync(path.join(workDir, "wiis-02-03-result.json"), JSON.stringify(deployResult, null, 2));
+  fs.writeFileSync(path.join(workDir, "iis-bind-verify-result.json"), JSON.stringify(deployResult, null, 2));
 
   if (deployResult.ok !== true) {
     console.log("FAIL: deployIisBinding did not report ok:true");
@@ -72,7 +72,7 @@ async function main() {
   console.log(confirm.includes(deployResult.boundThumbprint.toLowerCase()) ? "OK: netsh independently confirms the new binding" : "FAIL: netsh does not show the expected new thumbprint");
 
   console.log("");
-  console.log("=== WIIS-06: command/process audit -- no iisreset or blanket reload ===");
+  console.log("=== command/process audit -- no iisreset or blanket reload ===");
   console.log(commandAudit.join("\n"));
   fs.writeFileSync(path.join(workDir, "wiis-command-audit.txt"), commandAudit.join("\n"));
   const hasIisReset = commandAudit.some((c) => /iisreset/i.test(c));
