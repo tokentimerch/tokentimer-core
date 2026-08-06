@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * IIS binding deploy executor (ADR-0012 decisions 13 and 9, Wave 2b).
+ * IIS binding deploy executor (ADR-0012 decisions 13 and 9).
  *
  * Deploy is: import the certificate into the machine store (handled by the
  * sibling ../windows-cert-store module for CNG-native enrollment, or by a

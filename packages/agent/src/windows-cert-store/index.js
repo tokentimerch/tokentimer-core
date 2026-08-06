@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * CNG-native certificate custody executor (ADR-0012 decision 9, Wave 2b).
+ * CNG-native certificate custody executor (ADR-0012 decision 9).
  *
  * CNG-native is the default and required path for any certificate the
  * Windows agent itself requests against `keyMode: os-store-managed`:

@@ -2,7 +2,7 @@
 
 /**
  * Windows machine certificate store and http.sys binding discovery
- * (ADR-0012, Wave 2b). Observe-only inventory, the Windows-host analogue of
+ * (ADR-0012). Observe-only inventory, the Windows-host analogue of
  * the existing filesystem discovery module (../discovery): reports what
  * certificates exist in a Windows machine certificate store and what
  * http.sys bindings reference them, without ever exporting, reading, or
@@ -33,12 +33,9 @@
  * WITHOUT a shell, every dynamic argv element re-validated against a
  * shell-metacharacter pattern as defense in depth.
  *
- * Status: the text parsers below are written against certutil/netsh's
- * documented and previously-observed output format, but have NOT yet been
- * run against a real certutil.exe/netsh.exe on a real Windows host with
- * real store contents. That real-host verification is tracked separately
- * (see the Wave 2b todo list) and this module must not be advertised as
- * verified until it completes.
+ * Status: the text parsers below have been real-host verified against a
+ * live certutil.exe/netsh.exe on Windows Server, exercising a populated
+ * machine store and real http.sys SNI bindings.
  */
 
 const childProcess = require("node:child_process");

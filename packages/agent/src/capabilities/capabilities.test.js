@@ -25,9 +25,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
 
   it("ships with windows-cert-store-v1 and iis-binding-v1 qualified after real-host verification, trust-anchor-deploy-v1 still empty", () => {
     // windows-cert-store-v1 and iis-binding-v1 passed real-host verification
-    // on tokentimer-winverify-vm (WCNG/WIIS/WRET/WDISC, section 9 of the
-    // post-ship checklist); trust-anchor-deploy-v1 has no executor at all yet
-    // (Wave 3) and stays gated.
+    // against a real Windows Server host (CNG key custody, IIS binding,
+    // retention, and discovery); trust-anchor-deploy-v1 has no executor at
+    // all yet and stays gated.
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.deepEqual([...manifest.qualified].sort(), [
       "iis-binding-v1",

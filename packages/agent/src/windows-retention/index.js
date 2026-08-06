@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Superseded-certificate retention ledger (ADR-0012 decision 18, Wave 2b).
+ * Superseded-certificate retention ledger (ADR-0012 decision 18).
  *
  * A rotation on a Windows IIS/http.sys binding (../windows-iis) leaves the
  * certificate it just replaced sitting in the machine store and its CNG key

@@ -2214,7 +2214,7 @@ async function executeJob({
   }
 
   if (action === "renew") {
-    // ADR-0012 decisions 9/13 (Wave 2b): a renew job whose custody is
+    // ADR-0012 decisions 9/13: a renew job whose custody is
     // os-store-managed against a windows-iis target takes the CNG-native
     // path (key generated inside the CNG store, IIS/http.sys rebind,
     // retention-ledger bookkeeping) instead of the file-based
@@ -3106,7 +3106,7 @@ function isIsoParseable(value) {
 
 /**
  * Executes a "renew" job whose custody is `os-store-managed` against a
- * `windows-iis` target (ADR-0012 decisions 9 and 13, Wave 2b): the
+ * `windows-iis` target (ADR-0012 decisions 9 and 13): the
  * CNG-native counterpart to executeRenewJob's file-based key/deploy path.
  *
  * Steps 1-2 (key + CSR) use ../windows-cert-store's generateCsrViaCng

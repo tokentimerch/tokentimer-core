@@ -742,7 +742,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     if (md.targetType === 'windows-iis') {
       if (md.windowsStore) parts.push(`Store: ${md.windowsStore}`);
       if (md.windowsBindingSite) {
-        const port = md.windowsBindingPort != null ? `:${md.windowsBindingPort}` : '';
+        const port =
+          md.windowsBindingPort != null ? `:${md.windowsBindingPort}` : '';
         parts.push(`IIS site: ${md.windowsBindingSite}${port}`);
       }
       if (md.windowsBindingSniHost)
@@ -785,7 +786,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       // The reason is the actionable part: it names the proof that was missing.
       if (md.reconciliationReason)
         parts.push(`Reason: ${md.reconciliationReason}`);
-      if (md.derivationReason) parts.push(`Derivation reason: ${md.derivationReason}`);
+      if (md.derivationReason)
+        parts.push(`Derivation reason: ${md.derivationReason}`);
       if (md.detail) parts.push(`Detail: ${md.detail}`);
       if (md.operation) parts.push(`Operation: ${md.operation}`);
       if (md.agentId) parts.push(`Agent: ${md.agentId}`);
