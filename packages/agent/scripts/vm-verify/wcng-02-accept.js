@@ -53,9 +53,6 @@ async function main() {
     process.exitCode = 1;
   }
 
-  const thumbprintInStoreOutput = new RegExp(result.thumbprint.split("").join("\\s*"), "i").test(
-    storeOutput.replace(/\s+/g, ""),
-  );
   const normalizedStoreOutput = storeOutput.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
   const found = normalizedStoreOutput.includes(result.thumbprint);
   console.log("thumbprint bytes found verbatim in certutil -store output:", found);

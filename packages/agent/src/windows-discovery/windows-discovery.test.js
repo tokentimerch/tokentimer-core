@@ -18,9 +18,13 @@ const assert = require("node:assert/strict");
 const {
   splitCertutilStoreBlocks,
   parseCertutilStoreBlock,
+  parseSubjectAlternativeNames,
   parseNetshSslcertBindings,
+  parseAppcmdSiteListOutput,
+  findSitesForBinding,
   listMachineStoreCertificates,
   listHttpSysBindings,
+  listIisSites,
   discoverWindowsCertificateInventory,
 } = require("./index.js");
 
@@ -51,6 +55,44 @@ CertUtil: -store command completed successfully.
 
 const CERTUTIL_EMPTY_STORE_OUTPUT = `My "WebHosting"
 CertUtil: -store command completed successfully.
+`;
+
+// -v (verbose) output with a Subject Alternative Name extension, modeled on
+// certutil's documented multi-line "DNS Name=" per-entry format for this
+// extension.
+const CERTUTIL_STORE_OUTPUT_WITH_SAN = `My "Personal"
+================ Certificate 0 ================
+Serial Number: 1a2b3c4d5e
+Issuer: CN=Test Root CA
+ NotBefore: 1/1/2026 12:00 AM
+ NotAfter: 1/1/2027 12:00 AM
+Subject: CN=www.example.com
+Certificate Template Name (Certificate Type): WebServer
+2.5.29.17: Flags = 0, Length = 34
+Subject Alternative Name
+    DNS Name=www.example.com
+    DNS Name=example.com
+    IP Address=10.0.0.5
+
+Signature matches Public Key
+Cert Hash(sha1): aa bb cc dd ee ff 00 11 22 33 44 55 66 77 88 99 aa bb cc dd
+  Key Container = tokentimer-job-1-abcd1234
+  Provider = Microsoft Software Key Storage Provider
+  Signature test passed
+================ Certificate 1 ================
+Serial Number: 9f8e7d6c5b
+Issuer: CN=Test Root CA
+ NotBefore: 6/1/2025 12:00 AM
+ NotAfter: 6/1/2026 12:00 AM
+Subject: CN=old.example.com
+Cert Hash(sha1): 11 22 33 44 55 66 77 88 99 00 aa bb cc dd ee ff 00 11 22 33
+CertUtil: -store command completed successfully.
+`;
+
+// Real `appcmd list site` line format:
+//   SITE "Default Web Site" (id:1,bindings:http/*:80:,https/*:443:www.example.com,state:Started)
+const APPCMD_LIST_SITE_OUTPUT = `SITE "Default Web Site" (id:1,bindings:http/*:80:,https/*:443:,state:Started)
+SITE "Secure Site" (id:2,bindings:https/10.0.0.5:8443:,https/*:9443:sni.example.com,state:Started)
 `;
 
 const NETSH_SHOW_SSLCERT_OUTPUT = `
@@ -160,6 +202,34 @@ describe("parseCertutilStoreBlock", () => {
     assert.equal(parsed.subject, "CN=weird.example.com");
     assert.equal(parsed.hasPrivateKey, false);
   });
+
+  it("returns an empty array (not null) for subjectAlternativeNames when the extension is absent", () => {
+    const [certWithKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
+    const parsed = parseCertutilStoreBlock(certWithKey);
+    assert.deepEqual(parsed.subjectAlternativeNames, []);
+  });
+
+  it("extracts DNS Name and IP Address entries from a -v Subject Alternative Name section", () => {
+    const [certWithSan] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT_WITH_SAN);
+    const parsed = parseCertutilStoreBlock(certWithSan);
+    assert.deepEqual(parsed.subjectAlternativeNames, [
+      "www.example.com",
+      "example.com",
+      "10.0.0.5",
+    ]);
+  });
+
+  it("does not sweep unrelated extension fields into subjectAlternativeNames", () => {
+    const [, certWithoutSan] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT_WITH_SAN);
+    const parsed = parseCertutilStoreBlock(certWithoutSan);
+    assert.deepEqual(parsed.subjectAlternativeNames, []);
+  });
+});
+
+describe("parseSubjectAlternativeNames", () => {
+  it("returns [] for a block with no Subject Alternative Name heading at all", () => {
+    assert.deepEqual(parseSubjectAlternativeNames("Subject: CN=no-san.example.com\r\n"), []);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -236,11 +306,18 @@ describe("listMachineStoreCertificates", () => {
     assert.equal(execFileImpl.calls.length, 0);
   });
 
-  it("invokes certutil -store <name> with the expected argv", async () => {
+  it("invokes certutil -store <name> -v with the expected argv", async () => {
     const execFileImpl = makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT });
     await listMachineStoreCertificates({ store: "My", execFileImpl, certutilPath: "certutil.exe" });
     assert.equal(execFileImpl.calls.length, 1);
-    assert.deepEqual(execFileImpl.calls[0].args, ["-store", "My"]);
+    assert.deepEqual(execFileImpl.calls[0].args, ["-store", "My", "-v"]);
+  });
+
+  it("tags every returned certificate with the queried store name", async () => {
+    const execFileImpl = makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT });
+    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
+    assert.equal(result.certificates.length, 2);
+    assert.ok(result.certificates.every((cert) => cert.store === "My"));
   });
 });
 
@@ -273,14 +350,88 @@ describe("listHttpSysBindings", () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseAppcmdSiteListOutput / findSitesForBinding / listIisSites
+// ---------------------------------------------------------------------------
+
+describe("parseAppcmdSiteListOutput", () => {
+  it("parses one record per SITE line with decoded bindings", () => {
+    const sites = parseAppcmdSiteListOutput(APPCMD_LIST_SITE_OUTPUT);
+    assert.equal(sites.length, 2);
+    assert.equal(sites[0].name, "Default Web Site");
+    assert.equal(sites[0].id, "1");
+    assert.equal(sites[0].state, "Started");
+    assert.deepEqual(sites[0].bindings, [
+      { protocol: "http", address: "*", port: "80", hostHeader: "" },
+      { protocol: "https", address: "*", port: "443", hostHeader: "" },
+    ]);
+    assert.equal(sites[1].name, "Secure Site");
+    assert.deepEqual(sites[1].bindings, [
+      { protocol: "https", address: "10.0.0.5", port: "8443", hostHeader: "" },
+      { protocol: "https", address: "*", port: "9443", hostHeader: "sni.example.com" },
+    ]);
+  });
+
+  it("returns [] for output with no SITE lines", () => {
+    assert.deepEqual(parseAppcmdSiteListOutput("No sites configured\r\n"), []);
+  });
+});
+
+describe("findSitesForBinding", () => {
+  const sites = parseAppcmdSiteListOutput(APPCMD_LIST_SITE_OUTPUT);
+
+  it("matches an IP-keyed binding to a site with a wildcard address and no host header", () => {
+    assert.deepEqual(findSitesForBinding(sites, { ipPort: "10.0.0.5:443", keyedBy: "ipport" }), ["Default Web Site"]);
+  });
+
+  it("matches an IP-keyed binding to a site bound to the exact same address", () => {
+    assert.deepEqual(findSitesForBinding(sites, { ipPort: "10.0.0.5:8443", keyedBy: "ipport" }), ["Secure Site"]);
+  });
+
+  it("matches a hostname-keyed (SNI) binding by host header, not address", () => {
+    assert.deepEqual(
+      findSitesForBinding(sites, { ipPort: "sni.example.com:9443", keyedBy: "hostnameport" }),
+      ["Secure Site"],
+    );
+  });
+
+  it("never matches an IP-keyed binding against a site binding that has a host header (no SNI signal to disambiguate)", () => {
+    assert.deepEqual(findSitesForBinding(sites, { ipPort: "0.0.0.0:9443", keyedBy: "ipport" }), []);
+  });
+
+  it("returns [] when no site's bindings match at all", () => {
+    assert.deepEqual(findSitesForBinding(sites, { ipPort: "10.0.0.9:12345", keyedBy: "ipport" }), []);
+  });
+});
+
+describe("listIisSites", () => {
+  it("returns parsed sites on success", async () => {
+    const execFileImpl = makeExecStub({ stdout: APPCMD_LIST_SITE_OUTPUT });
+    const result = await listIisSites({ execFileImpl, appcmdPath: "appcmd.exe" });
+    assert.equal(result.ok, true);
+    assert.equal(result.sites.length, 2);
+  });
+
+  it("returns ok: true, sites: [] when appcmd is unavailable, never ok: false", async () => {
+    const error = Object.assign(new Error("not found"), { code: 9009 });
+    const execFileImpl = makeExecStub({ error, stderr: "'appcmd' is not recognized as an internal or external command" });
+    const result = await listIisSites({ execFileImpl });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.sites, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // discoverWindowsCertificateInventory
 // ---------------------------------------------------------------------------
 
 describe("discoverWindowsCertificateInventory", () => {
-  it("cross-references store certificates with the bindings that reference them", async () => {
+  it("cross-references store certificates with the bindings and IIS sites that reference them", async () => {
     const execFileImpl = (file, args, options, callback) => {
       if (args[0] === "-store") {
         return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
+      }
+      if (args[0] === "list") {
+        return makeExecStub({ stdout: APPCMD_LIST_SITE_OUTPUT })(file, args, options, callback);
       }
       return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);
     };
@@ -289,9 +440,28 @@ describe("discoverWindowsCertificateInventory", () => {
     assert.equal(result.ok, true);
     const bound = result.certificates.find((c) => c.thumbprint === SAMPLE_THUMBPRINT);
     assert.deepEqual(bound.boundAt, ["10.0.0.5:443"]);
+    assert.deepEqual(bound.boundSites, ["Default Web Site"]);
 
     const unbound = result.certificates.find((c) => c.thumbprint !== SAMPLE_THUMBPRINT);
     assert.deepEqual(unbound.boundAt, []);
+    assert.deepEqual(unbound.boundSites, []);
+  });
+
+  it("reports boundSites: [] (not an error) when appcmd/IIS management tools are unavailable", async () => {
+    const execFileImpl = (file, args, options, callback) => {
+      if (args[0] === "-store") {
+        return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
+      }
+      if (args[0] === "list") {
+        const error = Object.assign(new Error("not found"), { code: 9009 });
+        return makeExecStub({ error, stderr: "'appcmd' is not recognized" })(file, args, options, callback);
+      }
+      return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);
+    };
+
+    const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
+    assert.equal(result.ok, true);
+    assert.ok(result.certificates.every((cert) => Array.isArray(cert.boundSites) && cert.boundSites.length === 0));
   });
 
   it("surfaces a store query failure distinctly from an empty store", async () => {

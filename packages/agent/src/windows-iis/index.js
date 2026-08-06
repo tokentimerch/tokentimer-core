@@ -59,10 +59,14 @@
  * via child_process.execFile WITHOUT a shell, every dynamic argv element
  * re-validated against a shell-metacharacter pattern as defense in depth.
  *
- * Status: real, tested against a stubbed netsh/TLS layer, NOT yet verified
- * end-to-end against a real IIS site and real http.sys bindings. Do not
- * advertise iis-binding-v1 until that real-host run is complete (see the
- * module doc comment in ../capabilities/gated-capabilities.js).
+ * Status: real-host verified end to end against genuine IIS sites and real
+ * http.sys bindings on Windows Server 2019, 2022, and 2025 (see
+ * docs/certops/agent.md's platform matrix and the real-host verification
+ * runbook), including real rebind, rollback-on-failure, and SNI-precision
+ * scenarios. `iis-binding-v1` is advertised accordingly in
+ * ../capabilities/qualified-capabilities.json; see that module's own doc
+ * comment for the build-time gate mechanism that ties advertisement to
+ * this evidence.
  */
 
 const childProcess = require("node:child_process");

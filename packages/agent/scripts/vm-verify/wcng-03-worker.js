@@ -5,7 +5,6 @@
 // Usage: node wcng-03-worker.js <stateDir> <workDir> <label> <commonName>
 
 const path = require("node:path");
-const fs = require("node:fs");
 
 const modRoot = "C:\\TokenTimerAgentTest\\src\\windows-cert-store";
 const { acquireStoreLock, generateCsrViaCng } = require(path.join(modRoot, "index.js"));

@@ -10,27 +10,16 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
-const crypto = require("node:crypto");
 const childProcess = require("node:child_process");
 
 const { deployIisBinding, queryCurrentBinding } = require("C:\\TokenTimerAgentTest\\src\\windows-iis\\index.js");
 
-function generateSelfSignedNotInStore(commonName) {
-  // A real, syntactically valid, CA-less certificate that intentionally has
-  // no corresponding entry (thumbprint) in the Windows machine store: this
-  // is what makes the post-bind handshake genuinely fail on a real host,
-  // not a mocked connectImpl.
-  const { generateKeyPairSync } = crypto;
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  void publicKey;
-  // Node has no built-in self-signed cert issuance without extra deps; use
-  // certreq/PowerShell's New-SelfSignedCertificate output instead, then
-  // immediately remove it from the store so the thumbprint is real-format
-  // but absent from LocalMachine\My at verify time.
-  void privateKey;
-  return null;
-}
-void generateSelfSignedNotInStore;
+// Note: the dangling (syntactically valid, CA-less, not-in-store) certificate
+// used below is generated ahead of time via certreq/PowerShell's
+// New-SelfSignedCertificate, then immediately removed from the store so the
+// thumbprint is real-format but absent from LocalMachine\My at verify time,
+// and handed to this script as dangling.cer. Node has no built-in self-signed
+// cert issuance without extra deps, so that generation does not live here.
 
 async function main() {
   const workDir = process.argv[2] || "C:\\TokenTimerAgentTest\\work";

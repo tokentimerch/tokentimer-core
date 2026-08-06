@@ -792,8 +792,36 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.operation) parts.push(`Operation: ${md.operation}`);
       if (md.agentId) parts.push(`Agent: ${md.agentId}`);
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
-      // Unlike the DERIVED event's windowsStore/binding fields, only
-      // targetType is safe to show here: a decline usually means the
+      // Unlike DERIVATION_DECLINED below, an _UNRECONCILED event's
+      // windowsStore/binding fields ARE trustworthy: agentDispatch.js's
+      // windowsIisAuditFields() is shared across CERTOPS_CERTIFICATE_ISSUED,
+      // both _UNRECONCILED events, CERTOPS_JOB_FAILED, and
+      // CERTOPS_RENEWAL_PROFILE_DERIVED specifically because the target the
+      // agent actually attempted is already known at this point; only the
+      // verify-evidence step failed, not the target validation itself.
+      parts.push(...formatWindowsTargetParts(md));
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsDerivationDeclinedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.commonName) parts.push(`Certificate: ${md.commonName}`);
+      if (md.managedCertificateId) parts.push(`ID: ${md.managedCertificateId}`);
+      if (md.reconciliationReason)
+        parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.derivationReason)
+        parts.push(`Derivation reason: ${md.derivationReason}`);
+      if (md.detail) parts.push(`Detail: ${md.detail}`);
+      if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      // Unlike the _UNRECONCILED events and CERTOPS_RENEWAL_PROFILE_DERIVED,
+      // only targetType is safe to show here: a decline usually means the
       // store/binding fields themselves were the ones that failed
       // validation and were never trusted enough to persist.
       if (md.targetType) parts.push(`Target type: ${md.targetType}`);
@@ -1551,11 +1579,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
 
     if (action === 'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED') {
-      // Also the unreconciled shape. The certificate IS active here, unlike the
-      // two events above, but the operator consequence is the same class of
-      // problem: it will not auto-renew until someone acts, and the reason is
-      // the only thing that says what to fix.
-      const formatted = formatCertOpsUnreconciledMetadata(ev);
+      // Not the _UNRECONCILED shape: the certificate IS active here, unlike
+      // the two events above, but the operator consequence is the same
+      // class of problem: it will not auto-renew until someone acts, and
+      // the reason is the only thing that says what to fix. Uses its own
+      // formatter (targetType only, no windowsStore/binding fields) because
+      // a decline usually means the target validation itself is what failed.
+      const formatted = formatCertOpsDerivationDeclinedMetadata(ev);
       if (formatted) return formatted;
     }
 

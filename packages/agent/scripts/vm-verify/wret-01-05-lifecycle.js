@@ -15,7 +15,6 @@ const retMod = require("C:\\TokenTimerAgentTest\\src\\windows-retention\\index.j
 const {
   createLedgerRow,
   readLedgerRow,
-  writeLedgerRow,
   listLedgerThumbprints,
   evaluateEligibility,
   sweepLedger,

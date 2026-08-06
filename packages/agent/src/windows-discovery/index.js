@@ -35,7 +35,21 @@
  *
  * Status: the text parsers below have been real-host verified against a
  * live certutil.exe/netsh.exe on Windows Server, exercising a populated
- * machine store and real http.sys SNI bindings.
+ * machine store and real http.sys SNI bindings, with one exception noted
+ * where it applies: Subject Alternative Name parsing (added after that
+ * verification pass, to close a real gap against this module's documented
+ * contract) has only been exercised against hand-authored fixtures, not a
+ * captured real `certutil -store -v` transcript.
+ *
+ * `site` is deliberately always null. Unlike thumbprint/subject/expiry,
+ * an IIS site name has no representation in `certutil`'s or `netsh http`'s
+ * output: http.sys bindings are keyed by IP:port or hostname:port, never by
+ * IIS site, matching ../windows-iis's own documented stance that `site` is
+ * caller-supplied evidence/addressing metadata, not something `netsh http`
+ * itself understands. Resolving a real site name would require a separate
+ * IIS-configuration query (e.g. `appcmd list site`) this module does not
+ * perform; the field exists on every record so callers can rely on its
+ * presence, but it is honestly null rather than guessed or omitted.
  */
 
 const childProcess = require("node:child_process");
@@ -147,6 +161,15 @@ function splitCertutilStoreBlocks(stdout) {
  * (CNG-native) or "Provider =" line -- never by attempting to access the
  * key itself.
  *
+ * subjectAlternativeNames is read from the "Subject Alternative Name"
+ * extension section that `-v` (verbose) adds to certutil's output. Real
+ * certutil transcripts vary between one `Name=value` entry per line and a
+ * single comma-separated line, so both forms are matched by one regex
+ * scoped to just that section (bounded by the next blank line or the next
+ * `NN.NN.NN.NN:` OID-prefixed extension heading, whichever comes first) so
+ * a later, unrelated extension's own "Name=" style fields are never
+ * accidentally swept in.
+ *
  * @param {string} block
  * @returns {{
  *   thumbprint: string|null,
@@ -155,6 +178,7 @@ function splitCertutilStoreBlocks(stdout) {
  *   notBefore: string|null,
  *   notAfter: string|null,
  *   serialNumber: string|null,
+ *   subjectAlternativeNames: string[],
  *   hasPrivateKey: boolean,
  *   keyContainer: string|null,
  *   keyProvider: string|null,
@@ -181,10 +205,40 @@ function parseCertutilStoreBlock(block) {
     notBefore: notBeforeMatch ? notBeforeMatch[1].trim() : null,
     notAfter: notAfterMatch ? notAfterMatch[1].trim() : null,
     serialNumber: serialMatch ? serialMatch[1].trim() : null,
+    subjectAlternativeNames: parseSubjectAlternativeNames(block),
     hasPrivateKey: Boolean(containerMatch || providerMatch),
     keyContainer: containerMatch ? containerMatch[1].trim() : null,
     keyProvider: providerMatch ? providerMatch[1].trim() : null,
   };
+}
+
+/**
+ * Extracts DNS/IP subject-alternative-name entries from a certutil `-v`
+ * extension dump. Returns `[]` (not null) when the section is absent --
+ * either because the certificate has no SAN extension, or because
+ * `-v` was not used -- so callers never have to null-check before
+ * iterating.
+ *
+ * @param {string} block
+ * @returns {string[]}
+ */
+function parseSubjectAlternativeNames(block) {
+  const headingMatch = /Subject Alternative Name[^\r\n]*\r?\n/i.exec(block);
+  if (!headingMatch) return [];
+
+  const sectionStart = headingMatch.index + headingMatch[0].length;
+  const rest = block.slice(sectionStart);
+  const sectionEndMatch = /\r?\n\s*\r?\n|\r?\n\S/.exec(rest);
+  const section = sectionEndMatch ? rest.slice(0, sectionEndMatch.index) : rest;
+
+  const names = [];
+  const namePattern = /(?:DNS Name|IP Address)\s*=\s*([^\r\n,]+)/gi;
+  let match;
+  while ((match = namePattern.exec(section)) !== null) {
+    const value = match[1].trim();
+    if (value) names.push(value);
+  }
+  return names;
 }
 
 /**
@@ -263,7 +317,10 @@ async function listMachineStoreCertificates({
     throw buildError(`store must be a valid Windows certificate store name (got ${JSON.stringify(store)})`);
   }
   assertSafeArgvElements("certutilPath", [certutilPath]);
-  const argv = [certutilPath, "-store", store];
+  // -v (verbose) is required to get certutil to dump extensions, including
+  // Subject Alternative Name; without it the per-certificate block only
+  // ever carries the fields already present before this flag was added.
+  const argv = [certutilPath, "-store", store, "-v"];
   assertSafeArgvElements("argv", argv);
 
   const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
@@ -283,7 +340,10 @@ async function listMachineStoreCertificates({
     };
   }
 
-  const certificates = splitCertutilStoreBlocks(stdoutText).map(parseCertutilStoreBlock);
+  const certificates = splitCertutilStoreBlocks(stdoutText).map((block) => ({
+    ...parseCertutilStoreBlock(block),
+    store,
+  }));
   return { ok: true, certificates };
 }
 
@@ -329,27 +389,146 @@ async function listHttpSysBindings({
 }
 
 /**
+ * Parses `appcmd list site` output into one record per IIS site, with its
+ * binding list decoded into structured `{ protocol, address, port,
+ * hostHeader }` entries. Best-effort only: this is auxiliary evidence used
+ * to resolve a binding's `site` name, not part of this module's core
+ * certutil/netsh contract, so a caller must never treat a parse miss on
+ * one line as reason to fail the whole call -- unrecognized `SITE` lines
+ * are silently skipped rather than thrown.
+ *
+ * Real `appcmd list site` line shape:
+ *   SITE "Default Web Site" (id:1,bindings:http/*:80:,https/*:443:www.example.com,state:Started)
+ *
+ * @param {string} stdout
+ * @returns {{ name: string, id: string, state: string, bindings: { protocol: string, address: string, port: string, hostHeader: string }[] }[]}
+ */
+function parseAppcmdSiteListOutput(stdout) {
+  const sitePattern = /^SITE\s+"([^"]+)"\s+\(id:(\d+),bindings:(.*?),state:([^)]*)\)\s*$/gim;
+  const sites = [];
+  let match;
+  while ((match = sitePattern.exec(stdout)) !== null) {
+    const [, name, id, bindingsField, state] = match;
+    const bindings = bindingsField
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const bindingMatch = /^([A-Za-z]+)\/([^:]*):(\d+):(.*)$/.exec(entry);
+        if (!bindingMatch) return null;
+        const [, protocol, address, port, hostHeader] = bindingMatch;
+        return { protocol, address, port, hostHeader };
+      })
+      .filter((binding) => binding !== null);
+    sites.push({ name, id, state: state.trim(), bindings });
+  }
+  return sites;
+}
+
+/**
+ * Runs `appcmd list site` and returns the parsed site/binding list. Unlike
+ * listMachineStoreCertificates/listHttpSysBindings, a failure here (missing
+ * appcmd, IIS management tools not installed, access denied) is reported as
+ * `ok: true, sites: []` rather than `ok: false`: site-name resolution is
+ * supplementary evidence layered on top of the real http.sys binding facts,
+ * and a host running plain http.sys without the IIS management console
+ * feature installed is a normal configuration, not an error condition.
+ *
+ * Not yet real-host verified: unit-tested against a hand-authored fixture
+ * modeled on the documented `appcmd list site` line format, not a captured
+ * transcript from a real IIS host.
+ *
+ * @param {object} input
+ * @param {Function} [input.execFileImpl]
+ * @param {string} [input.appcmdPath]
+ * @param {number} [input.timeoutMs]
+ * @returns {Promise<{ ok: true, sites: ReturnType<typeof parseAppcmdSiteListOutput> }>}
+ */
+async function listIisSites({
+  execFileImpl = childProcess.execFile,
+  appcmdPath = `${process.env.SystemRoot || "C:\\Windows"}\\System32\\inetsrv\\appcmd.exe`,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  assertSafeArgvElements("appcmdPath", [appcmdPath]);
+  const argv = [appcmdPath, "list", "site"];
+  assertSafeArgvElements("argv", argv);
+
+  const { exitCode, stdout } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+  const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
+  if (exitCode !== 0) {
+    return { ok: true, sites: [] };
+  }
+  return { ok: true, sites: parseAppcmdSiteListOutput(stdoutText) };
+}
+
+/**
+ * Resolves the IIS site name(s) whose bindings match a given http.sys
+ * binding, by port plus either host header (hostname-keyed / SNI bindings)
+ * or address (IP-keyed bindings restricted to sites with no host header,
+ * since an IP-keyed cert binding carries no SNI signal to disambiguate
+ * between sites sharing a wildcard address). Returns `[]` when no site's
+ * bindings match, which is a normal outcome (e.g. a binding created
+ * directly via `netsh` with no matching IIS site), not a parse failure.
+ *
+ * @param {ReturnType<typeof parseAppcmdSiteListOutput>} sites
+ * @param {{ ipPort: string|null, keyedBy: "ipport"|"hostnameport" }} binding
+ * @returns {string[]}
+ */
+function findSitesForBinding(sites, binding) {
+  if (!binding.ipPort) return [];
+  const lastColon = binding.ipPort.lastIndexOf(":");
+  if (lastColon === -1) return [];
+  const addressOrHost = binding.ipPort.slice(0, lastColon);
+  const port = binding.ipPort.slice(lastColon + 1);
+
+  const matches = [];
+  for (const site of sites) {
+    const matched = site.bindings.some((siteBinding) => {
+      if (siteBinding.port !== port) return false;
+      if (binding.keyedBy === "hostnameport") {
+        return siteBinding.hostHeader.toLowerCase() === addressOrHost.toLowerCase();
+      }
+      if (siteBinding.hostHeader) return false;
+      return (
+        siteBinding.address === "*" ||
+        siteBinding.address === addressOrHost ||
+        addressOrHost === "0.0.0.0"
+      );
+    });
+    if (matched) matches.push(site.name);
+  }
+  return matches;
+}
+
+/**
  * Combines the machine store and http.sys binding enumerations into one
  * inventory: each certificate found in the store, cross-referenced with
- * every binding that currently references its thumbprint. Mirrors the
- * shape of the filesystem discovery module's per-certificate result
- * objects (subject/issuer/validity/serial/hasPrivateKey-style fields) so a
- * caller feeding both discovery sources into one evidence/inventory report
- * does not have to reconcile two unrelated shapes.
+ * every binding that currently references its thumbprint, and (best-effort)
+ * every IIS site name whose own binding matches that same address/port.
+ * Mirrors the shape of the filesystem discovery module's per-certificate
+ * result objects (subject/issuer/validity/serial/hasPrivateKey-style
+ * fields) so a caller feeding both discovery sources into one
+ * evidence/inventory report does not have to reconcile two unrelated
+ * shapes.
  *
- * Partial failure: if either sub-enumeration fails outright (ok: false),
- * that failure is surfaced directly rather than silently treated as
- * "nothing found" (an operator needs to know the difference between
- * "the store is empty" and "we could not ask the store at all").
+ * Partial failure: if either the store or the binding sub-enumeration
+ * fails outright (ok: false), that failure is surfaced directly rather
+ * than silently treated as "nothing found" (an operator needs to know the
+ * difference between "the store is empty" and "we could not ask the store
+ * at all"). Site-name resolution is intentionally exempt from this
+ * strictness: `listIisSites` never returns `ok: false` (see its own doc
+ * comment), so `boundSites` is simply `[]` on a host with no IIS
+ * management tools installed, which is a normal outcome, not a failure.
  *
  * @param {object} input
  * @param {string} input.store
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certutilPath]
  * @param {string} [input.netshPath]
+ * @param {string} [input.appcmdPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   | { ok: true, certificates: (ReturnType<typeof parseCertutilStoreBlock> & { boundAt: string[] })[] }
+ *   | { ok: true, certificates: (ReturnType<typeof parseCertutilStoreBlock> & { boundAt: string[], boundSites: string[] })[] }
  *   | { ok: false, code: "STORE_QUERY_FAILED"|"BINDING_QUERY_FAILED", detail: string }
  * >}
  */
@@ -358,6 +537,7 @@ async function discoverWindowsCertificateInventory({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   netshPath = "netsh.exe",
+  appcmdPath,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   const storeResult = await listMachineStoreCertificates({ store, execFileImpl, certutilPath, timeoutMs });
@@ -378,17 +558,30 @@ async function discoverWindowsCertificateInventory({
     };
   }
 
+  const sitesResult = await listIisSites(
+    appcmdPath ? { execFileImpl, appcmdPath, timeoutMs } : { execFileImpl, timeoutMs },
+  );
+
   const bindingsByThumbprint = new Map();
+  const sitesByThumbprint = new Map();
   for (const binding of bindingsResult.bindings) {
     if (!binding.thumbprint || !binding.ipPort) continue;
-    const existing = bindingsByThumbprint.get(binding.thumbprint) || [];
-    existing.push(binding.ipPort);
-    bindingsByThumbprint.set(binding.thumbprint, existing);
+    const existingBindings = bindingsByThumbprint.get(binding.thumbprint) || [];
+    existingBindings.push(binding.ipPort);
+    bindingsByThumbprint.set(binding.thumbprint, existingBindings);
+
+    const matchedSites = findSitesForBinding(sitesResult.sites, binding);
+    if (matchedSites.length > 0) {
+      const existingSites = sitesByThumbprint.get(binding.thumbprint) || new Set();
+      matchedSites.forEach((siteName) => existingSites.add(siteName));
+      sitesByThumbprint.set(binding.thumbprint, existingSites);
+    }
   }
 
   const certificates = storeResult.certificates.map((cert) => ({
     ...cert,
     boundAt: cert.thumbprint ? bindingsByThumbprint.get(cert.thumbprint) || [] : [],
+    boundSites: cert.thumbprint ? Array.from(sitesByThumbprint.get(cert.thumbprint) || []) : [],
   }));
 
   return { ok: true, certificates };
@@ -405,9 +598,13 @@ module.exports = {
   execWithoutShell,
   splitCertutilStoreBlocks,
   parseCertutilStoreBlock,
+  parseSubjectAlternativeNames,
   parseNetshSslcertBindings,
+  parseAppcmdSiteListOutput,
+  findSitesForBinding,
   listMachineStoreCertificates,
   listHttpSysBindings,
+  listIisSites,
   discoverWindowsCertificateInventory,
 };
 
