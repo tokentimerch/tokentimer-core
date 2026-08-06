@@ -116,24 +116,6 @@ check with its own specific rejection reason, rather than always being
 caught first, if at all, by the coarser pre-decode length check. The
 decoded-payload bound itself, the ADR's actual content-size policy, is
 unchanged.
-**A tenth amendment (2026-08-06, post-acceptance) records an invariant in
-decision 14 that was already enforced in code but never written into this
-record.** A cross-repo consistency check found `apps/api/services/certops/jobs.js`
-already rejecting `source: "automation"` for `distribute-trust`/`revoke-trust`
-with the comment "distributing or revoking a CA trust anchor is always an
-explicit human or API-token decision," and Cloud's manual-job-creation route
-independently enforcing the same rule at its own admin-role check - but this
-ADR never stated the invariant itself, so an auditor reading only this
-record, not the code, would not find it. Decision 14 now states it
-explicitly: trust-anchor operations may only be created by an authenticated
-human request or an API token acting on a human's behalf, never by the
-scheduler, a worker, or any other automation caller, enforced independently
-at the service layer (rejecting `source: "automation"` outright) and at each
-route's own role check (no automation-caller bypass of the admin floor), so
-neither layer alone is the only thing standing between an automated caller
-and a trust-anchor operation. No code or behavior change; this amendment
-only makes an existing, already-shipped invariant discoverable from the
-decision record itself.
 
 ## Context
 
@@ -1451,9 +1433,7 @@ service layer (`apps/api/services/certops/jobs.js`, which rejects
 route's own role check enforce this independently - a worker-authenticated
 or otherwise automated caller must never be able to bypass the admin-role
 check the way an ordinary job-creation caller legitimately can. Cloud's
-copy of this check must carry the same "no automation bypass" property;
-see the tenth amendment above for the cross-repo drift this caught and
-corrected.
+copy of this check must carry the same "no automation bypass" property.
 
 ### 15. Evidence and audit
 
