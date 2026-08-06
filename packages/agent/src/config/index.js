@@ -314,6 +314,7 @@ const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
   "infomaniak",
   "exoscale",
   "powerdns",
+  "pebble-challtestsrv",
 ]);
 
 /**

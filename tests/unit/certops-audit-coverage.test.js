@@ -166,6 +166,34 @@ describe("CERTOPS_CERTIFICATE_ISSUED", () => {
     assert.equal(metadata.operation, "issue");
   });
 
+  it("names the store/binding for a windows-iis issuance, in place of a null deployedCertPath", async () => {
+    // A windows-iis target has no deployedCertPath by design (ADR-0012
+    // decisions 1 and 10: its destination is a machine certificate store +
+    // IIS binding, not a file). Without these fields this event would say
+    // nothing at all about where the certificate landed.
+    const { audits, client } = reconcileClient();
+    await dispatch._test.reconcileProvisionedCertificate({
+      ...reconcileArgs(client),
+      job: {
+        ...reconcileArgs(client).job,
+        payload: {
+          target: {
+            type: "windows-iis",
+            store: "My",
+            binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
+          },
+        },
+      },
+    });
+
+    const { metadata } = audits[0];
+    assert.equal(metadata.targetType, "windows-iis");
+    assert.equal(metadata.windowsStore, "My");
+    assert.equal(metadata.windowsBindingSite, "Default Web Site");
+    assert.equal(metadata.windowsBindingPort, 443);
+    assert.equal(metadata.windowsBindingSniHost, "web-01.example.com");
+  });
+
   it("is not emitted when there was nothing to promote", async () => {
     // An already-active certificate reconciles as a no-op. Emitting here would
     // report a second issuance every time an agent re-reported a result.
@@ -810,6 +838,67 @@ describe("CERTOPS_JOB_FAILED", () => {
     assert.equal(metadata.jobStatus, "orphaned_unknown_effect");
     assert.equal(metadata.needsOperatorReconciliation, true);
     assert.equal(metadata.reconciliationReason, "agent_lost_mid_deploy");
+  });
+
+  it("names the store/binding a failed windows-iis job was targeting", async () => {
+    // A failed windows-iis job's errorMessage is free-text agent output; this
+    // is the structured substitute that lets an operator tell which store and
+    // IIS site/port/SNI host the failure actually touched, without parsing
+    // errorMessage.
+    const pool = resultPool({
+      jobRow: {
+        payload: {
+          target: {
+            type: "windows-iis",
+            store: "My",
+            binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
+          },
+        },
+      },
+    });
+    await dispatch.ingestResult({
+      dbPool: pool,
+      agent: AGENT,
+      envelope: { sequence: 11 },
+      body: {
+        jobId: "42",
+        claimId: "claim-1",
+        attemptId: "claim-1",
+        nonce: "n-1",
+        status: "failed",
+        errorMessage: "IIS binding deploy failed: BIND_FAILED",
+      },
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+
+    const { metadata } = pool.audits[0];
+    assert.equal(metadata.targetType, "windows-iis");
+    assert.equal(metadata.windowsStore, "My");
+    assert.equal(metadata.windowsBindingSite, "Default Web Site");
+    assert.equal(metadata.windowsBindingPort, 443);
+    assert.equal(metadata.windowsBindingSniHost, "web-01.example.com");
+  });
+
+  it("omits windows fields (beyond a null targetType) for a non-windows job", async () => {
+    const pool = resultPool();
+    await dispatch.ingestResult({
+      dbPool: pool,
+      agent: AGENT,
+      envelope: { sequence: 11 },
+      body: {
+        jobId: "42",
+        claimId: "claim-1",
+        attemptId: "claim-1",
+        nonce: "n-1",
+        status: "failed",
+        errorMessage: "dns propagation timed out",
+      },
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+
+    const { metadata } = pool.audits[0];
+    assert.equal(metadata.targetType, null);
+    assert.equal(metadata.windowsStore, undefined);
   });
 
   it("does not audit a success as a failure", async () => {

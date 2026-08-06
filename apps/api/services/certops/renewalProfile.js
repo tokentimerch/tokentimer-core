@@ -644,23 +644,37 @@ function executionFieldsFromRenewalProfile(profile) {
     // remain for single-destination backward compatibility.
     deploymentTargets: profile.deploymentTargets.map((t) => ({ ...t })),
   };
-  if (profile.target.certPath) {
-    fields.certPath = profile.target.certPath;
+  if (profile.target.type === "windows-iis") {
+    // Mirrors issuance.js's WINDOWS_IIS_ISSUANCE_KEY_MODE: the agent's
+    // executeJob dispatch (packages/agent/src/index.js) reads job.keyMode
+    // directly off the top-level payload to route to the CNG-native
+    // executor, and resolveJobDeployTargets' single-target fallback reads
+    // job.target.store/binding/thumbprintSha1 -- without these, a
+    // windows-iis renew job would fall through to the filesystem path
+    // below, which requires a certPath a windows-iis target never has.
+    fields.keyMode = "os-store-managed";
+    fields.target.store = profile.target.store;
+    fields.target.binding = { ...profile.target.binding };
+    fields.target.thumbprintSha1 = profile.target.thumbprintSha1;
   } else {
-    const withPath = profile.deploymentTargets.find((t) => t.certPath);
-    if (withPath?.certPath) fields.certPath = withPath.certPath;
-  }
-  if (profile.target.keyPath) {
-    fields.keyPath = profile.target.keyPath;
-  } else {
-    const withKey = profile.deploymentTargets.find((t) => t.keyPath);
-    if (withKey?.keyPath) fields.keyPath = withKey.keyPath;
-  }
-  if (profile.target.chainPath) {
-    fields.chainPath = profile.target.chainPath;
-  } else {
-    const withChain = profile.deploymentTargets.find((t) => t.chainPath);
-    if (withChain?.chainPath) fields.chainPath = withChain.chainPath;
+    if (profile.target.certPath) {
+      fields.certPath = profile.target.certPath;
+    } else {
+      const withPath = profile.deploymentTargets.find((t) => t.certPath);
+      if (withPath?.certPath) fields.certPath = withPath.certPath;
+    }
+    if (profile.target.keyPath) {
+      fields.keyPath = profile.target.keyPath;
+    } else {
+      const withKey = profile.deploymentTargets.find((t) => t.keyPath);
+      if (withKey?.keyPath) fields.keyPath = withKey.keyPath;
+    }
+    if (profile.target.chainPath) {
+      fields.chainPath = profile.target.chainPath;
+    } else {
+      const withChain = profile.deploymentTargets.find((t) => t.chainPath);
+      if (withChain?.chainPath) fields.chainPath = withChain.chainPath;
+    }
   }
   const reload = profile.deploymentTargets.find((t) => t.reloadService);
   if (reload?.reloadService) fields.reloadService = reload.reloadService;
@@ -681,6 +695,48 @@ function executionFieldsFromRenewalProfile(profile) {
     fields.eabRef = profile.ca.eabRef;
   }
   return fields;
+}
+
+/**
+ * Shared shape for the audit-metadata fields every CertOps audit event
+ * touching a deployment target should carry. certPath is the substitute for
+ * file-path targets; a windows-iis target has no certPath (ADR-0012
+ * decisions 1 and 10: its destination is a machine certificate store + IIS
+ * binding, not a file), so these are the substitute for that case. Accepts
+ * either a job-payload `target` object ({ type, store, binding }) or
+ * undefined/null, and always returns every key so callers can spread the
+ * result into `metadata` without conditional logic at each call site.
+ */
+function windowsIisTargetAuditFields(target) {
+  const targetType =
+    target && typeof target === "object" && typeof target.type === "string"
+      ? target.type
+      : null;
+  if (targetType !== "windows-iis") {
+    return {
+      targetType,
+      windowsStore: null,
+      windowsBindingSite: null,
+      windowsBindingPort: null,
+      windowsBindingSniHost: null,
+    };
+  }
+  const binding =
+    target.binding && typeof target.binding === "object"
+      ? target.binding
+      : null;
+  return {
+    targetType,
+    windowsStore: typeof target.store === "string" ? target.store : null,
+    windowsBindingSite:
+      binding && typeof binding.site === "string" ? binding.site : null,
+    windowsBindingPort:
+      binding && Number.isSafeInteger(binding.port) ? binding.port : null,
+    windowsBindingSniHost:
+      binding && typeof binding.sniHost === "string"
+        ? binding.sniHost
+        : null,
+  };
 }
 
 /**
@@ -713,4 +769,5 @@ module.exports = {
   resolveRenewalProfileSnapshot,
   resolveSans,
   validateRenewalProfile,
+  windowsIisTargetAuditFields,
 };

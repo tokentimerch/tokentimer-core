@@ -10,6 +10,7 @@ const {
   buildRenewalJobPayload,
   resolveRenewalProfileSnapshot,
   validateRenewalProfile,
+  windowsIisTargetAuditFields,
 } = require(
   path.resolve(
     __dirname,
@@ -122,6 +123,57 @@ describe("certops renewal profile", () => {
     );
   });
 
+  it("emits keyMode os-store-managed and target.store/binding onto the job payload for a windows-iis profile", () => {
+    const windowsTarget = {
+      type: "windows-iis",
+      reference: "iis-01/default-web-site",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" },
+      thumbprintSha1: "AA".repeat(20),
+    };
+    const sourceProfile = validProfile({
+      deploymentTargets: [windowsTarget],
+      target: windowsTarget,
+    });
+    const certificate = {
+      id: "cert-windows-1",
+      profile_id: "profile-1",
+      profile_name: "web-tls",
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      key_mode: "os-store-managed",
+      not_after: new Date("2026-08-01T00:00:00.000Z"),
+      profile_public_metadata: { renewalProfile: sourceProfile },
+    };
+
+    const payload = buildRenewalJobPayload({ certificate });
+
+    assert.equal(payload.keyMode, "os-store-managed");
+    assert.equal(payload.target.type, "windows-iis");
+    assert.equal(payload.target.store, "My");
+    assert.deepEqual(payload.target.binding, {
+      site: "Default Web Site",
+      port: 443,
+      sniHost: "app.example.com",
+    });
+    assert.equal(payload.target.thumbprintSha1, "AA".repeat(20));
+    assert.equal(
+      "certPath" in payload,
+      false,
+      "a windows-iis renew payload has no top-level certPath",
+    );
+    assert.equal(
+      "keyPath" in payload,
+      false,
+      "a windows-iis renew payload has no top-level keyPath",
+    );
+    assert.equal(
+      "chainPath" in payload,
+      false,
+      "a windows-iis renew payload has no top-level chainPath",
+    );
+  });
+
   it("rejects a windows-iis target missing store", () => {
     assert.throws(
       () =>
@@ -168,6 +220,51 @@ describe("certops renewal profile", () => {
           }),
         ),
       /target\.binding\.port/,
+    );
+  });
+
+  it("windowsIisTargetAuditFields names the store/binding for a windows-iis target", () => {
+    const fields = windowsIisTargetAuditFields({
+      type: "windows-iis",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" },
+    });
+    assert.deepEqual(fields, {
+      targetType: "windows-iis",
+      windowsStore: "My",
+      windowsBindingSite: "Default Web Site",
+      windowsBindingPort: 443,
+      windowsBindingSniHost: "app.example.com",
+    });
+  });
+
+  it("windowsIisTargetAuditFields returns an all-null shape for a non-windows target", () => {
+    assert.deepEqual(windowsIisTargetAuditFields({ type: "endpoint" }), {
+      targetType: "endpoint",
+      windowsStore: null,
+      windowsBindingSite: null,
+      windowsBindingPort: null,
+      windowsBindingSniHost: null,
+    });
+  });
+
+  it("windowsIisTargetAuditFields tolerates a missing/malformed target without throwing", () => {
+    assert.deepEqual(windowsIisTargetAuditFields(undefined), {
+      targetType: null,
+      windowsStore: null,
+      windowsBindingSite: null,
+      windowsBindingPort: null,
+      windowsBindingSniHost: null,
+    });
+    assert.deepEqual(
+      windowsIisTargetAuditFields({ type: "windows-iis", binding: "not-an-object" }),
+      {
+        targetType: "windows-iis",
+        windowsStore: null,
+        windowsBindingSite: null,
+        windowsBindingPort: null,
+        windowsBindingSniHost: null,
+      },
     );
   });
 

@@ -217,24 +217,28 @@ describe("CertOps adoption route refusals", () => {
     );
   });
 
-  it("refuses an os-store-managed certificate with 409 until the Windows executor exists", async () => {
-    // The agent would technically be the right custodian for a Windows
-    // certificate-store key, but the real store/site/binding execution
-    // path is not wired up in this build, so this stays refused rather
-    // than adopted into a renewal that can never actually deploy. This is
-    // intentional pending the real executor, which should flip this key
-    // mode back to agent-deployable in the same change that adds it.
+  it("adopts an os-store-managed certificate now that the Windows executor exists", async () => {
+    // Historically this stayed refused with 409 pending the real Windows
+    // store/site/binding execution path; that executor now exists
+    // (packages/agent/src/index.js's executeWindowsIisRenewJob), so
+    // os-store-managed is agent-deployable and adoption proceeds like any
+    // other agent-managed key mode.
     const client = adoptionClient({
       certificate: certificateRow({ key_mode: "os-store-managed" }),
     });
 
-    const { response } = await adoptAndMapErrors({ client });
+    const enqueued = [];
+    const { outcome, response } = await adoptAndMapErrors({
+      client,
+      enqueueIntent: async (args) => {
+        enqueued.push(args);
+        return { enqueued: true };
+      },
+    });
 
-    assert.equal(response.statusCode, 409);
-    assert.equal(
-      response.body.code,
-      "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE",
-    );
+    assert.equal(response, null);
+    assert.equal(outcome.job.id, JOB_ID);
+    assert.equal(enqueued.length, 1);
   });
 
   it("refuses a certificate that already has a renewal profile with 409", async () => {

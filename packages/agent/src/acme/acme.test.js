@@ -10,6 +10,7 @@ const {
   listSupportedAdapters,
   defaultDnsHookPath,
   defaultAcmeDnsApiPath,
+  buildDnsHookCommand,
   resolveAcmeStatePaths,
   resolveCertificateOutputPaths,
   ACME_SH_DNS_HOOK_NAME,
@@ -61,6 +62,12 @@ function certbotAdapter(execFileImpl, extra = {}) {
     execFileImpl,
     dnsHookPath: DNS_HOOK_PATH,
     acmeDnsApiPath: ACME_DNS_API_PATH,
+    // Pin to POSIX by default so this suite's expectations (and its
+    // assertion of the documented "<hookPath> <mode>" format) do not
+    // change depending on which OS actually runs the tests; the win32
+    // hook-command format has its own dedicated tests below.
+    platform: "linux",
+    nodeExecPath: "/usr/bin/node",
     ...extra,
   });
 }
@@ -197,6 +204,69 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
 });
 
+// ---------------------------------------------------------------------------
+// buildDnsHookCommand: win32 vs POSIX certbot hook-command format
+// (2026-08-05 real-host finding: certbot invokes the hook string through a
+// shell, and a bare ".js" path has no useful Windows file association)
+// ---------------------------------------------------------------------------
+
+test("buildDnsHookCommand uses '<hookPath> <mode>' on POSIX", () => {
+  assert.equal(
+    buildDnsHookCommand(DNS_HOOK_PATH, "present", {
+      platform: "linux",
+      nodeExecPath: "/usr/bin/node",
+    }),
+    `${DNS_HOOK_PATH} present`,
+  );
+  assert.equal(
+    buildDnsHookCommand(DNS_HOOK_PATH, "cleanup", {
+      platform: "darwin",
+      nodeExecPath: "/usr/bin/node",
+    }),
+    `${DNS_HOOK_PATH} cleanup`,
+  );
+});
+
+test("buildDnsHookCommand quotes and prefixes the node executable on win32", () => {
+  const winHookPath = "C:\\ProgramData\\TokenTimerAgent\\bin\\certops-dns-hook.js";
+  const winNodePath = "C:\\Program Files\\nodejs\\node.exe";
+  assert.equal(
+    buildDnsHookCommand(winHookPath, "present", {
+      platform: "win32",
+      nodeExecPath: winNodePath,
+    }),
+    `"${winNodePath}" "${winHookPath}" present`,
+  );
+  assert.equal(
+    buildDnsHookCommand(winHookPath, "cleanup", {
+      platform: "win32",
+      nodeExecPath: winNodePath,
+    }),
+    `"${winNodePath}" "${winHookPath}" cleanup`,
+  );
+});
+
+test("certbot adapter builds win32-formatted --manual-auth-hook/--manual-cleanup-hook when platform is win32", async () => {
+  const execStub = makeExecStub();
+  const winNodePath = "C:\\Program Files\\nodejs\\node.exe";
+  const adapter = certbotAdapter(execStub, {
+    platform: "win32",
+    nodeExecPath: winNodePath,
+  });
+
+  await adapter.runRenewal(baseRenewalInputs());
+
+  const args = execStub.calls[0].args;
+  assert.equal(
+    args[args.indexOf("--manual-auth-hook") + 1],
+    `"${winNodePath}" "${DNS_HOOK_PATH}" present`,
+  );
+  assert.equal(
+    args[args.indexOf("--manual-cleanup-hook") + 1],
+    `"${winNodePath}" "${DNS_HOOK_PATH}" cleanup`,
+  );
+});
+
 test("certbot adapter reports the leaf, chain and fullchain paths it wrote", async () => {
   const execStub = makeExecStub();
   const adapter = certbotAdapter(execStub);
@@ -300,6 +370,8 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     "www.example.com",
     "--dns",
     ACME_SH_DNS_HOOK_NAME,
+    "--dnssleep",
+    "0",
     "--cert-file",
     OUT_CERT_PATH,
     "--ca-file",
@@ -360,6 +432,8 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
     "www.example.com",
     "--dns",
     "dns_certops",
+    "--dnssleep",
+    "0",
     "--cert-file",
     OUT_CERT_PATH,
     "--ca-file",

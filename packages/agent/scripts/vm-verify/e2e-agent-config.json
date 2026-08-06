@@ -1,0 +1,40 @@
+{
+  "serverUrl": "https://circumstances-hull-excellence-parent.trycloudflare.com",
+  "workspaceId": "ed8e6dd5-1d2e-47d0-8cf3-c4ae479168c0",
+  "agentId": "candidate-ttwinverify-7916",
+  "declaredCommandProfileNames": ["acme-sh-e2e"],
+  "declaredTargetSelectors": ["e2e01.tokentimer-verify.local"],
+  "execution": {
+    "enabled": true,
+    "dryRun": false
+  },
+  "policy": {
+    "allowedCommands": {
+      "acme-sh-e2e": {
+        "argv": [
+          "C:\\Program Files\\Git\\bin\\bash.exe",
+          "C:\\ProgramData\\TokenTimerAgent\\tools\\acme.sh\\acme.sh"
+        ]
+      }
+    },
+    "allowedCaEndpoints": ["https://127.0.0.1:14000/dir"],
+    "allowedDnsZones": ["tokentimer-verify.local"],
+    "allowedDnsProviders": ["pebble-challtestsrv"],
+    "allowedVerifyHosts": ["e2e01.tokentimer-verify.local"]
+  },
+  "dnsProviders": {
+    "pebble-challtestsrv": {
+      "credentialsFile": "C:\\ProgramData\\TokenTimerAgent\\state\\dns-pebble-challtestsrv-credentials.json"
+    },
+    "zoneProviderMap": {
+      "tokentimer-verify.local": "pebble-challtestsrv"
+    }
+  },
+  "dnsPropagation": {
+    "checkAuthoritative": false,
+    "resolvers": ["127.0.0.1:8053"],
+    "timeoutMs": 60000,
+    "intervalMs": 2000
+  },
+  "allowInsecureLocalHttp": true
+}

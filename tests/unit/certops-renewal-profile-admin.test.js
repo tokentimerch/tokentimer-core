@@ -770,16 +770,15 @@ describe("CertOps upcoming renewals coverage", () => {
     assert.equal(item.blockedReason, null);
   });
 
-  it("treats os-store-managed custody as not_agent_deployable until the Windows executor exists", async () => {
-    // The agent would be the right custodian for a Windows certificate-store
-    // key, but the real store/site/binding execution path is not wired up
-    // in this build, so this stays refused rather than reported renewable.
-    // This is intentional pending the real executor, which should flip this
-    // key mode back to agent-deployable in the same change that adds it.
+  it("treats os-store-managed custody as renewable now that the Windows executor exists", async () => {
+    // Historically stayed not_agent_deployable pending the real Windows
+    // store/site/binding execution path; that executor now exists
+    // (packages/agent/src/index.js's executeWindowsIisRenewJob), so
+    // os-store-managed is reported renewable like other agent-managed modes.
     const { item } = await listOne({ key_mode: "os-store-managed" });
 
-    assert.equal(item.autoRenewEnabled, false);
-    assert.equal(item.blockedReason, "not_agent_deployable");
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
   });
 
   it("treats proxy-agent-local custody as renewable", async () => {

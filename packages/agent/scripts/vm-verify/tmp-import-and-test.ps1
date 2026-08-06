@@ -1,0 +1,5 @@
+﻿Import-Certificate -FilePath "C:\pebble\test\certs\pebble.minica.pem" -CertStoreLocation "Cert:\LocalMachine\Root"
+Write-Output "--- curl test (no -k) ---"
+& "C:\Program Files\Git\bin\bash.exe" -lc "curl -sS -o /dev/null -w '%{http_code}\n' https://127.0.0.1:14000/dir 2>&1"
+Write-Output "--- curl --version ---"
+& "C:\Program Files\Git\bin\bash.exe" -lc "curl --version | head -3"

@@ -684,9 +684,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const md = ev?.metadata || {};
       const parts = [];
       if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.mode) parts.push(`Mode: ${md.mode}`);
       if (md.subjectType) parts.push(`Subject: ${md.subjectType}`);
       if (md.subjectId) parts.push(`Subject ID: ${md.subjectId}`);
+      if (md.commonName) parts.push(`Common name: ${md.commonName}`);
       if (md.source) parts.push(`Source: ${md.source}`);
+      if (md.trigger) parts.push(`Trigger: ${md.trigger}`);
+      parts.push(...formatWindowsTargetParts(md));
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -728,6 +732,25 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  // Shared by every CertOps audit event that carries a windows-iis target:
+  // deployedCertPath/certPath is always null for that target type (its
+  // destination is a machine certificate store + IIS binding, not a file),
+  // so these are the fields that actually say where a Windows deployment
+  // touched.
+  function formatWindowsTargetParts(md) {
+    const parts = [];
+    if (md.targetType === 'windows-iis') {
+      if (md.windowsStore) parts.push(`Store: ${md.windowsStore}`);
+      if (md.windowsBindingSite) {
+        const port = md.windowsBindingPort != null ? `:${md.windowsBindingPort}` : '';
+        parts.push(`IIS site: ${md.windowsBindingSite}${port}`);
+      }
+      if (md.windowsBindingSniHost)
+        parts.push(`SNI host: ${md.windowsBindingSniHost}`);
+    }
+    return parts;
+  }
+
   function formatCertOpsIssuedMetadata(ev) {
     try {
       const md = ev?.metadata || {};
@@ -744,6 +767,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.fingerprintSha256)
         parts.push(`Fingerprint: ${md.fingerprintSha256}`);
       if (md.deployedCertPath) parts.push(`Path: ${md.deployedCertPath}`);
+      parts.push(...formatWindowsTargetParts(md));
       if (md.profileId) parts.push(`Renewal profile: ${md.profileId}`);
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
       return parts.length > 0 ? parts.join(' | ') : '';
@@ -761,9 +785,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       // The reason is the actionable part: it names the proof that was missing.
       if (md.reconciliationReason)
         parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.derivationReason) parts.push(`Derivation reason: ${md.derivationReason}`);
+      if (md.detail) parts.push(`Detail: ${md.detail}`);
       if (md.operation) parts.push(`Operation: ${md.operation}`);
       if (md.agentId) parts.push(`Agent: ${md.agentId}`);
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      // Unlike the DERIVED event's windowsStore/binding fields, only
+      // targetType is safe to show here: a decline usually means the
+      // store/binding fields themselves were the ones that failed
+      // validation and were never trusted enough to persist.
+      if (md.targetType) parts.push(`Target type: ${md.targetType}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -801,6 +832,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.subjectId) parts.push(`Subject ID: ${md.subjectId}`);
       if (md.source) parts.push(`Source: ${md.source}`);
       if (md.mode) parts.push(`Mode: ${md.mode}`);
+      parts.push(...formatWindowsTargetParts(md));
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -821,6 +853,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.commandRef) parts.push(`Command: ${md.commandRef}`);
       if (md.caEndpoint) parts.push(`CA: ${md.caEndpoint}`);
       if (md.certPath) parts.push(`Path: ${md.certPath}`);
+      parts.push(...formatWindowsTargetParts(md));
       if (md.dnsProvider) parts.push(`DNS: ${md.dnsProvider}`);
       if (md.dnsZone) parts.push(`Zone: ${md.dnsZone}`);
       if (md.renewBeforeDays != null)

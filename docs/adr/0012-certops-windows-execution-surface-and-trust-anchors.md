@@ -1765,10 +1765,10 @@ under its named reason rather than retrying invisibly with no operator signal.
 
 ### 19. Key-memory handling is documented as a residual-risk boundary, not a locked-memory guarantee
 
-**Closes open question 9.** certctl's `keymem.go` locks agent-side private-key
-memory (`VirtualLock`/an mlock-equivalent) against swap-to-disk exposure.
-Whether this agent needs the equivalent control was left open rather than
-silently unaddressed.
+**Closes open question 9.** Some comparable production tooling in this space
+locks agent-side private-key memory (`VirtualLock`/an mlock-equivalent)
+against swap-to-disk exposure. Whether this agent needs the equivalent
+control was left open rather than silently unaddressed.
 
 Decision: **this record does not require `mlock`/`VirtualLock`, and the agent
 must not claim locked or non-pageable memory for key material anywhere it

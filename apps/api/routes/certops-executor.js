@@ -1651,8 +1651,8 @@ async function executorEventsHandler(req, res, options = {}) {
           // different execution lanes over the same certificate_jobs table, and
           // the executor lane has no lease. Refusing every `executor_kind=agent`
           // job would be wrong, because a job created without an explicit
-          // executorKind defaults to "agent" and that IS the certctl/executor
-          // lane's own default. What must never happen is an executor token
+          // executorKind defaults to "agent" and that IS the bring-your-own-
+          // executor lane's own default. What must never happen is an executor token
           // driving a job an agent currently holds: the agent is still running
           // the ACME client and will report its own result against a status the
           // executor already moved, so the two lanes fight over one job and the
@@ -1753,8 +1753,8 @@ async function executorEventsHandler(req, res, options = {}) {
         }
 
         // The executor lane owed the same alert the agent lane pays. It did not:
-        // a renew job failed by a certctl/controller executor recorded the
-        // status and stopped, so the operator learned nothing while the
+        // a renew job failed by a bring-your-own-executor/controller executor
+        // recorded the status and stopped, so the operator learned nothing while the
         // identical failure reported by an agent emailed them. Same policy, same
         // dedupe key, same transaction, so an executor-reported failure cannot
         // commit without its intent, and a job already alerted for by another

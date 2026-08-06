@@ -49,9 +49,12 @@
 #     ambient host-wide access (ADR-0012 decision 11), so the enforcement
 #     point on Windows is agent-local policy (config.json allowlists),
 #     not an OS-level sandbox.
-#   - certbot/acme.sh are POSIX shell tools; the acme/ state subdirectories
-#     install-agent.sh creates for them are not created here. Windows ACME
-#     integration (if any) is a separate, not-yet-scoped surface.
+#   - certbot/acme.sh are POSIX shell tools; the acme/certbot/{config,work,
+#     logs} state subdirectories install-agent.sh creates for certbot are
+#     not created here (certbot itself creates them on first run on any
+#     platform). acme.sh's dnsapi/dns_certops.sh hook copy IS created here
+#     (see below) since acme.sh needs it present before its first run, not
+#     merely on first use.
 #   - A plain Node.js process does not itself speak the Windows Service
 #     Control Manager's control protocol (StartServiceCtrlDispatcher), so
 #     the service's binPath does not point at node.exe directly. It points
@@ -553,6 +556,28 @@ if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 }
 Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" }
+
+# ---------------------------------------------- acme.sh dnsapi hook (Windows)
+# install-agent.sh symlinks bin/dns_certops.sh into
+# <stateDir>/acme/acme.sh/dnsapi/ so acme.sh's `--dns dns_certops` resolves
+# it by name; this installer had no equivalent, so `acmeKind: "acme.sh"`
+# jobs failed at the DNS-01 step on every Windows install with "dns_certops
+# not found" (found 2026-08-05 during the first real acme.sh run on Windows,
+# via Git Bash - see docs/certops/agent.md's Windows hook note). A plain
+# copy is used instead of a symlink: creating symlinks needs
+# SeCreateSymbolicLinkPrivilege, which is not guaranteed even for an
+# elevated installer session, while a copy has no such dependency and
+# dns_certops.sh does not change independently of the package it ships in.
+$AcmeShDnsApiDir = Join-Path $StateDir "acme\acme.sh\dnsapi"
+$DnsCertopsSrc = Join-Path $PackageDir "bin\dns_certops.sh"
+Invoke-Step "install acme.sh dnsapi\dns_certops.sh hook" {
+    New-Item -ItemType Directory -Force -Path $AcmeShDnsApiDir | Out-Null
+    if (Test-Path -LiteralPath $DnsCertopsSrc) {
+        Copy-Item -LiteralPath $DnsCertopsSrc -Destination (Join-Path $AcmeShDnsApiDir "dns_certops.sh") -Force
+    } else {
+        Write-Log "WARNING: $DnsCertopsSrc not found; acme.sh --dns dns_certops will fail until the package includes bin\dns_certops.sh"
+    }
+}
 
 # ------------------------------------------------------- config.json
 # Fields consumed by the agent's config loader (src/config/index.js):

@@ -23,17 +23,19 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     );
   });
 
-  it("ships with an empty default manifest (nothing qualified yet)", () => {
+  it("ships with windows-cert-store-v1 and iis-binding-v1 qualified after real-host verification, trust-anchor-deploy-v1 still empty", () => {
+    // windows-cert-store-v1 and iis-binding-v1 passed real-host verification
+    // on tokentimer-winverify-vm (WCNG/WIIS/WRET/WDISC, section 9 of the
+    // post-ship checklist); trust-anchor-deploy-v1 has no executor at all yet
+    // (Wave 3) and stays gated.
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified], []);
+    assert.deepEqual([...manifest.qualified].sort(), [
+      "iis-binding-v1",
+      "windows-cert-store-v1",
+    ]);
   });
 
-  it("never advertises a gated capability when the default manifest names none, even though the underlying candidate list claims it exists", () => {
-    // Simulates a future build where the Windows/trust-anchor execution
-    // paths are implemented and some caller assembles a candidate
-    // capability list that already includes all three gated strings. The
-    // manifest shipped in THIS change is empty, so none of them may reach
-    // the wire.
+  it("advertises only the real-host-verified gated capabilities, never trust-anchor-deploy-v1", () => {
     const candidateCapabilities = [
       "evidence-claim-binding-v1",
       "windows-cert-store-v1",
@@ -41,13 +43,14 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
       "trust-anchor-deploy-v1",
     ];
     const declared = filterQualifiedCapabilities(candidateCapabilities);
-    assert.deepEqual([...declared], ["evidence-claim-binding-v1"]);
-    for (const gated of GATED_CAPABILITIES) {
-      assert.ok(
-        !declared.includes(gated),
-        `${gated} must not be advertised while the manifest is empty`,
-      );
-    }
+    assert.deepEqual(
+      [...declared].sort(),
+      ["evidence-claim-binding-v1", "iis-binding-v1", "windows-cert-store-v1"],
+    );
+    assert.ok(
+      !declared.includes("trust-anchor-deploy-v1"),
+      "trust-anchor-deploy-v1 must not be advertised: no executor exists yet",
+    );
   });
 
   it("lets an ungated capability through unconditionally", () => {
@@ -158,7 +161,10 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
 
     _resetQualifiedCapabilitiesCacheForTests();
     const manifest = loadQualifiedCapabilitiesManifest();
-    assert.deepEqual([...manifest.qualified], []);
+    assert.deepEqual([...manifest.qualified].sort(), [
+      "iis-binding-v1",
+      "windows-cert-store-v1",
+    ]);
   });
 });
 

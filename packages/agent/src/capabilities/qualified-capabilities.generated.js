@@ -9,4 +9,4 @@
  */
 
 "use strict";
-module.exports = Object.freeze({ qualified: Object.freeze([]) });
+module.exports = Object.freeze({ qualified: Object.freeze(["windows-cert-store-v1","iis-binding-v1"]) });

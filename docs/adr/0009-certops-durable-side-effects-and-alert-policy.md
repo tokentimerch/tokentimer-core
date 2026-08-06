@@ -61,7 +61,8 @@ terminated by either.
    transition (`agent_result`, `executor_event`, `approval_rejection`,
    `operator_cancel`, `lease_reaper`, `stale_agent`, `forced_retirement`) and is
    distinct from `certificate_jobs.source`, which describes how the job was
-   created. `executor_event` covers the machine-token lane (certctl, the
+   created. `executor_event` covers the machine-token lane (a bring-your-own
+   executor driving the API directly with a machine credential, or the
    Kubernetes controller): it shares `certificate_jobs` with the agent lane but
    holds no lease, and its terminal reports were the last path that recorded a
    renewal failure with no alert at all — added alongside `forced_retirement`

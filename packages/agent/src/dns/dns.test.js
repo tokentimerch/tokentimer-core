@@ -53,6 +53,7 @@ test("listSupportedDnsProviders returns the wave-1 then wave-2 provider ids", ()
     "infomaniak",
     "exoscale",
     "powerdns",
+    "pebble-challtestsrv",
   ]);
 });
 

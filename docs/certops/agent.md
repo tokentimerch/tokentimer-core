@@ -839,6 +839,12 @@ Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
 `exoscale`, `powerdns`. **Not supported yet:** DigitalOcean DNS (the
 `acme-dns` provider is the sixth wave-1 id; do not confuse the two).
 
+Test-only provider id: `pebble-challtestsrv` — Let's Encrypt's own
+companion DNS mock for the Pebble ACME test server (no authentication;
+never appropriate for a production `caEndpoint`). Use it only in a
+workspace policy scoped to a test CA, to validate the DNS-01 path locally
+without any real DNS zone.
+
 Config (`config.json`): each configured provider maps to an object holding
 the absolute path of its agent-local credentials file plus optional
 non-secret options; the reserved `zoneProviderMap` key routes zones to
@@ -897,6 +903,7 @@ group/other-readable files on POSIX), and never leave the host:
 | `infomaniak` | `apiToken` (Bearer; v2 API requires `domain:read`, `dns:read`, and `dns:write` scopes together, not the older single `domain` scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
 | `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success; the hook's propagation wait covers the apply window |
 | `powerdns` | `apiUrl` (must be `https:`, e.g. `https://pdns.example:8081`; a loopback `http://127.0.0.1:8081` endpoint requires an explicit `allowInsecureLocalHttp: true`), `apiKey` (X-API-Key header); optional `serverId` (default `localhost`). Zone and record names carry a trailing dot and TXT content is double-quoted, per PowerDNS API rules. Present merges with existing TXT values at the name and `REPLACE`s the union (parallel challenges never clobber each other); cleanup `REPLACE`s the remainder or sends `changetype: DELETE` when none remain |
+| `pebble-challtestsrv` | `baseUrl` (challtestsrv's management interface, default port `8055`; a loopback `http://127.0.0.1:8055` endpoint requires `allowInsecureLocalHttp: true`). No API key: challtestsrv has no authentication by design ("TEST USAGE ONLY"). `POST {baseUrl}/set-txt` / `POST {baseUrl}/clear-txt` with `{ host: "<name>.", value }`. Declares `capabilities.cleanupVerifiable: true` (unlike `acme-dns`, `/clear-txt` genuinely deletes the record) |
 
 Hook usage. The ACME adapter builds these flags automatically; operators
 debugging by hand can use the same contract. certbot manual hooks (the hook
@@ -911,6 +918,15 @@ certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
   --work-dir   <stateDir>/acme/certbot/work \
   --logs-dir   <stateDir>/acme/certbot/logs
 ```
+
+On win32, the hook string is instead `"<node.exe path>" "<hookPath>" present`
+/ `... cleanup` — certbot invokes the hook string through a shell, and a
+bare `.js` path has no useful Windows file association, so the node
+executable must be named explicitly (2026-08-05 real-host finding; also
+note that Certbot itself dropped official Windows support in February 2024,
+so this format matters mainly for `acmeKind: "acme.sh"` deployments run
+under Git Bash, and for anyone still running a self-built/unsupported
+Windows certbot).
 
 For acme.sh, `--dns` takes the shipped dnsapi hook **name** (`dns_certops`),
 not an absolute path — acme.sh sources `dnsapi/dns_certops.sh` from its own

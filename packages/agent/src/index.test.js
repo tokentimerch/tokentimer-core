@@ -13,6 +13,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { EventEmitter } = require("node:events");
 
 const {
   handleClaimedJob,
@@ -52,6 +53,7 @@ const {
   clearJournalOnTerminal,
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
+const { readLedgerRow } = require("./windows-retention");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -527,8 +529,16 @@ describe("registerIfNeeded", () => {
     // This build's verify step always reports fingerprint + validTo evidence
     // bound to the claim, so it must declare the capability issuance
     // reconciliation gates on; otherwise every issue job would sit at
-    // 'pending' forever against a freshly registered agent.
-    assert.deepEqual(registerCall.declaredCapabilities, ["evidence-claim-binding-v1"]);
+    // 'pending' forever against a freshly registered agent. On win32,
+    // windows-cert-store-v1/iis-binding-v1 are also candidate capabilities
+    // (AGENT_CANDIDATE_CAPABILITIES) and, since real-host verification on
+    // tokentimer-winverify-vm qualified them in qualified-capabilities.json,
+    // they now pass the manifest gate too.
+    const expectedDeclaredCapabilities =
+      process.platform === "win32"
+        ? ["evidence-claim-binding-v1", "windows-cert-store-v1", "iis-binding-v1"]
+        : ["evidence-claim-binding-v1"];
+    assert.deepEqual(registerCall.declaredCapabilities, expectedDeclaredCapabilities);
     // H1: registrationId must be sent and must match the pre-persisted key.
     assert.match(registerCall.registrationId, /^[0-9a-f-]{36}$/i);
     assert.equal(readRegistrationId(dir), null); // cleared after successful persist
@@ -3527,6 +3537,326 @@ describe("renew chain deployment", () => {
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /Skipping renew, Next renewal time is/);
+  });
+});
+
+describe("windows-iis renew job (os-store-managed)", () => {
+  const CERTIFICATE_ID = "certificate-iis";
+  const RENEW_JOB_ID = "job-iis";
+  const CA_ENDPOINT = "https://acme.example/dir";
+  const OTHER_THUMBPRINT = "AA".repeat(20);
+
+  const FIXTURE_NEW_CERT_PEM = fs.readFileSync(
+    path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
+    "utf8",
+  );
+  const NEW_THUMBPRINT = new crypto.X509Certificate(FIXTURE_NEW_CERT_PEM).fingerprint.replace(
+    /:/g,
+    "",
+  );
+
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function keysDir() {
+    return path.join(workDir, "keys");
+  }
+
+  function stateDir() {
+    return path.dirname(keysDir());
+  }
+
+  function makeExecutionContext({ acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl }) {
+    return buildExecutionContext({
+      config: {
+        execution: {
+          enabled: true,
+          dryRun: false,
+          keysDir: keysDir(),
+          replayStorePath: path.join(workDir, "replay.json"),
+          outboxDir: path.join(workDir, "outbox"),
+          clockDriftToleranceMs: 300000,
+        },
+        pinnedSigningKey: null,
+        acmeAccounts: null,
+      },
+      acmeExecFileImpl,
+      windowsExecFileImpl,
+      windowsConnectImpl,
+    });
+  }
+
+  /**
+   * Stands in for certbot: writes the new self-signed fixture certificate
+   * to the outCertPath the adapter asked for (the windows-iis path never
+   * separately deploys a chain/intermediate file, so a single leaf is
+   * all any test here needs).
+   */
+  function makeCertbotStub({ exitCode = 0 } = {}) {
+    const calls = [];
+    function execFileStub(file, args, options, callback) {
+      calls.push({ file, args, options });
+      const at = args.indexOf("--cert-path");
+      if (at !== -1) {
+        fs.writeFileSync(args[at + 1], FIXTURE_NEW_CERT_PEM, { mode: 0o600 });
+      }
+      const error =
+        exitCode === 0
+          ? null
+          : Object.assign(new Error("Command failed"), { code: exitCode });
+      process.nextTick(() => callback(error, "", exitCode === 0 ? "" : "order failed"));
+    }
+    execFileStub.calls = calls;
+    return execFileStub;
+  }
+
+  /**
+   * Combined certreq.exe/certutil.exe/netsh.exe stub covering every
+   * Windows child-process tool the CNG/IIS/discovery modules invoke for
+   * one windows-iis renewal, keyed on the invoked executable (argv[0])
+   * rather than one tool at a time like the sibling modules' own tests,
+   * since a single renewal call here drives all three in sequence.
+   *
+   * @param {object} opts
+   * @param {string|null} [opts.outgoingThumbprint] what `netsh http show
+   *   sslcert` reports as already bound, before this deploy. null means
+   *   "nothing bound yet" (first-ever deploy to this binding).
+   * @param {string|null} [opts.storeKeyContainer] the Key Container netsh's
+   *   sibling `certutil -store` reports for the outgoing certificate, so
+   *   recordSupersededWindowsCertificate can resolve ownershipProvenance.
+   */
+  function makeWindowsExecStub({ outgoingThumbprint = null, storeKeyContainer = null } = {}) {
+    const calls = [];
+    function execFileStub(file, args, options, callback) {
+      calls.push({ file, args, options });
+      let error = null;
+      let stdout = "";
+      let stderr = "";
+      if (file === "certreq.exe" && args[1] === "-new") {
+        const reqPath = args[args.length - 1];
+        fs.writeFileSync(
+          reqPath,
+          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          "utf8",
+        );
+      } else if (file === "certreq.exe" && args[1] === "-accept") {
+        // acceptCertificateViaCng computes the thumbprint itself from the
+        // certificatePem bytes; certreq's own stdout is not parsed.
+      } else if (file === "netsh.exe" && args[1] === "show") {
+        stdout = outgoingThumbprint
+          ? `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${outgoingThumbprint}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`
+          : "";
+      } else if (file === "netsh.exe" && (args[1] === "add" || args[1] === "delete")) {
+        stdout = "";
+      } else if (file === "certutil.exe" && args[0] === "-store") {
+        stdout = outgoingThumbprint
+          ? `My "Personal"\n================ Certificate 0 ================\nSerial Number: 1a2b3c4d5e\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=old.example.com\nCert Hash(sha1): ${outgoingThumbprint.match(/../g).join(" ")}\n${storeKeyContainer ? `  Key Container = ${storeKeyContainer}\n` : ""}CertUtil: -store command completed successfully.\n`
+          : `My "Personal"\nCertUtil: -store command completed successfully.\n`;
+      } else {
+        error = new Error(`unexpected windows exec call: ${file} ${args.join(" ")}`);
+      }
+      process.nextTick(() => callback(error, stdout, stderr));
+    }
+    execFileStub.calls = calls;
+    return execFileStub;
+  }
+
+  /** TLS-verify connectImpl stub: always presents the certificate that was
+   * just deployed, matching real deployIisBinding usage where the verify
+   * step happens right after the netsh add call this same stub answered. */
+  function makeConnectStub() {
+    function connectStub(options) {
+      const socket = new EventEmitter();
+      socket.destroy = () => {};
+      socket.getPeerCertificate = () => ({
+        raw: new crypto.X509Certificate(FIXTURE_NEW_CERT_PEM).raw,
+      });
+      process.nextTick(() => socket.emit("secureConnect"));
+      return socket;
+    }
+    return connectStub;
+  }
+
+  function makeJob(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: RENEW_JOB_ID,
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      certificateId: CERTIFICATE_ID,
+      action: "renew",
+      target: {
+        type: "windows-iis",
+        reference: "iis.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      keyMode: "os-store-managed",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(16).slice(2)}-0123456789abcdef`,
+      claimId: "claim-iis",
+      mode: "real",
+      commandRef: "certbot-renew",
+      caEndpoint: CA_ENDPOINT,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({
+      job,
+      privateKeyPem: signingKey.privateKeyPem,
+    });
+    return job;
+  }
+
+  function permissiveEngine() {
+    return engineWith(
+      {
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: [CA_ENDPOINT],
+      },
+      { declaredTargetSelectors: ["iis.example.com"] },
+    );
+  }
+
+  async function runIisRenew({ job, windowsOpts = {}, acmeExitCode = 0 }) {
+    const client = createRecordingClient();
+    const windowsExecFileImpl = makeWindowsExecStub(windowsOpts);
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({
+        acmeExecFileImpl: makeCertbotStub({ exitCode: acmeExitCode }),
+        windowsExecFileImpl,
+        windowsConnectImpl: makeConnectStub(),
+      }),
+      log: silentLog,
+    });
+    return { outcome, client, windowsExecFileImpl };
+  }
+
+  it("runs CNG CSR -> ACME -> certreq accept -> IIS bind -> TLS verify end to end and reports succeeded", async () => {
+    const job = makeJob();
+    const { outcome } = await runIisRenew({ job });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(outcome.keyRotated, null);
+  });
+
+  it("reports a claim-bound validation.passed/step=verify evidence item carrying fingerprintSha256 and validTo, so control-plane reconciliation (reconcileProvisionedCertificate / refreshRenewedCertificateEvidence) can promote or refresh the certificate row", async () => {
+    const job = makeJob();
+    const { outcome, client } = await runIisRenew({ job });
+
+    assert.equal(outcome.status, "succeeded");
+    const allItems = client.calls.reportEvidence.flatMap((c) => c.evidenceItems);
+    const verifyItem = allItems.find(
+      (item) => item.eventType === "validation.passed" &&
+        item.metadata.some((m) => m.name === "step" && m.value === "verify"),
+    );
+    assert.notEqual(verifyItem, undefined);
+    assert.equal(typeof verifyItem.fingerprintSha256, "string");
+    assert.equal(verifyItem.fingerprintSha256.length > 0, true);
+    assert.equal(
+      verifyItem.metadata.some((m) => m.name === "validTo"),
+      true,
+    );
+  });
+
+  it("records a retention-ledger row for the certificate the binding previously pointed at", async () => {
+    const job = makeJob();
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "tokentimer-old-1" },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    const row = readLedgerRow(ledgerDir, OTHER_THUMBPRINT);
+    assert.notEqual(row, null);
+    assert.equal(row.replacementThumbprint, NEW_THUMBPRINT.toUpperCase());
+    assert.equal(row.cngKeyContainerId, "tokentimer-old-1");
+    assert.equal(row.ownershipProvenance, "tokentimer_installed");
+    assert.equal(row.lifecycleState, "pending_retention");
+  });
+
+  it("creates no retention-ledger row on a first-ever bind (nothing was bound before)", async () => {
+    const job = makeJob();
+    const { outcome } = await runIisRenew({ job, windowsOpts: { outgoingThumbprint: null } });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    assert.equal(fs.existsSync(ledgerDir), false);
+  });
+
+  it("records ownershipProvenance preexisting when the superseded certificate has no CNG key container", async () => {
+    const job = makeJob();
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: null },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    const row = readLedgerRow(ledgerDir, OTHER_THUMBPRINT);
+    assert.equal(row.ownershipProvenance, "preexisting");
+  });
+
+  it("fails without dispatching any Windows child process when target.binding is missing site/port", async () => {
+    const job = makeJob({
+      target: { type: "windows-iis", reference: "iis.example.com", store: "My", binding: {} },
+    });
+    const { outcome, windowsExecFileImpl } = await runIisRenew({ job, windowsOpts: {} });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /target\.store and target\.binding/);
+    assert.equal(windowsExecFileImpl.calls.length, 0);
+  });
+
+  it("fails cleanly when the ACME order itself fails, never reaching certreq -accept", async () => {
+    const job = makeJob();
+    const { outcome } = await runIisRenew({ job, acmeExitCode: 1 });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /acme step failed/);
+  });
+
+  it("executeDeployJob rejects a windows-iis target with a clear, specific error", async () => {
+    const client = createRecordingClient();
+    const job = {
+      action: "deploy",
+      certificateId: CERTIFICATE_ID,
+      target: {
+        type: "windows-iis",
+        reference: "iis.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      certificatePem: FIXTURE_NEW_CERT_PEM,
+    };
+    const outcome = await executeDeployJob({
+      job,
+      jobId: "job-iis-deploy",
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({}),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
   });
 });
 
