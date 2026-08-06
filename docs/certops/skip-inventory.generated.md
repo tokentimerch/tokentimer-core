@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 41
+Total skips found: 44
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -19,12 +19,15 @@ Total skips found: 41
 | `packages/agent/src/config/config.test.js` | 586 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 683 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 780 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1140 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1150 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1161 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1237 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1249 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1262 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 840 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 855 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 868 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1182 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1192 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1203 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1279 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1291 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1304 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 526 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 555 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |

@@ -862,6 +862,9 @@ describe("credential file round trip", () => {
       encoding: "utf8",
     });
     if (setOwner.status !== 0) {
+      // skip-reason: no-host - this process's token cannot reassign file
+      // ownership to an unrelated SID without a real admin token (CI's
+      // windows-latest runner or a deployed service host).
       t.skip(
         "no-host: this process's token cannot reassign file ownership to an " +
           `unrelated SID (icacls: ${(setOwner.stderr || "").trim()}); needs a real ` +
