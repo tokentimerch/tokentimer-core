@@ -1150,6 +1150,16 @@ Windows:
   registry value (dropping the token, keeping the config-dir entry) once
   registration succeeds, so the secret does not outlive its single-use
   purpose by lingering in the registry after a successful exchange.
+- **A `windows-iis` target's `store` field is honored, not just validated.**
+  `certreq -accept` has no switch that targets a store other than `My` for a
+  machine-keyset request, so a non-default `store` (e.g. `WebHosting`) is
+  reached by mirroring the accepted certificate into it afterward
+  (`certutil -addstore` + `-repairstore`, then `-delstore My` to remove the
+  original copy). Requesting `store: "My"` (the common case) touches only
+  `certreq`, with no `certutil` call. Real-host verification so far has only
+  exercised the default `My` store; the non-default-store mirror path is
+  unit-tested against a stubbed `certutil` but not yet independently proven
+  against a real Windows host. See ADR-0012 decision 9.
 
 ## 9. Troubleshooting
 

@@ -1103,6 +1103,29 @@ property that Linux `agent-local` key generation already has via `openssl
 genrsa`/`certbot`, while keeping the custody *mode* honest about who can actually
 read the key.
 
+**Store targeting beyond the default `My` store.** `certreq -accept` itself has
+no switch or INF directive that targets a store other than `My` for a
+`MachineKeySet=TRUE` request; there is no hidden flag this was just missing.
+A `windows-iis` target's `store` field is honored by mirroring the accepted
+certificate into the requested store after acceptance: `certutil -addstore`
+copies the certificate object into the target store, `-repairstore`
+re-associates that copy with the matching CNG key by public key (key
+containers are not themselves store-scoped, so this is a metadata repair, not
+a key export or copy), and `-delstore My` removes the original `My`-store copy
+so the certificate does not end up live in two stores. This is the same
+sequence Microsoft's own IIS troubleshooting documentation uses to restore a
+"missing private key" certificate, applied here proactively rather than as a
+repair. Requesting the default `My` store touches only `certreq`, with no
+`certutil` call at all. **Only the default-store path has real-host
+verification as of this writing**; the addstore/repairstore/delstore mirror
+is unit-tested against a stubbed `certutil` but has not yet been proven
+against a real Windows host with a non-`My` target store (for example the
+`WebHosting` store convention some IIS deployments use). Tracked as a
+follow-up real-host verification pass, not a known defect: the sequence
+matches documented `certutil` behavior and every step is independently
+checked, with a partial failure at any stage reported rather than silently
+treated as success.
+
 ### 10. The Windows permission model: one ACL matrix, enforced, never skipped
 
 POSIX hosts express "only this identity may read this file" with `chmod 0600` /
@@ -1632,7 +1655,16 @@ key material" outcome this decision exists to close.
 - TokenTimer's own ownership record for the old certificate was written at the
   time this agent installed it (decision 9's install-time ownership
   recording; an agent must never delete material it did not install, per
-  the ownership-aware retention rule this decision establishes).
+  the ownership-aware retention rule this decision establishes). Ownership is
+  decided by the key container's *name* matching this agent's own naming
+  convention, never by container presence alone: a human operator's own
+  `certreq` enrollment, or a tool like IIS's self-signed-certificate
+  generator, also leaves a real, non-exportable CNG key container behind,
+  and container presence alone was previously enough to (incorrectly) record
+  `tokentimer_installed`; a predecessor whose key container this agent did
+  not itself create is now recorded `preexisting` and stays permanently
+  ineligible for cleanup, matching material with no key container at all
+  (an operator-imported PFX).
 - No IIS or `http.sys` binding, on this host, still references the old
   thumbprint.
 - No active job or rollback journal entry (the same journal decision 9
