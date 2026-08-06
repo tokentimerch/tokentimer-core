@@ -2955,11 +2955,30 @@ const migrations = [
       -- renewalProfile.js's validateTarget already own, and having both
       -- enforce it invites them to drift. The database stores; the service
       -- layer validates.
+      --
+      -- windows_site's bound is expressed as an unbounded character-class
+      -- match plus a separate char_length() check rather than a single
+      -- '{1,256}' interval: PostgreSQL's regex engine rejects a bounded
+      -- repetition count above 255 outright ("invalid regular expression:
+      -- invalid repetition count(s)"), so a single-interval '{1,256}' CHECK
+      -- would fail to compile on every single non-null insert or update,
+      -- never actually evaluating true or false. Verified directly against
+      -- a real Postgres 17 instance. windows_store's 1-64 bound and
+      -- windows_sni_host's 0-61 bounds are both well under the limit and
+      -- compile fine; only a 256 bound is affected. This is the same split
+      -- certops_trust_anchors.name (below) already uses for its own 1-255
+      -- bound.
       ALTER TABLE certificate_targets
         ADD COLUMN IF NOT EXISTS windows_store TEXT NULL
           CHECK (windows_store IS NULL OR windows_store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
         ADD COLUMN IF NOT EXISTS windows_site TEXT NULL
-          CHECK (windows_site IS NULL OR windows_site ~ '^[A-Za-z0-9 _.:-]{1,256}$'),
+          CHECK (
+            windows_site IS NULL
+            OR (
+              windows_site ~ '^[A-Za-z0-9 _.:-]+$'
+              AND char_length(windows_site) BETWEEN 1 AND 256
+            )
+          ),
         ADD COLUMN IF NOT EXISTS windows_port INTEGER NULL
           CHECK (windows_port IS NULL OR windows_port BETWEEN 1 AND 65535),
         ADD COLUMN IF NOT EXISTS windows_sni_host TEXT NULL
