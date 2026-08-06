@@ -35,8 +35,7 @@ describe('renewalDescriptor', () => {
   it('warns on an auto certificate whose workspace is paused, without changing the state', () => {
     // The profile itself is genuinely enabled - state stays 'auto' - but the
     // badge must say the workspace kill switch will stop it from actually
-    // renewing, rather than silently promising a renewal that will not run
-    // (13.12 finding, 2026-07-27).
+    // renewing, rather than silently promising a renewal that will not run.
     const descriptor = renewalDescriptor({
       state: RENEWAL_STATES.auto,
       renewsFrom: '2026-08-12T00:00:00.000Z',

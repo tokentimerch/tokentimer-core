@@ -228,7 +228,7 @@ describe("CertOps certificate renewal-state derivation", () => {
   it("flags workspacePaused without changing the auto state itself", () => {
     // The profile is genuinely switched on; a paused workspace is a
     // separate, orthogonal fact the badge must be able to show alongside
-    // it, not instead of it (13.12 finding, 2026-07-27).
+    // it, not instead of it.
     const renewal = deriveCertificateRenewalState(certificateRow(), {
       env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
       workspacePaused: true,
