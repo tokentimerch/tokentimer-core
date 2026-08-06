@@ -2978,7 +2978,7 @@ const migrations = [
           target_type IN (
             'endpoint', 'domain', 'host', 'kubernetes-secret',
             'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other',
-            'windows-iis'
+            'agent-host', 'windows-iis'
           )
         );
     `,
