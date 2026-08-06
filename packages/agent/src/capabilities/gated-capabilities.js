@@ -16,7 +16,7 @@
  * of strings the build-time manifest is allowed to name at all; whether a
  * given build's manifest actually qualifies one is a release decision made
  * per-tag, described in ./qualified-capabilities.json's own history and the
- * plan's "Phase exit criteria" section, not here.
+ * release process's exit-criteria documentation, not here.
  *
  * Split into its own module (no other dependencies) so that both the
  * runtime gate (./index.js) and the build-time manifest generator
