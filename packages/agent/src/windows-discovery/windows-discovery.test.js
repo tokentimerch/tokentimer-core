@@ -69,8 +69,8 @@ SSL Certificate bindings:
 `;
 
 // Real, captured (not hand-authored) netsh http show sslcert output for a
-// hostname-keyed (SNI, via hostnameport=) binding, from the 2026-08-05
-// real-host verification run (WIIS-05 / WDISC-04). This is the format
+// hostname-keyed (SNI, via hostnameport=) binding, from a real-host
+// verification run against a live IIS SNI binding. This is the format
 // splitCertutilStoreBlocks' sibling parseNetshSslcertBindings originally
 // failed to recognize at all.
 const NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT = `

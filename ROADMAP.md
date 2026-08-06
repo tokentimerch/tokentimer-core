@@ -78,13 +78,16 @@ rejects key material at every write surface (CI-enforced).
   Bash and PowerShell reference clients ship alongside the Node agent.
   Windows/IIS target descriptor columns and validation also shipped as part
   of this wave. See ADR-0012.
-- [ ] **Windows execution surface (Wave 2b/3, targeting 0.13.0)**: IIS
-  certificate-binding and Windows certificate-store deployment targets
-  actually driven end to end, CNG-native (non-exportable) key custody, ACL-
-  protected agent credentials and superseded-material retention, trust-anchor
-  ownership reconciliation. Decided in ADR-0012 but not yet implemented in the
-  Windows agent; deferred out of the 0.12.0 signed-dispatch wave because it
-  requires real-Windows-host verification evidence, not source review alone.
+- [x] **Windows execution surface**: IIS certificate-binding and Windows
+  certificate-store deployment targets driven end to end, CNG-native
+  (non-exportable) key custody, ACL-protected agent credentials, and
+  superseded-material retention. Verified end to end against real Windows
+  Server hosts (a real CNG store, a real IIS binding, a real ACME order).
+  See ADR-0012.
+- [ ] **Trust-anchor ownership reconciliation (targeting 0.13.0)**: CA
+  root/intermediate distribution to and revocation from agent hosts.
+  Decided in ADR-0012 but not yet implemented; `trust-anchor-deploy-v1`
+  stays gated with no executor.
 - [ ] **Consolidation guards** (non-blocking, lands incrementally):
   shared SSRF egress module, versioned encryption envelopes, audit hash chain,
   enum/type-drift and control-plane-keygen CI guards.
