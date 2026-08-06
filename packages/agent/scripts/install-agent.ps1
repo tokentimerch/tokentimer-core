@@ -23,7 +23,10 @@
 #   5. Installs a native Windows Service (sc.exe / New-Service; no NSSM or
 #      other third-party service wrapper) running as LocalSystem per
 #      ADR-0012 decision 11, then starts it.
-#   6. On an upgrade (the service already exists), health-checks the
+#   6. Sets the Windows Error Reporting LocalDumps DumpType=0 for node.exe
+#      (ADR-0012 decision 19: core dumps are disabled by a named,
+#      explicit mechanism, not an unspecified machine-wide default).
+#   7. On an upgrade (the service already exists), health-checks the
 #      restarted service and rolls back to the previous app version, with
 #      the credential and configuration preserved and its ACL re-asserted,
 #      if the health check fails.
@@ -675,22 +678,71 @@ if (-not $script:DryRun -and -not (Test-Path $serviceHostExe)) {
 $quotedServiceHost = '"' + $serviceHostExe + '"'
 $binPath = "$quotedServiceHost $quotedNode $quotedEntry"
 
+# sc.exe's binPath= value here is three separately-quoted path segments
+# (host exe, node.exe, entry script), which is the documented pattern for
+# a service whose binary takes quoted arguments. Windows PowerShell 5.1's
+# native-argument passing does not re-escape a string that already starts
+# and ends with a double quote, so $binPath reaches sc.exe's own (naive)
+# command-line tokenizer as raw, unwrapped `"..." "..." "..."` text --
+# sc.exe's tokenizer stops at the first embedded quoted segment and
+# treats what follows as unrecognized extra arguments, failing every
+# single time with exit 1639 (invalid command line), confirmed by a live
+# repro on Windows Server 2025 build 26100 / PowerShell 5.1, this script's
+# first real-host run. Wrapping the whole three-segment value in
+# one more outer pair of quotes, with the inner quotes doubled rather than
+# backslash-escaped (sc.exe's own convention, not cmd.exe's), survives
+# PowerShell's native-argument passing intact and round-trips through
+# `sc qc`/WMI PathName byte-for-byte, confirmed live against both
+# `sc.exe create` and `sc.exe config`. $binPath itself is left as the
+# human-readable form for -DryRun/log output; only this escaped variant is
+# ever passed to sc.exe.
+$binPathForScExe = '"' + $binPath.Replace('"', '""') + '"'
+
 if ($script:DryRun) {
     Write-Host "[dry-run] sc.exe create/config $ServiceName binPath= $binPath start= auto obj= LocalSystem"
     Write-Host "[dry-run] sc.exe failure $ServiceName reset= 86400 actions= restart/5000"
     Write-Host "[dry-run] set HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Environment"
+    Write-Host "[dry-run] set HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\node.exe DumpType=0"
     Write-Host "[dry-run] (re)start $ServiceName and health-check it"
     Write-Log ""
     Write-Log "Dry run complete. No changes were made."
     exit 0
 }
 
+# --------------------------------------- Windows Error Reporting dump suppression
+# ADR-0012 decision 19: core dumps must be disabled for the production
+# agent by a named, platform-specific mechanism, not an unspecified
+# "disabled" claim, since a crash dump is an alternate, unlocked copy of
+# process memory that no in-process buffer discipline can prevent. This
+# was previously documented in ADR-0012 but never implemented; a real-host
+# verification pass found the gap.
+#
+# WER's LocalDumps key is scoped by executable *file name*, not full path,
+# and Windows has no path-scoped equivalent. node.exe is the process that
+# actually runs the agent's key-handling JS code; the windows-service-host
+# shim (see windows-service-host/) is a thin SCM adapter that spawns
+# node.exe as its child and never itself holds key bytes, so suppressing
+# dumps only for the service-host executable would not protect the
+# process that matters. Setting this for node.exe suppresses WER dumps for
+# any node.exe process on this host, not only this agent's -- an accepted
+# trade-off per decision 10's own established principle that a
+# narrow-but-ineffective control is worse than a broad-but-deterministic
+# one. An operator who needs WER dumps for an unrelated Node service on
+# the same host should not colocate it with this agent.
+function Set-WindowsDumpSuppression {
+    param([string]$ExeName)
+    $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$ExeName"
+    New-Item -Path $key -Force | Out-Null
+    New-ItemProperty -Path $key -Name "DumpType" -PropertyType DWord -Value 0 -Force | Out-Null
+}
+Invoke-Step "set WER LocalDumps DumpType=0 for node.exe" { Set-WindowsDumpSuppression -ExeName "node.exe" }
+
 $serviceExisted = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
 if (-not $serviceExisted) {
-    & sc.exe create $ServiceName type= own start= auto obj= LocalSystem DisplayName= $ServiceDisplayName binPath= $binPath | Out-Null
+    & sc.exe create $ServiceName type= own start= auto obj= LocalSystem DisplayName= $ServiceDisplayName binPath= $binPathForScExe | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "sc.exe create failed for $ServiceName (exit $LASTEXITCODE)" }
 } else {
-    & sc.exe config $ServiceName binPath= $binPath obj= LocalSystem start= auto DisplayName= $ServiceDisplayName | Out-Null
+    & sc.exe config $ServiceName binPath= $binPathForScExe obj= LocalSystem start= auto DisplayName= $ServiceDisplayName | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "sc.exe config failed to update $ServiceName (exit $LASTEXITCODE)" }
 }
 & sc.exe failureflag $ServiceName 1 | Out-Null
@@ -705,10 +757,26 @@ Set-ServiceEnvironment -ConfigDir $StateDir -Token $script:BootstrapToken
 # correct verb for both the install and the upgrade path (mirrors
 # install-agent.sh's use of `systemctl restart` for the same reason).
 $currentStatus = (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue).Status
-if ($currentStatus -eq 'Running') {
-    Restart-Service -Name $ServiceName -Force
-} else {
-    Start-Service -Name $ServiceName
+# A build broken badly enough that the
+# service host can't even reach a running state (not merely "started but
+# unhealthy") makes Restart-Service/Start-Service themselves raise a
+# terminating error under this script's script-wide $ErrorActionPreference
+# = "Stop" -- live-repro'd on a real Windows Server host with a sabotaged
+# entry point: the uncaught exception killed the script before Line 766's
+# health check ever ran, so the rollback below never executed and the host
+# was left with a Stopped service running the broken build. The fix routes
+# every restart-time failure through the same Test-ServiceHealthy() gate
+# below instead of a second, divergent failure path: swallow the error here
+# (logged, not silent) and let the unhealthy Stopped/Running state that
+# Test-ServiceHealthy already understands decide whether to roll back.
+try {
+    if ($currentStatus -eq 'Running') {
+        Restart-Service -Name $ServiceName -Force -ErrorAction Stop
+    } else {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+    }
+} catch {
+    Write-Log "failed to (re)start ${ServiceName}: $($_.Exception.Message)"
 }
 
 $healthy = Test-ServiceHealthy -TimeoutSeconds 20
@@ -718,7 +786,7 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $AppDir
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
-    $rollbackBinPath = $binPath
+    $rollbackBinPath = $binPathForScExe
     & sc.exe config $ServiceName binPath= $rollbackBinPath | Out-Null
     Set-ServiceEnvironment -ConfigDir $StateDir -Token ""
     Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -738,7 +806,8 @@ if (-not $healthy) {
 }
 
 Write-Log ""
-Write-Log "Install complete. Next steps:"
+Write-Log "Install complete. Crash dumps (WER LocalDumps) are suppressed for node.exe on this host."
+Write-Log "Next steps:"
 Write-Log "  1. Check the service:      Get-Service $ServiceName"
 Write-Log "  2. Confirm registration in the dashboard (CertOps > Agent fleet):"
 Write-Log "     the agent should appear as active within about a minute."

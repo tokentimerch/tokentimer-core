@@ -832,6 +832,45 @@ describe("credential file round trip", () => {
     // The original credential must remain untouched after a rejected rotation.
     assert.equal(readCredential(dir), "ttagent_agent-01_0123456789abcdef");
   });
+
+  // skip-reason: no-host - requires a real Windows filesystem ACL.
+  // Live-repro'd on a real Windows Server 2025 host: before this fix,
+  // readCredential() read the file with no ownership/ACL check at all, the
+  // one credential-shaped path in this module that skipped it.
+  it("refuses a credential file whose ACL grants Everyone (win32)", { skip: !IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
+    const credentialPath = path.join(dir, "credential");
+    spawnSync("icacls", [credentialPath, "/grant", "*S-1-1-0:(F)"], { encoding: "utf8" });
+    assert.throws(() => readCredential(dir), /grants access to S-1-1-0/);
+  });
+
+  // skip-reason: no-host - requires a real Windows filesystem ACL
+  // and, per Windows' own rules, either SeRestorePrivilege (a real admin
+  // token, e.g. CI's windows-latest runner or a deployed service host) or
+  // ownership already vested in one of the caller's own token groups.
+  // Neither holds on an unprivileged dev workstation, so this dynamically
+  // skips there rather than failing on an environment gap unrelated to the
+  // fix under test.
+  it("refuses a credential file owned by an untrusted principal (win32)", { skip: !IS_WIN32 }, (t) => {
+    const dir = makeTempConfigDir();
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
+    const credentialPath = path.join(dir, "credential");
+    // BUILTIN\Guests (S-1-5-32-546) is never in the agent's trusted-owner
+    // allowlist (self/SYSTEM/Administrators).
+    const setOwner = spawnSync("icacls", [credentialPath, "/setowner", "*S-1-5-32-546"], {
+      encoding: "utf8",
+    });
+    if (setOwner.status !== 0) {
+      t.skip(
+        "no-host: this process's token cannot reassign file ownership to an " +
+          `unrelated SID (icacls: ${(setOwner.stderr || "").trim()}); needs a real ` +
+          "admin token (CI runner or deployed service host)",
+      );
+      return;
+    }
+    assert.throws(() => readCredential(dir), /not one of the trusted owners/);
+  });
 });
 
 describe("caBundlePath (loadAgentConfig)", () => {

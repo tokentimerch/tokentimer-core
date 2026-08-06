@@ -4340,8 +4340,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       // Independent of execution mode: this reports host-level NTP sync
       // health (observe-only agents benefit from the drift signal just as
       // much as execution-enabled ones). checkNtpSynced never throws; a
-      // missing timedatectl or non-systemd host resolves to null ("unknown")
-      // rather than stalling or failing the heartbeat.
+      // missing timedatectl/w32tm binary or an unsupported/stopped time
+      // service resolves to null ("unknown") rather than stalling or
+      // failing the heartbeat. Platform detection (timedatectl vs. w32tm)
+      // is internal to checkNtpSynced.
       const ntpSynced = await checkNtpSynced();
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
