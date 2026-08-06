@@ -651,6 +651,59 @@ async function removeCertificateAndKeyContainer({
   return guardReturnValue({ ok: true });
 }
 
+/**
+ * Deletes a CNG key container that generateCsrViaCng created but that
+ * never reached acceptCertificateViaCng (the ACME order consuming its CSR
+ * was rejected, failed, or the process crashed in between): there is no
+ * certificate in any store for this attempt, so unlike
+ * removeCertificateAndKeyContainer there is nothing to `-delstore` and no
+ * thumbprint to require -- only the orphaned key container itself needs
+ * freeing. Deliberately a single-step, best-effort operation: callers
+ * (index.js's executeWindowsIisRenewJob) treat a failure here as a safe,
+ * logged, non-fatal condition, never a reason to also fail the
+ * already-failed renewal a second way.
+ *
+ * @param {object} input
+ * @param {string} input.containerName the CNG key container to delete
+ *   (generateCsrViaCng's own return value; never persisted anywhere for a
+ *   request that never got this far, so the caller must supply it from
+ *   its own in-memory result).
+ * @param {Function} [input.execFileImpl]
+ * @param {string} [input.certutilPath] defaults to "certutil.exe".
+ * @param {number} [input.timeoutMs]
+ * @returns {Promise<
+ *   { ok: true }
+ *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ * >}
+ */
+async function removeAbandonedKeyContainer({
+  containerName,
+  execFileImpl = childProcess.execFile,
+  certutilPath = "certutil.exe",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
+    throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
+  }
+  if (!isNonEmptyString(certutilPath)) {
+    throw buildError("certutilPath must be a non-empty string");
+  }
+  assertSafeArgvElements("certutilPath", [certutilPath]);
+
+  const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
+  assertSafeArgvElements("delkeyArgv", delkeyArgv);
+  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
+  if (delkeyResult.exitCode !== 0) {
+    return guardReturnValue({
+      ok: false,
+      exitCode: delkeyResult.exitCode,
+      stdoutExcerpt: boundAndRedactExcerpt(delkeyResult.stdout),
+      stderrExcerpt: boundAndRedactExcerpt(delkeyResult.stderr),
+    });
+  }
+  return guardReturnValue({ ok: true });
+}
+
 module.exports = {
   SUPPORTED_KEY_ALGORITHM_NAMES,
   SHELL_METACHARACTER_PATTERN,
@@ -673,4 +726,5 @@ module.exports = {
   acceptCertificateViaCng,
   acquireStoreLock,
   removeCertificateAndKeyContainer,
+  removeAbandonedKeyContainer,
 };

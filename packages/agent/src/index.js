@@ -150,17 +150,13 @@ const {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
-  removeCertificateAndKeyContainer,
+  removeAbandonedKeyContainer,
   buildContainerName,
 } = require("./windows-cert-store");
-const { deployIisBinding, queryCurrentBinding } = require("./windows-iis");
+const { deployIisBinding } = require("./windows-iis");
 const {
   createLedgerRow,
   readLedgerRow,
-  writeLedgerRow,
-  listLedgerThumbprints,
-  sweepLedger,
-  validateRetentionHours,
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
 const { listMachineStoreCertificates } = require("./windows-discovery");
@@ -2833,7 +2829,6 @@ async function executeRenewJob({
  * @returns {Promise<{status: string, keyRotated: null, errorMessage?: string, rejectionReason?: string}>}
  */
 async function runWindowsIisDeployTail({
-  job,
   jobId,
   client,
   certificatePem,
@@ -3406,13 +3401,46 @@ async function executeWindowsIisRenewJob({
     for (const stagedArtifact of Object.values(stagedCertPaths)) {
       fs.rmSync(stagedArtifact, { force: true });
     }
+    // certificatePem is only ever assigned on the success path above,
+    // just before this finally runs; if the ACME step was rejected,
+    // failed, or produced no certificate (every early `return` above), the
+    // CNG key container generateCsrViaCng just created is now orphaned --
+    // never enrolled, never bound to anything, and (unlike a superseded
+    // cert handled by ../windows-retention's ledger/sweep) never recorded
+    // anywhere else, so this is the only place that can ever free it.
+    // Best-effort and non-fatal: a cleanup failure here must not turn an
+    // already-reported ACME failure into a second, different failure, and
+    // the orphaned container itself is inert (non-exportable, unbound,
+    // and safely re-attemptable) rather than a security or correctness
+    // problem if it is briefly leaked.
+    if (certificatePem === undefined) {
+      try {
+        const cleanup = await removeAbandonedKeyContainer({
+          containerName,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        if (cleanup.ok !== true) {
+          emitLog(
+            log,
+            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
+              `orphaned in the CNG key store until manually removed.`,
+          );
+        }
+      } catch (err) {
+        emitLog(
+          log,
+          `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `${containerName} after ACME failure: ${err.message}`,
+        );
+      }
+    }
   }
 
   // Steps 4-6: CNG accept + IIS bind + retention, under the store mutex
   // (decision 13: "the per-target mutex covers the store as well as the
   // binding").
   return runWindowsIisDeployTail({
-    job,
     jobId,
     client,
     certificatePem,

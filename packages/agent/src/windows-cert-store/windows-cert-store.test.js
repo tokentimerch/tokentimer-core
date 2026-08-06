@@ -33,6 +33,7 @@ const {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
+  removeAbandonedKeyContainer,
   WINDOWS_STORE_NAME_PATTERN,
 } = require("./index.js");
 
@@ -414,5 +415,66 @@ describe("acquireStoreLock", () => {
     for (const name of ["My", "WebHosting", "Root", "custom-store_1"]) {
       assert.equal(WINDOWS_STORE_NAME_PATTERN.test(name), true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeAbandonedKeyContainer: cleanup for a CSR container that never
+// reached acceptCertificateViaCng (ACME failure/rejection between the two).
+// ---------------------------------------------------------------------------
+
+describe("removeAbandonedKeyContainer", () => {
+  it("invokes certutil -csp <KSP> -delkey <containerName> without a shell", async () => {
+    const execFileImpl = makeExecStub({});
+    const containerName = buildContainerName("job-99");
+
+    const result = await removeAbandonedKeyContainer({ containerName, execFileImpl });
+
+    assert.equal(result.ok, true);
+    assert.equal(execFileImpl.calls.length, 1);
+    const call = execFileImpl.calls[0];
+    assert.equal(call.file, "certutil.exe");
+    assert.deepEqual(call.args, [
+      "-csp",
+      "Microsoft Software Key Storage Provider",
+      "-delkey",
+      containerName,
+    ]);
+    assert.equal(call.options.shell, undefined);
+  });
+
+  it("does NOT call -delstore first (unlike removeCertificateAndKeyContainer): only one certutil call", async () => {
+    const execFileImpl = makeExecStub({});
+    await removeAbandonedKeyContainer({
+      containerName: buildContainerName("job-1"),
+      execFileImpl,
+    });
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0].args[0], "-csp");
+  });
+
+  it("returns ok:false with exit code and excerpts when certutil -delkey fails", async () => {
+    const execFileImpl = makeExecStub({
+      error: Object.assign(new Error("boom"), { code: 1 }),
+      stderr: "certutil: key container not found",
+    });
+
+    const result = await removeAbandonedKeyContainer({
+      containerName: buildContainerName("job-2"),
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderrExcerpt, /key container not found/);
+  });
+
+  it("rejects a containerName outside the safe alphabet before invoking execFile", async () => {
+    const execFileImpl = makeExecStub({});
+    await assert.rejects(
+      removeAbandonedKeyContainer({ containerName: "evil;rm -rf", execFileImpl }),
+      /containerName must match/,
+    );
+    assert.equal(execFileImpl.calls.length, 0);
   });
 });

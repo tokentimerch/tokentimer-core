@@ -24,12 +24,11 @@
  *   - the sweep loop and its per-reason deferred-count metric
  *
  * This module does NOT own: deleting the actual store certificate or CNG
- * key container (an injected performCleanup callback does that; the real
- * agent wires it to ../windows-cert-store's removeCertificateAndKeyContainer,
- * see packages/agent/src/index.js's runWindowsRetentionSweep) or discovering
- * bindings/shared-key-container facts (../windows-discovery's
- * discoverWindowsCertificates/discoverHttpSysBindings, called from the same
- * sweep to build gatherContext's facts).
+ * key container (a caller-injected performCleanup callback does that; the
+ * real agent would wire it to ../windows-cert-store's
+ * removeCertificateAndKeyContainer) or discovering bindings/shared-key-
+ * container facts (../windows-discovery's discoverWindowsCertificateInventory,
+ * which a caller would use to build gatherContext's facts).
  *
  * Zero-custody preserving: this module never receives, generates, or
  * returns private key material; every field in a ledger row is a
@@ -42,11 +41,24 @@
  * ledger file) means concurrent rows never contend on the same atomic
  * write, and a torn write to one row can never corrupt an unrelated row.
  *
- * Status: real, tested against injected context/clock, and verified
- * end-to-end on a real Windows host (ledger lifecycle, sweep, active-
- * reference deferral, restart survival, retention boundary values). Now
- * wired to a real running sweep loop and real store/binding deletion via
- * packages/agent/src/index.js's runWindowsRetentionSweep.
+ * Status: this module (row schema, atomic persistence, deadline math, the
+ * six-condition eligibility check, and the sweep loop itself) is real,
+ * tested against injected context/clock, and verified end-to-end on a
+ * real Windows host as a standalone unit (ledger lifecycle, sweep,
+ * active-reference deferral, restart survival, retention boundary
+ * values). packages/agent/src/index.js's real renew path writes a row
+ * via createLedgerRow on every verified IIS cutover (see
+ * recordSupersededWindowsCertificate there), so superseded material IS
+ * being tracked in a live agent today. What is NOT yet wired is the
+ * periodic caller: no running code path ever invokes this module's own
+ * sweepLedger against those rows (index.js does not import it), and
+ * `windows.supersededRetentionHours` is not yet read by
+ * ../config/index.js's loader (validateRetentionHours exists only as a
+ * standalone export here). A tracked, pre-GA follow-up, not a silent gap:
+ * every ledger row written today stays `pending_retention` forever until
+ * that wiring lands, which is decision 18's own documented safe failure
+ * mode (predecessor material simply remains in the store) rather than an
+ * incorrect one.
  */
 
 const crypto = require("node:crypto");

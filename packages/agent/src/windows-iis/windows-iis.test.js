@@ -37,6 +37,7 @@ const {
   bindCertificate,
   deployIisBinding,
 } = require("./index.js");
+const { computeCertificateFingerprint } = require("../verify/index.js");
 
 const FIXTURE_CERT_PEM = fs.readFileSync(
   path.join(__dirname, "..", "verify", "fixtures", "selfsigned.crt.pem"),
@@ -378,6 +379,12 @@ describe("deployIisBinding", () => {
     assert.equal(result.outgoingThumbprint, OTHER_THUMBPRINT);
     assert.equal(result.boundThumbprint, FIXTURE_THUMBPRINT.toUpperCase());
     assert.equal(result.verifiedAt.host, VALID_BINDING.address);
+    // The handshake only succeeds above because the stubbed peer cert bytes
+    // (fixtureX509.raw) hash to the same sha256 fingerprint deployIisBinding
+    // derives internally from certificatePem via computeCertificateFingerprint
+    // -- cross-check that derivation against node:crypto's own digest of the
+    // same fixture, independently of the stub.
+    assert.equal(computeCertificateFingerprint(FIXTURE_CERT_PEM), FIXTURE_FINGERPRINT_SHA256);
   });
 
   it("verifies against the binding's own address, not a DNS name, for a wildcard binding", async () => {

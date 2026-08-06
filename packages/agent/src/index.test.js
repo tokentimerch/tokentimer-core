@@ -3661,6 +3661,9 @@ describe("windows-iis renew job (os-store-managed)", () => {
         stdout = outgoingThumbprint
           ? `My "Personal"\n================ Certificate 0 ================\nSerial Number: 1a2b3c4d5e\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=old.example.com\nCert Hash(sha1): ${outgoingThumbprint.match(/../g).join(" ")}\n${storeKeyContainer ? `  Key Container = ${storeKeyContainer}\n` : ""}CertUtil: -store command completed successfully.\n`
           : `My "Personal"\nCertUtil: -store command completed successfully.\n`;
+      } else if (file === "certutil.exe" && args[0] === "-csp" && args[2] === "-delkey") {
+        // removeAbandonedKeyContainer's cleanup call after an ACME failure.
+        stdout = "CertUtil: -delkey command completed successfully.\n";
       } else {
         error = new Error(`unexpected windows exec call: ${file} ${args.join(" ")}`);
       }
@@ -3674,7 +3677,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
    * just deployed, matching real deployIisBinding usage where the verify
    * step happens right after the netsh add call this same stub answered. */
   function makeConnectStub() {
-    function connectStub(options) {
+    function connectStub(_options) {
       const socket = new EventEmitter();
       socket.destroy = () => {};
       socket.getPeerCertificate = () => ({
@@ -3827,7 +3830,53 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
   it("fails cleanly when the ACME order itself fails, never reaching certreq -accept", async () => {
     const job = makeJob();
-    const { outcome } = await runIisRenew({ job, acmeExitCode: 1 });
+    const { outcome, windowsExecFileImpl } = await runIisRenew({ job, acmeExitCode: 1 });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /acme step failed/);
+    // The CNG key container generateCsrViaCng created before the ACME step
+    // ran is now orphaned (never accepted into any store); the finally
+    // block must best-effort delete it rather than leak it forever.
+    const delkeyCalls = windowsExecFileImpl.calls.filter(
+      (c) => c.file === "certutil.exe" && c.args[0] === "-csp" && c.args[2] === "-delkey",
+    );
+    assert.equal(delkeyCalls.length, 1);
+  });
+
+  it("does not fail the job a second way when the abandoned-key cleanup itself fails after an ACME rejection", async () => {
+    const job = makeJob();
+    const client = createRecordingClient();
+    const calls = [];
+    const windowsExecFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args, options });
+      if (file === "certreq.exe" && args[1] === "-new") {
+        const reqPath = args[args.length - 1];
+        fs.writeFileSync(
+          reqPath,
+          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          "utf8",
+        );
+        process.nextTick(() => callback(null, "", ""));
+        return;
+      }
+      if (file === "certutil.exe" && args[0] === "-csp" && args[2] === "-delkey") {
+        process.nextTick(() =>
+          callback(Object.assign(new Error("access denied"), { code: 5 }), "", "Access is denied."),
+        );
+        return;
+      }
+      process.nextTick(() => callback(new Error(`unexpected windows exec call: ${file} ${args.join(" ")}`), "", ""));
+    };
+    const acmeExecFileImpl = makeCertbotStub({ exitCode: 1 });
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({ acmeExecFileImpl, windowsExecFileImpl }),
+      log: silentLog,
+    });
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /acme step failed/);
