@@ -273,6 +273,26 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
     return false;
   }
 
+  // Even after the SCM reports STOPPED, a just-exited process's file
+  // handles can take a moment longer to actually release on Windows (a
+  // known gap between "process is gone" and "handle table is drained",
+  // sometimes stretched further by an AV on-close scan) - so a bare
+  // fs.rmSync right after STOPPED can still observe a transient EPERM/
+  // EBUSY. Retry a few times with a short backoff rather than either
+  // failing the whole suite on cleanup or silently swallowing a real,
+  // permanent lock (e.g. a leaked handle bug) after the retries exhaust.
+  function removeDirWithRetry(dir, attempts = 5, delayMs = 500) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        if (attempt === attempts || !["EPERM", "EBUSY"].includes(err.code)) throw err;
+        spawnSync(process.execPath, ["-e", `setTimeout(()=>{}, ${delayMs})`], { timeout: delayMs + 1000 });
+      }
+    }
+  }
+
   let skipReason = null;
   let hostExe;
   let mockAgentJs;
@@ -305,10 +325,21 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
 
   after(() => {
     if (getServiceStatus() !== null) {
-      spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
+      // The test body's own final assertion leaves the service RUNNING
+      // (it stops/starts it once to prove the restart cycle, then ends).
+      // `sc.exe stop` only *requests* a stop and returns immediately - it
+      // does not wait for the SCM to actually tear the process down - so
+      // deleting serviceConfigDir right after it, with no wait, raced the
+      // mock agent's own file handles on that directory and intermittently
+      // failed cleanup with EPERM. Wait for STOPPED (bounded, same 15s
+      // ceiling the test body itself uses) before deleting the service.
+      if (getServiceStatus() !== "STOPPED") {
+        spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
+        waitForStatus("STOPPED", 15000);
+      }
       spawnSync("sc.exe", ["delete", SERVICE_NAME], { encoding: "utf8" });
     }
-    if (serviceConfigDir) fs.rmSync(serviceConfigDir, { recursive: true, force: true });
+    if (serviceConfigDir) removeDirWithRetry(serviceConfigDir);
   });
 
   it("reaches Running and survives a Stop-Service / Start-Service cycle", (t) => {

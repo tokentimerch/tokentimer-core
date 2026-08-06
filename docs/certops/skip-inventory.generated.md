@@ -11,7 +11,7 @@ Total skips found: 44
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
-| `packages/agent/scripts/installer-smoke.test.js` | 317 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/scripts/installer-smoke.test.js` | 348 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `no-host` |
