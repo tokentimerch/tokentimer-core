@@ -33,6 +33,9 @@ const {
   formatIpPort,
   generateAppId,
   normalizeThumbprint,
+  parseSslcertParameters,
+  formatPreservedParamArgs,
+  checkSniPrecedenceConflict,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,
@@ -250,6 +253,131 @@ describe("queryCurrentBinding", () => {
     const call = execFileImpl.calls[0];
     assert.deepEqual(call.args, ["http", "show", "sslcert", "hostnameport=www.example.com:443"]);
   });
+
+  it("also parses the non-thumbprint parameters into result.parameters (rebind-settings preservation)", async () => {
+    const execFileImpl = makeExecStub(() => ({
+      error: null,
+      stdout: [
+        `Certificate Hash              : ${FIXTURE_THUMBPRINT}`,
+        "Application ID              : {00000000-0000-0000-0000-000000000000}",
+        "Certificate Store Name       : My",
+        "Verify Client Certificate Revocation : Enabled",
+        "Verify Revocation Using Cached Client Certificate Only : Disabled",
+        "Usage Check                  : Enabled",
+        "Revocation Freshness Time    : 0",
+        "URL Retrieval Timeout        : 0",
+        "Ctl Identifier               : (null)",
+        "Ctl Store Name                : (null)",
+        "DS Mapper Usage              : Disabled",
+        "Negotiate Client Certificate : Enabled",
+      ].join("\r\n"),
+    }));
+
+    const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.parameters, {
+      verifyClientCertRevocation: true,
+      verifyRevocationWithCachedClientCertOnly: false,
+      usageCheck: true,
+      revocationFreshnessTime: 0,
+      urlRetrievalTimeout: 0,
+      ctlIdentifier: null,
+      ctlStoreName: null,
+      dsMapperUsage: false,
+      negotiateClientCert: true,
+    });
+  });
+
+  it("returns parameters: {} (not throwing, not defaulting fields) when nothing is bound yet", async () => {
+    const error = Object.assign(new Error("netsh failed"), { code: 1 });
+    const execFileImpl = makeExecStub(() => ({
+      error,
+      stdout: "The system cannot find the file specified.\r\n",
+    }));
+
+    const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
+    assert.equal(result.ok, true);
+    assert.equal(result.thumbprint, null);
+    assert.equal(result.parameters, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseSslcertParameters / formatPreservedParamArgs: rebind-settings
+// preservation round-trip
+// ---------------------------------------------------------------------------
+
+describe("parseSslcertParameters", () => {
+  it("omits a field entirely when its label is absent from the output, rather than defaulting it", () => {
+    const parsed = parseSslcertParameters("Certificate Hash              : AA\r\n");
+    assert.deepEqual(parsed, {});
+  });
+
+  it("reads a real Ctl Identifier/Ctl Store Name pair when both are set", () => {
+    const parsed = parseSslcertParameters(
+      ["Ctl Identifier                : MyCtl", "Ctl Store Name                : CA"].join("\r\n"),
+    );
+    assert.equal(parsed.ctlIdentifier, "MyCtl");
+    assert.equal(parsed.ctlStoreName, "CA");
+  });
+});
+
+describe("formatPreservedParamArgs", () => {
+  it("returns an empty array for {} (nothing to preserve, e.g. a first-ever bind)", () => {
+    assert.deepEqual(formatPreservedParamArgs({}), []);
+    assert.deepEqual(formatPreservedParamArgs(), []);
+  });
+
+  it("emits enable/disable flags for every boolean field present", () => {
+    const args = formatPreservedParamArgs({
+      verifyClientCertRevocation: true,
+      verifyRevocationWithCachedClientCertOnly: false,
+      usageCheck: true,
+      dsMapperUsage: false,
+      negotiateClientCert: true,
+    });
+    assert.deepEqual(args, [
+      "verifyclientcertrevocation=enable",
+      "verifyrevocationwithcachedclientcertonly=disable",
+      "usagecheck=enable",
+      "dsmapperusage=disable",
+      "clientcertnegotiation=enable",
+    ]);
+  });
+
+  it("emits numeric fields verbatim", () => {
+    const args = formatPreservedParamArgs({ revocationFreshnessTime: 3600, urlRetrievalTimeout: 5000 });
+    assert.deepEqual(args, ["revocationfreshnesstime=3600", "urlretrievaltimeout=5000"]);
+  });
+
+  it("emits sslctlidentifier + sslctlstorename together only when ctlIdentifier is a real (non-null) value", () => {
+    assert.deepEqual(formatPreservedParamArgs({ ctlIdentifier: "MyCtl", ctlStoreName: "CA" }), [
+      "sslctlidentifier=MyCtl",
+      "sslctlstorename=CA",
+    ]);
+  });
+
+  it("omits both CTL flags when ctlIdentifier is null (the common 'not configured' case)", () => {
+    assert.deepEqual(formatPreservedParamArgs({ ctlIdentifier: null, ctlStoreName: null }), []);
+  });
+
+  it("round-trips a full parseSslcertParameters output back into valid netsh add sslcert flags", () => {
+    const parameters = parseSslcertParameters(
+      [
+        "Verify Client Certificate Revocation : Enabled",
+        "Usage Check                  : Enabled",
+        "Revocation Freshness Time    : 120",
+        "Negotiate Client Certificate : Disabled",
+      ].join("\r\n"),
+    );
+    const args = formatPreservedParamArgs(parameters);
+    assert.deepEqual(args, [
+      "verifyclientcertrevocation=enable",
+      "usagecheck=enable",
+      "revocationfreshnesstime=120",
+      "clientcertnegotiation=disable",
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -276,6 +404,45 @@ describe("bindCertificate", () => {
       new RegExp(`certhash=${FIXTURE_THUMBPRINT.toUpperCase()}`),
     );
     assert.match(execFileImpl.calls[1].args.join(" "), /certstorename=My/);
+  });
+
+  it("includes preserveParameters flags in the add sslcert call when provided", async () => {
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
+
+    const result = await bindCertificate({
+      binding: VALID_BINDING,
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      preserveParameters: { usageCheck: true, negotiateClientCert: false },
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, true);
+    const addArgs = execFileImpl.calls[1].args;
+    assert.equal(addArgs.includes("usagecheck=enable"), true);
+    assert.equal(addArgs.includes("clientcertnegotiation=disable"), true);
+  });
+
+  it("adds no extra flags when preserveParameters is omitted (default {}), unchanged from before this fix", async () => {
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
+
+    await bindCertificate({
+      binding: VALID_BINDING,
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      execFileImpl,
+    });
+
+    const addArgs = execFileImpl.calls[1].args;
+    assert.deepEqual(addArgs, [
+      "http",
+      "add",
+      "sslcert",
+      "ipport=10.0.0.5:443",
+      `certhash=${FIXTURE_THUMBPRINT.toUpperCase()}`,
+      addArgs[5], // appid=<random guid>, not asserted here
+      "certstorename=My",
+    ]);
   });
 
   it("ignores the delete call's exit code (nothing-to-delete is not a failure)", async () => {
@@ -695,5 +862,242 @@ describe("deployIisBinding", () => {
     assert.equal(result.ok, false);
     assert.equal(result.rolledBack, true);
     assert.match(result.rollbackVerifyDetail, /instead of the expected outgoing thumbprint/);
+  });
+
+  it("preserves the outgoing binding's revocation/negotiation settings across the delete+add rebind", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "show") {
+        return {
+          error: null,
+          stdout: [
+            `Certificate Hash              : ${OTHER_THUMBPRINT}`,
+            "Usage Check                  : Enabled",
+            "Negotiate Client Certificate : Enabled",
+          ].join("\r\n"),
+        };
+      }
+      return { error: null, stdout: "" };
+    });
+    const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl,
+    });
+
+    assert.equal(result.ok, true);
+    const addCall = execFileImpl.calls.find((c) => c.args[1] === "add");
+    assert.equal(addCall.args.includes("usagecheck=enable"), true);
+    assert.equal(addCall.args.includes("clientcertnegotiation=enable"), true);
+  });
+
+  it("carries the same preserved settings into a rollback bind, not just the primary bind", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "show") {
+        return {
+          error: null,
+          stdout: [
+            `Certificate Hash              : ${OTHER_THUMBPRINT}`,
+            "Usage Check                  : Enabled",
+          ].join("\r\n"),
+        };
+      }
+      return { error: null, stdout: "" };
+    });
+    const connectImpl = makeConnectStub({ peerDer: Buffer.from([0x01, 0x02, 0x03]) });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.rolledBack, true);
+    // Two "add" calls: the primary (verify-failed) bind, then the rollback
+    // bind restoring OTHER_THUMBPRINT -- both should carry the preserved
+    // usagecheck=enable flag read from the original outgoing binding.
+    const addCalls = execFileImpl.calls.filter((c) => c.args[1] === "add");
+    assert.equal(addCalls.length, 2);
+    for (const call of addCalls) {
+      assert.equal(call.args.includes("usagecheck=enable"), true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkSniPrecedenceConflict / deployIisBinding precedenceWarning
+// (non-SNI/specific-IP vs SNI binding scope clarification)
+// ---------------------------------------------------------------------------
+
+describe("checkSniPrecedenceConflict", () => {
+  const SNI_BINDING = Object.freeze({
+    address: "10.0.0.5",
+    port: 8443,
+    sniHost: "www.example.com",
+    store: "WebHosting",
+    site: "SNI Site",
+  });
+
+  it("returns undefined when neither wildcard address has any non-SNI binding on the port", async () => {
+    const execFileImpl = makeExecStub(() => ({
+      error: Object.assign(new Error("not found"), { code: 1 }),
+      stdout: "The system cannot find the file specified.\r\n",
+    }));
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.equal(warning, undefined);
+  });
+
+  it("warns when a non-SNI IPv4 wildcard (0.0.0.0) binding exists on the same port", async () => {
+    const execFileImpl = makeExecStub((key, args) => {
+      if (key === "show" && args.some((a) => a.includes("0.0.0.0"))) {
+        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
+      }
+      return {
+        error: Object.assign(new Error("not found"), { code: 1 }),
+        stdout: "The system cannot find the file specified.\r\n",
+      };
+    });
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.match(warning, /ipport=0\.0\.0\.0:8443/);
+    assert.match(warning, /hostnameport=www\.example\.com:8443/);
+  });
+
+  it("warns when a non-SNI IPv6 wildcard ([::]) binding exists on the same port", async () => {
+    const execFileImpl = makeExecStub((key, args) => {
+      if (key === "show" && args.some((a) => a.includes("[::]"))) {
+        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
+      }
+      return {
+        error: Object.assign(new Error("not found"), { code: 1 }),
+        stdout: "The system cannot find the file specified.\r\n",
+      };
+    });
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.match(warning, /ipport=\[::\]:8443/);
+  });
+
+  it("swallows a query error for either wildcard rather than throwing or warning", async () => {
+    const execFileImpl = () => {
+      throw new Error("execFile blew up");
+    };
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.equal(warning, undefined);
+  });
+});
+
+describe("deployIisBinding precedenceWarning wiring", () => {
+  const SNI_BINDING = Object.freeze({
+    address: "10.0.0.5",
+    port: 8443,
+    sniHost: "www.example.com",
+    store: "WebHosting",
+    site: "SNI Site",
+  });
+
+  it("attaches precedenceWarning on a successful SNI deploy when a wildcard non-SNI binding shadows it", async () => {
+    const execFileImpl = makeExecStub((key, args) => {
+      if (key === "show" && args.some((a) => a.startsWith("hostnameport="))) {
+        // The SNI binding's own pre-bind query: nothing bound yet.
+        return {
+          error: Object.assign(new Error("not found"), { code: 1 }),
+          stdout: "The system cannot find the file specified.\r\n",
+        };
+      }
+      if (key === "show" && args.some((a) => a.includes("0.0.0.0"))) {
+        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
+      }
+      if (key === "show") {
+        return {
+          error: Object.assign(new Error("not found"), { code: 1 }),
+          stdout: "The system cannot find the file specified.\r\n",
+        };
+      }
+      return { error: null, stdout: "" };
+    });
+    const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
+
+    const result = await deployIisBinding({
+      binding: SNI_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.match(result.precedenceWarning, /ipport=0\.0\.0\.0:8443/);
+  });
+
+  it("does NOT attach precedenceWarning for a non-SNI binding deploy (the check only applies to SNI deploys)", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "show") {
+        return {
+          error: Object.assign(new Error("not found"), { code: 1 }),
+          stdout: "The system cannot find the file specified.\r\n",
+        };
+      }
+      return { error: null, stdout: "" };
+    });
+    const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.precedenceWarning, undefined);
+  });
+
+  it("does NOT attach precedenceWarning for a successful SNI deploy when no shadowing binding exists", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "show") {
+        return {
+          error: Object.assign(new Error("not found"), { code: 1 }),
+          stdout: "The system cannot find the file specified.\r\n",
+        };
+      }
+      return { error: null, stdout: "" };
+    });
+    const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
+
+    const result = await deployIisBinding({
+      binding: SNI_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.precedenceWarning, undefined);
   });
 });

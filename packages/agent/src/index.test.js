@@ -45,6 +45,7 @@ const {
   verifyDeployedCertificateWithRetry,
   MAX_VERIFY_TRANSIENT_RETRIES,
   VERIFY_TRANSIENT_RETRY_DELAYS_MS,
+  runWindowsRetentionSweep,
 } = require("./index.js");
 const {
   markSideEffectReached,
@@ -53,7 +54,7 @@ const {
   clearJournalOnTerminal,
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
-const { readLedgerRow } = require("./windows-retention");
+const { readLedgerRow, createLedgerRow } = require("./windows-retention");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -3634,7 +3635,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
    *   sibling `certutil -store` reports for the outgoing certificate, so
    *   recordSupersededWindowsCertificate can resolve ownershipProvenance.
    */
-  function makeWindowsExecStub({ outgoingThumbprint = null, storeKeyContainer = null } = {}) {
+  function makeWindowsExecStub({ outgoingThumbprint = null, storeKeyContainer = null, acceptExitCode = 0 } = {}) {
     const calls = [];
     function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
@@ -3651,6 +3652,10 @@ describe("windows-iis renew job (os-store-managed)", () => {
       } else if (file === "certreq.exe" && args[1] === "-accept") {
         // acceptCertificateViaCng computes the thumbprint itself from the
         // certificatePem bytes; certreq's own stdout is not parsed.
+        if (acceptExitCode !== 0) {
+          error = Object.assign(new Error("no matching request"), { code: acceptExitCode });
+          stderr = "CertReq: No match";
+        }
       } else if (file === "netsh.exe" && args[1] === "show") {
         stdout = outgoingThumbprint
           ? `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${outgoingThumbprint}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`
@@ -3817,6 +3822,97 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(row.ownershipProvenance, "preexisting");
   });
 
+  it("records ownershipProvenance preexisting for a real key container this agent did not create (presence alone is not ownership)", async () => {
+    // A container name in exactly the shape an operator's own certreq
+    // enrollment, or IIS's own self-signed-cert generator, would leave
+    // behind: a real, non-exportable CNG container, just not one
+    // buildContainerName ever produced. Retention must not treat this as
+    // deletable material just because SOME key container is present.
+    const job = makeJob();
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "IIS-Self-Signed-{guid}" },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    const row = readLedgerRow(ledgerDir, OTHER_THUMBPRINT);
+    assert.equal(row.ownershipProvenance, "preexisting");
+    assert.notEqual(row.cngKeyContainerId, "IIS-Self-Signed-{guid}");
+  });
+
+  it("frees the CNG key container when certreq -accept itself fails (bare accept failure, key never bound to any certificate)", async () => {
+    const job = makeJob();
+    const { outcome, windowsExecFileImpl } = await runIisRenew({
+      job,
+      windowsOpts: { acceptExitCode: 2 },
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /CNG certificate acceptance failed/);
+    const delkeyCalls = windowsExecFileImpl.calls.filter(
+      (c) => c.file === "certutil.exe" && c.args[0] === "-csp" && c.args[2] === "-delkey",
+    );
+    assert.equal(delkeyCalls.length, 1);
+  });
+
+  it("does NOT touch the CNG key container when only the addstore/repairstore store-mirror stage fails (accept itself already succeeded)", async () => {
+    const job = makeJob({
+      target: {
+        type: "windows-iis",
+        reference: "iis.example.com",
+        store: "WebHosting",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+    });
+    const client = createRecordingClient();
+    const calls = [];
+    const windowsExecFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args, options });
+      if (file === "certreq.exe" && args[1] === "-new") {
+        const reqPath = args[args.length - 1];
+        fs.writeFileSync(
+          reqPath,
+          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          "utf8",
+        );
+        process.nextTick(() => callback(null, "", ""));
+        return;
+      }
+      if (file === "certreq.exe" && args[1] === "-accept") {
+        process.nextTick(() => callback(null, "", ""));
+        return;
+      }
+      if (file === "certutil.exe" && args[0] === "-addstore") {
+        process.nextTick(() =>
+          callback(Object.assign(new Error("access denied"), { code: 5 }), "", "Access is denied."),
+        );
+        return;
+      }
+      process.nextTick(() => callback(new Error(`unexpected windows exec call: ${file} ${args.join(" ")}`), "", ""));
+    };
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({
+        acmeExecFileImpl: makeCertbotStub({ exitCode: 0 }),
+        windowsExecFileImpl,
+        windowsConnectImpl: makeConnectStub(),
+      }),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.errorMessage.includes("CNG certificate acceptance failed"), true);
+    const delkeyCalls = calls.filter(
+      (c) => c.file === "certutil.exe" && c.args[0] === "-csp" && c.args[2] === "-delkey",
+    );
+    assert.equal(delkeyCalls.length, 0);
+  });
+
   it("fails without dispatching any Windows child process when target.binding is missing site/port", async () => {
     const job = makeJob({
       target: { type: "windows-iis", reference: "iis.example.com", store: "My", binding: {} },
@@ -3906,6 +4002,280 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
+  });
+});
+
+describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
+  const OLD_THUMBPRINT = "AA".repeat(20);
+  const REPLACEMENT_THUMBPRINT = "BB".repeat(20);
+  const CONTAINER_NAME = "tokentimer-old-job-abcd1234";
+
+  let workDir;
+  afterEach(() => {
+    if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function ledgerDirFor(dir) {
+    return path.join(dir, "windows-retention");
+  }
+
+  function seedRow(dir, overrides = {}) {
+    return createLedgerRow({
+      ledgerDir: ledgerDirFor(dir),
+      oldThumbprint: OLD_THUMBPRINT,
+      replacementThumbprint: REPLACEMENT_THUMBPRINT,
+      cngKeyContainerId: CONTAINER_NAME,
+      verifiedCutoverAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      oldNotAfter: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      ownershipProvenance: "tokentimer_installed",
+      store: "My",
+      jobOrRollbackJournalRefs: [{ ref: "job-old", active: false }],
+      ...overrides,
+    });
+  }
+
+  /**
+   * @param {object} opts
+   * @param {boolean} [opts.oldStillBound] whether netsh reports a binding
+   *   still pointing at OLD_THUMBPRINT.
+   * @param {boolean} [opts.replacementBound] whether netsh reports a
+   *   binding for REPLACEMENT_THUMBPRINT (needed before any handshake
+   *   probe can even be attempted).
+   * @param {string|null} [opts.sharedContainerOnOtherCert] when set, the
+   *   certutil -store stub reports a SECOND certificate (distinct
+   *   thumbprint) sharing this key container name.
+   * @param {boolean} [opts.netshFails] simulate listHttpSysBindings ok:false.
+   * @param {boolean} [opts.certutilStoreFails] simulate listMachineStoreCertificates ok:false.
+   */
+  function makeSweepExecStub({
+    oldStillBound = false,
+    replacementBound = true,
+    sharedContainerOnOtherCert = null,
+    netshFails = false,
+    certutilStoreFails = false,
+  } = {}) {
+    const calls = [];
+    return function execFileStub(file, args, options, callback) {
+      calls.push({ file, args, options });
+      if (file === "netsh.exe" && args[1] === "show") {
+        if (netshFails) {
+          process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
+          return;
+        }
+        const bindings = [];
+        if (oldStillBound) {
+          bindings.push(
+            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${OLD_THUMBPRINT}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`,
+          );
+        }
+        if (replacementBound) {
+          bindings.push(
+            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${REPLACEMENT_THUMBPRINT}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`,
+          );
+        }
+        const stdout = bindings.length > 0 ? `\nSSL Certificate bindings:\n-------------------------\n\n${bindings.join("\n")}` : "";
+        process.nextTick(() => callback(null, stdout, ""));
+        return;
+      }
+      if (file === "certutil.exe" && args[0] === "-store") {
+        if (certutilStoreFails) {
+          process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
+          return;
+        }
+        let stdout = `My "Personal"\n`;
+        if (sharedContainerOnOtherCert) {
+          stdout +=
+            `================ Certificate 0 ================\nSerial Number: 1\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=survivor.example.com\nCert Hash(sha1): ${"CC".repeat(20).match(/../g).join(" ")}\n  Key Container = ${sharedContainerOnOtherCert}\n`;
+        }
+        stdout += "CertUtil: -store command completed successfully.\n";
+        process.nextTick(() => callback(null, stdout, ""));
+        return;
+      }
+      if (file === "certutil.exe" && args[0] === "-delstore") {
+        process.nextTick(() => callback(null, "CertUtil: -delstore command completed successfully.\n", ""));
+        return;
+      }
+      if (file === "certutil.exe" && args[0] === "-csp" && args[2] === "-delkey") {
+        process.nextTick(() => callback(null, "CertUtil: -delkey command completed successfully.\n", ""));
+        return;
+      }
+      process.nextTick(() => callback(new Error(`unexpected windows exec call: ${file} ${args.join(" ")}`), "", ""));
+    };
+  }
+
+  /** connectImpl stub for the replacement handshake probe: always presents
+   * a certificate whose sha1(DER) equals REPLACEMENT_THUMBPRINT (a
+   * self-signed fixture built specifically so its own thumbprint matches). */
+  function makeHandshakeStub({ matches = true } = {}) {
+    return function connectStub(_options) {
+      const socket = new EventEmitter();
+      socket.destroy = () => {};
+      socket.getPeerCertificate = () => ({
+        raw: matches
+          ? new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).raw
+          : Buffer.from("not a real certificate, deliberately mismatched"),
+      });
+      process.nextTick(() => socket.emit("secureConnect"));
+      return socket;
+    };
+  }
+
+  // A self-signed fixture certificate generated purely so this suite can
+  // assert the sweep's TLS-probe thumbprint comparison genuinely computes
+  // sha1(DER) rather than trusting netsh's own report: REPLACEMENT_THUMBPRINT
+  // is set to match this specific certificate's real fingerprint below.
+  const FIXTURE_REPLACEMENT_PROBE_CERT_PEM = fs.readFileSync(
+    path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
+    "utf8",
+  );
+
+  it("returns null without touching execFileImpl when the ledger directory does not exist yet", async () => {
+    workDir = makeTempConfigDir();
+    let called = false;
+    await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl: () => {
+        called = true;
+      },
+    });
+    assert.equal(called, false);
+  });
+
+  it("removes an eligible row: old thumbprint unbound, container not shared, replacement passes handshake, deadline passed", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({ oldStillBound: false, replacementBound: true });
+
+    // Use the real replacement thumbprint = sha1(DER) of the fixture the
+    // handshake stub presents, so the probe's own comparison is exercised
+    // for real rather than short-circuited.
+    const realReplacementThumbprint = crypto
+      .createHash("sha1")
+      .update(new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).raw)
+      .digest("hex")
+      .toUpperCase();
+    fs.rmSync(ledgerDirFor(workDir), { recursive: true, force: true });
+    createLedgerRow({
+      ledgerDir: ledgerDirFor(workDir),
+      oldThumbprint: OLD_THUMBPRINT,
+      replacementThumbprint: realReplacementThumbprint,
+      cngKeyContainerId: CONTAINER_NAME,
+      verifiedCutoverAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      oldNotAfter: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      ownershipProvenance: "tokentimer_installed",
+      store: "My",
+      jobOrRollbackJournalRefs: [{ ref: "job-old", active: false }],
+    });
+    const execFileImplWithRealThumbprint = (file, args, options, callback) => {
+      if (file === "netsh.exe" && args[1] === "show") {
+        const stdout = `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${realReplacementThumbprint}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`;
+        process.nextTick(() => callback(null, stdout, ""));
+        return;
+      }
+      execFileImpl(file, args, options, callback);
+    };
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl: execFileImplWithRealThumbprint,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.deepEqual(summary.removed, [OLD_THUMBPRINT]);
+    const row = readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT);
+    assert.equal(row.lifecycleState, "removed");
+  });
+
+  it("defers (never calls performCleanup) when the old thumbprint is still bound", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({ oldStillBound: true, replacementBound: true });
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.equal(summary.removed.length, 0);
+    assert.equal(summary.deferred[0].reason, "binding_still_present");
+    const row = readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT);
+    assert.equal(row.lifecycleState, "deferred");
+  });
+
+  it("defers when a distinct current certificate shares the same key container", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({
+      oldStillBound: false,
+      replacementBound: true,
+      sharedContainerOnOtherCert: CONTAINER_NAME,
+    });
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.equal(summary.removed.length, 0);
+    assert.equal(summary.deferred[0].reason, "shared_key_container");
+  });
+
+  it("defers when the replacement's binding cannot be found at all (no handshake possible)", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({ oldStillBound: false, replacementBound: false });
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.equal(summary.removed.length, 0);
+    assert.equal(summary.deferred[0].reason, "replacement_handshake_failed");
+  });
+
+  it("fails safe (defers as still-bound) when listHttpSysBindings itself cannot be queried", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({ netshFails: true });
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.equal(summary.removed.length, 0);
+    assert.equal(summary.deferred[0].reason, "binding_still_present");
+  });
+
+  it("fails safe (defers as shared) when the machine store itself cannot be queried", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const execFileImpl = makeSweepExecStub({
+      oldStillBound: false,
+      replacementBound: true,
+      certutilStoreFails: true,
+    });
+
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl,
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+
+    assert.equal(summary.removed.length, 0);
+    assert.equal(summary.deferred[0].reason, "shared_key_container");
   });
 });
 

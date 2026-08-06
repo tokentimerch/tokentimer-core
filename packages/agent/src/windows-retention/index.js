@@ -46,19 +46,20 @@
  * tested against injected context/clock, and verified end-to-end on a
  * real Windows host as a standalone unit (ledger lifecycle, sweep,
  * active-reference deferral, restart survival, retention boundary
- * values). packages/agent/src/index.js's real renew path writes a row
- * via createLedgerRow on every verified IIS cutover (see
- * recordSupersededWindowsCertificate there), so superseded material IS
- * being tracked in a live agent today. What is NOT yet wired is the
- * periodic caller: no running code path ever invokes this module's own
- * sweepLedger against those rows (index.js does not import it), and
- * `windows.supersededRetentionHours` is not yet read by
- * ../config/index.js's loader (validateRetentionHours exists only as a
- * standalone export here). A tracked, pre-GA follow-up, not a silent gap:
- * every ledger row written today stays `pending_retention` forever until
- * that wiring lands, which is decision 18's own documented safe failure
- * mode (predecessor material simply remains in the store) rather than an
- * incorrect one.
+ * values). packages/agent/src/index.js's real renew path writes a row via
+ * createLedgerRow on every verified IIS cutover (see
+ * recordSupersededWindowsCertificate there), and index.js's own
+ * runWindowsRetentionSweep is now the periodic caller this module's own
+ * sweep loop needs: it gathers the live http.sys/store facts via
+ * ../windows-discovery, performs the actual delete via
+ * ../windows-cert-store's removeCertificateAndKeyContainer, and is wired
+ * into runAgent's poll-loop set (config `windows.sweepIntervalMs`,
+ * default 6 hours) whenever execution is enabled. `config.windows`'s
+ * `supersededRetentionHours` is validated by ../config/index.js's
+ * validateWindowsObject (default 168 hours / 7 days), independent of this
+ * module's own validateRetentionHours (kept as two call sites rather than
+ * one import, matching the loader's existing style of owning its own copy
+ * of the bounds it validates against).
  */
 
 const crypto = require("node:crypto");
@@ -81,6 +82,14 @@ const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 /** Opaque job/rollback-journal reference identifiers; boring alphabet,
  * same discipline as every other identifier this package persists. */
 const JOURNAL_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+/** Windows certificate store names this module accepts are exactly the
+ * ones ../windows-cert-store's WINDOWS_STORE_NAME_PATTERN accepts (kept as
+ * an independent literal, not an import, matching this module's documented
+ * decoupling from its sibling modules: it receives facts, it does not call
+ * into them). Recorded per-row so a later sweep knows which store to
+ * re-query for keyContainerSharedWithSurvivor, without this module itself
+ * ever touching the store. */
+const WINDOWS_STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 
 const OWNERSHIP_PROVENANCE_VALUES = Object.freeze(["tokentimer_installed", "preexisting"]);
 const LIFECYCLE_STATE_VALUES = Object.freeze([
@@ -260,6 +269,11 @@ function validateLedgerRow(row) {
   if (!OWNERSHIP_PROVENANCE_VALUES.includes(row.ownershipProvenance)) {
     throw buildError(`ownershipProvenance must be one of ${OWNERSHIP_PROVENANCE_VALUES.join(", ")}`);
   }
+  if (row.store !== null && row.store !== undefined) {
+    if (!isNonEmptyString(row.store) || !WINDOWS_STORE_NAME_PATTERN.test(row.store)) {
+      throw buildError(`store must match ${WINDOWS_STORE_NAME_PATTERN} or be null (got ${JSON.stringify(row.store)})`);
+    }
+  }
   if (!Array.isArray(row.jobOrRollbackJournalRefs)) {
     throw buildError("jobOrRollbackJournalRefs must be an array");
   }
@@ -279,6 +293,7 @@ function validateLedgerRow(row) {
     verifiedCutoverAt: row.verifiedCutoverAt,
     oldNotAfter: row.oldNotAfter,
     ownershipProvenance: row.ownershipProvenance,
+    store: row.store ?? null,
     jobOrRollbackJournalRefs,
     lifecycleState: row.lifecycleState,
     deferralReason: row.deferralReason ?? null,
@@ -302,6 +317,12 @@ function validateLedgerRow(row) {
  *   successful cutover verification.
  * @param {string} input.oldNotAfter the old certificate's own notAfter, ISO.
  * @param {"tokentimer_installed"|"preexisting"} input.ownershipProvenance
+ * @param {string|null} [input.store] the Windows certificate store
+ *   (e.g. "My", "WebHosting") the superseded certificate lives in; a
+ *   sweep's gatherContext needs this to know where to look when computing
+ *   keyContainerSharedWithSurvivor and performing the eventual cleanup.
+ *   Optional/nullable for backward compatibility with rows persisted
+ *   before this field existed.
  * @param {{ ref: string, active: boolean }[]} [input.jobOrRollbackJournalRefs]
  * @returns {object} the persisted row
  */
@@ -313,6 +334,7 @@ function createLedgerRow({
   verifiedCutoverAt,
   oldNotAfter,
   ownershipProvenance,
+  store = null,
   jobOrRollbackJournalRefs = [],
 }) {
   const row = validateLedgerRow({
@@ -322,6 +344,7 @@ function createLedgerRow({
     verifiedCutoverAt,
     oldNotAfter,
     ownershipProvenance,
+    store,
     jobOrRollbackJournalRefs,
     lifecycleState: "pending_retention",
     deferralReason: null,
@@ -602,6 +625,7 @@ module.exports = {
   THUMBPRINT_PATTERN,
   CONTAINER_NAME_PATTERN,
   JOURNAL_REF_PATTERN,
+  WINDOWS_STORE_NAME_PATTERN,
   OWNERSHIP_PROVENANCE_VALUES,
   LIFECYCLE_STATE_VALUES,
   DEFERRAL_REASONS,

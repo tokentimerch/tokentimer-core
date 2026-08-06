@@ -10,7 +10,11 @@
  * KSP unless a hardware KSP is configured) and writes out a PKCS#10 CSR;
  * the private key never exists as a file. `certreq -accept` later binds
  * the CA's signed response to that same pending request, completing
- * enrollment without the key ever leaving the store.
+ * enrollment without the key ever leaving the store. `certreq -accept`
+ * itself only ever populates the default `My` store for a MachineKeySet
+ * request; acceptCertificateViaCng mirrors the result into a different
+ * caller-requested store (e.g. "WebHosting") via `certutil -addstore` +
+ * `-repairstore` when one is given -- see that function's own doc comment.
  *
  * This module never reads, receives, or returns private key bytes. The
  * CSR produced by generateCsrViaCng carries only public material (the
@@ -35,7 +39,9 @@
  * rejection, and store-thumbprint cross-checks all reproduced on-host. The
  * qualified-capabilities manifest was updated in the same change that
  * flipped os-store-managed to agent-deployable, per decision 14 / the
- * gated-capabilities module's own doc comment.
+ * gated-capabilities module's own doc comment. The addstore/repairstore
+ * non-default-store mirror path is unit-tested only (not yet real-host
+ * verified); every real-host pass so far targeted the default "My" store.
  */
 
 const childProcess = require("node:child_process");
@@ -79,6 +85,34 @@ const HOSTNAME_PATTERN =
  * passed to certreq INF/argv, so it must stay in a safe, boring alphabet. */
 const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
+/** Every container buildContainerName produces starts with this literal
+ * prefix. isAgentOwnedContainerName uses it to distinguish a container THIS
+ * agent created from one a human operator or another tool created directly
+ * in the CNG store: both are valid, non-exportable CNG key containers and
+ * both make certutil's "Key Container =" line non-empty, so container
+ * PRESENCE alone is not evidence of agent ownership. Retention (ADR-0012
+ * decision 18) must never mark a certificate `tokentimer_installed` -- and
+ * therefore automatically deletable -- on that weaker signal. */
+const AGENT_CONTAINER_NAME_PREFIX = "tokentimer-";
+
+/**
+ * Whether a CNG key container name matches this agent's own naming
+ * convention (see buildContainerName), as opposed to merely being SOME
+ * non-exportable CNG container -- which could belong to a certificate a
+ * human operator or a different tool enrolled directly on this host. Only
+ * the former is safe evidence of agent ownership for decision 18's
+ * retention ledger; the presence of a key container generally is not.
+ * @param {*} name
+ * @returns {boolean}
+ */
+function isAgentOwnedContainerName(name) {
+  return (
+    isNonEmptyString(name) &&
+    CONTAINER_NAME_PATTERN.test(name) &&
+    name.startsWith(AGENT_CONTAINER_NAME_PREFIX)
+  );
+}
+
 const SUPPORTED_KEY_ALGORITHMS = Object.freeze({
   "rsa-2048": Object.freeze({ keyAlgorithm: "RSA", keyLength: 2048 }),
   "rsa-3072": Object.freeze({ keyAlgorithm: "RSA", keyLength: 3072 }),
@@ -91,6 +125,14 @@ const SUPPORTED_KEY_ALGORITHM_NAMES = Object.freeze(
 );
 
 const MICROSOFT_SOFTWARE_KSP = "Microsoft Software Key Storage Provider";
+
+/** The only store `certreq -accept` itself ever populates for a
+ * MachineKeySet=TRUE request: there is no INF directive or -accept switch
+ * that targets a different store directly (confirmed against Microsoft's
+ * own certreq reference and the standard WebHosting-store community
+ * workaround, which starts from a My-store enrollment). See
+ * acceptCertificateViaCng's doc comment. */
+const CERTREQ_ACCEPT_DEFAULT_STORE = "My";
 
 function buildError(message, code) {
   const error = new Error(`tokentimer-agent windows-cert-store: ${message}`);
@@ -431,8 +473,26 @@ async function generateCsrViaCng({
  * certificate's public key against the pending request it created in
  * phase 1 (by container/public key, not by an explicit id this module
  * threads through) and, on a match, completes enrollment: the certificate
- * is bound to the already-in-store, non-exportable private key and lands
- * in the configured machine store (My, by default).
+ * is bound to the already-in-store, non-exportable private key.
+ *
+ * Store targeting: `certreq -accept` has no switch or INF directive that
+ * targets a store other than CERTREQ_ACCEPT_DEFAULT_STORE ("My") for a
+ * MachineKeySet=TRUE request -- confirmed against Microsoft's own certreq
+ * reference; there is no hidden flag this was just missing. When the
+ * caller's `store` differs, the certificate is mirrored into it via the
+ * same two-step `certutil -addstore` + `-repairstore` sequence Microsoft's
+ * own IIS troubleshooting docs describe for a certificate that needs to
+ * live in a non-Personal store (e.g. the "WebHosting" convention many IIS
+ * deployments use): `-addstore` copies the certificate object into the
+ * target store (from a bare .cer file, so with NO key-provider-info
+ * property yet), then `-repairstore` re-associates it with the matching
+ * CNG key by public key -- key containers are not themselves store-scoped,
+ * so this is a metadata repair, not a key export/copy. The My-store copy
+ * is then removed (`-delstore`) so the certificate does not silently exist
+ * in two stores after a non-default-store deploy. NOTE: only the
+ * default-store (`My`) path has been verified against a real Windows host
+ * so far; the addstore/repairstore path is unit-tested against a stubbed
+ * certutil, not yet real-host verified (tracked as a follow-up).
  *
  * The resulting store thumbprint is computed locally from the certificate
  * bytes (a Windows thumbprint IS sha1(DER)), not parsed from certreq's own
@@ -442,19 +502,26 @@ async function generateCsrViaCng({
  * @param {object} input
  * @param {string} input.certificatePem the CA-issued leaf certificate, PEM.
  * @param {string} input.workDir absolute, ACL-protected scratch directory.
+ * @param {string} [input.store] target Windows machine store name; defaults
+ *   to CERTREQ_ACCEPT_DEFAULT_STORE ("My"), which needs no extra steps.
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certreqPath]
+ * @param {string} [input.certutilPath] defaults to "certutil.exe"; only
+ *   invoked when `store` differs from CERTREQ_ACCEPT_DEFAULT_STORE.
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   { ok: true, thumbprint: string, certPath: string }
+ *   { ok: true, thumbprint: string, certPath: string, store: string }
  *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ *   | { ok: false, stage: "addstore"|"delstore"|"repairstore", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
  * >}
  */
 async function acceptCertificateViaCng({
   certificatePem,
   workDir,
+  store = CERTREQ_ACCEPT_DEFAULT_STORE,
   execFileImpl = childProcess.execFile,
   certreqPath = "certreq.exe",
+  certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   if (!isNonEmptyString(certificatePem)) {
@@ -462,6 +529,9 @@ async function acceptCertificateViaCng({
   }
   if (!isNonEmptyString(workDir)) {
     throw buildError("acceptCertificateViaCng requires a non-empty workDir string");
+  }
+  if (!isNonEmptyString(store) || !WINDOWS_STORE_NAME_PATTERN.test(store)) {
+    throw buildError(`store must match ${WINDOWS_STORE_NAME_PATTERN} (got ${JSON.stringify(store)})`);
   }
   assertSafeArgvElements("certreqPath", [certreqPath]);
 
@@ -489,7 +559,19 @@ async function acceptCertificateViaCng({
       };
     }
 
-    return guardReturnValue({ ok: true, thumbprint: expectedThumbprint, certPath });
+    if (store !== CERTREQ_ACCEPT_DEFAULT_STORE) {
+      const mirrored = await mirrorAcceptedCertificateToStore({
+        certPath,
+        thumbprint: expectedThumbprint,
+        targetStore: store,
+        execFileImpl,
+        certutilPath,
+        timeoutMs,
+      });
+      if (!mirrored.ok) return mirrored;
+    }
+
+    return guardReturnValue({ ok: true, thumbprint: expectedThumbprint, certPath, store });
   } finally {
     try {
       fs.unlinkSync(certPath);
@@ -497,6 +579,170 @@ async function acceptCertificateViaCng({
       // best-effort; the file is a public certificate, not key material.
     }
   }
+}
+
+/**
+ * Mirrors a just-`certreq -accept`ed certificate from the default `My`
+ * store into `targetStore` (see acceptCertificateViaCng's doc comment for
+ * why this three-step sequence, rather than a single certreq/certutil
+ * call, is what actually moves a CNG-keyed certificate between stores):
+ *
+ *   1. `certutil -addstore <targetStore> <certPath>` -- copies the
+ *      certificate object (from the plain .cer file already on disk, i.e.
+ *      no key-provider-info property) into targetStore.
+ *   2. `certutil -repairstore <targetStore> <thumbprint>` -- re-associates
+ *      that copy with the matching CNG private key by public key. This is
+ *      the same operation Microsoft's own IIS troubleshooting docs use to
+ *      restore a "missing private key" certificate; here it is used
+ *      proactively, since a certificate freshly copied by -addstore from a
+ *      bare .cer file starts in exactly that "no key metadata yet" state.
+ *   3. `certutil -delstore My <thumbprint>` -- removes the original
+ *      My-store copy `certreq -accept` created, so the certificate does
+ *      not end up live in two stores after a non-default-store deploy.
+ *
+ * Each step is independently checked; a failure at any step returns
+ * immediately rather than attempting the next one, so a caller never sees
+ * `ok: true` for a partially-completed mirror.
+ *
+ * @param {object} input
+ * @param {string} input.certPath the .cer file acceptCertificateViaCng
+ *   already staged (still on disk; not yet cleaned up by its finally).
+ * @param {string} input.thumbprint
+ * @param {string} input.targetStore
+ * @param {Function} input.execFileImpl
+ * @param {string} input.certutilPath
+ * @param {number} input.timeoutMs
+ * @returns {Promise<
+ *   { ok: true }
+ *   | { ok: false, stage: "addstore"|"repairstore"|"delstore", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ * >}
+ */
+async function mirrorAcceptedCertificateToStore({
+  certPath,
+  thumbprint,
+  targetStore,
+  execFileImpl,
+  certutilPath,
+  timeoutMs,
+}) {
+  assertSafeArgvElements("certutilPath", [certutilPath]);
+
+  const addstoreArgv = [certutilPath, "-addstore", targetStore, certPath];
+  assertSafeArgvElements("addstoreArgv", addstoreArgv);
+  const addstoreResult = await execWithoutShell(execFileImpl, addstoreArgv, timeoutMs);
+  if (addstoreResult.exitCode !== 0) {
+    return {
+      ok: false,
+      stage: "addstore",
+      exitCode: addstoreResult.exitCode,
+      stdoutExcerpt: boundAndRedactExcerpt(addstoreResult.stdout),
+      stderrExcerpt: boundAndRedactExcerpt(addstoreResult.stderr),
+    };
+  }
+
+  const repairstoreArgv = [certutilPath, "-repairstore", targetStore, thumbprint];
+  assertSafeArgvElements("repairstoreArgv", repairstoreArgv);
+  const repairstoreResult = await execWithoutShell(execFileImpl, repairstoreArgv, timeoutMs);
+  if (repairstoreResult.exitCode !== 0) {
+    return {
+      ok: false,
+      stage: "repairstore",
+      exitCode: repairstoreResult.exitCode,
+      stdoutExcerpt: boundAndRedactExcerpt(repairstoreResult.stdout),
+      stderrExcerpt: boundAndRedactExcerpt(repairstoreResult.stderr),
+    };
+  }
+
+  const delstoreArgv = [certutilPath, "-delstore", CERTREQ_ACCEPT_DEFAULT_STORE, thumbprint];
+  assertSafeArgvElements("delstoreArgv", delstoreArgv);
+  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs);
+  if (delstoreResult.exitCode !== 0) {
+    return {
+      ok: false,
+      stage: "delstore",
+      exitCode: delstoreResult.exitCode,
+      stdoutExcerpt: boundAndRedactExcerpt(delstoreResult.stdout),
+      stderrExcerpt: boundAndRedactExcerpt(delstoreResult.stderr),
+    };
+  }
+
+  return { ok: true };
+}
+
+/** A lock older than this, no matter whose PID recorded it, is treated as
+ * stale outright, guarding against the (rare but real) case where the OS
+ * has since reused the recorded PID for a completely unrelated process
+ * that is very much still running -- liveness alone cannot rule that out,
+ * only age can. Set well above any real enrollment/binding operation's
+ * duration (seconds, not minutes) while staying well below "an operator
+ * has to notice and intervene manually" territory. */
+const MAX_STORE_LOCK_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * Whether the process that created a lock file is still alive.
+ * `process.kill(pid, 0)` sends no signal, only checks existence/permission
+ * (works on both POSIX and win32, per Node's own child_process.kill docs).
+ * ESRCH means the process is gone; anything else (including a permission
+ * error, i.e. the PID exists but under a different account) means it is
+ * still considered live, since this function's only job is to rule out
+ * "this process definitely no longer exists", not to fully authenticate
+ * ownership.
+ * @param {number} pid
+ * @returns {boolean}
+ */
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code !== "ESRCH";
+  }
+}
+
+/**
+ * Parses an acquireStoreLock lock file's contents (`"<pid>\n<isoDate>\n"`,
+ * written by acquireStoreLock itself) back into `{ pid, createdAt }`.
+ * Returns null on anything unparseable, so a corrupted/foreign lock file
+ * is treated the same as "cannot prove this is stale" (fails closed,
+ * still locked) rather than crashing the caller.
+ * @param {string} contents
+ * @returns {{ pid: number, createdAt: Date }|null}
+ */
+function parseStoreLockContents(contents) {
+  const lines = String(contents).split("\n");
+  const pid = Number(lines[0]);
+  const createdAt = new Date(lines[1] ?? "");
+  if (!Number.isInteger(pid) || pid < 0 || Number.isNaN(createdAt.getTime())) return null;
+  return { pid, createdAt };
+}
+
+/**
+ * Whether an existing lock file at `lockPath` is safe to steal: either its
+ * recording process is no longer alive, or the lock has simply existed
+ * longer than any real operation ever legitimately takes (see
+ * MAX_STORE_LOCK_AGE_MS). An unparseable lock file is never considered
+ * stale -- decision 13's mutex fails closed on anything it cannot
+ * positively prove is dead, matching this module's fail-closed style
+ * elsewhere (e.g. store-name/container-name validation).
+ * @param {string} lockPath
+ * @returns {boolean}
+ */
+function isStoreLockStale(lockPath) {
+  let contents;
+  try {
+    contents = fs.readFileSync(lockPath, "utf8");
+  } catch (err) {
+    // Already gone (another racer cleaned it up first) -- not "stale",
+    // just no longer an obstacle; the caller's retry will succeed via the
+    // normal wx path.
+    if (err && err.code === "ENOENT") return true;
+    return false;
+  }
+  const parsed = parseStoreLockContents(contents);
+  if (parsed === null) return false;
+  if (Date.now() - parsed.createdAt.getTime() > MAX_STORE_LOCK_AGE_MS) return true;
+  return !isProcessAlive(parsed.pid);
 }
 
 /**
@@ -508,6 +754,15 @@ async function acceptCertificateViaCng({
  * exactly the semantics a mutex needs and requires no additional OS
  * primitive. Reused as-is by the future IIS-binding executor so a single
  * lock name space covers both operations per decision 13.
+ *
+ * Stale-lock recovery: a process killed mid-enrollment (crash, OOM kill,
+ * `taskkill /F`) leaves its lock file behind forever under the plain `wx`
+ * scheme above -- with no other recovery path, EVERY future renewal
+ * against that store fails permanently until an operator manually deletes
+ * the file. On an initial EEXIST, this now checks isStoreLockStale (dead
+ * PID, or simply too old) and, if stale, unlinks the abandoned file and
+ * retries the acquisition exactly once (not in a loop: a genuinely busy,
+ * live lock must still fail fast with STORE_LOCKED, not spin).
  *
  * @param {string} stateDir agent state dir.
  * @param {string} storeName Windows machine store name (e.g. "My").
@@ -521,17 +776,41 @@ function acquireStoreLock(stateDir, storeName) {
   fs.mkdirSync(lockDir, { recursive: true });
   const lockPath = path.join(lockDir, `${storeName}.lock`);
 
+  function tryAcquire() {
+    return fs.openSync(lockPath, "wx");
+  }
+
   let fd;
   try {
-    fd = fs.openSync(lockPath, "wx");
+    fd = tryAcquire();
   } catch (err) {
-    if (err && err.code === "EEXIST") {
+    if (err && err.code === "EEXIST" && isStoreLockStale(lockPath)) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // Another racer may have already cleaned it up (or re-acquired
+        // it); either way, fall through to the single retry below, which
+        // is the actual source of truth.
+      }
+      try {
+        fd = tryAcquire();
+      } catch (retryErr) {
+        if (retryErr && retryErr.code === "EEXIST") {
+          throw buildError(
+            `store ${JSON.stringify(storeName)} is locked by a concurrent enrollment/binding operation (${lockPath})`,
+            "STORE_LOCKED",
+          );
+        }
+        throw retryErr;
+      }
+    } else if (err && err.code === "EEXIST") {
       throw buildError(
         `store ${JSON.stringify(storeName)} is locked by a concurrent enrollment/binding operation (${lockPath})`,
         "STORE_LOCKED",
       );
+    } else {
+      throw err;
     }
-    throw err;
   }
   fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
   fs.closeSync(fd);
@@ -545,10 +824,11 @@ function acquireStoreLock(stateDir, storeName) {
       try {
         fs.unlinkSync(lockPath);
       } catch {
-        // best-effort; a stale lock file from a killed process is a known
-        // limit of this simple primitive, not a security issue (nothing
-        // sensitive is in it), and is expected to be swept by a future
-        // startup sweep alongside the CNG artifact sweep.
+        // best-effort; a lock file surviving past release (e.g. another
+        // process already stole it as stale in a race with this exact
+        // release call) is not a security issue -- nothing sensitive is
+        // in it -- and is exactly the scenario isStoreLockStale above
+        // exists to eventually recover from.
       }
     },
   };
@@ -712,8 +992,11 @@ module.exports = {
   WINDOWS_STORE_NAME_PATTERN,
   HOSTNAME_PATTERN,
   CONTAINER_NAME_PATTERN,
+  AGENT_CONTAINER_NAME_PREFIX,
+  CERTREQ_ACCEPT_DEFAULT_STORE,
   THUMBPRINT_PATTERN,
   buildContainerName,
+  isAgentOwnedContainerName,
   buildCertreqInf,
   computeSha1ThumbprintFromPem,
   normalizeCsrPemLabel,
@@ -725,6 +1008,10 @@ module.exports = {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
+  isProcessAlive,
+  isStoreLockStale,
+  parseStoreLockContents,
+  MAX_STORE_LOCK_AGE_MS,
   removeCertificateAndKeyContainer,
   removeAbandonedKeyContainer,
 };

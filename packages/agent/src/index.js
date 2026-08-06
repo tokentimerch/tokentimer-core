@@ -69,6 +69,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const tls = require("node:tls");
+const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,
@@ -151,15 +153,18 @@ const {
   acceptCertificateViaCng,
   acquireStoreLock,
   removeAbandonedKeyContainer,
+  removeCertificateAndKeyContainer,
+  isAgentOwnedContainerName,
   buildContainerName,
 } = require("./windows-cert-store");
-const { deployIisBinding } = require("./windows-iis");
+const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
 const {
   createLedgerRow,
   readLedgerRow,
+  sweepLedger,
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
-const { listMachineStoreCertificates } = require("./windows-discovery");
+const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -2826,6 +2831,12 @@ async function executeRenewJob({
  * @param {object} params.target the single resolved windows-iis deploy target.
  * @param {string} params.stateDir agent state dir (mutex lock file location).
  * @param {string} params.cngWorkDir CNG accept scratch dir.
+ * @param {string|null} [params.containerName] the CNG key container
+ *   generateCsrViaCng created for this job, if known. Used ONLY to free an
+ *   orphaned container on a bare `certreq -accept` failure (see the
+ *   accept-failure branch below); never touched on any success path or on
+ *   a later addstore/repairstore/delstore-stage failure, since by then the
+ *   container is legitimately bound to an enrolled certificate.
  * @returns {Promise<{status: string, keyRotated: null, errorMessage?: string, rejectionReason?: string}>}
  */
 async function runWindowsIisDeployTail({
@@ -2836,6 +2847,7 @@ async function runWindowsIisDeployTail({
   stateDir,
   cngWorkDir,
   log,
+  containerName = null,
   leaseOpts = null,
   onBeforeMutation = null,
   windowsExecFileImpl,
@@ -2863,9 +2875,43 @@ async function runWindowsIisDeployTail({
     const acceptResult = await acceptCertificateViaCng({
       certificatePem,
       workDir: cngWorkDir,
+      store: target.store,
       ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
     });
     if (!acceptResult.ok) {
+      // Only a bare-accept failure (no `stage`) leaves the CNG key
+      // container genuinely orphaned: `certreq -accept` itself never ran,
+      // or ran and failed before binding any certificate to the key, so
+      // there is no enrolled certificate anywhere referencing this
+      // container yet. A failure at the addstore/repairstore/delstore
+      // mirroring stage is different -- accept already SUCCEEDED, so the
+      // key is bound to a real certificate sitting in the store (at least
+      // in "My"); deleting the container there would corrupt that
+      // certificate's key reference instead of freeing dead weight. Same
+      // best-effort, non-fatal cleanup discipline as the ACME-failure path
+      // in executeWindowsIisRenewJob's finally block.
+      if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
+        try {
+          const cleanup = await removeAbandonedKeyContainer({
+            containerName,
+            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+          });
+          if (cleanup.ok !== true) {
+            emitLog(
+              log,
+              `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+                `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
+                `it will remain orphaned in the CNG key store until manually removed.`,
+            );
+          }
+        } catch (err) {
+          emitLog(
+            log,
+            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `${containerName} after certreq -accept failure: ${err.message}`,
+          );
+        }
+      }
       await reportStepEvidence(client, jobId, [
         buildEvidenceItem({
           eventType: "validation.failed",
@@ -2933,6 +2979,9 @@ async function runWindowsIisDeployTail({
     }
 
     emitInfo(`job ${jobId}: IIS binding deploy succeeded, verified at ${JSON.stringify(deployResult.verifiedAt)}`);
+    if (deployResult.precedenceWarning) {
+      emitInfo(`job ${jobId}: WARNING: ${deployResult.precedenceWarning}`);
+    }
     await reportStepEvidence(client, jobId, [
       buildEvidenceItem({
         eventType: "deployment.updated",
@@ -2944,6 +2993,9 @@ async function runWindowsIisDeployTail({
           { name: "step", value: "iis-bind" },
           { name: "idempotentSkip", value: deployResult.skippedMutation === true },
           { name: "boundThumbprint", value: deployResult.boundThumbprint },
+          ...(deployResult.precedenceWarning
+            ? [{ name: "precedenceWarning", value: deployResult.precedenceWarning }]
+            : []),
         ],
       }),
     ]);
@@ -3034,13 +3086,22 @@ async function runWindowsIisDeployTail({
  * from the job, since the predecessor's own container/validity are facts
  * about ITS certificate object, not this job's.
  *
+ * Ownership is decided by isAgentOwnedContainerName, not merely by
+ * container PRESENCE: any non-exportable CNG certificate (one an operator
+ * or a different tool enrolled directly on this host, not just one this
+ * agent installed) also reports a "Key Container =" line in certutil's
+ * output, so presence alone is not evidence this agent may delete it. Only
+ * a container name matching this agent's own buildContainerName naming
+ * convention counts as tokentimer_installed.
+ *
  * A predecessor whose store entry cannot be found (already removed by a
- * prior sweep, or was never a CNG-native cert at all -- e.g. an operator-
- * imported PFX cert with no key container) is recorded with
- * ownershipProvenance "preexisting" and a placeholder container id, which
- * ../windows-retention's evaluateEligibility's ownership check then keeps
- * permanently ineligible for automated cleanup -- never deleting material
- * this agent cannot prove it installed.
+ * prior sweep), one with no key container at all (e.g. an operator-
+ * imported PFX cert), or one with a key container this agent did not
+ * create, is recorded with ownershipProvenance "preexisting" and a
+ * placeholder container id, which ../windows-retention's
+ * evaluateEligibility's ownership check then keeps permanently ineligible
+ * for automated cleanup -- never deleting material this agent cannot prove
+ * it installed.
  *
  * @param {object} params
  * @returns {Promise<void>}
@@ -3078,9 +3139,11 @@ async function recordSupersededWindowsCertificate({
       : null;
 
   const ownershipProvenance =
-    predecessor && isNonEmptyStringValue(predecessor.keyContainer) ? "tokentimer_installed" : "preexisting";
+    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
+      ? "tokentimer_installed"
+      : "preexisting";
   const cngKeyContainerId =
-    predecessor && isNonEmptyStringValue(predecessor.keyContainer)
+    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
       ? predecessor.keyContainer
       : buildContainerName(`unknown-${normalizedOld.slice(0, 16)}`);
   const oldNotAfter =
@@ -3096,12 +3159,232 @@ async function recordSupersededWindowsCertificate({
     verifiedCutoverAt: new Date().toISOString(),
     oldNotAfter,
     ownershipProvenance,
+    store,
     jobOrRollbackJournalRefs: [{ ref: jobId, active: false }],
   });
 }
 
 function isIsoParseable(value) {
   return typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Parses one ../windows-discovery `listHttpSysBindings` entry's `ipPort`
+ * string (an `IP:port` or `Hostname:port` literal, per that module's own
+ * `keyedBy` field) into the `{ address, port }` shape ../windows-iis's
+ * `resolveVerificationTarget` expects. Splits on the LAST colon so a
+ * bracketed IPv6 literal (`[::1]:443`) is not mis-split on one of its own
+ * embedded colons.
+ * @param {string} ipPort
+ * @returns {{ address: string, port: number }|null} null if unparseable.
+ */
+function splitIpPortLiteral(ipPort) {
+  if (!isNonEmptyStringValue(ipPort)) return null;
+  const lastColon = ipPort.lastIndexOf(":");
+  if (lastColon <= 0 || lastColon === ipPort.length - 1) return null;
+  const address = ipPort.slice(0, lastColon);
+  const port = Number(ipPort.slice(lastColon + 1));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { address, port };
+}
+
+/**
+ * Resolves the real TCP host/port/SNI a retention sweep should re-probe
+ * for one ../windows-discovery binding entry, reusing ../windows-iis's own
+ * `resolveVerificationTarget` (the exact same wildcard-to-loopback mapping
+ * decision 13's own bind-time verification step uses) rather than
+ * inventing a second address-resolution policy for the sweep.
+ * @param {{ ipPort: string, keyedBy: "ipport"|"hostnameport" }} binding
+ * @returns {{ host: string, port: number, servername: string|undefined }|null}
+ */
+function resolveSweepVerificationTarget(binding) {
+  const parsed = splitIpPortLiteral(binding.ipPort);
+  if (parsed === null) return null;
+  const isHostnameKeyed = binding.keyedBy === "hostnameport";
+  const target = resolveVerificationTarget({
+    address: isHostnameKeyed ? "*" : parsed.address,
+    ...(isHostnameKeyed ? { sniHost: parsed.address } : {}),
+  });
+  return { host: target.host, port: parsed.port, servername: target.servername };
+}
+
+/**
+ * Opens a real TLS handshake against `host:port` (optionally with SNI) and
+ * returns the sha1(DER) thumbprint of whatever certificate is presented --
+ * the same identifier space every thumbprint in this module and
+ * ../windows-retention's ledger already lives in -- or null on any
+ * connect/handshake failure or timeout. Deliberately does not validate the
+ * chain (`rejectUnauthorized: false`): like ../verify's own fingerprint-
+ * pinned verification, the thumbprint COMPARISON the caller makes against
+ * a known-expected value is the actual verification here, not anything
+ * TLS's own trust store would decide.
+ * @param {object} input
+ * @param {string} input.host
+ * @param {number} input.port
+ * @param {string} [input.servername]
+ * @param {Function} [input.connectImpl] defaults to tls.connect.
+ * @param {number} [input.timeoutMs]
+ * @returns {Promise<string|null>} uppercase 40-hex-char thumbprint, or null.
+ */
+function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000 }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    let socket = null;
+
+    function settle(value) {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      if (socket) {
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort teardown
+        }
+      }
+      resolve(value);
+    }
+
+    timer = setTimeout(() => settle(null), timeoutMs);
+
+    try {
+      socket = connectImpl({
+        host,
+        port,
+        ...(servername !== undefined ? { servername } : {}),
+        rejectUnauthorized: false,
+      });
+    } catch {
+      settle(null);
+      return;
+    }
+
+    socket.on("secureConnect", () => {
+      try {
+        const peerCert = socket.getPeerCertificate();
+        if (!peerCert || !peerCert.raw) {
+          settle(null);
+          return;
+        }
+        settle(crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase());
+      } catch {
+        settle(null);
+      }
+    });
+    socket.on("error", () => settle(null));
+  });
+}
+
+/**
+ * Runs one pass of the ADR-0012 decision 18 retention sweep over every row
+ * in this agent's superseded-certificate ledger (../windows-retention),
+ * re-gathering the live facts evaluateEligibility needs from this host --
+ * this is the periodic caller ../windows-retention's own doc comment
+ * flags as the one piece it deliberately does not own -- and performing
+ * the actual store/key-container deletion for whatever comes back
+ * eligible.
+ *
+ * Fail-safe posture: when a fact-gathering step itself cannot complete
+ * (http.sys or the store cannot be queried), this treats the corresponding
+ * eligibility condition as NOT satisfied (still bound / shared / failed
+ * handshake) rather than as "unknown, assume fine" -- decision 18's own
+ * "a still-bound predecessor is the safe failure mode" principle applied
+ * to the sweep's own fact-gathering, not just to the six conditions
+ * themselves.
+ *
+ * @param {object} input
+ * @param {string} input.stateDir agent state dir (ledger + store-mutex location).
+ * @param {number} input.retentionHours validated `windows.supersededRetentionHours`.
+ * @param {object} [input.log]
+ * @param {Function} [input.execFileImpl] injection point for certutil.exe/netsh.exe.
+ * @param {Function} [input.connectImpl] injection point for the replacement handshake probe.
+ * @returns {Promise<{removed: string[], deferred: object[], deferredCountByReason: Record<string, number>}|null>}
+ *   null when there is no ledger directory yet (nothing has ever been superseded).
+ */
+async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl }) {
+  const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
+  if (!fs.existsSync(ledgerDir)) return null;
+
+  async function gatherContext(row) {
+    const store = row.store || "My";
+
+    const bindingsResult = await listHttpSysBindings({
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    const bindingStillReferencesOldThumbprint =
+      bindingsResult.ok !== true
+        ? true
+        : bindingsResult.bindings.some(
+            (binding) =>
+              isNonEmptyStringValue(binding.thumbprint) &&
+              normalizeRetentionThumbprint(binding.thumbprint) === row.oldThumbprint,
+          );
+
+    const storeResult = await listMachineStoreCertificates({
+      store,
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    const keyContainerSharedWithSurvivor =
+      storeResult.ok !== true
+        ? true
+        : storeResult.certificates.some(
+            (cert) =>
+              cert.thumbprint !== row.oldThumbprint &&
+              isNonEmptyStringValue(cert.keyContainer) &&
+              cert.keyContainer === row.cngKeyContainerId,
+          );
+
+    let replacementPassesHandshakeNow = false;
+    if (bindingsResult.ok === true) {
+      const replacementBinding = bindingsResult.bindings.find(
+        (binding) =>
+          isNonEmptyStringValue(binding.thumbprint) &&
+          normalizeRetentionThumbprint(binding.thumbprint) === row.replacementThumbprint,
+      );
+      const target = replacementBinding ? resolveSweepVerificationTarget(replacementBinding) : null;
+      if (target !== null) {
+        const observedThumbprint = await probeTlsSha1Thumbprint({
+          host: target.host,
+          port: target.port,
+          servername: target.servername,
+          ...(connectImpl ? { connectImpl } : {}),
+        });
+        replacementPassesHandshakeNow = observedThumbprint === row.replacementThumbprint;
+      }
+    }
+
+    return { bindingStillReferencesOldThumbprint, keyContainerSharedWithSurvivor, replacementPassesHandshakeNow };
+  }
+
+  async function performCleanup(row) {
+    const store = row.store || "My";
+    const storeLock = acquireStoreLock(stateDir, store);
+    try {
+      const result = await removeCertificateAndKeyContainer({
+        thumbprint: row.oldThumbprint,
+        store,
+        containerName: row.cngKeyContainerId,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+      if (result.ok !== true) {
+        throw new Error(
+          `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
+            result.stderrExcerpt,
+        );
+      }
+    } finally {
+      storeLock.release();
+    }
+  }
+
+  const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
+  emitLog(
+    log,
+    `tokentimer-agent: windows-retention sweep: removed=${summary.removed.length} ` +
+      `deferred=${summary.deferred.length}`,
+  );
+  return summary;
 }
 
 /**
@@ -3448,6 +3731,7 @@ async function executeWindowsIisRenewJob({
     stateDir,
     cngWorkDir,
     log,
+    containerName,
     leaseOpts,
     onBeforeMutation,
     windowsExecFileImpl,
@@ -5275,6 +5559,41 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     );
   }
 
+  // Windows superseded-certificate retention sweep (ADR-0012 decision 18):
+  // only meaningful with execution enabled, since without it no windows-iis
+  // renewal can ever have written a ledger row in the first place.
+  // runWindowsRetentionSweep itself no-ops (returns null) until the ledger
+  // directory exists, so this loop is harmless to start unconditionally on
+  // an execution-enabled agent that has never touched Windows targets.
+  if (executionContext) {
+    const retentionStateDir = resolveAgentStateDir(executionContext);
+    if (retentionStateDir) {
+      loops.push(
+        startPollLoop({
+          intervalMs: config.windows.sweepIntervalMs,
+          signal: controller.signal,
+          startImmediately: true,
+          onTick: () =>
+            runWindowsRetentionSweep({
+              stateDir: retentionStateDir,
+              retentionHours: config.windows.supersededRetentionHours,
+              log: defaultAgentLogger,
+              ...(executionContext.windowsExecFileImpl
+                ? { execFileImpl: executionContext.windowsExecFileImpl }
+                : {}),
+              ...(executionContext.windowsConnectImpl
+                ? { connectImpl: executionContext.windowsConnectImpl }
+                : {}),
+            }).catch((err) => {
+              defaultAgentLogger.error(
+                `tokentimer-agent: windows-retention sweep failed: ${err.message}`,
+              );
+            }),
+        }),
+      );
+    }
+  }
+
   try {
     await Promise.all(loops);
   } finally {
@@ -5305,6 +5624,7 @@ module.exports = {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runWindowsRetentionSweep,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,

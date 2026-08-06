@@ -23,6 +23,21 @@
  * 13's explicit "no iisreset, a binding change is picked up by http.sys with
  * no restart at all".
  *
+ * Non-SNI/specific-IP/SNI binding scope (clarified 2026-08-06, PR review --
+ * see deployIisBinding's own doc comment for the full explanation): a
+ * binding with `sniHost` set scopes by HOSTNAME across every IP http.sys
+ * listens on at that port; `binding.address` in that case only picks the
+ * real interface this module's own post-bind verification handshake
+ * dials, it does NOT restrict which IP the SNI binding applies to. A
+ * binding WITHOUT `sniHost` scopes by the literal `(address, port)` pair
+ * (or by "every IP" for the three wildcard address forms) and, per
+ * http.sys's own documented precedence rule, always wins over any SNI
+ * binding on the same port for a client connecting to that address --
+ * deployIisBinding surfaces this as a non-fatal `precedenceWarning` when
+ * it detects the shape most likely to trip an operator up (deploying an
+ * SNI binding while a wildcard non-SNI binding already exists on the same
+ * port).
+ *
  * Verification reuses ../verify's verifyDeployedCertificate (fingerprint
  * pinning over a real TLS handshake, rejectUnauthorized: false is correct
  * there for the same reason it is correct here: this is byte-identity
@@ -366,7 +381,141 @@ async function queryCurrentBinding({
   }
 
   const match = /Certificate Hash\s*:\s*([0-9A-Fa-f]{40})/.exec(stdoutText);
-  return { ok: true, thumbprint: match ? match[1].toUpperCase() : null };
+  return {
+    ok: true,
+    thumbprint: match ? match[1].toUpperCase() : null,
+    parameters: parseSslcertParameters(stdoutText),
+  };
+}
+
+/**
+ * Parses the non-thumbprint parameters an operator may have configured on
+ * an existing binding out of `netsh http show sslcert`'s human-readable
+ * output: revocation checking, CTL-based issuer restriction, DS mapper
+ * usage, and client-certificate negotiation. `bindCertificate`'s
+ * delete-then-add rebind (decision 13) would otherwise silently reset
+ * every one of these to netsh's own default on every renewal, since `add
+ * sslcert` only ever sees the flags a given call explicitly passes it --
+ * found during PR review as a real gap, not yet exercised on the E2E VM
+ * (which never customizes these on its throwaway binding).
+ *
+ * Only fields this function can positively read back are included in the
+ * returned object; a label it does not find is simply omitted, never
+ * defaulted to true/false/0 by guesswork. formatPreservedParamArgs then
+ * only ever emits a flag for a key that is actually present, so an
+ * unparsed field falls back to netsh's own default exactly as it did
+ * before this fix -- strictly no worse, not a new failure mode.
+ *
+ * These eight are the parameters `netsh http add sslcert help` has
+ * accepted since Windows Server 2012 (excluding certhash/appid/
+ * certstorename, which the caller always sets explicitly to the new
+ * certificate's own identity, never preserved from the outgoing one).
+ * Newer per-Windows-version add sslcert options (rejectconnections,
+ * disablehttp2, disablequic, disableocspstapling, enabletokenbinding) are
+ * intentionally not covered: they simply fall through to netsh's default
+ * on every rebind, unchanged from this module's behavior before this fix.
+ *
+ * @param {string} stdoutText raw `netsh http show sslcert` stdout.
+ * @returns {{
+ *   verifyClientCertRevocation?: boolean,
+ *   verifyRevocationWithCachedClientCertOnly?: boolean,
+ *   usageCheck?: boolean,
+ *   revocationFreshnessTime?: number,
+ *   urlRetrievalTimeout?: number,
+ *   ctlIdentifier?: string|null,
+ *   ctlStoreName?: string|null,
+ *   dsMapperUsage?: boolean,
+ *   negotiateClientCert?: boolean,
+ * }}
+ */
+function parseSslcertParameters(stdoutText) {
+  const readEnabledDisabled = (label) => {
+    const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled)`, "i").exec(stdoutText);
+    return found ? found[1].toLowerCase() === "enabled" : undefined;
+  };
+  const readInteger = (label) => {
+    const found = new RegExp(`${label}\\s*:\\s*(\\d+)`, "i").exec(stdoutText);
+    return found ? Number(found[1]) : undefined;
+  };
+  const readNullableString = (label) => {
+    const found = new RegExp(`${label}\\s*:\\s*(.+)`, "i").exec(stdoutText);
+    if (!found) return undefined;
+    const value = found[1].trim();
+    return value === "" || value === "(null)" ? null : value;
+  };
+
+  const params = {};
+  const assign = (key, value) => {
+    if (value !== undefined) params[key] = value;
+  };
+
+  assign("verifyClientCertRevocation", readEnabledDisabled("Verify Client Certificate Revocation"));
+  assign(
+    "verifyRevocationWithCachedClientCertOnly",
+    readEnabledDisabled("Verify Revocation Using Cached Client Certificate Only"),
+  );
+  assign("usageCheck", readEnabledDisabled("Usage Check"));
+  assign("revocationFreshnessTime", readInteger("Revocation Freshness Time"));
+  assign("urlRetrievalTimeout", readInteger("URL Retrieval Timeout"));
+  assign("ctlIdentifier", readNullableString("Ctl Identifier"));
+  assign("ctlStoreName", readNullableString("Ctl Store Name"));
+  assign("dsMapperUsage", readEnabledDisabled("DS Mapper Usage"));
+  assign("negotiateClientCert", readEnabledDisabled("Negotiate Client Certificate"));
+
+  return params;
+}
+
+/**
+ * Turns a parseSslcertParameters result back into the `netsh http add
+ * sslcert` flags that reproduce it, so bindCertificate's rebind can pass
+ * them alongside the new certhash/appid/certstorename and genuinely
+ * preserve an operator's prior revocation/CTL/negotiation configuration
+ * instead of silently resetting it to netsh's default on every renewal.
+ * A key absent from `parameters` (never positively read back) contributes
+ * no flag at all, which is exactly netsh's own default-on-omission
+ * behavior -- the same as before this fix, for that one field.
+ *
+ * @param {ReturnType<typeof parseSslcertParameters>} parameters
+ * @returns {string[]} zero or more `name=value` netsh argv elements.
+ */
+function formatPreservedParamArgs(parameters = {}) {
+  const flag = (value) => (value ? "enable" : "disable");
+  const args = [];
+
+  if (parameters.verifyClientCertRevocation !== undefined) {
+    args.push(`verifyclientcertrevocation=${flag(parameters.verifyClientCertRevocation)}`);
+  }
+  if (parameters.verifyRevocationWithCachedClientCertOnly !== undefined) {
+    args.push(
+      `verifyrevocationwithcachedclientcertonly=${flag(parameters.verifyRevocationWithCachedClientCertOnly)}`,
+    );
+  }
+  if (parameters.usageCheck !== undefined) {
+    args.push(`usagecheck=${flag(parameters.usageCheck)}`);
+  }
+  if (parameters.revocationFreshnessTime !== undefined) {
+    args.push(`revocationfreshnesstime=${parameters.revocationFreshnessTime}`);
+  }
+  if (parameters.urlRetrievalTimeout !== undefined) {
+    args.push(`urlretrievaltimeout=${parameters.urlRetrievalTimeout}`);
+  }
+  // A real, non-"(null)" ctlIdentifier is meaningless without its paired
+  // store name and vice versa, so both are gated on ctlIdentifier alone
+  // being present and non-null -- matching netsh's own pairing of the two
+  // in `add sslcert help`.
+  if (parameters.ctlIdentifier) {
+    args.push(`sslctlidentifier=${parameters.ctlIdentifier}`);
+    if (parameters.ctlStoreName) {
+      args.push(`sslctlstorename=${parameters.ctlStoreName}`);
+    }
+  }
+  if (parameters.dsMapperUsage !== undefined) {
+    args.push(`dsmapperusage=${flag(parameters.dsMapperUsage)}`);
+  }
+  if (parameters.negotiateClientCert !== undefined) {
+    args.push(`clientcertnegotiation=${flag(parameters.negotiateClientCert)}`);
+  }
+  return args;
 }
 
 /**
@@ -385,10 +534,19 @@ async function queryCurrentBinding({
  * formatBindingSelector's doc comment for why the original
  * sslctlidentifier-based approach was a real defect, not just cosmetic.
  *
+ * `preserveParameters` (optional, from a prior queryCurrentBinding call
+ * against this same selector) carries forward any revocation/CTL/
+ * negotiation settings an operator configured on the OUTGOING binding via
+ * formatPreservedParamArgs, so the delete-then-add pair does not silently
+ * reset them to netsh's default on every renewal. Omitted entirely
+ * (equivalent to `{}`) for a first-ever bind, where there is nothing to
+ * preserve.
+ *
  * @param {object} input
  * @param {{ address: string, port: number, sniHost?: string }} input.binding
  * @param {string} input.thumbprint 40-hex-char SHA-1, any case.
  * @param {string} input.store Windows certificate store name.
+ * @param {ReturnType<typeof parseSslcertParameters>} [input.preserveParameters]
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.netshPath]
  * @param {number} [input.timeoutMs]
@@ -398,6 +556,7 @@ async function bindCertificate({
   binding,
   thumbprint,
   store,
+  preserveParameters = {},
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -430,6 +589,7 @@ async function bindCertificate({
     `certhash=${normalizedThumbprint}`,
     `appid=${generateAppId()}`,
     `certstorename=${store}`,
+    ...formatPreservedParamArgs(preserveParameters),
   ];
   assertSafeArgvElements("argv", addArgs);
 
@@ -463,16 +623,25 @@ async function bindCertificate({
  * @param {object} input
  * @param {{ address: string, port: number, sniHost?: string, store: string }} input.binding
  * @param {string} input.outgoingThumbprint non-null; caller checks null first.
+ * @param {ReturnType<typeof parseSslcertParameters>} [input.preserveParameters]
  * @param {Function} input.execFileImpl
  * @param {string} input.netshPath
  * @param {number} input.timeoutMs
  * @returns {Promise<{ rolledBack: boolean, rollbackDetail?: string, rollbackVerifyDetail?: string }>}
  */
-async function attemptRollback({ binding, outgoingThumbprint, execFileImpl, netshPath, timeoutMs }) {
+async function attemptRollback({
+  binding,
+  outgoingThumbprint,
+  preserveParameters = {},
+  execFileImpl,
+  netshPath,
+  timeoutMs,
+}) {
   const rollbackResult = await bindCertificate({
     binding,
     thumbprint: outgoingThumbprint,
     store: binding.store,
+    preserveParameters,
     execFileImpl,
     netshPath,
     timeoutMs,
@@ -505,6 +674,64 @@ async function attemptRollback({ binding, outgoingThumbprint, execFileImpl, nets
 }
 
 /**
+ * Non-SNI (`ipport=`) bindings take precedence over SNI (`hostnameport=`)
+ * bindings for any client connecting to an IP that also has its own
+ * ipport binding on the same port -- confirmed http.sys/IIS platform
+ * behavior (Microsoft's own SNI-scalability docs, corroborated by
+ * multiple independent reports of exactly this precedence order), not
+ * something either binding's own configuration can override. Concretely:
+ * deploying binding.sniHost cleanly here does NOT guarantee it is what a
+ * client actually receives, if a non-SNI binding also exists on the same
+ * port for the address family the client connects over.
+ *
+ * This module cannot prevent that precedence rule (it is http.sys's, not
+ * this module's), only detect when it may be silently shadowing the SNI
+ * binding just deployed, and surface that as a non-fatal warning rather
+ * than staying silent about a real, non-obvious gotcha. Checks the IPv4
+ * (0.0.0.0) and IPv6 ([::]) wildcard forms, since either stack's wildcard
+ * ipport binding shadows every hostnameport binding on that port for
+ * clients on that stack -- the common real-world shape of this conflict
+ * (an operator/IIS Manager created a default "no SNI" binding on the port
+ * before, or alongside, this SNI one).
+ *
+ * A query failure here is swallowed (no warning returned): this check is
+ * purely informational and must never fail an otherwise-successful SNI
+ * deploy over an inability to positively confirm the absence of a
+ * conflict.
+ *
+ * @param {object} input
+ * @param {{ port: number, sniHost: string }} input.binding
+ * @param {Function} input.execFileImpl
+ * @param {string} input.netshPath
+ * @param {number} input.timeoutMs
+ * @returns {Promise<string|undefined>}
+ */
+async function checkSniPrecedenceConflict({ binding, execFileImpl, netshPath, timeoutMs }) {
+  for (const wildcardAddress of ["0.0.0.0", "[::]"]) {
+    let result;
+    try {
+      result = await queryCurrentBinding({
+        binding: { address: wildcardAddress, port: binding.port },
+        execFileImpl,
+        netshPath,
+        timeoutMs,
+      });
+    } catch {
+      continue;
+    }
+    if (result.ok && result.thumbprint !== null) {
+      return (
+        `an existing non-SNI certificate binding at ipport=${wildcardAddress}:${binding.port} may take ` +
+        `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
+        `connecting over that address family: http.sys evaluates ipport bindings before hostnameport ` +
+        `bindings on the same port, regardless of the client's SNI value`
+      );
+    }
+  }
+  return undefined;
+}
+
+/**
  * Deploys a certificate onto an IIS/http.sys binding with the full
  * decision-13 discipline: record the outgoing thumbprint, rebind to the
  * new one, verify with a real TLS handshake against the binding's own
@@ -512,6 +739,34 @@ async function attemptRollback({ binding, outgoingThumbprint, execFileImpl, nets
  * thumbprint if verification fails. The outgoing thumbprint is always
  * returned (even null, meaning "nothing was bound before") so the caller
  * can hand it to the retention ledger (decision 18) regardless of outcome.
+ *
+ * Non-SNI vs specific-IP vs SNI binding scope (clarified 2026-08-06, PR
+ * review): the three binding shapes this module accepts scope
+ * completely differently at the http.sys level, which is NOT obvious
+ * from the binding descriptor's field names alone:
+ *   - Non-SNI, wildcard address (no sniHost; address is "*"/"0.0.0.0"/
+ *     "[::]"): binds EVERY IP at this port -- http.sys's "default
+ *     certificate for this port" concept. This is what most single-site
+ *     IIS installs use.
+ *   - Non-SNI, specific IP (no sniHost; address is a concrete literal):
+ *     binds ONLY that one IP at this port. A DIFFERENT certificate may be
+ *     bound to a different specific IP, or to the wildcard, on the SAME
+ *     port, without conflict.
+ *   - SNI (sniHost set): binds by HOSTNAME at this port, ACROSS EVERY IP
+ *     http.sys listens on at that port -- `binding.address` in this case
+ *     is used ONLY to choose which real interface THIS FUNCTION's own
+ *     post-bind verification handshake dials (decision 13's "verify
+ *     against the binding's own real address, never a DNS name"); it
+ *     does NOT scope which IP the SNI binding itself applies to. There
+ *     is no netsh syntax this module uses that restricts a hostnameport
+ *     binding to one IP.
+ *   - Precedence gotcha (see checkSniPrecedenceConflict): a non-SNI
+ *     binding on the same port takes precedence over ANY SNI binding on
+ *     that port for a client connecting to that non-SNI binding's IP,
+ *     REGARDLESS of the SNI value sent. Surfaced as `precedenceWarning`
+ *     on a successful SNI deploy, never as a hard failure -- an operator
+ *     may have deliberately configured this coexistence, and this module
+ *     has no way to distinguish "deliberate" from "accidental" from here.
  *
  * certificatePem (not just a thumbprint) is required: verification is a
  * real TLS handshake compared against the certificate's sha256(DER)
@@ -575,7 +830,7 @@ async function attemptRollback({ binding, outgoingThumbprint, execFileImpl, nets
  * failure branches now share one attemptRollback helper for this reason.
  *
  * @returns {Promise<
- *   | { ok: true, outgoingThumbprint: string|null, boundThumbprint: string, verifiedAt: { host: string, port: number }, skippedMutation?: true }
+ *   | { ok: true, outgoingThumbprint: string|null, boundThumbprint: string, verifiedAt: { host: string, port: number }, skippedMutation?: true, precedenceWarning?: string }
  *   | { ok: false, code: string, detail: string, outgoingThumbprint: string|null, rolledBack: boolean, rollbackDetail?: string, rollbackVerifyDetail?: string }
  * >}
  */
@@ -612,6 +867,11 @@ async function deployIisBinding({
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
+  // Only meaningful when there is an existing binding to preserve settings
+  // from at all; queryCurrentBinding's own parameters field is `{}` for a
+  // never-bound selector, which formatPreservedParamArgs already treats as
+  // "add no preservation flags", so this default costs nothing either way.
+  const outgoingParameters = currentBindingResult.parameters || {};
   const alreadyBound = outgoingThumbprint === newThumbprint;
 
   if (!alreadyBound) {
@@ -619,6 +879,7 @@ async function deployIisBinding({
       binding,
       thumbprint: newThumbprint,
       store: binding.store,
+      preserveParameters: outgoingParameters,
       execFileImpl,
       netshPath,
       timeoutMs,
@@ -631,7 +892,14 @@ async function deployIisBinding({
       const rollback =
         outgoingThumbprint === null
           ? { rolledBack: false }
-          : await attemptRollback({ binding, outgoingThumbprint, execFileImpl, netshPath, timeoutMs });
+          : await attemptRollback({
+              binding,
+              outgoingThumbprint,
+              preserveParameters: outgoingParameters,
+              execFileImpl,
+              netshPath,
+              timeoutMs,
+            });
       return guardReturnValue({
         ok: false,
         code: "BIND_FAILED",
@@ -653,12 +921,16 @@ async function deployIisBinding({
   });
 
   if (verifyResult.verified) {
+    const precedenceWarning = binding.sniHost
+      ? await checkSniPrecedenceConflict({ binding, execFileImpl, netshPath, timeoutMs })
+      : undefined;
     return guardReturnValue({
       ok: true,
       outgoingThumbprint,
       boundThumbprint: newThumbprint,
       verifiedAt: { host, port: binding.port },
       ...(alreadyBound ? { skippedMutation: true } : {}),
+      ...(precedenceWarning !== undefined ? { precedenceWarning } : {}),
     });
   }
 
@@ -680,7 +952,14 @@ async function deployIisBinding({
     });
   }
 
-  const rollback = await attemptRollback({ binding, outgoingThumbprint, execFileImpl, netshPath, timeoutMs });
+  const rollback = await attemptRollback({
+    binding,
+    outgoingThumbprint,
+    preserveParameters: outgoingParameters,
+    execFileImpl,
+    netshPath,
+    timeoutMs,
+  });
   return guardReturnValue({
     ok: false,
     code: "VERIFY_FAILED",
@@ -709,6 +988,9 @@ module.exports = {
   formatIpPort,
   formatBindingSelector,
   generateAppId,
+  parseSslcertParameters,
+  formatPreservedParamArgs,
+  checkSniPrecedenceConflict,
   queryCurrentBinding,
   bindCertificate,
   deployIisBinding,
