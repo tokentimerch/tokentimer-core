@@ -1201,6 +1201,35 @@ Windows:
   self-signed-certificate generator is correctly recorded `preexisting` and
   never auto-deleted, whether for missing any of the three signals or for a
   mismatched thumbprint. See ADR-0012 decision 18.
+- **The mandatory delete-then-add IIS rebind (decision 13) preserves the
+  outgoing binding's other settings instead of silently resetting them to
+  `netsh`'s defaults.** `netsh http add sslcert` only ever applies the flags
+  a given call explicitly passes it, and a rebind must delete the existing
+  binding before re-adding it (`add` refuses to overwrite one in place), so
+  every renewal previously reset any operator-configured
+  revocation-checking, CTL-issuer-restriction, DS-mapper, and
+  client-certificate-negotiation setting back to default. The agent now
+  reads the outgoing binding's settings back via `netsh http show sslcert`
+  before deleting it and reapplies every one it can positively parse on the
+  new binding, including the newer Windows Server 2019+ per-connection
+  policy flags (`reject`, `disablehttp2`, `disablequic`, `disablelegacytls`,
+  `disabletls12`, `disabletls13`, `disableocspstapling`,
+  `enabletokenbinding`, `logextendedevents`, `enablesessionticket`,
+  `disablesessionid`). A setting `netsh` reports as its own "Not Set"
+  tri-state default is never forced either way, matching pre-fix behavior
+  for that one field.
+- **A non-SNI binding on the same port always takes precedence over an SNI
+  binding, and a deploy to an SNI binding now warns when one exists.** This
+  is `http.sys`'s own dispatch rule, not something either binding's
+  configuration can override: a client connecting to an address with its
+  own `ipport=` binding gets that certificate regardless of the SNI
+  hostname it sent. After a successful SNI (`hostnameport=`) deploy, the
+  agent checks for a shadowing `ipport=` binding on the same port -- the
+  IPv4 wildcard (`0.0.0.0`), the IPv6 wildcard (`[::]`), and any other
+  concrete IP -- and surfaces a non-fatal `precedenceWarning` in the
+  deploy-succeeded evidence when one is found, rather than staying silent
+  about a real, non-obvious gotcha. This is detection only: the agent
+  cannot change `http.sys`'s own precedence rule, only warn about it.
 
 ## 9. Troubleshooting
 
