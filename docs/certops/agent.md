@@ -1172,17 +1172,35 @@ Windows:
   (`certutil -delkey`) only a container still enrolled to no certificate,
   leaving alone (and marking reconciled, so it is not re-checked forever)
   any container a later attempt or an operator has since legitimately
-  enrolled. See ADR-0012 decision 9.
+  enrolled. For a non-default target store (e.g. `WebHosting`), this check
+  queries **both** the default `My` store and the recorded target store,
+  never the target store alone: `certreq -accept` itself always lands in
+  `My` first, with the mirror into a non-default store happening as a
+  separate, later step (see the store-targeting bullet above), so a crash
+  between those two steps leaves a live certificate in `My` that a
+  target-store-only check would miss, incorrectly freeing a key still in
+  use. A store-query failure fails closed (deferred, never deleted). See
+  ADR-0012 decision 9.
 - **Superseded-certificate retention now requires a persisted issuance
-  record, not just a container-naming match, before treating a
-  predecessor's CNG key container as this agent's own to delete.** A name
-  matching the agent's own container-naming convention is necessary but not
-  sufficient; a durable record written at the moment the agent itself
-  created that exact container (carrying the originating job and
-  certificate id) must also exist, so a human operator's own `certreq`
-  enrollment or a tool like IIS's self-signed-certificate generator is
-  correctly recorded `preexisting` and never auto-deleted merely for
-  matching the naming convention by coincidence. See ADR-0012 decision 18.
+  record proving the *specific certificate* was installed by this agent,
+  not just a container-naming match or a bare record of container
+  creation, before treating a predecessor's CNG key container as this
+  agent's own to delete.** A name matching the agent's own container-naming
+  convention is necessary but not sufficient; a durable record written at
+  the moment the agent itself created that exact container (carrying the
+  originating job and certificate id) must also exist; and that record
+  must further have been upgraded, immediately after a successful
+  `certreq -accept`, to carry the actual accepted certificate's thumbprint,
+  which must match the predecessor certificate being evaluated. This third
+  requirement closes a gap where an operator (or an unrelated later
+  attempt) enrolling a different certificate into an agent-created
+  container -- one the crash-reconciliation sweep above found already
+  enrolled and correctly left alone -- could otherwise inherit
+  `tokentimer_installed` provenance for that unrelated certificate. A human
+  operator's own `certreq` enrollment or a tool like IIS's
+  self-signed-certificate generator is correctly recorded `preexisting` and
+  never auto-deleted, whether for missing any of the three signals or for a
+  mismatched thumbprint. See ADR-0012 decision 18.
 
 ## 9. Troubleshooting
 

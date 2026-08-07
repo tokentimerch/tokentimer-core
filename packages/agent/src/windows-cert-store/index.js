@@ -174,11 +174,25 @@ function recordIssuedContainer({ stateDir, containerName, jobId, certificateId, 
   }
   const dir = issuedContainerRecordDir(stateDir);
   fs.mkdirSync(dir, { recursive: true });
+  // `status: "generated"` at this point means only "this agent created the
+  // CNG key container", NOT "this agent's certificate is what is enrolled
+  // to it" -- markIssuedContainerAccepted below is what upgrades a record
+  // to "enrolled_by_agent" once certreq -accept has actually succeeded, and
+  // recordSupersededWindowsCertificate's ownership-provenance gate requires
+  // that upgraded status (plus a matching acceptedThumbprint), not merely
+  // this record's existence, before ever treating a predecessor certificate
+  // as this agent's own to delete. See this file's module doc comment and
+  // ADR-0012 decision 18 for the two-signal (naming + persisted record)
+  // rationale this strengthens.
   const record = {
     containerName,
     jobId: isNonEmptyString(jobId) ? jobId : null,
     certificateId: isNonEmptyString(certificateId) ? certificateId : null,
     issuedAt: now().toISOString(),
+    status: "generated",
+    acceptedThumbprint: null,
+    acceptedStore: null,
+    acceptedAt: null,
   };
   const filePath = issuedContainerRecordPath(stateDir, containerName);
   const tmp = `${filePath}.${process.pid}.tmp`;
@@ -187,12 +201,101 @@ function recordIssuedContainer({ stateDir, containerName, jobId, certificateId, 
 }
 
 /**
- * Whether a durable recordIssuedContainer record exists for `containerName`
- * -- the second, independent piece of evidence
- * recordSupersededWindowsCertificate requires alongside
- * isAgentOwnedContainerName's naming check before treating a predecessor
- * certificate's key container as this agent's own (see
- * ISSUED_CONTAINER_RECORD_DIR_NAME's doc comment).
+ * Upgrades a recordIssuedContainer record to `status: "enrolled_by_agent"`
+ * once `certreq -accept` (see acceptCertificateViaCng) has actually
+ * succeeded for this exact container, binding the certificate's own
+ * thumbprint into the durable record -- the missing link a PR review found
+ * (2026-08-07): without it, recordSupersededWindowsCertificate could only
+ * prove "this agent created this key container", never "this agent's
+ * certificate is what is currently enrolled to it", so an operator who
+ * later enrolled a DIFFERENT certificate into an agent-created container
+ * (e.g. after reconcileOrphanedWindowsCngContainers left it alone because
+ * it found something enrolled) could have that certificate inherit
+ * `tokentimer_installed` provenance and become eligible for automatic
+ * retention cleanup.
+ *
+ * Best-effort by design (mirrors recordIssuedContainer): a caller must
+ * treat a thrown/failed call here as non-fatal to an otherwise-succeeded
+ * CNG acceptance, since the failure mode of NOT upgrading the record is
+ * merely "this predecessor will be conservatively treated as `preexisting`
+ * (not deletable) by a later retention decision", never data loss or an
+ * unsafe deletion -- the fail-closed direction ADR-0012 decision 18
+ * requires.
+ *
+ * No-op (returns false) if no `recordIssuedContainer` record exists yet
+ * for this containerName (e.g. the original best-effort write failed, or
+ * this container was never tracked): there is nothing to upgrade, and this
+ * function never creates a fresh record from scratch, since doing so would
+ * fabricate an `issuedAt`/`jobId` provenance this call site does not
+ * actually have.
+ *
+ * @param {object} input
+ * @param {string} input.stateDir
+ * @param {string} input.containerName
+ * @param {string} input.acceptedThumbprint the SHA-1 thumbprint
+ *   `acceptCertificateViaCng` reported for the certificate just accepted
+ *   into this container (any case; normalized to uppercase on write).
+ * @param {string} [input.store] the store the certificate now lives in
+ *   (post-mirror for a non-default store; `CERTREQ_ACCEPT_DEFAULT_STORE`
+ *   otherwise).
+ * @param {() => Date} [input.now]
+ * @returns {boolean} true if a record existed and was upgraded.
+ */
+function markIssuedContainerAccepted({ stateDir, containerName, acceptedThumbprint, store, now = () => new Date() }) {
+  if (!isNonEmptyString(stateDir) || !isNonEmptyString(containerName)) return false;
+  if (!isNonEmptyString(acceptedThumbprint)) return false;
+  const filePath = issuedContainerRecordPath(stateDir, containerName);
+  let existing;
+  try {
+    existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return false;
+  }
+  const record = {
+    ...existing,
+    containerName,
+    status: "enrolled_by_agent",
+    acceptedThumbprint: acceptedThumbprint.toUpperCase(),
+    acceptedStore: isNonEmptyString(store) ? store : existing.acceptedStore ?? null,
+    acceptedAt: now().toISOString(),
+  };
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, filePath);
+  return true;
+}
+
+/**
+ * Reads back a recordIssuedContainer/markIssuedContainerAccepted record in
+ * full (not just its existence, unlike hasIssuedContainerRecord below), so
+ * a caller can inspect `status`/`acceptedThumbprint` -- the fields
+ * recordSupersededWindowsCertificate's ownership-provenance gate now
+ * requires.
+ * @param {object} input
+ * @param {string} input.stateDir
+ * @param {string} input.containerName
+ * @returns {null | { containerName: string, jobId: string|null, certificateId: string|null, issuedAt: string, status: "generated"|"enrolled_by_agent", acceptedThumbprint: string|null, acceptedStore: string|null, acceptedAt: string|null }}
+ */
+function readIssuedContainerRecord({ stateDir, containerName }) {
+  if (!isNonEmptyString(stateDir) || !isNonEmptyString(containerName)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(issuedContainerRecordPath(stateDir, containerName), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a durable recordIssuedContainer record exists for `containerName`,
+ * in ANY status ("generated" or "enrolled_by_agent"). Existence alone only
+ * proves "this agent created this key container", NOT "this agent's
+ * certificate is currently enrolled to it" -- callers deciding whether a
+ * predecessor certificate is safe to delete must use
+ * readIssuedContainerRecord and check `status === "enrolled_by_agent"` plus
+ * a matching `acceptedThumbprint` instead (see
+ * recordSupersededWindowsCertificate). This existence-only check remains
+ * useful for callers that only care "is there a record to clean up at all"
+ * (e.g. removeIssuedContainerRecord's own call sites).
  * @param {object} input
  * @param {string} input.stateDir
  * @param {string} input.containerName
@@ -1147,6 +1250,8 @@ module.exports = {
   issuedContainerRecordDir,
   issuedContainerRecordPath,
   recordIssuedContainer,
+  markIssuedContainerAccepted,
+  readIssuedContainerRecord,
   hasIssuedContainerRecord,
   removeIssuedContainerRecord,
   buildCertreqInf,

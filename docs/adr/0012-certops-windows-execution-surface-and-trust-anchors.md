@@ -1114,15 +1114,25 @@ applies here instead of a temp-file path: the container name (and target
 store) is journaled immediately after `certreq -new` succeeds, and a startup
 reconciliation sweep scans unresolved journal entries, queries the machine
 store for each recorded container, and frees (`certutil -delkey`) only a
-container proven to be enrolled to *no* certificate in its recorded store; a
-container a later attempt (or an operator) has since legitimately enrolled to
-is left untouched and marked reconciled so the sweep does not repeat the same
-query forever. This never resolves the underlying job attempt's own outcome
-with the control plane, which stays exactly the operator-reconciliation
-responsibility the existing side-effect journal already establishes; freeing
-an orphaned container is strictly narrower than that, and only ever removes
-dead-weight state with no certificate, no binding, and no rollback value to
-protect.
+container proven to be enrolled to *no* certificate in *either* the default
+`My` store or the job's recorded target store; a container a later attempt
+(or an operator) has since legitimately enrolled to is left untouched and
+marked reconciled so the sweep does not repeat the same query forever.
+Checking both stores (not just the recorded target store) closes a real
+crash window a PR review found (2026-08-07): `certreq -accept` itself only
+ever lands in `My`, with a *separate, later* mirroring step moving the
+certificate into a non-default target store (see the store-targeting
+paragraph below); a crash between those two steps leaves a certificate
+genuinely using the key sitting only in `My`, and a reconciler that queried
+only the target store would incorrectly conclude "orphan" and delete a key a
+real, enrolled certificate depended on. A store-query failure on either store
+now fails closed (the entry is deferred to the next startup, never treated
+as "not enrolled there"). This never resolves the underlying job attempt's
+own outcome with the control plane, which stays exactly the operator-
+reconciliation responsibility the existing side-effect journal already
+establishes; freeing an orphaned container is strictly narrower than that,
+and only ever removes dead-weight state with no certificate, no binding, and
+no rollback value to protect.
 
 **Store targeting beyond the default `My` store.** `certreq -accept` itself has
 no switch or INF directive that targets a store other than `My` for a
@@ -1695,29 +1705,42 @@ key material" outcome this decision exists to close.
   time this agent installed it (decision 9's install-time ownership
   recording; an agent must never delete material it did not install, per
   the ownership-aware retention rule this decision establishes). Ownership
-  requires **both** of the following, not either alone: the key container's
-  *name* matches this agent's own naming convention, **and** a durable,
+  requires **all three** of the following, not any one or two alone: the key
+  container's *name* matches this agent's own naming convention; a durable,
   independently-persisted issuance record (written the moment `certreq -new`
   creates the container, keyed on the container name, carrying the
   originating job id and certificate id) exists for that exact container
-  name. Naming convention alone was previously treated as sufficient, and
-  briefly recorded `tokentimer_installed` for any container merely matching
-  the convention; but a name is not proof of provenance on its own; a
-  container an operator (or another tool) happened to create with a
-  colliding or forged name would pass a naming check with no actual agent
-  involvement. Requiring the persisted issuance record as well closes that
-  gap: a human operator's own `certreq` enrollment, or a tool like IIS's
-  self-signed-certificate generator, also leaves a real, non-exportable CNG
-  key container behind, and neither ever gets an issuance record from this
-  agent, so both are now correctly recorded `preexisting` regardless of what
-  their container happens to be named. A predecessor whose key container
-  this agent did not itself create, or for which the issuance record has
-  since been lost, is recorded `preexisting` and stays permanently
-  ineligible for cleanup, matching material with no key container at all
-  (an operator-imported PFX). The issuance record itself is removed once its
-  container is actually deleted (by this decision's own sweep, or by the
-  orphaned-container startup reconciliation decision 9 describes), so the
-  record store does not accumulate one file per container forever.
+  name; and that record has been upgraded, right after a successful `certreq
+  -accept`, to record the *actual accepted certificate thumbprint*, which
+  must match the predecessor certificate this sweep is now evaluating.
+  Naming convention alone was previously treated as sufficient, and briefly
+  recorded `tokentimer_installed` for any container merely matching the
+  convention; but a name is not proof of provenance on its own; a container
+  an operator (or another tool) happened to create with a colliding or
+  forged name would pass a naming check with no actual agent involvement.
+  Requiring the persisted issuance record closed that gap, but a PR review
+  found (2026-08-07) that record existence alone still only proves "this
+  agent created the key container", not "this agent's own certificate is
+  what is currently enrolled to it": an operator (or an unrelated later
+  attempt) who later enrolled a *different* certificate into an
+  agent-created container -- for instance, one the crash-reconciliation
+  sweep found already enrolled and therefore correctly left alone -- could
+  otherwise inherit `tokentimer_installed` provenance for that unrelated
+  certificate. Requiring the accepted-thumbprint match closes that
+  remaining gap: a human operator's own `certreq` enrollment, or a tool like
+  IIS's self-signed-certificate generator, also leaves a real, non-exportable
+  CNG key container behind, and neither ever gets an issuance record (let
+  alone a matching accepted thumbprint) from this agent, so both are
+  correctly recorded `preexisting` regardless of what their container
+  happens to be named. A predecessor whose key container this agent did not
+  itself create, whose issuance record has since been lost, or whose
+  recorded accepted thumbprint does not match, is recorded `preexisting` and
+  stays permanently ineligible for cleanup, matching material with no key
+  container at all (an operator-imported PFX). The issuance record itself is
+  removed once its container is actually deleted (by this decision's own
+  sweep, or by the orphaned-container startup reconciliation decision 9
+  describes), so the record store does not accumulate one file per
+  container forever.
 - No IIS or `http.sys` binding, on this host, still references the old
   thumbprint.
 - No active job or rollback journal entry (the same journal decision 9

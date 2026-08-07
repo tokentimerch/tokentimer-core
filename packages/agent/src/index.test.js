@@ -58,7 +58,7 @@ const {
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { readLedgerRow, createLedgerRow } = require("./windows-retention");
-const { recordIssuedContainer } = require("./windows-cert-store");
+const { recordIssuedContainer, markIssuedContainerAccepted } = require("./windows-cert-store");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -3789,18 +3789,27 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
   it("records a retention-ledger row for the certificate the binding previously pointed at", async () => {
     const job = makeJob();
-    // Ownership now requires BOTH the naming convention AND a durable
-    // issuance record (see recordSupersededWindowsCertificate's doc
-    // comment): this test's "tokentimer-old-1" container is a fixture
-    // standing in for a certificate THIS agent previously issued, so it
-    // must also have an issuance record for that provenance to resolve to
+    // Ownership now requires the naming convention, a durable issuance
+    // record, AND that record being upgraded to "enrolled_by_agent" with
+    // an acceptedThumbprint matching the predecessor certificate's own
+    // thumbprint (see recordSupersededWindowsCertificate's doc comment):
+    // this test's "tokentimer-old-1" container is a fixture standing in
+    // for a certificate THIS agent previously issued AND accepted, so it
+    // must carry both pieces of provenance for ownership to resolve to
     // "tokentimer_installed", exactly as a real prior renewal would have
-    // written via generateCsrViaCng's own call site.
+    // written via generateCsrViaCng + acceptCertificateViaCng's own call
+    // sites.
     recordIssuedContainer({
       stateDir: stateDir(),
       containerName: "tokentimer-old-1",
       jobId: "prior-job",
       certificateId: job.certificateId,
+    });
+    markIssuedContainerAccepted({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      acceptedThumbprint: OTHER_THUMBPRINT,
+      store: "My",
     });
     const { outcome } = await runIisRenew({
       job,
@@ -3823,6 +3832,67 @@ describe("windows-iis renew job (os-store-managed)", () => {
     // convention alone is no longer sufficient to authorize automated
     // deletion after the ownership-provenance hardening.
     const job = makeJob();
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "tokentimer-old-1" },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    const row = readLedgerRow(ledgerDir, OTHER_THUMBPRINT);
+    assert.notEqual(row, null);
+    assert.equal(row.ownershipProvenance, "preexisting");
+  });
+
+  it("records ownershipProvenance preexisting for an issuance record that was never upgraded to enrolled_by_agent (container created but certreq -accept's outcome never confirmed)", async () => {
+    // Same container name again, WITH a recordIssuedContainer record but
+    // WITHOUT the markIssuedContainerAccepted upgrade: proves a bare
+    // "this agent created the container" record is no longer sufficient
+    // on its own, closing the gap a PR review found (2026-08-07) where an
+    // operator-enrolled certificate in an agent-created container could
+    // otherwise inherit tokentimer_installed provenance.
+    const job = makeJob();
+    recordIssuedContainer({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      jobId: "prior-job",
+      certificateId: job.certificateId,
+    });
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "tokentimer-old-1" },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const ledgerDir = path.join(stateDir(), "windows-retention");
+    const row = readLedgerRow(ledgerDir, OTHER_THUMBPRINT);
+    assert.notEqual(row, null);
+    assert.equal(row.ownershipProvenance, "preexisting");
+  });
+
+  it("records ownershipProvenance preexisting when the accepted thumbprint on record does not match the predecessor certificate (operator later enrolled a different certificate into an agent-created container)", async () => {
+    // The agent created and accepted a DIFFERENT certificate into this
+    // container at some point (acceptedThumbprint recorded), but the
+    // predecessor certificate this sweep is now looking at carries
+    // OTHER_THUMBPRINT -- a mismatch that must NOT resolve to
+    // tokentimer_installed, since it is exactly the scenario the PR
+    // review flagged: an operator (or a later, unrelated attempt) can
+    // enroll a different certificate into an agent-owned container name
+    // without this agent's own acceptCertificateViaCng having produced
+    // that specific certificate.
+    const job = makeJob();
+    recordIssuedContainer({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      jobId: "prior-job",
+      certificateId: job.certificateId,
+    });
+    markIssuedContainerAccepted({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      acceptedThumbprint: "BB".repeat(20),
+      store: "My",
+    });
     const { outcome } = await runIisRenew({
       job,
       windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "tokentimer-old-1" },
@@ -4325,13 +4395,21 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
    * @param {string|null} [opts.enrolledContainer] a container name certutil
    *   -store should report as currently enrolled to a real certificate, if
    *   any (simulates "a later attempt legitimately used this container").
+   *   Enrolled in EVERY queried store unless `enrolledInStore` narrows it.
+   * @param {string|null} [opts.enrolledInStore] restricts `enrolledContainer`
+   *   to only appear enrolled when that exact store is queried (simulates
+   *   a crash after certreq -accept succeeded into "My" but before the
+   *   later mirror step into a non-default target store completed).
    * @param {boolean} [opts.delkeyFails] simulate certutil -delkey ok:false.
    */
-  function makeReconcileExecStub({ enrolledContainer = null, delkeyFails = false } = {}) {
+  function makeReconcileExecStub({ enrolledContainer = null, enrolledInStore = null, delkeyFails = false } = {}) {
     return function execFileStub(file, args, options, callback) {
       if (file === "certutil.exe" && args[0] === "-store") {
+        const queriedStore = args[1];
+        const showEnrolled =
+          enrolledContainer && (enrolledInStore === null || enrolledInStore === queriedStore);
         let stdout = `My "Personal"\n`;
-        if (enrolledContainer) {
+        if (showEnrolled) {
           stdout +=
             `================ Certificate 0 ================\nSerial Number: 1\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=enrolled.example.com\nCert Hash(sha1): ${"DD".repeat(20).match(/../g).join(" ")}\n  Key Container = ${enrolledContainer}\n`;
         }
@@ -4393,21 +4471,64 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(result.skipped[0].reason, "enrolled");
   });
 
-  it("targets the recorded store, not always My", async () => {
+  it("queries both My and the recorded target store, not just one", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-webhost1";
     seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
 
-    let queriedStore = null;
+    const queriedStores = [];
     const execFileImpl = (file, args, options, callback) => {
       if (file === "certutil.exe" && args[0] === "-store") {
-        queriedStore = args[1];
+        queriedStores.push(args[1]);
       }
       return makeReconcileExecStub()(file, args, options, callback);
     };
 
-    await reconcileOrphanedWindowsCngContainers({ stateDir: workDir, execFileImpl });
-    assert.equal(queriedStore, "WebHosting");
+    const result = await reconcileOrphanedWindowsCngContainers({ stateDir: workDir, execFileImpl });
+    assert.deepEqual(new Set(queriedStores), new Set(["My", "WebHosting"]));
+    // Never enrolled in either store: genuinely orphaned, safe to free.
+    assert.deepEqual(result.freed, [containerName]);
+  });
+
+  it("CRITICAL: never deletes a container whose certificate landed in My but the target-store mirror step never ran (crash between certreq -accept and the addstore/repairstore/delstore mirror)", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-webhost2";
+    // Simulates the real crash window: the job's recorded target store is
+    // "WebHosting" (recordWindowsCngContainer wrote this at keygen time,
+    // before certreq -accept ever ran), but certreq -accept always lands
+    // in "My" first, and a crash before the later mirror step means the
+    // certificate -- and its live key reference -- exists ONLY in "My".
+    seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub({ enrolledContainer: containerName, enrolledInStore: "My" }),
+    });
+
+    // Must NOT delete: a real, enrolled certificate in "My" depends on
+    // this exact key container.
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].reason, "enrolled");
+  });
+
+  it("never frees a container when either store's lookup fails (fails closed, does not treat a query error as absence)", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-webhost3";
+    seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
+
+    const execFileImpl = (file, args, options, callback) => {
+      if (file === "certutil.exe" && args[0] === "-store" && args[1] === "WebHosting") {
+        process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "access denied"));
+        return;
+      }
+      return makeReconcileExecStub()(file, args, options, callback);
+    };
+
+    const result = await reconcileOrphanedWindowsCngContainers({ stateDir: workDir, execFileImpl });
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /query failed/);
   });
 
   it("defers (does not free, does not throw) when delkey fails", async () => {

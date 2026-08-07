@@ -159,7 +159,8 @@ const {
   isAgentOwnedContainerName,
   buildContainerName,
   recordIssuedContainer,
-  hasIssuedContainerRecord,
+  markIssuedContainerAccepted,
+  readIssuedContainerRecord,
   removeIssuedContainerRecord,
 } = require("./windows-cert-store");
 const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
@@ -2941,6 +2942,30 @@ async function runWindowsIisDeployTail({
       };
     }
     emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
+    // Ownership-provenance upgrade (PR review, 2026-08-07): binds this
+    // record to the ACTUAL accepted certificate's thumbprint, not merely
+    // "this agent created the container" -- see windows-cert-store's
+    // markIssuedContainerAccepted doc comment and ADR-0012 decision 18.
+    // Best-effort/non-fatal for the same reason recordIssuedContainer's
+    // own initial write is: a failure here only makes a future retention
+    // decision for this container more conservative (treats it as
+    // `preexisting` instead of `tokentimer_installed`), never unsafe.
+    if (isNonEmptyStringValue(containerName)) {
+      try {
+        markIssuedContainerAccepted({
+          stateDir,
+          containerName,
+          acceptedThumbprint: acceptResult.thumbprint,
+          store: target.store,
+        });
+      } catch (err) {
+        emitLog(
+          log,
+          `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+            `acceptance provenance (non-fatal, continuing): ${err.message}`,
+        );
+      }
+    }
 
     // job-payload.schema.json's windowsIisBinding carries only
     // {site, port, sniHost} -- no explicit address -- so every windows-iis
@@ -3094,31 +3119,44 @@ async function runWindowsIisDeployTail({
  * from the job, since the predecessor's own container/validity are facts
  * about ITS certificate object, not this job's.
  *
- * Ownership is decided by TWO independent signals, both required, not
+ * Ownership is decided by THREE independent signals, ALL required, not
  * merely container PRESENCE: any non-exportable CNG certificate (one an
  * operator or a different tool enrolled directly on this host, not just
  * one this agent installed) also reports a "Key Container =" line in
  * certutil's output, so presence alone is not evidence this agent may
- * delete it, and a container name matching this agent's own naming
- * convention alone is a closed-alphabet pattern match, not proof this
- * agent process actually created that exact container. The two signals:
+ * delete it; a container name matching this agent's own naming convention
+ * alone is a closed-alphabet pattern match, not proof this agent process
+ * actually created that exact container; and even a genuine
+ * recordIssuedContainer record only proves this agent created the
+ * CONTAINER, not that this agent's certificate is what is CURRENTLY
+ * enrolled to it (a PR review found, 2026-08-07, that an operator who
+ * later enrolled a different certificate into an agent-created container
+ * -- e.g. one reconcileOrphanedWindowsCngContainers found "enrolled" and
+ * therefore left alone -- could otherwise inherit tokentimer_installed
+ * provenance for that unrelated certificate). The three signals:
  *   1. isAgentOwnedContainerName -- the container name matches this
  *      agent's own buildContainerName convention.
- *   2. hasIssuedContainerRecord -- a durable, persisted record exists
- *      (written by generateCsrViaCng's own call site, ../windows-cert-
- *      store's recordIssuedContainer) proving THIS agent's own process
- *      actually issued that exact container, independent of its name.
- * Both must hold for ownershipProvenance to be "tokentimer_installed";
- * either one missing keeps the certificate "preexisting" (permanently
+ *   2. A recordIssuedContainer record exists for that exact container,
+ *      proving THIS agent's own process actually issued it, independent
+ *      of its name.
+ *   3. That record's status has been upgraded to "enrolled_by_agent" (by
+ *      ../windows-cert-store's markIssuedContainerAccepted, called right
+ *      after a successful certreq -accept) AND its acceptedThumbprint
+ *      matches the predecessor certificate's OWN thumbprint -- proving
+ *      this agent's ACME-issued certificate, specifically, is what is
+ *      currently enrolled to that container, not merely that the
+ *      container itself has agent provenance.
+ * All three must hold for ownershipProvenance to be "tokentimer_installed";
+ * any one missing keeps the certificate "preexisting" (permanently
  * ineligible for automated cleanup per ../windows-retention's
  * evaluateEligibility), matching decision 18's "never delete material
- * this agent cannot prove it installed" -- now with two independent
- * proofs instead of one.
+ * this agent cannot prove it installed" -- now with a signal tied to the
+ * actual certificate, not only its container.
  *
  * A predecessor whose store entry cannot be found (already removed by a
  * prior sweep), one with no key container at all (e.g. an operator-
- * imported PFX cert), or one whose key container does not satisfy BOTH
- * ownership signals above, is recorded with ownershipProvenance
+ * imported PFX cert), or one whose key container does not satisfy ALL
+ * THREE ownership signals above, is recorded with ownershipProvenance
  * "preexisting" and a placeholder container id, which
  * ../windows-retention's evaluateEligibility's ownership check then keeps
  * permanently ineligible for automated cleanup -- never deleting material
@@ -3159,11 +3197,19 @@ async function recordSupersededWindowsCertificate({
       ? storeResult.certificates.find((cert) => cert.thumbprint === normalizedOld)
       : null;
 
+  const issuedRecord =
+    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
+      ? readIssuedContainerRecord({ stateDir, containerName: predecessor.keyContainer })
+      : null;
+
   const provenConfidently =
     predecessor !== null &&
     predecessor !== undefined &&
     isAgentOwnedContainerName(predecessor.keyContainer) &&
-    hasIssuedContainerRecord({ stateDir, containerName: predecessor.keyContainer });
+    issuedRecord !== null &&
+    issuedRecord.status === "enrolled_by_agent" &&
+    isNonEmptyStringValue(issuedRecord.acceptedThumbprint) &&
+    issuedRecord.acceptedThumbprint.toUpperCase() === normalizedOld;
 
   const ownershipProvenance = provenConfidently ? "tokentimer_installed" : "preexisting";
   const cngKeyContainerId = provenConfidently
@@ -3418,8 +3464,9 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  * certificate (../windows-retention's ledger, which governs material that
  * WAS successfully enrolled and bound at least once), a container journaled
  * here by recordWindowsCngContainer but never enrolled to ANY certificate in
- * its recorded store is inert, unbound, and safe to free autonomously --
- * there is no certificate, no binding, no rollback value it protects.
+ * EITHER the default `My` store or its recorded target store (see below for
+ * why both) is inert, unbound, and safe to free autonomously -- there is no
+ * certificate, no binding, no rollback value it protects.
  *
  * This is the autonomous half of crash recovery job-journal's own doc
  * comment describes: scanUnresolvedJournalEntries (called separately, at
@@ -3434,6 +3481,30 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  * used by a different, later attempt this sweep has no visibility into, in
  * which case the store lookup below simply finds it non-orphaned and skips
  * it every time, indefinitely).
+ *
+ * Checks BOTH the default `My` store AND the job's recorded target store
+ * (which may be the same store, e.g. the common `My`-only case) before
+ * concluding a container is orphaned -- a PR review found (2026-08-07)
+ * that checking only the target store is unsafe for a non-default-store
+ * job: recordWindowsCngContainer's `store` field is the job's FINAL target
+ * (e.g. "WebHosting"), written at keygen time, well before certreq -accept
+ * ever runs; but `certreq -accept` itself only ever populates the default
+ * `My` store (see acceptCertificateViaCng's own doc comment), with a
+ * SEPARATE, LATER mirroring step (`certutil -addstore`/`-repairstore`/
+ * `-delstore`) moving the certificate into the target store afterward. A
+ * hard crash between those two steps leaves a certificate genuinely using
+ * this key container sitting only in `My`; querying only "WebHosting"
+ * would find nothing there and incorrectly conclude "orphan", deleting a
+ * private key a real, enrolled certificate depends on. Querying both
+ * stores (deduplicated when they are the same) closes that window: the
+ * container is treated as orphaned -- and only then freed -- if and only
+ * if NEITHER store reports a certificate referencing it.
+ *
+ * Fails closed on a store-query error: if either store's lookup cannot be
+ * completed, this entry is skipped (deferred to the next startup) rather
+ * than treated as "not enrolled there", since a query failure is not
+ * evidence of absence and this function must never delete a key it could
+ * not positively rule out as still in use.
  *
  * Every entry this function inspects and every cleanup attempt it makes is
  * independently logged; a failure to free one container defers it to the
@@ -3467,35 +3538,64 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     if (!isNonEmptyStringValue(containerName)) continue;
     if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
 
-    const store = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+    // Deduplicated: the common case (store: "My", or no store recorded at
+    // all) checks the same store only once.
+    const storesToCheck = [...new Set(["My", targetStore])];
 
-    let storeLock;
-    try {
-      storeLock = acquireStoreLock(stateDir, store);
-    } catch (err) {
-      // A concurrent enrollment/binding operation legitimately holds this
-      // store's mutex right now; retry on a future startup rather than
-      // waiting here, since this sweep must never block agent startup.
-      skipped.push({ containerName, reason: `store locked: ${err.message}` });
+    const acquiredLocks = [];
+    let lockFailure = null;
+    for (const storeName of storesToCheck) {
+      try {
+        acquiredLocks.push(acquireStoreLock(stateDir, storeName));
+      } catch (err) {
+        lockFailure = err;
+        break;
+      }
+    }
+    if (lockFailure) {
+      for (const lock of acquiredLocks) lock.release();
+      // A concurrent enrollment/binding operation legitimately holds one
+      // of these stores' mutexes right now; retry on a future startup
+      // rather than waiting here, since this sweep must never block agent
+      // startup.
+      skipped.push({ containerName, reason: `store locked: ${lockFailure.message}` });
       continue;
     }
 
     try {
-      const storeResult = await listMachineStoreCertificates({
-        store,
-        ...(execFileImpl ? { execFileImpl } : {}),
-      });
-      if (storeResult.ok !== true) {
-        skipped.push({ containerName, reason: `store query failed: ${storeResult.stderrExcerpt}` });
+      let enrolled = false;
+      let queryFailure = null;
+      for (const storeName of storesToCheck) {
+        const storeResult = await listMachineStoreCertificates({
+          store: storeName,
+          ...(execFileImpl ? { execFileImpl } : {}),
+        });
+        if (storeResult.ok !== true) {
+          queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
+          break;
+        }
+        if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
+          enrolled = true;
+          break;
+        }
+      }
+
+      if (queryFailure) {
+        // Fail closed: a store lookup that could not be completed is NOT
+        // evidence the container is unused there, so this entry must be
+        // deferred rather than treated as safe to delete.
+        skipped.push({ containerName, reason: queryFailure });
         continue;
       }
-      const enrolled = storeResult.certificates.some(
-        (cert) => cert.keyContainer === containerName,
-      );
+
       if (enrolled) {
         // A later attempt (or an operator) legitimately enrolled a
-        // certificate to this container since the journal entry was
-        // written; never free a container backing a real certificate.
+        // certificate to this container -- either in "My" (e.g. certreq
+        // -accept succeeded but a crash interrupted the later mirror step
+        // into targetStore) or in targetStore itself -- since the journal
+        // entry was written; never free a container backing a real
+        // certificate.
         try {
           markWindowsCngContainerReconciled({
             stateDir,
@@ -3534,7 +3634,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
       removeIssuedContainerRecord({ stateDir, containerName });
       freed.push(containerName);
     } finally {
-      storeLock.release();
+      for (const lock of acquiredLocks) lock.release();
     }
   }
 
