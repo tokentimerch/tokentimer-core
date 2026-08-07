@@ -2868,7 +2868,11 @@ async function runWindowsIisDeployTail({
 
   let storeLock;
   try {
-    storeLock = acquireStoreLock(stateDir, target.store);
+    // Locks BOTH the default `My` store and `target.store` (deduplicated
+    // when they are the same) -- see acquireWindowsStoreLocks' own doc
+    // comment for why `target.store` alone is not the actual mutation
+    // scope for a non-default-store job.
+    storeLock = acquireWindowsStoreLocks(stateDir, target.store);
   } catch (err) {
     return {
       status: "failed",
@@ -3458,6 +3462,53 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
 }
 
 /**
+ * Acquires the store-scoped mutex (../windows-cert-store's acquireStoreLock)
+ * for every store a windows-iis mutation against `targetStore` actually
+ * touches, not merely `targetStore` itself: `certreq -accept` always
+ * populates the default `My` store first regardless of the requested target
+ * store, with a non-default target store (e.g. `WebHosting`) reached only
+ * by a SEPARATE mirror step afterward (`certutil -addstore`/`-repairstore`/
+ * `-delstore My`, see acceptCertificateViaCng's own doc comment). A caller
+ * that locked only `targetStore` would leave `My` itself unprotected during
+ * that window, letting an unrelated `My`-targeted job's own concurrent
+ * `certreq -accept` (or this same job's later `-delstore My`) race it --
+ * found in PR review (2026-08-08): runWindowsIisDeployTail was locking only
+ * `target.store`, while reconcileOrphanedWindowsCngContainers (below) had
+ * already been fixed to correctly lock/query both stores. Normal execution
+ * must match that same locking scope, not only the crash-reconciliation
+ * path.
+ *
+ * Deduplicated (the common `store: "My"` case acquires one lock, not two)
+ * and always acquired in the SAME deterministic order ("My" first, see the
+ * `Set` iteration order below) every call site uses, so this function and
+ * reconcileOrphanedWindowsCngContainers can never deadlock against each
+ * other by acquiring the same two locks in opposite order.
+ *
+ * @param {string} stateDir
+ * @param {string} targetStore
+ * @returns {{ release: () => void }} `release` releases every lock this
+ *   call acquired, in any order. Throws (without leaking any lock already
+ *   acquired in this call) if any store in the set cannot be locked.
+ */
+function acquireWindowsStoreLocks(stateDir, targetStore) {
+  const storeNames = [...new Set(["My", targetStore])];
+  const locks = [];
+  try {
+    for (const storeName of storeNames) {
+      locks.push(acquireStoreLock(stateDir, storeName));
+    }
+  } catch (err) {
+    for (const lock of locks) lock.release();
+    throw err;
+  }
+  return {
+    release() {
+      for (const lock of locks) lock.release();
+    },
+  };
+}
+
+/**
  * Startup crash-reconciliation for CNG key containers a windows-iis renewal
  * attempt created (../windows-cert-store's generateCsrViaCng) but that
  * never reached cutover before the agent process died: unlike a superseded
@@ -3540,26 +3591,21 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
 
     const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
     // Deduplicated: the common case (store: "My", or no store recorded at
-    // all) checks the same store only once.
+    // all) checks the same store only once. Must match
+    // acquireWindowsStoreLocks' own store set exactly, since the lock
+    // acquired below and the certificate query further down must agree on
+    // which stores are in scope.
     const storesToCheck = [...new Set(["My", targetStore])];
 
-    const acquiredLocks = [];
-    let lockFailure = null;
-    for (const storeName of storesToCheck) {
-      try {
-        acquiredLocks.push(acquireStoreLock(stateDir, storeName));
-      } catch (err) {
-        lockFailure = err;
-        break;
-      }
-    }
-    if (lockFailure) {
-      for (const lock of acquiredLocks) lock.release();
+    let storeLocks;
+    try {
+      storeLocks = acquireWindowsStoreLocks(stateDir, targetStore);
+    } catch (err) {
       // A concurrent enrollment/binding operation legitimately holds one
       // of these stores' mutexes right now; retry on a future startup
       // rather than waiting here, since this sweep must never block agent
       // startup.
-      skipped.push({ containerName, reason: `store locked: ${lockFailure.message}` });
+      skipped.push({ containerName, reason: `store locked: ${err.message}` });
       continue;
     }
 
@@ -3634,7 +3680,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
       removeIssuedContainerRecord({ stateDir, containerName });
       freed.push(containerName);
     } finally {
-      for (const lock of acquiredLocks) lock.release();
+      storeLocks.release();
     }
   }
 
@@ -5954,6 +6000,7 @@ module.exports = {
   runDiscoveryScan,
   runWindowsRetentionSweep,
   reconcileOrphanedWindowsCngContainers,
+  acquireWindowsStoreLocks,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,

@@ -350,7 +350,58 @@ describe("parseSslcertParameters", () => {
     );
     assert.deepEqual(parsed, {});
   });
+
+  it("reads 'Disable Legacy TLS Versions: Set' as true, not omitted (Microsoft's documented vocabulary for this field is Set/Not Set, not Enabled/Disabled/Not Set)", () => {
+    // Captured real `netsh http show sslcert` output shape
+    // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
+    // for Disable Legacy TLS Versions: Set/Not Set") -- a PR review found
+    // (2026-08-08) that the Enabled/Disabled/Not-Set regex every sibling
+    // per-connection flag uses never matches a bare "Set", so this field
+    // was silently dropped from the preserved-parameters set entirely.
+    const parsed = parseSslcertParameters(
+      [
+        "Certificate Store Name        : My",
+        "Reject Connections            : Disabled",
+        "Disable HTTP2                 : Not Set",
+        "Disable QUIC                  : Not Set",
+        "Disable TLS1.2                : Not Set",
+        "Disable TLS1.3                : Not Set",
+        "Disable OCSP Stapling         : Not Set",
+        "Enable Token Binding          : Not Set",
+        "Log Extended Events           : Not Set",
+        "Disable Legacy TLS Versions   : Set",
+        "Enable Session Ticket         : Not Set",
+      ].join("\r\n"),
+    );
+    assert.equal(parsed.disableLegacyTls, true);
+  });
+
+  it("reads 'Disable Legacy TLS Versions: Not Set' (the real captured default) as omitted, not false", () => {
+    // Captured real `netsh http show sslcert` output shape (every source
+    // above reports "Not Set" as this field's own default, never
+    // "Disabled").
+    const parsed = parseSslcertParameters("Disable Legacy TLS Versions  : Not Set\r\n");
+    assert.equal("disableLegacyTls" in parsed, false);
+  });
+
+  it("also accepts 'Disable Legacy TLS Versions: Enabled'/'Disabled' defensively, in case a future Windows build reports this field the same way as its siblings", () => {
+    assert.equal(parseSslcertParameters("Disable Legacy TLS Versions : Enabled\r\n").disableLegacyTls, true);
+    assert.equal("disableLegacyTls" in parseSslcertParameters("Disable Legacy TLS Versions : Disabled\r\n"), false);
+  });
 });
+
+describe("formatPreservedParamArgs -> parseSslcertParameters round-trip for Disable Legacy TLS Versions", () => {
+  it("an outgoing binding with legacy TLS disabled (netsh's 'Set' vocabulary) survives a rebind and reproduces disablelegacytls=enable", () => {
+    const outgoingStdout = [
+      "Certificate Store Name        : My",
+      "Disable Legacy TLS Versions   : Set",
+    ].join("\r\n");
+    const parsed = parseSslcertParameters(outgoingStdout);
+    const args = formatPreservedParamArgs(parsed);
+    assert.deepEqual(args, ["disablelegacytls=enable"]);
+  });
+});
+
 
 describe("formatPreservedParamArgs", () => {
   it("returns an empty array for {} (nothing to preserve, e.g. a first-ever bind)", () => {

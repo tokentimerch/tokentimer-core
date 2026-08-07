@@ -414,6 +414,15 @@ async function queryCurrentBinding({
  * "Not Set") field falls back to netsh's own default exactly as it did
  * before this fix -- strictly no worse, not a new failure mode.
  *
+ * `disableLegacyTls` specifically uses a DIFFERENT vocabulary than every
+ * other per-connection policy flag: Microsoft's own documentation reports
+ * this one field as "Set"/"Not Set", not "Enabled"/"Disabled"/"Not Set" --
+ * a PR review found (2026-08-08) that treating it the same as its siblings
+ * meant an outgoing binding with legacy TLS genuinely disabled was never
+ * recognized as such, so that restriction was silently dropped (not reset,
+ * simply never preserved) on every rebind. See readSetOrEnabledOrNotSet's
+ * own doc comment below.
+ *
  * These are every parameter `netsh http add sslcert help` accepts as of
  * Windows Server 2022/2025 (excluding certhash/appid/certstorename, which
  * the caller always sets explicitly to the new certificate's own identity,
@@ -469,6 +478,31 @@ function parseSslcertParameters(stdoutText) {
     if (value === "not set") return undefined;
     return value === "enabled";
   };
+  // "Disable Legacy TLS Versions" specifically -- unlike every sibling
+  // per-connection policy flag above, which real captured `netsh show
+  // sslcert` output reports as Enabled/Disabled/Not Set -- is documented by
+  // Microsoft itself with a DIFFERENT, two-state vocabulary: "Set" (the
+  // restriction is active) / "Not Set" (default, never configured), with
+  // no separate "Disabled" text ever shown
+  // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
+  // for Disable Legacy TLS Versions: Set/Not Set"). A PR review found
+  // (2026-08-08) that readEnabledDisabledOrNotSet's Enabled/Disabled/Not-Set
+  // regex never matches a bare "Set", so an outgoing binding with legacy
+  // TLS genuinely disabled had that setting silently DROPPED (not reset,
+  // simply omitted -- formatPreservedParamArgs then emits no
+  // `disablelegacytls=` flag at all) on every rebind, quietly re-exposing
+  // legacy TLS on a binding an operator had deliberately hardened. Accepts
+  // BOTH vocabularies defensively, in case a future Windows build ever
+  // reports Enabled/Disabled for this one field too: "Set" and "Enabled"
+  // both mean the restriction is active; "Not Set" and "Disabled" are both
+  // omitted (never forced), matching every sibling flag's own "do not
+  // force a value that was not observed as explicitly enabled" rule.
+  const readSetOrEnabledOrNotSet = (label) => {
+    const found = new RegExp(`${label}\\s*:\\s*(Not Set|Set|Enabled|Disabled)`, "i").exec(stdoutText);
+    if (!found) return undefined;
+    const value = found[1].toLowerCase();
+    return value === "set" || value === "enabled" ? true : undefined;
+  };
   const readInteger = (label) => {
     const found = new RegExp(`${label}\\s*:\\s*(\\d+)`, "i").exec(stdoutText);
     return found ? Number(found[1]) : undefined;
@@ -500,7 +534,7 @@ function parseSslcertParameters(stdoutText) {
   assign("rejectConnections", readEnabledDisabledOrNotSet("Reject Connections"));
   assign("disableHttp2", readEnabledDisabledOrNotSet("Disable HTTP2"));
   assign("disableQuic", readEnabledDisabledOrNotSet("Disable QUIC"));
-  assign("disableLegacyTls", readEnabledDisabledOrNotSet("Disable Legacy TLS Versions"));
+  assign("disableLegacyTls", readSetOrEnabledOrNotSet("Disable Legacy TLS Versions"));
   assign("disableTls12", readEnabledDisabledOrNotSet("Disable TLS1\\.2"));
   assign("disableTls13", readEnabledDisabledOrNotSet("Disable TLS1\\.3"));
   assign("disableOcspStapling", readEnabledDisabledOrNotSet("Disable OCSP Stapling"));
