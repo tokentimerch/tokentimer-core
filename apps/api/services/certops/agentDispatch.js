@@ -137,6 +137,58 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
  */
 const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
 
+/**
+ * Windows-iis-specific audit fields for a job payload's `target`, shared
+ * across every audit event that reports on a windows-iis issuance or
+ * renewal (CERTOPS_CERTIFICATE_ISSUED, the two _UNRECONCILED events,
+ * CERTOPS_JOB_FAILED, CERTOPS_RENEWAL_PROFILE_DERIVED). Without this, those
+ * events carried only `deployedCertPath`/`certPath`, which is always null
+ * for a windows-iis target (ADR-0012 decisions 1 and 10: the destination is
+ * a machine certificate store + IIS binding, not a file), leaving an
+ * operator no way to tell from the audit log alone which store/site/port a
+ * Windows deployment actually touched.
+ *
+ * Takes the *whole* job payload, not payload.target directly, and
+ * normalizes it the same defensive way the claim path already does
+ * (job.payload is jsonb and normally arrives pre-parsed, but is read here
+ * defensively in case it ever arrives as a raw JSON string) — calling
+ * safeParseJson on an already-parsed object would silently discard it, since
+ * safeParseJson only ever parses strings. Returns `{ targetType: null }` for
+ * a missing or malformed target rather than throwing, since every call site
+ * here is inside an audit-metadata object literal, where a thrown error
+ * would abort the write of the event itself.
+ */
+function windowsIisAuditFields(jobPayload) {
+  const payload =
+    jobPayload && typeof jobPayload === "object"
+      ? jobPayload
+      : safeParseJson(jobPayload);
+  const target = payload?.target;
+  const targetType =
+    target && typeof target === "object" && typeof target.type === "string"
+      ? target.type
+      : null;
+  if (targetType !== "windows-iis") {
+    return { targetType };
+  }
+  const binding =
+    target.binding && typeof target.binding === "object"
+      ? target.binding
+      : null;
+  return {
+    targetType,
+    windowsStore: typeof target.store === "string" ? target.store : null,
+    windowsBindingSite:
+      binding && typeof binding.site === "string" ? binding.site : null,
+    windowsBindingPort:
+      binding && Number.isSafeInteger(binding.port) ? binding.port : null,
+    windowsBindingSniHost:
+      binding && typeof binding.sniHost === "string" ? binding.sniHost : null,
+  };
+}
+
+
+
 function wireActionForOperation(operation) {
   return WIRE_ACTION_BY_OPERATION[operation] || operation;
 }
@@ -1507,6 +1559,7 @@ async function reconcileProvisionedCertificate({
         claimId: job.claim_id ? String(job.claim_id) : null,
         agentId: agent?.agentId || null,
         reconciliationReason: reason,
+        ...windowsIisAuditFields(job.payload),
       },
     });
     return { certificateId: String(job.subject_id), promoted: false, reason };
@@ -1641,6 +1694,13 @@ async function reconcileProvisionedCertificate({
         // malformed. It names fields, never their values, so it cannot become a
         // topology disclosure the way the DERIVED event's metadata can.
         detail: derivation?.error || null,
+        // Not the full windowsIisAuditFields() set deliberately: a declined
+        // derivation means the store/binding fields could not be trusted (that
+        // is very often *why* it declined), so only the type discriminator is
+        // safe to record here. Requesting the fuller set from a payload that
+        // failed exactly this validation would surface fields the derivation
+        // itself refused to certify as complete.
+        targetType: text(job.payload?.target?.type),
       },
     });
   }
@@ -1676,6 +1736,10 @@ async function reconcileProvisionedCertificate({
       notAfter,
       subjectAltNames: sans,
       deployedCertPath: text(certificate.deployed_cert_path),
+      // deployedCertPath above is always null for a windows-iis target (its
+      // destination is a certificate store + IIS binding, not a file); these
+      // fields are the substitute, see windowsIisAuditFields.
+      ...windowsIisAuditFields(job.payload),
       profileId: derivation?.profileId || null,
       // Why there is no profile, when there is none. Without this the ISSUED
       // event recorded the absence but never the cause, so an operator seeing
@@ -1813,6 +1877,7 @@ async function refreshRenewedCertificateEvidence({
         claimId: job.claim_id ? String(job.claim_id) : null,
         agentId: agent?.agentId || null,
         reconciliationReason: reason,
+        ...windowsIisAuditFields(job.payload),
       },
     });
     return { certificateId: String(job.subject_id), refreshed: false, reason };
@@ -2154,6 +2219,7 @@ async function ingestResult({
             row.needs_operator_reconciliation,
           ),
           reconciliationReason: row.reconciliation_reason || null,
+          ...windowsIisAuditFields(job.payload),
         },
       });
     }

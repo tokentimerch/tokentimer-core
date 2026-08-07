@@ -46,4 +46,25 @@ describe('logoUtils', () => {
     const mod = await import('../../src/utils/logoUtils.js');
     expect(mod.getFaviconPath()).toBe('/Branding/favicon.svg');
   });
+
+  it('returns PNG app icon path for Chrome user agent and caches it', async () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Chrome/126.0.0.0 Safari/537.36' },
+      configurable: true,
+    });
+    const mod = await import('../../src/utils/logoUtils.js');
+    const first = mod.getAppIconPath();
+    const second = mod.getAppIconPath();
+    expect(first).toBe('/Branding/app-icon.png');
+    expect(second).toBe('/Branding/app-icon.png');
+  });
+
+  it('returns SVG app icon path for non-Chrome user agent', async () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Firefox/123.0' },
+      configurable: true,
+    });
+    const mod = await import('../../src/utils/logoUtils.js');
+    expect(mod.getAppIconPath()).toBe('/Branding/app-icon.svg');
+  });
 });

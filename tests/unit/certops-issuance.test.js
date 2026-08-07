@@ -210,6 +210,112 @@ describe("certops issuance request validation", () => {
   });
 });
 
+describe("certops issuance request validation (windows-iis target)", () => {
+  function windowsRequest({ payload, ...overrides } = {}) {
+    return validRequest({
+      payload: {
+        target: {
+          type: "windows-iis",
+          reference: "iis.example.com",
+          store: "My",
+          binding: { site: "Default Web Site", port: 443 },
+        },
+        certPath: undefined,
+        ...(payload || {}),
+      },
+      ...overrides,
+    });
+  }
+
+  it("accepts a well-formed windows-iis request with no certPath and os-store-managed key mode", () => {
+    const normalized = normalizeIssuanceRequest(windowsRequest());
+    assert.equal(normalized.commonName, "iis.example.com");
+    assert.equal(normalized.targetType, "windows-iis");
+    assert.equal(normalized.certPath, null);
+    assert.deepEqual(normalized.windowsTarget, {
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: null },
+      thumbprintSha1: null,
+    });
+  });
+
+  it("accepts an optional sniHost and thumbprintSha1", () => {
+    const normalized = normalizeIssuanceRequest(
+      windowsRequest({
+        payload: {
+          target: {
+            type: "windows-iis",
+            reference: "iis.example.com",
+            store: "My",
+            binding: { site: "Default Web Site", port: 443, sniHost: "iis.example.com" },
+            thumbprintSha1: "AA".repeat(20),
+          },
+        },
+      }),
+    );
+    assert.equal(normalized.windowsTarget.binding.sniHost, "iis.example.com");
+    assert.equal(normalized.windowsTarget.thumbprintSha1, "AA".repeat(20));
+  });
+
+  it("does not require payload.certPath for a windows-iis target", () => {
+    assert.doesNotThrow(() => normalizeIssuanceRequest(windowsRequest()));
+  });
+
+  it("rejects a certPath on a windows-iis target", () => {
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          windowsRequest({ payload: { certPath: "/etc/ssl/tokentimer/iis.pem" } }),
+        ),
+      /certPath is not valid for a windows-iis target/,
+    );
+  });
+
+  it("requires target.store", () => {
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          windowsRequest({
+            payload: {
+              target: { type: "windows-iis", reference: "iis.example.com", binding: { site: "Default Web Site", port: 443 } },
+            },
+          }),
+        ),
+      /payload\.target\.store is required/,
+    );
+  });
+
+  it("requires target.binding.site and target.binding.port", () => {
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          windowsRequest({
+            payload: {
+              target: { type: "windows-iis", reference: "iis.example.com", store: "My", binding: {} },
+            },
+          }),
+        ),
+      /payload\.target\.binding\.site is required/,
+    );
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          windowsRequest({
+            payload: {
+              target: {
+                type: "windows-iis",
+                reference: "iis.example.com",
+                store: "My",
+                binding: { site: "Default Web Site", port: 0 },
+              },
+            },
+          }),
+        ),
+      /payload\.target\.binding\.port must be an integer/,
+    );
+  });
+});
+
 describe("certops issuance job creation", () => {
   it("creates the provisioning certificate before the job", async () => {
     const { state, client } = createIssuanceClient();
@@ -358,6 +464,43 @@ describe("certops issuance job creation", () => {
       () => createCertificateIssuanceJob({ ...validRequest(), client: null }),
       /kill-switch-locked client/,
     );
+  });
+
+  it("creates a windows-iis provisioning certificate with os-store-managed key_mode and a winstore:// key_reference, and a job payload carrying keyMode instead of certPath", async () => {
+    const { state, client } = createIssuanceClient();
+    let jobOptions = null;
+    await createCertificateIssuanceJob({
+      ...validRequest({
+        payload: {
+          target: {
+            type: "windows-iis",
+            reference: "iis.example.com",
+            store: "My",
+            binding: { site: "Default Web Site", port: 443 },
+          },
+          certPath: undefined,
+        },
+      }),
+      client,
+      jobCreatorOverride: async (options) => {
+        jobOptions = options;
+        return { job: { id: "job-1" }, created: true };
+      },
+    });
+
+    assert.equal(state.inserts.length, 1);
+    const insert = state.inserts[0];
+    assert.equal(insert[6], "os-store-managed");
+    assert.equal(insert[7], "winstore://My/Default Web Site:443");
+    assert.equal(
+      insert[9],
+      null,
+      "deployed_cert_path has no filesystem path to correlate for a windows-iis target",
+    );
+
+    assert.equal(jobOptions.payload.keyMode, "os-store-managed");
+    assert.equal(jobOptions.payload.certPath, undefined);
+    assert.equal(jobOptions.payload.target.store, "My");
   });
 });
 

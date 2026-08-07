@@ -376,6 +376,65 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(client.released, true);
   });
 
+  it("names the store/binding on CERTOPS_JOB_CREATED_AUTOMATIC for a windows-iis renewal, not certPath", async () => {
+    const windowsTarget = {
+      type: "windows-iis",
+      reference: "iis-01/default-web-site",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" },
+      thumbprintSha1: "AA".repeat(20),
+    };
+    const pool = createSchedulerPool({
+      dueRows: [
+        dueCertificate({
+          renewalProfileOverrides: {
+            deploymentTargets: [windowsTarget],
+            target: windowsTarget,
+          },
+        }),
+      ],
+    });
+    let auditMetadata = null;
+
+    const summary = await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      jobCreator: async () => ({ job: { id: "job-windows-1" }, created: true }),
+      auditWriter: async ({ action, metadata }) => {
+        if (action === "CERTOPS_JOB_CREATED_AUTOMATIC") auditMetadata = metadata;
+      },
+    });
+
+    assert.strictEqual(summary.created, 1);
+    assert.ok(auditMetadata);
+    assert.equal(auditMetadata.targetType, "windows-iis");
+    assert.equal(auditMetadata.windowsStore, "My");
+    assert.equal(auditMetadata.windowsBindingSite, "Default Web Site");
+    assert.equal(auditMetadata.windowsBindingPort, 443);
+    assert.equal(auditMetadata.windowsBindingSniHost, "app.example.com");
+  });
+
+  it("reports only a null targetType (no windows fields) for a non-windows automation renewal", async () => {
+    const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
+    let auditMetadata = null;
+
+    await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      jobCreator: async () => ({ job: { id: "job-1" }, created: true }),
+      auditWriter: async ({ action, metadata }) => {
+        if (action === "CERTOPS_JOB_CREATED_AUTOMATIC") auditMetadata = metadata;
+      },
+    });
+
+    assert.ok(auditMetadata);
+    assert.equal(auditMetadata.targetType, "endpoint");
+    assert.equal(auditMetadata.windowsStore, null);
+    assert.equal(auditMetadata.windowsBindingSite, null);
+    assert.equal(auditMetadata.windowsBindingPort, null);
+    assert.equal(auditMetadata.windowsBindingSniHost, null);
+  });
+
   it("skips certificates lacking a complete renewal profile", async () => {
     const warnings = [];
     const pool = createSchedulerPool({

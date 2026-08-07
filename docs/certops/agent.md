@@ -125,7 +125,8 @@ matrix may work but are not covered by CI or release sign-off.
 | Node.js | `>= 22.0.0, < 25.0.0` | Even-numbered Active LTS lines only (22, 24); odd/Current releases are not release-tested. |
 | Certbot | `2.x` (tested against the latest `2.x` release at release time) | `--manual` + `--csr` mode only; snap and pip installs both exercised in CI. |
 | acme.sh | Latest tagged release at release time (pinned commit recorded in CI config) | Uses the shipped `dns_certops` dnsapi hook; requires acme.sh's own `dnsapi` loading support (stable across acme.sh releases). |
-| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems are not supported by `install-agent.sh`. |
+| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh` itself has no CI dry-run (unlike `install-agent.ps1`'s Windows dry-run above), so a real host run is the only verification path for the Linux installer today. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
+| Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` fails closed below build 14393, the first widely-deployed release with both WDAC and CNG non-exportable key custody generally available (see the "Windows build-number floor" note later in this document). Real end-to-end verified on **Windows Server 2025** (build 26100), **Windows Server 2022** (build 20348), and **Windows Server 2019**: full agent install, CNG-native issue with real IIS binding, unattended auto-renew, and the CNG/IIS/retention/discovery module-level real-host checks all produced identical results on all three, with no code path found to differ between them. Other Windows Server releases from build 14393 onward are expected to work the same way but are not independently verified; Windows 10/11 desktop SKUs are not verified as agent hosts at all. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
 | PostgreSQL (control plane) | `13+`, or `pgcrypto` on an older server | CertOps migrations (including 42-44) use `gen_random_uuid()`, native since PostgreSQL 13. |
 
@@ -836,8 +837,13 @@ speaks the DNS wire format over `node:net` with a TSIG HMAC (RFC 8945,
 Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
 `cloudflare`, `route53`, `azure-dns`, `google-cloud-dns`, `rfc2136`,
 `acme-dns`. Wave-2 provider ids: `ovhcloud`, `hetzner`, `infomaniak`,
-`exoscale`, `powerdns`. **Not supported yet:** DigitalOcean DNS (the
-`acme-dns` provider is the sixth wave-1 id; do not confuse the two).
+`exoscale`, `powerdns`.
+
+Test-only provider id: `pebble-challtestsrv` — Let's Encrypt's own
+companion DNS mock for the Pebble ACME test server (no authentication;
+never appropriate for a production `caEndpoint`). Use it only in a
+workspace policy scoped to a test CA, to validate the DNS-01 path locally
+without any real DNS zone.
 
 Config (`config.json`): each configured provider maps to an object holding
 the absolute path of its agent-local credentials file plus optional
@@ -897,6 +903,7 @@ group/other-readable files on POSIX), and never leave the host:
 | `infomaniak` | `apiToken` (Bearer; v2 API requires `domain:read`, `dns:read`, and `dns:write` scopes together, not the older single `domain` scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
 | `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success; the hook's propagation wait covers the apply window |
 | `powerdns` | `apiUrl` (must be `https:`, e.g. `https://pdns.example:8081`; a loopback `http://127.0.0.1:8081` endpoint requires an explicit `allowInsecureLocalHttp: true`), `apiKey` (X-API-Key header); optional `serverId` (default `localhost`). Zone and record names carry a trailing dot and TXT content is double-quoted, per PowerDNS API rules. Present merges with existing TXT values at the name and `REPLACE`s the union (parallel challenges never clobber each other); cleanup `REPLACE`s the remainder or sends `changetype: DELETE` when none remain |
+| `pebble-challtestsrv` | `baseUrl` (challtestsrv's management interface, default port `8055`; a loopback `http://127.0.0.1:8055` endpoint requires `allowInsecureLocalHttp: true`). No API key: challtestsrv has no authentication by design ("TEST USAGE ONLY"). `POST {baseUrl}/set-txt` / `POST {baseUrl}/clear-txt` with `{ host: "<name>.", value }`. Declares `capabilities.cleanupVerifiable: true` (unlike `acme-dns`, `/clear-txt` genuinely deletes the record) |
 
 Hook usage. The ACME adapter builds these flags automatically; operators
 debugging by hand can use the same contract. certbot manual hooks (the hook
@@ -911,6 +918,15 @@ certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
   --work-dir   <stateDir>/acme/certbot/work \
   --logs-dir   <stateDir>/acme/certbot/logs
 ```
+
+On win32, the hook string is instead `"<node.exe path>" "<hookPath>" present`
+/ `... cleanup` — certbot invokes the hook string through a shell, and a
+bare `.js` path has no useful Windows file association, so the node
+executable must be named explicitly (2026-08-05 real-host finding; also
+note that Certbot itself dropped official Windows support in February 2024,
+so this format matters mainly for `acmeKind: "acme.sh"` deployments run
+under Git Bash, and for anyone still running a self-built/unsupported
+Windows certbot).
 
 For acme.sh, `--dns` takes the shipped dnsapi hook **name** (`dns_certops`),
 not an absolute path — acme.sh sources `dnsapi/dns_certops.sh` from its own
@@ -1134,6 +1150,110 @@ Windows:
   registry value (dropping the token, keeping the config-dir entry) once
   registration succeeds, so the secret does not outlive its single-use
   purpose by lingering in the registry after a successful exchange.
+- **A `windows-iis` target's `store` field is honored, not just validated.**
+  `certreq -accept` has no switch that targets a store other than `My` for a
+  machine-keyset request, so a non-default `store` (e.g. `WebHosting`) is
+  reached by mirroring the accepted certificate into it afterward
+  (`certutil -addstore` + `-repairstore`, then `-delstore My` to remove the
+  original copy, then a closing `certutil -store <store> <thumbprint>` query
+  that independently confirms the certificate is actually retrievable from
+  the target store rather than trusting the prior exit codes alone).
+  Requesting `store: "My"` (the common case) touches only `certreq`, with no
+  `certutil` call. Real-host verification so far has only exercised the
+  default `My` store; the non-default-store mirror path is unit-tested
+  (including the closing confirmation query) against a stubbed `certutil`
+  but not yet independently proven against a real Windows host. See
+  ADR-0012 decision 9.
+- **A CNG key container abandoned by a crash between `certreq -new` and
+  `certreq -accept` is freed automatically at the next agent startup, not
+  left behind indefinitely.** The container name is journaled the instant
+  `certreq -new` succeeds; a startup reconciliation pass checks each
+  unresolved entry against the live machine store and deletes
+  (`certutil -delkey`) only a container still enrolled to no certificate,
+  leaving alone (and marking reconciled, so it is not re-checked forever)
+  any container a later attempt or an operator has since legitimately
+  enrolled. For a non-default target store (e.g. `WebHosting`), this check
+  queries **both** the default `My` store and the recorded target store,
+  never the target store alone: `certreq -accept` itself always lands in
+  `My` first, with the mirror into a non-default store happening as a
+  separate, later step (see the store-targeting bullet above), so a crash
+  between those two steps leaves a live certificate in `My` that a
+  target-store-only check would miss, incorrectly freeing a key still in
+  use. A store-query failure fails closed (deferred, never deleted). See
+  ADR-0012 decision 9.
+- **Normal (non-crash-recovery) execution against a non-default target
+  store locks both stores for the duration of the operation, not just the
+  target store.** `certreq -accept` always mutates the default `My` store
+  first regardless of the requested target, with a non-default store (e.g.
+  `WebHosting`) reached only by a separate, later mirror step (see the
+  store-targeting bullet above) -- a `WebHosting`-targeted renewal that
+  locked only `WebHosting` would leave `My` itself unprotected for that
+  entire window, letting an unrelated `My`-targeted job's own concurrent
+  `certreq -accept` (or this same job's later `-delstore My`) race it. A PR
+  review found (2026-08-07) that execution's own lock scope did not match
+  the crash-reconciliation sweep's already-correct dual-store scope; both
+  now share one helper that locks the deduplicated set (one lock for the
+  common `store: "My"` case) in the same deterministic order, so the two
+  paths can never deadlock against each other.
+- **Superseded-certificate retention now requires a persisted issuance
+  record proving the *specific certificate* was installed by this agent,
+  not just a container-naming match or a bare record of container
+  creation, before treating a predecessor's CNG key container as this
+  agent's own to delete.** A name matching the agent's own container-naming
+  convention is necessary but not sufficient; a durable record written at
+  the moment the agent itself created that exact container (carrying the
+  originating job and certificate id) must also exist; and that record
+  must further have been upgraded, immediately after a successful
+  `certreq -accept`, to carry the actual accepted certificate's thumbprint,
+  which must match the predecessor certificate being evaluated. This third
+  requirement closes a gap where an operator (or an unrelated later
+  attempt) enrolling a different certificate into an agent-created
+  container -- one the crash-reconciliation sweep above found already
+  enrolled and correctly left alone -- could otherwise inherit
+  `tokentimer_installed` provenance for that unrelated certificate. A human
+  operator's own `certreq` enrollment or a tool like IIS's
+  self-signed-certificate generator is correctly recorded `preexisting` and
+  never auto-deleted, whether for missing any of the three signals or for a
+  mismatched thumbprint. See ADR-0012 decision 18.
+- **The mandatory delete-then-add IIS rebind (decision 13) preserves the
+  outgoing binding's other settings instead of silently resetting them to
+  `netsh`'s defaults.** `netsh http add sslcert` only ever applies the flags
+  a given call explicitly passes it, and a rebind must delete the existing
+  binding before re-adding it (`add` refuses to overwrite one in place), so
+  every renewal previously reset any operator-configured
+  revocation-checking, CTL-issuer-restriction, DS-mapper, and
+  client-certificate-negotiation setting back to default. The agent now
+  reads the outgoing binding's settings back via `netsh http show sslcert`
+  before deleting it and reapplies every one it can positively parse on the
+  new binding, including the newer Windows Server 2019+ per-connection
+  policy flags (`reject`, `disablehttp2`, `disablequic`, `disablelegacytls`,
+  `disabletls12`, `disabletls13`, `disableocspstapling`,
+  `enabletokenbinding`, `logextendedevents`, `enablesessionticket`,
+  `disablesessionid`). A setting `netsh` reports as its own "Not Set"
+  tri-state default is never forced either way, matching pre-fix behavior
+  for that one field. `disableLegacyTls` specifically is parsed against a
+  *different* vocabulary than every other per-connection flag above:
+  Microsoft's own documentation reports this one field as `Set`/`Not Set`,
+  not `Enabled`/`Disabled`/`Not Set` -- a PR review found (2026-08-07) that
+  the shared Enabled/Disabled/Not-Set parser never matched a bare `Set`, so
+  an outgoing binding with legacy TLS genuinely disabled had that
+  restriction silently dropped, not merely reset, on every renewal. The
+  parser now recognizes both vocabularies (defensively accepting
+  `Enabled`/`Disabled` too, should a future Windows build ever report this
+  field the same way as its siblings), with a regression test built from
+  Microsoft's own documented `netsh http show sslcert` output shape.
+- **A non-SNI binding on the same port always takes precedence over an SNI
+  binding, and a deploy to an SNI binding now warns when one exists.** This
+  is `http.sys`'s own dispatch rule, not something either binding's
+  configuration can override: a client connecting to an address with its
+  own `ipport=` binding gets that certificate regardless of the SNI
+  hostname it sent. After a successful SNI (`hostnameport=`) deploy, the
+  agent checks for a shadowing `ipport=` binding on the same port -- the
+  IPv4 wildcard (`0.0.0.0`), the IPv6 wildcard (`[::]`), and any other
+  concrete IP -- and surfaces a non-fatal `precedenceWarning` in the
+  deploy-succeeded evidence when one is found, rather than staying silent
+  about a real, non-obvious gotcha. This is detection only: the agent
+  cannot change `http.sys`'s own precedence rule, only warn about it.
 
 ## 9. Troubleshooting
 

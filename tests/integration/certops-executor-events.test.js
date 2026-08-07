@@ -4080,10 +4080,11 @@ describe("CertOps executor event ingestion", function () {
   });
 
   // The executor lane owed the same alert the agent lane pays. It did not pay
-  // it: a renew failed by certctl recorded the status and stopped, so the
-  // operator learned nothing, while the identical failure reported by an agent
-  // notified them. The assertion is on the outbox intent because that is the
-  // part which must be atomic with the status change.
+  // it: a renew failed by a machine-token executor recorded the status and
+  // stopped, so the operator learned nothing, while the identical failure
+  // reported by an agent notified them. The assertion is on the outbox
+  // intent because that is the part which must be atomic with the status
+  // change.
   it("records a renewal-alert intent for an executor-reported renew failure", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-renew-alert-intent",

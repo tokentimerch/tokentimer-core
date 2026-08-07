@@ -58,8 +58,8 @@ SuccessExitStatus=86
 # default (commonly "unlimited") is not the guarantee this decision
 # requires. LimitCORE=0 sets systemd's own default of "soft=hard" to 0,
 # closing that gap before exec. Verified by reading the running process's
-# /proc/<pid>/limits "Max core file size" row, not by inspecting this unit
-# file alone -- see KEY-03 in the manual acceptance checklist.
+# /proc/<pid>/limits "Max core file size" row on a live host, not by
+# inspecting this unit file alone.
 LimitCORE=0
 
 # Hardening. ProtectSystem=strict makes the whole filesystem read-only for

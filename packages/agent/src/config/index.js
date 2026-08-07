@@ -76,6 +76,23 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_POLL_INTERVAL_MS = 15000;
 // Discovery is an inventory scan, not a control loop; hourly by default.
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
+/** Decision 18's own bounds ([24, 720] hours); duplicated here (not
+ * imported from ../windows-retention) rather than depending on that
+ * module just for two integer literals, matching this loader's existing
+ * "own copy of the constants it validates against" style elsewhere. */
+const WINDOWS_MIN_RETENTION_HOURS = 24;
+const WINDOWS_MAX_RETENTION_HOURS = 720;
+/** 7 days: long enough that a rollback investigation started the same
+ * week still finds the superseded material, short enough that a fleet
+ * running entirely on defaults does not accumulate months of dead
+ * certificates in the machine store. */
+const DEFAULT_WINDOWS_RETENTION_HOURS = 168;
+/** How often the sweep loop re-evaluates every ledger row. Deliberately
+ * much less frequent than the discovery/heartbeat loops: a sweep only
+ * ever advances a row once its retention deadline (hours, not minutes)
+ * has passed, so sub-hour polling would just be wasted store/handshake
+ * probes for no earlier possible outcome. */
+const DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
@@ -314,6 +331,7 @@ const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
   "infomaniak",
   "exoscale",
   "powerdns",
+  "pebble-challtestsrv",
 ]);
 
 /**
@@ -649,6 +667,61 @@ function validateDiscoveryObject(discovery) {
   return { directories, intervalMs };
 }
 
+/**
+ * Validates `windows` in config.json: the retention-sweep policy governing
+ * ADR-0012 decision 18's ledger (see ../windows-retention). `null` means
+ * "use every documented default", NOT "retention disabled" -- decision 18
+ * has no disabled state; a superseded certificate is always tracked once
+ * created, only the sweep's own cadence and hours-in-store are tunable.
+ * @param {*} windows
+ * @returns {{ supersededRetentionHours: number, sweepIntervalMs: number }}
+ */
+function validateWindowsObject(windows) {
+  if (windows === undefined || windows === null) {
+    return {
+      supersededRetentionHours: DEFAULT_WINDOWS_RETENTION_HOURS,
+      sweepIntervalMs: DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS,
+    };
+  }
+  if (typeof windows !== "object" || Array.isArray(windows)) {
+    throw new Error(
+      "tokentimer-agent: windows in config.json must be an object " +
+        "({ supersededRetentionHours?, sweepIntervalMs? })",
+    );
+  }
+  let supersededRetentionHours = DEFAULT_WINDOWS_RETENTION_HOURS;
+  if (windows.supersededRetentionHours !== undefined) {
+    if (
+      typeof windows.supersededRetentionHours !== "number" ||
+      !Number.isInteger(windows.supersededRetentionHours) ||
+      windows.supersededRetentionHours < WINDOWS_MIN_RETENTION_HOURS ||
+      windows.supersededRetentionHours > WINDOWS_MAX_RETENTION_HOURS
+    ) {
+      throw new Error(
+        "tokentimer-agent: windows.supersededRetentionHours must be an integer in " +
+          `[${WINDOWS_MIN_RETENTION_HOURS}, ${WINDOWS_MAX_RETENTION_HOURS}], got: ` +
+          JSON.stringify(windows.supersededRetentionHours),
+      );
+    }
+    supersededRetentionHours = windows.supersededRetentionHours;
+  }
+  let sweepIntervalMs = DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS;
+  if (windows.sweepIntervalMs !== undefined) {
+    if (
+      typeof windows.sweepIntervalMs !== "number" ||
+      !Number.isInteger(windows.sweepIntervalMs) ||
+      windows.sweepIntervalMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: windows.sweepIntervalMs must be a positive integer " +
+          `(milliseconds), got: ${JSON.stringify(windows.sweepIntervalMs)}`,
+      );
+    }
+    sweepIntervalMs = windows.sweepIntervalMs;
+  }
+  return { supersededRetentionHours, sweepIntervalMs };
+}
+
 function validateCaBundlePath(caBundlePath) {
   if (caBundlePath === undefined || caBundlePath === null) return null;
   if (typeof caBundlePath !== "string" || caBundlePath.length === 0) {
@@ -888,6 +961,11 @@ function loadAgentConfig({ configDir } = {}) {
   // null means discovery is disabled entirely.
   const discovery = validateDiscoveryObject(fileConfig.discovery);
 
+  // Windows superseded-certificate retention sweep policy (ADR-0012
+  // decision 18). Always populated (with defaults), unlike discovery:
+  // decision 18 has no disabled state.
+  const windows = validateWindowsObject(fileConfig.windows);
+
   const caBundlePath = validateCaBundlePath(
     process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
   );
@@ -948,6 +1026,7 @@ function loadAgentConfig({ configDir } = {}) {
     declaredCommandProfileNames,
     policy,
     discovery,
+    windows,
     caBundlePath,
     allowInsecureLocalHttp,
     requireSignedAgentId,
@@ -1528,5 +1607,8 @@ module.exports = {
   MAX_CA_BUNDLE_BYTES,
   OUTBOX_DIR_NAME,
   normalizeDnsPropagationConfig,
+  validateWindowsObject,
+  DEFAULT_WINDOWS_RETENTION_HOURS,
+  DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS,
   DEFAULT_REQUIRE_SIGNED_AGENT_ID,
 };

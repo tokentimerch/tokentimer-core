@@ -2370,7 +2370,7 @@ function renewalWindowStart(notAfter, renewBeforeDays) {
  * scheduler actually act right now". A paused workspace still derives `auto`
  * here (the profile itself is not disabled), but with `workspacePaused: true`
  * so the badge can say so instead of promising a renewal that will not run
- * until the workspace is resumed (13.12 finding, 2026-07-27).
+ * until the workspace is resumed.
  */
 function deriveCertificateRenewalState(
   row,
@@ -2550,10 +2550,10 @@ async function withRenewalState({
         ? loadResumablePreflights({ db, workspaceId, certificateIds })
         : Promise.resolve(new Map()),
       // Answers "will this workspace's scheduler act right now", a different
-      // question from the per-profile state above (13.12 finding,
-      // 2026-07-27: a paused workspace still reported `auto` because the
-      // profile itself is genuinely switched on). Read directly rather than
-      // through getWorkspaceCertOpsPauseState/isCertOpsEnabled to avoid a
+      // question from the per-profile state above (a paused workspace still
+      // reported `auto` because the profile itself is genuinely switched
+      // on). Read directly rather than through
+      // getWorkspaceCertOpsPauseState/isCertOpsEnabled to avoid a
       // second, redundant check of the global rollout flag this route is
       // already gated on by requireCertOpsEnabled - advisory display only,
       // never a gate, so a stale or failed read just falls back to "not

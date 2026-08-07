@@ -35,9 +35,16 @@ const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const ISSUANCE_SOURCE = "agent_issuance";
 const ISSUANCE_STATUS = "provisioning";
-// An issue job always ends with the agent holding the key on its own
-// filesystem: it generates the key, submits the CSR, and deploys to certPath.
+// An issue job for a filesystem target always ends with the agent holding
+// the key on its own filesystem: it generates the key, submits the CSR, and
+// deploys to certPath. A windows-iis target (ADR-0012 decision 9) has no
+// filesystem key at all -- the key is generated inside the CNG machine key
+// store -- so its custody is os-store-managed instead. See
+// keyModeForTargetType below, the single place that maps target.type to the
+// custody the rest of issuance (the certificate row, and the job payload the
+// agent dispatches to) must agree on.
 const ISSUANCE_KEY_MODE = "agent-local";
+const WINDOWS_IIS_ISSUANCE_KEY_MODE = "os-store-managed";
 
 const MAX_DNS_NAME_LENGTH = 253;
 const MAX_SANS = 100;
@@ -47,6 +54,24 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 // than failing later on the host.
 const DNS_NAME_PATTERN =
   /^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+
+// Mirrors job-payload.schema.json's windowsStoreName/windowsIisBinding/
+// windowsThumbprintSha1 definitions and renewalProfile.js's identical
+// validateWindowsBinding (kept as a separate, small copy here rather than an
+// import: issuance's error code is CERTOPS_JOB_INVALID, not
+// CERTOPS_RENEWAL_PROFILE_INVALID, and the two validators already run at
+// different points in two different request lifecycles).
+const WINDOWS_STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const WINDOWS_IIS_SITE_PATTERN = /^[A-Za-z0-9 _.:-]{1,256}$/;
+const WINDOWS_SNI_HOST_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const WINDOWS_THUMBPRINT_SHA1_PATTERN = /^[A-Fa-f0-9]{40}$/;
+
+function keyModeForTargetType(targetType) {
+  return targetType === "windows-iis"
+    ? WINDOWS_IIS_ISSUANCE_KEY_MODE
+    : ISSUANCE_KEY_MODE;
+}
 
 function issuanceError(message) {
   const error = new Error(message);
@@ -76,6 +101,73 @@ function normalizeDnsName(value, fieldName) {
     throw issuanceError(`${fieldName} has an invalid DNS label`);
   }
   return normalized;
+}
+
+/**
+ * Validates the store/binding shape of a windows-iis target (ADR-0012),
+ * mirroring renewalProfile.js's validateWindowsBinding and
+ * job-payload.schema.json's windowsIisBinding definition. Unlike the
+ * filesystem case, there is no certPath: the destination is a machine
+ * certificate store plus an IIS site binding, keyed on thumbprint.
+ */
+function normalizeWindowsIssuanceTarget(target) {
+  const store = target.store;
+  if (typeof store !== "string" || !WINDOWS_STORE_NAME_PATTERN.test(store)) {
+    throw issuanceError(
+      "payload.target.store is required for a windows-iis target (1-64 chars matching ^[A-Za-z0-9 _.-]+$)",
+    );
+  }
+
+  const binding = target.binding;
+  if (!isPlainObject(binding)) {
+    throw issuanceError("payload.target.binding is required for a windows-iis target");
+  }
+  if (
+    typeof binding.site !== "string" ||
+    !WINDOWS_IIS_SITE_PATTERN.test(binding.site)
+  ) {
+    throw issuanceError(
+      "payload.target.binding.site is required for a windows-iis target",
+    );
+  }
+  if (
+    !Number.isInteger(binding.port) ||
+    binding.port < 1 ||
+    binding.port > 65535
+  ) {
+    throw issuanceError("payload.target.binding.port must be an integer 1-65535");
+  }
+  let sniHost = null;
+  if (binding.sniHost !== undefined && binding.sniHost !== null) {
+    if (
+      typeof binding.sniHost !== "string" ||
+      !WINDOWS_SNI_HOST_PATTERN.test(binding.sniHost)
+    ) {
+      throw issuanceError("payload.target.binding.sniHost is not a valid hostname");
+    }
+    sniHost = binding.sniHost;
+  }
+
+  let thumbprintSha1 = null;
+  if (target.thumbprintSha1 !== undefined && target.thumbprintSha1 !== null) {
+    if (
+      typeof target.thumbprintSha1 !== "string" ||
+      !WINDOWS_THUMBPRINT_SHA1_PATTERN.test(target.thumbprintSha1)
+    ) {
+      throw issuanceError("payload.target.thumbprintSha1 is not a valid SHA-1 thumbprint");
+    }
+    thumbprintSha1 = target.thumbprintSha1;
+  }
+
+  // certPath describes a filesystem deploy destination, which a machine
+  // certificate store + IIS binding is not (renewalProfile.js's validateTarget
+  // keeps the same separation); accepting one here would silently create a
+  // certificate row that neither issuance path can actually satisfy. Checked
+  // by the caller against payload.certPath (the field issuance actually
+  // reads), not target.certPath, since payload.certPath is where a filesystem
+  // issuance's path lives (see normalizeIssuanceRequest below).
+
+  return { store, binding: { site: binding.site, port: binding.port, sniHost }, thumbprintSha1 };
 }
 
 /**
@@ -145,6 +237,24 @@ function normalizeIssuanceRequest(options) {
     sans = [...new Set(normalized)];
   }
 
+  const targetType = target.type;
+  if (targetType === "windows-iis") {
+    if (payload.certPath !== undefined && payload.certPath !== null) {
+      throw issuanceError(
+        "payload.certPath is not valid for a windows-iis target (it deploys to a certificate store + IIS binding, not a filesystem path)",
+      );
+    }
+    const windowsTarget = normalizeWindowsIssuanceTarget(target);
+    return {
+      idempotencyKey,
+      commonName,
+      sans,
+      targetType,
+      certPath: null,
+      windowsTarget,
+    };
+  }
+
   // certPath is where the agent writes the issued certificate, and it is the
   // only durable pointer back to the material, so it is required here even
   // though a renew job can inherit it from a renewal profile.
@@ -186,6 +296,41 @@ function advisoryLockKeyForIssuance(workspaceId, idempotencyKey) {
 }
 
 async function insertProvisioningCertificate(client, options) {
+  const keyMode = keyModeForTargetType(options.targetType);
+  const windowsTarget = options.windowsTarget;
+  // A filesystem target's key_reference/deployed_cert_path correlate this
+  // row to the agent's later filesystem discovery scan of the same path
+  // (see the class doc comment above). A windows-iis target has no
+  // filesystem path to correlate against at all: its destination is a
+  // machine certificate store + IIS binding, addressed by store/binding, not
+  // a path, so deployed_cert_path stays NULL and key_reference is instead an
+  // opaque store/binding pointer (never key material -- the CNG key never
+  // leaves the machine key store, let alone this row).
+  const keyReference = windowsTarget
+    ? `winstore://${windowsTarget.store}/${windowsTarget.binding.site}:${windowsTarget.binding.port}`
+    : `file://${options.certPath}`;
+  const deployedCertPath = windowsTarget ? null : options.certPath;
+  const publicMetadata = windowsTarget
+    ? {
+        issuance: {
+          requestedAt: new Date().toISOString(),
+          target: {
+            type: "windows-iis",
+            store: windowsTarget.store,
+            binding: windowsTarget.binding,
+            ...(windowsTarget.thumbprintSha1
+              ? { thumbprintSha1: windowsTarget.thumbprintSha1 }
+              : {}),
+          },
+        },
+      }
+    : {
+        issuance: {
+          requestedAt: new Date().toISOString(),
+          certPath: options.certPath,
+        },
+      };
+
   const result = await client.query(
     `INSERT INTO managed_certificates (
        workspace_id, status, source, source_ref, name, common_name,
@@ -200,18 +345,14 @@ async function insertProvisioningCertificate(client, options) {
       options.idempotencyKey,
       options.commonName,
       options.sans,
-      ISSUANCE_KEY_MODE,
-      `file://${options.certPath}`,
-      JSON.stringify({
-        issuance: {
-          requestedAt: new Date().toISOString(),
-          certPath: options.certPath,
-        },
-      }),
+      keyMode,
+      keyReference,
+      JSON.stringify(publicMetadata),
       // Correlation key for the later filesystem scan of this same path, so the
       // certificate this operator requested and the one an agent subsequently
-      // discovers are one identity rather than two.
-      options.certPath,
+      // discovers are one identity rather than two. Null for windows-iis: there
+      // is no filesystem path to correlate against.
+      deployedCertPath,
       options.assignedAgentId || null,
     ],
   );
@@ -238,7 +379,7 @@ async function createCertificateIssuanceJob(options = {}) {
   const { jobCreatorOverride, ...jobOptions } = options;
   const createJob = jobCreatorOverride || createCertificateJob;
   const workspaceId = options.workspaceId;
-  const { idempotencyKey, commonName, sans, certPath } =
+  const { idempotencyKey, commonName, sans, targetType, certPath, windowsTarget } =
     normalizeIssuanceRequest(options);
 
   // Resolve the identity before touching certificate_jobs. A retried POST must
@@ -293,7 +434,9 @@ async function createCertificateIssuanceJob(options = {}) {
       idempotencyKey,
       commonName,
       sans,
+      targetType,
       certPath,
+      windowsTarget,
       // Mirrors the resolution createCertificateJob performs for the job row, so
       // the certificate is correlated to the same agent that will deploy it.
       assignedAgentId:
@@ -321,7 +464,15 @@ async function createCertificateIssuanceJob(options = {}) {
       // reconciles.
       certificateId,
       sans,
-      certPath,
+      // A windows-iis issuance carries no certPath at all (its destination is
+      // target.store/target.binding, already present on options.payload.target
+      // and left untouched above); keyMode: os-store-managed is what routes
+      // this job, once dispatched, to the agent's CNG-native executor instead
+      // of the file-based one (see AGENT_DEPLOYABLE_KEY_MODES's doc comment in
+      // jobs.js and executeJob's dispatch check in packages/agent/src/index.js).
+      ...(windowsTarget
+        ? { keyMode: WINDOWS_IIS_ISSUANCE_KEY_MODE }
+        : { certPath }),
     },
     returnOutcome: true,
   });

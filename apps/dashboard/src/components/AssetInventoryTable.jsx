@@ -483,11 +483,18 @@ function StatusBadge({ token, getStatusMeta }) {
   const status = effectiveStatusMeta(token, getStatusMeta);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const managed = token.__managedCert;
+  // Skip the lifecycle badge when it says the same thing as the pill above
+  // it (e.g. both read "expired") instead of adding a distinct state like
+  // "provisioning" or "renewing".
+  const managedStatusIsRedundant =
+    managed?.status && String(managed.status).toLowerCase() === status.key;
 
   return (
     <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
-      {managed?.status && !isRetiredStatus(managed.status) ? (
+      {managed?.status &&
+      !isRetiredStatus(managed.status) &&
+      !managedStatusIsRedundant ? (
         <Tooltip label='Managed certificate lifecycle status'>
           <Badge
             colorScheme='purple'

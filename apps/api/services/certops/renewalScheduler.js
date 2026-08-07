@@ -40,6 +40,7 @@ const {
   CERTOPS_RENEWAL_PROFILE_INVALID,
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   buildRenewalJobPayload,
+  windowsIisTargetAuditFields,
 } = require("./renewalProfile");
 const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
@@ -414,6 +415,7 @@ async function createRenewalJobForCertificate({
             : null,
           source: "automation",
           trigger: "renewal_scheduler",
+          ...windowsIisTargetAuditFields(payload?.target),
         },
       });
     }

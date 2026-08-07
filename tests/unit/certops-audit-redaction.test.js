@@ -1,11 +1,10 @@
 "use strict";
 
 /**
- * Named audit/evidence-redaction test, modeled on certctl's
- * audit_redact_test.go: prove that a field which must never reach a
- * persisted row (a `pem` / full private-key-bearing value) is actually
- * stripped or rejected before the row is written, not merely "supposed to
- * be" by convention.
+ * Named audit/evidence-redaction test: prove that a field which must never
+ * reach a persisted row (a `pem` / full private-key-bearing value) is
+ * actually stripped or rejected before the row is written, not merely
+ * "supposed to be" by convention.
  *
  * This file exercises the REAL persistence writers directly:
  * apps/api/services/certops/jobs.js (createCertificateJob) and

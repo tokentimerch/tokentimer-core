@@ -53,6 +53,12 @@
  *                "--manual",
  *                "--manual-auth-hook", "<hookPath> present",
  *                "--manual-cleanup-hook", "<hookPath> cleanup",
+ *                // on win32: "\"<nodeExecPath>\" \"<hookPath>\" present" /
+ *                // "...cleanup" instead -- certbot invokes the hook string
+ *                // through a shell (subprocess shell=True), and a bare
+ *                // ".js" path has no useful Windows file association (it
+ *                // is not Node); the node executable must be named
+ *                // explicitly. See buildDnsHookCommand.
  *                "--csr", csrPath,
  *                "--server", caEndpoint,
  *                "-d", domain      (repeated per domain, in input order),
@@ -78,6 +84,16 @@
  *                "--server", caEndpoint,
  *                "-d", domain      (repeated per domain, in input order),
  *                "--dns", "dns_certops",  // hook NAME (dnsapi/dns_certops.sh)
+ *                "--dnssleep", "0",  // our hook already polls authoritative
+ *                                    // propagation (waitForTxtPresent)
+ *                                    // before returning 0; without this,
+ *                                    // acme.sh's own generic public-DNS
+ *                                    // recheck queries the *system*
+ *                                    // resolver for the TXT record, which
+ *                                    // never succeeds for an internal/
+ *                                    // test-only zone (no public
+ *                                    // delegation) and hangs for minutes
+ *                                    // retrying before giving up.
  *                "--cert-file", outCertPath,
  *                "--ca-file", "<outCertPath sibling>.chain.pem",
  *                "--fullchain-file", "<outCertPath sibling>.fullchain.pem",
@@ -172,6 +188,35 @@ function defaultDnsHookPath() {
  */
 function defaultAcmeDnsApiPath() {
   return path.resolve(__dirname, "..", "..", "bin", "dns_certops.sh");
+}
+
+/**
+ * Builds the certbot `--manual-auth-hook`/`--manual-cleanup-hook` command
+ * string for one hook mode ("present"/"cleanup").
+ *
+ * certbot runs this string through a shell (subprocess `shell=True`), which
+ * on POSIX resolves a bare executable path via its shebang + execute bit.
+ * On win32 that never works: `certops-dns-hook.js` has no meaningful
+ * Windows file association as a "command" (a bare `.js` path is not
+ * Node -- it is Windows Script Host at best, nothing at worst), so the
+ * hook must name the Node executable explicitly. Both paths are quoted so
+ * spaces in either (e.g. `Program Files`) survive the shell's own parsing.
+ *
+ * @param {string} dnsHookPath absolute path to certops-dns-hook.js
+ * @param {"present"|"cleanup"} mode
+ * @param {{ platform?: string, nodeExecPath?: string }} [options] test
+ *   injection points; default to the running process's own values.
+ * @returns {string}
+ */
+function buildDnsHookCommand(
+  dnsHookPath,
+  mode,
+  { platform = process.platform, nodeExecPath = process.execPath } = {},
+) {
+  if (platform === "win32") {
+    return `"${nodeExecPath}" "${dnsHookPath}" ${mode}`;
+  }
+  return `${dnsHookPath} ${mode}`;
 }
 
 /**
@@ -351,6 +396,8 @@ function buildTypedOptionArgs({ preferredChain, eabKid, eabHmacKey }) {
  *   preferredChain?: string,
  *   eabKid?: string,
  *   eabHmacKey?: string,
+ *   hookPlatform?: string,
+ *   hookNodeExecPath?: string,
  * }} inputs
  * @returns {string[]}
  */
@@ -365,6 +412,8 @@ function buildAdapterArgs(kind, {
   preferredChain,
   eabKid,
   eabHmacKey,
+  hookPlatform,
+  hookNodeExecPath,
 }) {
   const domainFlags = domains.flatMap((domain) => ["-d", domain]);
   const typedArgs = buildTypedOptionArgs({
@@ -379,9 +428,16 @@ function buildAdapterArgs(kind, {
     // certbot runs the hook string via a shell-like invocation; keep the
     // mode ("present"/"cleanup") in the SAME argv element as the hook path
     // so it is not parsed as a separate certbot flag. Credentials are never
-    // part of this string — only the hook binary path + mode.
-    const authHook = `${dnsHookPath} present`;
-    const cleanupHook = `${dnsHookPath} cleanup`;
+    // part of this string — only the hook binary path + mode (plus, on
+    // win32, the node executable path -- see buildDnsHookCommand).
+    const authHook = buildDnsHookCommand(dnsHookPath, "present", {
+      platform: hookPlatform,
+      nodeExecPath: hookNodeExecPath,
+    });
+    const cleanupHook = buildDnsHookCommand(dnsHookPath, "cleanup", {
+      platform: hookPlatform,
+      nodeExecPath: hookNodeExecPath,
+    });
     // No --dry-run here: certbot rejects --dry-run combined with --csr, and
     // this adapter always issues via --csr. runRenewal rejects dryRun:true
     // for kind === "certbot" before this function is ever called.
@@ -434,6 +490,20 @@ function buildAdapterArgs(kind, {
   // fails with an unhelpful "exit code 2, no stderr" instead of running.
   // certbot's --csr mode has no equivalent stateful skip, so this is
   // acme.sh-specific.
+  //
+  // --dnssleep 0 is mandatory too, for a different reason: our own
+  // dns_certops.sh -> certops-dns-hook already polls the authoritative
+  // resolver chain (src/dns/propagate.js's waitForTxtPresent) and only
+  // returns 0 to acme.sh once the TXT record is actually visible there.
+  // Without --dnssleep, acme.sh follows that success with its OWN generic
+  // propagation recheck against the system resolver
+  // (_check_dns_entries/dns_check_txt), which cannot ever succeed for an
+  // internal-only zone (no public delegation, e.g. a lab/test domain) and
+  // retries for minutes before failing the whole run — even though the
+  // record it is looking for was already confirmed present by the hook
+  // that just ran. Passing 0 here does not skip verification; it skips
+  // acme.sh's redundant, publicly-resolver-bound second check in favor of
+  // the one our hook already did correctly.
   return [
     "--home",
     paths.acmeShHome,
@@ -447,6 +517,8 @@ function buildAdapterArgs(kind, {
     ...domainFlags,
     "--dns",
     ACME_SH_DNS_HOOK_NAME,
+    "--dnssleep",
+    "0",
     "--cert-file",
     outputPaths.leafPath,
     "--ca-file",
@@ -519,6 +591,11 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env) {
  * @param {string} [options.dnsHookPath] absolute path to certops-dns-hook.js.
  * @param {string} [options.acmeDnsApiPath] absolute path to the shipped
  *   dns_certops.sh source (installer symlink target; not passed as --dns).
+ * @param {string} [options.platform] test injection point for the certbot
+ *   hook-command format decision; defaults to process.platform.
+ * @param {string} [options.nodeExecPath] test injection point for the node
+ *   executable path used in the win32 hook-command format; defaults to
+ *   process.execPath.
  * @returns {{ kind: string, runRenewal: Function, resolveCertificateOutputPaths: Function, dnsHookPath: string, acmeDnsApiPath: string }}
  */
 function createAcmeAdapter({
@@ -528,6 +605,8 @@ function createAcmeAdapter({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   dnsHookPath = defaultDnsHookPath(),
   acmeDnsApiPath = defaultAcmeDnsApiPath(),
+  platform = process.platform,
+  nodeExecPath = process.execPath,
 } = {}) {
   if (!SUPPORTED_ADAPTER_KINDS.includes(kind)) {
     throw new Error(
@@ -573,11 +652,12 @@ function createAcmeAdapter({
   }
   assertSafeArgvElements("dnsHookPath", [dnsHookPath]);
   assertSafeArgvElements("acmeDnsApiPath", [acmeDnsApiPath]);
-  // Hook command strings include a space + mode; validate they remain free
-  // of shell metacharacters beyond the allowed space.
+  // Hook command strings include a space + mode (and, on win32, quoted
+  // paths); validate they remain free of shell metacharacters beyond what
+  // buildDnsHookCommand itself introduces.
   assertSafeArgvElements("dnsHookCommands", [
-    `${dnsHookPath} present`,
-    `${dnsHookPath} cleanup`,
+    buildDnsHookCommand(dnsHookPath, "present", { platform, nodeExecPath }),
+    buildDnsHookCommand(dnsHookPath, "cleanup", { platform, nodeExecPath }),
   ]);
 
   // Freeze a copy so a caller mutating its profile object after adapter
@@ -756,6 +836,8 @@ function createAcmeAdapter({
         preferredChain,
         eabKid,
         eabHmacKey,
+        hookPlatform: platform,
+        hookNodeExecPath: nodeExecPath,
       }),
     ];
 
@@ -804,6 +886,7 @@ module.exports = {
   listSupportedAdapters,
   defaultDnsHookPath,
   defaultAcmeDnsApiPath,
+  buildDnsHookCommand,
   resolveAcmeStatePaths,
   resolveCertificateOutputPaths,
   ACME_SH_DNS_HOOK_NAME,

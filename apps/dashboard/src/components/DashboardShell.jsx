@@ -48,7 +48,7 @@ import {
   DASHBOARD_PAGE_GUTTER_X,
   DASHBOARD_SHELL_HEADER_HEIGHT,
 } from '../styles/dashboardLayout';
-import { getFaviconPath } from '../utils/logoUtils.js';
+import { getAppIconPath, getFaviconPath } from '../utils/logoUtils.js';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
 const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
@@ -637,7 +637,7 @@ export default function DashboardShell({
                 as={Image}
                 src={
                   isDashboardSidebarExpanded
-                    ? '/Branding/app-icon.svg'
+                    ? getAppIconPath()
                     : getFaviconPath()
                 }
                 alt='TokenTimer'
@@ -1166,7 +1166,7 @@ export default function DashboardShell({
                 >
                   <Box
                     as={Image}
-                    src='/Branding/app-icon.svg'
+                    src={getAppIconPath()}
                     alt='TokenTimer'
                     h='32px'
                     w='auto'
