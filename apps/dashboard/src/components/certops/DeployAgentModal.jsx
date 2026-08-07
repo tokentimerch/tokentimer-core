@@ -12,6 +12,7 @@ import {
   FormLabel,
   HStack,
   Input,
+  Link as ChakraLink,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -87,6 +88,18 @@ function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
     `  --api-url '${apiUrl}' \\`,
     `  --workspace-id '${workspaceId}'`,
   ].join('\n');
+}
+
+/**
+ * Full install runbook, anchored to the platform-specific step this modal
+ * reproduces interactively. Self-hosted docs (`/docs/self-hosted/...`), not
+ * cloud: this file lives in the self-hosted dashboard bundle.
+ */
+function buildInstallDocsUrl(os) {
+  const base = 'https://tokentimer.ch/docs/self-hosted/runbooks';
+  return os === 'windows'
+    ? `${base}/certops-agent-install-windows#windows-install`
+    : `${base}/certops-agent-install#install`;
 }
 
 function createErrorMessage(err) {
@@ -386,6 +399,23 @@ export default function DeployAgentModal({
                   in step 2 below and paste it there, or set the
                   TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
                   running.
+                </Text>
+                <Text fontSize='xs'>
+                  <ChakraLink
+                    onClick={() =>
+                      window.open(
+                        buildInstallDocsUrl(targetOs),
+                        '_blank',
+                        'noopener,noreferrer'
+                      )
+                    }
+                    cursor='pointer'
+                    color='blue.500'
+                    textDecoration='underline'
+                    isExternal
+                  >
+                    Full install guide ({targetOs === 'windows' ? 'Windows' : 'Linux'})
+                  </ChakraLink>
                 </Text>
               </VStack>
             </Box>
