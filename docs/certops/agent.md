@@ -1155,11 +1155,34 @@ Windows:
   machine-keyset request, so a non-default `store` (e.g. `WebHosting`) is
   reached by mirroring the accepted certificate into it afterward
   (`certutil -addstore` + `-repairstore`, then `-delstore My` to remove the
-  original copy). Requesting `store: "My"` (the common case) touches only
-  `certreq`, with no `certutil` call. Real-host verification so far has only
-  exercised the default `My` store; the non-default-store mirror path is
-  unit-tested against a stubbed `certutil` but not yet independently proven
-  against a real Windows host. See ADR-0012 decision 9.
+  original copy, then a closing `certutil -store <store> <thumbprint>` query
+  that independently confirms the certificate is actually retrievable from
+  the target store rather than trusting the prior exit codes alone).
+  Requesting `store: "My"` (the common case) touches only `certreq`, with no
+  `certutil` call. Real-host verification so far has only exercised the
+  default `My` store; the non-default-store mirror path is unit-tested
+  (including the closing confirmation query) against a stubbed `certutil`
+  but not yet independently proven against a real Windows host. See
+  ADR-0012 decision 9.
+- **A CNG key container abandoned by a crash between `certreq -new` and
+  `certreq -accept` is freed automatically at the next agent startup, not
+  left behind indefinitely.** The container name is journaled the instant
+  `certreq -new` succeeds; a startup reconciliation pass checks each
+  unresolved entry against the live machine store and deletes
+  (`certutil -delkey`) only a container still enrolled to no certificate,
+  leaving alone (and marking reconciled, so it is not re-checked forever)
+  any container a later attempt or an operator has since legitimately
+  enrolled. See ADR-0012 decision 9.
+- **Superseded-certificate retention now requires a persisted issuance
+  record, not just a container-naming match, before treating a
+  predecessor's CNG key container as this agent's own to delete.** A name
+  matching the agent's own container-naming convention is necessary but not
+  sufficient; a durable record written at the moment the agent itself
+  created that exact container (carrying the originating job and
+  certificate id) must also exist, so a human operator's own `certreq`
+  enrollment or a tool like IIS's self-signed-certificate generator is
+  correctly recorded `preexisting` and never auto-deleted merely for
+  matching the naming convention by coincidence. See ADR-0012 decision 18.
 
 ## 9. Troubleshooting
 
