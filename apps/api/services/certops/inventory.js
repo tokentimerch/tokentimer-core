@@ -81,6 +81,10 @@ const KEY_REFERENCE_ALLOWED_SCHEME_PREFIXES = Object.freeze([
   "hsm:",
   "external-unknown:",
   "pkcs11:",
+  // winstore:// names the OS-store custody location an agent_windows
+  // observation resolved (LocalMachine/My/<thumbprint> etc), not key
+  // material; pairs with keyMode 'os-store-managed' (ADR-0012 decision 9).
+  "winstore://",
 ]);
 
 // RFC 7512 PKCS#11 URI attribute keys. All of them are structural
@@ -380,6 +384,11 @@ function toInventoryRecord(row) {
     notAfter: dateToIso(row.not_after),
     keyMode: row.key_mode,
     keyReference: row.key_reference,
+    // Populated for agent-issuance/agent-filesystem rows only (renewalAdoption.js);
+    // used by the renewal-path resolver (renewalPath.js) to determine which
+    // agent must be live for THIS certificate's configured renewal path,
+    // rather than any agent that has ever merely observed it.
+    deployedAgentId: row.deployed_agent_id || null,
     // Manager-only field: the routes that serve this projection to a viewer
     // (the list and single-certificate GET) redact it before responding,
     // since a deployment filesystem path is host reconnaissance, the same
@@ -406,6 +415,8 @@ function toInstanceRecord(row) {
     status: row.status,
     source: row.source,
     sourceRef: row.source_ref,
+    locationKind: row.location_kind,
+    responsibleAgentId: agentIdFromTargetSourceRef(row.source, row.source_ref),
     observedFingerprintSha256: row.observed_fingerprint_sha256,
     observedSerialNumber: row.observed_serial_number,
     observedSubject: row.observed_subject,
@@ -416,6 +427,20 @@ function toInstanceRecord(row) {
     observedAt: dateToIso(row.observed_at),
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
+    // Present only when the query joined certificate_targets (both list
+    // functions below do). Null rather than omitted when there is genuinely
+    // no target row, so the UI can distinguish "not joined" (undefined,
+    // shouldn't happen in practice) from "target was deleted" (null).
+    target: row.target_name !== undefined
+      ? {
+        id: row.target_id,
+        name: row.target_name,
+        targetType: row.target_target_type,
+        hostname: row.target_hostname,
+        locationKind: row.target_location_kind,
+        deploymentReference: row.target_deployment_reference,
+      }
+      : undefined,
   };
 }
 
@@ -829,7 +854,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
        WHERE fingerprint_sha256 IS NOT NULL
          AND source NOT IN (
            'endpoint_monitor', 'domain_checker', 'cert_manager',
-           'agent_filesystem', 'agent_issuance'
+           'agent_filesystem', 'agent_issuance', 'agent_windows'
          )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
@@ -964,7 +989,7 @@ async function upsertManagedCertificateByMonitorSource(
        WHERE source_ref IS NOT NULL
          AND source IN (
            'endpoint_monitor', 'domain_checker', 'cert_manager',
-           'agent_filesystem', 'agent_issuance'
+           'agent_filesystem', 'agent_issuance', 'agent_windows'
          )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
@@ -1005,37 +1030,102 @@ async function upsertManagedCertificateByMonitorSource(
   return toInventoryRecord(result.rows[0]);
 }
 
+// Only these two sources are ever produced by the agent-observation pipeline
+// (agentObservations.js); both have their own partial unique index on
+// (workspace_id, source, source_ref) (see migrations 28 and 45). The
+// conflict predicate below is chosen from this fixed allow-list, never from
+// caller-supplied text, so interpolating it into the query string cannot
+// become an injection surface.
+const AGENT_TARGET_CONFLICT_SOURCES = new Set(["agent_filesystem", "agent_windows"]);
+
 /**
- * Upsert an agent-filesystem discovery target (host) keyed by agent + host.
- * Mirrors cert-manager target upsert identity semantics.
+ * Upsert an agent-observed discovery target (host, or host+location-kind for
+ * non-filesystem locations) keyed by agent + host [+ location kind].
+ * Mirrors cert-manager target upsert identity semantics. Covers both
+ * filesystem discovery (source='agent_filesystem', target_type='agent-host',
+ * the original B17 shape) and generalized Windows-store/IIS/http.sys
+ * discovery (source='agent_windows'); see agentObservations.js for how each
+ * locationKind maps to targetType/windowsStore/windowsSite/etc.
  */
 async function upsertAgentFilesystemTarget(client, options) {
   const sourceRef = normalizeSourceRef(options.sourceRef);
   if (!sourceRef) {
     throw new Error("sourceRef is required for agent filesystem target upsert");
   }
-  const result = await client.query(
-    `INSERT INTO certificate_targets (
+  const source = AGENT_TARGET_CONFLICT_SOURCES.has(options.source)
+    ? options.source
+    : "agent_filesystem";
+  const targetType = options.targetType || "agent-host";
+  const locationKind = options.locationKind || "filesystem";
+  // Postgres cannot parameterize a partial index's WHERE predicate, so this
+  // conflict target must be a literal per source. Rather than interpolating
+  // `source` into the SQL string (a real, if currently allow-listed, string-
+  // building pattern this codebase otherwise avoids everywhere else), the two
+  // values AGENT_TARGET_CONFLICT_SOURCES can ever produce get their own
+  // static query text, selected by a plain `if`. A future third source would
+  // fail loudly here (not silently fall through to string interpolation)
+  // until a matching branch is added.
+  const conflictQuery =
+    source === "agent_windows"
+      ? `INSERT INTO certificate_targets (
        workspace_id, name, target_type, status, source, source_ref,
-       hostname, deployment_reference, public_metadata
-     ) VALUES ($1, $2, 'agent-host', 'active', 'agent_filesystem', $3, $4, $5, $6::jsonb)
+       hostname, deployment_reference, location_kind,
+       windows_store, windows_site, windows_port, windows_sni_host,
+       public_metadata
+     ) VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source = 'agent_windows' AND source_ref IS NOT NULL
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       target_type = EXCLUDED.target_type,
+       status = 'active',
+       hostname = EXCLUDED.hostname,
+       deployment_reference = EXCLUDED.deployment_reference,
+       location_kind = EXCLUDED.location_kind,
+       windows_store = EXCLUDED.windows_store,
+       windows_site = EXCLUDED.windows_site,
+       windows_port = EXCLUDED.windows_port,
+       windows_sni_host = EXCLUDED.windows_sni_host,
+       public_metadata = EXCLUDED.public_metadata,
+       updated_at = NOW()
+     RETURNING *`
+      : `INSERT INTO certificate_targets (
+       workspace_id, name, target_type, status, source, source_ref,
+       hostname, deployment_reference, location_kind,
+       windows_store, windows_site, windows_port, windows_sni_host,
+       public_metadata
+     ) VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source = 'agent_filesystem' AND source_ref IS NOT NULL
      DO UPDATE SET
        name = EXCLUDED.name,
-       target_type = 'agent-host',
+       target_type = EXCLUDED.target_type,
        status = 'active',
        hostname = EXCLUDED.hostname,
        deployment_reference = EXCLUDED.deployment_reference,
+       location_kind = EXCLUDED.location_kind,
+       windows_store = EXCLUDED.windows_store,
+       windows_site = EXCLUDED.windows_site,
+       windows_port = EXCLUDED.windows_port,
+       windows_sni_host = EXCLUDED.windows_sni_host,
        public_metadata = EXCLUDED.public_metadata,
        updated_at = NOW()
-     RETURNING *`,
+     RETURNING *`;
+  const result = await client.query(
+    conflictQuery,
     [
       options.workspaceId,
       options.name || options.hostname || sourceRef,
+      targetType,
+      source,
       sourceRef,
       options.hostname || null,
       options.deploymentReference || null,
+      locationKind,
+      options.windowsStore || null,
+      options.windowsSite || null,
+      options.windowsPort || null,
+      options.windowsSniHost || null,
       JSON.stringify(options.publicMetadata || {}),
     ],
   );
@@ -1044,16 +1134,23 @@ async function upsertAgentFilesystemTarget(client, options) {
 
 /**
  * Upsert an agent-observed certificate instance keyed by target + fingerprint.
+ * `source`/`locationKind` default to the original filesystem-discovery
+ * values for backward compatibility; Windows discovery passes
+ * source='agent_windows' and the specific locationKind.
  */
 async function upsertAgentFilesystemInstance(client, options) {
   if (!options.fingerprintSha256) return null;
+  const source = AGENT_TARGET_CONFLICT_SOURCES.has(options.source)
+    ? options.source
+    : "agent_filesystem";
+  const locationKind = options.locationKind || "filesystem";
   const result = await client.query(
     `INSERT INTO certificate_instances (
        workspace_id, managed_certificate_id, target_id, status, source, source_ref,
        observed_fingerprint_sha256, observed_serial_number, observed_subject,
        observed_issuer, observed_not_before, observed_not_after,
-       deployment_reference, observed_at, public_metadata
-     ) VALUES ($1, $2, $3, $4, 'agent_filesystem', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+       deployment_reference, observed_at, location_kind, public_metadata
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
      ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
      DO UPDATE SET
        status = EXCLUDED.status, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
@@ -1061,6 +1158,7 @@ async function upsertAgentFilesystemInstance(client, options) {
        observed_subject = EXCLUDED.observed_subject, observed_issuer = EXCLUDED.observed_issuer,
        observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
        deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
+       location_kind = EXCLUDED.location_kind,
        public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
      RETURNING *`,
     [
@@ -1068,6 +1166,7 @@ async function upsertAgentFilesystemInstance(client, options) {
       options.managedCertificateId,
       options.targetId,
       options.status || "discovered",
+      source,
       normalizeSourceRef(options.sourceRef),
       options.fingerprintSha256,
       options.serialNumber || null,
@@ -1077,6 +1176,7 @@ async function upsertAgentFilesystemInstance(client, options) {
       options.notAfter || null,
       options.deploymentReference || null,
       options.observedAt || null,
+      locationKind,
       JSON.stringify(options.publicMetadata || {}),
     ],
   );
@@ -1254,14 +1354,21 @@ async function listCertificateInstances({ workspaceId, certId, limit, offset }) 
   const normalizedLimit = normalizeLimit(limit);
   const normalizedOffset = normalizeOffset(offset);
   const result = await pool.query(
-    `SELECT *
-       FROM certificate_instances
-      WHERE workspace_id = $1
-        AND managed_certificate_id = $2
-      ORDER BY observed_at DESC NULLS LAST,
-               updated_at DESC,
-               created_at DESC,
-               id ASC
+    `SELECT ci.*,
+            t.name AS target_name,
+            t.target_type AS target_target_type,
+            t.hostname AS target_hostname,
+            t.location_kind AS target_location_kind,
+            t.deployment_reference AS target_deployment_reference
+       FROM certificate_instances ci
+       LEFT JOIN certificate_targets t
+         ON t.id = ci.target_id AND t.workspace_id = ci.workspace_id
+      WHERE ci.workspace_id = $1
+        AND ci.managed_certificate_id = $2
+      ORDER BY ci.observed_at DESC NULLS LAST,
+               ci.updated_at DESC,
+               ci.created_at DESC,
+               ci.id ASC
       LIMIT $3 OFFSET $4`,
     [workspaceId, certId, normalizedLimit, normalizedOffset],
   );
@@ -1287,13 +1394,20 @@ async function listWorkspaceCertificateInstances({ workspaceId, limit, offset })
   const normalizedLimit = normalizeLimit(limit);
   const normalizedOffset = normalizeOffset(offset);
   const result = await pool.query(
-    `SELECT *
-       FROM certificate_instances
-      WHERE workspace_id = $1
-      ORDER BY observed_at DESC NULLS LAST,
-               updated_at DESC,
-               created_at DESC,
-               id ASC
+    `SELECT ci.*,
+            t.name AS target_name,
+            t.target_type AS target_target_type,
+            t.hostname AS target_hostname,
+            t.location_kind AS target_location_kind,
+            t.deployment_reference AS target_deployment_reference
+       FROM certificate_instances ci
+       LEFT JOIN certificate_targets t
+         ON t.id = ci.target_id AND t.workspace_id = ci.workspace_id
+      WHERE ci.workspace_id = $1
+      ORDER BY ci.observed_at DESC NULLS LAST,
+               ci.updated_at DESC,
+               ci.created_at DESC,
+               ci.id ASC
       LIMIT $2 OFFSET $3`,
     [workspaceId, normalizedLimit, normalizedOffset],
   );
@@ -1305,6 +1419,25 @@ async function listWorkspaceCertificateInstances({ workspaceId, limit, offset })
       offset: normalizedOffset,
     },
   };
+}
+
+// Sources whose source_ref embeds the reporting agent's own agentId as its
+// first '/'-delimited segment (task: "Which agent is responsible for
+// observing/managing it?"). Neither certificate_targets nor
+// certificate_instances has an agent_id foreign key -- source_ref IS the
+// identity link, exactly like it is for reconciliation (certSourceRefFor/
+// targetSourceRefFor in agentObservations.js build these same strings).
+// Splitting on the first '/' is unambiguous: AGENT_ID_PATTERN
+// (agentObservations.js) never allows a slash in an agentId.
+const AGENT_SOURCED_TARGET_SOURCES = new Set(["agent_filesystem", "agent_windows"]);
+
+function agentIdFromTargetSourceRef(source, sourceRef) {
+  if (!AGENT_SOURCED_TARGET_SOURCES.has(source) || typeof sourceRef !== "string") {
+    return null;
+  }
+  const slashIndex = sourceRef.indexOf("/");
+  if (slashIndex <= 0) return null;
+  return sourceRef.slice(0, slashIndex);
 }
 
 function toTargetRecord(row) {
@@ -1321,10 +1454,16 @@ function toTargetRecord(row) {
     status: row.status,
     source: row.source,
     sourceRef: row.source_ref,
+    locationKind: row.location_kind,
     hostname: row.hostname,
     url: row.url,
     deploymentReference: row.deployment_reference,
     environment: row.environment,
+    // Connectivity/liveness for this agentId is intentionally NOT resolved
+    // here (inventory.js is workspace/cert-scoped storage, not agent
+    // registry-aware); callers (routes) batch-resolve it via
+    // agentRegistry.getAgentsByAgentIdStrings and attach it themselves.
+    responsibleAgentId: agentIdFromTargetSourceRef(row.source, row.source_ref),
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
   };

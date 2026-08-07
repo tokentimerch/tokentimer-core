@@ -241,6 +241,24 @@ function createMemoryDb() {
         return { rows: [row] };
       }
 
+      if (normalized.includes("FROM managed_certificates mc")) {
+        // This suite is not exercising renewal-path impact counts; keep the
+        // agent-list route's enrichment a no-op here rather than throwing.
+        return { rows: [] };
+      }
+
+      if (
+        normalized.includes("FROM certops_agents") &&
+        normalized.includes("declared_target_selectors") &&
+        normalized.includes("status <> 'retired'")
+      ) {
+        return {
+          rows: agentRows
+            .filter((row) => row.status !== "retired")
+            .map((row) => ({ ...row, declared_target_selectors: [] })),
+        };
+      }
+
       throw new Error(`Unexpected query: ${normalized}`);
     },
     release() {},
@@ -490,6 +508,8 @@ describe("CertOps agents list route", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       retiredAt: null,
       retireReason: null,
+      downtimeAlertsEnabled: true,
+      contactGroupId: null,
       // 1.2.3 is ahead of the shipped agent package's own version (the
       // default "latest known" reference for the outdated heuristic), so
       // it is compatible, not outdated.
@@ -497,6 +517,7 @@ describe("CertOps agents list route", () => {
       clockDriftState: "ok",
       clockDriftMs: 25,
       livenessState: "stale",
+      dependentAutoRenewCertificateCount: 0,
     });
   });
 

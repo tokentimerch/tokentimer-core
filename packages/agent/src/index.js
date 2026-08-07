@@ -102,6 +102,7 @@ const {
   assertEvidencePayloadSafe,
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
+const { collectWindowsDiscoveryObservations } = require("./discovery/windows");
 const {
   validateClaimedJob,
   hasReportableJobId,
@@ -4000,6 +4001,101 @@ async function runDiscoveryScan({ directories, client, log = null }) {
 }
 
 /**
+ * Runs one observe-only Windows OS-store/IIS/http.sys discovery scan and
+ * reports results as `certificate.observed` evidence, the same event type
+ * and evidence pipeline filesystem discovery (runDiscoveryScan) uses. Fills
+ * the product gap this feature exists to close: a certificate that lives
+ * only in the Windows machine certificate store (bound to an IIS site, or
+ * bound directly via http.sys) previously never appeared in Observed
+ * Locations at all.
+ *
+ * A no-op (0 observed, 0 warnings) on any non-Windows host or when
+ * PowerShell/IIS/netsh are unavailable -- see collectWindowsDiscoveryObservations's
+ * own per-surface graceful degradation. Never throws for a missing
+ * prerequisite; the surrounding poll loop only ever needs to handle this
+ * scan raising for a genuinely unexpected error (e.g. evidence reporting
+ * itself failing).
+ *
+ * Exported for direct unit testing.
+ *
+ * @param {object} params
+ * @param {object} params.client from createProtocolClient
+ * @param {(msg: string) => void} [params.log]
+ * @param {typeof collectWindowsDiscoveryObservations} [params.collect] injection seam for tests
+ * @returns {Promise<{ observed: number, warnings: number }>}
+ */
+async function runWindowsDiscoveryScan({ client, log = null, collect = collectWindowsDiscoveryObservations }) {
+  const warnings = [];
+  const observations = collect({ onWarning: (message) => warnings.push(message) });
+  for (const warning of warnings) emitLog(log, warning);
+
+  const targetHost = os.hostname();
+  const items = [];
+  const observedAt = new Date().toISOString();
+  for (const observation of observations) {
+    // Structured metadata matching agentObservations.js's generalized
+    // observation contract (task: "generalize this contract safely so an
+    // observation can represent non-filesystem locations"). filePath is
+    // intentionally absent -- locationKind !== 'filesystem' requires
+    // locationSlot instead, never filePath.
+    const metadata = [
+      { name: "locationKind", value: observation.locationKind },
+      { name: "locationSlot", value: observation.locationSlot },
+      { name: "targetHost", value: targetHost },
+      { name: "subject", value: observation.subject ?? null },
+      { name: "issuer", value: observation.issuer ?? null },
+      { name: "serialNumber", value: observation.serialNumber ?? null },
+      { name: "validFrom", value: observation.notBefore ?? null },
+      { name: "validTo", value: observation.notAfter ?? null },
+      // Boolean fact only (task: "Private-key presence is not private-key
+      // material"), read from the certificate's own HasPrivateKey property
+      // by collectWindowsDiscoveryObservations -- never a key path, export,
+      // or blob. The control plane only derives keyMode: 'os-store-managed'
+      // when this is explicitly true (agentObservations.js), so an agent
+      // that genuinely could not determine this should omit the field
+      // rather than guess; this module always has a real boolean here
+      // because listMachineStoreCertificates always returns one.
+      { name: "keyPresent", value: observation.keyPresent === true },
+      { name: "storeLocation", value: observation.storeLocation ?? null },
+      { name: "storeName", value: observation.storeName ?? null },
+    ];
+    if (typeof observation.subjectAltNames === "string" && observation.subjectAltNames.length > 0) {
+      metadata.push({ name: "subjectAltNames", value: observation.subjectAltNames });
+    }
+    if (observation.locationKind === "iis_binding") {
+      metadata.push({ name: "siteName", value: observation.siteName });
+      metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.sniHost) metadata.push({ name: "sniHost", value: observation.sniHost });
+    }
+    if (observation.locationKind === "http_sys") {
+      metadata.push({ name: "port", value: String(observation.port) });
+    }
+
+    items.push(
+      buildEvidenceItem({
+        eventType: "certificate.observed",
+        observedAt,
+        fingerprintSha256: observation.fingerprintSha256,
+        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${observation.subject})`,
+        metadata,
+      }),
+    );
+  }
+
+  const EVIDENCE_CHUNK_SIZE = 16;
+  for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
+    const body = buildEvidenceBody({
+      jobId: null,
+      evidenceItems: items.slice(start, start + EVIDENCE_CHUNK_SIZE),
+    });
+    assertEvidencePayloadSafe(body);
+    await client.reportEvidence(body);
+  }
+
+  return { observed: items.length, warnings: warnings.length };
+}
+
+/**
  * Performs first-run registration when no credential is stored yet.
  * Requires TOKENTIMER_AGENT_BOOTSTRAP_TOKEN (and optionally
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID) in the environment; the bootstrap
@@ -4461,6 +4557,24 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     );
   }
 
+  // Windows OS-store/IIS/http.sys discovery: unlike filesystem discovery,
+  // this needs no operator-configured directories (self-discovering via
+  // Cert:\, WebAdministration, and netsh), so it starts whenever
+  // config.windowsDiscovery.enabled is true and the host is actually
+  // Windows. It is a no-op elsewhere (isWindows() false), so this check
+  // avoids scheduling a poll loop whose every tick is guaranteed to be a
+  // trivial [] result.
+  if (config.windowsDiscovery && config.windowsDiscovery.enabled && isWindows()) {
+    loops.push(
+      startPollLoop({
+        intervalMs: config.windowsDiscovery.intervalMs,
+        signal: controller.signal,
+        startImmediately: true,
+        onTick: () => runWindowsDiscoveryScan({ client }),
+      }),
+    );
+  }
+
   try {
     await Promise.all(loops);
   } finally {
@@ -4487,6 +4601,7 @@ module.exports = {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runWindowsDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,

@@ -8,6 +8,10 @@ const {
   classifyTerminalTransition,
 } = require("./renewalAlertPolicy");
 const { OUTBOX_EVENT_TYPES, enqueueOutboxEvent } = require("./outbox");
+const {
+  DEFAULT_AGENT_OFFLINE_AFTER_MS,
+  resolveAgentOfflineAfterMs,
+} = require("./agentLiveness");
 
 const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
 const CERTOPS_AGENT_INVALID = "CERTOPS_AGENT_INVALID";
@@ -44,13 +48,15 @@ try {
 }
 const DEFAULT_CLOCK_DRIFT_WARN_MS = 5_000;
 const DEFAULT_CLOCK_DRIFT_ALERT_MS = 30_000;
-// Kept in sync with apps/worker/src/certops-worker.js's
-// DEFAULT_AGENT_OFFLINE_AFTER_MS / CERTOPS_AGENT_OFFLINE_AFTER_MS: the
-// stale-agent sweep is the eventual source of truth for the persisted
-// `status` column, but it only runs periodically, so this read path
-// independently derives a `livenessState` from the same threshold to avoid
-// showing a crashed/unresponsive agent as "active" between sweeps.
-const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
+// DEFAULT_AGENT_OFFLINE_AFTER_MS / resolveAgentOfflineAfterMs now live in the
+// shared agentLiveness.js module (imported above) so this read path and
+// apps/worker/src/certops-worker.js's stale-agent sweep and the agent-health
+// alert transition detector cannot drift apart even if
+// CERTOPS_AGENT_OFFLINE_AFTER_MS is overridden. The stale-agent sweep is the
+// eventual source of truth for the persisted `status` column, but it only
+// runs periodically, so this read path independently derives a
+// `livenessState` from the same threshold to avoid showing a
+// crashed/unresponsive agent as "active" between sweeps.
 
 // ADR-0012 decision 7. agent_kind is server-assigned exactly once, at row
 // creation (registerAgent for 'normal', createDiagnosticBootstrap for
@@ -117,7 +123,9 @@ const AGENT_SAFE_SELECT_FIELDS = `
   pinned_signing_key_id,
   created_at,
   retired_at,
-  retire_reason
+  retire_reason,
+  downtime_alerts_enabled,
+  contact_group_id
 `;
 
 // Idempotent revocation guard for retireAgent below. Generates a fresh
@@ -251,11 +259,7 @@ function readCompatibilityConfig(env = process.env) {
         String(DEFAULT_CLOCK_DRIFT_ALERT_MS),
       10,
     ),
-    agentOfflineAfterMs: Number.parseInt(
-      env.CERTOPS_AGENT_OFFLINE_AFTER_MS ||
-        String(DEFAULT_AGENT_OFFLINE_AFTER_MS),
-      10,
-    ),
+    agentOfflineAfterMs: resolveAgentOfflineAfterMs(env),
   };
 }
 
@@ -372,6 +376,13 @@ function agentMetadataFromRow(row, env = process.env) {
     createdAt: dateToIso(row.created_at),
     retiredAt: dateToIso(row.retired_at),
     retireReason: row.retire_reason ?? null,
+    // Per-agent downtime alert configuration (task: "agent downtime alerting").
+    // downtimeAlertsEnabled is NOT NULL at the DB layer (default TRUE), so this
+    // is always a concrete boolean, never null, for any row read through this
+    // path (including agents registered before migration 45 -- the column's
+    // DEFAULT TRUE backfilled every pre-existing row at migration time).
+    downtimeAlertsEnabled: Boolean(row.downtime_alerts_enabled ?? true),
+    contactGroupId: row.contact_group_id ?? null,
   };
   const compatibility = computeAgentCompatibility(base, env);
   return {
@@ -449,6 +460,85 @@ async function getAgentById(options) {
         AND id = $2
       LIMIT 1`,
     [normalizeWorkspaceId(options.workspaceId), options.agentId],
+  );
+  return agentMetadataFromRow(result.rows[0] || null, options.env);
+}
+
+/**
+ * Batch-resolves agents by their human-readable agent_id string (not the
+ * UUID primary key), keyed for callers that only have the string form --
+ * e.g. Observed Locations, which derives the responsible agent from a
+ * certificate_target's source_ref (`<agentId>/<targetHost>[/...]`) rather
+ * than from a stored foreign key (neither certificate_targets nor
+ * certificate_instances has an agent_id column; source_ref IS the identity
+ * link). Returns a Map so a caller can attach connectivity/liveness to many
+ * rows with one query instead of one round-trip per row.
+ *
+ * @param {{ workspaceId: string, agentIds: string[], client?: object, env?: NodeJS.ProcessEnv }} options
+ * @returns {Promise<Map<string, object>>} agentId (string) -> agentMetadataFromRow shape
+ */
+async function getAgentsByAgentIdStrings(options) {
+  const agentIds = Array.from(
+    new Set((options.agentIds || []).filter((value) => typeof value === "string" && value)),
+  );
+  if (agentIds.length === 0) return new Map();
+  const result = await (options.client || pool).query(
+    `SELECT ${AGENT_SAFE_SELECT_FIELDS}
+       FROM certops_agents
+      WHERE workspace_id = $1
+        AND agent_id = ANY($2::text[])`,
+    [normalizeWorkspaceId(options.workspaceId), agentIds],
+  );
+  const map = new Map();
+  for (const row of result.rows) {
+    const metadata = agentMetadataFromRow(row, options.env);
+    map.set(metadata.agentId, metadata);
+  }
+  return map;
+}
+
+/**
+ * Edit an existing agent's downtime alert settings (task: "Also provide an
+ * API mechanism to edit alert settings for an already registered agent").
+ * Both fields are independently optional so a PATCH can change just one;
+ * `undefined` (field omitted from the request body) leaves the stored value
+ * untouched, while `null` for contactGroupId explicitly clears it back to
+ * "use workspace default". Contact-group existence is validated by the
+ * route (it needs workspace_settings, which this registry module does not
+ * otherwise touch), mirroring the same split used for bootstrap-token create.
+ */
+async function updateAgentAlertSettings(options) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const setClauses = [];
+  const params = [workspaceId, options.agentId];
+
+  if (options.downtimeAlertsEnabled !== undefined) {
+    params.push(Boolean(options.downtimeAlertsEnabled));
+    setClauses.push(`downtime_alerts_enabled = $${params.length}`);
+  }
+  if (options.contactGroupId !== undefined) {
+    params.push(options.contactGroupId || null);
+    setClauses.push(`contact_group_id = $${params.length}`);
+  }
+
+  if (setClauses.length === 0) {
+    return await getAgentById({
+      client: db,
+      workspaceId,
+      agentId: options.agentId,
+      env: options.env,
+    });
+  }
+
+  const result = await db.query(
+    `UPDATE certops_agents
+        SET ${setClauses.join(", ")},
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2
+      RETURNING ${AGENT_SAFE_SELECT_FIELDS}`,
+    params,
   );
   return agentMetadataFromRow(result.rows[0] || null, options.env);
 }
@@ -885,6 +975,7 @@ module.exports = {
   CERTOPS_AGENT_NOT_FOUND,
   CERTOPS_AGENT_RETIRE_REASON_INVALID,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,
+  DEFAULT_AGENT_OFFLINE_AFTER_MS,
   DEFAULT_CERTOPS_CAPABILITY_FRESHNESS_MS,
   DEFAULT_DIAGNOSTIC_AGENT_INACTIVITY_TTL_MS,
   DIAGNOSTIC_ORPHAN_BRANCH,
@@ -894,12 +985,14 @@ module.exports = {
   diagnosticAgentInactivityTtlMs,
   fenceAgentInFlightWork,
   getAgentById,
+  getAgentsByAgentIdStrings,
   listAgents,
   normalizeRequiredRetireReason,
   readCompatibilityConfig,
   reconcileDiagnosticAgentOrphan,
   retireAgent,
   sweepInactiveDiagnosticAgents,
+  updateAgentAlertSettings,
 };
 
 module.exports._test = {

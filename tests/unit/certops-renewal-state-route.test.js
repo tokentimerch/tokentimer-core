@@ -380,7 +380,7 @@ describe("CertOps certificate renewal-state projection", () => {
       ],
     });
 
-    assert.equal(queries.length, 3);
+    assert.equal(queries.length, 5);
     assert.match(queries[0].sql, /LEFT JOIN certificate_profiles/);
     assert.deepEqual(queries[0].params, [
       "workspace-1",
@@ -394,11 +394,21 @@ describe("CertOps certificate renewal-state projection", () => {
     ]);
     assert.match(queries[2].sql, /SELECT certops_paused FROM workspaces/);
     assert.deepEqual(queries[2].params, ["workspace-1"]);
+    // Renewal-path health (Healthy/Degraded/Unavailable/Unknown) is resolved
+    // alongside the lifecycle renewal state: one query for the certificates'
+    // own topology columns, one for the workspace's agent index.
+    assert.match(queries[3].sql, /FROM managed_certificates mc/);
+    assert.match(queries[4].sql, /FROM certops_agents/);
 
     assert.equal(items[0].commonName, "app.example.com");
     assert.equal(items[0].renewal.state, "auto");
     assert.equal(items[0].renewal.workspacePaused, false);
     assert.ok(items[0].renewalSetup);
+    // Renewal-path health is a distinct axis, always present alongside the
+    // lifecycle renewal state (even if the mocked db can't produce a
+    // meaningful topology here).
+    assert.ok("renewalPathState" in items[0]);
+    assert.ok(Array.isArray(items[0].dependencies));
     assert.equal(items[1].commonName, "obs.example.com");
     assert.equal(items[1].renewal.state, "not-eligible");
     assert.ok(items[1].renewalSetup);

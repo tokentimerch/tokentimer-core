@@ -76,6 +76,11 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_POLL_INTERVAL_MS = 15000;
 // Discovery is an inventory scan, not a control loop; hourly by default.
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
+// Windows OS-store/IIS/http.sys discovery is a lighter enumeration than the
+// filesystem walk (no file I/O, just Cert:\ / WebAdministration / netsh
+// queries), so it defaults to a shorter interval to catch renewals/rotations
+// sooner without meaningfully increasing host load.
+const DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS = 30 * 60 * 1000;
 // Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
@@ -649,6 +654,52 @@ function validateDiscoveryObject(discovery) {
   return { directories, intervalMs };
 }
 
+/**
+ * Windows OS-store/IIS/http.sys discovery config, deliberately independent
+ * of validateDiscoveryObject (filesystem directories are meaningless here,
+ * and this surface only exists on Windows hosts). Defaults to enabled with
+ * no directories/parameters needed -- unlike filesystem discovery, this scan
+ * doesn't require any operator-specified path; Cert:\LocalMachine\My, IIS
+ * sites, and http.sys bindings are all self-discovering. `enabled: false`
+ * lets an operator opt out on a Windows host that doesn't want this surface
+ * reported (e.g. a workstation with unrelated local certificates).
+ */
+function validateWindowsDiscoveryObject(windowsDiscovery) {
+  if (windowsDiscovery === undefined || windowsDiscovery === null) {
+    return { enabled: true, intervalMs: DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS };
+  }
+  if (typeof windowsDiscovery !== "object" || Array.isArray(windowsDiscovery)) {
+    throw new Error(
+      "tokentimer-agent: windowsDiscovery in config.json must be an object ({ enabled?, intervalMs? })",
+    );
+  }
+  let enabled = true;
+  if (windowsDiscovery.enabled !== undefined) {
+    if (typeof windowsDiscovery.enabled !== "boolean") {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.enabled must be a boolean, got: " +
+          JSON.stringify(windowsDiscovery.enabled),
+      );
+    }
+    enabled = windowsDiscovery.enabled;
+  }
+  let intervalMs = DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS;
+  if (windowsDiscovery.intervalMs !== undefined) {
+    if (
+      typeof windowsDiscovery.intervalMs !== "number" ||
+      !Number.isInteger(windowsDiscovery.intervalMs) ||
+      windowsDiscovery.intervalMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.intervalMs must be a positive integer " +
+          `(milliseconds), got: ${JSON.stringify(windowsDiscovery.intervalMs)}`,
+      );
+    }
+    intervalMs = windowsDiscovery.intervalMs;
+  }
+  return { enabled, intervalMs };
+}
+
 function validateCaBundlePath(caBundlePath) {
   if (caBundlePath === undefined || caBundlePath === null) return null;
   if (typeof caBundlePath !== "string" || caBundlePath.length === 0) {
@@ -814,6 +865,7 @@ function validateExecutionObject(execution, configDir) {
  *   declaredCommandProfileNames: string[],
  *   policy: object|null,
  *   discovery: {directories: string[], intervalMs: number}|null,
+ *   windowsDiscovery: {enabled: boolean, intervalMs: number},
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
  *   requireSignedAgentId: boolean,
@@ -888,6 +940,12 @@ function loadAgentConfig({ configDir } = {}) {
   // null means discovery is disabled entirely.
   const discovery = validateDiscoveryObject(fileConfig.discovery);
 
+  // Windows OS-store/IIS/http.sys discovery config. Unlike filesystem
+  // discovery, this has no "disabled by absence" semantics -- it defaults to
+  // enabled (see validateWindowsDiscoveryObject) since it needs no operator-
+  // supplied paths and is a no-op (empty results) on any non-Windows host.
+  const windowsDiscovery = validateWindowsDiscoveryObject(fileConfig.windowsDiscovery);
+
   const caBundlePath = validateCaBundlePath(
     process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
   );
@@ -948,6 +1006,7 @@ function loadAgentConfig({ configDir } = {}) {
     declaredCommandProfileNames,
     policy,
     discovery,
+    windowsDiscovery,
     caBundlePath,
     allowInsecureLocalHttp,
     requireSignedAgentId,

@@ -63,10 +63,16 @@ const {
   CERTOPS_AGENT_RETIRE_REASON_INVALID,
   countActivelyLeasedJobs,
   getAgentById,
+  getAgentsByAgentIdStrings,
   listAgents,
   normalizeRequiredRetireReason,
   retireAgent,
+  updateAgentAlertSettings,
 } = require("../services/certops/agentRegistry");
+const {
+  countCertificatesDependentPerAgent,
+  resolveRenewalPathsForCertificateIds,
+} = require("../services/certops/renewalPathHealth");
 const {
   CERTOPS_DIAGNOSTIC_BOOTSTRAP_ALREADY_CONSUMED,
   CERTOPS_DIAGNOSTIC_BOOTSTRAP_REQUEST_ID_INVALID,
@@ -422,10 +428,13 @@ function handleCertOpsError(res, err) {
   if (
     err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID ||
     err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID ||
-    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID ||
+    err?.code === "CERTOPS_AGENT_CONTACT_GROUP_INVALID"
   ) {
-    return res.status(400).json({
-      error: "CertOps agent bootstrap token request is invalid",
+    return res.status(err.statusCode || 400).json({
+      error: err.code === "CERTOPS_AGENT_CONTACT_GROUP_INVALID"
+        ? err.message
+        : "CertOps agent bootstrap token request is invalid",
       code: err.code,
     });
   }
@@ -1635,6 +1644,29 @@ router.post(
   async (req, res) => {
     try {
       const created = await withCertOpsTokenTransaction(async (client) => {
+        // Validate contact_group_id belongs to the workspace up front (same
+        // check as tokens.js), so a bad id fails the create instead of
+        // silently resolving to "no group" at send time much later.
+        let contactGroupId = null;
+        if (
+          req.body?.contactGroupId !== undefined &&
+          req.body?.contactGroupId !== null &&
+          String(req.body.contactGroupId).trim() !== ""
+        ) {
+          const cgId = String(req.body.contactGroupId).trim();
+          const cgRes = await client.query(
+            "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)",
+            [req.workspace.id, cgId],
+          );
+          if (cgRes.rowCount === 0) {
+            const error = new Error("Invalid contactGroupId for workspace");
+            error.code = "CERTOPS_AGENT_CONTACT_GROUP_INVALID";
+            error.statusCode = 400;
+            throw error;
+          }
+          contactGroupId = cgId;
+        }
+
         // createBootstrapToken enforces required future expiry and the
         // max-TTL window, so this route relies on service-layer validation.
         const tokenResult = await createBootstrapToken({
@@ -1643,6 +1675,8 @@ router.post(
           name: req.body?.name,
           expiresAt: req.body?.expiresAt,
           createdBy: req.user.id,
+          downtimeAlertsEnabled: req.body?.downtimeAlertsEnabled,
+          contactGroupId,
         });
         await recordBootstrapTokenAudit({
           client,
@@ -1793,8 +1827,26 @@ router.get(
         limit: req.query.limit,
         offset: req.query.offset,
       });
+      let impactCounts = new Map();
+      try {
+        impactCounts = await countCertificatesDependentPerAgent({
+          workspaceId: req.workspace.id,
+        });
+      } catch (impactErr) {
+        // Impact counts are an enrichment, not core fleet data; a failure
+        // here (e.g. a workspace with malformed profile metadata) must not
+        // take down the whole agent list.
+        logger.warn("CertOps agent renewal-impact count failed", {
+          error: impactErr.message,
+          workspaceId: req.workspace?.id,
+        });
+      }
+      const items = agents.items.map((agent) => ({
+        ...agent,
+        dependentAutoRenewCertificateCount: impactCounts.get(String(agent.id)) || 0,
+      }));
       return res.json({
-        items: agents.items,
+        items,
         pagination: agents.pagination,
       });
     } catch (err) {
@@ -1919,6 +1971,111 @@ router.post(
       });
       return res.status(500).json({
         error: "Failed to retire CertOps agent",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.patch(
+  "/api/v1/workspaces/:id/certops/agents/:agentId/alert-settings",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    const agentId = agentIdFromParams(req, res);
+    if (!agentId) return null;
+
+    if (
+      req.body?.downtimeAlertsEnabled === undefined &&
+      req.body?.contactGroupId === undefined
+    ) {
+      return res.status(400).json({
+        error: "At least one of downtimeAlertsEnabled or contactGroupId is required",
+        code: "CERTOPS_AGENT_ALERT_SETTINGS_EMPTY",
+      });
+    }
+
+    try {
+      const outcome = await withCertOpsTransaction(async (client) => {
+        const existing = await getAgentById({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+        });
+        if (!existing) return { notFound: true };
+
+        let contactGroupId;
+        if (req.body?.contactGroupId !== undefined) {
+          if (req.body.contactGroupId === null || String(req.body.contactGroupId).trim() === "") {
+            contactGroupId = null;
+          } else {
+            const cgId = String(req.body.contactGroupId).trim();
+            const cgRes = await client.query(
+              "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)",
+              [req.workspace.id, cgId],
+            );
+            if (cgRes.rowCount === 0) {
+              return { invalidContactGroup: true };
+            }
+            contactGroupId = cgId;
+          }
+        }
+
+        const agent = await updateAgentAlertSettings({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+          downtimeAlertsEnabled: req.body?.downtimeAlertsEnabled,
+          contactGroupId,
+        });
+
+        await writeAudit({
+          client,
+          actorUserId: req.user.id,
+          subjectUserId: req.user.id,
+          action: "CERTOPS_AGENT_ALERT_SETTINGS_UPDATED",
+          targetType: "certops_agent",
+          targetId: null,
+          workspaceId: req.workspace.id,
+          metadata: {
+            agentId: agent.agentId,
+            downtimeAlertsEnabled: agent.downtimeAlertsEnabled,
+            contactGroupId: agent.contactGroupId,
+          },
+        });
+
+        return { agent };
+      });
+
+      if (outcome.notFound) {
+        return res.status(404).json({
+          error: "CertOps agent not found",
+          code: CERTOPS_AGENT_NOT_FOUND,
+        });
+      }
+      if (outcome.invalidContactGroup) {
+        return res.status(400).json({
+          error: "Invalid contactGroupId for workspace",
+          code: "CERTOPS_AGENT_CONTACT_GROUP_INVALID",
+        });
+      }
+
+      return res.json({ agent: outcome.agent });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent alert settings update failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        agentId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to update CertOps agent alert settings",
         code: "INTERNAL_ERROR",
       });
     }
@@ -2525,6 +2682,59 @@ function renewalRowFromInventoryRecord(certificate) {
   };
 }
 
+/**
+ * Observed Locations UI needs a connectivity fact per row ("Reachable" /
+ * "Agent offline" / no responsible agent) that is deliberately NOT the same
+ * axis as certificate_instances.status (that answers "is the certificate
+ * still present there", per an actual scan -- see inventory.js#toInstanceRecord
+ * and the product note that agent connectivity must never overload it).
+ * `responsibleAgentId` is already derived server-side from source/sourceRef
+ * (inventory.js); this only attaches the live liveness read for that agent,
+ * reusing the exact same 10-minute threshold as the fleet table and the
+ * down/recovery alert trigger (agentLiveness.js via agentRegistry.js).
+ */
+async function withInstanceAgentConnectivity({ workspaceId, items }) {
+  const list = Array.isArray(items) ? items : [];
+  const agentIds = list
+    .map((item) => item?.responsibleAgentId)
+    .filter((value) => typeof value === "string" && value);
+  if (agentIds.length === 0) {
+    return list.map((item) => ({ ...item, agent: null }));
+  }
+  let agentsByAgentId = new Map();
+  try {
+    agentsByAgentId = await getAgentsByAgentIdStrings({
+      workspaceId,
+      agentIds,
+    });
+  } catch (err) {
+    // Connectivity is an enrichment on top of the persisted location row;
+    // a lookup failure must still render the location itself.
+    logger.warn("CertOps instance agent-connectivity lookup failed", {
+      error: err.message,
+      workspaceId,
+    });
+  }
+  return list.map((item) => {
+    const agent = item?.responsibleAgentId
+      ? agentsByAgentId.get(item.responsibleAgentId) || null
+      : null;
+    return {
+      ...item,
+      agent: agent
+        ? {
+            agentId: agent.agentId,
+            name: agent.name,
+            hostname: agent.hostname,
+            platform: agent.platform,
+            livenessState: agent.livenessState,
+            lastSeenAt: agent.lastSeenAt,
+          }
+        : null,
+    };
+  });
+}
+
 async function withRenewalState({
   db = pool,
   env = process.env,
@@ -2542,7 +2752,7 @@ async function withRenewalState({
     .map(String);
   if (certificateIds.length === 0) return items;
 
-  const [rows, setupIntentsById, preflightsById, workspaceRow] =
+  const [rows, setupIntentsById, preflightsById, workspaceRow, renewalPathById] =
     await Promise.all([
       loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
       loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
@@ -2563,6 +2773,16 @@ async function withRenewalState({
           workspaceId,
         ])
         .catch(() => null),
+      // Renewal-path health (Healthy/Degraded/Renewal path unavailable/
+      // Unknown) is a distinct axis from the lifecycle `renewal` state
+      // above; a failure here must not take down certificate list/detail
+      // rendering, so fall back to an empty projection per certificate.
+      resolveRenewalPathsForCertificateIds({
+        db,
+        workspaceId,
+        certificateIds,
+        env,
+      }).catch(() => new Map()),
     ]);
   const rowsById = new Map(rows.map((row) => [String(row.id), row]));
   const workspacePaused = workspaceRow?.rows?.[0]?.certops_paused === true;
@@ -2577,6 +2797,12 @@ async function withRenewalState({
     renewalSetup: projectRenewalSetupState(
       setupIntentsById.get(String(certificate.id)) || null,
     ),
+    ...(renewalPathById.get(String(certificate.id)) || {
+      renewalPathState: null,
+      renewalPathReason: null,
+      renewalPathSummary: null,
+      dependencies: [],
+    }),
     ...(includePreflight
       ? {
           renewalPreflight: projectRenewalPreflight(
@@ -2852,7 +3078,13 @@ router.get(
         });
       }
 
-      return res.json(result);
+      return res.json({
+        ...result,
+        items: await withInstanceAgentConnectivity({
+          workspaceId: req.workspace.id,
+          items: result.items,
+        }),
+      });
     } catch (err) {
       logger.error("CertOps certificate instances list failed", {
         error: err.message,
@@ -2889,7 +3121,13 @@ router.get(
         limit: req.query.limit,
         offset: req.query.offset,
       });
-      return res.json(result);
+      return res.json({
+        ...result,
+        items: await withInstanceAgentConnectivity({
+          workspaceId: req.workspace.id,
+          items: result.items,
+        }),
+      });
     } catch (err) {
       logger.error("CertOps certificate instances list failed", {
         error: err.message,
@@ -3149,6 +3387,7 @@ module.exports._test = {
   requireCertOpsSessionUser,
   handleCertOpsError,
   withRenewalState,
+  withInstanceAgentConnectivity,
   loadRenewalSetupIntents,
   projectRenewalSetupState,
   apiTokenMetadata,

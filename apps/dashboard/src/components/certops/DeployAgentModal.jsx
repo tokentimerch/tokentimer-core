@@ -5,6 +5,7 @@ import {
   AlertIcon,
   Box,
   Button,
+  Checkbox,
   Code,
   FormControl,
   FormHelperText,
@@ -17,6 +18,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Text,
   VStack,
@@ -30,6 +32,7 @@ import {
 import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { workspaceAPI } from '../../utils/apiClient';
 import { showError, showSuccess } from '../../utils/toast.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme.js';
 import {
@@ -143,6 +146,10 @@ export default function DeployAgentModal({
 
   const [name, setName] = useState('');
   const [expiresLocal, setExpiresLocal] = useState(defaultExpiryLocalValue());
+  const [downtimeAlertsEnabled, setDowntimeAlertsEnabled] = useState(true);
+  const [contactGroupId, setContactGroupId] = useState('');
+  const [contactGroups, setContactGroups] = useState([]);
+  const [defaultContactGroupId, setDefaultContactGroupId] = useState('');
   const [creating, setCreating] = useState(false);
   const [plaintextToken, setPlaintextToken] = useState('');
   const [secretAcknowledged, setSecretAcknowledged] = useState(false);
@@ -159,9 +166,35 @@ export default function DeployAgentModal({
 
   const { agents: fleetAgents } = useCertOpsAgents();
 
+  // Contact groups load lazily when the modal opens, same pattern as
+  // CertificateTokenDetailModal / AgentFleetPanel's Edit alerting modal.
+  useEffect(() => {
+    if (!isOpen || !workspaceId) return undefined;
+    let cancelled = false;
+    workspaceAPI
+      .getAlertSettings(workspaceId)
+      .then(settings => {
+        if (cancelled) return;
+        setContactGroups(
+          Array.isArray(settings?.contact_groups)
+            ? settings.contact_groups
+            : []
+        );
+        setDefaultContactGroupId(settings?.default_contact_group_id || '');
+      })
+      .catch(() => {
+        if (!cancelled) setContactGroups([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, workspaceId]);
+
   const resetWizard = () => {
     setName('');
     setExpiresLocal(defaultExpiryLocalValue());
+    setDowntimeAlertsEnabled(true);
+    setContactGroupId('');
     setCreating(false);
     setPlaintextToken('');
     setSecretAcknowledged(false);
@@ -268,6 +301,8 @@ export default function DeployAgentModal({
       const result = await createBootstrapToken(requestWorkspaceId, {
         name: name.trim(),
         expiresAt: expiresAtIso,
+        downtimeAlertsEnabled,
+        contactGroupId: contactGroupId || null,
       });
       const plaintext =
         typeof result?.plaintextToken === 'string'
@@ -388,6 +423,47 @@ export default function DeployAgentModal({
                       : 'Required; at most 30 days out. Defaults to 24 hours.'}
                   </FormHelperText>
                 </FormControl>
+
+                <FormControl isDisabled={hasUnacknowledgedSecret}>
+                  <Checkbox
+                    isChecked={downtimeAlertsEnabled}
+                    onChange={event =>
+                      setDowntimeAlertsEnabled(event.target.checked)
+                    }
+                    size='sm'
+                  >
+                    <Text as='span' fontSize='sm'>
+                      Agent downtime alerts
+                    </Text>
+                  </Checkbox>
+                  <FormHelperText>
+                    Alert when this agent has not been seen for 10 minutes.
+                  </FormHelperText>
+                </FormControl>
+
+                {downtimeAlertsEnabled ? (
+                  <FormControl
+                    isDisabled={hasUnacknowledgedSecret}
+                    maxW='280px'
+                  >
+                    <FormLabel fontSize='sm'>Contact group</FormLabel>
+                    <Select
+                      size='sm'
+                      value={contactGroupId}
+                      onChange={event => setContactGroupId(event.target.value)}
+                    >
+                      <option value=''>Default workspace group</option>
+                      {contactGroups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                          {String(g.id) === String(defaultContactGroupId)
+                            ? ' (default)'
+                            : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : null}
 
                 {!plaintextToken ? (
                   <Button
