@@ -24,6 +24,7 @@ const {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runWindowsDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,
@@ -384,6 +385,177 @@ describe("runDiscoveryScan", () => {
       client,
       log: silentLog,
     });
+
+    assert.equal(outcome.observed, 17);
+    assert.equal(client.calls.reportEvidence.length, 2);
+    assert.equal(client.calls.reportEvidence[0].evidenceItems.length, 16);
+    assert.equal(client.calls.reportEvidence[1].evidenceItems.length, 1);
+  });
+});
+
+describe("runWindowsDiscoveryScan", () => {
+  it("reports collected observations as certificate.observed evidence with locationKind/locationSlot metadata", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "windows_store",
+        locationSlot: "LocalMachine/My/example.com",
+        fingerprintSha256: "a".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        serialNumber: "01",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        thumbprint: "deadbeef",
+        keyPresent: true,
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    assert.equal(outcome.warnings, 0);
+    assert.equal(client.calls.reportEvidence.length, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.eventType, "certificate.observed");
+    assert.equal(item.fingerprintSha256, "a".repeat(64));
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.locationKind, "windows_store");
+    assert.equal(byName.locationSlot, "LocalMachine/My/example.com");
+    assert.equal(byName.targetHost, os.hostname());
+    assert.equal(byName.keyPresent, true);
+    assert.equal(byName.storeLocation, "LocalMachine");
+    assert.equal(byName.storeName, "My");
+    // filePath must never appear for a non-filesystem location.
+    assert.ok(!("filePath" in byName));
+  });
+
+  it("reports keyPresent: false (not omitted) when the store confirms no private key at this location", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "windows_store",
+        locationSlot: "LocalMachine/My/public-only.example.com",
+        fingerprintSha256: "d".repeat(64),
+        subject: "CN=public-only.example.com",
+        issuer: "CN=public-only.example.com",
+        serialNumber: "09",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "public-only.example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        thumbprint: "cafef00d",
+        keyPresent: false,
+      },
+    ];
+
+    await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.keyPresent, false);
+  });
+
+  it("includes IIS-specific metadata (siteName, port, sniHost) for an iis_binding observation", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "iis_binding",
+        locationSlot: "Default Web Site:443#example.com",
+        fingerprintSha256: "b".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        serialNumber: "02",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        siteName: "Default Web Site",
+        port: 443,
+        sniHost: "example.com",
+        thumbprint: "deadbeef",
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.siteName, "Default Web Site");
+    assert.equal(byName.port, "443");
+    assert.equal(byName.sniHost, "example.com");
+  });
+
+  it("includes http_sys-specific port metadata without sniHost/siteName", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "http_sys",
+        locationSlot: "0.0.0.0:8443",
+        fingerprintSha256: "c".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        port: 8443,
+        thumbprint: "deadbeef",
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.port, "8443");
+    assert.ok(!("siteName" in byName));
+    assert.ok(!("sniHost" in byName));
+  });
+
+  it("sends no evidence when the collector returns no observations (e.g. non-Windows host)", async () => {
+    const client = createRecordingClient();
+    const collect = () => [];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 0);
+    assert.equal(outcome.warnings, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("surfaces collector warnings in the returned count without failing the scan", async () => {
+    const client = createRecordingClient();
+    const collect = ({ onWarning }) => {
+      onWarning("windows discovery (iis_binding): powershell exited 1: boom");
+      return [];
+    };
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.warnings, 1);
+    assert.equal(outcome.observed, 0);
+  });
+
+  it("chunks evidence bodies to the schema's 16-item maximum", async () => {
+    const client = createRecordingClient();
+    const collect = () =>
+      Array.from({ length: 17 }, (_v, index) => ({
+        locationKind: "windows_store",
+        locationSlot: `LocalMachine/My/cert-${index}.example.com`,
+        fingerprintSha256: index.toString(16).padStart(2, "0").repeat(32),
+        subject: `CN=cert-${index}.example.com`,
+        issuer: `CN=cert-${index}.example.com`,
+        storeLocation: "LocalMachine",
+        storeName: "My",
+      }));
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
 
     assert.equal(outcome.observed, 17);
     assert.equal(client.calls.reportEvidence.length, 2);

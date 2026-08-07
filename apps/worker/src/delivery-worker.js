@@ -519,6 +519,331 @@ function buildEndpointHealthWebhookPayload(
   };
 }
 
+// agent_health mirrors endpoint_health's shape exactly (same alert_key
+// convention: agent_health:<agentRowId>:<down|recovered>), reading the
+// enrichment payload that agentHealthAlerts.js writes into alert_queue.metadata
+// instead of joining a tokens row -- an agent has none. Only public identity
+// and certificate labels/ids/renewalPathState ever appear here (zero-custody).
+function parseAgentHealthMetadata(alert) {
+  if (alert && typeof alert.metadata === "object" && alert.metadata !== null) {
+    return alert.metadata;
+  }
+  try {
+    return JSON.parse(alert?.metadata || "{}");
+  } catch (_err) {
+    return {};
+  }
+}
+
+function formatOfflineDuration(lastSeenAt) {
+  if (!lastSeenAt) return null;
+  const ms = Date.now() - new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 60) return `${minutes} minute(s)`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours} hour(s)`;
+}
+
+function getAgentHealthContext(alert) {
+  const parts = String(alert.alert_key || "").split(":");
+  const transition = parts[2] || "down";
+  const isDown = transition === "down";
+  const meta = parseAgentHealthMetadata(alert);
+  const agentName = meta.agentName || meta.agentId || "Agent";
+  const hostname = meta.hostname || null;
+  const platform = meta.platform || null;
+  const lastSeenAt = meta.lastSeenAt || null;
+  const offlineAfterMs = Number(meta.offlineAfterMs) || null;
+  const offlineAfterMinutes = offlineAfterMs
+    ? Math.round(offlineAfterMs / 60000)
+    : null;
+  const offlineDuration = isDown ? formatOfflineDuration(lastSeenAt) : null;
+  const impactedCertificates = Array.isArray(meta.impactedCertificates)
+    ? meta.impactedCertificates
+    : [];
+  const impactedTotalCount = Number(meta.impactedCertificateTotalCount) || 0;
+  const extraImpactedCount = Math.max(
+    0,
+    impactedTotalCount - impactedCertificates.length,
+  );
+
+  return {
+    transition,
+    isDown,
+    status: isDown ? "DOWN" : "RECOVERED",
+    severity: isDown ? "critical" : "info",
+    statusIcon: isDown ? "\u26A0\uFE0F" : "\u2705",
+    agentName,
+    hostname,
+    platform,
+    lastSeenAt,
+    offlineAfterMinutes,
+    offlineDuration,
+    impactedCertificates,
+    impactedTotalCount,
+    extraImpactedCount,
+    title: isDown ? `Agent Down: ${agentName}` : `Agent Recovered: ${agentName}`,
+    description: isDown
+      ? `No heartbeat has been received for more than ${offlineAfterMinutes || 10} minutes.`
+      : impactedTotalCount > 0
+        ? `${impactedTotalCount} affected certificate renewal path(s) recovered.`
+        : "The agent is back online and reporting normally.",
+  };
+}
+
+// Mirrors RenewalPathBadge's label map exactly (certopsFormat.js
+// renewalPathDescriptor) so the alert body reads "Renewal path unavailable"
+// rather than the raw wire value "unavailable" -- duplicated rather than
+// imported for the same CommonJS/ESM boundary reason as resolveContactGroup
+// in agentHealthAlerts.js. Keep in sync by hand; the states are small and
+// stable (renewalPathHealth.js RENEWAL_PATH_STATES).
+const RENEWAL_PATH_STATE_LABELS = {
+  healthy: "Healthy",
+  degraded: "Degraded",
+  unavailable: "Renewal path unavailable",
+  unknown: "Unknown",
+};
+
+function formatImpactedCertificateLines(context) {
+  if (context.impactedCertificates.length === 0) return [];
+  const lines = context.impactedCertificates.map((cert) => {
+    const label = cert.commonName || cert.id || "certificate";
+    const stateLabel = cert.renewalPathState
+      ? RENEWAL_PATH_STATE_LABELS[cert.renewalPathState] || cert.renewalPathState
+      : null;
+    return stateLabel ? `- ${label} \u2014 ${stateLabel}` : `- ${label}`;
+  });
+  if (context.extraImpactedCount > 0) {
+    lines.push(`+${context.extraImpactedCount} more`);
+  }
+  return lines;
+}
+
+function buildAgentHealthEmailContent(alert) {
+  const context = getAgentHealthContext(alert);
+  const frontendUrl = process.env.APP_URL || "http://localhost:5173";
+  const timestamp = new Date().toLocaleString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+  const subject = context.isDown
+    ? `${context.statusIcon} Agent Down: ${context.agentName}`
+    : `${context.statusIcon} Agent Recovered: ${context.agentName}`;
+
+  const impactedLines = formatImpactedCertificateLines(context);
+
+  const textLines = [
+    `Agent ${context.status}: ${context.agentName}`,
+    "",
+    `Status: ${context.status}`,
+    ...(context.hostname ? [`Hostname: ${context.hostname}`] : []),
+    ...(context.platform ? [`OS: ${context.platform}`] : []),
+    ...(context.lastSeenAt
+      ? [`Last seen: ${new Date(context.lastSeenAt).toISOString()}`]
+      : []),
+    ...(context.isDown && context.offlineDuration
+      ? [`Offline for: ${context.offlineDuration}`]
+      : []),
+    `Detected at: ${timestamp}`,
+    "",
+    context.description,
+    ...(impactedLines.length > 0
+      ? [
+          "",
+          `${context.impactedTotalCount} auto-renew certificate(s) affected:`,
+          ...impactedLines,
+        ]
+      : []),
+    "",
+    `View your dashboard: ${frontendUrl}`,
+  ];
+  const text = textLines.join("\n");
+
+  const statusColor = context.isDown ? "#e53e3e" : "#38a169";
+  const statusBg = context.isDown ? "#FFF5F5" : "#F0FFF4";
+  const statusBorder = context.isDown ? "#FEB2B2" : "#9AE6B4";
+
+  const statusBadge = `
+    <div style="background: ${statusBg}; border: 1px solid ${statusBorder}; border-radius: 8px; padding: 16px 20px; margin: 16px 0;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="vertical-align: middle; width: 40px;">
+            <span style="font-size: 28px;">${context.statusIcon}</span>
+          </td>
+          <td style="vertical-align: middle; padding-left: 12px;">
+            <span style="font-size: 20px; font-weight: 700; color: ${statusColor};">${context.status}</span>
+            <br/>
+            <span style="font-size: 14px; color: #4A5568;">${context.description}</span>
+          </td>
+        </tr>
+      </table>
+    </div>`;
+
+  const detailsRows = [
+    context.hostname
+      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; width: 120px;">Hostname</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${context.hostname}</td></tr>`
+      : "",
+    context.platform
+      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">OS</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${context.platform}</td></tr>`
+      : "",
+    context.lastSeenAt
+      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Last Seen</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${new Date(context.lastSeenAt).toLocaleString("en-US")}</td></tr>`
+      : "",
+    `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${timestamp}</td></tr>`,
+  ].join("");
+  const detailsTable = `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 20px 0; border-collapse: collapse;">${detailsRows}</table>`;
+
+  const impactedHtml =
+    impactedLines.length > 0
+      ? `<div style="margin-top: 16px;">
+          <p style="font-size: 14px; color: #2D3748; font-weight: 600; margin: 0 0 8px 0;">${context.impactedTotalCount} auto-renew certificate(s) affected:</p>
+          <ul style="margin: 0; padding-left: 20px; color: #4A5568; font-size: 13px; line-height: 1.6;">
+            ${context.impactedCertificates
+              .map(
+                (cert) =>
+                  `<li>${cert.commonName || cert.id || "certificate"}${cert.renewalPathState ? ` \u2014 ${cert.renewalPathState}` : ""}</li>`,
+              )
+              .join("")}
+            ${context.extraImpactedCount > 0 ? `<li>+${context.extraImpactedCount} more</li>` : ""}
+          </ul>
+        </div>`
+      : "";
+
+  const htmlContent = `${statusBadge}${detailsTable}${impactedHtml}`;
+
+  const { html, text: templateText } = generateEmailTemplate({
+    title: `Agent ${context.status}: ${context.agentName}`,
+    content: htmlContent,
+    buttonText: "View Dashboard",
+    buttonUrl: frontendUrl,
+    plainTextContent: text,
+  });
+
+  return { subject, text: templateText, html };
+}
+
+function buildAgentHealthWebhookPayload(
+  kind,
+  alert,
+  { severity, title, routingKey } = {},
+) {
+  const context = getAgentHealthContext(alert);
+  const selectedSeverity = String(severity || context.severity).toLowerCase();
+  const selectedTitle = title || context.title;
+  const impactedLines = formatImpactedCertificateLines(context);
+  const agentData = {
+    type: "agent_health",
+    agent_name: context.agentName,
+    hostname: context.hostname,
+    platform: context.platform,
+    status: context.status,
+    transition: context.transition,
+    impacted_certificate_count: context.impactedTotalCount,
+    impacted_certificates: context.impactedCertificates,
+  };
+
+  if (kind === "slack") {
+    return {
+      text: `${context.statusIcon} ${selectedTitle}`,
+      blocks: [
+        {
+          type: "header",
+          text: { type: "plain_text", text: `${context.statusIcon} ${selectedTitle}` },
+        },
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: context.description },
+        },
+        ...(impactedLines.length > 0
+          ? [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*${context.impactedTotalCount} auto-renew certificate(s) affected:*\n${impactedLines.join("\n")}`,
+                },
+              },
+            ]
+          : []),
+      ],
+    };
+  }
+
+  if (kind === "discord") {
+    return {
+      content: `${context.statusIcon} **${selectedTitle}**`,
+      embeds: [
+        {
+          title: selectedTitle,
+          description: [context.description, ...impactedLines].join("\n"),
+          color: context.isDown ? 15158332 : 3066993,
+          fields: [
+            { name: "Status", value: context.status, inline: true },
+            ...(context.hostname
+              ? [{ name: "Hostname", value: context.hostname, inline: true }]
+              : []),
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+  }
+
+  if (kind === "teams") {
+    return {
+      "@type": "MessageCard",
+      "@context": "https://schema.org/extensions",
+      summary: selectedTitle,
+      themeColor: context.isDown ? "E02424" : "2F855A",
+      sections: [
+        {
+          activityTitle: `${context.statusIcon} ${selectedTitle}`,
+          text: [context.description, ...impactedLines].join("\n\n"),
+          facts: [
+            { name: "Status", value: context.status },
+            ...(context.hostname
+              ? [{ name: "Hostname", value: context.hostname }]
+              : []),
+          ],
+          markdown: true,
+        },
+      ],
+    };
+  }
+
+  if (kind === "pagerduty") {
+    return {
+      routing_key: routingKey,
+      event_action: "trigger",
+      payload: {
+        summary: selectedTitle,
+        source: "TokenTimer",
+        severity: selectedSeverity,
+        timestamp: new Date().toISOString(),
+        custom_details: agentData,
+      },
+    };
+  }
+
+  return {
+    text: `${context.statusIcon} ${selectedTitle}`,
+    content: `${context.statusIcon} ${selectedTitle}`,
+    message: [context.description, ...impactedLines].join("\n"),
+    severity: selectedSeverity,
+    title: selectedTitle,
+    timestamp: new Date().toISOString(),
+    type: "agent_health_alert",
+    agent: agentData,
+  };
+}
+
 // Twilio/WhatsApp approved templates reject newlines, long runs of spaces, and
 // unknown or overlong variable keys (max 16 chars). See DocsAlerts placeholder contracts.
 /**
@@ -629,6 +954,13 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
+// Exported for direct unit testing without spinning up the full worker job.
+export const _test = {
+  formatImpactedCertificateLines,
+  getAgentHealthContext,
+  RENEWAL_PATH_STATE_LABELS,
+};
+
 export async function deliveryWorkerJob({ closePool = true } = {}) {
   const startedAt = Date.now();
   // Owner identity for this run's claims. Every renewal and terminal write
@@ -722,12 +1054,13 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          t.key_size, t.algorithm, t.license_type, t.vendor, t.cost, 
          t.renewal_url, t.renewal_date::date AS renewal_date, t.contacts, 
          t.description, t.notes,
-         t.contact_group_id,
-         t.workspace_id,
+         COALESCE(t.contact_group_id, ca.contact_group_id) AS contact_group_id,
+         COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
-       JOIN tokens t ON t.id = aq.token_id
-       LEFT JOIN workspaces w ON w.id = t.workspace_id
+       LEFT JOIN tokens t ON t.id = aq.token_id
+       LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+       LEFT JOIN workspaces w ON w.id = COALESCE(t.workspace_id, ca.workspace_id)
        LEFT JOIN LATERAL (
          SELECT w2.*
          FROM workspaces w2
@@ -749,6 +1082,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
        LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
         WHERE aq.status IN ('pending', 'failed', 'partial') 
          AND aq.due_date <= CURRENT_DATE
+         AND (t.id IS NOT NULL OR ca.id IS NOT NULL)
          ${gatingClause}
        ORDER BY aq.due_date ASC, aq.created_at ASC
        LIMIT 1000
@@ -1092,6 +1426,8 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               const isCertRenewalFailedAlert =
                 alert.alert_key &&
                 alert.alert_key.startsWith("cert_renewal_failed:");
+              const isAgentHealthAlert =
+                alert.alert_key && alert.alert_key.startsWith("agent_health:");
               let certRenewalJob = null;
               if (isCertRenewalFailedAlert) {
                 // Best-effort job lookup for the error code (zero-custody:
@@ -1113,7 +1449,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 ? buildEndpointHealthEmailContent(alert, alert)
                 : isCertRenewalFailedAlert
                   ? buildCertRenewalFailedEmailContent(alert, certRenewalJob)
-                  : buildEmailContent(alert, daysLeft);
+                  : isAgentHealthAlert
+                    ? buildAgentHealthEmailContent(alert)
+                    : buildEmailContent(alert, daysLeft);
               let allOk = true;
               for (const rcpt of trimmed) {
                 await assertStillOwnsDelivery(
@@ -1263,10 +1601,13 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 const isCertRenewalFailedWebhook =
                   alert.alert_key &&
                   alert.alert_key.startsWith("cert_renewal_failed:");
+                const isAgentHealthWebhook =
+                  alert.alert_key && alert.alert_key.startsWith("agent_health:");
 
                 let text;
                 let tokenData;
                 let endpointTransition = null;
+                let agentTransition = null;
                 if (isEndpointHealthWebhook) {
                   const ehParts = alert.alert_key.split(":");
                   const ehTransition = ehParts[2] || "down";
@@ -1294,6 +1635,17 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                     token_id: alert.token_id,
                     name: alert.name,
                     job_id: certJobId,
+                  };
+                } else if (isAgentHealthWebhook) {
+                  const agentContext = getAgentHealthContext(alert);
+                  agentTransition = agentContext.transition;
+                  text = `Agent ${agentContext.status}: ${agentContext.agentName}`;
+                  tokenData = {
+                    type: "agent_health",
+                    agent_name: agentContext.agentName,
+                    status: agentContext.status,
+                    transition: agentContext.transition,
+                    impacted_certificate_count: agentContext.impactedTotalCount,
                   };
                 } else {
                   const expires = alert.expiration
@@ -1335,7 +1687,11 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                         : "info"
                       : isCertRenewalFailedWebhook
                         ? "critical"
-                        : computedSeverity;
+                        : isAgentHealthWebhook
+                          ? agentTransition === "down"
+                            ? "critical"
+                            : "info"
+                          : computedSeverity;
                 const templateTitle =
                   typeof wh?.template === "string" && wh.template
                     ? String(wh.template)
@@ -1347,22 +1703,28 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       title: templateTitle || undefined,
                       routingKey,
                     })
-                  : kind === "pagerduty"
-                    ? {
-                        routing_key: routingKey,
-                        event_action: "trigger",
-                        payload: {
-                          summary: templateTitle || text,
-                          source: "TokenTimer",
-                          severity: selectedSeverity,
-                          timestamp: new Date().toISOString(),
-                          custom_details: tokenData,
-                        },
-                      }
-                    : formatPayload(kind, text, tokenData, {
+                  : isAgentHealthWebhook
+                    ? buildAgentHealthWebhookPayload(kind, alert, {
                         severity: selectedSeverity,
                         title: templateTitle || undefined,
-                      });
+                        routingKey,
+                      })
+                    : kind === "pagerduty"
+                      ? {
+                          routing_key: routingKey,
+                          event_action: "trigger",
+                          payload: {
+                            summary: templateTitle || text,
+                            source: "TokenTimer",
+                            severity: selectedSeverity,
+                            timestamp: new Date().toISOString(),
+                            custom_details: tokenData,
+                          },
+                        }
+                      : formatPayload(kind, text, tokenData, {
+                          severity: selectedSeverity,
+                          title: templateTitle || undefined,
+                        });
                 await assertStillOwnsDelivery(
                   client,
                   alert.id,
@@ -1417,8 +1779,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       group_id: groupIdUsedForWebhooks,
                       payload_type: isEndpointHealthWebhook
                         ? "endpoint_health"
-                        : "token_expiry",
+                        : isCertRenewalFailedWebhook
+                          ? "cert_renewal_failed"
+                          : isAgentHealthWebhook
+                            ? "agent_health"
+                            : "token_expiry",
                       endpoint_transition: isEndpointHealthWebhook
+                        ? tokenData?.transition || null
+                        : null,
+                      agent_transition: isAgentHealthWebhook
                         ? tokenData?.transition || null
                         : null,
                     }),

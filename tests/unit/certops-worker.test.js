@@ -545,6 +545,346 @@ describe("certops maintenance worker", () => {
     assert.deepStrictEqual(warned[0].meta.agentIds, ["agent-a"]);
   });
 
+  it("queues one down alert per newly-stale agent via the injected alert queuer", async () => {
+    const worker = await import(workerUrl);
+    const client = {
+      async query() {
+        return {
+          rows: [
+            {
+              id: "row-1",
+              agent_id: "agent-a",
+              workspace_id: "ws-1",
+              name: "agent-a-name",
+              hostname: "host-a",
+              platform: "linux",
+              last_seen_at: new Date("2026-01-01T00:00:00Z"),
+              downtime_alerts_enabled: true,
+              contact_group_id: "cg-1",
+            },
+          ],
+        };
+      },
+    };
+
+    const queuedCalls = [];
+    const result = await worker.sweepStaleAgents({
+      client,
+      offlineAfterMs: 600000,
+      log: silentLogger,
+      resolveImpactedCertificates: async () => [
+        { id: "cert-1", commonName: "api.example.com", renewalPathState: "unavailable" },
+      ],
+      alertQueuer: async (args) => {
+        queuedCalls.push(args);
+        return { queued: true, alertKey: "agent_health:row-1:down", channels: ["email"] };
+      },
+    });
+
+    assert.strictEqual(result.staleCount, 1);
+    assert.strictEqual(result.alertsQueued, 1);
+    assert.strictEqual(queuedCalls.length, 1);
+    assert.strictEqual(queuedCalls[0].transitionType, "down");
+    assert.strictEqual(queuedCalls[0].agent.id, "row-1");
+    assert.strictEqual(queuedCalls[0].agent.contactGroupId, "cg-1");
+    assert.strictEqual(queuedCalls[0].offlineAfterMs, 600000);
+    assert.deepStrictEqual(queuedCalls[0].impactedCertificates, [
+      { id: "cert-1", commonName: "api.example.com", renewalPathState: "unavailable" },
+    ]);
+  });
+
+  it("the default resolveImpactedCertificates wires the real renewal-path dependency resolver", async () => {
+    const worker = await import(workerUrl);
+    const client = {
+      async query(sql, params = []) {
+        const normalized = normalizeSql(sql);
+        if (/^UPDATE certops_agents/.test(normalized)) {
+          return {
+            rows: [
+              {
+                id: "row-1",
+                agent_id: "agent-a",
+                workspace_id: "ws-1",
+                name: "agent-a-name",
+                hostname: "host-a",
+                platform: "linux",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                downtime_alerts_enabled: true,
+                contact_group_id: "cg-1",
+              },
+            ],
+          };
+        }
+        if (/FROM managed_certificates mc/.test(normalized)) {
+          return {
+            rows: [
+              {
+                id: "cert-dependent",
+                workspace_id: "ws-1",
+                status: "active",
+                key_mode: "agent-local",
+                source: "agent_filesystem",
+                common_name: "api.example.com",
+                profile_id: "profile-1",
+                deployed_agent_id: null,
+                discovery_agent_id: "agent-a",
+                certificate_public_metadata: {},
+                profile_status: "active",
+                profile_public_metadata: {},
+              },
+            ],
+          };
+        }
+        if (/FROM certops_agents/.test(normalized)) {
+          return {
+            rows: [
+              {
+                id: "row-1",
+                agent_id: "agent-a",
+                name: "agent-a-name",
+                hostname: "host-a",
+                platform: "linux",
+                status: "offline",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                created_at: new Date("2025-12-01T00:00:00Z"),
+                declared_target_selectors: [],
+              },
+            ],
+          };
+        }
+        throw new Error(`Unexpected query: ${normalized}`);
+      },
+    };
+
+    const queuedCalls = [];
+    const result = await worker.sweepStaleAgents({
+      client,
+      offlineAfterMs: 600000,
+      log: silentLogger,
+      alertQueuer: async (args) => {
+        queuedCalls.push(args);
+        return { queued: true, alertKey: "agent_health:row-1:down", channels: ["email"] };
+      },
+    });
+
+    assert.strictEqual(result.staleCount, 1);
+    assert.strictEqual(queuedCalls.length, 1);
+    // The pinned certificate (agent_filesystem discovery-agent string ==
+    // agent-a, now offline with no redundant executor) shows up without any
+    // test-supplied stub -- this is the real renewalPathHealth.js resolver,
+    // not a fake.
+    assert.deepStrictEqual(queuedCalls[0].impactedCertificates, [
+      {
+        id: "cert-dependent",
+        commonName: "api.example.com",
+        renewalPathState: "unavailable",
+      },
+    ]);
+  });
+
+  it("the default resolveImpactedCertificates resolves each workspace's renewal-path projection at most once per sweep tick, even with multiple stale agents", async () => {
+    const worker = await import(workerUrl);
+    let managedCertificatesQueryCount = 0;
+    const client = {
+      async query(sql, params = []) {
+        const normalized = normalizeSql(sql);
+        if (/^UPDATE certops_agents/.test(normalized)) {
+          return {
+            rows: [
+              {
+                id: "row-1",
+                agent_id: "agent-a",
+                workspace_id: "ws-1",
+                name: "agent-a-name",
+                hostname: "host-a",
+                platform: "linux",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                downtime_alerts_enabled: true,
+                contact_group_id: "cg-1",
+              },
+              {
+                id: "row-2",
+                agent_id: "agent-b",
+                workspace_id: "ws-1",
+                name: "agent-b-name",
+                hostname: "host-b",
+                platform: "linux",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                downtime_alerts_enabled: true,
+                contact_group_id: "cg-1",
+              },
+            ],
+          };
+        }
+        if (/FROM managed_certificates mc/.test(normalized)) {
+          managedCertificatesQueryCount += 1;
+          return { rows: [] };
+        }
+        if (/FROM certops_agents/.test(normalized)) {
+          return {
+            rows: [
+              {
+                id: "row-1",
+                agent_id: "agent-a",
+                name: "agent-a-name",
+                hostname: "host-a",
+                platform: "linux",
+                status: "offline",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                created_at: new Date("2025-12-01T00:00:00Z"),
+                declared_target_selectors: [],
+              },
+              {
+                id: "row-2",
+                agent_id: "agent-b",
+                name: "agent-b-name",
+                hostname: "host-b",
+                platform: "linux",
+                status: "offline",
+                last_seen_at: new Date("2026-01-01T00:00:00Z"),
+                created_at: new Date("2025-12-01T00:00:00Z"),
+                declared_target_selectors: [],
+              },
+            ],
+          };
+        }
+        throw new Error(`Unexpected query: ${normalized}`);
+      },
+    };
+
+    const queuedCalls = [];
+    const result = await worker.sweepStaleAgents({
+      client,
+      offlineAfterMs: 600000,
+      log: silentLogger,
+      alertQueuer: async (args) => {
+        queuedCalls.push(args);
+        return { queued: true, alertKey: `agent_health:${args.agent.id}:down`, channels: ["email"] };
+      },
+    });
+
+    assert.strictEqual(result.staleCount, 2);
+    assert.strictEqual(queuedCalls.length, 2);
+    // Both agents belong to workspace ws-1: the workspace-wide certificate
+    // projection must be resolved once and shared, not once per agent.
+    assert.strictEqual(
+      managedCertificatesQueryCount,
+      1,
+      "resolveRenewalPathsForWorkspace must be shared across agents in the same workspace within one sweep tick",
+    );
+  });
+
+  it("does not queue an alert or throw when no agent crosses the stale threshold", async () => {
+    const worker = await import(workerUrl);
+    const client = { async query() { return { rows: [] }; } };
+    let calls = 0;
+
+    const result = await worker.sweepStaleAgents({
+      client,
+      offlineAfterMs: 600000,
+      log: silentLogger,
+      alertQueuer: async () => {
+        calls += 1;
+        return { queued: true };
+      },
+    });
+
+    assert.strictEqual(result.staleCount, 0);
+    assert.strictEqual(result.alertsQueued, 0);
+    assert.strictEqual(calls, 0);
+  });
+
+  it("a failing alert queuer does not stop the sweep from reporting the stale agent", async () => {
+    const worker = await import(workerUrl);
+    const client = {
+      async query() {
+        return {
+          rows: [
+            {
+              id: "row-1",
+              agent_id: "agent-a",
+              workspace_id: "ws-1",
+              last_seen_at: new Date("2026-01-01T00:00:00Z"),
+            },
+          ],
+        };
+      },
+    };
+
+    const result = await worker.sweepStaleAgents({
+      client,
+      offlineAfterMs: 600000,
+      log: silentLogger,
+      alertQueuer: async () => {
+        throw new Error("delivery boom");
+      },
+    });
+
+    assert.strictEqual(result.staleCount, 1);
+    assert.strictEqual(result.alertsQueued, 0);
+  });
+
+  it("finds active agents with a still-open down alert and queues recovery", async () => {
+    const worker = await import(workerUrl);
+    const queries = [];
+    const client = {
+      async query(sql, params = []) {
+        queries.push({ sql: normalizeSql(sql), params });
+        return {
+          rows: [
+            {
+              id: "row-1",
+              agent_id: "agent-a",
+              workspace_id: "ws-1",
+              name: "agent-a-name",
+              hostname: "host-a",
+              platform: "linux",
+              last_seen_at: new Date("2026-01-02T00:00:00Z"),
+              downtime_alerts_enabled: true,
+              contact_group_id: null,
+            },
+          ],
+        };
+      },
+    };
+
+    const queuedCalls = [];
+    const result = await worker.sweepAgentRecoveries({
+      client,
+      log: silentLogger,
+      alertQueuer: async (args) => {
+        queuedCalls.push(args);
+        return { queued: true, alertKey: "agent_health:row-1:recovered", channels: ["email"] };
+      },
+    });
+
+    assert.strictEqual(result.candidateCount, 1);
+    assert.strictEqual(result.alertsQueued, 1);
+    assert.strictEqual(queuedCalls[0].transitionType, "recovered");
+    assert.strictEqual(queuedCalls[0].agent.agentId, "agent-a");
+    assert.match(queries[0].sql, /JOIN alert_queue/);
+    assert.match(queries[0].sql, /WHERE a\.status = 'active'/);
+  });
+
+  it("queues nothing when no active agent has an open down alert", async () => {
+    const worker = await import(workerUrl);
+    const client = { async query() { return { rows: [] }; } };
+    let calls = 0;
+
+    const result = await worker.sweepAgentRecoveries({
+      client,
+      log: silentLogger,
+      alertQueuer: async () => {
+        calls += 1;
+        return { queued: true };
+      },
+    });
+
+    assert.strictEqual(result.candidateCount, 0);
+    assert.strictEqual(result.alertsQueued, 0);
+    assert.strictEqual(calls, 0);
+  });
+
   it("runs all sweeps in isolation so one failure does not stop the others", async () => {
     const worker = await import(workerUrl);
     let nonceCalls = 0;
@@ -593,9 +933,10 @@ describe("certops maintenance worker", () => {
 
     const results = await worker.runCertOpsMaintenance({
       env: {
-        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
-        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "0",
-        CERTOPS_SWEEP_NONCE_ENABLED: "true",
+      CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+      CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "0",
+      CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "0",
+      CERTOPS_SWEEP_NONCE_ENABLED: "true",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
       },
@@ -618,6 +959,7 @@ describe("certops maintenance worker", () => {
 
     assert.strictEqual(results.leaseReaper.status, "skipped");
     assert.strictEqual(results.staleAgents.status, "skipped");
+    assert.strictEqual(results.agentRecoveryAlerts.status, "skipped");
     assert.strictEqual(results.nonceSweep.status, "success");
     assert.strictEqual(results.registrationReplaySweep.status, "skipped");
     assert.strictEqual(results.renewalScheduler.status, "skipped");

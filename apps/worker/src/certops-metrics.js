@@ -59,3 +59,10 @@ export const gCertopsDiagnosticAgentsRetired = new client.Gauge({
   labelNames: ["outcome"],
   registers: [metricsRegister],
 });
+
+export const gCertopsAgentHealthAlerts = new client.Gauge({
+  name: "certops_agent_health_alerts_queued",
+  help: "Agent down/recovered health alerts queued in the last sweep, by transition",
+  labelNames: ["transition"],
+  registers: [metricsRegister],
+});
