@@ -417,7 +417,7 @@ async function queryCurrentBinding({
  * `disableLegacyTls` specifically uses a DIFFERENT vocabulary than every
  * other per-connection policy flag: Microsoft's own documentation reports
  * this one field as "Set"/"Not Set", not "Enabled"/"Disabled"/"Not Set" --
- * a PR review found (2026-08-08) that treating it the same as its siblings
+ * a PR review found (2026-08-07) that treating it the same as its siblings
  * meant an outgoing binding with legacy TLS genuinely disabled was never
  * recognized as such, so that restriction was silently dropped (not reset,
  * simply never preserved) on every rebind. See readSetOrEnabledOrNotSet's
@@ -486,7 +486,7 @@ function parseSslcertParameters(stdoutText) {
   // no separate "Disabled" text ever shown
   // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
   // for Disable Legacy TLS Versions: Set/Not Set"). A PR review found
-  // (2026-08-08) that readEnabledDisabledOrNotSet's Enabled/Disabled/Not-Set
+  // (2026-08-07) that readEnabledDisabledOrNotSet's Enabled/Disabled/Not-Set
   // regex never matches a bare "Set", so an outgoing binding with legacy
   // TLS genuinely disabled had that setting silently DROPPED (not reset,
   // simply omitted -- formatPreservedParamArgs then emits no

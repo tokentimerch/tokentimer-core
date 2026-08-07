@@ -1190,7 +1190,7 @@ Windows:
   locked only `WebHosting` would leave `My` itself unprotected for that
   entire window, letting an unrelated `My`-targeted job's own concurrent
   `certreq -accept` (or this same job's later `-delstore My`) race it. A PR
-  review found (2026-08-08) that execution's own lock scope did not match
+  review found (2026-08-07) that execution's own lock scope did not match
   the crash-reconciliation sweep's already-correct dual-store scope; both
   now share one helper that locks the deduplicated set (one lock for the
   common `store: "My"` case) in the same deterministic order, so the two
@@ -1234,7 +1234,7 @@ Windows:
   for that one field. `disableLegacyTls` specifically is parsed against a
   *different* vocabulary than every other per-connection flag above:
   Microsoft's own documentation reports this one field as `Set`/`Not Set`,
-  not `Enabled`/`Disabled`/`Not Set` -- a PR review found (2026-08-08) that
+  not `Enabled`/`Disabled`/`Not Set` -- a PR review found (2026-08-07) that
   the shared Enabled/Disabled/Not-Set parser never matched a bare `Set`, so
   an outgoing binding with legacy TLS genuinely disabled had that
   restriction silently dropped, not merely reset, on every renewal. The

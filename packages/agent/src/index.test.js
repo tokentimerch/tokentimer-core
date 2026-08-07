@@ -4110,7 +4110,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
   });
 
-  describe("store-lock scope for a non-default target store (PR review, 2026-08-08)", () => {
+  describe("store-lock scope for a non-default target store (PR review, 2026-08-07)", () => {
     // certreq -accept always populates "My" first, with a non-default
     // target store (e.g. "WebHosting") reached only by a separate, later
     // mirror step -- see acquireWindowsStoreLocks' own doc comment. A

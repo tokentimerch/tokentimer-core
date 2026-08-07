@@ -355,7 +355,7 @@ describe("parseSslcertParameters", () => {
     // Captured real `netsh http show sslcert` output shape
     // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
     // for Disable Legacy TLS Versions: Set/Not Set") -- a PR review found
-    // (2026-08-08) that the Enabled/Disabled/Not-Set regex every sibling
+    // (2026-08-07) that the Enabled/Disabled/Not-Set regex every sibling
     // per-connection flag uses never matches a bare "Set", so this field
     // was silently dropped from the preserved-parameters set entirely.
     const parsed = parseSslcertParameters(

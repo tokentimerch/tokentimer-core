@@ -1170,7 +1170,7 @@ must lock *both* `My` and the target store for its entire duration, not
 merely the target store: as the store-targeting paragraph above describes,
 `certreq -accept` always mutates `My` first regardless of the requested
 target, with the mirror into a non-default store (and the closing
-`-delstore My`) happening only afterward. A PR review found (2026-08-08)
+`-delstore My`) happening only afterward. A PR review found (2026-08-07)
 that execution's own lock acquisition covered only `target.store`, leaving
 `My` itself unprotected during that entire window -- an unrelated
 `My`-targeted job's own concurrent `certreq -accept`, or even this same

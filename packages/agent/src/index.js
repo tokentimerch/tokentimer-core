@@ -3472,7 +3472,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  * that locked only `targetStore` would leave `My` itself unprotected during
  * that window, letting an unrelated `My`-targeted job's own concurrent
  * `certreq -accept` (or this same job's later `-delstore My`) race it --
- * found in PR review (2026-08-08): runWindowsIisDeployTail was locking only
+ * found in PR review (2026-08-07): runWindowsIisDeployTail was locking only
  * `target.store`, while reconcileOrphanedWindowsCngContainers (below) had
  * already been fixed to correctly lock/query both stores. Normal execution
  * must match that same locking scope, not only the crash-reconciliation
