@@ -10,6 +10,18 @@
  *
  * Private-key / secret material MUST never be written here — only ids,
  * claim references, timestamps, and stage names.
+ *
+ * Windows CNG container reconciliation: for a windows-iis renewal attempt,
+ * recordWindowsCngContainer additionally attaches the CNG key container
+ * name (and target store) that attempt's keygen stage created, onto the
+ * same entry markSideEffectReached wrote. index.js's own startup sweep
+ * (reconcileOrphanedWindowsCngContainers) reads this to autonomously free
+ * a container that a hard crash left orphaned -- never enrolled to any
+ * certificate in the recorded store -- rather than only ever reporting it
+ * to an operator via formatUnresolvedJournalReport, which is still done
+ * for the job-attempt-outcome question this module was originally built
+ * for (see markWindowsCngContainerReconciled's own doc comment for why
+ * these are deliberately two separate lifecycles).
  */
 
 const fs = require("node:fs");
@@ -120,6 +132,111 @@ function markSideEffectReached({
   return { path: filePath, created: true, entry };
 }
 
+/** Boring, closed alphabet for a CNG key container name -- mirrors
+ * ../windows-cert-store's own CONTAINER_NAME_PATTERN (duplicated, not
+ * imported, per this package's self-contained-module convention: the
+ * journal must stay a plain-data format that never depends on a sibling
+ * module's internals). */
+const WINDOWS_CNG_CONTAINER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+/** Mirrors ../windows-cert-store's WINDOWS_STORE_NAME_PATTERN. */
+const WINDOWS_STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+
+/**
+ * Attaches (or refreshes) the CNG key container identifier a windows-iis
+ * renewal created for this attempt, onto an ALREADY-EXISTING journal entry
+ * (one markSideEffectReached already wrote for the "keygen" stage).
+ * No-op (returns null) if no entry exists yet for this jobId/attemptId --
+ * this function only ever enriches a journal entry, it never creates one,
+ * since a crash before markSideEffectReached("keygen") ran leaves nothing
+ * to enrich and nothing this agent could have created either.
+ *
+ * `store` (the job's target windows-iis store, e.g. "My" or "WebHosting")
+ * is recorded alongside the container name because markSideEffectReached
+ * is idempotent per attempt: the entry's own `stage` field freezes at
+ * whichever stage was reached FIRST for this attempt ("keygen", always,
+ * for this job type) and is never advanced by later onBeforeMutation
+ * calls in the same attempt, so `stage` alone cannot tell a later
+ * reconciliation pass how far the job actually got before crashing. Store
+ * membership (does ANY certificate in "My" or this target store reference
+ * the container?) is the only reliable, independently-verifiable signal
+ * of whether `certreq -accept` ever actually ran for this container.
+ *
+ * This is what lets a startup reconciliation pass (see index.js's
+ * reconcileOrphanedWindowsCngContainers) actually FREE an orphaned CNG key
+ * container after a hard crash, rather than merely reporting that some
+ * side effect happened: without the container name recorded here, the
+ * journal only knows a mutation started, never which key container it
+ * created.
+ *
+ * @param {object} params
+ * @param {string} params.stateDir
+ * @param {string} params.jobId
+ * @param {string} params.attemptId
+ * @param {string} params.containerName
+ * @param {string} [params.store] the job's target windows-iis store.
+ * @returns {{ path: string, entry: object }|null}
+ */
+function recordWindowsCngContainer({ stateDir, jobId, attemptId, containerName, store }) {
+  if (
+    typeof containerName !== "string" ||
+    !WINDOWS_CNG_CONTAINER_NAME_PATTERN.test(containerName)
+  ) {
+    throw new Error(
+      `job-journal: containerName must match ${WINDOWS_CNG_CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`,
+    );
+  }
+  if (store !== undefined && !WINDOWS_STORE_NAME_PATTERN.test(store)) {
+    throw new Error(
+      `job-journal: store must match ${WINDOWS_STORE_NAME_PATTERN} (got ${JSON.stringify(store)})`,
+    );
+  }
+  const filePath = journalPathFor(stateDir, jobId, attemptId);
+  const existing = readJournalFile(filePath);
+  if (existing === null) return null;
+
+  const entry = {
+    ...existing,
+    windowsCngContainerName: containerName,
+    ...(store !== undefined ? { windowsCngStore: store } : {}),
+  };
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(entry)}\n`, { mode: JOURNAL_FILE_MODE });
+  applyRestrictivePermissions(tmp, { kind: "file", mode: JOURNAL_FILE_MODE });
+  fs.renameSync(tmp, filePath);
+  return { path: filePath, entry };
+}
+
+/**
+ * Marks a journal entry's recorded CNG key container as already reconciled
+ * (freed, or confirmed still legitimately bound) by a startup sweep, so a
+ * later restart does not repeat the same certutil call against a container
+ * that either no longer exists or is now known to be in legitimate use.
+ * Does NOT clear/resolve the journal entry itself: the underlying job
+ * attempt's outcome with the control plane is still unknown and still
+ * requires the existing operator-reconciliation path (decision: container
+ * lifecycle and job-attempt lifecycle are separate concerns; freeing a
+ * dead key container does not retroactively tell this agent whether the
+ * control plane ever saw a result for the attempt).
+ *
+ * @param {object} params
+ * @param {string} params.stateDir
+ * @param {string} params.jobId
+ * @param {string} params.attemptId
+ * @returns {{ path: string, entry: object }|null}
+ */
+function markWindowsCngContainerReconciled({ stateDir, jobId, attemptId }) {
+  const filePath = journalPathFor(stateDir, jobId, attemptId);
+  const existing = readJournalFile(filePath);
+  if (existing === null) return null;
+
+  const entry = { ...existing, windowsCngContainerReconciledAt: new Date().toISOString() };
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(entry)}\n`, { mode: JOURNAL_FILE_MODE });
+  applyRestrictivePermissions(tmp, { kind: "file", mode: JOURNAL_FILE_MODE });
+  fs.renameSync(tmp, filePath);
+  return { path: filePath, entry };
+}
+
 /**
  * @param {string} filePath
  * @returns {object|null}
@@ -228,10 +345,14 @@ function formatUnresolvedJournalReport(entries) {
 module.exports = {
   JOURNAL_DIR_NAME,
   TERMINAL_STATUSES,
+  WINDOWS_CNG_CONTAINER_NAME_PATTERN,
+  WINDOWS_STORE_NAME_PATTERN,
   journalDirFor,
   journalPathFor,
   ensureJournalDir,
   markSideEffectReached,
+  recordWindowsCngContainer,
+  markWindowsCngContainerReconciled,
   scanUnresolvedJournalEntries,
   hasUnresolvedJournalForJob,
   clearJournalOnTerminal,

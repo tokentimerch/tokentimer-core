@@ -5,6 +5,7 @@ import {
   AlertIcon,
   Box,
   Button,
+  ButtonGroup,
   Code,
   FormControl,
   FormHelperText,
@@ -69,8 +70,18 @@ function defaultExpiryLocalValue() {
  * the token from a hidden interactive prompt (or from the
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable) when no
  * --bootstrap-token flag is given, so the secret never lands in shell history.
+ * Same contract on both platforms; only the installer script and shell
+ * differ (see certops-agent-install-windows.mdx for the native Windows
+ * Service installer this Windows command drives).
  */
-function buildTokenlessInstallCommand({ apiUrl, workspaceId }) {
+function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
+  if (os === 'windows') {
+    return [
+      '.\\install-agent.ps1 `',
+      `  --api-url '${apiUrl}' \``,
+      `  --workspace-id '${workspaceId}'`,
+    ].join('\n');
+  }
   return [
     `sudo ./install-agent.sh \\`,
     `  --api-url '${apiUrl}' \\`,
@@ -146,6 +157,10 @@ export default function DeployAgentModal({
   const [creating, setCreating] = useState(false);
   const [plaintextToken, setPlaintextToken] = useState('');
   const [secretAcknowledged, setSecretAcknowledged] = useState(false);
+  // 'linux' | 'windows'; only changes which install command/instructions
+  // step 1 shows, never anything server-side (both platforms register
+  // through the same bootstrap-token flow below).
+  const [targetOs, setTargetOs] = useState('linux');
   // 'idle' | 'waiting' | 'registered'
   const [waitState, setWaitState] = useState('idle');
   const [registeredAgent, setRegisteredAgent] = useState(null);
@@ -167,6 +182,7 @@ export default function DeployAgentModal({
     setSecretAcknowledged(false);
     setWaitState('idle');
     setRegisteredAgent(null);
+    setTargetOs('linux');
     knownAgentIdsRef.current = null;
     tokenCreatedAtRef.current = null;
   };
@@ -246,6 +262,7 @@ export default function DeployAgentModal({
   const installCommand = buildTokenlessInstallCommand({
     apiUrl,
     workspaceId: workspaceId || '<workspace-id>',
+    os: targetOs,
   });
 
   const hasUnacknowledgedSecret =
@@ -327,11 +344,36 @@ export default function DeployAgentModal({
                 Step 1: Run the installer on the target host
               </Text>
               <VStack align='stretch' spacing={2}>
-                <Text fontSize='sm' color={muted}>
-                  From the unpacked agent package directory (
-                  <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
-                  host with Node 22+:
-                </Text>
+                <ButtonGroup size='xs' isAttached variant='outline'>
+                  <Button
+                    colorScheme={targetOs === 'linux' ? 'blue' : undefined}
+                    variant={targetOs === 'linux' ? 'solid' : 'outline'}
+                    onClick={() => setTargetOs('linux')}
+                  >
+                    Linux
+                  </Button>
+                  <Button
+                    colorScheme={targetOs === 'windows' ? 'blue' : undefined}
+                    variant={targetOs === 'windows' ? 'solid' : 'outline'}
+                    onClick={() => setTargetOs('windows')}
+                  >
+                    Windows
+                  </Button>
+                </ButtonGroup>
+                {targetOs === 'windows' ? (
+                  <Text fontSize='sm' color={muted}>
+                    From an elevated (Administrator) PowerShell prompt (
+                    <Code fontSize='xs'>powershell.exe</Code> or{' '}
+                    <Code fontSize='xs'>pwsh</Code>), in the unpacked agent
+                    package's directory:
+                  </Text>
+                ) : (
+                  <Text fontSize='sm' color={muted}>
+                    From the unpacked agent package directory (
+                    <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
+                    host with Node 22+:
+                  </Text>
+                )}
                 <CopyableCodeBlock
                   code={installCommand}
                   label='Install command'

@@ -128,6 +128,8 @@ const {
 const { durabilityMetadataEntries } = require("./platform/durability.js");
 const {
   markSideEffectReached,
+  recordWindowsCngContainer,
+  markWindowsCngContainerReconciled,
   scanUnresolvedJournalEntries,
   hasUnresolvedJournalForJob,
   clearJournalOnTerminal,
@@ -156,6 +158,9 @@ const {
   removeCertificateAndKeyContainer,
   isAgentOwnedContainerName,
   buildContainerName,
+  recordIssuedContainer,
+  hasIssuedContainerRecord,
+  removeIssuedContainerRecord,
 } = require("./windows-cert-store");
 const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
 const {
@@ -2237,6 +2242,7 @@ async function executeJob({
         log,
         leaseOpts,
         onBeforeMutation: markMutation,
+        journalCtx,
       });
     }
     return executeRenewJob({
@@ -2903,6 +2909,8 @@ async function runWindowsIisDeployTail({
                 `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
                 `it will remain orphaned in the CNG key store until manually removed.`,
             );
+          } else {
+            removeIssuedContainerRecord({ stateDir, containerName });
           }
         } catch (err) {
           emitLog(
@@ -3086,22 +3094,35 @@ async function runWindowsIisDeployTail({
  * from the job, since the predecessor's own container/validity are facts
  * about ITS certificate object, not this job's.
  *
- * Ownership is decided by isAgentOwnedContainerName, not merely by
- * container PRESENCE: any non-exportable CNG certificate (one an operator
- * or a different tool enrolled directly on this host, not just one this
- * agent installed) also reports a "Key Container =" line in certutil's
- * output, so presence alone is not evidence this agent may delete it. Only
- * a container name matching this agent's own buildContainerName naming
- * convention counts as tokentimer_installed.
+ * Ownership is decided by TWO independent signals, both required, not
+ * merely container PRESENCE: any non-exportable CNG certificate (one an
+ * operator or a different tool enrolled directly on this host, not just
+ * one this agent installed) also reports a "Key Container =" line in
+ * certutil's output, so presence alone is not evidence this agent may
+ * delete it, and a container name matching this agent's own naming
+ * convention alone is a closed-alphabet pattern match, not proof this
+ * agent process actually created that exact container. The two signals:
+ *   1. isAgentOwnedContainerName -- the container name matches this
+ *      agent's own buildContainerName convention.
+ *   2. hasIssuedContainerRecord -- a durable, persisted record exists
+ *      (written by generateCsrViaCng's own call site, ../windows-cert-
+ *      store's recordIssuedContainer) proving THIS agent's own process
+ *      actually issued that exact container, independent of its name.
+ * Both must hold for ownershipProvenance to be "tokentimer_installed";
+ * either one missing keeps the certificate "preexisting" (permanently
+ * ineligible for automated cleanup per ../windows-retention's
+ * evaluateEligibility), matching decision 18's "never delete material
+ * this agent cannot prove it installed" -- now with two independent
+ * proofs instead of one.
  *
  * A predecessor whose store entry cannot be found (already removed by a
  * prior sweep), one with no key container at all (e.g. an operator-
- * imported PFX cert), or one with a key container this agent did not
- * create, is recorded with ownershipProvenance "preexisting" and a
- * placeholder container id, which ../windows-retention's
- * evaluateEligibility's ownership check then keeps permanently ineligible
- * for automated cleanup -- never deleting material this agent cannot prove
- * it installed.
+ * imported PFX cert), or one whose key container does not satisfy BOTH
+ * ownership signals above, is recorded with ownershipProvenance
+ * "preexisting" and a placeholder container id, which
+ * ../windows-retention's evaluateEligibility's ownership check then keeps
+ * permanently ineligible for automated cleanup -- never deleting material
+ * this agent cannot prove it installed.
  *
  * @param {object} params
  * @returns {Promise<void>}
@@ -3138,14 +3159,16 @@ async function recordSupersededWindowsCertificate({
       ? storeResult.certificates.find((cert) => cert.thumbprint === normalizedOld)
       : null;
 
-  const ownershipProvenance =
-    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
-      ? "tokentimer_installed"
-      : "preexisting";
-  const cngKeyContainerId =
-    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
-      ? predecessor.keyContainer
-      : buildContainerName(`unknown-${normalizedOld.slice(0, 16)}`);
+  const provenConfidently =
+    predecessor !== null &&
+    predecessor !== undefined &&
+    isAgentOwnedContainerName(predecessor.keyContainer) &&
+    hasIssuedContainerRecord({ stateDir, containerName: predecessor.keyContainer });
+
+  const ownershipProvenance = provenConfidently ? "tokentimer_installed" : "preexisting";
+  const cngKeyContainerId = provenConfidently
+    ? predecessor.keyContainer
+    : buildContainerName(`unknown-${normalizedOld.slice(0, 16)}`);
   const oldNotAfter =
     predecessor && isIsoParseable(predecessor.notAfter)
       ? new Date(predecessor.notAfter).toISOString()
@@ -3373,6 +3396,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
             result.stderrExcerpt,
         );
       }
+      removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
     } finally {
       storeLock.release();
     }
@@ -3385,6 +3409,143 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
       `deferred=${summary.deferred.length}`,
   );
   return summary;
+}
+
+/**
+ * Startup crash-reconciliation for CNG key containers a windows-iis renewal
+ * attempt created (../windows-cert-store's generateCsrViaCng) but that
+ * never reached cutover before the agent process died: unlike a superseded
+ * certificate (../windows-retention's ledger, which governs material that
+ * WAS successfully enrolled and bound at least once), a container journaled
+ * here by recordWindowsCngContainer but never enrolled to ANY certificate in
+ * its recorded store is inert, unbound, and safe to free autonomously --
+ * there is no certificate, no binding, no rollback value it protects.
+ *
+ * This is the autonomous half of crash recovery job-journal's own doc
+ * comment describes: scanUnresolvedJournalEntries (called separately, at
+ * every startup, unconditionally) still reports the underlying job-attempt
+ * OUTCOME as requiring operator reconciliation (this function does nothing
+ * to resolve that, and does not call clearJournalOnTerminal); this function
+ * only ever frees the one piece of dead-weight state that is unambiguously
+ * safe to clean up on its own -- an orphaned, never-enrolled CNG container
+ * -- and records that it did so via markWindowsCngContainerReconciled, so a
+ * future restart does not repeat the same certutil call against a
+ * container that may have already been freed (or since become legitimately
+ * used by a different, later attempt this sweep has no visibility into, in
+ * which case the store lookup below simply finds it non-orphaned and skips
+ * it every time, indefinitely).
+ *
+ * Every entry this function inspects and every cleanup attempt it makes is
+ * independently logged; a failure to free one container defers it to the
+ * next startup rather than throwing, matching this package's "a blocked
+ * cleanup is the safe failure mode" convention elsewhere (../windows-retention's
+ * sweepLedger, this same file's runWindowsRetentionSweep).
+ *
+ * @param {object} input
+ * @param {string} input.stateDir agent state dir (journal + store-mutex location).
+ * @param {object} [input.log]
+ * @param {Function} [input.execFileImpl] injection point for certutil.exe.
+ * @returns {Promise<{ freed: string[], skipped: { containerName: string, reason: string }[] }>}
+ */
+async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl }) {
+  const freed = [];
+  const skipped = [];
+
+  let entries;
+  try {
+    entries = scanUnresolvedJournalEntries(stateDir);
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: windows-cng-container reconciliation: journal scan failed: ${err.message}`,
+    );
+    return { freed, skipped };
+  }
+
+  for (const entry of entries) {
+    const containerName = entry.windowsCngContainerName;
+    if (!isNonEmptyStringValue(containerName)) continue;
+    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+
+    const store = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+
+    let storeLock;
+    try {
+      storeLock = acquireStoreLock(stateDir, store);
+    } catch (err) {
+      // A concurrent enrollment/binding operation legitimately holds this
+      // store's mutex right now; retry on a future startup rather than
+      // waiting here, since this sweep must never block agent startup.
+      skipped.push({ containerName, reason: `store locked: ${err.message}` });
+      continue;
+    }
+
+    try {
+      const storeResult = await listMachineStoreCertificates({
+        store,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+      if (storeResult.ok !== true) {
+        skipped.push({ containerName, reason: `store query failed: ${storeResult.stderrExcerpt}` });
+        continue;
+      }
+      const enrolled = storeResult.certificates.some(
+        (cert) => cert.keyContainer === containerName,
+      );
+      if (enrolled) {
+        // A later attempt (or an operator) legitimately enrolled a
+        // certificate to this container since the journal entry was
+        // written; never free a container backing a real certificate.
+        try {
+          markWindowsCngContainerReconciled({
+            stateDir,
+            jobId: entry.jobId,
+            attemptId: entry.attemptId,
+          });
+        } catch {
+          // Best-effort; the container itself is safe either way, and an
+          // un-marked entry is simply re-checked (and again found
+          // enrolled, hence still skipped) on the next startup.
+        }
+        skipped.push({ containerName, reason: "enrolled" });
+        continue;
+      }
+
+      const cleanup = await removeAbandonedKeyContainer({
+        containerName,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+      if (cleanup.ok !== true) {
+        skipped.push({
+          containerName,
+          reason: `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+        });
+        continue;
+      }
+      try {
+        markWindowsCngContainerReconciled({
+          stateDir,
+          jobId: entry.jobId,
+          attemptId: entry.attemptId,
+        });
+      } catch {
+        // Best-effort; the container is already freed regardless.
+      }
+      removeIssuedContainerRecord({ stateDir, containerName });
+      freed.push(containerName);
+    } finally {
+      storeLock.release();
+    }
+  }
+
+  if (freed.length > 0 || skipped.length > 0) {
+    emitLog(
+      log,
+      `tokentimer-agent: windows-cng-container reconciliation: freed=${freed.length} ` +
+        `skipped=${skipped.length}${skipped.length > 0 ? ` (${skipped.map((s) => s.reason).join("; ")})` : ""}`,
+    );
+  }
+  return { freed, skipped };
 }
 
 /**
@@ -3420,6 +3581,7 @@ async function executeWindowsIisRenewJob({
   log,
   leaseOpts = null,
   onBeforeMutation = null,
+  journalCtx = null,
 }) {
   const { execution } = executionContext;
   const commonName = job?.target?.reference;
@@ -3579,6 +3741,49 @@ async function executeWindowsIisRenewJob({
     };
   }
   const containerName = csrResult.containerName;
+  // Recorded onto the same journal entry markMutation("keygen") already
+  // wrote above, so a crash between here and cutover leaves a startup
+  // sweep (reconcileOrphanedWindowsCngContainers) enough information to
+  // autonomously free this exact container -- not just report that SOME
+  // mutation happened. Best-effort: a journal-write failure here must
+  // never abort an otherwise-healthy renewal over a crash-recovery
+  // convenience write; the container remains freeable manually either way.
+  if (journalCtx) {
+    try {
+      recordWindowsCngContainer({
+        ...journalCtx,
+        containerName,
+        store: windowsTarget.store,
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+          `in the job journal (non-fatal, continuing): ${err.message}`,
+      );
+    }
+  }
+  // Durable issuance record (ADR-0012 decision 18's ownership-provenance
+  // gate; see windows-cert-store's ISSUED_CONTAINER_RECORD_DIR_NAME doc
+  // comment): outlives the job-journal entry above, so
+  // recordSupersededWindowsCertificate can later require BOTH the
+  // container's naming convention AND this persisted issuance record
+  // before ever treating a predecessor certificate as this agent's own to
+  // delete. Best-effort for the same reason as the journal write above.
+  try {
+    recordIssuedContainer({
+      stateDir,
+      containerName,
+      jobId,
+      certificateId: job.certificateId,
+    });
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+        `issuance (non-fatal, continuing): ${err.message}`,
+    );
+  }
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
   fs.writeFileSync(csrPath, csrResult.csrPem, { mode: 0o600 });
@@ -3709,6 +3914,8 @@ async function executeWindowsIisRenewJob({
               `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
               `orphaned in the CNG key store until manually removed.`,
           );
+        } else {
+          removeIssuedContainerRecord({ stateDir, containerName });
         }
       } catch (err) {
         emitLog(
@@ -5340,6 +5547,27 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     );
   }
 
+  // Windows CNG container crash-reconciliation: autonomously frees any
+  // key container a windows-iis renewal created but never enrolled to a
+  // certificate before the process died (see this function's own doc
+  // comment for why this is safe without resolving the journal entry
+  // itself). Best-effort and non-fatal: on a non-Windows host, or one with
+  // no windows-cert-store activity yet, every unresolved entry simply has
+  // no windowsCngContainerName field and this loop does nothing.
+  try {
+    await reconcileOrphanedWindowsCngContainers({
+      stateDir: configDir,
+      log: console.error,
+      ...(executionContext?.windowsExecFileImpl
+        ? { execFileImpl: executionContext.windowsExecFileImpl }
+        : {}),
+    });
+  } catch (err) {
+    console.error(
+      `tokentimer-agent: windows-cng-container reconciliation failed at startup: ${err.message}`,
+    );
+  }
+
   const controller = new AbortController();
   const stop = () => controller.abort();
   if (externalSignal) {
@@ -5625,6 +5853,7 @@ module.exports = {
   isValidCertificateId,
   runDiscoveryScan,
   runWindowsRetentionSweep,
+  reconcileOrphanedWindowsCngContainers,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,

@@ -28,6 +28,9 @@ const {
   SUPPORTED_KEY_ALGORITHM_NAMES,
   buildContainerName,
   isAgentOwnedContainerName,
+  recordIssuedContainer,
+  hasIssuedContainerRecord,
+  removeIssuedContainerRecord,
   buildCertreqInf,
   computeSha1ThumbprintFromPem,
   normalizeCsrPemLabel,
@@ -112,6 +115,59 @@ describe("isAgentOwnedContainerName", () => {
 
   it("rejects a name that starts with the prefix but breaks the safe alphabet", () => {
     assert.equal(isAgentOwnedContainerName("tokentimer-evil\r\nInjected=1"), false);
+  });
+});
+
+describe("recordIssuedContainer / hasIssuedContainerRecord / removeIssuedContainerRecord", () => {
+  it("records an issuance, reports it present, then removes it", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-windows-cert-store-"));
+    try {
+      const containerName = buildContainerName("job-1");
+      assert.equal(hasIssuedContainerRecord({ stateDir: dir, containerName }), false);
+
+      recordIssuedContainer({ stateDir: dir, containerName, jobId: "job-1", certificateId: "cert-1" });
+      assert.equal(hasIssuedContainerRecord({ stateDir: dir, containerName }), true);
+
+      removeIssuedContainerRecord({ stateDir: dir, containerName });
+      assert.equal(hasIssuedContainerRecord({ stateDir: dir, containerName }), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("hasIssuedContainerRecord returns false for an unrelated container name, never throws", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-windows-cert-store-"));
+    try {
+      recordIssuedContainer({ stateDir: dir, containerName: buildContainerName("job-1") });
+      assert.equal(
+        hasIssuedContainerRecord({ stateDir: dir, containerName: buildContainerName("job-2") }),
+        false,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("removeIssuedContainerRecord is a silent no-op when no record exists", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-windows-cert-store-"));
+    try {
+      assert.doesNotThrow(() =>
+        removeIssuedContainerRecord({ stateDir: dir, containerName: buildContainerName("job-1") }),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("recordIssuedContainer rejects a containerName outside the closed alphabet", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-windows-cert-store-"));
+    try {
+      assert.throws(() =>
+        recordIssuedContainer({ stateDir: dir, containerName: "not; safe" }),
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -416,8 +472,8 @@ describe("acceptCertificateViaCng", () => {
     assert.equal(result.store, "WebHosting");
     assert.equal(result.thumbprint, FIXTURE_THUMBPRINT);
 
-    // certreq -accept, then certutil -addstore, -repairstore, -delstore, in that order.
-    assert.equal(calls.length, 4);
+    // certreq -accept, then certutil -addstore, -repairstore, -delstore, -store (verify), in that order.
+    assert.equal(calls.length, 5);
     assert.equal(calls[0].file, "certreq.exe");
     assert.deepEqual(calls[0].args.slice(0, 2), ["-q", "-accept"]);
     assert.equal(calls[1].file, "certutil.exe");
@@ -426,6 +482,8 @@ describe("acceptCertificateViaCng", () => {
     assert.deepEqual(calls[2].args, ["-repairstore", "WebHosting", FIXTURE_THUMBPRINT]);
     assert.equal(calls[3].file, "certutil.exe");
     assert.deepEqual(calls[3].args, ["-delstore", "My", FIXTURE_THUMBPRINT]);
+    assert.equal(calls[4].file, "certutil.exe");
+    assert.deepEqual(calls[4].args, ["-store", "WebHosting", FIXTURE_THUMBPRINT]);
   });
 
   it("touches certreq only, never certutil, for the default My store", async () => {
@@ -500,6 +558,35 @@ describe("acceptCertificateViaCng", () => {
     assert.equal(result.stage, "repairstore");
     assert.match(result.stderrExcerpt, /no matching key found/);
     assert.equal(calls.length, 3);
+  });
+
+  it("stops at the post-mirror verify query (and reports it as its own stage) when the certificate is not actually retrievable from targetStore afterward", async () => {
+    const workDir = makeTempDir();
+    const calls = [];
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args });
+      if (file === "certutil.exe" && args[0] === "-store") {
+        process.nextTick(() =>
+          callback(Object.assign(new Error("not found"), { code: 1 }), "", "Object was not found."),
+        );
+        return;
+      }
+      process.nextTick(() => callback(null, "", ""));
+    };
+
+    const result = await acceptCertificateViaCng({
+      certificatePem: FIXTURE_CERT_PEM,
+      workDir,
+      store: "WebHosting",
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "verify");
+    assert.match(result.stderrExcerpt, /Object was not found/);
+    // addstore, repairstore, delstore all ran (each reported success); only
+    // the final independent confirmation query failed.
+    assert.equal(calls.length, 5);
   });
 
   it("rejects a store name outside the safe alphabet before invoking execFile", async () => {

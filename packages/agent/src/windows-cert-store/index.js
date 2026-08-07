@@ -113,6 +113,123 @@ function isAgentOwnedContainerName(name) {
   );
 }
 
+/** Directory (under the caller's agent state dir) holding one persisted,
+ * durable record per CNG container this agent has ever issued via
+ * generateCsrViaCng, written at issuance time and outliving both the
+ * job-journal entry (cleared on terminal outcome) and the eventual
+ * enrollment/rotation. isAgentOwnedContainerName's naming-convention check
+ * alone is a closed-alphabet pattern match, not evidence that THIS agent
+ * process actually created a given container: a sufficiently motivated
+ * operator or another tool could, in principle, create a container whose
+ * name happens to satisfy CONTAINER_NAME_PATTERN and the "tokentimer-"
+ * prefix. recordIssuedContainer / hasIssuedContainerRecord give
+ * recordSupersededWindowsCertificate (index.js) a second, independent
+ * source of evidence -- an actual persisted record this agent wrote at the
+ * moment it generated that exact container -- so retention's ownership
+ * gate (ADR-0012 decision 18) requires BOTH the naming convention AND this
+ * durable issuance record before ever marking a certificate
+ * `tokentimer_installed` (and therefore eligible for automated deletion).
+ */
+const ISSUED_CONTAINER_RECORD_DIR_NAME = "issued-containers";
+
+/**
+ * @param {string} stateDir
+ * @returns {string}
+ */
+function issuedContainerRecordDir(stateDir) {
+  return path.join(stateDir, "windows-cert-store", ISSUED_CONTAINER_RECORD_DIR_NAME);
+}
+
+/**
+ * @param {string} stateDir
+ * @param {string} containerName
+ * @returns {string}
+ */
+function issuedContainerRecordPath(stateDir, containerName) {
+  return path.join(issuedContainerRecordDir(stateDir), `${containerName}.json`);
+}
+
+/**
+ * Persists a durable record that this agent process issued `containerName`
+ * for `jobId`/`certificateId`, at the moment generateCsrViaCng creates it.
+ * Best-effort by contract (callers treat a write failure as non-fatal,
+ * matching this module's other crash-recovery-adjacent writes): a missing
+ * record only ever makes hasIssuedContainerRecord's check fail closed
+ * (never eligible for automated retention), it never makes anything less
+ * safe.
+ * @param {object} input
+ * @param {string} input.stateDir
+ * @param {string} input.containerName
+ * @param {string} [input.jobId]
+ * @param {string} [input.certificateId]
+ * @param {() => Date} [input.now]
+ * @returns {void}
+ */
+function recordIssuedContainer({ stateDir, containerName, jobId, certificateId, now = () => new Date() }) {
+  if (!isNonEmptyString(stateDir)) {
+    throw buildError("recordIssuedContainer requires a non-empty stateDir string");
+  }
+  if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
+    throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
+  }
+  const dir = issuedContainerRecordDir(stateDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const record = {
+    containerName,
+    jobId: isNonEmptyString(jobId) ? jobId : null,
+    certificateId: isNonEmptyString(certificateId) ? certificateId : null,
+    issuedAt: now().toISOString(),
+  };
+  const filePath = issuedContainerRecordPath(stateDir, containerName);
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, filePath);
+}
+
+/**
+ * Whether a durable recordIssuedContainer record exists for `containerName`
+ * -- the second, independent piece of evidence
+ * recordSupersededWindowsCertificate requires alongside
+ * isAgentOwnedContainerName's naming check before treating a predecessor
+ * certificate's key container as this agent's own (see
+ * ISSUED_CONTAINER_RECORD_DIR_NAME's doc comment).
+ * @param {object} input
+ * @param {string} input.stateDir
+ * @param {string} input.containerName
+ * @returns {boolean}
+ */
+function hasIssuedContainerRecord({ stateDir, containerName }) {
+  if (!isNonEmptyString(stateDir) || !isNonEmptyString(containerName)) return false;
+  try {
+    return fs.existsSync(issuedContainerRecordPath(stateDir, containerName));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Best-effort deletes a recordIssuedContainer record once the container
+ * itself has been permanently removed from the CNG store (../windows-
+ * retention's sweep, after removeCertificateAndKeyContainer succeeds), so
+ * this directory does not accumulate one file per container forever.
+ * Never throws: a leftover record for an already-deleted container is
+ * harmless litter (hasIssuedContainerRecord would only ever be consulted
+ * again for that exact container name, which no longer exists to enroll
+ * anything to), not a correctness or security concern.
+ * @param {object} input
+ * @param {string} input.stateDir
+ * @param {string} input.containerName
+ * @returns {void}
+ */
+function removeIssuedContainerRecord({ stateDir, containerName }) {
+  if (!isNonEmptyString(stateDir) || !isNonEmptyString(containerName)) return;
+  try {
+    fs.unlinkSync(issuedContainerRecordPath(stateDir, containerName));
+  } catch {
+    // best-effort; see doc comment above.
+  }
+}
+
 const SUPPORTED_KEY_ALGORITHMS = Object.freeze({
   "rsa-2048": Object.freeze({ keyAlgorithm: "RSA", keyLength: 2048 }),
   "rsa-3072": Object.freeze({ keyAlgorithm: "RSA", keyLength: 3072 }),
@@ -488,11 +605,15 @@ async function generateCsrViaCng({
  * property yet), then `-repairstore` re-associates it with the matching
  * CNG key by public key -- key containers are not themselves store-scoped,
  * so this is a metadata repair, not a key export/copy. The My-store copy
- * is then removed (`-delstore`) so the certificate does not silently exist
- * in two stores after a non-default-store deploy. NOTE: only the
- * default-store (`My`) path has been verified against a real Windows host
- * so far; the addstore/repairstore path is unit-tested against a stubbed
- * certutil, not yet real-host verified (tracked as a follow-up).
+ * is then removed (`-delstore`), and a final `-store <targetStore>
+ * <thumbprint>` query independently confirms the certificate is actually
+ * retrievable from targetStore afterward (see
+ * mirrorAcceptedCertificateToStore's own doc comment, step 4) -- this
+ * function's success therefore never rests on certutil's exit codes alone.
+ * NOTE: only the default-store (`My`) path has been verified against a
+ * real Windows host so far; the addstore/repairstore/verify sequence for a
+ * non-default store is unit-tested against a stubbed certutil, not yet
+ * real-host verified (tracked as a follow-up).
  *
  * The resulting store thumbprint is computed locally from the certificate
  * bytes (a Windows thumbprint IS sha1(DER)), not parsed from certreq's own
@@ -512,7 +633,7 @@ async function generateCsrViaCng({
  * @returns {Promise<
  *   { ok: true, thumbprint: string, certPath: string, store: string }
  *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
- *   | { ok: false, stage: "addstore"|"delstore"|"repairstore", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ *   | { ok: false, stage: "addstore"|"delstore"|"repairstore"|"verify", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
  * >}
  */
 async function acceptCertificateViaCng({
@@ -599,10 +720,19 @@ async function acceptCertificateViaCng({
  *   3. `certutil -delstore My <thumbprint>` -- removes the original
  *      My-store copy `certreq -accept` created, so the certificate does
  *      not end up live in two stores after a non-default-store deploy.
+ *   4. `certutil -store <targetStore> <thumbprint>` -- an explicit,
+ *      independent confirmation query: since steps 1-3 above only prove
+ *      "certutil reported a zero exit code", not "the certificate is
+ *      actually retrievable from targetStore afterward", this step closes
+ *      that gap by asking the store directly for the exact thumbprint one
+ *      more time before this function reports success. A store whose
+ *      -addstore/-repairstore silently no-opped (e.g. a store name
+ *      certutil accepts but does not persist to) is caught here rather
+ *      than surfacing later as a binding failure with a confusing error.
  *
  * Each step is independently checked; a failure at any step returns
  * immediately rather than attempting the next one, so a caller never sees
- * `ok: true` for a partially-completed mirror.
+ * `ok: true` for a partially-completed (or unconfirmed) mirror.
  *
  * @param {object} input
  * @param {string} input.certPath the .cer file acceptCertificateViaCng
@@ -614,7 +744,7 @@ async function acceptCertificateViaCng({
  * @param {number} input.timeoutMs
  * @returns {Promise<
  *   { ok: true }
- *   | { ok: false, stage: "addstore"|"repairstore"|"delstore", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ *   | { ok: false, stage: "addstore"|"repairstore"|"delstore"|"verify", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
  * >}
  */
 async function mirrorAcceptedCertificateToStore({
@@ -663,6 +793,22 @@ async function mirrorAcceptedCertificateToStore({
       exitCode: delstoreResult.exitCode,
       stdoutExcerpt: boundAndRedactExcerpt(delstoreResult.stdout),
       stderrExcerpt: boundAndRedactExcerpt(delstoreResult.stderr),
+    };
+  }
+
+  // Independent confirmation: ask targetStore directly for this exact
+  // thumbprint, rather than trusting the three prior exit codes alone (see
+  // this function's doc comment, step 4).
+  const verifyArgv = [certutilPath, "-store", targetStore, thumbprint];
+  assertSafeArgvElements("verifyArgv", verifyArgv);
+  const verifyResult = await execWithoutShell(execFileImpl, verifyArgv, timeoutMs);
+  if (verifyResult.exitCode !== 0) {
+    return {
+      ok: false,
+      stage: "verify",
+      exitCode: verifyResult.exitCode,
+      stdoutExcerpt: boundAndRedactExcerpt(verifyResult.stdout),
+      stderrExcerpt: boundAndRedactExcerpt(verifyResult.stderr),
     };
   }
 
@@ -993,10 +1139,16 @@ module.exports = {
   HOSTNAME_PATTERN,
   CONTAINER_NAME_PATTERN,
   AGENT_CONTAINER_NAME_PREFIX,
+  ISSUED_CONTAINER_RECORD_DIR_NAME,
   CERTREQ_ACCEPT_DEFAULT_STORE,
   THUMBPRINT_PATTERN,
   buildContainerName,
   isAgentOwnedContainerName,
+  issuedContainerRecordDir,
+  issuedContainerRecordPath,
+  recordIssuedContainer,
+  hasIssuedContainerRecord,
+  removeIssuedContainerRecord,
   buildCertreqInf,
   computeSha1ThumbprintFromPem,
   normalizeCsrPemLabel,
