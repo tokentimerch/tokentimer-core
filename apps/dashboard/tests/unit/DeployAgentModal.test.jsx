@@ -338,6 +338,27 @@ describe('DeployAgentModal', () => {
     clearIntervalSpy.mockRestore();
   });
 
+  it('switches step 1 to the Windows install command when the Windows toggle is selected', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+
+    renderModal();
+
+    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Windows' }));
+
+    const commandBlock = screen.getByText(/install-agent\.ps1/);
+    expect(commandBlock.textContent).toContain('--api-url');
+    expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
+    expect(commandBlock.textContent).not.toContain('install-agent.sh');
+    expect(
+      screen.getByText(/elevated \(Administrator\) PowerShell prompt/)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Linux' }));
+    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
+  });
+
   it('disables new-token creation while paused but keeps the flow otherwise visible', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
 

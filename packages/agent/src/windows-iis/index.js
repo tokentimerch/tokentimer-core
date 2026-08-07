@@ -77,6 +77,7 @@ const {
 } = require("../../vendor/log-scrub/secret-material.js");
 const { verifyDeployedCertificate, computeCertificateFingerprint } = require("../verify/index.js");
 const { computeSha1ThumbprintFromPem } = require("../windows-cert-store/index.js");
+const { listHttpSysBindings } = require("../windows-discovery/index.js");
 
 /** Mirrors the sibling modules' shell-metacharacter pattern. */
 const SHELL_METACHARACTER_PATTERN = /[;|&$`><\r\n]/;
@@ -396,28 +397,34 @@ async function queryCurrentBinding({
  * Parses the non-thumbprint parameters an operator may have configured on
  * an existing binding out of `netsh http show sslcert`'s human-readable
  * output: revocation checking, CTL-based issuer restriction, DS mapper
- * usage, and client-certificate negotiation. `bindCertificate`'s
- * delete-then-add rebind (decision 13) would otherwise silently reset
- * every one of these to netsh's own default on every renewal, since `add
- * sslcert` only ever sees the flags a given call explicitly passes it --
- * found during PR review as a real gap, not yet exercised on the E2E VM
- * (which never customizes these on its throwaway binding).
+ * usage, client-certificate negotiation, and the newer per-connection
+ * policy flags (reject, HTTP/2, QUIC, legacy-TLS/TLS1.2/TLS1.3, OCSP
+ * stapling, token binding, extended-event logging, session ticket/id).
+ * `bindCertificate`'s delete-then-add rebind (decision 13) would otherwise
+ * silently reset every one of these to netsh's own default on every
+ * renewal, since `add sslcert` only ever sees the flags a given call
+ * explicitly passes it -- found during PR review as a real gap.
  *
  * Only fields this function can positively read back are included in the
- * returned object; a label it does not find is simply omitted, never
- * defaulted to true/false/0 by guesswork. formatPreservedParamArgs then
- * only ever emits a flag for a key that is actually present, so an
- * unparsed field falls back to netsh's own default exactly as it did
+ * returned object; a label it does not find, or one netsh reports as
+ * "Not Set" (its own tri-state default for the newer per-connection flags
+ * below, distinct from Enabled/Disabled), is simply omitted, never
+ * defaulted to true/false by guesswork. formatPreservedParamArgs then only
+ * ever emits a flag for a key that is actually present, so an unparsed (or
+ * "Not Set") field falls back to netsh's own default exactly as it did
  * before this fix -- strictly no worse, not a new failure mode.
  *
- * These eight are the parameters `netsh http add sslcert help` has
- * accepted since Windows Server 2012 (excluding certhash/appid/
- * certstorename, which the caller always sets explicitly to the new
- * certificate's own identity, never preserved from the outgoing one).
- * Newer per-Windows-version add sslcert options (rejectconnections,
- * disablehttp2, disablequic, disableocspstapling, enabletokenbinding) are
- * intentionally not covered: they simply fall through to netsh's default
- * on every rebind, unchanged from this module's behavior before this fix.
+ * These are every parameter `netsh http add sslcert help` accepts as of
+ * Windows Server 2022/2025 (excluding certhash/appid/certstorename, which
+ * the caller always sets explicitly to the new certificate's own identity,
+ * never preserved from the outgoing one): the eight classic ones (Windows
+ * Server 2012+) plus the newer per-connection policy flags Server 2019+
+ * added (reject/disablehttp2/disablequic/disablelegacytls/disabletls12/
+ * disabletls13/disableocspstapling/enabletokenbinding/logextendedevents/
+ * enablesessionticket/disablesessionid). A netsh binary older than the
+ * host this runs on would simply never emit these newer labels in its
+ * `show sslcert` output, so readEnabledDisabledOrNotSet naturally omits
+ * them for that host too -- no version detection needed.
  *
  * @param {string} stdoutText raw `netsh http show sslcert` stdout.
  * @returns {{
@@ -430,12 +437,37 @@ async function queryCurrentBinding({
  *   ctlStoreName?: string|null,
  *   dsMapperUsage?: boolean,
  *   negotiateClientCert?: boolean,
+ *   rejectConnections?: boolean,
+ *   disableHttp2?: boolean,
+ *   disableQuic?: boolean,
+ *   disableLegacyTls?: boolean,
+ *   disableTls12?: boolean,
+ *   disableTls13?: boolean,
+ *   disableOcspStapling?: boolean,
+ *   enableTokenBinding?: boolean,
+ *   logExtendedEvents?: boolean,
+ *   enableSessionTicket?: boolean,
+ *   disableSessionId?: boolean,
  * }}
  */
 function parseSslcertParameters(stdoutText) {
   const readEnabledDisabled = (label) => {
     const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled)`, "i").exec(stdoutText);
     return found ? found[1].toLowerCase() === "enabled" : undefined;
+  };
+  // The newer per-connection policy flags report a third state, "Not Set"
+  // (netsh's own "never explicitly configured" default), alongside
+  // Enabled/Disabled -- distinct from the classic fields above, which only
+  // ever report Enabled/Disabled. "Not Set" is treated the same as "not
+  // found": omitted, so formatPreservedParamArgs falls back to netsh's own
+  // default on rebind rather than forcing a value that was never actually
+  // configured.
+  const readEnabledDisabledOrNotSet = (label) => {
+    const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled|Not Set)`, "i").exec(stdoutText);
+    if (!found) return undefined;
+    const value = found[1].toLowerCase();
+    if (value === "not set") return undefined;
+    return value === "enabled";
   };
   const readInteger = (label) => {
     const found = new RegExp(`${label}\\s*:\\s*(\\d+)`, "i").exec(stdoutText);
@@ -465,6 +497,17 @@ function parseSslcertParameters(stdoutText) {
   assign("ctlStoreName", readNullableString("Ctl Store Name"));
   assign("dsMapperUsage", readEnabledDisabled("DS Mapper Usage"));
   assign("negotiateClientCert", readEnabledDisabled("Negotiate Client Certificate"));
+  assign("rejectConnections", readEnabledDisabledOrNotSet("Reject Connections"));
+  assign("disableHttp2", readEnabledDisabledOrNotSet("Disable HTTP2"));
+  assign("disableQuic", readEnabledDisabledOrNotSet("Disable QUIC"));
+  assign("disableLegacyTls", readEnabledDisabledOrNotSet("Disable Legacy TLS Versions"));
+  assign("disableTls12", readEnabledDisabledOrNotSet("Disable TLS1\\.2"));
+  assign("disableTls13", readEnabledDisabledOrNotSet("Disable TLS1\\.3"));
+  assign("disableOcspStapling", readEnabledDisabledOrNotSet("Disable OCSP Stapling"));
+  assign("enableTokenBinding", readEnabledDisabledOrNotSet("Enable Token Binding"));
+  assign("logExtendedEvents", readEnabledDisabledOrNotSet("Log Extended Events"));
+  assign("enableSessionTicket", readEnabledDisabledOrNotSet("Enable Session Ticket"));
+  assign("disableSessionId", readEnabledDisabledOrNotSet("Disable Session ID"));
 
   return params;
 }
@@ -473,11 +516,13 @@ function parseSslcertParameters(stdoutText) {
  * Turns a parseSslcertParameters result back into the `netsh http add
  * sslcert` flags that reproduce it, so bindCertificate's rebind can pass
  * them alongside the new certhash/appid/certstorename and genuinely
- * preserve an operator's prior revocation/CTL/negotiation configuration
- * instead of silently resetting it to netsh's default on every renewal.
- * A key absent from `parameters` (never positively read back) contributes
- * no flag at all, which is exactly netsh's own default-on-omission
- * behavior -- the same as before this fix, for that one field.
+ * preserve an operator's prior revocation/CTL/negotiation/connection-policy
+ * configuration instead of silently resetting it to netsh's default on
+ * every renewal. A key absent from `parameters` (never positively read
+ * back, including a netsh "Not Set" tri-state for the newer flags) simply
+ * contributes no flag at all, which is exactly netsh's own
+ * default-on-omission behavior -- the same as before this fix, for that
+ * one field.
  *
  * @param {ReturnType<typeof parseSslcertParameters>} parameters
  * @returns {string[]} zero or more `name=value` netsh argv elements.
@@ -518,6 +563,42 @@ function formatPreservedParamArgs(parameters = {}) {
   }
   if (parameters.negotiateClientCert !== undefined) {
     args.push(`clientcertnegotiation=${flag(parameters.negotiateClientCert)}`);
+  }
+  // Newer per-connection policy flags (Windows Server 2019+; see
+  // parseSslcertParameters' doc comment for the version-agnostic
+  // omit-if-absent rationale, which applies identically here).
+  if (parameters.rejectConnections !== undefined) {
+    args.push(`reject=${flag(parameters.rejectConnections)}`);
+  }
+  if (parameters.disableHttp2 !== undefined) {
+    args.push(`disablehttp2=${flag(parameters.disableHttp2)}`);
+  }
+  if (parameters.disableQuic !== undefined) {
+    args.push(`disablequic=${flag(parameters.disableQuic)}`);
+  }
+  if (parameters.disableLegacyTls !== undefined) {
+    args.push(`disablelegacytls=${flag(parameters.disableLegacyTls)}`);
+  }
+  if (parameters.disableTls12 !== undefined) {
+    args.push(`disabletls12=${flag(parameters.disableTls12)}`);
+  }
+  if (parameters.disableTls13 !== undefined) {
+    args.push(`disabletls13=${flag(parameters.disableTls13)}`);
+  }
+  if (parameters.disableOcspStapling !== undefined) {
+    args.push(`disableocspstapling=${flag(parameters.disableOcspStapling)}`);
+  }
+  if (parameters.enableTokenBinding !== undefined) {
+    args.push(`enabletokenbinding=${flag(parameters.enableTokenBinding)}`);
+  }
+  if (parameters.logExtendedEvents !== undefined) {
+    args.push(`logextendedevents=${flag(parameters.logExtendedEvents)}`);
+  }
+  if (parameters.enableSessionTicket !== undefined) {
+    args.push(`enablesessionticket=${flag(parameters.enableSessionTicket)}`);
+  }
+  if (parameters.disableSessionId !== undefined) {
+    args.push(`disablesessionid=${flag(parameters.disableSessionId)}`);
   }
   return args;
 }
@@ -686,17 +767,26 @@ async function attemptRollback({
  * something either binding's own configuration can override. Concretely:
  * deploying binding.sniHost cleanly here does NOT guarantee it is what a
  * client actually receives, if a non-SNI binding also exists on the same
- * port for the address family the client connects over.
+ * port for the address (or address family) the client connects over.
  *
  * This module cannot prevent that precedence rule (it is http.sys's, not
  * this module's), only detect when it may be silently shadowing the SNI
  * binding just deployed, and surface that as a non-fatal warning rather
- * than staying silent about a real, non-obvious gotcha. Checks the IPv4
- * (0.0.0.0) and IPv6 ([::]) wildcard forms, since either stack's wildcard
- * ipport binding shadows every hostnameport binding on that port for
- * clients on that stack -- the common real-world shape of this conflict
- * (an operator/IIS Manager created a default "no SNI" binding on the port
- * before, or alongside, this SNI one).
+ * than staying silent about a real, non-obvious gotcha. Checks THREE
+ * shapes of shadowing ipport binding:
+ *   1. The IPv4 wildcard (0.0.0.0) -- shadows every hostnameport binding
+ *      on that port for every IPv4 client.
+ *   2. The IPv6 wildcard ([::]) -- same, for every IPv6 client.
+ *   3. Any OTHER, concrete-IP ipport binding on the same port -- shadows
+ *      the SNI binding only for clients connecting to that exact IP, but
+ *      is otherwise the identical precedence rule (a PR review found,
+ *      2026-08-07, that checking only the two wildcard forms misses this
+ *      shape entirely, even though this module's own binding-scope doc
+ *      comment on deployIisBinding already explains specific-IP bindings
+ *      take precedence too). Enumerated via a full, unfiltered
+ *      `netsh http show sslcert` listing (../windows-discovery's
+ *      listHttpSysBindings) rather than a targeted query, since the
+ *      conflicting address is not known in advance.
  *
  * A query failure here is swallowed (no warning returned): this check is
  * purely informational and must never fail an otherwise-successful SNI
@@ -732,7 +822,54 @@ async function checkSniPrecedenceConflict({ binding, execFileImpl, netshPath, ti
       );
     }
   }
+
+  // Concrete-IP ipport bindings shadow the SNI binding for clients
+  // connecting to that exact IP only, but are otherwise the same
+  // precedence rule as the two wildcard forms above -- see this
+  // function's doc comment.
+  try {
+    const allBindings = await listHttpSysBindings({ execFileImpl, netshPath, timeoutMs });
+    if (allBindings.ok === true) {
+      for (const existing of allBindings.bindings) {
+        if (existing.keyedBy !== "ipport" || !existing.thumbprint || !existing.ipPort) continue;
+        const parsed = splitIpPortLiteral(existing.ipPort);
+        if (!parsed || parsed.port !== binding.port) continue;
+        if (parsed.address === "0.0.0.0" || parsed.address === "[::]" || parsed.address === "*") {
+          // Already covered by the wildcard checks above.
+          continue;
+        }
+        return (
+          `an existing non-SNI certificate binding at ipport=${parsed.address}:${binding.port} may take ` +
+          `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
+          `connecting to that specific IP: http.sys evaluates ipport bindings before hostnameport bindings ` +
+          `on the same port, regardless of the client's SNI value`
+        );
+      }
+    }
+  } catch {
+    // Purely informational; see doc comment above.
+  }
   return undefined;
+}
+
+/**
+ * Splits a `netsh http show sslcert`-reported `ipPort` literal (an
+ * `IP:port` or `Hostname:port` string, per ../windows-discovery's own
+ * `keyedBy` field) into `{ address, port }`, on the LAST colon so a
+ * bracketed IPv6 literal (`[::1]:443`) is not mis-split on one of its own
+ * embedded colons. Mirrors index.js's own splitIpPortLiteral (duplicated
+ * per this package's self-contained-module convention).
+ * @param {string} ipPort
+ * @returns {{ address: string, port: number }|null} null if unparseable.
+ */
+function splitIpPortLiteral(ipPort) {
+  if (!isNonEmptyString(ipPort)) return null;
+  const lastColon = ipPort.lastIndexOf(":");
+  if (lastColon <= 0 || lastColon === ipPort.length - 1) return null;
+  const address = ipPort.slice(0, lastColon);
+  const port = Number(ipPort.slice(lastColon + 1));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { address, port };
 }
 
 /**

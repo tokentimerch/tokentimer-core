@@ -1155,11 +1155,81 @@ Windows:
   machine-keyset request, so a non-default `store` (e.g. `WebHosting`) is
   reached by mirroring the accepted certificate into it afterward
   (`certutil -addstore` + `-repairstore`, then `-delstore My` to remove the
-  original copy). Requesting `store: "My"` (the common case) touches only
-  `certreq`, with no `certutil` call. Real-host verification so far has only
-  exercised the default `My` store; the non-default-store mirror path is
-  unit-tested against a stubbed `certutil` but not yet independently proven
-  against a real Windows host. See ADR-0012 decision 9.
+  original copy, then a closing `certutil -store <store> <thumbprint>` query
+  that independently confirms the certificate is actually retrievable from
+  the target store rather than trusting the prior exit codes alone).
+  Requesting `store: "My"` (the common case) touches only `certreq`, with no
+  `certutil` call. Real-host verification so far has only exercised the
+  default `My` store; the non-default-store mirror path is unit-tested
+  (including the closing confirmation query) against a stubbed `certutil`
+  but not yet independently proven against a real Windows host. See
+  ADR-0012 decision 9.
+- **A CNG key container abandoned by a crash between `certreq -new` and
+  `certreq -accept` is freed automatically at the next agent startup, not
+  left behind indefinitely.** The container name is journaled the instant
+  `certreq -new` succeeds; a startup reconciliation pass checks each
+  unresolved entry against the live machine store and deletes
+  (`certutil -delkey`) only a container still enrolled to no certificate,
+  leaving alone (and marking reconciled, so it is not re-checked forever)
+  any container a later attempt or an operator has since legitimately
+  enrolled. For a non-default target store (e.g. `WebHosting`), this check
+  queries **both** the default `My` store and the recorded target store,
+  never the target store alone: `certreq -accept` itself always lands in
+  `My` first, with the mirror into a non-default store happening as a
+  separate, later step (see the store-targeting bullet above), so a crash
+  between those two steps leaves a live certificate in `My` that a
+  target-store-only check would miss, incorrectly freeing a key still in
+  use. A store-query failure fails closed (deferred, never deleted). See
+  ADR-0012 decision 9.
+- **Superseded-certificate retention now requires a persisted issuance
+  record proving the *specific certificate* was installed by this agent,
+  not just a container-naming match or a bare record of container
+  creation, before treating a predecessor's CNG key container as this
+  agent's own to delete.** A name matching the agent's own container-naming
+  convention is necessary but not sufficient; a durable record written at
+  the moment the agent itself created that exact container (carrying the
+  originating job and certificate id) must also exist; and that record
+  must further have been upgraded, immediately after a successful
+  `certreq -accept`, to carry the actual accepted certificate's thumbprint,
+  which must match the predecessor certificate being evaluated. This third
+  requirement closes a gap where an operator (or an unrelated later
+  attempt) enrolling a different certificate into an agent-created
+  container -- one the crash-reconciliation sweep above found already
+  enrolled and correctly left alone -- could otherwise inherit
+  `tokentimer_installed` provenance for that unrelated certificate. A human
+  operator's own `certreq` enrollment or a tool like IIS's
+  self-signed-certificate generator is correctly recorded `preexisting` and
+  never auto-deleted, whether for missing any of the three signals or for a
+  mismatched thumbprint. See ADR-0012 decision 18.
+- **The mandatory delete-then-add IIS rebind (decision 13) preserves the
+  outgoing binding's other settings instead of silently resetting them to
+  `netsh`'s defaults.** `netsh http add sslcert` only ever applies the flags
+  a given call explicitly passes it, and a rebind must delete the existing
+  binding before re-adding it (`add` refuses to overwrite one in place), so
+  every renewal previously reset any operator-configured
+  revocation-checking, CTL-issuer-restriction, DS-mapper, and
+  client-certificate-negotiation setting back to default. The agent now
+  reads the outgoing binding's settings back via `netsh http show sslcert`
+  before deleting it and reapplies every one it can positively parse on the
+  new binding, including the newer Windows Server 2019+ per-connection
+  policy flags (`reject`, `disablehttp2`, `disablequic`, `disablelegacytls`,
+  `disabletls12`, `disabletls13`, `disableocspstapling`,
+  `enabletokenbinding`, `logextendedevents`, `enablesessionticket`,
+  `disablesessionid`). A setting `netsh` reports as its own "Not Set"
+  tri-state default is never forced either way, matching pre-fix behavior
+  for that one field.
+- **A non-SNI binding on the same port always takes precedence over an SNI
+  binding, and a deploy to an SNI binding now warns when one exists.** This
+  is `http.sys`'s own dispatch rule, not something either binding's
+  configuration can override: a client connecting to an address with its
+  own `ipport=` binding gets that certificate regardless of the SNI
+  hostname it sent. After a successful SNI (`hostnameport=`) deploy, the
+  agent checks for a shadowing `ipport=` binding on the same port -- the
+  IPv4 wildcard (`0.0.0.0`), the IPv6 wildcard (`[::]`), and any other
+  concrete IP -- and surfaces a non-fatal `precedenceWarning` in the
+  deploy-succeeded evidence when one is found, rather than staying silent
+  about a real, non-obvious gotcha. This is detection only: the agent
+  cannot change `http.sys`'s own precedence rule, only warn about it.
 
 ## 9. Troubleshooting
 

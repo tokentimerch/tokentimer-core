@@ -320,6 +320,36 @@ describe("parseSslcertParameters", () => {
     assert.equal(parsed.ctlIdentifier, "MyCtl");
     assert.equal(parsed.ctlStoreName, "CA");
   });
+
+  it("reads the newer per-connection policy flags when they report Enabled/Disabled", () => {
+    const parsed = parseSslcertParameters(
+      [
+        "Reject Connections            : Disabled",
+        "Disable HTTP2                 : Enabled",
+        "Disable QUIC                  : Disabled",
+        "Disable OCSP Stapling         : Enabled",
+        "Enable Token Binding          : Disabled",
+      ].join("\r\n"),
+    );
+    assert.equal(parsed.rejectConnections, false);
+    assert.equal(parsed.disableHttp2, true);
+    assert.equal(parsed.disableQuic, false);
+    assert.equal(parsed.disableOcspStapling, true);
+    assert.equal(parsed.enableTokenBinding, false);
+  });
+
+  it("omits (does not default) a newer per-connection policy flag reported as 'Not Set'", () => {
+    const parsed = parseSslcertParameters(
+      [
+        "Disable HTTP2                 : Not Set",
+        "Disable QUIC                  : Not Set",
+        "Enable Token Binding          : Not Set",
+        "Log Extended Events           : Not Set",
+        "Enable Session Ticket         : Not Set",
+      ].join("\r\n"),
+    );
+    assert.deepEqual(parsed, {});
+  });
 });
 
 describe("formatPreservedParamArgs", () => {
@@ -361,13 +391,46 @@ describe("formatPreservedParamArgs", () => {
     assert.deepEqual(formatPreservedParamArgs({ ctlIdentifier: null, ctlStoreName: null }), []);
   });
 
-  it("round-trips a full parseSslcertParameters output back into valid netsh add sslcert flags", () => {
+  it("emits enable/disable flags for the newer per-connection policy fields present", () => {
+    const args = formatPreservedParamArgs({
+      rejectConnections: false,
+      disableHttp2: true,
+      disableQuic: false,
+      disableLegacyTls: true,
+      disableTls12: false,
+      disableTls13: false,
+      disableOcspStapling: true,
+      enableTokenBinding: false,
+      logExtendedEvents: true,
+      enableSessionTicket: true,
+      disableSessionId: false,
+    });
+    assert.deepEqual(args, [
+      "reject=disable",
+      "disablehttp2=enable",
+      "disablequic=disable",
+      "disablelegacytls=enable",
+      "disabletls12=disable",
+      "disabletls13=disable",
+      "disableocspstapling=enable",
+      "enabletokenbinding=disable",
+      "logextendedevents=enable",
+      "enablesessionticket=enable",
+      "disablesessionid=disable",
+    ]);
+  });
+
+  it("round-trips a full parseSslcertParameters output (including the newer flags) back into valid netsh add sslcert flags", () => {
     const parameters = parseSslcertParameters(
       [
         "Verify Client Certificate Revocation : Enabled",
         "Usage Check                  : Enabled",
         "Revocation Freshness Time    : 120",
         "Negotiate Client Certificate : Disabled",
+        "Reject Connections           : Disabled",
+        "Disable HTTP2                : Enabled",
+        "Disable QUIC                 : Not Set",
+        "Disable OCSP Stapling        : Enabled",
       ].join("\r\n"),
     );
     const args = formatPreservedParamArgs(parameters);
@@ -376,6 +439,9 @@ describe("formatPreservedParamArgs", () => {
       "usagecheck=enable",
       "revocationfreshnesstime=120",
       "clientcertnegotiation=disable",
+      "reject=disable",
+      "disablehttp2=enable",
+      "disableocspstapling=enable",
     ]);
   });
 });
@@ -1002,6 +1068,66 @@ describe("checkSniPrecedenceConflict", () => {
     const execFileImpl = () => {
       throw new Error("execFile blew up");
     };
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.equal(warning, undefined);
+  });
+
+  it("warns when a non-SNI binding exists on a CONCRETE (non-wildcard) IP on the same port", async () => {
+    // Neither wildcard form is bound, but a specific-IP ipport binding on
+    // the same port shadows this SNI binding for clients connecting to
+    // that exact IP -- the gap a PR review found (2026-08-07): checking
+    // only the two wildcard forms missed this shape entirely.
+    const execFileImpl = makeExecStub((key, args) => {
+      if (key === "show" && args.length === 3) {
+        // The unfiltered "netsh http show sslcert" full-listing call
+        // (../windows-discovery's listHttpSysBindings): reports one
+        // concrete-IP ipport binding on the same port as the SNI binding.
+        return {
+          error: null,
+          stdout:
+            `IP:port                       : 192.0.2.10:8443\r\n` +
+            `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` +
+            `Application ID                : {00000000-0000-0000-0000-000000000000}\r\n` +
+            `Certificate Store Name        : My\r\n`,
+        };
+      }
+      return {
+        error: Object.assign(new Error("not found"), { code: 1 }),
+        stdout: "The system cannot find the file specified.\r\n",
+      };
+    });
+
+    const warning = await checkSniPrecedenceConflict({
+      binding: SNI_BINDING,
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.match(warning, /ipport=192\.0\.2\.10:8443/);
+    assert.match(warning, /hostnameport=www\.example\.com:8443/);
+  });
+
+  it("does not warn about a concrete-IP binding on a DIFFERENT port", async () => {
+    const execFileImpl = makeExecStub((key, args) => {
+      if (key === "show" && args.length === 3) {
+        return {
+          error: null,
+          stdout:
+            `IP:port                       : 192.0.2.10:9999\r\n` +
+            `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n`,
+        };
+      }
+      return {
+        error: Object.assign(new Error("not found"), { code: 1 }),
+        stdout: "The system cannot find the file specified.\r\n",
+      };
+    });
 
     const warning = await checkSniPrecedenceConflict({
       binding: SNI_BINDING,
