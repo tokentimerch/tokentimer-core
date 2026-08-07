@@ -44,6 +44,7 @@ export default function CopyableId({ id, label, display, size = 'xs' }) {
         fontSize={size}
         color={idColor}
         title={value}
+        overflowWrap='anywhere'
       >
         {shown}
       </Text>
