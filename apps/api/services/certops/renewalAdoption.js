@@ -59,9 +59,14 @@ function adoptionIntentDedupeKey(jobId) {
  * Sources that describe a place the certificate is actually installed, as
  * opposed to a vantage point it was merely observed from. Only a deployment
  * location can be renewed into, so only these count towards the adoption block.
+ * agent_windows (machine store / IIS binding / http.sys, migration 45)
+ * belongs here for exactly the same reason agent_filesystem does: the agent
+ * that reported it is the same agent capable of renewing/reinstalling into
+ * it, unlike endpoint_monitor/domain_checker which only ever observe.
  */
 const DEPLOYMENT_INSTANCE_SOURCES = Object.freeze([
   "agent_filesystem",
+  "agent_windows",
   "cert_manager",
 ]);
 

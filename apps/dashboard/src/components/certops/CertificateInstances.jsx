@@ -9,11 +9,17 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
 } from '@chakra-ui/react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardState } from '../DashboardPrimitives.jsx';
-import { formatDateTime, statusScheme } from './certopsFormat';
+import {
+  formatDateTime,
+  locationKindLabel,
+  statusScheme,
+} from './certopsFormat';
+import { formatRelativeDateTime } from './certopsJobsFormat';
 
 function targetLabel(instance) {
   return (
@@ -28,6 +34,40 @@ function instanceTimestamp(instance) {
   return (
     instance.observedAt || instance.updatedAt || instance.createdAt || null
   );
+}
+
+/**
+ * Connectivity is a SEPARATE fact from `instance.status` (certificate
+ * presence, decided by a live agent's scan) - see the product note that
+ * agent connectivity must never overload certificate_instances.status. A
+ * location with no responsible agent (e.g. cert-manager/domain-checker
+ * observations) has no connectivity concept at all, hence 'unknown' rather
+ * than a misleading 'offline'.
+ */
+function connectivityDescriptor(instance) {
+  const agent = instance.agent;
+  if (!agent) {
+    return { label: 'Unknown', scheme: 'gray', help: 'No agent is responsible for observing this location.' };
+  }
+  if (agent.livenessState === 'live') {
+    return {
+      label: 'Reachable',
+      scheme: 'green',
+      help: `${agent.name || agent.hostname || agent.agentId} last reported in.`,
+    };
+  }
+  if (agent.livenessState === 'retired') {
+    return {
+      label: 'Agent retired',
+      scheme: 'gray',
+      help: `${agent.name || agent.hostname || agent.agentId} has been retired; this location can no longer be verified.`,
+    };
+  }
+  return {
+    label: 'Agent offline',
+    scheme: 'orange',
+    help: `${agent.name || agent.hostname || agent.agentId} has not reported in since ${formatDateTime(agent.lastSeenAt)}.`,
+  };
 }
 
 /**
@@ -77,11 +117,34 @@ function groupByTarget(instances) {
 }
 
 function InstanceRow({ instance, border, muted, indent = false }) {
+  const connectivity = connectivityDescriptor(instance);
   return (
     <Tr>
       <Td borderColor={border} pl={indent ? 8 : undefined}>
         <Text fontSize='sm' noOfLines={1} color={indent ? muted : undefined}>
           {targetLabel(instance)}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Text fontSize='sm' color={muted} noOfLines={1}>
+          {locationKindLabel(instance.locationKind)}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Text fontSize='sm' color={muted} noOfLines={1}>
+          {instance.agent?.name || instance.agent?.hostname || instance.agent?.agentId || '--'}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Tooltip label={connectivity.help} hasArrow placement='top' openDelay={250}>
+          <Badge colorScheme={connectivity.scheme} variant='subtle' textTransform='none' fontSize='xs'>
+            {connectivity.label}
+          </Badge>
+        </Tooltip>
+      </Td>
+      <Td borderColor={border}>
+        <Text fontSize='sm' color={muted} title={formatDateTime(instanceTimestamp(instance))}>
+          {formatRelativeDateTime(instanceTimestamp(instance))}
         </Text>
       </Td>
       <Td borderColor={border}>
@@ -92,16 +155,6 @@ function InstanceRow({ instance, border, muted, indent = false }) {
         >
           {instance.status || 'unknown'}
         </Badge>
-      </Td>
-      <Td borderColor={border}>
-        <Text fontSize='sm' color={muted}>
-          {formatDateTime(instanceTimestamp(instance))}
-        </Text>
-      </Td>
-      <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} noOfLines={1}>
-          {instance.source || '--'}
-        </Text>
       </Td>
     </Tr>
   );
@@ -160,19 +213,45 @@ export default function CertificateInstances({ instances, available, error }) {
       <Table size='sm' variant='simple'>
         <Thead>
           <Tr>
-            <Th>Target</Th>
-            <Th>Status</Th>
-            <Th>Observed</Th>
-            <Th>Source</Th>
+            <Th>Location</Th>
+            <Th>Type</Th>
+            <Th>Agent</Th>
+            <Th>Connectivity</Th>
+            <Th>Last observed</Th>
+            <Th>Certificate state</Th>
           </Tr>
         </Thead>
         <Tbody>
-          {groups.map(({ key, current, history, rotated }) => (
+          {groups.map(({ key, current, history, rotated }) => {
+            const connectivity = connectivityDescriptor(current);
+            return (
             <Fragment key={key}>
               <Tr>
                 <Td borderColor={border}>
                   <Text fontSize='sm' noOfLines={1}>
                     {targetLabel(current)}
+                  </Text>
+                </Td>
+                <Td borderColor={border}>
+                  <Text fontSize='sm' color={muted} noOfLines={1}>
+                    {locationKindLabel(current.locationKind)}
+                  </Text>
+                </Td>
+                <Td borderColor={border}>
+                  <Text fontSize='sm' color={muted} noOfLines={1}>
+                    {current.agent?.name || current.agent?.hostname || current.agent?.agentId || '--'}
+                  </Text>
+                </Td>
+                <Td borderColor={border}>
+                  <Tooltip label={connectivity.help} hasArrow placement='top' openDelay={250}>
+                    <Badge colorScheme={connectivity.scheme} variant='subtle' textTransform='none' fontSize='xs'>
+                      {connectivity.label}
+                    </Badge>
+                  </Tooltip>
+                </Td>
+                <Td borderColor={border}>
+                  <Text fontSize='sm' color={muted} title={formatDateTime(instanceTimestamp(current))}>
+                    {formatRelativeDateTime(instanceTimestamp(current))}
                   </Text>
                 </Td>
                 <Td borderColor={border}>
@@ -189,20 +268,10 @@ export default function CertificateInstances({ instances, available, error }) {
                     </Badge>
                   ) : null}
                 </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted}>
-                    {formatDateTime(instanceTimestamp(current))}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} noOfLines={1}>
-                    {current.source || '--'}
-                  </Text>
-                </Td>
               </Tr>
               {history.length > 0 ? (
                 <Tr key={`${key}-toggle`}>
-                  <Td colSpan={4} borderColor={border} pt={0} pb={2}>
+                  <Td colSpan={6} borderColor={border} pt={0} pb={2}>
                     <Button
                       size='xs'
                       variant='link'
@@ -229,9 +298,11 @@ export default function CertificateInstances({ instances, available, error }) {
                   ))
                 : null}
             </Fragment>
-          ))}
+            );
+          })}
         </Tbody>
       </Table>
     </TableContainer>
   );
 }
+

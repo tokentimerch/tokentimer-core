@@ -162,6 +162,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/tokens",
       "GET /api/v1/workspaces/:id/certops/settings",
       "GET /api/v1/workspaces/:id/certops/targets",
+      "PATCH /api/v1/workspaces/:id/certops/agents/:agentId/alert-settings",
       "PATCH /api/v1/workspaces/:id/certops/profiles/:profileId",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",

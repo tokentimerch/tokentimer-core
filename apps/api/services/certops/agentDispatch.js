@@ -520,10 +520,12 @@ async function registerAgent({
          status,
          bootstrap_token_id,
          last_sequence,
-         capabilities_updated_at
+         capabilities_updated_at,
+         downtime_alerts_enabled,
+         contact_group_id
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
-               $15::jsonb, 'active', $13, $14, NOW())
+               $15::jsonb, 'active', $13, $14, NOW(), $16, $17)
        ON CONFLICT (workspace_id, agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
@@ -549,6 +551,13 @@ async function registerAgent({
         // never against a previous registration's high-water mark.
         envelopeSequence(envelope) ?? 0,
         JSON.stringify(normalizeStringList(body.declaredCapabilities, 64)),
+        // Legacy bootstrap tokens (created before migration 45) carry
+        // downtimeAlertsEnabled: null; NULL here means "unset", not "off",
+        // so it must resolve to the column's own TRUE default rather than
+        // to false. A bootstrap token that explicitly opted out (=== false)
+        // is the only way this agent starts with alerting disabled.
+        bootstrapToken.downtimeAlertsEnabled === false ? false : true,
+        bootstrapToken.contactGroupId || null,
       ],
     );
 
