@@ -87,6 +87,41 @@ const OUTPUT_EXCERPT_MAX_CHARS = 1024;
 const PRIVATE_KEY_MARKER = "PRIVATE KEY";
 const REDACTED_EXCERPT_PLACEHOLDER = "[redacted]";
 
+/**
+ * `netsh http add sslcert` can fail with "The parameter is incorrect"
+ * immediately after a CNG `certreq -accept` for the same certificate,
+ * even though the identical command succeeds if retried a moment later
+ * (real-host finding, Windows Server 2025 build 26100: SChannel's private
+ * key association for a just-written CNG key container is not always
+ * visible to netsh's own lookup on the very first call after the key
+ * lands in the store). These are bounded, short retries of the ADD call
+ * only (never the preceding DELETE, which is best-effort and idempotent
+ * either way) to absorb that specific, transient settle delay; a genuine
+ * BIND_FAILED (bad thumbprint, wrong store, real parameter error) fails
+ * exactly the same after exhausting them, just slightly slower.
+ *
+ * Widened 2026-08-08 (real-host finding against the same Windows Server
+ * 2025 build, on a `renew` job specifically): the original [300, 700,
+ * 1500] budget (2.5s of added delay across 4 total attempts) was not
+ * always sufficient -- two independent real renewal runs against a
+ * freshly key-rotated CNG certificate still failed after exhausting it,
+ * while a manual retry of the exact same `netsh add sslcert` call a
+ * couple of minutes later succeeded immediately, confirming the
+ * underlying condition really is transient settle delay, just with a
+ * longer tail than originally measured. Widened to a slower-growing,
+ * longer-total schedule (up to ~15.75s of added delay across 6 total
+ * attempts) to cover that observed tail without materially changing
+ * behavior for the common case, which still resolves on an early retry.
+ */
+const BIND_ADD_RETRY_DELAYS_MS = [300, 700, 1500, 3000, 5000, 5250];
+
+/** Default real-time delay implementation, overridable in tests. */
+function defaultDelayImpl(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /** Default handshake verification budget after a rebind. */
 const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 1000;
 
@@ -645,6 +680,8 @@ async function bindCertificate({
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  delayImpl = defaultDelayImpl,
+  addRetryDelaysMs = BIND_ADD_RETRY_DELAYS_MS,
 } = {}) {
   const normalizedThumbprint = normalizeThumbprint(thumbprint);
   if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
@@ -665,28 +702,49 @@ async function bindCertificate({
     timeoutMs,
   );
 
-  const addArgs = [
-    netshPath,
-    "http",
-    "add",
-    "sslcert",
-    selector,
-    `certhash=${normalizedThumbprint}`,
-    `appid=${generateAppId()}`,
-    `certstorename=${store}`,
-    ...formatPreservedParamArgs(preserveParameters),
-  ];
-  assertSafeArgvElements("argv", addArgs);
+  // See BIND_ADD_RETRY_DELAYS_MS's doc comment: a just-accepted CNG
+  // certificate can transiently fail netsh's own key-association lookup
+  // immediately after `certreq -accept`, real-host finding, not a fixture
+  // artifact. Only ever retries this ADD call, with a fresh appid each
+  // attempt (netsh's own bookkeeping key, no correctness meaning); the
+  // preceding DELETE above already ran exactly once, unconditionally.
+  const attemptDelaysMs = [0, ...addRetryDelaysMs];
+  let lastResult = null;
+  for (let attempt = 0; attempt < attemptDelaysMs.length; attempt += 1) {
+    if (attemptDelaysMs[attempt] > 0) {
+      await delayImpl(attemptDelaysMs[attempt]);
+    }
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, addArgs, timeoutMs);
-  if (exitCode !== 0) {
-    return {
+    const addArgs = [
+      netshPath,
+      "http",
+      "add",
+      "sslcert",
+      selector,
+      `certhash=${normalizedThumbprint}`,
+      `appid=${generateAppId()}`,
+      `certstorename=${store}`,
+      ...formatPreservedParamArgs(preserveParameters),
+    ];
+    assertSafeArgvElements("argv", addArgs);
+
+    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, addArgs, timeoutMs);
+    if (exitCode === 0) {
+      return { ok: true };
+    }
+
+    lastResult = {
       ok: false,
       exitCode,
       stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
     };
+
+    const isTransientParameterError = /parameter is incorrect/i.test(String(stderr ?? "") + String(stdout ?? ""));
+    if (!isTransientParameterError) {
+      break;
+    }
   }
-  return { ok: true };
+  return lastResult;
 }
 
 /**
@@ -721,6 +779,7 @@ async function attemptRollback({
   execFileImpl,
   netshPath,
   timeoutMs,
+  delayImpl,
 }) {
   const rollbackResult = await bindCertificate({
     binding,
@@ -730,6 +789,7 @@ async function attemptRollback({
     execFileImpl,
     netshPath,
     timeoutMs,
+    ...(delayImpl !== undefined ? { delayImpl } : {}),
   });
 
   if (!rollbackResult.ok) {
@@ -983,6 +1043,7 @@ async function deployIisBinding({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   verifyTimeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
   connectImpl,
+  delayImpl = defaultDelayImpl,
 } = {}) {
   assertValidBinding(binding);
   if (!isNonEmptyString(certificatePem)) {
@@ -1024,6 +1085,7 @@ async function deployIisBinding({
       execFileImpl,
       netshPath,
       timeoutMs,
+      delayImpl,
     });
     if (!bindResult.ok) {
       // The preceding delete (inside bindCertificate) already ran
@@ -1040,6 +1102,7 @@ async function deployIisBinding({
               execFileImpl,
               netshPath,
               timeoutMs,
+              delayImpl,
             });
       return guardReturnValue({
         ok: false,
@@ -1100,6 +1163,7 @@ async function deployIisBinding({
     execFileImpl,
     netshPath,
     timeoutMs,
+    delayImpl,
   });
   return guardReturnValue({
     ok: false,
@@ -1119,6 +1183,7 @@ module.exports = {
   WILDCARD_BINDING_ADDRESSES,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_VERIFY_TIMEOUT_MS,
+  BIND_ADD_RETRY_DELAYS_MS,
   OUTPUT_EXCERPT_MAX_CHARS,
   normalizeThumbprint,
   assertValidBinding,

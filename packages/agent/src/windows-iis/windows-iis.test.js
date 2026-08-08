@@ -28,6 +28,7 @@ const { X509Certificate } = require("node:crypto");
 const {
   THUMBPRINT_PATTERN,
   WILDCARD_BINDING_ADDRESSES,
+  BIND_ADD_RETRY_DELAYS_MS,
   assertValidBinding,
   resolveVerificationTarget,
   formatIpPort,
@@ -528,10 +529,10 @@ describe("bindCertificate", () => {
     assert.equal(result.ok, true);
   });
 
-  it("returns ok: false when the add call fails", async () => {
+  it("returns ok: false when the add call fails with a non-transient error (no retries)", async () => {
     const execFileImpl = makeExecStub((key) => {
       if (key === "add") {
-        return { error: Object.assign(new Error("failed"), { code: 87 }), stderr: "The parameter is incorrect." };
+        return { error: Object.assign(new Error("failed"), { code: 87 }), stderr: "Some other failure." };
       }
       return { error: null, stdout: "" };
     });
@@ -544,6 +545,78 @@ describe("bindCertificate", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.exitCode, 87);
+    // delete + a single add attempt, no retries for a non-transient error.
+    assert.equal(execFileImpl.calls.filter((call) => call.args[1] === "add").length, 1);
+  });
+
+  it("retries the add call on 'The parameter is incorrect.' (real-host finding, 2026-08-07) and succeeds once the transient error clears", async () => {
+    let addAttempts = 0;
+    const succeedOnAttempt = 3;
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "add") {
+        addAttempts += 1;
+        if (addAttempts < succeedOnAttempt) {
+          return {
+            error: Object.assign(new Error("failed"), { code: 87 }),
+            stderr: "The parameter is incorrect.",
+          };
+        }
+        return { error: null, stdout: "" };
+      }
+      return { error: null, stdout: "" };
+    });
+    const delays = [];
+    const delayImpl = async (ms) => {
+      delays.push(ms);
+    };
+
+    const result = await bindCertificate({
+      binding: VALID_BINDING,
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      execFileImpl,
+      delayImpl,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(addAttempts, succeedOnAttempt);
+    // The first two attempts each consumed the transient-error branch's
+    // delay before retrying; the third attempt succeeded. Derived from the
+    // real BIND_ADD_RETRY_DELAYS_MS schedule rather than hardcoded, so a
+    // future widening of the schedule (see that constant's doc comment)
+    // does not require updating an unrelated magic number here.
+    assert.deepEqual(delays, BIND_ADD_RETRY_DELAYS_MS.slice(0, succeedOnAttempt - 1));
+  });
+
+  it("gives up after exhausting all retries when 'The parameter is incorrect.' persists", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "add") {
+        return { error: Object.assign(new Error("failed"), { code: 87 }), stderr: "The parameter is incorrect." };
+      }
+      return { error: null, stdout: "" };
+    });
+    const delays = [];
+    const delayImpl = async (ms) => {
+      delays.push(ms);
+    };
+
+    const result = await bindCertificate({
+      binding: VALID_BINDING,
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      execFileImpl,
+      delayImpl,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 87);
+    // 1 initial attempt + one retry per configured delay; every delay is
+    // consumed since the transient error never clears. Derived from the
+    // real BIND_ADD_RETRY_DELAYS_MS schedule rather than hardcoded (see
+    // above).
+    assert.equal(
+      execFileImpl.calls.filter((call) => call.args[1] === "add").length,
+      BIND_ADD_RETRY_DELAYS_MS.length + 1,
+    );
+    assert.deepEqual(delays, BIND_ADD_RETRY_DELAYS_MS);
   });
 
   it("binds via hostnameport= (not ipport=+sslctlidentifier) when the binding has an sniHost", async () => {
