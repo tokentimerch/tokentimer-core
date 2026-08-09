@@ -1161,6 +1161,30 @@ step, including the closing confirmation, is independently checked, with a
 partial or unconfirmed mirror reported rather than silently treated as
 success.
 
+**Store-lock scope for a non-default target store.** The store-scoped mutex
+decision 13 introduces (`acquireStoreLock`, one lock file per store name
+under the agent's state directory) protects a single store's mutations
+against a concurrent renewal targeting that same store. A normal (not
+crash-recovery) `windows-iis` renewal against a non-default target store
+must lock *both* `My` and the target store for its entire duration, not
+merely the target store: as the store-targeting paragraph above describes,
+`certreq -accept` always mutates `My` first regardless of the requested
+target, with the mirror into a non-default store (and the closing
+`-delstore My`) happening only afterward. A PR review found (2026-08-07)
+that execution's own lock acquisition covered only `target.store`, leaving
+`My` itself unprotected during that entire window -- an unrelated
+`My`-targeted job's own concurrent `certreq -accept`, or even this same
+job's own later `-delstore My`, could race a real mutation of `My` that no
+lock was actually held for. This was a real concurrency/design-contract
+gap in execution's own lock scope, distinct from (and inconsistent with)
+the crash-reconciliation sweep above, which already correctly locks and
+queries both stores. Both paths now share one helper
+(`acquireWindowsStoreLocks`) that computes the same deduplicated store set
+("My" alone for the common case; `["My", targetStore]` for a non-default
+target) and acquires every lock in it in the same deterministic order
+("My" first), so the two paths can never deadlock against each other by
+acquiring the same two locks in opposite order.
+
 ### 10. The Windows permission model: one ACL matrix, enforced, never skipped
 
 POSIX hosts express "only this identity may read this file" with `chmod 0600` /

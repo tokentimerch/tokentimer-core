@@ -1181,6 +1181,20 @@ Windows:
   target-store-only check would miss, incorrectly freeing a key still in
   use. A store-query failure fails closed (deferred, never deleted). See
   ADR-0012 decision 9.
+- **Normal (non-crash-recovery) execution against a non-default target
+  store locks both stores for the duration of the operation, not just the
+  target store.** `certreq -accept` always mutates the default `My` store
+  first regardless of the requested target, with a non-default store (e.g.
+  `WebHosting`) reached only by a separate, later mirror step (see the
+  store-targeting bullet above) -- a `WebHosting`-targeted renewal that
+  locked only `WebHosting` would leave `My` itself unprotected for that
+  entire window, letting an unrelated `My`-targeted job's own concurrent
+  `certreq -accept` (or this same job's later `-delstore My`) race it. A PR
+  review found (2026-08-07) that execution's own lock scope did not match
+  the crash-reconciliation sweep's already-correct dual-store scope; both
+  now share one helper that locks the deduplicated set (one lock for the
+  common `store: "My"` case) in the same deterministic order, so the two
+  paths can never deadlock against each other.
 - **Superseded-certificate retention now requires a persisted issuance
   record proving the *specific certificate* was installed by this agent,
   not just a container-naming match or a bare record of container
@@ -1217,7 +1231,17 @@ Windows:
   `enabletokenbinding`, `logextendedevents`, `enablesessionticket`,
   `disablesessionid`). A setting `netsh` reports as its own "Not Set"
   tri-state default is never forced either way, matching pre-fix behavior
-  for that one field.
+  for that one field. `disableLegacyTls` specifically is parsed against a
+  *different* vocabulary than every other per-connection flag above:
+  Microsoft's own documentation reports this one field as `Set`/`Not Set`,
+  not `Enabled`/`Disabled`/`Not Set` -- a PR review found (2026-08-07) that
+  the shared Enabled/Disabled/Not-Set parser never matched a bare `Set`, so
+  an outgoing binding with legacy TLS genuinely disabled had that
+  restriction silently dropped, not merely reset, on every renewal. The
+  parser now recognizes both vocabularies (defensively accepting
+  `Enabled`/`Disabled` too, should a future Windows build ever report this
+  field the same way as its siblings), with a regression test built from
+  Microsoft's own documented `netsh http show sslcert` output shape.
 - **A non-SNI binding on the same port always takes precedence over an SNI
   binding, and a deploy to an SNI binding now warns when one exists.** This
   is `http.sys`'s own dispatch rule, not something either binding's
