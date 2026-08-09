@@ -1639,14 +1639,46 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 
-  it("is the final migration and every migration version is sequential with no gaps", () => {
+  it("keeps every migration version sequential with no gaps", () => {
     const versions = migrations.map((entry) => entry.version);
     const sorted = [...versions].sort((a, b) => a - b);
     assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 46);
+    assert.equal(sorted[sorted.length - 1], 47);
   });
 });
 
+describe("migration 47 durable agent-health incidents and anchor XOR", () => {
+  const migration = migrations.find((entry) => entry.version === 47);
+
+  it("adds an exactly-one alert anchor constraint and refuses ambiguous legacy rows", () => {
+    assert.ok(migration);
+    assert.equal(migration.name, "agent_health_incidents_and_alert_anchor_xor");
+    assert.match(
+      migration.sql,
+      /WHERE \(token_id IS NULL\) = \(certops_agent_id IS NULL\)/,
+    );
+    assert.match(
+      migration.sql,
+      /CHECK \(\s*\(token_id IS NOT NULL\) <> \(certops_agent_id IS NOT NULL\)\s*\)/,
+    );
+  });
+
+  it("creates a durable open-incident row keyed by agent with workspace-safe foreign keys", () => {
+    assert.match(
+      migration.sql,
+      /CREATE TABLE IF NOT EXISTS certops_agent_health_incidents/,
+    );
+    assert.match(migration.sql, /agent_id UUID PRIMARY KEY/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, agent_id\)\s+REFERENCES certops_agents\(workspace_id, id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      migration.sql,
+      /INSERT INTO certops_agent_health_incidents[\s\S]+WHERE aq\.alert_key = 'agent_health:' \|\| a\.id::text \|\| ':down'[\s\S]+ON CONFLICT \(agent_id\) DO NOTHING/,
+    );
+  });
+});

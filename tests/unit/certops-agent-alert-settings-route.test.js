@@ -252,6 +252,28 @@ describe("CertOps agent alert-settings route", () => {
     assert.equal(res.body.code, "CERTOPS_AGENT_ALERT_SETTINGS_EMPTY");
   });
 
+  it("rejects string, numeric, null, array, and object boolean lookalikes", async () => {
+    for (const downtimeAlertsEnabled of [
+      "false",
+      "true",
+      "yes",
+      0,
+      1,
+      null,
+      [],
+      {},
+    ]) {
+      const res = await invokeRoute("patch", alertSettingsPath, {
+        params: { agentId: AGENT_ROW_ID },
+        body: { downtimeAlertsEnabled },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.code, "CERTOPS_AGENT_ALERTS_ENABLED_INVALID");
+      assert.equal(db.agentRows[0].downtime_alerts_enabled, true);
+      assert.equal(db.auditEvents.length, 0);
+    }
+  });
+
   it("allows updating both fields together", async () => {
     const res = await invokeRoute("patch", alertSettingsPath, {
       params: { agentId: AGENT_ROW_ID },

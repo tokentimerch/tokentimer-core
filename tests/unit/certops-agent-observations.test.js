@@ -297,12 +297,12 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
   });
 });
 
-// Windows / OS-store discovery: generalizing the observation contract beyond
-// filesystem discovery (task: "Important Windows observed-location gap").
+// Windows / OS-store discovery generalizes the observation contract beyond
+// filesystem paths.
 // windows_store/iis_binding/http_sys observations have no filePath; their
 // identity is locationSlot, a stable per-binding string the agent computes
 // so a certificate rotation at the same binding refreshes the existing
-// logical location instead of creating a misleading duplicate (task #15).
+// logical location instead of creating a misleading duplicate.
 describe("normalizeAgentFilesystemObservation - Windows locations", () => {
   function windowsEvidenceItem(overrides = {}) {
     return {
@@ -341,6 +341,46 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
     assert.equal(
       observation.locationRef,
       "winstore://LocalMachine/My/deadbeef",
+    );
+  });
+
+  it("preserves JSON-encoded SAN arrays without splitting commas inside values", () => {
+    const item = windowsEvidenceItem();
+    item.metadata.push({
+      name: "subjectAltNames",
+      value: JSON.stringify([
+        "app.example.com",
+        "10.0.0.5",
+        "https://example.com/a,b",
+        "ops@example.com",
+      ]),
+    });
+    const observation = normalizeAgentFilesystemObservation({
+      agent: AGENT,
+      evidenceItem: item,
+    });
+
+    assert.deepEqual(observation.publicCertificate.subjectAltNames, [
+      "app.example.com",
+      "10.0.0.5",
+      "https://example.com/a,b",
+      "ops@example.com",
+    ]);
+  });
+
+  it("rejects unsafe Windows store names at the observation boundary", () => {
+    const item = windowsEvidenceItem();
+    item.metadata.push({
+      name: "storeName",
+      value: "WebHosting; Remove-Item C:\\",
+    });
+    assert.throws(
+      () =>
+        normalizeAgentFilesystemObservation({
+          agent: AGENT,
+          evidenceItem: item,
+        }),
+      /storeName is invalid/,
     );
   });
 
@@ -751,7 +791,7 @@ describe("real-host regression: iis_binding/http_sys observations with a private
   });
 });
 
-describe("certSourceRefFor / targetSourceRefFor - Windows location identity (task #15 reconciliation)", () => {
+describe("certSourceRefFor / targetSourceRefFor - Windows location identity", () => {
   function windowsObservation(overrides = {}) {
     return normalizeAgentFilesystemObservation({
       agent: AGENT,
@@ -804,7 +844,7 @@ describe("certSourceRefFor / targetSourceRefFor - Windows location identity (tas
     );
   });
 
-  it("shares one target per host+locationKind across multiple bindings of that kind", () => {
+  it("keeps distinct targets for bindings with different executor topology", () => {
     const bindingA = windowsObservation({
       metadata: [
         { name: "locationKind", value: "iis_binding" },
@@ -820,10 +860,10 @@ describe("certSourceRefFor / targetSourceRefFor - Windows location identity (tas
       ],
     });
 
-    assert.equal(
+    assert.notEqual(
       _test.targetSourceRefFor(bindingA),
       _test.targetSourceRefFor(bindingB),
-      "one host's IIS surface is one target, disambiguated per-instance by deployment_reference (mirrors filesystem's per-host target holding many files)",
+      "site/port topology must not be overwritten by another binding on the same host",
     );
   });
 

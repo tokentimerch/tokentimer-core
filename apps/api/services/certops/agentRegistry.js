@@ -12,6 +12,10 @@ const {
   DEFAULT_AGENT_OFFLINE_AFTER_MS,
   resolveAgentOfflineAfterMs,
 } = require("./agentLiveness");
+const {
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
+  normalizeDowntimeAlertsEnabled,
+} = require("./agentAlertSettings");
 
 const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
 const CERTOPS_AGENT_INVALID = "CERTOPS_AGENT_INVALID";
@@ -376,7 +380,7 @@ function agentMetadataFromRow(row, env = process.env) {
     createdAt: dateToIso(row.created_at),
     retiredAt: dateToIso(row.retired_at),
     retireReason: row.retire_reason ?? null,
-    // Per-agent downtime alert configuration (task: "agent downtime alerting").
+    // Per-agent downtime alert configuration.
     // downtimeAlertsEnabled is NOT NULL at the DB layer (default TRUE), so this
     // is always a concrete boolean, never null, for any row read through this
     // path (including agents registered before migration 45 -- the column's
@@ -498,8 +502,7 @@ async function getAgentsByAgentIdStrings(options) {
 }
 
 /**
- * Edit an existing agent's downtime alert settings (task: "Also provide an
- * API mechanism to edit alert settings for an already registered agent").
+ * Edit an existing agent's downtime alert settings.
  * Both fields are independently optional so a PATCH can change just one;
  * `undefined` (field omitted from the request body) leaves the stored value
  * untouched, while `null` for contactGroupId explicitly clears it back to
@@ -514,7 +517,11 @@ async function updateAgentAlertSettings(options) {
   const params = [workspaceId, options.agentId];
 
   if (options.downtimeAlertsEnabled !== undefined) {
-    params.push(Boolean(options.downtimeAlertsEnabled));
+    params.push(
+      normalizeDowntimeAlertsEnabled(options.downtimeAlertsEnabled, {
+        allowOmitted: false,
+      }),
+    );
     setClauses.push(`downtime_alerts_enabled = $${params.length}`);
   }
   if (options.contactGroupId !== undefined) {
@@ -972,6 +979,7 @@ module.exports = {
   AGENT_KIND_NORMAL,
   AGENT_KINDS,
   CERTOPS_AGENT_INVALID,
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_NOT_FOUND,
   CERTOPS_AGENT_RETIRE_REASON_INVALID,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,

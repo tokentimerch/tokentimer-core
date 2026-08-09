@@ -89,4 +89,76 @@ describe("agent_health alert content: impacted-certificate rendering", () => {
     assert.equal(context.extraImpactedCount, 3);
     assert.equal(context.title, "Agent Down: prod-iis-01");
   });
+
+  it("escapes hostile metadata in HTML email while preserving readable plain text", async () => {
+    const { _test } = await import(deliveryWorkerUrl);
+    const alert = {
+      alert_key: "agent_health:agent-row-1:down",
+      metadata: {
+        agentName: '<img src=x onerror="boom">',
+        hostname: "</td></tr><tr><td>spoof<script>alert(1)</script>",
+        platform: "win32 & prod",
+        impactedCertificates: [
+          {
+            id: "c1",
+            commonName: '<a href="https://example.invalid">fake login</a>',
+            renewalPathState: "unavailable",
+          },
+        ],
+        impactedCertificateTotalCount: 1,
+      },
+    };
+    const message = _test.buildAgentHealthEmailContent(alert);
+    assert.ok(!message.html.includes("<img src=x"));
+    assert.ok(!message.html.includes("<script>alert(1)</script>"));
+    assert.ok(!message.html.includes('<a href="https://example.invalid">'));
+    assert.ok(!message.html.includes("</td></tr><tr><td>spoof"));
+    assert.match(message.html, /&lt;img src=x onerror=&quot;boom&quot;&gt;/);
+    assert.match(
+      message.html,
+      /&lt;a href=&quot;https:\/\/example\.invalid&quot;&gt;fake login&lt;\/a&gt;/,
+    );
+    assert.match(
+      message.text,
+      /<a href="https:\/\/example\.invalid">fake login<\/a>/,
+    );
+  });
+
+  it("neutralizes mentions and markup for Slack, Discord, and Teams payloads", async () => {
+    const { _test } = await import(deliveryWorkerUrl);
+    const alert = {
+      alert_key: "agent_health:agent-row-1:down",
+      metadata: {
+        agentName: "@everyone <@U123> *ops*\r\nStatus: RECOVERED",
+        hostname: "host_[prod] @channel",
+        impactedCertificates: [
+          { id: "c1", commonName: "@here <b>svc</b>", renewalPathState: "unavailable" },
+        ],
+        impactedCertificateTotalCount: 1,
+      },
+    };
+    for (const kind of ["slack", "discord", "teams"]) {
+      const payload = _test.buildAgentHealthWebhookPayload(kind, alert);
+      const encoded = JSON.stringify(payload);
+      assert.doesNotThrow(() => JSON.parse(encoded));
+      assert.ok(!encoded.includes("@everyone"), `${kind} broadcast mention`);
+      assert.ok(!encoded.includes("@channel"), `${kind} channel mention`);
+      assert.ok(!encoded.includes("<@U123>"), `${kind} user mention`);
+      assert.ok(!encoded.includes("\\r\\n"), `${kind} line-break injection`);
+      if (kind === "slack") {
+        const mrkdwnText = [
+          payload.text,
+          ...payload.blocks
+            .filter((block) => block.text?.type === "mrkdwn")
+            .map((block) => block.text.text),
+        ].join("\n");
+        assert.ok(!mrkdwnText.includes("*ops*"), "slack emphasis injection");
+      } else {
+        assert.ok(!encoded.includes("*ops*"), `${kind} emphasis injection`);
+      }
+      assert.ok(!encoded.includes("<b>svc</b>"), `${kind} tag/link injection`);
+    }
+    const discord = _test.buildAgentHealthWebhookPayload("discord", alert);
+    assert.deepEqual(discord.allowed_mentions, { parse: [] });
+  });
 });

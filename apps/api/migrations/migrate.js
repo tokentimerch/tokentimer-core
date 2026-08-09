@@ -3188,8 +3188,8 @@ const migrations = [
     version: 45,
     name: "certops_agent_observation_locality_and_downtime_alerts",
     sql: `
-      -- Generalized observation locality (task: "Windows / OS-store certificate
-      -- discovery" + "persistent observed locations"). agent_filesystem stays
+      -- Generalized observation locality for Windows/OS-store certificates and
+      -- persistent observed locations. agent_filesystem stays
       -- exactly as it was (filePath-oriented); a new distinct source,
       -- agent_windows, carries non-filesystem locations (Windows machine
       -- certificate store, IIS bindings, http.sys SSL bindings) through the
@@ -3276,23 +3276,16 @@ const migrations = [
       -- renewalAdoption.js's countCertificateDeploymentLocations reads this
       -- set at query time (no stored list to keep in sync).
 
-      -- Per-agent downtime alert settings (task: "agent downtime alerting").
+      -- Per-agent downtime alert settings.
       -- alertsEnabled defaults to true (consistent with the endpoint-health
       -- alerting default of "on unless explicitly turned off");
       -- contact_group_id is workspace-scoped free reference, resolved the
       -- same way endpoint/domain alerts resolve contact_group_id (fallback to
       -- the workspace default contact group at send time, not stored here).
       --
-      -- Agent-health alert transition state is NOT a second column pair here:
-      -- an earlier draft of this migration added last_liveness_state/
-      -- down_alert_sent_at columns mirroring domain_monitors' health-status
-      -- pair, but agentHealthAlerts.js/certops-worker.js ended up using
-      -- alert_queue itself as the transition state machine instead (a still-
-      -- open agent_health:<id>:down row IS "a down alert was sent and not yet
-      -- recovered" -- see sweepAgentRecoveries' own doc comment), the same
-      -- way endpoint_health alerting already worked before this feature. Two
-      -- parallel state machines for the same fact would drift, so those
-      -- columns were removed before this migration ever shipped.
+      -- Delivery settings live on the agent. Outage incident state is kept in
+      -- the dedicated durable incident table introduced by the forward
+      -- migration that follows the alert-queue anchor migration.
       ALTER TABLE certops_agents
         ADD COLUMN IF NOT EXISTS downtime_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE;
       ALTER TABLE certops_agents
@@ -3314,10 +3307,9 @@ const migrations = [
     version: 46,
     name: "alert_queue_agent_health_anchor",
     sql: `
-      -- Agent-down/recovery alerts (task: "agent downtime alerting") ride the
-      -- SAME alert_queue + delivery-worker pipeline as endpoint_health and
-      -- cert_renewal_failed alerts, per the existing dedupe-key + status='sent'
-      -- recovery-gating pattern. Those two existing alert types both anchor on
+      -- Agent-down/recovery notifications use the same alert_queue and
+      -- delivery-worker pipeline as endpoint_health and cert_renewal_failed.
+      -- Those two existing alert types both anchor on
       -- alert_queue.token_id (a tokens row), because every existing alert is
       -- ultimately "about" a certificate/token. An agent is not about a
       -- certificate, so forcing it through a synthetic/hidden tokens row would
@@ -3351,6 +3343,69 @@ const migrations = [
       -- leave unset.
       ALTER TABLE alert_queue
         ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+    `,
+  },
+  {
+    version: 47,
+    name: "agent_health_incidents_and_alert_anchor_xor",
+    sql: `
+      -- Refuse to hide pre-existing ambiguous anchors. All normal alert
+      -- producers use token_id and agent-health alerts use certops_agent_id.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+            FROM alert_queue
+           WHERE (token_id IS NULL) = (certops_agent_id IS NULL)
+        ) THEN
+          RAISE EXCEPTION
+            'alert_queue contains rows that do not have exactly one anchor';
+        END IF;
+      END
+      $$;
+
+      ALTER TABLE alert_queue
+        DROP CONSTRAINT IF EXISTS alert_queue_anchor_check;
+      ALTER TABLE alert_queue
+        ADD CONSTRAINT alert_queue_anchor_check CHECK (
+          (token_id IS NOT NULL) <> (certops_agent_id IS NOT NULL)
+        );
+
+      -- An open row is durable recovery intent. It is created in the same
+      -- transaction that flips an agent offline and removed only after the
+      -- recovery transition has been queued or deliberately suppressed.
+      CREATE TABLE IF NOT EXISTS certops_agent_health_incidents (
+        agent_id UUID PRIMARY KEY
+          REFERENCES certops_agents(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL
+          REFERENCES workspaces(id) ON DELETE CASCADE,
+        opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ NULL,
+        down_alert_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_agent_health_incidents_workspace_agent
+          FOREIGN KEY (workspace_id, agent_id)
+          REFERENCES certops_agents(workspace_id, id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_health_incidents_workspace
+        ON certops_agent_health_incidents(workspace_id, opened_at);
+
+      -- Preserve recovery intent for outages opened before this table
+      -- existed. Only the canonical per-agent DOWN key represents an open
+      -- incident; unrelated agent-anchored alerts are not backfilled.
+      INSERT INTO certops_agent_health_incidents (
+        agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
+      )
+      SELECT a.id,
+             a.workspace_id,
+             aq.created_at,
+             a.last_seen_at,
+             aq.alert_key
+        FROM alert_queue aq
+        JOIN certops_agents a ON a.id = aq.certops_agent_id
+       WHERE aq.alert_key = 'agent_health:' || a.id::text || ':down'
+      ON CONFLICT (agent_id) DO NOTHING;
     `,
   },
 ];

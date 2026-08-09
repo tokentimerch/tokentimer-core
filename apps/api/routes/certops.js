@@ -51,6 +51,7 @@ const {
 } = require("../services/certops/apiTokens");
 const {
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID,
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
   createBootstrapToken,
@@ -139,6 +140,7 @@ const {
   CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
   CERTOPS_RENEWAL_SETUP_MULTI_LOCATION,
   CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+  CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE,
   detachRenewalProfile,
   loadRenewalSetupIntents,
   loadResumablePreflights,
@@ -429,6 +431,7 @@ function handleCertOpsError(res, err) {
     err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID ||
     err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID ||
     err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID ||
+    err?.code === CERTOPS_AGENT_ALERTS_ENABLED_INVALID ||
     err?.code === "CERTOPS_AGENT_CONTACT_GROUP_INVALID"
   ) {
     return res.status(err.statusCode || 400).json({
@@ -566,10 +569,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  if (err?.code === CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH) {
+  if (
+    err?.code === CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH ||
+    err?.code === CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE
+  ) {
     return res.status(422).json({
       error: err.message,
-      code: CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+      code: err.code,
     });
   }
 

@@ -204,9 +204,7 @@ export default function DeployAgentModal({
       .then(settings => {
         if (cancelled) return;
         setContactGroups(
-          Array.isArray(settings?.contact_groups)
-            ? settings.contact_groups
-            : []
+          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
         );
         setDefaultContactGroupId(settings?.default_contact_group_id || '');
       })
@@ -418,8 +416,8 @@ export default function DeployAgentModal({
                 ) : (
                   <Text fontSize='sm' color={muted}>
                     From the unpacked agent package directory (
-                    <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
-                    host with Node 22+:
+                    <Code fontSize='xs'>packages/agent/scripts</Code>) on a
+                    Linux host with Node 22+:
                   </Text>
                 )}
                 <CopyableCodeBlock
@@ -449,7 +447,8 @@ export default function DeployAgentModal({
                     textDecoration='underline'
                     isExternal
                   >
-                    Full install guide ({targetOs === 'windows' ? 'Windows' : 'Linux'})
+                    Full install guide (
+                    {targetOs === 'windows' ? 'Windows' : 'Linux'})
                   </ChakraLink>
                 </Text>
               </VStack>

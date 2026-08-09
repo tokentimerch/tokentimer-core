@@ -412,6 +412,29 @@ describe("evaluateEligibility", () => {
     assert.deepEqual(result, { eligible: false, reason: "deadline_not_reached" });
   });
 
+  it("still defers at the exact deadline and becomes eligible one millisecond later", () => {
+    const row = eligibleRow;
+    const deadline = computeCleanupDeadline({
+      verifiedCutoverAt: row.verifiedCutoverAt,
+      oldNotAfter: row.oldNotAfter,
+      retentionHours: 24,
+    });
+    assert.deepEqual(
+      evaluateEligibility(row, {
+        ...fullContext({ retentionHours: 24 }),
+        now: () => new Date(deadline.getTime()),
+      }),
+      { eligible: false, reason: "deadline_not_reached" },
+    );
+    assert.deepEqual(
+      evaluateEligibility(row, {
+        ...fullContext({ retentionHours: 24 }),
+        now: () => new Date(deadline.getTime() + 1),
+      }),
+      { eligible: true },
+    );
+  });
+
   it("checks conditions in the documented precedence order (ownership before binding, etc.)", () => {
     const row = { ...eligibleRow, ownershipProvenance: "preexisting" };
     const result = evaluateEligibility(
@@ -612,5 +635,3 @@ describe("sweepLedger", () => {
     assert.equal(summary.deferred[0].oldThumbprint, secondThumbprint);
   });
 });
-
-

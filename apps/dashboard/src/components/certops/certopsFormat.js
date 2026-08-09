@@ -296,7 +296,8 @@ export function renewalPathDescriptor(certificate) {
       state,
       label: 'Healthy',
       scheme: 'green',
-      help: summary || 'A complete renewal execution path is currently available.',
+      help:
+        summary || 'A complete renewal execution path is currently available.',
       isWarning: false,
     };
   }

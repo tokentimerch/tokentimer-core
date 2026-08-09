@@ -5,6 +5,10 @@ const crypto = require("crypto");
 const { pool } = require("../../db/database");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { assertSafePublicValue } = require("./jobs");
+const {
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
+  normalizeDowntimeAlertsEnabled,
+} = require("./agentAlertSettings");
 
 const CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID =
   "CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID";
@@ -161,8 +165,7 @@ function normalizeOptionalContactGroupId(value) {
 // off"); explicit true/false -> the caller's choice, including explicit
 // opt-out.
 function normalizeOptionalAlertsEnabled(value) {
-  if (value === undefined || value === null) return null;
-  return Boolean(value);
+  return normalizeDowntimeAlertsEnabled(value, { allowOmitted: true });
 }
 
 function normalizeWorkspaceId(value) {
@@ -639,6 +642,7 @@ module.exports = {
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_USED,
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_CREDENTIAL_INVALID,
   CERTOPS_AGENT_CREDENTIAL_MALFORMED,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,

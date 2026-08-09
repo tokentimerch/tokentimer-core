@@ -399,6 +399,24 @@ describe("runDiscoveryScan", () => {
 });
 
 describe("runWindowsDiscoveryScan", () => {
+  it("passes the configured store set to the canonical collector", async () => {
+    const client = createRecordingClient();
+    let receivedStores = null;
+    const collect = ({ stores }) => {
+      receivedStores = stores;
+      return [];
+    };
+
+    await runWindowsDiscoveryScan({
+      client,
+      stores: ["My", "WebHosting"],
+      log: silentLog,
+      collect,
+    });
+
+    assert.deepEqual(receivedStores, ["My", "WebHosting"]);
+  });
+
   it("reports collected observations as certificate.observed evidence with locationKind/locationSlot metadata", async () => {
     const client = createRecordingClient();
     const collect = () => [
@@ -4020,9 +4038,8 @@ describe("windows-iis renew job (os-store-managed)", () => {
   it("records ownershipProvenance preexisting for an issuance record that was never upgraded to enrolled_by_agent (container created but certreq -accept's outcome never confirmed)", async () => {
     // Same container name again, WITH a recordIssuedContainer record but
     // WITHOUT the markIssuedContainerAccepted upgrade: proves a bare
-    // "this agent created the container" record is no longer sufficient
-    // on its own, closing the gap a PR review found (2026-08-07) where an
-    // operator-enrolled certificate in an agent-created container could
+    // "this agent created the container" record is not sufficient on its
+    // own: an operator-enrolled certificate in an agent-created container could
     // otherwise inherit tokentimer_installed provenance.
     const job = makeJob();
     recordIssuedContainer({
@@ -4048,8 +4065,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     // container at some point (acceptedThumbprint recorded), but the
     // predecessor certificate this sweep is now looking at carries
     // OTHER_THUMBPRINT -- a mismatch that must NOT resolve to
-    // tokentimer_installed, since it is exactly the scenario the PR
-    // review flagged: an operator (or a later, unrelated attempt) can
+    // tokentimer_installed: an operator (or a later, unrelated attempt) can
     // enroll a different certificate into an agent-owned container name
     // without this agent's own acceptCertificateViaCng having produced
     // that specific certificate.
@@ -4282,7 +4298,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
   });
 
-  describe("store-lock scope for a non-default target store (PR review, 2026-08-07)", () => {
+  describe("store-lock scope for a non-default target store", () => {
     // certreq -accept always populates "My" first, with a non-default
     // target store (e.g. "WebHosting") reached only by a separate, later
     // mirror step -- see acquireWindowsStoreLocks' own doc comment. A
@@ -4981,4 +4997,3 @@ describe("verifyDeployedCertificateWithRetry", () => {
     assert.deepEqual(delays, [42]);
   });
 });
-

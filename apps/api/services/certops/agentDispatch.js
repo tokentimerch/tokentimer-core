@@ -72,9 +72,14 @@ const {
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
-  certopsCapabilityFreshnessMs,
   computeAgentCompatibility,
 } = require("./agentRegistry");
+const {
+  EVIDENCE_CLAIM_BINDING_CAPABILITY,
+  evaluateAgentJobEligibility,
+  hasFreshCapability,
+  wireActionForOperation,
+} = require("./agentJobEligibility");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -122,20 +127,6 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   // uncertain. Requires operator reconciliation (distinct from failed).
   orphaned_unknown_effect: "orphaned_unknown_effect",
 });
-
-/**
- * Control-plane operation -> agent-facing wire action.
- *
- * "issue" exists only in the control plane (ADR-0008). Execution is identical
- * to a renewal: same ACME order, same DNS-01 solver, same deploy/reload/verify
- * tail, same agent-local command profile. Adding it to the protocol's action
- * enum would have been a breaking contract change requiring a fleet-wide agent
- * upgrade to buy exactly nothing, so signed dispatch translates it to "renew"
- * instead and agents already in the field run issue jobs unmodified.
- *
- * The asymmetry is deliberate. Do not "fix" it by widening the wire enum.
- */
-const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
 
 /**
  * Windows-iis-specific audit fields for a job payload's `target`, shared
@@ -189,17 +180,11 @@ function windowsIisAuditFields(jobPayload) {
 
 
 
-function wireActionForOperation(operation) {
-  return WIRE_ACTION_BY_OPERATION[operation] || operation;
-}
-
 // Reconciliation of a provisioning certificate only trusts verify evidence that
 // is bound to the current claim, which an agent must explicitly support. Gating
 // claimability on the declared capability keeps an older agent from running an
 // issuance that could never be reconciled, leaving the certificate stuck in
 // 'provisioning' with a succeeded job and no way forward.
-const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
-
 // ADR-0012 decision 1: an agent that declares this capability at
 // registration/heartbeat receives the v2 "exact-byte" signed envelope
 // ({ envelopeVersion: 2, payloadB64, signatureB64, signingKeyId }) instead of
@@ -224,32 +209,6 @@ const SIGNED_PAYLOAD_B64_CAPABILITY = "signed-payload-b64-v1";
 // already be considered liveness-stale has no business being offered a
 // capability-gated job. This is NOT "3x the 30s heartbeat interval" - that
 // reasoning was considered and explicitly rejected (ADR-0012 decision 17).
-
-/**
- * Reusable freshness check for capability-gated claim selection (ADR-0012
- * decision 17). A capability string only counts toward a gate when it is
- * BOTH present in the declared set AND its assertion is fresh; a stale or
- * never-asserted (`capabilitiesUpdatedAt === null`) row fails closed to
- * "gate not satisfied" regardless of what the (stale) array still contains.
- *
- * Any future capability-restricted claim gate should call this rather than
- * re-deriving its own freshness arithmetic.
- */
-function hasFreshCapability({
-  declaredCapabilities,
-  capabilitiesUpdatedAt,
-  capability,
-  env = process.env,
-  now = Date.now(),
-}) {
-  if (!jsonbTextArray(declaredCapabilities).includes(capability)) return false;
-  if (!capabilitiesUpdatedAt) return false;
-  const updatedAtMs = new Date(capabilitiesUpdatedAt).getTime();
-  if (!Number.isFinite(updatedAtMs)) return false;
-  const ageMs = now - updatedAtMs;
-  if (ageMs < 0) return true; // clock skew in the agent's favor is not a staleness signal
-  return ageMs <= certopsCapabilityFreshnessMs(env);
-}
 
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
@@ -1100,10 +1059,11 @@ async function claimJobs({
     //
     // The operation filter compares against the agent's wire actions
     // (supportedActions), not the control-plane operation column directly:
-    // "issue" is dispatched to agents as "renew" (see WIRE_ACTION_BY_OPERATION
-    // above) and no agent ever declares "issue" as a supported action, so
+    // "issue" is dispatched to agents as "renew" (see
+    // agentJobEligibility.wireActionForOperation) and no agent ever declares
+    // "issue" as a supported action, so
     // without this translation issue jobs would sit at 'pending' forever.
-    // Keep this CASE in sync with WIRE_ACTION_BY_OPERATION if that map grows.
+    // The shared pure predicate below authoritatively rechecks this prefilter.
     //
     // The capability gate covers BOTH ways a job can need claim-bound evidence.
     // Gating operation = 'issue' alone is insufficient: a failed issuance is
@@ -1117,7 +1077,16 @@ async function claimJobs({
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
-              required_dns_provider, required_command_profile
+              required_dns_provider, required_command_profile,
+              EXISTS (
+                SELECT 1
+                  FROM managed_certificates mc
+                 WHERE mc.workspace_id = cj.workspace_id
+                   AND cj.subject_type = 'managed_certificate'
+                   AND cj.subject_id IS NOT NULL
+                   AND mc.id = cj.subject_id::uuid
+                   AND mc.status = 'provisioning'
+              ) AS subject_is_provisioning
          FROM certificate_jobs cj
         WHERE workspace_id = $1
           AND status = 'pending'
@@ -1173,8 +1142,37 @@ async function claimJobs({
       ],
     );
 
+    const eligibilityAgent = {
+      ...agent,
+      supportedOperations: supportedActions,
+      targetSelectors,
+      dnsProviders,
+      commandProfiles,
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      agentKind,
+    };
     const jobs = [];
     for (const row of selected.rows) {
+      // SQL above is a lock-efficient prefilter. This shared pure predicate
+      // is authoritative and is also used by renewal-path health, preventing
+      // the UI from calling a path healthy that dispatch would reject.
+      const eligibility = evaluateAgentJobEligibility({
+        agent: eligibilityAgent,
+        job: {
+          operation: row.operation,
+          executorKind: row.executor_kind,
+          assignedAgentId: row.assigned_agent_id,
+          requiredTargetSelector: row.required_target_selector,
+          requiredDnsProvider: row.required_dns_provider,
+          requiredCommandProfile: row.required_command_profile,
+          subjectIsProvisioning: row.subject_is_provisioning === true,
+        },
+        compatibility,
+        env,
+      });
+      if (!eligibility.eligible) continue;
+
       // Approval-gate re-verification: an approval is bound to a SHA256
       // hash of the canonical payload and canonical execution intent at
       // approval time. If either drifts, the approval is void.
@@ -2370,6 +2368,7 @@ module.exports = {
     boundReconciliationReason,
     dateToIso,
     envelopeSequence,
+    evaluateAgentJobEligibility,
     findRegistrationReplay,
     normalizeStringList,
     parseReconciliationFromErrorMessage,

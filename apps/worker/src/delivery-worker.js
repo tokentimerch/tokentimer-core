@@ -15,6 +15,7 @@ import {
 import {
   sendEmailNotification,
   generateEmailTemplate,
+  escapeHtml,
 } from "./notify/email.js";
 import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
@@ -426,16 +427,17 @@ function buildEndpointHealthWebhookPayload(
   };
 
   if (kind === "slack") {
+    const slackTitle = escapeSlackMrkdwn(selectedTitle);
     return {
-      text: `${context.statusIcon} ${selectedTitle}`,
+      text: `${context.statusIcon} ${slackTitle}`,
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: `${context.statusIcon} ${selectedTitle}` },
+          text: { type: "plain_text", text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}` },
         },
         {
           type: "section",
-          text: { type: "mrkdwn", text: context.description },
+          text: { type: "mrkdwn", text: escapeSlackMrkdwn(context.description) },
         },
         {
           type: "section",
@@ -609,9 +611,12 @@ const RENEWAL_PATH_STATE_LABELS = {
 function formatImpactedCertificateLines(context) {
   if (context.impactedCertificates.length === 0) return [];
   const lines = context.impactedCertificates.map((cert) => {
-    const label = cert.commonName || cert.id || "certificate";
+    const label = singleLineText(cert.commonName || cert.id || "certificate");
     const stateLabel = cert.renewalPathState
-      ? RENEWAL_PATH_STATE_LABELS[cert.renewalPathState] || cert.renewalPathState
+      ? singleLineText(
+          RENEWAL_PATH_STATE_LABELS[cert.renewalPathState] ||
+            cert.renewalPathState,
+        )
       : null;
     return stateLabel ? `- ${label} \u2014 ${stateLabel}` : `- ${label}`;
   });
@@ -619,6 +624,30 @@ function formatImpactedCertificateLines(context) {
     lines.push(`+${context.extraImpactedCount} more`);
   }
   return lines;
+}
+
+function singleLineText(value) {
+  return String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+}
+
+function neutralizeMentions(value) {
+  return singleLineText(value).replace(/@/g, "@\u200B");
+}
+
+function escapeSlackMrkdwn(value) {
+  return neutralizeMentions(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([*_~`])/g, "$1\u200B");
+}
+
+function escapeMarkdown(value) {
+  return neutralizeMentions(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([\\`*_{}\[\]()#+\-.!|~])/g, "\\$1");
 }
 
 function buildAgentHealthEmailContent(alert) {
@@ -634,17 +663,17 @@ function buildAgentHealthEmailContent(alert) {
     timeZoneName: "short",
   });
   const subject = context.isDown
-    ? `${context.statusIcon} Agent Down: ${context.agentName}`
-    : `${context.statusIcon} Agent Recovered: ${context.agentName}`;
+    ? `${context.statusIcon} Agent Down: ${singleLineText(context.agentName)}`
+    : `${context.statusIcon} Agent Recovered: ${singleLineText(context.agentName)}`;
 
   const impactedLines = formatImpactedCertificateLines(context);
 
   const textLines = [
-    `Agent ${context.status}: ${context.agentName}`,
+    `Agent ${context.status}: ${singleLineText(context.agentName)}`,
     "",
     `Status: ${context.status}`,
-    ...(context.hostname ? [`Hostname: ${context.hostname}`] : []),
-    ...(context.platform ? [`OS: ${context.platform}`] : []),
+    ...(context.hostname ? [`Hostname: ${singleLineText(context.hostname)}`] : []),
+    ...(context.platform ? [`OS: ${singleLineText(context.platform)}`] : []),
     ...(context.lastSeenAt
       ? [`Last seen: ${new Date(context.lastSeenAt).toISOString()}`]
       : []),
@@ -680,7 +709,7 @@ function buildAgentHealthEmailContent(alert) {
           <td style="vertical-align: middle; padding-left: 12px;">
             <span style="font-size: 20px; font-weight: 700; color: ${statusColor};">${context.status}</span>
             <br/>
-            <span style="font-size: 14px; color: #4A5568;">${context.description}</span>
+            <span style="font-size: 14px; color: #4A5568;">${escapeHtml(context.description)}</span>
           </td>
         </tr>
       </table>
@@ -688,10 +717,10 @@ function buildAgentHealthEmailContent(alert) {
 
   const detailsRows = [
     context.hostname
-      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; width: 120px;">Hostname</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${context.hostname}</td></tr>`
+      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; width: 120px;">Hostname</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${escapeHtml(singleLineText(context.hostname))}</td></tr>`
       : "",
     context.platform
-      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">OS</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${context.platform}</td></tr>`
+      ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">OS</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${escapeHtml(singleLineText(context.platform))}</td></tr>`
       : "",
     context.lastSeenAt
       ? `<tr><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Last Seen</td><td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${new Date(context.lastSeenAt).toLocaleString("en-US")}</td></tr>`
@@ -708,7 +737,7 @@ function buildAgentHealthEmailContent(alert) {
             ${context.impactedCertificates
               .map(
                 (cert) =>
-                  `<li>${cert.commonName || cert.id || "certificate"}${cert.renewalPathState ? ` \u2014 ${cert.renewalPathState}` : ""}</li>`,
+                  `<li>${escapeHtml(singleLineText(cert.commonName || cert.id || "certificate"))}${cert.renewalPathState ? ` \u2014 ${escapeHtml(singleLineText(RENEWAL_PATH_STATE_LABELS[cert.renewalPathState] || cert.renewalPathState))}` : ""}</li>`,
               )
               .join("")}
             ${context.extraImpactedCount > 0 ? `<li>+${context.extraImpactedCount} more</li>` : ""}
@@ -719,7 +748,7 @@ function buildAgentHealthEmailContent(alert) {
   const htmlContent = `${statusBadge}${detailsTable}${impactedHtml}`;
 
   const { html, text: templateText } = generateEmailTemplate({
-    title: `Agent ${context.status}: ${context.agentName}`,
+    title: escapeHtml(`Agent ${context.status}: ${singleLineText(context.agentName)}`),
     content: htmlContent,
     buttonText: "View Dashboard",
     buttonUrl: frontendUrl,
@@ -750,16 +779,18 @@ function buildAgentHealthWebhookPayload(
   };
 
   if (kind === "slack") {
+    const slackTitle = escapeSlackMrkdwn(selectedTitle);
+    const slackLines = impactedLines.map(escapeSlackMrkdwn);
     return {
-      text: `${context.statusIcon} ${selectedTitle}`,
+      text: `${context.statusIcon} ${slackTitle}`,
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: `${context.statusIcon} ${selectedTitle}` },
+          text: { type: "plain_text", text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}` },
         },
         {
           type: "section",
-          text: { type: "mrkdwn", text: context.description },
+          text: { type: "mrkdwn", text: escapeSlackMrkdwn(context.description) },
         },
         ...(impactedLines.length > 0
           ? [
@@ -767,7 +798,7 @@ function buildAgentHealthWebhookPayload(
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `*${context.impactedTotalCount} auto-renew certificate(s) affected:*\n${impactedLines.join("\n")}`,
+                  text: `*${context.impactedTotalCount} auto-renew certificate(s) affected:*\n${slackLines.join("\n")}`,
                 },
               },
             ]
@@ -777,17 +808,19 @@ function buildAgentHealthWebhookPayload(
   }
 
   if (kind === "discord") {
+    const discordTitle = escapeMarkdown(selectedTitle);
     return {
-      content: `${context.statusIcon} **${selectedTitle}**`,
+      content: `${context.statusIcon} **${discordTitle}**`,
+      allowed_mentions: { parse: [] },
       embeds: [
         {
-          title: selectedTitle,
-          description: [context.description, ...impactedLines].join("\n"),
+          title: discordTitle,
+          description: [context.description, ...impactedLines].map(escapeMarkdown).join("\n"),
           color: context.isDown ? 15158332 : 3066993,
           fields: [
             { name: "Status", value: context.status, inline: true },
             ...(context.hostname
-              ? [{ name: "Hostname", value: context.hostname, inline: true }]
+              ? [{ name: "Hostname", value: escapeMarkdown(context.hostname), inline: true }]
               : []),
           ],
           timestamp: new Date().toISOString(),
@@ -797,19 +830,20 @@ function buildAgentHealthWebhookPayload(
   }
 
   if (kind === "teams") {
+    const teamsTitle = escapeMarkdown(selectedTitle);
     return {
       "@type": "MessageCard",
       "@context": "https://schema.org/extensions",
-      summary: selectedTitle,
+      summary: teamsTitle,
       themeColor: context.isDown ? "E02424" : "2F855A",
       sections: [
         {
-          activityTitle: `${context.statusIcon} ${selectedTitle}`,
-          text: [context.description, ...impactedLines].join("\n\n"),
+          activityTitle: `${context.statusIcon} ${teamsTitle}`,
+          text: [context.description, ...impactedLines].map(escapeMarkdown).join("\n\n"),
           facts: [
             { name: "Status", value: context.status },
             ...(context.hostname
-              ? [{ name: "Hostname", value: context.hostname }]
+              ? [{ name: "Hostname", value: escapeMarkdown(context.hostname) }]
               : []),
           ],
           markdown: true,
@@ -956,8 +990,13 @@ const shutdown = async (signal) => {
 
 // Exported for direct unit testing without spinning up the full worker job.
 export const _test = {
+  buildAgentHealthEmailContent,
+  buildAgentHealthWebhookPayload,
+  escapeMarkdown,
+  escapeSlackMrkdwn,
   formatImpactedCertificateLines,
   getAgentHealthContext,
+  neutralizeMentions,
   RENEWAL_PATH_STATE_LABELS,
 };
 

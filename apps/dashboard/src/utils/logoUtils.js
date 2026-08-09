@@ -26,7 +26,9 @@ export function getLogoPath() {
 export function getAppIconPath() {
   if (cachedAppIconPath === null) {
     const isChrome = /Chrome/.test(navigator.userAgent);
-    cachedAppIconPath = isChrome ? '/Branding/app-icon.png' : '/Branding/app-icon.svg';
+    cachedAppIconPath = isChrome
+      ? '/Branding/app-icon.png'
+      : '/Branding/app-icon.svg';
   }
   return cachedAppIconPath;
 }

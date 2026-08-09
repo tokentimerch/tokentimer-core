@@ -56,6 +56,8 @@ const {
 
 const POWERSHELL_TIMEOUT_MS = 30000;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
+const STORE_NAME_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const MAX_DISCOVERY_STORES = 32;
 
 /**
  * Runs a PowerShell script and parses its stdout as JSON. Scoped to exactly
@@ -130,7 +132,7 @@ function fetchRawCertificateDerByThumbprint({
   spawn = spawnSync,
   onWarning = () => {},
 } = {}) {
-  if (!/^[A-Za-z]+$/.test(storeLocation) || !/^[A-Za-z0-9 ]+$/.test(storeName)) {
+  if (!/^[A-Za-z]+$/.test(storeLocation) || !STORE_NAME_PATTERN.test(storeName)) {
     onWarning("windows discovery (fingerprint completion): invalid storeLocation/storeName, skipping");
     return new Map();
   }
@@ -194,13 +196,46 @@ function computeFingerprintSha256(rawCertificateBase64, onWarning = () => {}) {
  */
 function parseNodeSubjectAltName(subjectAltName) {
   if (typeof subjectAltName !== "string" || !subjectAltName) return [];
-  return subjectAltName
-    .split(",")
-    .map((entry) => entry.trim())
-    .map((entry) => /^(?:DNS|IP Address|URI|email)\s*:\s*(.+)$/i.exec(entry))
-    .filter((match) => match !== null)
-    .map((match) => match[1].trim())
-    .filter(Boolean);
+  const entries = [];
+  let start = 0;
+  let inQuotedValue = false;
+  let escaped = false;
+  for (let index = 0; index <= subjectAltName.length; index += 1) {
+    const char = subjectAltName[index];
+    if (inQuotedValue) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inQuotedValue = false;
+      }
+    } else if (char === '"') {
+      inQuotedValue = true;
+    }
+    if (index === subjectAltName.length || (char === "," && !inQuotedValue)) {
+      entries.push(subjectAltName.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const values = [];
+  for (const entry of entries) {
+    const match = /^(?:DNS|IP Address|URI|email)\s*:\s*(.+)$/i.exec(entry);
+    if (!match) continue;
+    let value = match[1].trim();
+    if (value.startsWith('"')) {
+      try {
+        const decoded = JSON.parse(value);
+        if (typeof decoded !== "string") continue;
+        value = decoded;
+      } catch (_error) {
+        continue;
+      }
+    }
+    if (value) values.push(value);
+  }
+  return values;
 }
 
 /**
@@ -239,18 +274,20 @@ function readSubjectAltNamesFromDer(rawCertificateBase64, onWarning = () => {}) 
  * falling back to ../windows-discovery's own certutil-text-parsed list when
  * the raw-bytes derivation is unavailable (e.g. the fingerprint-completion
  * PowerShell step itself is unavailable on this host). Either source, once
- * chosen, is joined into the same comma-separated string this module's
- * observation shape has always used for subjectAltNames.
+ * chosen, remains an array so commas inside legitimate SAN values are not
+ * mistaken for entry delimiters downstream.
  *
  * @param {ReturnType<typeof parseCertutilStoreBlock>} cert
  * @param {string|undefined} rawCertificateBase64
  * @param {(m: string) => void} onWarning
- * @returns {string}
+ * @returns {string[]}
  */
 function resolveSubjectAltNames(cert, rawCertificateBase64, onWarning) {
   const fromDer = readSubjectAltNamesFromDer(rawCertificateBase64, onWarning);
-  if (fromDer.length > 0) return fromDer.join(",");
-  return Array.isArray(cert.subjectAlternativeNames) ? cert.subjectAlternativeNames.join(",") : "";
+  if (fromDer.length > 0) return fromDer;
+  return Array.isArray(cert.subjectAlternativeNames)
+    ? cert.subjectAlternativeNames.filter((value) => typeof value === "string" && value)
+    : [];
 }
 
 /**
@@ -318,20 +355,28 @@ function splitIpPortLiteral(ipPort) {
  *   (iis_binding) or port (http_sys).
  */
 async function collectWindowsDiscoveryObservations({
-  store = "My",
+  store,
+  stores,
   execFileImpl,
   spawn = spawnSync,
   onWarning = () => {},
 } = {}) {
   const storeLocation = "LocalMachine";
   const execOpts = execFileImpl ? { execFileImpl } : {};
-
-  const storeResult = await listMachineStoreCertificates({ store, ...execOpts });
-  if (!storeResult.ok) {
-    onWarning(`windows discovery (windows_store): ${storeResult.stderrExcerpt || "certutil query failed"}`);
-    return [];
+  const configuredStores = Array.isArray(stores)
+    ? stores
+    : [store || "My"];
+  if (
+    configuredStores.length < 1 ||
+    configuredStores.length > MAX_DISCOVERY_STORES ||
+    configuredStores.some((name) => typeof name !== "string" || !STORE_NAME_PATTERN.test(name))
+  ) {
+    throw new Error("windows discovery: stores must contain 1 to 32 safe Windows store names");
   }
 
+  // Bindings are enumerated first because they can reference a safe store an
+  // operator did not explicitly configure. Those stores are added to this
+  // scan so WebHosting and custom-store bindings remain resolvable.
   const bindingsResult = await listHttpSysBindings({ ...execOpts });
   if (!bindingsResult.ok) {
     onWarning(`windows discovery (http_sys/iis_binding): ${bindingsResult.stderrExcerpt || "netsh query failed"}`);
@@ -340,30 +385,77 @@ async function collectWindowsDiscoveryObservations({
 
   const sitesResult = await listIisSites({ ...execOpts });
   const sites = sitesResult.ok ? sitesResult.sites : [];
+  const effectiveStores = [];
+  const seenStores = new Set();
+  const addStore = (name) => {
+    if (typeof name !== "string" || !STORE_NAME_PATTERN.test(name)) return;
+    const key = name.toLowerCase();
+    if (seenStores.has(key)) return;
+    if (effectiveStores.length >= MAX_DISCOVERY_STORES) return;
+    seenStores.add(key);
+    effectiveStores.push(name);
+  };
+  configuredStores.forEach(addStore);
+  bindings.forEach((binding) => addStore(binding.storeName));
 
-  const rawDerByThumbprint = fetchRawCertificateDerByThumbprint({ storeLocation, storeName: store, spawn, onWarning });
-  const byThumbprint = new Map(storeResult.certificates.map((cert) => [cert.thumbprint?.toLowerCase(), cert]));
+  const inventories = [];
+  const byStoreAndThumbprint = new Map();
+  const byThumbprint = new Map();
+  for (const storeName of effectiveStores) {
+    const storeResult = await listMachineStoreCertificates({
+      store: storeName,
+      ...execOpts,
+    });
+    if (!storeResult.ok) {
+      onWarning(
+        `windows discovery (windows_store ${storeName}): ${storeResult.stderrExcerpt || "certutil query failed"}`,
+      );
+      continue;
+    }
+    const rawDerByThumbprint = fetchRawCertificateDerByThumbprint({
+      storeLocation,
+      storeName,
+      spawn,
+      onWarning,
+    });
+    for (const cert of storeResult.certificates) {
+      const thumbprint = cert.thumbprint?.toLowerCase() || null;
+      if (!thumbprint) continue;
+      const entry = {
+        cert,
+        storeName,
+        rawCertificateBase64: rawDerByThumbprint.get(thumbprint),
+      };
+      const exactKey = `${storeName.toLowerCase()}\0${thumbprint}`;
+      if (byStoreAndThumbprint.has(exactKey)) continue;
+      byStoreAndThumbprint.set(exactKey, entry);
+      const candidates = byThumbprint.get(thumbprint) || [];
+      candidates.push(entry);
+      byThumbprint.set(thumbprint, candidates);
+      inventories.push(entry);
+    }
+  }
 
   const observations = [];
 
-  for (const cert of storeResult.certificates) {
+  for (const { cert, storeName, rawCertificateBase64 } of inventories) {
     const thumbprint = cert.thumbprint ? cert.thumbprint.toLowerCase() : null;
     const fingerprintSha256 = computeFingerprintSha256(
-      thumbprint ? rawDerByThumbprint.get(thumbprint) : null,
+      rawCertificateBase64,
       onWarning,
     );
     if (!fingerprintSha256) {
       onWarning(`windows discovery (windows_store): no fingerprint available for ${thumbprint || "unknown"}, skipping`);
       continue;
     }
-    const subjectAltNames = resolveSubjectAltNames(cert, rawDerByThumbprint.get(thumbprint), onWarning);
+    const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const slotIdentity =
       commonNameFromSubject(cert.subject) ||
-      subjectAltNames.split(",").map((s) => s.trim()).filter(Boolean)[0] ||
+      subjectAltNames[0] ||
       thumbprint;
     observations.push({
       locationKind: "windows_store",
-      locationSlot: `${storeLocation}/${store}/${slotIdentity}`,
+      locationSlot: `${storeLocation}/${storeName}/${slotIdentity}`,
       fingerprintSha256,
       subject: cert.subject,
       issuer: cert.issuer,
@@ -372,7 +464,7 @@ async function collectWindowsDiscoveryObservations({
       notAfter: cert.notAfter,
       subjectAltNames,
       storeLocation,
-      storeName: store,
+      storeName,
       thumbprint,
       keyPresent: cert.hasPrivateKey === true,
     });
@@ -381,21 +473,40 @@ async function collectWindowsDiscoveryObservations({
   for (const binding of bindings) {
     if (!binding.thumbprint || !binding.ipPort) continue;
     const thumbprint = binding.thumbprint.toLowerCase();
-    const cert = byThumbprint.get(thumbprint);
-    if (!cert) {
+    if (
+      typeof binding.storeName === "string" &&
+      binding.storeName.length > 0 &&
+      !STORE_NAME_PATTERN.test(binding.storeName)
+    ) {
       onWarning(
-        `windows discovery (binding): binding "${binding.ipPort}" bound thumbprint not found in ` +
-          `${storeLocation}\\${store}, skipping`,
+        `windows discovery (binding): binding ${JSON.stringify(binding.ipPort)} has an unsafe store name, skipping`,
       );
       continue;
     }
-    const fingerprintSha256 = computeFingerprintSha256(rawDerByThumbprint.get(thumbprint), onWarning);
+    const bindingStore =
+      typeof binding.storeName === "string" && STORE_NAME_PATTERN.test(binding.storeName)
+        ? binding.storeName
+        : null;
+    const exact = bindingStore
+      ? byStoreAndThumbprint.get(`${bindingStore.toLowerCase()}\0${thumbprint}`)
+      : null;
+    const entry = bindingStore
+      ? exact
+      : (byThumbprint.get(thumbprint) || [])[0];
+    if (!entry) {
+      onWarning(
+        `windows discovery (binding): binding ${JSON.stringify(binding.ipPort)} thumbprint was not found in a scanned store, skipping`,
+      );
+      continue;
+    }
+    const { cert, storeName, rawCertificateBase64 } = entry;
+    const fingerprintSha256 = computeFingerprintSha256(rawCertificateBase64, onWarning);
     if (!fingerprintSha256) continue;
 
     const parsed = splitIpPortLiteral(binding.ipPort);
     if (!parsed) continue;
 
-    const subjectAltNames = resolveSubjectAltNames(cert, rawDerByThumbprint.get(thumbprint), onWarning);
+    const subjectAltNames = resolveSubjectAltNames(cert, rawCertificateBase64, onWarning);
     const base = {
       fingerprintSha256,
       subject: cert.subject,
@@ -405,7 +516,7 @@ async function collectWindowsDiscoveryObservations({
       notAfter: cert.notAfter,
       subjectAltNames,
       storeLocation,
-      storeName: store,
+      storeName,
       thumbprint,
       // A binding's key presence is the underlying store entry's: the
       // binding itself never holds a key handle, only a thumbprint

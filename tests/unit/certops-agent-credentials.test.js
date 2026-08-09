@@ -12,6 +12,7 @@ const {
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_USED,
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_CREDENTIAL_INVALID,
   CERTOPS_AGENT_CREDENTIAL_MALFORMED,
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -214,6 +215,30 @@ describe("CertOps agent bootstrap tokens", () => {
     const parsed = _test.parseRawBootstrapToken(raw);
     assert.equal(parsed.tokenPrefix, `ttboot_${"ab".repeat(8)}`);
     assert.equal(parsed.rawToken, raw);
+  });
+
+  it("accepts only real booleans for bootstrap downtime alerts", async () => {
+    for (const downtimeAlertsEnabled of ["false", "true", "yes", 0, 1, [], {}]) {
+      await assert.rejects(
+        () => createBootstrapToken({
+          client: createMemoryClient(),
+          workspaceId: WORKSPACE_A,
+          name: "Boolean check",
+          expiresAt: date(60_000),
+          downtimeAlertsEnabled,
+        }),
+        (error) => error?.code === CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
+      );
+    }
+    for (const downtimeAlertsEnabled of [undefined, null, false, true]) {
+      await createBootstrapToken({
+        client: createMemoryClient(),
+        workspaceId: WORKSPACE_A,
+        name: "Boolean accepted",
+        expiresAt: date(60_000),
+        downtimeAlertsEnabled,
+      });
+    }
   });
 
   it("requires a future expiry no more than 30 days out", async () => {
