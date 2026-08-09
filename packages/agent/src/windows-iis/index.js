@@ -481,7 +481,7 @@ async function queryCurrentBinding({
  * disabletls13/disableocspstapling/enabletokenbinding/logextendedevents/
  * enablesessionticket/disablesessionid). A netsh binary older than the
  * host this runs on would simply never emit these newer labels in its
- * `show sslcert` output, so readEnabledDisabledOrNotSet naturally omits
+ * `show sslcert` output, so readSetOrEnabledOrNotSet naturally omits
  * them for that host too -- no version detection needed.
  *
  * @param {string} stdoutText raw `netsh http show sslcert` stdout.
@@ -513,39 +513,28 @@ function parseSslcertParameters(stdoutText) {
     const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled)`, "i").exec(stdoutText);
     return found ? found[1].toLowerCase() === "enabled" : undefined;
   };
-  // The newer per-connection policy flags report a third state, "Not Set"
-  // (netsh's own "never explicitly configured" default), alongside
-  // Enabled/Disabled -- distinct from the classic fields above, which only
-  // ever report Enabled/Disabled. "Not Set" is treated the same as "not
-  // found": omitted, so formatPreservedParamArgs falls back to netsh's own
-  // default on rebind rather than forcing a value that was never actually
-  // configured.
-  const readEnabledDisabledOrNotSet = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled|Not Set)`, "i").exec(stdoutText);
-    if (!found) return undefined;
-    const value = found[1].toLowerCase();
-    if (value === "not set") return undefined;
-    return value === "enabled";
-  };
-  // "Disable Legacy TLS Versions" specifically -- unlike every sibling
-  // per-connection policy flag above, which real captured `netsh show
-  // sslcert` output reports as Enabled/Disabled/Not Set -- is documented by
-  // Microsoft itself with a DIFFERENT, two-state vocabulary: "Set" (the
-  // restriction is active) / "Not Set" (default, never configured), with
-  // no separate "Disabled" text ever shown
-  // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
-  // for Disable Legacy TLS Versions: Set/Not Set"). A PR review found
-  // (2026-08-07) that readEnabledDisabledOrNotSet's Enabled/Disabled/Not-Set
-  // regex never matches a bare "Set", so an outgoing binding with legacy
-  // TLS genuinely disabled had that setting silently DROPPED (not reset,
-  // simply omitted -- formatPreservedParamArgs then emits no
-  // `disablelegacytls=` flag at all) on every rebind, quietly re-exposing
-  // legacy TLS on a binding an operator had deliberately hardened. Accepts
-  // BOTH vocabularies defensively, in case a future Windows build ever
-  // reports Enabled/Disabled for this one field too: "Set" and "Enabled"
-  // both mean the restriction is active; "Not Set" and "Disabled" are both
-  // omitted (never forced), matching every sibling flag's own "do not
-  // force a value that was not observed as explicitly enabled" rule.
+  // The newer per-connection policy flags (Windows Server 2019+) all
+  // report a real Windows Server 2025 host's actual vocabulary as
+  // "Set"/"Not Set", NOT "Enabled"/"Disabled" -- a real-host finding
+  // (2026-08-09) that widens what was originally believed (and fixed,
+  // 2026-08-07) to be a one-off vocabulary quirk unique to "Disable Legacy
+  // TLS Versions". A real captured `netsh http show sslcert` transcript
+  // from a binding with SEVEN of these flags explicitly configured
+  // (disablehttp2, disablequic, disablelegacytls, enabletokenbinding,
+  // logextendedevents, enablesessionticket, disablesessionid, all set via
+  // a real `add sslcert` call) showed every single one rendered as "Set",
+  // never "Enabled" -- proving the original Enabled/Disabled/Not-Set
+  // regex this function used to have for these ten flags never matches a
+  // real positive value on this Windows build, silently DROPPING (not
+  // resetting -- formatPreservedParamArgs then emits no flag at all) every
+  // one of them on every rebind, quietly undoing an operator's
+  // deliberately-configured connection-policy hardening each time a
+  // certificate renews. Accepts all four tokens defensively, in case a
+  // future/older Windows build ever reports Enabled/Disabled for one of
+  // these fields instead: "Set" and "Enabled" both mean the restriction is
+  // active; "Not Set" and "Disabled" are both omitted (never forced,
+  // exactly netsh's own default-on-omission), so an unparsed or
+  // never-configured field costs nothing extra on rebind either way.
   const readSetOrEnabledOrNotSet = (label) => {
     const found = new RegExp(`${label}\\s*:\\s*(Not Set|Set|Enabled|Disabled)`, "i").exec(stdoutText);
     if (!found) return undefined;
@@ -580,17 +569,17 @@ function parseSslcertParameters(stdoutText) {
   assign("ctlStoreName", readNullableString("Ctl Store Name"));
   assign("dsMapperUsage", readEnabledDisabled("DS Mapper Usage"));
   assign("negotiateClientCert", readEnabledDisabled("Negotiate Client Certificate"));
-  assign("rejectConnections", readEnabledDisabledOrNotSet("Reject Connections"));
-  assign("disableHttp2", readEnabledDisabledOrNotSet("Disable HTTP2"));
-  assign("disableQuic", readEnabledDisabledOrNotSet("Disable QUIC"));
+  assign("rejectConnections", readSetOrEnabledOrNotSet("Reject Connections"));
+  assign("disableHttp2", readSetOrEnabledOrNotSet("Disable HTTP2"));
+  assign("disableQuic", readSetOrEnabledOrNotSet("Disable QUIC"));
   assign("disableLegacyTls", readSetOrEnabledOrNotSet("Disable Legacy TLS Versions"));
-  assign("disableTls12", readEnabledDisabledOrNotSet("Disable TLS1\\.2"));
-  assign("disableTls13", readEnabledDisabledOrNotSet("Disable TLS1\\.3"));
-  assign("disableOcspStapling", readEnabledDisabledOrNotSet("Disable OCSP Stapling"));
-  assign("enableTokenBinding", readEnabledDisabledOrNotSet("Enable Token Binding"));
-  assign("logExtendedEvents", readEnabledDisabledOrNotSet("Log Extended Events"));
-  assign("enableSessionTicket", readEnabledDisabledOrNotSet("Enable Session Ticket"));
-  assign("disableSessionId", readEnabledDisabledOrNotSet("Disable Session ID"));
+  assign("disableTls12", readSetOrEnabledOrNotSet("Disable TLS1\\.2"));
+  assign("disableTls13", readSetOrEnabledOrNotSet("Disable TLS1\\.3"));
+  assign("disableOcspStapling", readSetOrEnabledOrNotSet("Disable OCSP Stapling"));
+  assign("enableTokenBinding", readSetOrEnabledOrNotSet("Enable Token Binding"));
+  assign("logExtendedEvents", readSetOrEnabledOrNotSet("Log Extended Events"));
+  assign("enableSessionTicket", readSetOrEnabledOrNotSet("Enable Session Ticket"));
+  assign("disableSessionId", readSetOrEnabledOrNotSet("Disable Session ID"));
 
   return params;
 }

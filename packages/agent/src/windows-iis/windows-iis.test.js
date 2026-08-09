@@ -322,21 +322,40 @@ describe("parseSslcertParameters", () => {
     assert.equal(parsed.ctlStoreName, "CA");
   });
 
-  it("reads the newer per-connection policy flags when they report Enabled/Disabled", () => {
+  it("reads the newer per-connection policy flags when they report a real Set/Not-Set value", () => {
+    // Real-host finding (2026-08-09): every newer per-connection flag on a
+    // real Windows Server 2025 build renders as "Set"/"Not Set" when
+    // explicitly configured, the same vocabulary previously believed
+    // (2026-08-07) to be unique to "Disable Legacy TLS Versions" -- see the
+    // dedicated regression test below for the full real transcript that
+    // proved this.
     const parsed = parseSslcertParameters(
       [
-        "Reject Connections            : Disabled",
-        "Disable HTTP2                 : Enabled",
-        "Disable QUIC                  : Disabled",
-        "Disable OCSP Stapling         : Enabled",
-        "Enable Token Binding          : Disabled",
+        "Reject Connections            : Not Set",
+        "Disable HTTP2                 : Set",
+        "Disable QUIC                  : Not Set",
+        "Disable OCSP Stapling         : Set",
+        "Enable Token Binding          : Not Set",
       ].join("\r\n"),
     );
-    assert.equal(parsed.rejectConnections, false);
+    assert.equal("rejectConnections" in parsed, false);
     assert.equal(parsed.disableHttp2, true);
-    assert.equal(parsed.disableQuic, false);
+    assert.equal("disableQuic" in parsed, false);
     assert.equal(parsed.disableOcspStapling, true);
-    assert.equal(parsed.enableTokenBinding, false);
+    assert.equal("enableTokenBinding" in parsed, false);
+  });
+
+  it("also accepts the newer per-connection policy flags' Enabled/Disabled vocabulary defensively, in case a different Windows build ever reports them that way", () => {
+    // Not the vocabulary any real host observed so far actually uses (see
+    // above), but accepted the same way disableLegacyTls already
+    // defensively accepts both vocabularies: "Disabled" is treated the
+    // same as "Not Set" (omitted, never forced to false), since none of
+    // these fields' real defaults are ever the opposite of "off".
+    const parsed = parseSslcertParameters(
+      ["Disable HTTP2                 : Enabled", "Disable QUIC                  : Disabled"].join("\r\n"),
+    );
+    assert.equal(parsed.disableHttp2, true);
+    assert.equal("disableQuic" in parsed, false);
   });
 
   it("omits (does not default) a newer per-connection policy flag reported as 'Not Set'", () => {
@@ -357,8 +376,11 @@ describe("parseSslcertParameters", () => {
     // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
     // for Disable Legacy TLS Versions: Set/Not Set") -- a PR review found
     // (2026-08-07) that the Enabled/Disabled/Not-Set regex every sibling
-    // per-connection flag uses never matches a bare "Set", so this field
-    // was silently dropped from the preserved-parameters set entirely.
+    // per-connection flag used at the time never matches a bare "Set", so
+    // this field was silently dropped from the preserved-parameters set
+    // entirely. (2026-08-09 real-host finding: every sibling flag turned
+    // out to have the exact same gap -- see the dedicated regression test
+    // below.)
     const parsed = parseSslcertParameters(
       [
         "Certificate Store Name        : My",
@@ -388,6 +410,53 @@ describe("parseSslcertParameters", () => {
   it("also accepts 'Disable Legacy TLS Versions: Enabled'/'Disabled' defensively, in case a future Windows build reports this field the same way as its siblings", () => {
     assert.equal(parseSslcertParameters("Disable Legacy TLS Versions : Enabled\r\n").disableLegacyTls, true);
     assert.equal("disableLegacyTls" in parseSslcertParameters("Disable Legacy TLS Versions : Disabled\r\n"), false);
+  });
+
+  it("real-host regression (2026-08-09, tokentimer-winverify-vm, Windows Server 2025 build 26100): every newer per-connection flag, not only Disable Legacy TLS Versions, renders as Set/Not Set, and the pre-fix parser silently dropped all of them", () => {
+    // Exact real `netsh http show sslcert` transcript captured after
+    // binding a real certificate with seven of these flags explicitly set
+    // via a real `netsh http add sslcert ... disablehttp2=enable
+    // disablequic=enable disablelegacytls=enable enabletokenbinding=enable
+    // logextendedevents=enable enablesessionticket=enable
+    // disablesessionid=enable` call (the real-host verification pass,
+    // `windows-iis-flag-preservation-and-sni-shadowing-verify.js`).
+    // Every one of these seven rendered as "Set", not "Enabled" -- proving
+    // the original per-field Enabled/Disabled/Not-Set regex never matched
+    // a real positive value for ANY of them, not only disableLegacyTls as
+    // the 2026-08-07 fix assumed.
+    const realTranscript = [
+      "    IP:port                      : 0.0.0.0:21443",
+      "    Certificate Store Name       : My",
+      "    Reject Connections           : Disabled",
+      "    Disable HTTP2                : Set",
+      "    Disable QUIC                 : Set",
+      "    Disable TLS1.2               : Not Set",
+      "    Disable TLS1.3               : Not Set",
+      "    Disable OCSP Stapling        : Not Set",
+      "    Enable Token Binding         : Set",
+      "    Log Extended Events          : Set",
+      "    Disable Legacy TLS Versions  : Set",
+      "    Enable Session Ticket        : Set",
+      "    Disable Session ID           : Set",
+      "    Enable Caching Client Hello  : Not Set",
+    ].join("\r\n");
+    const parsed = parseSslcertParameters(realTranscript);
+    assert.equal(parsed.disableHttp2, true);
+    assert.equal(parsed.disableQuic, true);
+    assert.equal(parsed.enableTokenBinding, true);
+    assert.equal(parsed.logExtendedEvents, true);
+    assert.equal(parsed.disableLegacyTls, true);
+    assert.equal(parsed.enableSessionTicket, true);
+    assert.equal(parsed.disableSessionId, true);
+    assert.deepEqual(formatPreservedParamArgs(parsed).sort(), [
+      "disablehttp2=enable",
+      "disablelegacytls=enable",
+      "disablequic=enable",
+      "disablesessionid=enable",
+      "enablesessionticket=enable",
+      "enabletokenbinding=enable",
+      "logextendedevents=enable",
+    ].sort());
   });
 });
 
@@ -495,10 +564,10 @@ describe("formatPreservedParamArgs", () => {
         "Usage Check                  : Enabled",
         "Revocation Freshness Time    : 120",
         "Negotiate Client Certificate : Disabled",
-        "Reject Connections           : Disabled",
-        "Disable HTTP2                : Enabled",
+        "Reject Connections           : Not Set",
+        "Disable HTTP2                : Set",
         "Disable QUIC                 : Not Set",
-        "Disable OCSP Stapling        : Enabled",
+        "Disable OCSP Stapling        : Set",
       ].join("\r\n"),
     );
     const args = formatPreservedParamArgs(parameters);
@@ -507,7 +576,6 @@ describe("formatPreservedParamArgs", () => {
       "usagecheck=enable",
       "revocationfreshnesstime=120",
       "clientcertnegotiation=disable",
-      "reject=disable",
       "disablehttp2=enable",
       "disableocspstapling=enable",
     ]);

@@ -15,11 +15,34 @@ const { generateCsrViaCng, acceptCertificateViaCng, isAgentOwnedContainerName } 
   path.join(modRoot, "index.js"),
 );
 
+/** Bounds every shelled-out call in this driver. Unlike the product code
+ * under test (windows-cert-store/index.js's own execWithoutShell, which has
+ * a 2-minute default timeout), this driver's certreq/certutil calls had no
+ * timeout at all -- a real-host run against a Standalone Root CA hung this
+ * driver (and, transitively, the calling Run Command channel) indefinitely
+ * on `certreq -submit`, with no evidence of why in any output. Node's
+ * execFileSync `timeout` option kills the child on expiry instead of
+ * hanging forever, so a repeat hang costs 60s locally, not an open-ended
+ * Run Command stall. */
+const RUN_CAPTURED_TIMEOUT_MS = 60 * 1000;
+
 function runCaptured(cmd, args) {
   try {
-    const stdout = execFileSync(cmd, args, { encoding: "utf8" });
+    const stdout = execFileSync(cmd, args, {
+      encoding: "utf8",
+      timeout: RUN_CAPTURED_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
     return { stdout, stderr: "", exitCode: 0 };
   } catch (err) {
+    if (err.code === "ETIMEDOUT" || err.signal === "SIGKILL") {
+      return {
+        stdout: err.stdout ? err.stdout.toString() : "",
+        stderr: `TIMED OUT after ${RUN_CAPTURED_TIMEOUT_MS}ms running ${cmd} ${args.join(" ")}`,
+        exitCode: null,
+        timedOut: true,
+      };
+    }
     return {
       stdout: err.stdout ? err.stdout.toString() : "",
       stderr: err.stderr ? err.stderr.toString() : String(err.message || err),
@@ -54,15 +77,46 @@ async function main() {
   console.log("");
   console.log("=== step 2: submit CSR to the real test CA ===");
   const cerPath = path.join(workDir, "nondefault-store-verify.cer");
-  try {
-    fs.unlinkSync(cerPath);
-  } catch {
-    // fine if it didn't exist
+  const rspPath = path.join(workDir, "nondefault-store-verify.rsp");
+  // certreq -submit/-retrieve both silently write a sibling .rsp file next
+  // to the .cer output, and *reusing this exact workDir/basename across
+  // runs* (as this driver always does) means a leftover .rsp from any
+  // earlier attempt (including the .rsp -submit itself just wrote this
+  // same run, before -retrieve gets to it) makes the next certreq
+  // invocation print an interactive "Do you wish to overwrite the
+  // following file?" Y/N prompt instead of just overwriting -- and that
+  // prompt hangs forever with no window station to render it on under Run
+  // Command's SYSTEM context, exactly like the already-documented
+  // `certutil -config - -ping` interactive-dialog gotcha. Real-host
+  // finding (2026-08-09): this is what actually wedged both a several-
+  // day-old VM and a brand-new one for 30+ minutes each on this exact
+  // driver, masquerading as an Azure control-plane fault until
+  // RUN_CAPTURED_TIMEOUT_MS surfaced the real prompt text. Fixed two ways
+  // belt-and-suspenders: `-f` (force overwrite, undocumented in `-submit
+  // -?`'s own summary but present in `-retrieve -?`'s) on every certreq
+  // call below, plus deleting stale siblings from a genuinely prior run
+  // up front.
+  for (const stale of [cerPath, rspPath]) {
+    try {
+      fs.unlinkSync(stale);
+    } catch {
+      // fine if it didn't exist
+    }
   }
   let requestId = null;
-  const submit = runCaptured("certreq", ["-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath, cerPath]);
   console.log("certreq -submit stdout:", submit.stdout);
   console.log("certreq -submit stderr:", submit.stderr);
+  if (submit.timedOut) {
+    throw new Error(
+      `certreq -submit -config "${caConfig}" timed out after ${RUN_CAPTURED_TIMEOUT_MS}ms -- ` +
+        "this almost always means the CA's DCOM/RPC endpoint is not accepting requests yet " +
+        "(e.g. right after a fresh Install-AdcsCertificationAuthority) or the calling " +
+        "identity lacks Enroll permission on the CA and certreq is blocked waiting on a " +
+        "response that will never come non-interactively. Re-run `certutil -CAInfo` " +
+        "independently first to confirm the CA answers local queries before retrying this.",
+    );
+  }
   const combined = `${submit.stdout}\n${submit.stderr}`;
   const idMatch = combined.match(/RequestId:\s*(\d+)/i);
   if (idMatch) requestId = idMatch[1];
@@ -75,11 +129,17 @@ async function main() {
     const resubmit = runCaptured("certutil", ["-resubmit", requestId]);
     console.log("certutil -resubmit stdout:", resubmit.stdout);
     console.log("certutil -resubmit stderr:", resubmit.stderr);
+    if (resubmit.timedOut) {
+      throw new Error(`certutil -resubmit ${requestId} timed out after ${RUN_CAPTURED_TIMEOUT_MS}ms`);
+    }
 
     console.log("retrieving the now-issued certificate...");
-    const retrieve = runCaptured("certreq", ["-retrieve", "-config", caConfig, requestId, cerPath]);
+    const retrieve = runCaptured("certreq", ["-f", "-retrieve", "-config", caConfig, requestId, cerPath]);
     console.log("certreq -retrieve stdout:", retrieve.stdout);
     console.log("certreq -retrieve stderr:", retrieve.stderr);
+    if (retrieve.timedOut) {
+      throw new Error(`certreq -retrieve ${requestId} timed out after ${RUN_CAPTURED_TIMEOUT_MS}ms`);
+    }
   }
 
   if (!fs.existsSync(cerPath)) {

@@ -42,6 +42,7 @@ const {
   parseStoreLockContents,
   MAX_STORE_LOCK_AGE_MS,
   removeAbandonedKeyContainer,
+  removeCertificateAndKeyContainer,
   WINDOWS_STORE_NAME_PATTERN,
 } = require("./index.js");
 
@@ -727,6 +728,166 @@ describe("acquireStoreLock", () => {
   it("parseStoreLockContents returns null for garbage input", () => {
     assert.equal(parseStoreLockContents("garbage"), null);
     assert.equal(parseStoreLockContents(""), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeCertificateAndKeyContainer: deletes the store entry, then the CNG
+// key container (interrupted-cleanup idempotency).
+// ---------------------------------------------------------------------------
+
+describe("removeCertificateAndKeyContainer", () => {
+  it("calls -delstore then -delkey, in that order, without a shell", async () => {
+    const calls = [];
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args, options });
+      process.nextTick(() => callback(null, "", ""));
+    };
+    const containerName = buildContainerName("job-1");
+
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].args, ["-delstore", "My", FIXTURE_THUMBPRINT]);
+    assert.deepEqual(calls[1].args, [
+      "-csp",
+      "Microsoft Software Key Storage Provider",
+      "-delkey",
+      containerName,
+    ]);
+    assert.equal(calls[0].options.shell, undefined);
+    assert.equal(calls[1].options.shell, undefined);
+  });
+
+  it("returns ok:false at stage delstore when certutil -delstore fails for a reason other than a missing thumbprint", async () => {
+    const execFileImpl = makeExecStub({
+      error: Object.assign(new Error("boom"), { code: 5 }),
+      stderr: "Access is denied.",
+    });
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName: buildContainerName("job-2"),
+      execFileImpl,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "delstore");
+    assert.equal(result.exitCode, 5);
+    assert.match(result.stderrExcerpt, /Access is denied/);
+  });
+
+  it(
+    "regression: treats certutil -delkey's NTE_BAD_KEYSET (\"Keyset does not exist\") as ok:true, " +
+      "not a failure -- real-host finding (2026-08-09): a crash between a first, fully successful " +
+      "-delstore+-delkey pair and the caller persisting that success (e.g. windows-retention's " +
+      "sweepLedger marking the ledger row \"removed\") left a retried cleanup call failing this second " +
+      "half forever, even though the on-disk state was already exactly the desired end state; a missing " +
+      "key container must be treated the same way -delstore already treats a missing thumbprint " +
+      "(absence IS success for a delete), or the ledger row can never reach \"removed\" and sweepLedger " +
+      "retries an operation that can never succeed again on every future sweep",
+    async () => {
+      const execFileImpl = (file, args, options, callback) => {
+        if (args[0] === "-delstore") {
+          process.nextTick(() => callback(null, "CertUtil: -delstore command completed successfully.", ""));
+          return;
+        }
+        process.nextTick(() =>
+          callback(
+            Object.assign(new Error("delkey failed"), { code: -2146893802 }),
+            "CertUtil: -delkey command FAILED: 0x80090016 (-2146893802 NTE_BAD_KEYSET)\r\nCertUtil: Keyset does not exist\r\n",
+            "",
+          ),
+        );
+      };
+
+      const result = await removeCertificateAndKeyContainer({
+        thumbprint: FIXTURE_THUMBPRINT,
+        store: "My",
+        containerName: buildContainerName("job-3"),
+        execFileImpl,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.keyContainerAlreadyAbsent, true);
+    },
+  );
+
+  it("still returns ok:false at stage delkey for a genuine -delkey failure unrelated to NTE_BAD_KEYSET", async () => {
+    const execFileImpl = (file, args, options, callback) => {
+      if (args[0] === "-delstore") {
+        process.nextTick(() => callback(null, "", ""));
+        return;
+      }
+      process.nextTick(() =>
+        callback(Object.assign(new Error("access denied"), { code: 5 }), "", "Access is denied."),
+      );
+    };
+
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName: buildContainerName("job-4"),
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "delkey");
+    assert.equal(result.exitCode, 5);
+    assert.match(result.stderrExcerpt, /Access is denied/);
+  });
+
+  it("never calls -delkey when -delstore fails", async () => {
+    const calls = [];
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ args });
+      process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "some error"));
+    };
+    await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName: buildContainerName("job-5"),
+      execFileImpl,
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args[0], "-delstore");
+  });
+
+  it("rejects an invalid thumbprint/store/containerName before invoking execFile", async () => {
+    const execFileImpl = makeExecStub({});
+    await assert.rejects(
+      removeCertificateAndKeyContainer({
+        thumbprint: "not-hex",
+        store: "My",
+        containerName: buildContainerName("job-6"),
+        execFileImpl,
+      }),
+      /thumbprint must be a 40-hex-char SHA-1 string/,
+    );
+    await assert.rejects(
+      removeCertificateAndKeyContainer({
+        thumbprint: FIXTURE_THUMBPRINT,
+        store: "not a store; rm -rf",
+        containerName: buildContainerName("job-7"),
+        execFileImpl,
+      }),
+      /store must match/,
+    );
+    await assert.rejects(
+      removeCertificateAndKeyContainer({
+        thumbprint: FIXTURE_THUMBPRINT,
+        store: "My",
+        containerName: "evil;rm -rf",
+        execFileImpl,
+      }),
+      /containerName must match/,
+    );
+    assert.equal(execFileImpl.calls.length, 0);
   });
 });
 

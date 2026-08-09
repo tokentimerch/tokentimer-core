@@ -241,9 +241,9 @@
           "maxItems": 16,
           "items": {
             "type": "string",
-            "enum": ["renew", "deploy", "reload", "revoke", "noop"]
+            "enum": ["renew", "deploy", "reload", "revoke", "noop", "protocol_smoke"]
           },
-          "description": "Subset of job-payload.schema.json actions this agent build can execute; lets the claim query skip jobs the agent cannot run."
+          "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly."
         },
         "supportedDnsProviders": {
           "type": "array",
