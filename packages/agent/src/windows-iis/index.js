@@ -112,6 +112,20 @@ const REDACTED_EXCERPT_PLACEHOLDER = "[redacted]";
  * longer-total schedule (up to ~15.75s of added delay across 6 total
  * attempts) to cover that observed tail without materially changing
  * behavior for the common case, which still resolves on an early retry.
+ *
+ * A second, deterministic (not transient) failure mode was misdiagnosed
+ * against this same retry budget on 2026-08-08 (real-host testing on
+ * `certops/agent-health-windows-integration`): two renewal jobs against
+ * the same SNI binding exhausted this entire budget and still failed,
+ * which first looked like "the transient tail is even longer than
+ * measured" and briefly motivated widening this schedule further. It was
+ * not that -- root-caused instead to `formatPreservedParamArgs` replaying
+ * an outgoing binding's `revocationFreshnessTime`/`urlRetrievalTimeout` of
+ * `0` verbatim into the next `add sslcert` call, which this exact netsh
+ * build rejects outright regardless of how many times or how long it is
+ * retried (see that function's own doc comment). Fixed at the source
+ * there; this retry budget stays at the schedule above, which remains
+ * correct for the genuine transient settle delay it targets.
  */
 const BIND_ADD_RETRY_DELAYS_MS = [300, 700, 1500, 3000, 5000, 5250];
 
@@ -577,10 +591,28 @@ function formatPreservedParamArgs(parameters = {}) {
   if (parameters.usageCheck !== undefined) {
     args.push(`usagecheck=${flag(parameters.usageCheck)}`);
   }
-  if (parameters.revocationFreshnessTime !== undefined) {
+  // Real-host finding (Windows Server 2025 build 26100.32860): `add
+  // sslcert` rejects an explicit `revocationfreshnesstime=0` or
+  // `urlretrievaltimeout=0` with "The parameter is incorrect", even though
+  // `add sslcert help` documents 0 as a legal value ("If this value is 0,
+  // then the new CRL is updated only if the previous one expires") and even
+  // though every *other* integer value (1, 3600, 1000, ...) is accepted
+  // without error. 0 is also netsh's own default for both fields when they
+  // are omitted entirely from `add sslcert` -- confirmed by binding a
+  // certificate with neither flag present and observing `show sslcert`
+  // still report 0 for both -- so an outgoing binding that reports 0 was
+  // never explicitly customized away from the default in the first place.
+  // Omitting the flag here reproduces that exact same effective value (0,
+  // via netsh's own default-on-omission) without ever hitting the buggy
+  // explicit-0 codepath, so this is strictly no worse than before for the
+  // only value it changes behavior for, and it is what fixed a 100%
+  // reproducible rebind failure on every renewal following an
+  // never-customized initial bind (the common case: nothing before this
+  // fix ever explicitly set these two fields to a non-zero value).
+  if (parameters.revocationFreshnessTime !== undefined && parameters.revocationFreshnessTime !== 0) {
     args.push(`revocationfreshnesstime=${parameters.revocationFreshnessTime}`);
   }
-  if (parameters.urlRetrievalTimeout !== undefined) {
+  if (parameters.urlRetrievalTimeout !== undefined && parameters.urlRetrievalTimeout !== 0) {
     args.push(`urlretrievaltimeout=${parameters.urlRetrievalTimeout}`);
   }
   // A real, non-"(null)" ctlIdentifier is meaningless without its paired

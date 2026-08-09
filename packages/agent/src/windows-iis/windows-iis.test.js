@@ -376,9 +376,25 @@ describe("formatPreservedParamArgs", () => {
     ]);
   });
 
-  it("emits numeric fields verbatim", () => {
+  it("emits numeric fields verbatim for any non-zero value", () => {
     const args = formatPreservedParamArgs({ revocationFreshnessTime: 3600, urlRetrievalTimeout: 5000 });
     assert.deepEqual(args, ["revocationfreshnesstime=3600", "urlretrievaltimeout=5000"]);
+  });
+
+  it("omits revocationFreshnessTime/urlRetrievalTimeout when the outgoing binding reports netsh's own default of 0 (real-host finding: `add sslcert` rejects an explicit 0 for either flag with 'The parameter is incorrect' on Windows Server 2025 build 26100.32860, even though 0 is netsh's own default-on-omission and is documented as a legal value; every other integer value is accepted)", () => {
+    assert.deepEqual(
+      formatPreservedParamArgs({ revocationFreshnessTime: 0, urlRetrievalTimeout: 0 }),
+      [],
+    );
+  });
+
+  it("omits only the zero-valued one of the pair, still emitting the genuinely non-zero one", () => {
+    assert.deepEqual(formatPreservedParamArgs({ revocationFreshnessTime: 0, urlRetrievalTimeout: 5000 }), [
+      "urlretrievaltimeout=5000",
+    ]);
+    assert.deepEqual(formatPreservedParamArgs({ revocationFreshnessTime: 3600, urlRetrievalTimeout: 0 }), [
+      "revocationfreshnesstime=3600",
+    ]);
   });
 
   it("emits sslctlidentifier + sslctlstorename together only when ctlIdentifier is a real (non-null) value", () => {
