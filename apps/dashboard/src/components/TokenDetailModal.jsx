@@ -534,7 +534,10 @@ function TokenDetailModal({
 
         <ModalBody {...bodyProps}>
           <Grid
-            templateColumns={{ base: 'minmax(0, 1fr)', md: 'repeat(2, 1fr)' }}
+            templateColumns={{
+              base: 'minmax(0, 1fr)',
+              md: 'repeat(2, minmax(0, 1fr))',
+            }}
             gap={{ base: 3, md: 4 }}
           >
             {renderSectionTitle('Basic Information', false)}

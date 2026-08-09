@@ -116,22 +116,30 @@ function groupByTarget(instances) {
   });
 }
 
+// Cells stay single-line (no wrapping) so rows keep a consistent height, but
+// unlike noOfLines/isTruncated they never clip text with an ellipsis - a
+// long, unbroken value (e.g. a winstore://... key reference) instead makes
+// the table itself wider than its container. TableContainer below scopes the
+// resulting horizontal scrollbar to just this table (see the modal's Grid
+// using minmax(0, 1fr) tracks so that overflow can't bubble up further).
+const NOWRAP_CELL = { whiteSpace: 'nowrap' };
+
 function InstanceRow({ instance, border, muted, indent = false }) {
   const connectivity = connectivityDescriptor(instance);
   return (
     <Tr>
       <Td borderColor={border} pl={indent ? 8 : undefined}>
-        <Text fontSize='sm' noOfLines={1} color={indent ? muted : undefined}>
+        <Text fontSize='sm' sx={NOWRAP_CELL} color={indent ? muted : undefined}>
           {targetLabel(instance)}
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} noOfLines={1}>
+        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
           {locationKindLabel(instance.locationKind)}
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} noOfLines={1}>
+        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
           {instance.agent?.name || instance.agent?.hostname || instance.agent?.agentId || '--'}
         </Text>
       </Td>
@@ -213,12 +221,12 @@ export default function CertificateInstances({ instances, available, error }) {
       <Table size='sm' variant='simple'>
         <Thead>
           <Tr>
-            <Th>Location</Th>
-            <Th>Type</Th>
-            <Th>Agent</Th>
-            <Th>Connectivity</Th>
-            <Th>Last observed</Th>
-            <Th>Certificate state</Th>
+            <Th whiteSpace='nowrap'>Location</Th>
+            <Th whiteSpace='nowrap'>Type</Th>
+            <Th whiteSpace='nowrap'>Agent</Th>
+            <Th whiteSpace='nowrap'>Connectivity</Th>
+            <Th whiteSpace='nowrap'>Last observed</Th>
+            <Th whiteSpace='nowrap'>Certificate state</Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -228,17 +236,17 @@ export default function CertificateInstances({ instances, available, error }) {
             <Fragment key={key}>
               <Tr>
                 <Td borderColor={border}>
-                  <Text fontSize='sm' noOfLines={1}>
+                  <Text fontSize='sm' sx={NOWRAP_CELL}>
                     {targetLabel(current)}
                   </Text>
                 </Td>
                 <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} noOfLines={1}>
+                  <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
                     {locationKindLabel(current.locationKind)}
                   </Text>
                 </Td>
                 <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} noOfLines={1}>
+                  <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
                     {current.agent?.name || current.agent?.hostname || current.agent?.agentId || '--'}
                   </Text>
                 </Td>
