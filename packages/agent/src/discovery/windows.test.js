@@ -23,6 +23,9 @@ const {
   collectWindowsDiscoveryObservations,
   fetchRawCertificateDerByThumbprint,
   computeFingerprintSha256,
+  parseNodeSubjectAltName,
+  readSubjectAltNamesFromDer,
+  resolveSubjectAltNames,
 } = require("./windows.js");
 
 const CERTUTIL_STORE_OUTPUT = `My "Personal"
@@ -146,6 +149,42 @@ function generateSelfSignedCertDerBase64(commonName) {
   return fs.readFileSync(derPath).toString("base64");
 }
 
+/**
+ * Same as generateSelfSignedCertDerBase64, but with a real Subject
+ * Alternative Name extension (via an openssl config file), for tests that
+ * need to prove SANs are read from the certificate's own raw bytes rather
+ * than from certutil's -v text dump.
+ */
+function generateSelfSignedCertWithSanDerBase64(commonName, sanEntries) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-windows-adapter-san-test-"));
+  tempDirs.push(dir);
+  const keyPath = path.join(dir, "server.key");
+  const pemPath = path.join(dir, "server.crt");
+  const derPath = path.join(dir, "server.der");
+  const cnfPath = path.join(dir, "san.cnf");
+  const cnf = [
+    "[req]",
+    "distinguished_name = req_distinguished_name",
+    "x509_extensions = v3_req",
+    "prompt = no",
+    "[req_distinguished_name]",
+    `CN = ${commonName}`,
+    "[v3_req]",
+    `subjectAltName = ${sanEntries.join(",")}`,
+    "",
+  ].join("\n");
+  fs.writeFileSync(cnfPath, cnf);
+  execSync(
+    `"${OPENSSL_BINARY}" req -x509 -newkey rsa:2048 -keyout "${keyPath}" ` +
+      `-out "${pemPath}" -days 1 -nodes -config "${cnfPath}"`,
+    { stdio: "ignore" },
+  );
+  execSync(`"${OPENSSL_BINARY}" x509 -in "${pemPath}" -outform der -out "${derPath}"`, {
+    stdio: "ignore",
+  });
+  return fs.readFileSync(derPath).toString("base64");
+}
+
 describe("computeFingerprintSha256", () => {
   it(
     "computes a real SHA-256 fingerprint from base64 DER bytes",
@@ -208,6 +247,77 @@ describe("fetchRawCertificateDerByThumbprint", () => {
     const result = fetchRawCertificateDerByThumbprint({ spawn });
 
     assert.equal(result.get("aabbcc"), "ZGVy");
+  });
+});
+
+describe("parseNodeSubjectAltName", () => {
+  it("parses Node's X509Certificate#subjectAltName comma-separated format into bare values", () => {
+    const result = parseNodeSubjectAltName("DNS:example.com, DNS:www.example.com, IP Address:10.0.0.5");
+    assert.deepEqual(result, ["example.com", "www.example.com", "10.0.0.5"]);
+  });
+
+  it("returns [] for undefined/empty input", () => {
+    assert.deepEqual(parseNodeSubjectAltName(undefined), []);
+    assert.deepEqual(parseNodeSubjectAltName(""), []);
+  });
+
+  it("ignores entries it does not recognize rather than throwing", () => {
+    assert.deepEqual(parseNodeSubjectAltName("othername:some-value, DNS:example.com"), ["example.com"]);
+  });
+});
+
+describe("readSubjectAltNamesFromDer", () => {
+  it(
+    "reads real SAN entries directly from a certificate's own raw DER bytes",
+    { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
+    () => {
+      const derBase64 = generateSelfSignedCertWithSanDerBase64("san-adapter-test.example.com", [
+        "DNS:san-adapter-test.example.com",
+        "DNS:alt.san-adapter-test.example.com",
+        "IP:10.0.0.9",
+      ]);
+      const sans = readSubjectAltNamesFromDer(derBase64);
+      assert.deepEqual(sans, [
+        "san-adapter-test.example.com",
+        "alt.san-adapter-test.example.com",
+        "10.0.0.9",
+      ]);
+    },
+  );
+
+  it("returns [] (not throw) for malformed input", () => {
+    const warnings = [];
+    assert.deepEqual(readSubjectAltNamesFromDer("not-valid-base64-der", (m) => warnings.push(m)), []);
+    assert.ok(warnings.length > 0);
+  });
+
+  it("returns [] for null/undefined input without warning", () => {
+    assert.deepEqual(readSubjectAltNamesFromDer(null), []);
+    assert.deepEqual(readSubjectAltNamesFromDer(undefined), []);
+  });
+});
+
+describe("resolveSubjectAltNames", () => {
+  it(
+    "prefers the raw-bytes-derived SANs over windows-discovery's certutil-text-parsed list",
+    { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
+    () => {
+      const derBase64 = generateSelfSignedCertWithSanDerBase64("resolve-san-test.example.com", [
+        "DNS:from-der.example.com",
+      ]);
+      const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
+      assert.equal(resolveSubjectAltNames(cert, derBase64), "from-der.example.com");
+    },
+  );
+
+  it("falls back to windows-discovery's certutil-text-parsed SANs when raw bytes are unavailable", () => {
+    const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
+    assert.equal(resolveSubjectAltNames(cert, undefined), "from-certutil-text.example.com");
+  });
+
+  it("returns an empty string when neither source has SANs", () => {
+    const cert = { subjectAlternativeNames: [] };
+    assert.equal(resolveSubjectAltNames(cert, undefined), "");
   });
 });
 
@@ -385,4 +495,49 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.deepEqual(observations, []);
     assert.ok(warnings.some((m) => m.includes("http_sys")));
   });
+
+  // End-to-end regression for the 2026-08-08 real-host finding: on an
+  // affected host, ../windows-discovery's own certutil -v fallback (see its
+  // test suite) already keeps windows_store observations flowing even
+  // though -v itself fails; this test additionally proves the adapter
+  // still recovers real SANs in that exact scenario, via the certificate's
+  // own raw bytes rather than certutil's (broken) -v text dump.
+  it(
+    "still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed",
+    { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
+    async () => {
+      const thumbprint = "aabbccddeeff00112233445566778899aabbccdd";
+      const derBase64 = generateSelfSignedCertWithSanDerBase64("v-broken.example.com", [
+        "DNS:v-broken.example.com",
+        "DNS:alt.v-broken.example.com",
+      ]);
+      const plainStdout = certutilStoreOutputFor(thumbprint, "v-broken.example.com");
+      const execFileImpl = (file, args, options, callback) => {
+        process.nextTick(() => {
+          if (String(file).includes("certutil")) {
+            if (args.includes("-v")) {
+              const error = Object.assign(new Error("NTE_NOT_FOUND"), { code: -2146893807 });
+              callback(error, "My \"Personal\"\n", "CertUtil: Object was not found.\n");
+              return;
+            }
+            callback(null, plainStdout, "");
+            return;
+          }
+          // No http.sys bindings / IIS sites in this scenario.
+          callback({ code: 1 }, "", "");
+        });
+      };
+      const spawn = () =>
+        fakeSpawnResult({
+          stdout: JSON.stringify({ items: [{ Thumbprint: thumbprint, RawCertificateBase64: derBase64 }] }),
+        });
+
+      const observations = await collectWindowsDiscoveryObservations({ execFileImpl, spawn });
+
+      assert.equal(observations.length, 1);
+      const [obs] = observations;
+      assert.equal(obs.locationKind, "windows_store");
+      assert.equal(obs.subjectAltNames, "v-broken.example.com,alt.v-broken.example.com");
+    },
+  );
 });

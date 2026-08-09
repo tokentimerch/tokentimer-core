@@ -290,37 +290,30 @@ function parseNetshSslcertBindings(stdout) {
 }
 
 /**
- * Runs `certutil -store <store>` and returns every certificate entry found,
- * each annotated with hasPrivateKey (read from certutil's own report, never
- * from touching the key itself). A nonzero exit (e.g. an empty/nonexistent
- * store) is not an error: it is reported as `ok: true, certificates: []`,
- * matching queryCurrentBinding's "nothing there yet is not a failure"
- * posture in ../windows-iis.
+ * Runs one `certutil -store <store>` invocation (verbose or not) and
+ * classifies the result. Factored out of listMachineStoreCertificates so
+ * that function can retry without `-v` on a genuine verbose-mode failure
+ * (see its own doc comment) without duplicating the exit-code
+ * classification logic.
  *
  * @param {object} input
- * @param {string} input.store Windows certificate store name (e.g. "My").
- * @param {Function} [input.execFileImpl]
- * @param {string} [input.certutilPath]
- * @param {number} [input.timeoutMs]
+ * @param {string} input.store
+ * @param {Function} input.execFileImpl
+ * @param {string} input.certutilPath
+ * @param {number} input.timeoutMs
+ * @param {boolean} input.verbose
  * @returns {Promise<
  *   | { ok: true, certificates: ReturnType<typeof parseCertutilStoreBlock>[] }
  *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
  * >}
  */
-async function listMachineStoreCertificates({
-  store,
-  execFileImpl = childProcess.execFile,
-  certutilPath = "certutil.exe",
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-} = {}) {
-  if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
-    throw buildError(`store must be a valid Windows certificate store name (got ${JSON.stringify(store)})`);
-  }
-  assertSafeArgvElements("certutilPath", [certutilPath]);
-  // -v (verbose) is required to get certutil to dump extensions, including
+async function runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose }) {
+  // -v (verbose) is what gets certutil to dump extensions, including
   // Subject Alternative Name; without it the per-certificate block only
   // ever carries the fields already present before this flag was added.
-  const argv = [certutilPath, "-store", store, "-v"];
+  const argv = verbose
+    ? [certutilPath, "-store", store, "-v"]
+    : [certutilPath, "-store", store];
   assertSafeArgvElements("argv", argv);
 
   const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
@@ -345,6 +338,62 @@ async function listMachineStoreCertificates({
     store,
   }));
   return { ok: true, certificates };
+}
+
+/**
+ * Runs `certutil -store <store>` and returns every certificate entry found,
+ * each annotated with hasPrivateKey (read from certutil's own report, never
+ * from touching the key itself). A nonzero exit (e.g. an empty/nonexistent
+ * store) is not an error: it is reported as `ok: true, certificates: []`,
+ * matching queryCurrentBinding's "nothing there yet is not a failure"
+ * posture in ../windows-iis.
+ *
+ * Falls back to a non-verbose query on a genuine verbose-mode failure: a
+ * 2026-08-08 real-host finding (two independent Windows Server 2022 VMs,
+ * different SKUs/images) showed `certutil -store <name> -v` can fail
+ * outright with NTE_NOT_FOUND -- on every store, every certificate, even a
+ * certificate created seconds earlier -- while the exact same store queried
+ * WITHOUT `-v` succeeds and returns every field except the Subject
+ * Alternative Name extension (which only `-v` prints). Treating that as a
+ * total STORE_QUERY_FAILED would silently drop this host's entire Windows
+ * discovery, not just its SAN data. The caller-side adapter
+ * (../discovery/windows.js) independently recovers SANs from each
+ * certificate's own raw bytes -- which it already fetches for SHA-256
+ * fingerprint completion -- so no discovery capability is actually lost
+ * even on a host hitting this bug; falling back here only avoids losing
+ * subject/issuer/dates/serial/thumbprint/key-presence too.
+ *
+ * @param {object} input
+ * @param {string} input.store Windows certificate store name (e.g. "My").
+ * @param {Function} [input.execFileImpl]
+ * @param {string} [input.certutilPath]
+ * @param {number} [input.timeoutMs]
+ * @returns {Promise<
+ *   | { ok: true, certificates: ReturnType<typeof parseCertutilStoreBlock>[] }
+ *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
+ * >}
+ */
+async function listMachineStoreCertificates({
+  store,
+  execFileImpl = childProcess.execFile,
+  certutilPath = "certutil.exe",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
+    throw buildError(`store must be a valid Windows certificate store name (got ${JSON.stringify(store)})`);
+  }
+  assertSafeArgvElements("certutilPath", [certutilPath]);
+
+  const verboseResult = await runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose: true });
+  if (verboseResult.ok) return verboseResult;
+
+  const plainResult = await runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose: false });
+  if (plainResult.ok) return plainResult;
+
+  // Both the verbose and the non-verbose query failed: report the
+  // verbose attempt's failure, since it is the one this function's
+  // contract (and its argv-shape test) documents as the primary call.
+  return verboseResult;
 }
 
 /**

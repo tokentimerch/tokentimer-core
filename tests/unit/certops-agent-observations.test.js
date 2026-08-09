@@ -607,6 +607,150 @@ describe("_test.defaultLocationRef", () => {
   });
 });
 
+// Regression coverage for a real-host defect (found on a live Windows
+// Server 2022 QA VM running IIS with a genuine SNI HTTPS binding): the
+// evidence route rejected every batch containing an iis_binding/http_sys
+// observation with HTTP 500 CERTOPS_KEY_REFERENCE_INVALID, because the
+// os-store-managed keyReference was set to the same iis://.../http-sys://...
+// descriptor as locationRef/deploymentReference, and inventory.js's
+// KEY_REFERENCE_ALLOWED_SCHEME_PREFIXES allow-list has no iis:// or
+// http-sys:// scheme. Since normalizeAgentFilesystemObservation.map() runs
+// for the whole batch before any DB write, this silently dropped every
+// Windows discovery observation from that host, including its otherwise-
+// valid windows_store entries. defaultKeyReference must always resolve to
+// the winstore:// store coordinate for every non-filesystem location kind,
+// because the key -- when present -- physically lives in the store the
+// binding references, never in the binding descriptor itself.
+describe("_test.defaultKeyReference", () => {
+  it("returns null for filesystem (key reference is file:// built elsewhere)", () => {
+    assert.equal(_test.defaultKeyReference("filesystem", {}), null);
+  });
+
+  it("resolves an iis_binding key reference to the underlying winstore:// store coordinate, not iis://", () => {
+    const ref = _test.defaultKeyReference("iis_binding", {
+      windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
+      locationSlot: "Default Web Site:8443",
+      thumbprint: "deadbeef",
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/deadbeef");
+  });
+
+  it("resolves an http_sys key reference to the underlying winstore:// store coordinate, not http-sys://", () => {
+    const ref = _test.defaultKeyReference("http_sys", {
+      windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
+      locationSlot: "0.0.0.0:8443",
+      thumbprint: "deadbeef",
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/deadbeef");
+  });
+
+  it("falls back to locationSlot when no thumbprint is known", () => {
+    const ref = _test.defaultKeyReference("iis_binding", {
+      windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
+      locationSlot: "Default Web Site:8443",
+      thumbprint: null,
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/Default Web Site:8443");
+  });
+
+  it("defaults store location/name when the agent omitted them", () => {
+    const ref = _test.defaultKeyReference("http_sys", {
+      windowsFields: {},
+      locationSlot: "0.0.0.0:443",
+      thumbprint: null,
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/0.0.0.0:443");
+  });
+});
+
+describe("real-host regression: iis_binding/http_sys observations with a private key must pass keyReference validation", () => {
+  const { normalizeKeyReference } = require(
+    path.resolve(__dirname, "../../apps/api/services/certops/inventory.js"),
+  );
+
+  function keyReferenceForObservation(evidenceItem) {
+    const observation = normalizeAgentFilesystemObservation({
+      agent: AGENT,
+      evidenceItem,
+    });
+    const keyReference =
+      observation.locationKind === "filesystem"
+        ? `file://${observation.filePath}`
+        : _test.defaultKeyReference(observation.locationKind, {
+            windowsFields: observation.windowsFields,
+            locationSlot: observation.locationSlot,
+            thumbprint: observation.windowsFields?.thumbprint,
+          });
+    // Must not throw CERTOPS_KEY_REFERENCE_INVALID, exactly as
+    // upsertManagedCertificateByMonitorSource would apply it server-side.
+    return normalizeKeyReference(keyReference);
+  }
+
+  it("accepts a real IIS SNI binding observation with a store-resident private key (Test 9 real-host scenario)", () => {
+    // The shipped agent (packages/agent/src/index.js runWindowsDiscoveryScan)
+    // never transmits a "thumbprint" metadata field for any location kind
+    // today, so windowsFields.thumbprint is always undefined server-side and
+    // defaultKeyReference falls back to locationSlot -- still a stable,
+    // unique winstore:// pointer per binding, just not thumbprint-suffixed.
+    const ref = keyReferenceForObservation({
+      evidenceId: "ev_iis_1",
+      eventType: "certificate.observed",
+      observedAt: "2026-08-08T11:45:00.000Z",
+      fingerprintSha256: "5".repeat(64),
+      metadata: [
+        { name: "locationKind", value: "iis_binding" },
+        { name: "locationSlot", value: "Default Web Site:8443" },
+        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "siteName", value: "Default Web Site" },
+        { name: "port", value: "8443" },
+        { name: "sniHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: "My" },
+        { name: "keyPresent", value: true },
+      ],
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/Default Web Site:8443");
+  });
+
+  it("accepts a real http_sys binding observation with a store-resident private key", () => {
+    const ref = keyReferenceForObservation({
+      evidenceId: "ev_httpsys_1",
+      eventType: "certificate.observed",
+      observedAt: "2026-08-08T11:45:00.000Z",
+      fingerprintSha256: "6".repeat(64),
+      metadata: [
+        { name: "locationKind", value: "http_sys" },
+        { name: "locationSlot", value: "0.0.0.0:5986" },
+        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "port", value: "5986" },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: "My" },
+        { name: "keyPresent", value: true },
+      ],
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/0.0.0.0:5986");
+  });
+
+  it("prefers an explicit thumbprint over locationSlot when the agent does supply one", () => {
+    const ref = keyReferenceForObservation({
+      evidenceId: "ev_iis_2",
+      eventType: "certificate.observed",
+      observedAt: "2026-08-08T11:45:00.000Z",
+      fingerprintSha256: "7".repeat(64),
+      metadata: [
+        { name: "locationKind", value: "windows_store" },
+        { name: "locationSlot", value: "LocalMachine/My/some-cn" },
+        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "storeLocation", value: "LocalMachine" },
+        { name: "storeName", value: "My" },
+        { name: "thumbprint", value: "587c96d037a416002a3cbeeb7c6e8c31e1dc2c94" },
+        { name: "keyPresent", value: true },
+      ],
+    });
+    assert.equal(ref, "winstore://LocalMachine/My/587c96d037a416002a3cbeeb7c6e8c31e1dc2c94");
+  });
+});
+
 describe("certSourceRefFor / targetSourceRefFor - Windows location identity (task #15 reconciliation)", () => {
   function windowsObservation(overrides = {}) {
     return normalizeAgentFilesystemObservation({

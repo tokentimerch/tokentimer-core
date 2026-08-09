@@ -21,13 +21,28 @@
  * base64/DER dump mode. The control-plane observation contract requires a
  * real SHA-256 `fingerprintSha256` (see ../evidence's FINGERPRINT_SHA256_PATTERN),
  * which cannot be derived from a SHA-1 hex string. This module closes that
- * one gap -- and only that gap -- with a minimal, read-only PowerShell call
- * that fetches each store certificate's own public `.RawData` (the same
- * DER bytes a TLS peer receives on the wire) purely to compute the
- * SHA-256 fingerprint locally via node:crypto's X509Certificate. It never
- * touches key material and never duplicates ../windows-discovery's own
- * subject/issuer/SAN/date/key-presence/binding/site parsing -- those fields
- * always come from the canonical module.
+ * gap with a minimal, read-only PowerShell call that fetches each store
+ * certificate's own public `.RawData` (the same DER bytes a TLS peer
+ * receives on the wire) purely to compute the SHA-256 fingerprint locally
+ * via node:crypto's X509Certificate. It never touches key material and
+ * never duplicates ../windows-discovery's own subject/issuer/date/
+ * key-presence/binding/site parsing -- those fields always come from the
+ * canonical module.
+ *
+ * Subject Alternative Names are the one field this adapter DOES re-derive
+ * independently, rather than trusting ../windows-discovery's own SAN
+ * parse: a 2026-08-08 real-host finding (two independent Windows Server
+ * 2022 VMs, different SKUs/images) showed `certutil -store -v` -- the only
+ * certutil invocation that ever prints the SAN extension -- can fail
+ * outright with NTE_NOT_FOUND, on every store and every certificate, while
+ * the exact same certificate's bytes remain readable via
+ * `Get-ChildItem Cert:\...` (the same call this module already makes for
+ * fingerprint completion). Since Node's own X509Certificate parses SANs
+ * out of those same already-fetched raw bytes, this adapter derives SANs
+ * from that source when available and only falls back to
+ * ../windows-discovery's certutil-text-parsed list when it is not (see
+ * resolveSubjectAltNames below), so SAN reporting no longer depends on
+ * `-v` working at all.
  */
 
 const { spawnSync } = require("node:child_process");
@@ -165,6 +180,80 @@ function computeFingerprintSha256(rawCertificateBase64, onWarning = () => {}) {
 }
 
 /**
+ * Parses Node's own `X509Certificate#subjectAltName` string format (e.g.
+ * `"DNS:example.com, DNS:www.example.com, IP Address:10.0.0.5"`) into a
+ * plain array of bare name values, matching ../windows-discovery's
+ * `parseSubjectAlternativeNames` output shape (no "DNS:"/"IP Address:"
+ * prefix) so a caller never has to know which parser produced a given
+ * subjectAltNames array. Deliberately a separate parser rather than a
+ * reuse of that function: the two tools format the same extension
+ * differently ("DNS Name=" with a space+equals vs "DNS:" with a colon).
+ *
+ * @param {string|undefined} subjectAltName
+ * @returns {string[]}
+ */
+function parseNodeSubjectAltName(subjectAltName) {
+  if (typeof subjectAltName !== "string" || !subjectAltName) return [];
+  return subjectAltName
+    .split(",")
+    .map((entry) => entry.trim())
+    .map((entry) => /^(?:DNS|IP Address|URI|email)\s*:\s*(.+)$/i.exec(entry))
+    .filter((match) => match !== null)
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+}
+
+/**
+ * Reads Subject Alternative Names directly off a certificate's own raw DER
+ * bytes via Node's `X509Certificate#subjectAltName`, rather than relying on
+ * ../windows-discovery's parse of certutil's `-v` text dump.
+ *
+ * This closes a real gap, not a cosmetic one: a 2026-08-08 real-host finding
+ * (two independent Windows Server 2022 VMs, different SKUs/images) showed
+ * `certutil -store <name> -v` can fail outright (NTE_NOT_FOUND) even though
+ * the exact same certificate's bytes are always readable via
+ * `Get-ChildItem Cert:\...` -- which this module already does, for every
+ * store certificate, to compute fingerprintSha256 above. Deriving SANs from
+ * that same already-fetched blob means this adapter's SAN reporting no
+ * longer depends on `-v` working at all, on any host.
+ *
+ * @param {string|null|undefined} rawCertificateBase64
+ * @param {(m: string) => void} onWarning
+ * @returns {string[]}
+ */
+function readSubjectAltNamesFromDer(rawCertificateBase64, onWarning = () => {}) {
+  if (!rawCertificateBase64 || typeof rawCertificateBase64 !== "string") return [];
+  try {
+    const der = Buffer.from(rawCertificateBase64, "base64");
+    const cert = new X509Certificate(der);
+    return parseNodeSubjectAltName(cert.subjectAltName);
+  } catch (err) {
+    onWarning(`windows discovery: could not read subject alternative names from certificate bytes: ${err?.message || err}`);
+    return [];
+  }
+}
+
+/**
+ * Resolves the subjectAltNames field for one certificate, preferring the
+ * raw-bytes-derived list (see readSubjectAltNamesFromDer above) and only
+ * falling back to ../windows-discovery's own certutil-text-parsed list when
+ * the raw-bytes derivation is unavailable (e.g. the fingerprint-completion
+ * PowerShell step itself is unavailable on this host). Either source, once
+ * chosen, is joined into the same comma-separated string this module's
+ * observation shape has always used for subjectAltNames.
+ *
+ * @param {ReturnType<typeof parseCertutilStoreBlock>} cert
+ * @param {string|undefined} rawCertificateBase64
+ * @param {(m: string) => void} onWarning
+ * @returns {string}
+ */
+function resolveSubjectAltNames(cert, rawCertificateBase64, onWarning) {
+  const fromDer = readSubjectAltNamesFromDer(rawCertificateBase64, onWarning);
+  if (fromDer.length > 0) return fromDer.join(",");
+  return Array.isArray(cert.subjectAlternativeNames) ? cert.subjectAlternativeNames.join(",") : "";
+}
+
+/**
  * Extracts the CN attribute from a raw X.509 subject string (e.g.
  * "CN=example.com, O=Example Inc"). Mirrors agentObservations.js's
  * commonNameFromSubject on the control-plane side.
@@ -267,9 +356,7 @@ async function collectWindowsDiscoveryObservations({
       onWarning(`windows discovery (windows_store): no fingerprint available for ${thumbprint || "unknown"}, skipping`);
       continue;
     }
-    const subjectAltNames = Array.isArray(cert.subjectAlternativeNames)
-      ? cert.subjectAlternativeNames.join(",")
-      : "";
+    const subjectAltNames = resolveSubjectAltNames(cert, rawDerByThumbprint.get(thumbprint), onWarning);
     const slotIdentity =
       commonNameFromSubject(cert.subject) ||
       subjectAltNames.split(",").map((s) => s.trim()).filter(Boolean)[0] ||
@@ -308,9 +395,7 @@ async function collectWindowsDiscoveryObservations({
     const parsed = splitIpPortLiteral(binding.ipPort);
     if (!parsed) continue;
 
-    const subjectAltNames = Array.isArray(cert.subjectAlternativeNames)
-      ? cert.subjectAlternativeNames.join(",")
-      : "";
+    const subjectAltNames = resolveSubjectAltNames(cert, rawDerByThumbprint.get(thumbprint), onWarning);
     const base = {
       fingerprintSha256,
       subject: cert.subject,
@@ -357,4 +442,7 @@ module.exports = {
   collectWindowsDiscoveryObservations,
   fetchRawCertificateDerByThumbprint,
   computeFingerprintSha256,
+  parseNodeSubjectAltName,
+  readSubjectAltNamesFromDer,
+  resolveSubjectAltNames,
 };

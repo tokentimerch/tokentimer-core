@@ -253,6 +253,29 @@ function defaultLocationRef(locationKind, { targetHost, windowsFields, locationS
 }
 
 /**
+ * Server-derived keyReference (zero-custody material-locality pointer; see
+ * inventory.js's KEY_REFERENCE_ALLOWED_SCHEME_PREFIXES) for a non-filesystem
+ * observation. Deliberately NOT the same string as defaultLocationRef/
+ * deploymentReference: a binding descriptor like `iis://Default Web
+ * Site:8443` or `http-sys://host:port` answers "how was this certificate
+ * exposed", which is exactly the free-text shape the allow-list rejects,
+ * because it is not one of the pointer schemes that actually names a key
+ * custody location. For every Windows-sourced location kind the key -- when
+ * present at all -- physically lives in the same machine certificate store
+ * the binding merely references, never inside the binding itself, so the
+ * custody pointer is always the winstore:// store coordinate regardless of
+ * whether this observation came from the store enumeration or an IIS/
+ * http.sys binding scan.
+ */
+function defaultKeyReference(locationKind, { windowsFields, locationSlot, thumbprint }) {
+  if (locationKind === "filesystem") return null;
+  const suffix = thumbprint || locationSlot;
+  const storeLocation = windowsFields.storeLocation || "LocalMachine";
+  const storeName = windowsFields.storeName || "My";
+  return `winstore://${storeLocation}/${storeName}${suffix ? `/${suffix}` : ""}`;
+}
+
+/**
  * Structured agent-observation contract, generalized (task: "generalize this
  * contract safely so an observation can represent non-filesystem locations")
  * beyond the original B17 filesystem-only shape. `locationKind` defaults to
@@ -566,7 +589,11 @@ async function upsertInventoryForObservation(client, observation) {
           : null,
       keyReference: isFilesystem
         ? `file://${observation.filePath}`
-        : observation.locationRef,
+        : defaultKeyReference(observation.locationKind, {
+            windowsFields: observation.windowsFields,
+            locationSlot: observation.locationSlot,
+            thumbprint: observation.windowsFields?.thumbprint,
+          }),
       // Renewal adoption (renewalAdoption.js) refuses to arm a renewal for a
       // certificate with no deployed_cert_path. Filesystem discovery
       // observes that destination directly; Windows discovery has no
@@ -886,6 +913,7 @@ module.exports = {
     normalizeAgentFilesystemObservation,
     targetSourceRefFor,
     defaultLocationRef,
+    defaultKeyReference,
     windowsLocationFieldsFor,
   },
 };
