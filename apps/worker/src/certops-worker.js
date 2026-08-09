@@ -922,8 +922,8 @@ function createBatchedImpactResolver({ client, log = logger } = {}) {
  * not level: only rows this UPDATE actually flips are candidates, so a
  * worker tick that finds nothing new to flip queues nothing).
  *
- * `resolveImpactedCertificates` is a Phase F seam: it defaults to
- * `createBatchedImpactResolver` above, which resolves each workspace's full
+ * `resolveImpactedCertificates` defaults to `createBatchedImpactResolver`,
+ * which resolves each workspace's full
  * renewal-path dependency projection at most once per sweep tick (shared
  * across every agent transitioning in that workspace this tick) and embeds
  * the dependent auto-renew certificates for each agent from it. Tests that
@@ -936,8 +936,12 @@ export async function sweepStaleAgents({
   resolveImpactedCertificates = createBatchedImpactResolver({ client, log }),
   alertQueuer = queueAgentHealthAlert,
 } = {}) {
-  const result = await client.query(
-    `UPDATE certops_agents
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const result = await client.query(
+      `UPDATE certops_agents
         SET status = 'offline',
             updated_at = NOW()
       WHERE status = 'active'
@@ -945,32 +949,38 @@ export async function sweepStaleAgents({
               < NOW() - ($1 || ' milliseconds')::interval
       RETURNING id, agent_id, workspace_id, name, hostname, platform,
                 last_seen_at, downtime_alerts_enabled, contact_group_id`,
-    [String(offlineAfterMs)],
-  );
+      [String(offlineAfterMs)],
+    );
 
-  const staleAgents = result.rows.map((row) => ({
-    id: row.id,
-    agentId: row.agent_id,
-    workspaceId: row.workspace_id,
-    name: row.name,
-    hostname: row.hostname,
-    platform: row.platform,
-    lastSeenAt: row.last_seen_at,
-    downtimeAlertsEnabled: row.downtime_alerts_enabled,
-    contactGroupId: row.contact_group_id,
-  }));
+    const staleAgents = result.rows.map((row) => ({
+      id: row.id,
+      agentId: row.agent_id,
+      workspaceId: row.workspace_id,
+      name: row.name,
+      hostname: row.hostname,
+      platform: row.platform,
+      lastSeenAt: row.last_seen_at,
+      downtimeAlertsEnabled: row.downtime_alerts_enabled,
+      contactGroupId: row.contact_group_id,
+    }));
 
-  if (staleAgents.length > 0) {
-    log.warn("certops-stale-agents-detected", {
-      count: staleAgents.length,
-      offlineAfterMs,
-      agentIds: staleAgents.map((agent) => agent.agentId),
-    });
-  }
+    if (staleAgents.length > 0) {
+      log.warn("certops-stale-agents-detected", {
+        count: staleAgents.length,
+        offlineAfterMs,
+        agentIds: staleAgents.map((agent) => agent.agentId),
+      });
+    }
 
-  let alertsQueued = 0;
-  for (const agent of staleAgents) {
-    try {
+    let alertsQueued = 0;
+    for (const agent of staleAgents) {
+      await client.query(
+        `INSERT INTO certops_agent_health_incidents (
+           agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
+         ) VALUES ($1, $2, NOW(), $3, 'agent_health:' || $1::text || ':down')
+         ON CONFLICT (agent_id) DO NOTHING`,
+        [agent.id, agent.workspaceId, agent.lastSeenAt],
+      );
       const impactedCertificates = await resolveImpactedCertificates(agent);
       const outcome = await alertQueuer({
         client,
@@ -990,15 +1000,21 @@ export async function sweepStaleAgents({
         offlineAfterMs,
       });
       if (outcome.queued) alertsQueued += 1;
-    } catch (err) {
-      log.error("certops-agent-down-alert-failed", {
-        agentId: agent.agentId,
-        error: err.message,
-      });
     }
-  }
 
-  return { staleCount: staleAgents.length, staleAgents, alertsQueued };
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return { staleCount: staleAgents.length, staleAgents, alertsQueued };
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // Preserve the transition/alert failure.
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1006,14 +1022,8 @@ export async function sweepStaleAgents({
  * currently-active agents rather than a status transition the SQL layer can
  * see directly: the flip back to 'active' happens on the agent's own
  * heartbeat/claim call (agentDispatch.js), not in this worker, so recovery
- * is detected here by the presence of a still-open `agent_health:<id>:down`
- * alert_queue row instead of a fresh UPDATE...RETURNING edge. That row is
- * exactly the fact this sweep needs: "this agent was alerted down and has
- * not yet been alerted recovered." queueAgentHealthAlert('recovered') then
- * enforces the real rule (only alert if the down alert was actually
- * delivered) and always clears the row either way, so a recovery that
- * arrives before the down alert was ever sent still starts the next outage
- * clean.
+ * is detected from the durable incident row created atomically with the
+ * offline transition. The alert queue is delivery state, not incident state.
  */
 export async function sweepAgentRecoveries({
   client,
@@ -1021,31 +1031,33 @@ export async function sweepAgentRecoveries({
   resolveImpactedCertificates = createBatchedImpactResolver({ client, log }),
   alertQueuer = queueAgentHealthAlert,
 } = {}) {
-  const result = await client.query(
-    `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const result = await client.query(
+      `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
             a.last_seen_at, a.downtime_alerts_enabled, a.contact_group_id
        FROM certops_agents a
-       JOIN alert_queue aq
-         ON aq.certops_agent_id = a.id
-        AND aq.alert_key = 'agent_health:' || a.id || ':down'
-      WHERE a.status = 'active'`,
-  );
+       JOIN certops_agent_health_incidents i ON i.agent_id = a.id
+      WHERE a.status = 'active'
+      FOR UPDATE OF i`,
+    );
 
-  const candidates = result.rows.map((row) => ({
-    id: row.id,
-    agentId: row.agent_id,
-    workspaceId: row.workspace_id,
-    name: row.name,
-    hostname: row.hostname,
-    platform: row.platform,
-    lastSeenAt: row.last_seen_at,
-    downtimeAlertsEnabled: row.downtime_alerts_enabled,
-    contactGroupId: row.contact_group_id,
-  }));
+    const candidates = result.rows.map((row) => ({
+      id: row.id,
+      agentId: row.agent_id,
+      workspaceId: row.workspace_id,
+      name: row.name,
+      hostname: row.hostname,
+      platform: row.platform,
+      lastSeenAt: row.last_seen_at,
+      downtimeAlertsEnabled: row.downtime_alerts_enabled,
+      contactGroupId: row.contact_group_id,
+    }));
 
-  let alertsQueued = 0;
-  for (const agent of candidates) {
-    try {
+    let alertsQueued = 0;
+    for (const agent of candidates) {
       const impactedCertificates = await resolveImpactedCertificates(agent);
       const outcome = await alertQueuer({
         client,
@@ -1054,15 +1066,27 @@ export async function sweepAgentRecoveries({
         impactedCertificates,
       });
       if (outcome.queued) alertsQueued += 1;
-    } catch (err) {
-      log.error("certops-agent-recovery-alert-failed", {
-        agentId: agent.agentId,
-        error: err.message,
-      });
+      if (outcome.retry === true) continue;
+      await client.query(
+        `DELETE FROM certops_agent_health_incidents
+          WHERE agent_id = $1 AND workspace_id = $2`,
+        [agent.id, agent.workspaceId],
+      );
     }
-  }
 
-  return { candidateCount: candidates.length, alertsQueued };
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return { candidateCount: candidates.length, alertsQueued };
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // Preserve the transition/alert failure.
+      }
+    }
+    throw error;
+  }
 }
 
 async function withTimeout(promise, timeoutMs, sweepName) {

@@ -18,6 +18,9 @@ const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   assertRenewalPerCaCapacityAvailable,
 } = require("./renewalCapacity");
+const {
+  resolveAgentJobRoutingRequirements,
+} = require("./agentJobEligibility");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -1083,30 +1086,34 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     );
   }
 
-  // Explicit caller/payload assignment always wins; only fall back to the
-  // certificate's stored discovery agent (agent_filesystem source) when
-  // neither was supplied, so a caller can still override for a legitimate
-  // hand-off (e.g. re-homing a certificate to a replacement agent).
+  // Derive the same raw requirements consumed by dispatch and renewal-path
+  // health, then apply this write path's validation and normalization.
+  const rawRouting = resolveAgentJobRoutingRequirements({
+    executorKind,
+    assignedAgentId:
+      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
+    requiredTargetSelector: options.requiredTargetSelector,
+    requiredDnsProvider: options.requiredDnsProvider,
+    requiredCommandProfile: options.requiredCommandProfile,
+    payload,
+  });
+
   const assignedAgentId =
     normalizeOptionalShortText(
-      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
+      rawRouting.assignedAgentId,
       "assignedAgentId",
     ) || null;
 
   const requiredTargetSelector =
     normalizeOptionalPublicText(
-      options.requiredTargetSelector ??
-        payload.targetSelector ??
-        (payload.target && typeof payload.target === "object"
-          ? payload.target.reference
-          : null),
+      rawRouting.requiredTargetSelector,
       "requiredTargetSelector",
       512,
     ) || null;
 
   const requiredDnsProvider =
     normalizeOptionalShortText(
-      options.requiredDnsProvider ?? payload.dnsProvider,
+      rawRouting.requiredDnsProvider,
       "requiredDnsProvider",
     ) || null;
   if (
@@ -1118,7 +1125,7 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
 
   const requiredCommandProfile =
     normalizeOptionalShortText(
-      options.requiredCommandProfile ?? payload.commandRef,
+      rawRouting.requiredCommandProfile,
       "requiredCommandProfile",
     ) || null;
   if (
@@ -1249,6 +1256,7 @@ async function resolveManagedCertificateJobDefaults({
   const result = await db.query(
     `SELECT mc.key_mode,
             mc.source,
+            mc.deployed_agent_id,
             mc.public_metadata->'controllerObservation'->>'agentId'
               AS discovery_agent_id,
             cp.status AS profile_status
@@ -1297,6 +1305,12 @@ async function resolveManagedCertificateJobDefaults({
     );
   }
 
+  // Windows store/IIS observations already persist the reporting agent's row
+  // id. The store and binding are host-local, so every later scheduler job
+  // must stay pinned to that same executor just like filesystem discovery.
+  if (row.source === "agent_windows" && row.deployed_agent_id) {
+    return { autoAssignedAgentId: row.deployed_agent_id };
+  }
   if (row.source !== "agent_filesystem" || !row.discovery_agent_id) {
     return { autoAssignedAgentId: null };
   }

@@ -512,6 +512,7 @@ describe("loadAgentConfig", () => {
       const { windowsDiscovery } = loadAgentConfig({ configDir: dir });
       assert.equal(windowsDiscovery.enabled, true);
       assert.equal(windowsDiscovery.intervalMs, 30 * 60 * 1000);
+      assert.deepEqual(windowsDiscovery.stores, ["My"]);
     });
   });
 
@@ -523,7 +524,11 @@ describe("loadAgentConfig", () => {
       configPath,
       JSON.stringify({
         serverUrl: "https://control-plane.example.com",
-        windowsDiscovery: { enabled: false, intervalMs: 5000 },
+        windowsDiscovery: {
+          enabled: false,
+          intervalMs: 5000,
+          stores: ["My", "WebHosting", "webhosting"],
+        },
       }),
       "utf8",
     );
@@ -531,6 +536,7 @@ describe("loadAgentConfig", () => {
       const { windowsDiscovery } = loadAgentConfig({ configDir: dir });
       assert.equal(windowsDiscovery.enabled, false);
       assert.equal(windowsDiscovery.intervalMs, 5000);
+      assert.deepEqual(windowsDiscovery.stores, ["My", "WebHosting"]);
     });
   });
 
@@ -566,6 +572,21 @@ describe("loadAgentConfig", () => {
       assert.throws(
         () => loadAgentConfig({ configDir: dir }),
         /windowsDiscovery\.intervalMs must be a positive integer/,
+      );
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windowsDiscovery: { stores: ["My", "WebHosting; Remove-Item C:\\"] },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windowsDiscovery\.stores contains an invalid store name/,
       );
     });
   });

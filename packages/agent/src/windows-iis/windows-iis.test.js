@@ -616,7 +616,7 @@ describe("bindCertificate", () => {
     assert.equal(execFileImpl.calls.filter((call) => call.args[1] === "add").length, 1);
   });
 
-  it("retries the add call on 'The parameter is incorrect.' (real-host finding, 2026-08-07) and succeeds once the transient error clears", async () => {
+  it("retries the add call on 'The parameter is incorrect.' and succeeds once the transient error clears", async () => {
     let addAttempts = 0;
     const succeedOnAttempt = 3;
     const execFileImpl = makeExecStub((key) => {

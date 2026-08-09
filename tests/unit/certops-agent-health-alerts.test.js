@@ -43,8 +43,10 @@ function agentFixture(overrides = {}) {
 
 function happyPathHandler(overrides = {}) {
   return (sql) => {
-    if (sql.includes("FROM alert_queue WHERE alert_key") && sql.includes("status = 'sent'")) {
-      return overrides.sentDown !== undefined ? overrides.sentDown : { rows: [{ id: 1 }] };
+    if (sql.includes("SELECT id, status, delivery_claim_id")) {
+      return overrides.sentDown !== undefined
+        ? overrides.sentDown
+        : { rows: [{ id: 1, status: "sent", delivery_claim_id: null }] };
     }
     if (sql.startsWith("DELETE FROM alert_queue")) {
       return { rows: [] };
@@ -72,7 +74,9 @@ function happyPathHandler(overrides = {}) {
           };
     }
     if (sql.includes("INSERT INTO alert_queue")) {
-      return { rows: [], rowCount: 1 };
+      return overrides.insertResult !== undefined
+        ? overrides.insertResult
+        : { rows: [], rowCount: 1 };
     }
     throw new Error(`unexpected query: ${sql}`);
   };
@@ -120,11 +124,17 @@ describe("agentHealthAlerts.queueAgentHealthAlert (down)", () => {
     assert.equal(metadata.agentId, "agent-01");
     assert.equal(metadata.transitionType, "down");
     assert.equal(metadata.offlineAfterMs, 600000);
+    const deletes = state.queries.filter((query) =>
+      query.text.startsWith("DELETE FROM alert_queue"),
+    );
+    assert.deepEqual(deletes.map((query) => query.params), [
+      ["agent_health:agent-row-1:recovered", "agent-row-1"],
+    ]);
   });
 
   it("dedupes: does not queue a second down alert while one is already queued", async () => {
     const { state, client } = createMockClient(
-      happyPathHandler({ existingAlert: { rows: [{ id: 9 }] } }),
+      happyPathHandler({ insertResult: { rows: [], rowCount: 0 } }),
     );
     const outcome = await queueAgentHealthAlert({
       client,
@@ -135,8 +145,8 @@ describe("agentHealthAlerts.queueAgentHealthAlert (down)", () => {
     assert.equal(outcome.queued, false);
     assert.equal(outcome.reason, "already_queued");
     assert.equal(
-      state.queries.some((q) => q.text.includes("INSERT INTO alert_queue")),
-      false,
+      state.queries.filter((q) => q.text.includes("INSERT INTO alert_queue")).length,
+      1,
     );
   });
 
@@ -271,8 +281,11 @@ describe("agentHealthAlerts.queueAgentHealthAlert (recovered)", () => {
     assert.equal(outcome.queued, true);
     assert.equal(outcome.alertKey, "agent_health:agent-row-1:recovered");
     const deletes = state.queries.filter((q) => q.text.startsWith("DELETE FROM alert_queue"));
-    assert.equal(deletes.length, 2, "old down row and any stale recovered row are cleared");
-    assert.deepEqual(deletes[0].params, ["agent_health:agent-row-1:down"]);
+    assert.equal(deletes.length, 1, "the paired down row is cleared after recovery is queued");
+    assert.deepEqual(deletes[0].params, [
+      "agent_health:agent-row-1:down",
+      "agent-row-1",
+    ]);
   });
 
   it("does not send recovery when the down alert was never delivered", async () => {
@@ -292,8 +305,59 @@ describe("agentHealthAlerts.queueAgentHealthAlert (recovered)", () => {
     );
     // The stale down row is still cleaned up so a future outage starts fresh.
     const deletes = state.queries.filter((q) => q.text.startsWith("DELETE FROM alert_queue"));
-    assert.equal(deletes.length, 1);
-    assert.deepEqual(deletes[0].params, ["agent_health:agent-row-1:down"]);
+    assert.equal(deletes.length, 2);
+    assert.deepEqual(deletes[0].params, [
+      "agent_health:agent-row-1:down",
+      "agent-row-1",
+    ]);
+  });
+
+  it("keeps the incident open while the DOWN delivery worker owns the row", async () => {
+    const { state, client } = createMockClient(
+      happyPathHandler({
+        sentDown: {
+          rows: [
+            {
+              id: 1,
+              status: "pending",
+              delivery_claim_id: "11111111-1111-4111-8111-111111111111",
+            },
+          ],
+        },
+      }),
+    );
+    const outcome = await queueAgentHealthAlert({
+      client,
+      agent: agentFixture(),
+      transitionType: "recovered",
+    });
+
+    assert.deepEqual(outcome, {
+      queued: false,
+      retry: true,
+      reason: "down_delivery_in_progress",
+    });
+    assert.equal(
+      state.queries.some((query) =>
+        query.text.startsWith("DELETE FROM alert_queue"),
+      ),
+      false,
+    );
+  });
+
+  it("closes the old incident when alerts were disabled while the agent was down", async () => {
+    const { state, client } = createMockClient(happyPathHandler());
+    const outcome = await queueAgentHealthAlert({
+      client,
+      agent: agentFixture({ downtimeAlertsEnabled: false }),
+      transitionType: "recovered",
+    });
+    assert.equal(outcome.queued, false);
+    assert.equal(outcome.reason, "alerts_disabled_incident_closed");
+    assert.equal(
+      state.queries.filter((query) => query.text.startsWith("DELETE FROM alert_queue")).length,
+      2,
+    );
   });
 });
 

@@ -345,9 +345,7 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
       .then(settings => {
         if (cancelled) return;
         setContactGroups(
-          Array.isArray(settings?.contact_groups)
-            ? settings.contact_groups
-            : []
+          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
         );
         setDefaultContactGroupId(settings?.default_contact_group_id || '');
       })
@@ -616,20 +614,27 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                         </Box>
                       </Td>
                       <Td>
-                        <Text fontSize='sm'>{platformLabel(agent.platform)}</Text>
+                        <Text fontSize='sm'>
+                          {platformLabel(agent.platform)}
+                        </Text>
                       </Td>
                       <Td>
                         <VStack align='flex-start' spacing={0.5}>
-                          <AgentStatusBadge status={displayAgentStatus(agent)} />
+                          <AgentStatusBadge
+                            status={displayAgentStatus(agent)}
+                          />
                           {['offline', 'stale'].includes(
-                            String(displayAgentStatus(agent) || '').toLowerCase(),
+                            String(
+                              displayAgentStatus(agent) || ''
+                            ).toLowerCase()
                           ) && agent.dependentAutoRenewCertificateCount > 0 ? (
                             <Text
                               fontSize='xs'
                               color='orange.600'
                               title='Auto-renew certificates whose renewal path currently depends on this agent'
                             >
-                              {agent.dependentAutoRenewCertificateCount} auto-renew{' '}
+                              {agent.dependentAutoRenewCertificateCount}{' '}
+                              auto-renew{' '}
                               {agent.dependentAutoRenewCertificateCount === 1
                                 ? 'certificate'
                                 : 'certificates'}{' '}

@@ -188,6 +188,7 @@ function generateSelfSignedCertWithSanDerBase64(commonName, sanEntries) {
 describe("computeFingerprintSha256", () => {
   it(
     "computes a real SHA-256 fingerprint from base64 DER bytes",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertDerBase64("fingerprint-test.example.com");
@@ -264,11 +265,21 @@ describe("parseNodeSubjectAltName", () => {
   it("ignores entries it does not recognize rather than throwing", () => {
     assert.deepEqual(parseNodeSubjectAltName("othername:some-value, DNS:example.com"), ["example.com"]);
   });
+
+  it("preserves JSON-quoted values containing commas and escaped quotes", () => {
+    assert.deepEqual(
+      parseNodeSubjectAltName(
+        'DNS:example.com, URI:"https://example.com/a,b", email:"ops\\\"blue@example.com"',
+      ),
+      ["example.com", "https://example.com/a,b", 'ops"blue@example.com'],
+    );
+  });
 });
 
 describe("readSubjectAltNamesFromDer", () => {
   it(
     "reads real SAN entries directly from a certificate's own raw DER bytes",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertWithSanDerBase64("san-adapter-test.example.com", [
@@ -300,30 +311,50 @@ describe("readSubjectAltNamesFromDer", () => {
 describe("resolveSubjectAltNames", () => {
   it(
     "prefers the raw-bytes-derived SANs over windows-discovery's certutil-text-parsed list",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertWithSanDerBase64("resolve-san-test.example.com", [
         "DNS:from-der.example.com",
       ]);
       const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
-      assert.equal(resolveSubjectAltNames(cert, derBase64), "from-der.example.com");
+      assert.deepEqual(resolveSubjectAltNames(cert, derBase64), ["from-der.example.com"]);
     },
   );
 
   it("falls back to windows-discovery's certutil-text-parsed SANs when raw bytes are unavailable", () => {
     const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
-    assert.equal(resolveSubjectAltNames(cert, undefined), "from-certutil-text.example.com");
+    assert.deepEqual(resolveSubjectAltNames(cert, undefined), ["from-certutil-text.example.com"]);
   });
 
-  it("returns an empty string when neither source has SANs", () => {
+  it("returns an empty array when neither source has SANs", () => {
     const cert = { subjectAlternativeNames: [] };
-    assert.equal(resolveSubjectAltNames(cert, undefined), "");
+    assert.deepEqual(resolveSubjectAltNames(cert, undefined), []);
   });
 });
 
 describe("collectWindowsDiscoveryObservations", () => {
+  it("rejects unsafe configured store names before spawning any process", async () => {
+    let calls = 0;
+    await assert.rejects(
+      () =>
+        collectWindowsDiscoveryObservations({
+          stores: ["My", "WebHosting; Remove-Item C:\\"],
+          execFileImpl() {
+            calls += 1;
+          },
+          spawn() {
+            calls += 1;
+          },
+        }),
+      /stores must contain 1 to 32 safe Windows store names/,
+    );
+    assert.equal(calls, 0);
+  });
+
   it(
     "reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("store-only.example.com");
@@ -354,6 +385,7 @@ describe("collectWindowsDiscoveryObservations", () => {
 
   it(
     "resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("iis-bound.example.com");
@@ -395,7 +427,73 @@ describe("collectWindowsDiscoveryObservations", () => {
   );
 
   it(
+    "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
+    { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
+    async () => {
+      const thumbprint = "1234567890abcdef1234567890abcdef12345678";
+      const myDer = generateSelfSignedCertDerBase64("my-copy.example.com");
+      const webDer = generateSelfSignedCertDerBase64("webhosting-copy.example.com");
+      const netshStdout = [
+        "    IP:port                      : 10.0.0.5:443",
+        `    Certificate Hash             : ${thumbprint}`,
+        "    Certificate Store Name       : WebHosting",
+        "",
+      ].join("\r\n");
+      const execFileImpl = (file, args, options, callback) => {
+        process.nextTick(() => {
+          if (String(file).includes("netsh")) return callback(null, netshStdout, "");
+          if (String(file).includes("appcmd")) {
+            return callback(
+              null,
+              'SITE "Default Web Site" (id:1,bindings:https/10.0.0.5:443:,state:Started)\n',
+              "",
+            );
+          }
+          const storeName = args.includes("WebHosting") ? "WebHosting" : "My";
+          return callback(
+            null,
+            certutilStoreOutputFor(
+              thumbprint,
+              storeName === "WebHosting"
+                ? "webhosting-copy.example.com"
+                : "my-copy.example.com",
+            ),
+            "",
+          );
+        });
+      };
+      const spawn = (_file, args) =>
+        fakeSpawnResult({
+          stdout: JSON.stringify({
+            items: [{
+              Thumbprint: thumbprint,
+              RawCertificateBase64: args.join(" ").includes("WebHosting") ? webDer : myDer,
+            }],
+          }),
+        });
+
+      const observations = await collectWindowsDiscoveryObservations({
+        stores: ["My"],
+        execFileImpl,
+        spawn,
+      });
+      const binding = observations.find((entry) => entry.locationKind === "iis_binding");
+      assert.ok(binding);
+      assert.equal(binding.storeName, "WebHosting");
+      assert.equal(binding.subject, "CN=webhosting-copy.example.com");
+      assert.deepEqual(
+        observations
+          .filter((entry) => entry.locationKind === "windows_store")
+          .map((entry) => entry.storeName),
+        ["My", "WebHosting"],
+      );
+    },
+  );
+
+  it(
     "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("httpsys-bound.example.com");
@@ -504,6 +602,7 @@ describe("collectWindowsDiscoveryObservations", () => {
   // own raw bytes rather than certutil's (broken) -v text dump.
   it(
     "still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed",
+    // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const thumbprint = "aabbccddeeff00112233445566778899aabbccdd";
@@ -537,7 +636,10 @@ describe("collectWindowsDiscoveryObservations", () => {
       assert.equal(observations.length, 1);
       const [obs] = observations;
       assert.equal(obs.locationKind, "windows_store");
-      assert.equal(obs.subjectAltNames, "v-broken.example.com,alt.v-broken.example.com");
+      assert.deepEqual(obs.subjectAltNames, [
+        "v-broken.example.com",
+        "alt.v-broken.example.com",
+      ]);
     },
   );
 });

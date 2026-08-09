@@ -2947,8 +2947,8 @@ async function runWindowsIisDeployTail({
       };
     }
     emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
-    // Ownership-provenance upgrade (PR review, 2026-08-07): binds this
-    // record to the ACTUAL accepted certificate's thumbprint, not merely
+    // Bind the ownership record to the actual accepted certificate's
+    // thumbprint, not merely
     // "this agent created the container" -- see windows-cert-store's
     // markIssuedContainerAccepted doc comment and ADR-0012 decision 18.
     // Best-effort/non-fatal for the same reason recordIssuedContainer's
@@ -3134,8 +3134,8 @@ async function runWindowsIisDeployTail({
  * actually created that exact container; and even a genuine
  * recordIssuedContainer record only proves this agent created the
  * CONTAINER, not that this agent's certificate is what is CURRENTLY
- * enrolled to it (a PR review found, 2026-08-07, that an operator who
- * later enrolled a different certificate into an agent-created container
+ * enrolled to it. An operator who later enrolled a different certificate
+ * into an agent-created container
  * -- e.g. one reconcileOrphanedWindowsCngContainers found "enrolled" and
  * therefore left alone -- could otherwise inherit tokentimer_installed
  * provenance for that unrelated certificate). The three signals:
@@ -3472,10 +3472,8 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  * `-delstore My`, see acceptCertificateViaCng's own doc comment). A caller
  * that locked only `targetStore` would leave `My` itself unprotected during
  * that window, letting an unrelated `My`-targeted job's own concurrent
- * `certreq -accept` (or this same job's later `-delstore My`) race it --
- * found in PR review (2026-08-07): runWindowsIisDeployTail was locking only
- * `target.store`, while reconcileOrphanedWindowsCngContainers (below) had
- * already been fixed to correctly lock/query both stores. Normal execution
+ * `certreq -accept` (or this same job's later `-delstore My`) race it.
+ * Normal execution
  * must match that same locking scope, not only the crash-reconciliation
  * path.
  *
@@ -3536,8 +3534,8 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
  *
  * Checks BOTH the default `My` store AND the job's recorded target store
  * (which may be the same store, e.g. the common `My`-only case) before
- * concluding a container is orphaned -- a PR review found (2026-08-07)
- * that checking only the target store is unsafe for a non-default-store
+ * concluding a container is orphaned. Checking only the target store is
+ * unsafe for a non-default-store
  * job: recordWindowsCngContainer's `store` field is the job's FINAL target
  * (e.g. "WebHosting"), written at keygen time, well before certreq -accept
  * ever runs; but `certreq -accept` itself only ever populates the default
@@ -5464,9 +5462,17 @@ async function runDiscoveryScan({ directories, client, log = null }) {
  * @param {typeof collectWindowsDiscoveryObservations} [params.collect] injection seam for tests
  * @returns {Promise<{ observed: number, warnings: number }>}
  */
-async function runWindowsDiscoveryScan({ client, log = null, collect = collectWindowsDiscoveryObservations }) {
+async function runWindowsDiscoveryScan({
+  client,
+  stores = ["My"],
+  log = null,
+  collect = collectWindowsDiscoveryObservations,
+}) {
   const warnings = [];
-  const observations = await collect({ onWarning: (message) => warnings.push(message) });
+  const observations = await collect({
+    stores,
+    onWarning: (message) => warnings.push(message),
+  });
   for (const warning of warnings) emitLog(log, warning);
 
   const targetHost = os.hostname();
@@ -5474,8 +5480,7 @@ async function runWindowsDiscoveryScan({ client, log = null, collect = collectWi
   const observedAt = new Date().toISOString();
   for (const observation of observations) {
     // Structured metadata matching agentObservations.js's generalized
-    // observation contract (task: "generalize this contract safely so an
-    // observation can represent non-filesystem locations"). filePath is
+    // observation contract. filePath is
     // intentionally absent -- locationKind !== 'filesystem' requires
     // locationSlot instead, never filePath.
     const metadata = [
@@ -5487,8 +5492,7 @@ async function runWindowsDiscoveryScan({ client, log = null, collect = collectWi
       { name: "serialNumber", value: observation.serialNumber ?? null },
       { name: "validFrom", value: observation.notBefore ?? null },
       { name: "validTo", value: observation.notAfter ?? null },
-      // Boolean fact only (task: "Private-key presence is not private-key
-      // material"), read from the certificate's own HasPrivateKey property
+      // Boolean fact only, read from the certificate's own HasPrivateKey property
       // by collectWindowsDiscoveryObservations -- never a key path, export,
       // or blob. The control plane only derives keyMode: 'os-store-managed'
       // when this is explicitly true (agentObservations.js), so an agent
@@ -5499,7 +5503,12 @@ async function runWindowsDiscoveryScan({ client, log = null, collect = collectWi
       { name: "storeLocation", value: observation.storeLocation ?? null },
       { name: "storeName", value: observation.storeName ?? null },
     ];
-    if (typeof observation.subjectAltNames === "string" && observation.subjectAltNames.length > 0) {
+    if (Array.isArray(observation.subjectAltNames) && observation.subjectAltNames.length > 0) {
+      metadata.push({
+        name: "subjectAltNames",
+        value: JSON.stringify(observation.subjectAltNames),
+      });
+    } else if (typeof observation.subjectAltNames === "string" && observation.subjectAltNames.length > 0) {
       metadata.push({ name: "subjectAltNames", value: observation.subjectAltNames });
     }
     if (observation.locationKind === "iis_binding") {
@@ -6077,7 +6086,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         intervalMs: config.windowsDiscovery.intervalMs,
         signal: controller.signal,
         startImmediately: true,
-        onTick: () => runWindowsDiscoveryScan({ client }),
+        onTick: () => runWindowsDiscoveryScan({
+          client,
+          stores: config.windowsDiscovery.stores,
+        }),
       }),
     );
   }

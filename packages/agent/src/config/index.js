@@ -101,6 +101,8 @@ const DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // different things (current inventory vs. superseded-certificate cleanup)
 // on independent cadences.
 const DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS = 30 * 60 * 1000;
+const WINDOWS_DISCOVERY_STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const DEFAULT_WINDOWS_DISCOVERY_STORES = Object.freeze(["My"]);
 // Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
@@ -745,7 +747,11 @@ function validateWindowsObject(windows) {
  */
 function validateWindowsDiscoveryObject(windowsDiscovery) {
   if (windowsDiscovery === undefined || windowsDiscovery === null) {
-    return { enabled: true, intervalMs: DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS };
+    return {
+      enabled: true,
+      intervalMs: DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS,
+      stores: [...DEFAULT_WINDOWS_DISCOVERY_STORES],
+    };
   }
   if (typeof windowsDiscovery !== "object" || Array.isArray(windowsDiscovery)) {
     throw new Error(
@@ -776,7 +782,33 @@ function validateWindowsDiscoveryObject(windowsDiscovery) {
     }
     intervalMs = windowsDiscovery.intervalMs;
   }
-  return { enabled, intervalMs };
+  let stores = [...DEFAULT_WINDOWS_DISCOVERY_STORES];
+  if (windowsDiscovery.stores !== undefined) {
+    if (
+      !Array.isArray(windowsDiscovery.stores) ||
+      windowsDiscovery.stores.length < 1 ||
+      windowsDiscovery.stores.length > 32
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.stores must be an array containing 1 to 32 store names",
+      );
+    }
+    const seen = new Set();
+    stores = [];
+    for (const store of windowsDiscovery.stores) {
+      if (typeof store !== "string" || !WINDOWS_DISCOVERY_STORE_PATTERN.test(store)) {
+        throw new Error(
+          "tokentimer-agent: windowsDiscovery.stores contains an invalid store name",
+        );
+      }
+      const key = store.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        stores.push(store);
+      }
+    }
+  }
+  return { enabled, intervalMs, stores };
 }
 
 function validateCaBundlePath(caBundlePath) {
@@ -945,7 +977,7 @@ function validateExecutionObject(execution, configDir) {
  *   policy: object|null,
  *   discovery: {directories: string[], intervalMs: number}|null,
  *   windows: {supersededRetentionHours: number, sweepIntervalMs: number},
- *   windowsDiscovery: {enabled: boolean, intervalMs: number},
+ *   windowsDiscovery: {enabled: boolean, intervalMs: number, stores: string[]},
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
  *   requireSignedAgentId: boolean,

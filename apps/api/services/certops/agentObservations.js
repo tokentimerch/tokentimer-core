@@ -1,10 +1,8 @@
 "use strict";
 
 /**
- * Agent discovery observations (B17 + B18), generalized beyond filesystem
- * discovery to Windows machine-store/IIS-binding/http.sys locations (task:
- * "generalize this contract safely so an observation can represent
- * non-filesystem locations").
+ * Agent certificate discovery, generalized beyond filesystem paths to Windows
+ * machine-store, IIS-binding, and http.sys locations.
  *
  * Jobless certificate.observed evidence from a credential-authenticated agent
  * must:
@@ -32,6 +30,11 @@ const {
   enforceAgentSequence,
   assertEvidenceClaimOwnership,
 } = require("./agentDispatch");
+const {
+  WINDOWS_IIS_SITE_PATTERN,
+  WINDOWS_SNI_HOST_PATTERN,
+  WINDOWS_STORE_NAME_PATTERN,
+} = require("./renewalProfile");
 
 const CERTOPS_AGENT_OBSERVATION_INVALID = "CERTOPS_AGENT_OBSERVATION_INVALID";
 const CERTOPS_AGENT_EVIDENCE_ID_REQUIRED = "CERTOPS_AGENT_EVIDENCE_ID_REQUIRED";
@@ -40,13 +43,12 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_PATH = 512;
 const MAX_TEXT = 1024;
 
-// The observation contract's locality discriminator (task: "Windows / OS-store
-// certificate discovery"). 'filesystem' is the original B17 shape (identity =
-// filePath). The other three are non-filesystem locations reported by Windows
+// The observation contract's locality discriminator. 'filesystem' uses a
+// filePath identity. The other three are non-filesystem locations reported by Windows
 // discovery; identity for those is `locationSlot`, a stable per-binding string
 // the agent computes (e.g. "Default Web Site:443", "LocalMachine/My/<thumbprint>")
 // that survives a certificate rotation at the same location so a renewal
-// refreshes the existing row instead of creating a duplicate (task #15).
+// refreshes the existing row instead of creating a duplicate.
 const LOCATION_KINDS = new Set([
   "filesystem",
   "windows_store",
@@ -93,8 +95,8 @@ function requiredId(value, fieldName) {
 
 /**
  * Strict boolean-or-absent parse for the Windows discovery `keyPresent`
- * fact (task: "reporting key presence without export", mirroring
- * filesystem discovery's own coLocatedKeyDetected signal). Named `keyPresent`
+ * fact, mirroring filesystem discovery's own coLocatedKeyDetected signal.
+ * Named `keyPresent`
  * rather than `privateKeyPresent` deliberately: the latter's normalized form
  * contains the substring "privatekey", which both
  * packages/log-scrub/secret-material.js's field-name scan and this repo's
@@ -134,6 +136,14 @@ function optionalText(value, fieldName, max = MAX_TEXT) {
   return trimmed;
 }
 
+function optionalPatternText(value, fieldName, max, pattern) {
+  const normalized = optionalText(value, fieldName, max);
+  if (normalized !== null && !pattern.test(normalized)) {
+    throw observationError(`${fieldName} is invalid`);
+  }
+  return normalized;
+}
+
 function optionalSha256(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) {
@@ -154,6 +164,23 @@ function optionalStringArray(value, fieldName) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (!Array.isArray(parsed)) {
+            throw observationError(`${fieldName} is invalid`);
+          }
+          return parsed
+            .filter((entry) => typeof entry === "string")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .slice(0, 64);
+        } catch (error) {
+          if (error?.code === CERTOPS_AGENT_OBSERVATION_INVALID) throw error;
+          throw observationError(`${fieldName} is invalid`);
+        }
+      }
       return value
         .split(/[,\n]/)
         .map((part) => part.trim())
@@ -204,26 +231,50 @@ function parseWindowsPort(raw, fieldName) {
  * item regardless of kind, so this does not loosen that boundary.
  */
 function windowsLocationFieldsFor(locationKind, clientMeta) {
+  const storeLocation =
+    optionalPatternText(
+      clientMeta.storeLocation,
+      "storeLocation",
+      64,
+      /^LocalMachine$/,
+    ) || "LocalMachine";
+  const storeName =
+    optionalPatternText(
+      clientMeta.storeName,
+      "storeName",
+      64,
+      WINDOWS_STORE_NAME_PATTERN,
+    ) || "My";
   if (locationKind === "windows_store") {
     return {
-      storeLocation: optionalText(clientMeta.storeLocation, "storeLocation", 64) || "LocalMachine",
-      storeName: optionalText(clientMeta.storeName, "storeName", 64) || "My",
+      storeLocation,
+      storeName,
       thumbprint: optionalText(clientMeta.thumbprint, "thumbprint", 64),
     };
   }
   if (locationKind === "iis_binding") {
     return {
-      storeLocation: optionalText(clientMeta.storeLocation, "storeLocation", 64) || "LocalMachine",
-      storeName: optionalText(clientMeta.storeName, "storeName", 64) || "My",
-      siteName: optionalText(clientMeta.siteName, "siteName", 256),
+      storeLocation,
+      storeName,
+      siteName: optionalPatternText(
+        clientMeta.siteName,
+        "siteName",
+        256,
+        WINDOWS_IIS_SITE_PATTERN,
+      ),
       port: parseWindowsPort(clientMeta.port, "port"),
-      sniHost: optionalText(clientMeta.sniHost, "sniHost", 255),
+      sniHost: optionalPatternText(
+        clientMeta.sniHost,
+        "sniHost",
+        255,
+        WINDOWS_SNI_HOST_PATTERN,
+      ),
     };
   }
   if (locationKind === "http_sys") {
     return {
-      storeLocation: optionalText(clientMeta.storeLocation, "storeLocation", 64) || "LocalMachine",
-      storeName: optionalText(clientMeta.storeName, "storeName", 64) || "My",
+      storeLocation,
+      storeName,
       port: parseWindowsPort(clientMeta.port, "port"),
     };
   }
@@ -276,9 +327,8 @@ function defaultKeyReference(locationKind, { windowsFields, locationSlot, thumbp
 }
 
 /**
- * Structured agent-observation contract, generalized (task: "generalize this
- * contract safely so an observation can represent non-filesystem locations")
- * beyond the original B17 filesystem-only shape. `locationKind` defaults to
+ * Structured agent-observation contract generalized beyond the original
+ * filesystem-only shape. `locationKind` defaults to
  * 'filesystem' so every existing agent (which never sends this field) keeps
  * behaving exactly as before -- filePath stays required, identity stays
  * `agentId/targetHost/filePath`. A `locationKind` of windows_store/
@@ -358,8 +408,7 @@ function normalizeAgentFilesystemObservation({
       );
     }
     windowsFields = windowsLocationFieldsFor(locationKind, clientMeta);
-    // Fact only, never material (task: "Private-key presence is not
-    // private-key material"): whether the location's certificate has an
+    // Fact only, never material: whether the location's certificate has an
     // associated private key, exactly as Windows itself reports it
     // (`X509Certificate2.HasPrivateKey`) -- never a key path, export, or
     // blob. Unknown (older agent, or a location the agent genuinely
@@ -455,13 +504,10 @@ function targetSourceRefFor(observation) {
   if (observation.locationKind === "filesystem") {
     return `${observation.agentId}/${observation.targetHost}`;
   }
-  // Included so a host doing BOTH filesystem discovery AND Windows discovery
-  // gets two distinct targets (different target_type values cannot share one
-  // target row); a given host's Windows surface still gets one shared target
-  // across all its bindings/store entries, disambiguated per-instance by
-  // deployment_reference, exactly like filesystem's per-host target holds
-  // many files disambiguated the same way.
-  return `${observation.agentId}/${observation.targetHost}/${observation.locationKind}`;
+  // Store entries and bindings carry distinct topology. Including the stable
+  // location slot prevents one IIS site's store/site/port fields from
+  // overwriting another site's target row on the same host.
+  return `${observation.agentId}/${observation.targetHost}/${observation.locationKind}/${observation.locationSlot}`;
 }
 
 /**
@@ -535,7 +581,7 @@ async function upsertInventoryForObservation(client, observation) {
   // (otherwise it is invisible in the token-centric dashboard views).
   // Looked up by the stable (source, source_ref) identity first, not
   // fingerprint, since a rotation at the same file path/binding keeps the
-  // same source_ref but changes the fingerprint (task #15: reconciliation).
+  // same source_ref but changes the fingerprint.
   const existingManagedCertificate = await findManagedCertificateBySourceRef(
     client,
     {
@@ -566,22 +612,20 @@ async function upsertInventoryForObservation(client, observation) {
       source: observation.source,
       sourceRef: certSourceRef,
       name: displayName,
-      // os-store-managed (ADR-0012 decision 9) only when the agent actually
+      // os-store-managed only when the agent actually
       // observed a private key at this location (observation.keyPresent ===
       // true, from the Windows store's own HasPrivateKey fact -- never
-      // assumed). Decision 9 describes TokenTimer's OWN executor creating a
-      // certificate directly inside the CNG store, which always has a key by
+      // assumed). TokenTimer's executor creates a certificate directly inside
+      // the CNG store, which always has a key by
       // construction; this code instead observes certificates that already
       // existed on the host, where that is not guaranteed (a public-only
       // import, an intermediate cert, or a binding pointing at a store entry
       // this agent cannot read the key state for). Claiming os-store-managed
       // for a location with no confirmed key would misrepresent custody, so
       // an unconfirmed/false observation leaves keyMode null rather than
-      // guessing. It is deliberately NOT in AGENT_DEPLOYABLE_KEY_MODES
-      // (jobs.js) yet either way -- the real Windows renew/rebind executor
-      // does not exist -- so this only makes the certificate
-      // inventory-visible, matching the ADR's "custody without an executor"
-      // state.
+      // guessing. A confirmed key plus complete IIS topology is deployable by
+      // the Windows renew/rebind executor; public-only entries remain
+      // observation-only.
       keyMode: isFilesystem
         ? "agent-local"
         : observation.keyPresent === true
@@ -594,12 +638,9 @@ async function upsertInventoryForObservation(client, observation) {
             locationSlot: observation.locationSlot,
             thumbprint: observation.windowsFields?.thumbprint,
           }),
-      // Renewal adoption (renewalAdoption.js) refuses to arm a renewal for a
-      // certificate with no deployed_cert_path. Filesystem discovery
-      // observes that destination directly; Windows discovery has no
-      // filesystem path to offer (the key never exists as a file), so this
-      // stays null for agent_windows exactly like every other non-filesystem
-      // source (cert_manager, endpoint_monitor).
+      // Filesystem adoption uses this path directly. Windows adoption uses
+      // the store/site/binding descriptor instead, so its certificate path
+      // remains null and no file-based key custody is invented.
       deployedCertPath: isFilesystem ? observation.filePath : null,
       deployedAgentId: observation.agentRowId,
       tokenId,
@@ -625,7 +666,7 @@ async function upsertInventoryForObservation(client, observation) {
     hostname: observation.targetHost,
     name: observation.targetHost,
     locationKind: observation.locationKind,
-    deploymentReference: `agent://${observation.agentId}/${observation.targetHost}`,
+    deploymentReference: observation.locationRef,
     windowsStore: observation.windowsFields?.storeName || null,
     windowsSite: observation.windowsFields?.siteName || null,
     windowsPort: observation.windowsFields?.port || null,
@@ -634,7 +675,9 @@ async function upsertInventoryForObservation(client, observation) {
       agentId: observation.agentId,
       targetHost: observation.targetHost,
       locationKind: observation.locationKind,
-      observationOnly: true,
+      observationOnly:
+        observation.locationKind !== "iis_binding" ||
+        observation.keyPresent !== true,
     },
   });
 

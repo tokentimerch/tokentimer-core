@@ -32,7 +32,10 @@ function agentRow({
   status = "active",
   lastSeenAt,
   createdAt = "2026-01-01T00:00:00.000Z",
-  targetSelectors = [],
+  targetSelectors = ["host/web"],
+  supportedOperations = ["renew"],
+  dnsProviders = ["cloudflare"],
+  commandProfiles = ["renew.web"],
 }) {
   return {
     id,
@@ -44,6 +47,15 @@ function agentRow({
     last_seen_at: lastSeenAt,
     created_at: createdAt,
     declared_target_selectors: targetSelectors,
+    supported_operations: supportedOperations,
+    supported_dns_providers: dnsProviders,
+    declared_command_profile_names: commandProfiles,
+    declared_capabilities: [],
+    capabilities_updated_at: new Date(NOW).toISOString(),
+    agent_kind: "normal",
+    agent_version: "0.1.0",
+    protocol_version: "1.0.0",
+    clock_offset_ms: 0,
   };
 }
 
@@ -63,11 +75,47 @@ function buildAgentIndex(rows) {
       targetSelectors: Array.isArray(row.declared_target_selectors)
         ? row.declared_target_selectors
         : [],
+      supportedOperations: row.supported_operations,
+      dnsProviders: row.supported_dns_providers,
+      commandProfiles: row.declared_command_profile_names,
+      declaredCapabilities: row.declared_capabilities,
+      capabilitiesUpdatedAt: row.capabilities_updated_at,
+      agentKind: row.agent_kind,
+      agentVersion: row.agent_version,
+      protocolVersion: row.protocol_version,
+      clockOffsetMs: row.clock_offset_ms,
     };
     byRowId.set(agent.id, agent);
     if (agent.agentId) byAgentIdString.set(agent.agentId, agent);
   }
-  return { byRowId, byAgentIdString, retiredAgentIdStrings: new Set(), all: [...byRowId.values()] };
+  return {
+    byRowId,
+    byAgentIdString,
+    retiredRowIds: new Set(),
+    retiredAgentIdStrings: new Set(),
+    all: [...byRowId.values()],
+  };
+}
+
+function executableRenewalProfile() {
+  return {
+    schemaVersion: 1,
+    profileId: "profile-1",
+    profileName: "web-tls",
+    sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    keyRotationPolicy: { rotateOnRenew: true },
+    preferredChain: null,
+    ca: { endpoint: "https://acme.example.test/directory", accountRef: null, eabRef: null },
+    acme: { kind: "certbot", commandRef: "renew.web" },
+    dns: { provider: "cloudflare", zone: "example.com" },
+    deploymentTargets: [
+      { type: "endpoint", reference: "host/web", certPath: "/etc/ssl/app.pem" },
+    ],
+    target: { type: "endpoint", reference: "host/web", certPath: "/etc/ssl/app.pem" },
+    verification: { host: null, port: null, requireMatch: false },
+  };
 }
 
 function onlineAgentRow(overrides = {}) {
@@ -98,7 +146,7 @@ function certRow(overrides = {}) {
     discovery_agent_id: null,
     profile_status: "active",
     profile_public_metadata: {
-      renewalProfile: { target: { reference: "host/web" } },
+      renewalProfile: executableRenewalProfile(),
     },
     ...overrides,
   };
@@ -479,7 +527,7 @@ describe("renewalPathHealth: resolveRenewalPathForCertificate (DB-facing)", () =
           deployed_agent_id: null,
           discovery_agent_id: "agent-a",
           profile_status: "active",
-          profile_public_metadata: { renewalProfile: {} },
+          profile_public_metadata: { renewalProfile: executableRenewalProfile() },
         },
       ],
       // resolveRenewalPathForCertificate has no injectable `now` (unlike the
@@ -529,7 +577,7 @@ describe("renewalPathHealth: listCertificatesDependentOnAgent", () => {
         deployed_agent_id: null,
         discovery_agent_id: "agent-a",
         profile_status: "active",
-        profile_public_metadata: { renewalProfile: {} },
+        profile_public_metadata: { renewalProfile: executableRenewalProfile() },
       },
       {
         id: "cert-unrelated",
@@ -541,7 +589,7 @@ describe("renewalPathHealth: listCertificatesDependentOnAgent", () => {
         deployed_agent_id: null,
         discovery_agent_id: "agent-b",
         profile_status: "active",
-        profile_public_metadata: { renewalProfile: {} },
+        profile_public_metadata: { renewalProfile: executableRenewalProfile() },
       },
       {
         // Observed by agent-a but not a renewal dependency: no profile at all.

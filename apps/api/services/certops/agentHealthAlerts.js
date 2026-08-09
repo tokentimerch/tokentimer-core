@@ -3,12 +3,9 @@
 /**
  * agent_health alert resolution (down / recovered).
  *
- * Mirrors the endpoint_health pattern in apps/worker/src/endpoint-check-worker.js
- * exactly: one alert_key per agent per transition, existence-checked before
- * insert (down), and a recovery is only ever queued when the paired down
- * alert actually reached status='sent' in alert_queue. The old down row is
- * deleted on recovery regardless (so the next outage can queue fresh),
- * matching cert_renewal_failed / endpoint_health.
+ * One alert_key exists per agent transition. Recovery is only notified when
+ * the paired down alert reached status='sent'; every intentional suppression
+ * still closes the old incident so a future outage can alert again.
  *
  * Anchor: unlike endpoint_health/cert_renewal_failed, an agent has no linked
  * tokens row to hang the required alert_queue.token_id off of. Migration 46
@@ -78,9 +75,7 @@ function getWebhookNames(contactGroup) {
 }
 
 const AGENT_HEALTH_ALERT_PREFIX = "agent_health:";
-// Rendering cap (task: "Limit/format the certificate list sensibly if there
-// are many certificates"). The API/UI can still show the full list; this is
-// only what ships inside the notification body.
+// The API/UI can show the full impacted list; notification bodies stay bounded.
 const MAX_IMPACTED_CERTIFICATES_IN_ALERT = 10;
 
 function agentHealthAlertKey(agentRowId, transitionType) {
@@ -114,36 +109,61 @@ async function queueAgentHealthAlert({
   if (transitionType !== "down" && transitionType !== "recovered") {
     return { queued: false, reason: "invalid_transition" };
   }
-  // Alerts disabled is checked here (not just at the sweep call site) so any
-  // future caller gets the same safe default: only an explicit `false`
-  // suppresses alerting, matching the migration 45 column default of TRUE.
-  if (agent.downtimeAlertsEnabled === false) {
-    return { queued: false, reason: "alerts_disabled" };
-  }
-
   const downKey = agentHealthAlertKey(agent.id, "down");
   const recoveredKey = agentHealthAlertKey(agent.id, "recovered");
   const alertKey = transitionType === "down" ? downKey : recoveredKey;
 
-  if (transitionType === "recovered") {
-    const sentDown = await client.query(
-      "SELECT id FROM alert_queue WHERE alert_key = $1 AND status = 'sent'",
-      [downKey],
-    );
-    await client.query("DELETE FROM alert_queue WHERE alert_key = $1", [downKey]);
-    if (sentDown.rows.length === 0) {
-      return { queued: false, reason: "down_never_delivered" };
+  if (agent.downtimeAlertsEnabled === false) {
+    if (transitionType === "recovered") {
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [downKey, agent.id],
+      );
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [recoveredKey, agent.id],
+      );
+      return { queued: false, reason: "alerts_disabled_incident_closed" };
     }
-    await client.query("DELETE FROM alert_queue WHERE alert_key = $1", [recoveredKey]);
+    return { queued: false, reason: "alerts_disabled" };
   }
 
   if (transitionType === "down") {
-    const existing = await client.query(
-      "SELECT id FROM alert_queue WHERE alert_key = $1",
-      [alertKey],
+    // A recovered key is reusable across outages. Retire the prior outage's
+    // terminal row in the same transaction that records this new DOWN edge,
+    // otherwise its unique alert_key would suppress this outage's recovery.
+    await client.query(
+      "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+      [recoveredKey, agent.id],
     );
-    if (existing.rows.length > 0) {
-      return { queued: false, reason: "already_queued", alertKey };
+  }
+
+  if (transitionType === "recovered") {
+    const downState = await client.query(
+      `SELECT id, status, delivery_claim_id
+         FROM alert_queue
+        WHERE alert_key = $1
+          AND certops_agent_id = $2
+        FOR UPDATE`,
+      [downKey, agent.id],
+    );
+    if (downState.rows[0]?.delivery_claim_id) {
+      return {
+        queued: false,
+        retry: true,
+        reason: "down_delivery_in_progress",
+      };
+    }
+    if (downState.rows[0]?.status !== "sent") {
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [downKey, agent.id],
+      );
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [recoveredKey, agent.id],
+      );
+      return { queued: false, reason: "down_never_delivered" };
     }
   }
 
@@ -180,6 +200,16 @@ async function queueAgentHealthAlert({
     [agent.workspaceId],
   );
   if (userRes.rows.length === 0 || !userRes.rows[0].user_id) {
+    if (transitionType === "recovered") {
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [downKey, agent.id],
+      );
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [recoveredKey, agent.id],
+      );
+    }
     return { queued: false, reason: "no_recipient" };
   }
   const userId = userRes.rows[0].user_id;
@@ -212,6 +242,16 @@ async function queueAgentHealthAlert({
   // none exists for agent_health. Email + webhooks only.
 
   if (channels.length === 0) {
+    if (transitionType === "recovered") {
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [downKey, agent.id],
+      );
+      await client.query(
+        "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+        [recoveredKey, agent.id],
+      );
+    }
     return { queued: false, reason: "no_channels" };
   }
 
@@ -238,16 +278,30 @@ async function queueAgentHealthAlert({
       : 0,
   };
 
-  await client.query(
+  const inserted = await client.query(
     `INSERT INTO alert_queue (
        user_id, token_id, certops_agent_id, alert_key, threshold_days,
        due_date, channels, status, metadata
      )
-     VALUES ($1, NULL, $2, $3, $4, CURRENT_DATE, $5::jsonb, 'pending', $6::jsonb)`,
+     VALUES ($1, NULL, $2, $3, $4, CURRENT_DATE, $5::jsonb, 'pending', $6::jsonb)
+     ON CONFLICT (alert_key) DO NOTHING`,
     [userId, agent.id, alertKey, 0, JSON.stringify(channels), JSON.stringify(metadata)],
   );
 
-  return { queued: true, alertKey, channels };
+  if (transitionType === "recovered") {
+    await client.query(
+      "DELETE FROM alert_queue WHERE alert_key = $1 AND certops_agent_id = $2",
+      [downKey, agent.id],
+    );
+  }
+
+  const queued = inserted.rowCount !== 0;
+  return {
+    queued,
+    ...(queued ? {} : { reason: "already_queued" }),
+    alertKey,
+    channels,
+  };
 }
 
 module.exports = {

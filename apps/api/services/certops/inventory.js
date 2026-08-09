@@ -1422,8 +1422,7 @@ async function listWorkspaceCertificateInstances({ workspaceId, limit, offset })
 }
 
 // Sources whose source_ref embeds the reporting agent's own agentId as its
-// first '/'-delimited segment (task: "Which agent is responsible for
-// observing/managing it?"). Neither certificate_targets nor
+// first '/'-delimited segment. Neither certificate_targets nor
 // certificate_instances has an agent_id foreign key -- source_ref IS the
 // identity link, exactly like it is for reconciliation (certSourceRefFor/
 // targetSourceRefFor in agentObservations.js build these same strings).

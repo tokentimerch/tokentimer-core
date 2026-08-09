@@ -47,7 +47,11 @@ function instanceTimestamp(instance) {
 function connectivityDescriptor(instance) {
   const agent = instance.agent;
   if (!agent) {
-    return { label: 'Unknown', scheme: 'gray', help: 'No agent is responsible for observing this location.' };
+    return {
+      label: 'Unknown',
+      scheme: 'gray',
+      help: 'No agent is responsible for observing this location.',
+    };
   }
   if (agent.livenessState === 'live') {
     return {
@@ -140,18 +144,35 @@ function InstanceRow({ instance, border, muted, indent = false }) {
       </Td>
       <Td borderColor={border}>
         <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-          {instance.agent?.name || instance.agent?.hostname || instance.agent?.agentId || '--'}
+          {instance.agent?.name ||
+            instance.agent?.hostname ||
+            instance.agent?.agentId ||
+            '--'}
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Tooltip label={connectivity.help} hasArrow placement='top' openDelay={250}>
-          <Badge colorScheme={connectivity.scheme} variant='subtle' textTransform='none' fontSize='xs'>
+        <Tooltip
+          label={connectivity.help}
+          hasArrow
+          placement='top'
+          openDelay={250}
+        >
+          <Badge
+            colorScheme={connectivity.scheme}
+            variant='subtle'
+            textTransform='none'
+            fontSize='xs'
+          >
             {connectivity.label}
           </Badge>
         </Tooltip>
       </Td>
       <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} title={formatDateTime(instanceTimestamp(instance))}>
+        <Text
+          fontSize='sm'
+          color={muted}
+          title={formatDateTime(instanceTimestamp(instance))}
+        >
           {formatRelativeDateTime(instanceTimestamp(instance))}
         </Text>
       </Td>
@@ -233,79 +254,96 @@ export default function CertificateInstances({ instances, available, error }) {
           {groups.map(({ key, current, history, rotated }) => {
             const connectivity = connectivityDescriptor(current);
             return (
-            <Fragment key={key}>
-              <Tr>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' sx={NOWRAP_CELL}>
-                    {targetLabel(current)}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-                    {locationKindLabel(current.locationKind)}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-                    {current.agent?.name || current.agent?.hostname || current.agent?.agentId || '--'}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Tooltip label={connectivity.help} hasArrow placement='top' openDelay={250}>
-                    <Badge colorScheme={connectivity.scheme} variant='subtle' textTransform='none' fontSize='xs'>
-                      {connectivity.label}
-                    </Badge>
-                  </Tooltip>
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} title={formatDateTime(instanceTimestamp(current))}>
-                    {formatRelativeDateTime(instanceTimestamp(current))}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Badge
-                    colorScheme={statusScheme(current.status)}
-                    variant='subtle'
-                    textTransform='none'
-                  >
-                    {current.status || 'unknown'}
-                  </Badge>
-                  {rotated ? (
-                    <Badge ml={2} colorScheme='purple' variant='outline'>
-                      Renewed
-                    </Badge>
-                  ) : null}
-                </Td>
-              </Tr>
-              {history.length > 0 ? (
-                <Tr key={`${key}-toggle`}>
-                  <Td colSpan={6} borderColor={border} pt={0} pb={2}>
-                    <Button
-                      size='xs'
-                      variant='link'
-                      onClick={() => toggle(key)}
+              <Fragment key={key}>
+                <Tr>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' sx={NOWRAP_CELL}>
+                      {targetLabel(current)}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+                      {locationKindLabel(current.locationKind)}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+                      {current.agent?.name ||
+                        current.agent?.hostname ||
+                        current.agent?.agentId ||
+                        '--'}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Tooltip
+                      label={connectivity.help}
+                      hasArrow
+                      placement='top'
+                      openDelay={250}
                     >
-                      {expanded.has(key)
-                        ? 'Hide earlier observations'
-                        : `Show ${history.length} earlier observation${
-                            history.length === 1 ? '' : 's'
-                          } at this location`}
-                    </Button>
+                      <Badge
+                        colorScheme={connectivity.scheme}
+                        variant='subtle'
+                        textTransform='none'
+                        fontSize='xs'
+                      >
+                        {connectivity.label}
+                      </Badge>
+                    </Tooltip>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text
+                      fontSize='sm'
+                      color={muted}
+                      title={formatDateTime(instanceTimestamp(current))}
+                    >
+                      {formatRelativeDateTime(instanceTimestamp(current))}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Badge
+                      colorScheme={statusScheme(current.status)}
+                      variant='subtle'
+                      textTransform='none'
+                    >
+                      {current.status || 'unknown'}
+                    </Badge>
+                    {rotated ? (
+                      <Badge ml={2} colorScheme='purple' variant='outline'>
+                        Renewed
+                      </Badge>
+                    ) : null}
                   </Td>
                 </Tr>
-              ) : null}
-              {expanded.has(key)
-                ? history.map(entry => (
-                    <InstanceRow
-                      key={entry.id}
-                      instance={entry}
-                      border={border}
-                      muted={muted}
-                      indent
-                    />
-                  ))
-                : null}
-            </Fragment>
+                {history.length > 0 ? (
+                  <Tr key={`${key}-toggle`}>
+                    <Td colSpan={6} borderColor={border} pt={0} pb={2}>
+                      <Button
+                        size='xs'
+                        variant='link'
+                        onClick={() => toggle(key)}
+                      >
+                        {expanded.has(key)
+                          ? 'Hide earlier observations'
+                          : `Show ${history.length} earlier observation${
+                              history.length === 1 ? '' : 's'
+                            } at this location`}
+                      </Button>
+                    </Td>
+                  </Tr>
+                ) : null}
+                {expanded.has(key)
+                  ? history.map(entry => (
+                      <InstanceRow
+                        key={entry.id}
+                        instance={entry}
+                        border={border}
+                        muted={muted}
+                        indent
+                      />
+                    ))
+                  : null}
+              </Fragment>
             );
           })}
         </Tbody>
@@ -313,4 +351,3 @@ export default function CertificateInstances({ instances, available, error }) {
     </TableContainer>
   );
 }
-

@@ -1,91 +1,36 @@
 "use strict";
 
 /**
- * Renewal-path health: a derived, read-only projection of whether the
- * automatic-renewal execution path for a managed certificate currently has a
- * live agent able to run it.
+ * Derived, read-only health for a certificate's automatic-renewal execution
+ * path. Certificate lifecycle and observed-location connectivity remain
+ * separate axes: this projection answers only whether a live agent could
+ * claim the renewal job that the current profile would create.
  *
- * This is a SEPARATE axis from managed_certificates.status (the certificate
- * lifecycle: active/renewing/expired/...) and from certificate_instances'
- * observed-location connectivity. A certificate can be lifecycle ACTIVE while
- * its renewal path is unavailable (the agent that would renew it is offline),
- * and an observed location can show "agent offline" for a certificate whose
- * renewal path is perfectly healthy (a different agent owns renewal).
+ * Job requirements are derived through renewalProfile.js/jobs.js semantics,
+ * then evaluated with the same pure predicate used by real dispatch. Filesystem
+ * discoveries pin through their legacy discovery-agent identity; Windows IIS
+ * discoveries pin through deployed_agent_id because the store and binding are
+ * host-local. Other paths remain open to every genuinely eligible agent.
+ * Unknown or malformed persisted eligibility facts fail closed to Unknown,
+ * never Healthy.
  *
- * Topology model (deliberately built around what this codebase actually
- * represents, not an idealized multi-target-AND graph -- see the note on
- * "Case D" below):
- *
- *   managed_certificate --profile_id--> certificate_profile
- *     .public_metadata.renewalProfile.target.reference  (single selector)
- *
- * A renew job for a certificate is claimable by exactly one agent, chosen one
- * of two ways. This MUST mirror jobs.js resolveManagedCertificateJobDefaults /
- * agentDispatch.js claimJobs exactly rather than approximate it, because
- * `managed_certificates.deployed_agent_id` -- despite the name -- is NOT the
- * scheduler's assignment source: renewalScheduler.js's ongoing sweep creates
- * every renewal job via `createCertificateJob` with no `assignedAgentId` in
- * either its call options or its payload (see buildRenewalJobPayload /
- * executionFieldsFromRenewalProfile), so `resolveExecutorKindAndRouting`
- * falls through to `autoAssignedAgentId` alone. `resolveManagedCertificateJobDefaults`
- * only ever produces a non-null `autoAssignedAgentId` when
- * `certificateRow.source === "agent_filesystem"`, resolved from the legacy
- * `public_metadata.controllerObservation.agentId` string -- it never reads
- * `deployed_agent_id`. Treating `deployed_agent_id` as an unconditional pin
- * here (an earlier version of this module did) would misreport a genuinely
- * open-claim, redundancy-eligible path (e.g. any adopted certificate whose
- * source is "manual"/"api"/"agent_windows"/etc., or an "agent_filesystem" row
- * whose `deployed_agent_id` has drifted from its `discovery_agent_id` string)
- * as a hard single point of failure with no possible fallback, in either
- * direction: it can fabricate an "Unavailable" when a redundant agent would
- * really claim the next job, or fabricate a "Healthy"/"Degraded" pin on an
- * agent the real dispatcher would never actually route to.
- *
- *   1. PINNED: `certificateRow.source === "agent_filesystem"` AND its legacy
- *      `public_metadata.controllerObservation.agentId` string resolves to a
- *      real agent row (live or retired -- see case below). Exactly one
- *      required executor; no redundancy is possible because the job's
- *      `assigned_agent_id` pins it, bypassing target-selector matching
- *      entirely (agentDispatch.js claimJobs: `assigned_agent_id IS NULL OR
- *      assigned_agent_id = $agent`, no fallback to any other agent, ever,
- *      regardless of what that other agent declares).
- *
- *      If the string resolves to an agent that has since been retired (never
- *      cleared by retireAgent -- a retired row is a frozen historical fact,
- *      not deleted), that pin is permanent and un-claimable by design: no
- *      code path re-derives a fresh assignment for an already-configured
- *      renewal profile mid-lifecycle, so this reports Unavailable with a
- *      distinct reason rather than silently falling through to open-claim
- *      matching as if no pin had ever existed.
- *
- *   2. OPEN-CLAIM: source is not "agent_filesystem", or no legacy agent-id
- *      string resolves. The job carries requiredTargetSelector =
- *      renewalProfile.target.reference, and any agent that declares that
- *      selector in declared_target_selectors may claim it (agentDispatch.js).
- *      If more than one agent in the workspace declares the same selector,
- *      that is genuine redundancy: either can execute the renewal.
- *
- * Case D from the product spec ("deployment requires BOTH target A and
- * target B, each a distinct required dependency") has no representation here:
- * a certificate's renewalProfile has exactly one target/selector.
- * `deploymentTargets` is a same-agent multi-DESTINATION list (one agent
- * writes the renewed cert to several local paths), not multiple independent
- * required executors -- see renewalProfile.js executionFieldsFromRenewalProfile
- * and jobs.js's MAX_ISSUE_DEPLOYMENT_TARGETS comment. Modeling Case D would
- * require inventing a topology concept the rest of CertOps does not have, so
- * it is intentionally not implemented; only Cases A/B/C (single required
- * executor, redundant executors, all executors down) are real states this
- * resolver can honestly report.
- *
- * Zero-custody: every field read here (deployed_agent_id, target.reference,
- * declared_target_selectors, agent name/hostname/platform/status) is already
- * public/non-secret elsewhere in CertOps. This module never reads key
- * material and never introduces a new secret-bearing column.
+ * Zero custody is unchanged: only routing, capability, compatibility, and
+ * liveness metadata is read here; no certificate private-key material exists
+ * in this projection.
  */
 
 const { pool } = require("../../db/database");
 const { isAgentDeployableKeyMode } = require("./jobs");
-const { AUTO_RENEW_DISABLED_PROFILE_STATUSES } = require("./renewalProfile");
+const {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  executionFieldsFromRenewalProfile,
+  validateRenewalProfile,
+} = require("./renewalProfile");
+const { computeAgentCompatibility } = require("./agentRegistry");
+const {
+  evaluateAgentJobEligibility,
+  resolveAgentJobRoutingRequirements,
+} = require("./agentJobEligibility");
 const {
   resolveAgentOfflineAfterMs,
   classifyAgentLiveness,
@@ -176,16 +121,21 @@ function targetReferenceFromProfile(profileMetadata) {
 async function loadWorkspaceAgentIndex({ db, workspaceId }) {
   const result = await db.query(
     `SELECT id, agent_id, name, hostname, platform, status, last_seen_at,
-            created_at, declared_target_selectors
+            created_at, agent_version, protocol_version, clock_offset_ms,
+            supported_operations, declared_target_selectors,
+            supported_dns_providers, declared_command_profile_names,
+            declared_capabilities, capabilities_updated_at, agent_kind
        FROM certops_agents
       WHERE workspace_id = $1`,
     [workspaceId],
   );
   const byRowId = new Map();
   const byAgentIdString = new Map();
+  const retiredRowIds = new Set();
   const retiredAgentIdStrings = new Set();
   for (const row of result.rows) {
     if (row.status === "retired") {
+      retiredRowIds.add(String(row.id));
       if (row.agent_id) retiredAgentIdStrings.add(row.agent_id);
       continue;
     }
@@ -198,9 +148,16 @@ async function loadWorkspaceAgentIndex({ db, workspaceId }) {
       status: row.status,
       lastSeenAt: row.last_seen_at,
       createdAt: row.created_at,
-      targetSelectors: Array.isArray(row.declared_target_selectors)
-        ? row.declared_target_selectors.filter((v) => typeof v === "string")
-        : [],
+      agentVersion: row.agent_version,
+      protocolVersion: row.protocol_version,
+      clockOffsetMs: row.clock_offset_ms,
+      supportedOperations: row.supported_operations,
+      targetSelectors: row.declared_target_selectors,
+      dnsProviders: row.supported_dns_providers,
+      commandProfiles: row.declared_command_profile_names,
+      declaredCapabilities: row.declared_capabilities,
+      capabilitiesUpdatedAt: row.capabilities_updated_at,
+      agentKind: row.agent_kind,
     };
     byRowId.set(agent.id, agent);
     if (agent.agentId) byAgentIdString.set(agent.agentId, agent);
@@ -208,6 +165,7 @@ async function loadWorkspaceAgentIndex({ db, workspaceId }) {
   return {
     byRowId,
     byAgentIdString,
+    retiredRowIds,
     retiredAgentIdStrings,
     all: [...byRowId.values()],
   };
@@ -252,38 +210,18 @@ function resolveRequiredExecutors({
   agentIndex,
   offlineAfterMs,
   now,
+  env = process.env,
+  jobRequirements = null,
 }) {
-  // Mirrors resolveManagedCertificateJobDefaults (jobs.js) exactly: the
-  // ongoing renewal scheduler only ever auto-pins a job's assigned_agent_id
-  // for agent_filesystem-sourced certificates, via this legacy string. Every
-  // other source (adopted certs, agent_windows, imports, ...) is open-claim
-  // for every renewal after any one-time setup job, regardless of
-  // deployed_agent_id -- see the module doc comment for why deployed_agent_id
-  // itself must not be treated as a pin here.
+  let assignedAgentId = null;
   if (certificateRow.source === "agent_filesystem") {
     const legacyAgentIdString = certificateRow.discovery_agent_id || null;
     if (legacyAgentIdString) {
       const pinnedAgent = agentIndex.byAgentIdString.get(legacyAgentIdString);
       if (pinnedAgent) {
-        return {
-          pinned: true,
-          pinnedButRetired: false,
-          targetReference: null,
-          agents: [
-            agentDependencyView(pinnedAgent, {
-              required: true,
-              offlineAfterMs,
-              now,
-            }),
-          ],
-        };
+        assignedAgentId = pinnedAgent.id;
       }
-      if (agentIndex.retiredAgentIdStrings.has(legacyAgentIdString)) {
-        // The pin target is a real agent that has since retired. Retirement
-        // never re-derives a fresh assignment for an already-configured
-        // renewal profile, so this is a permanent Unavailable, not "no pin
-        // was ever configured" -- must not fall through to open-claim
-        // matching against some unrelated agent's declared selector.
+      if (!pinnedAgent && agentIndex.retiredAgentIdStrings.has(legacyAgentIdString)) {
         return {
           pinned: true,
           pinnedButRetired: true,
@@ -291,27 +229,65 @@ function resolveRequiredExecutors({
           agents: [],
         };
       }
-      // The string does not resolve to any known agent (live or retired) --
-      // e.g. stale/malformed metadata. Falls through to open-claim below
-      // rather than being treated as a hard pin to nothing.
+    }
+  } else if (certificateRow.source === "agent_windows" && certificateRow.deployed_agent_id) {
+    const candidateId = String(certificateRow.deployed_agent_id);
+    if (agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
+    if (agentIndex.retiredRowIds?.has(candidateId)) {
+      return {
+        pinned: true,
+        pinnedButRetired: true,
+        targetReference: null,
+        agents: [],
+      };
     }
   }
 
   const targetReference = targetReferenceFromProfile(profileMetadata);
-  if (!targetReference) {
+  if (!targetReference && !assignedAgentId) {
     return { pinned: false, pinnedButRetired: false, targetReference: null, agents: [] };
   }
 
-  const matching = agentIndex.all.filter((agent) =>
-    agent.targetSelectors.includes(targetReference),
-  );
+  // Direct unit callers may omit a full executable profile. The real health
+  // path always supplies validated jobRequirements and therefore always uses
+  // the shared dispatch predicate below.
+  let eligibilityIndeterminate = false;
+  let liveEligibilityIndeterminate = false;
+  const matching = jobRequirements
+    ? agentIndex.all.filter((agent) => {
+        const evaluation = evaluateAgentJobEligibility({
+          agent,
+          job: {
+            ...jobRequirements,
+            assignedAgentId,
+          },
+          compatibility: computeAgentCompatibility(agent, env),
+          env,
+          now,
+        });
+        if (!evaluation.determinate) {
+          eligibilityIndeterminate = true;
+          if (isAgentOnline(agent, { offlineAfterMs, now })) {
+            liveEligibilityIndeterminate = true;
+          }
+        }
+        return evaluation.eligible;
+      })
+    : agentIndex.all.filter((agent) =>
+        assignedAgentId
+          ? agent.id === assignedAgentId
+          : Array.isArray(agent.targetSelectors) &&
+            agent.targetSelectors.includes(targetReference),
+      );
   return {
-    pinned: false,
+    pinned: Boolean(assignedAgentId),
     pinnedButRetired: false,
     targetReference,
+    eligibilityIndeterminate,
+    liveEligibilityIndeterminate,
     agents: matching.map((agent) =>
       agentDependencyView(agent, {
-        required: matching.length === 1,
+        required: Boolean(assignedAgentId) || matching.length === 1,
         offlineAfterMs,
         now,
       }),
@@ -435,13 +411,57 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
   }
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
-  const { agents, targetReference, pinned, pinnedButRetired } = resolveRequiredExecutors({
+  let jobRequirements;
+  try {
+    const profile = validateRenewalProfile(profileMetadata.renewalProfile);
+    const payload = executionFieldsFromRenewalProfile(profile);
+    jobRequirements = {
+      operation: "renew",
+      ...resolveAgentJobRoutingRequirements({
+        executorKind: "agent",
+        payload,
+      }),
+      subjectIsProvisioning: certificateRow.status === "provisioning",
+    };
+  } catch (_error) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNKNOWN,
+      renewalPathReason: RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN,
+      renewalPathSummary:
+        "TokenTimer cannot resolve a complete executable renewal profile for this certificate.",
+      dependencies: [],
+    };
+  }
+
+  const {
+    agents,
+    targetReference,
+    pinned,
+    pinnedButRetired,
+    eligibilityIndeterminate,
+    liveEligibilityIndeterminate,
+  } = resolveRequiredExecutors({
     certificateRow,
     profileMetadata,
     agentIndex,
     offlineAfterMs,
     now,
+    env,
+    jobRequirements,
   });
+  if (
+    eligibilityIndeterminate &&
+    liveEligibilityIndeterminate &&
+    !agents.some((agent) => agent.online)
+  ) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNKNOWN,
+      renewalPathReason: RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN,
+      renewalPathSummary:
+        "TokenTimer cannot determine agent eligibility from the persisted capability facts.",
+      dependencies: [],
+    };
+  }
   const hasResolvableTopology =
     agents.length > 0 || Boolean(targetReference) || pinned || pinnedButRetired;
 
@@ -497,7 +517,7 @@ async function resolveRenewalPathForCertificate({
 /**
  * Batch projection for every non-retired certificate in a workspace. Used by
  * the Agent Fleet "N auto-renew certificates affected" count and by the
- * agent-down alert enrichment (Phase F) -- both need "which certificates
+ * agent-down alert enrichment -- both need "which certificates
  * depend on agent X", which is cheapest to answer by resolving every
  * certificate once and filtering, rather than re-querying per agent.
  */
