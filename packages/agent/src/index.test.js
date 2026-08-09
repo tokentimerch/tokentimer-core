@@ -48,6 +48,7 @@ const {
   VERIFY_TRANSIENT_RETRY_DELAYS_MS,
   runWindowsRetentionSweep,
   reconcileOrphanedWindowsCngContainers,
+  acquireWindowsStoreLocks,
 } = require("./index.js");
 const {
   markSideEffectReached,
@@ -59,7 +60,7 @@ const {
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { readLedgerRow, createLedgerRow } = require("./windows-retention");
-const { recordIssuedContainer, markIssuedContainerAccepted } = require("./windows-cert-store");
+const { recordIssuedContainer, markIssuedContainerAccepted, acquireStoreLock } = require("./windows-cert-store");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -4279,6 +4280,109 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
+  });
+
+  describe("store-lock scope for a non-default target store (PR review, 2026-08-07)", () => {
+    // certreq -accept always populates "My" first, with a non-default
+    // target store (e.g. "WebHosting") reached only by a separate, later
+    // mirror step -- see acquireWindowsStoreLocks' own doc comment. A
+    // WebHosting-targeted renewal must therefore hold BOTH stores' locks
+    // for its entire duration, not merely "WebHosting", or a concurrent
+    // "My"-targeted job (or this same job's own -delstore My step racing
+    // reconciliation) could corrupt shared "My" state.
+
+    it("a WebHosting-targeted renewal fails closed when 'My' is already locked by a concurrent operation, not just when 'WebHosting' is", async () => {
+      const myLock = acquireStoreLock(stateDir(), "My");
+      try {
+        const job = makeJob({
+          target: {
+            type: "windows-iis",
+            reference: "iis.example.com",
+            store: "WebHosting",
+            binding: { site: "Default Web Site", port: 443 },
+          },
+        });
+        const { outcome } = await runIisRenew({ job });
+
+        assert.equal(outcome.status, "failed");
+        assert.match(outcome.errorMessage, /could not acquire windows-iis store lock/);
+        assert.match(outcome.errorMessage, /"My"/);
+      } finally {
+        myLock.release();
+      }
+    });
+
+    it("a WebHosting-targeted renewal fails closed when 'WebHosting' itself is already locked", async () => {
+      const targetLock = acquireStoreLock(stateDir(), "WebHosting");
+      try {
+        const job = makeJob({
+          target: {
+            type: "windows-iis",
+            reference: "iis.example.com",
+            store: "WebHosting",
+            binding: { site: "Default Web Site", port: 443 },
+          },
+        });
+        const { outcome } = await runIisRenew({ job });
+
+        assert.equal(outcome.status, "failed");
+        assert.match(outcome.errorMessage, /could not acquire windows-iis store lock/);
+        assert.match(outcome.errorMessage, /"WebHosting"/);
+      } finally {
+        targetLock.release();
+      }
+    });
+
+    it("acquireWindowsStoreLocks locks both stores for a non-default target, and releases both", () => {
+      const dir = stateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const locks = acquireWindowsStoreLocks(dir, "WebHosting");
+
+      // Both stores are now held: a second acquisition attempt on either
+      // one must fail while the first is outstanding.
+      assert.throws(() => acquireStoreLock(dir, "My"), /locked by a concurrent/);
+      assert.throws(() => acquireStoreLock(dir, "WebHosting"), /locked by a concurrent/);
+
+      locks.release();
+
+      // Both released: a fresh acquisition of each now succeeds.
+      const myLock = acquireStoreLock(dir, "My");
+      const targetLock = acquireStoreLock(dir, "WebHosting");
+      myLock.release();
+      targetLock.release();
+    });
+
+    it("acquireWindowsStoreLocks against the default 'My' store acquires only one lock (deduplicated), matching pre-fix behavior for the common case", () => {
+      const dir = stateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const locks = acquireWindowsStoreLocks(dir, "My");
+
+      assert.throws(() => acquireStoreLock(dir, "My"), /locked by a concurrent/);
+      locks.release();
+
+      // No stray "WebHosting" (or other) lock file was left behind for the
+      // My-only case.
+      const contents = fs.existsSync(path.join(dir, "windows-cert-store"))
+        ? fs.readdirSync(path.join(dir, "windows-cert-store"))
+        : [];
+      assert.deepEqual(contents, []);
+    });
+
+    it("if the target-store lock cannot be acquired, the already-acquired 'My' lock is released rather than leaked", () => {
+      const dir = stateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const targetLock = acquireStoreLock(dir, "WebHosting");
+      try {
+        assert.throws(() => acquireWindowsStoreLocks(dir, "WebHosting"), /locked by a concurrent/);
+        // "My" must NOT still be held after the failed call above -- a
+        // fresh acquisition must succeed immediately, with no leaked lock
+        // file requiring the stale-lock timeout to clear it.
+        const myLock = acquireStoreLock(dir, "My");
+        myLock.release();
+      } finally {
+        targetLock.release();
+      }
+    });
   });
 });
 
