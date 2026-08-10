@@ -22,7 +22,6 @@ const certStore = require(path.join(modRoot, "windows-cert-store", "index.js"));
 const {
   generateCsrViaCng,
   acceptCertificateViaCng,
-  buildContainerName,
   recordIssuedContainer,
   markIssuedContainerAccepted,
 } = certStore;

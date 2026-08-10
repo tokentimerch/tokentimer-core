@@ -48,8 +48,16 @@ function deterministicUuidFromKey(idempotencyKey) {
 }
 
 function createObservationEnvelope(observation, { now = () => new Date().toISOString() } = {}) {
+  // Scan the caller-supplied observation before attaching derived hex keys.
+  // Idempotency keys are SHA-256 digests and must not participate in the
+  // private-key detector's hex-decode path.
+  if (containsPrivateKeyMaterial(observation)) {
+    const error = new Error("Private key material is not accepted in controller observations");
+    error.code = PRIVATE_KEY_MATERIAL_REJECTED;
+    throw error;
+  }
   const idempotencyKey = idempotencyKeyFor(observation);
-  const envelope = {
+  return {
     ...observation,
     schemaVersion: 1,
     observationSource: "cert_manager",
@@ -57,12 +65,6 @@ function createObservationEnvelope(observation, { now = () => new Date().toISOSt
     idempotencyKey,
     observedAt: observation.observedAt || now(),
   };
-  if (containsPrivateKeyMaterial(envelope)) {
-    const error = new Error("Private key material is not accepted in controller observations");
-    error.code = PRIVATE_KEY_MATERIAL_REJECTED;
-    throw error;
-  }
-  return envelope;
 }
 
 module.exports = {

@@ -19,7 +19,7 @@ const { execFileSync } = require("node:child_process");
 const certStoreRoot = "C:\\TokenTimerAgentTest\\src\\windows-cert-store";
 const iisRoot = "C:\\TokenTimerAgentTest\\src\\windows-iis";
 const { generateCsrViaCng, acceptCertificateViaCng } = require(path.join(certStoreRoot, "index.js"));
-const { deployIisBinding, queryCurrentBinding, bindCertificate } = require(path.join(iisRoot, "index.js"));
+const { deployIisBinding } = require(path.join(iisRoot, "index.js"));
 
 const RUN_CAPTURED_TIMEOUT_MS = 60 * 1000;
 

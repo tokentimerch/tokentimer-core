@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.11.3
+  version: 0.12.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -9561,7 +9561,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop]
+                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
