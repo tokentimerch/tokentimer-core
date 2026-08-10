@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 const crypto = require("crypto");
 const path = require("path");
@@ -44,6 +44,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
   this.timeout(120000);
 
   before(async function () {
+    // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+    // environment, so the real-PostgreSQL agent-health worker cron path
+    // this test exercises cannot be driven end to end here.
     if (!CERTOPS_ENABLED) this.skip();
     await runMigrations();
   });
@@ -126,6 +129,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
 
   describe("real agent-down alert transition via the worker cron path", () => {
     it("sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId, agentId } = await createAgentRow({
         lastSeenAt: "NOW() - INTERVAL '1 hour'",
@@ -165,6 +171,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level)", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId } = await createAgentRow({
         lastSeenAt: "NOW() - INTERVAL '1 hour'",
@@ -190,6 +199,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("respects a real downtime_alerts_enabled = false agent: still flips offline, queues no alert", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId, agentId } = await createAgentRow({
         downtimeAlertsEnabled: false,
@@ -221,6 +233,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
 
   describe("real agent-recovered transition, paired-delivery gated, negative case", () => {
     it("sweepAgentRecoveries queues a real recovered alert and deletes the down row, but ONLY once the down alert reached status='sent'", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId, agentId } = await createAgentRow({
         lastSeenAt: "NOW() - INTERVAL '1 hour'",
@@ -286,6 +301,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("an agent with no open down alert_queue row at all is not a recovery candidate", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId } = await createAgentRow({ lastSeenAt: "NOW()" });
 
@@ -310,6 +328,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
 
   describe("alert-settings route round-trip against a real registered agent", () => {
     it("PATCH alert-settings persists downtimeAlertsEnabled/contactGroupId on a real agent row, and GET /agents reflects it", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId, agentId } = await createAgentRow();
 
@@ -350,6 +371,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("rejects an unknown contactGroupId with 400 and leaves the real agent row unchanged", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId } = await createAgentRow();
 
@@ -361,6 +385,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("rejects an empty body with 400 (at least one of downtimeAlertsEnabled/contactGroupId is required)", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId } = await createAgentRow();
 
@@ -372,6 +399,9 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
     });
 
     it("a real downtimeAlertsEnabled=false set via the route is actually honored by the worker cron down-alert sweep", async function () {
+      // skip-reason: no-host - CERTOPS_ENABLED is not set in this test
+      // environment, so the real-PostgreSQL agent-health worker cron path
+      // this test exercises cannot be driven end to end here.
       if (!CERTOPS_ENABLED) this.skip();
       const { id: agentRowId, agentId } = await createAgentRow({
         lastSeenAt: "NOW() - INTERVAL '1 hour'",

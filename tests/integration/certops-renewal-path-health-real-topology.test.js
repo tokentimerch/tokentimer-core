@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 const crypto = require("crypto");
 
@@ -72,15 +72,61 @@ describe("CertOps renewal-path health - real topology resolution against a real 
     }
   });
 
-  async function createAgent({ status = "active", lastSeenAt = "NOW()", targetSelectors = [] } = {}) {
+  function executableRenewalProfile(targetReference) {
+    return {
+      schemaVersion: 1,
+      profileId: `renewal-path-profile-${crypto.randomUUID()}`,
+      profileName: "renewal-path-test",
+      sanPolicy: {
+        mode: "exact",
+        sans: ["app.example.com"],
+        allowWildcards: false,
+      },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+      keyRotationPolicy: { rotateOnRenew: true },
+      preferredChain: null,
+      ca: {
+        endpoint: "https://acme.example.test/directory",
+        accountRef: null,
+        eabRef: null,
+      },
+      acme: { kind: "certbot", commandRef: "renew.web" },
+      dns: { provider: "cloudflare", zone: "example.com" },
+      deploymentTargets: [
+        {
+          type: "endpoint",
+          reference: targetReference,
+          certPath: "/etc/ssl/app.pem",
+        },
+      ],
+      target: {
+        type: "endpoint",
+        reference: targetReference,
+        certPath: "/etc/ssl/app.pem",
+      },
+      verification: { host: null, port: null, requireMatch: false },
+    };
+  }
+
+  async function createAgent({
+    status = "active",
+    lastSeenAt = "NOW()",
+    targetSelectors = [],
+  } = {}) {
     const agentId = `renewal-path-test-agent-${crypto.randomUUID()}`;
     const credential = generateAgentCredential();
     const inserted = await TestUtils.execQuery(
       `INSERT INTO certops_agents (
          workspace_id, agent_id, name, agent_version, protocol_version,
-         credential_prefix, credential_hash, status, declared_target_selectors, last_seen_at
+         credential_prefix, credential_hash, status, declared_target_selectors,
+         supported_operations, supported_dns_providers, declared_command_profile_names,
+         last_seen_at
        )
-       VALUES ($1, $2, 'renewal-path-test-fleet-agent', '1.0.0', '1.0.0', $3, $4, $5, $6::jsonb, ${lastSeenAt})
+       VALUES (
+         $1, $2, 'renewal-path-test-fleet-agent', '1.0.0', '1.0.0', $3, $4, $5, $6::jsonb,
+         $7::jsonb, $8::jsonb, $9::jsonb, ${lastSeenAt}
+       )
        RETURNING id`,
       [
         workspaceId,
@@ -89,14 +135,19 @@ describe("CertOps renewal-path health - real topology resolution against a real 
         credential.credentialHash,
         status,
         JSON.stringify(targetSelectors),
+        JSON.stringify(["renew"]),
+        JSON.stringify(["cloudflare"]),
+        JSON.stringify(["renew.web"]),
       ],
     );
     return { id: String(inserted.rows[0].id), agentId };
   }
 
   async function createProfile({ status = "active", targetReference = null } = {}) {
+    // Incomplete profiles stay incomplete so the topology_unknown path is
+    // exercised. Executable topology cases must pass a targetReference.
     const publicMetadata = targetReference
-      ? { renewalProfile: { target: { reference: targetReference } } }
+      ? { renewalProfile: executableRenewalProfile(targetReference) }
       : { renewalProfile: {} };
     const inserted = await TestUtils.execQuery(
       `INSERT INTO certificate_profiles (workspace_id, name, status, public_metadata)
@@ -135,8 +186,9 @@ describe("CertOps renewal-path health - real topology resolution against a real 
   }
 
   it("Case A (PINNED): agent_filesystem source whose discovery_agent_id resolves to a real online agent is Healthy with exactly one required dependency", async () => {
-    const agent = await createAgent();
-    const profileId = await createProfile();
+    const targetRef = `renewal-path-test-target-${crypto.randomUUID()}`;
+    const agent = await createAgent({ targetSelectors: [targetRef] });
+    const profileId = await createProfile({ targetReference: targetRef });
     const certId = await createCertificate({
       source: "agent_filesystem",
       profileId,
@@ -153,8 +205,12 @@ describe("CertOps renewal-path health - real topology resolution against a real 
   });
 
   it("Case A (PINNED, offline): the pinned agent is real but offline -> Unavailable/agent_offline, not open-claim fallback", async () => {
-    const agent = await createAgent({ lastSeenAt: "NOW() - INTERVAL '1 hour'" });
-    const profileId = await createProfile();
+    const targetRef = `renewal-path-test-target-${crypto.randomUUID()}`;
+    const agent = await createAgent({
+      targetSelectors: [targetRef],
+      lastSeenAt: "NOW() - INTERVAL '1 hour'",
+    });
+    const profileId = await createProfile({ targetReference: targetRef });
     const certId = await createCertificate({
       source: "agent_filesystem",
       profileId,
@@ -169,12 +225,13 @@ describe("CertOps renewal-path health - real topology resolution against a real 
   });
 
   it("Case A (PINNED, retired): the pinned agent has been retired -> permanent Unavailable/assigned_agent_retired, never falls through to open-claim", async () => {
-    const agent = await createAgent();
+    const targetRef = `renewal-path-test-target-${crypto.randomUUID()}`;
+    const agent = await createAgent({ targetSelectors: [targetRef] });
     await TestUtils.execQuery(
       `UPDATE certops_agents SET status = 'retired', retired_at = NOW() WHERE id = $1`,
       [agent.id],
     );
-    const profileId = await createProfile();
+    const profileId = await createProfile({ targetReference: targetRef });
     const certId = await createCertificate({
       source: "agent_filesystem",
       profileId,

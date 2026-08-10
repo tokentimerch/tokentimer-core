@@ -1013,12 +1013,20 @@ export async function sweepStaleAgents({
       // unrelated agents are no longer coupled to this work.
       resolveImpactedCertificates.invalidateWorkspace?.(agent.workspaceId);
       const impactedCertificates = await resolveImpactedCertificates(agent);
+      // Build the alert key in JS. Embedding `$1::text` in the same statement
+      // as a UUID column bind made Postgres reject the query with
+      // "inconsistent types deduced for parameter $1".
       await client.query(
         `INSERT INTO certops_agent_health_incidents (
            agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
-         ) VALUES ($1, $2, NOW(), $3, 'agent_health:' || $1::text || ':down')
+         ) VALUES ($1, $2, NOW(), $3, $4)
          ON CONFLICT (agent_id) DO NOTHING`,
-        [agent.id, agent.workspaceId, agent.lastSeenAt],
+        [
+          agent.id,
+          agent.workspaceId,
+          agent.lastSeenAt,
+          `agent_health:${agent.id}:down`,
+        ],
       );
       const outcome = await alertQueuer({
         client,

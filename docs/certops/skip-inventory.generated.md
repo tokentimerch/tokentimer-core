@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 52
+Total skips found: 62
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -58,6 +58,16 @@ Total skips found: 52
 | `tests/e2e/certops-agent-e2e.test.js` | 710 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 772 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 827 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 135 | sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 177 | a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 205 | respects a real downtime_alerts_enabled = false agent: still flips offline, queues no alert | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 239 | sweepAgentRecoveries queues a real recovered alert and deletes the down row, but ONLY once the down alert reached status='sent' | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 307 | an agent with no open down alert_queue row at all is not a recovery candidate | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 334 | PATCH alert-settings persists downtimeAlertsEnabled/contactGroupId on a real agent row, and GET /agents reflects it | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 377 | rejects an unknown contactGroupId with 400 and leaves the real agent row unchanged | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 391 | rejects an empty body with 400 (at least one of downtimeAlertsEnabled/contactGroupId is required) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 405 | a real downtimeAlertsEnabled=false set via the route is actually honored by the worker cron down-alert sweep | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 347 | rejects internal worker credentials from reading or changing settings | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 388 | rejects worker settings key material before the session-user denial | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-workspace-kill-switch-api.test.js` | 537 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `no-host` |

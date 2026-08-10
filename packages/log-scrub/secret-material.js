@@ -680,8 +680,14 @@ function stringContainsPrivateKey(value) {
   if (typeof value !== "string" || value.length === 0) return false;
   if (PRIVATE_KEY_PEM_PATTERN.test(value)) return true;
 
+  // Hex digests (SHA-256 fingerprints, idempotency keys) decode to high-entropy
+  // 16-64 byte buffers that occasionally look like a zlib header. Applying the
+  // compressed-input fail-closed path to those digests false-positives ~0.1% of
+  // the time and flakes CI. Hex is only checked for concrete DER/PKCS#12/JKS
+  // shapes; gzip/zlib unwrapping stays on the base64 path where operators and
+  // attackers actually wrap key material.
   const hexDecoded = hexDecodeIfLikely(value);
-  if (hexDecoded && bufferContainsPrivateKey(hexDecoded)) return true;
+  if (hexDecoded && ordinaryBufferContainsPrivateKey(hexDecoded)) return true;
 
   const decoded = base64DecodeIfLikely(value);
   if (decoded) {
@@ -788,7 +794,7 @@ function redactPrivateKeyMaterial(value) {
     return PRIVATE_KEY_REDACTION_PLACEHOLDER;
   }
   const hexDecoded = hexDecodeIfLikely(value);
-  if (hexDecoded && bufferContainsPrivateKey(hexDecoded)) {
+  if (hexDecoded && ordinaryBufferContainsPrivateKey(hexDecoded)) {
     return PRIVATE_KEY_REDACTION_PLACEHOLDER;
   }
   return value;
