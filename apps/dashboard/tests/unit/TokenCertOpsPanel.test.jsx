@@ -127,4 +127,56 @@ describe('TokenCertOpsPanel', () => {
       screen.queryByText('Not reported (status-only observation)')
     ).not.toBeInTheDocument();
   });
+
+  it('shows the renewal-path badge and summary when the path is not healthy', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificates: [
+          cert({
+            renewalPathState: 'unavailable',
+            renewalPathSummary:
+              'The only agent able to renew this certificate is offline.',
+          }),
+        ],
+      })
+    );
+
+    renderPanel(certToken);
+
+    expect(screen.getByText('Renewal path unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'The only agent able to renew this certificate is offline.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('shows a Healthy renewal-path badge without a warning summary line', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificates: [cert({ renewalPathState: 'healthy' })],
+      })
+    );
+
+    renderPanel(certToken);
+
+    expect(screen.getByText('Healthy')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/renewal execution agents are online/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders no renewal-path badge when the certificate never has a renewal path to evaluate', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificates: [cert({ renewalPathState: null })],
+      })
+    );
+
+    renderPanel(certToken);
+
+    expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
+    expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
+    expect(screen.queryByText('Renewal path unavailable')).not.toBeInTheDocument();
+  });
 });

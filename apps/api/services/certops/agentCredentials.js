@@ -5,6 +5,10 @@ const crypto = require("crypto");
 const { pool } = require("../../db/database");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { assertSafePublicValue } = require("./jobs");
+const {
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
+  normalizeDowntimeAlertsEnabled,
+} = require("./agentAlertSettings");
 
 const CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID =
   "CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID";
@@ -64,7 +68,9 @@ const BOOTSTRAP_SAFE_SELECT_FIELDS = `
   revoked_by,
   created_by,
   created_at,
-  updated_at
+  updated_at,
+  downtime_alerts_enabled,
+  contact_group_id
 `;
 
 function serviceError(message, code) {
@@ -131,6 +137,35 @@ function normalizeName(value) {
     );
   }
   return trimmed;
+}
+
+// Three-valued, mirroring the wire contract used everywhere else alerts are
+// configured (tokens.js contact_group_id): undefined/null/"" -> not set (no
+// per-agent override -- registration/edit treats this as "use workspace
+// default"); a non-empty string -> the caller's chosen group. Existence
+// against workspace_settings.contact_groups is checked by the route (same
+// split as tokens.js: this only enforces shape/safety, DB existence needs a
+// workspaceId this function does not take).
+function normalizeOptionalContactGroupId(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 128) {
+    throw serviceError(
+      "Contact group id is invalid",
+      CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
+    );
+  }
+  return trimmed;
+}
+
+// Three-valued boolean: undefined/null -> "use the system default" (treated
+// as true downstream, matching the migration 45 column default and the
+// existing endpoint-health alerting default of "on unless explicitly turned
+// off"); explicit true/false -> the caller's choice, including explicit
+// opt-out.
+function normalizeOptionalAlertsEnabled(value) {
+  return normalizeDowntimeAlertsEnabled(value, { allowOmitted: true });
 }
 
 function normalizeWorkspaceId(value) {
@@ -265,6 +300,14 @@ function bootstrapTokenMetadataFromRow(row) {
     createdBy: row.created_by,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
+    // Legacy tokens (created before migration 45) have both columns NULL;
+    // registration treats a NULL downtimeAlertsEnabled as "use the system
+    // default (enabled)" -- see agentDispatch.js registerAgent.
+    downtimeAlertsEnabled:
+      row.downtime_alerts_enabled === null || row.downtime_alerts_enabled === undefined
+        ? null
+        : Boolean(row.downtime_alerts_enabled),
+    contactGroupId: row.contact_group_id || null,
   };
 }
 
@@ -297,6 +340,10 @@ async function createBootstrapToken(options) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const name = normalizeName(options.name);
   const expiresAt = normalizeRequiredExpiresAt(options.expiresAt);
+  const downtimeAlertsEnabled = normalizeOptionalAlertsEnabled(
+    options.downtimeAlertsEnabled,
+  );
+  const contactGroupId = normalizeOptionalContactGroupId(options.contactGroupId);
 
   for (let attempt = 1; attempt <= MAX_TOKEN_CREATE_ATTEMPTS; attempt += 1) {
     const plaintextToken = generateRawBootstrapToken();
@@ -312,9 +359,11 @@ async function createBootstrapToken(options) {
            token_hash,
            status,
            expires_at,
-           created_by
+           created_by,
+           downtime_alerts_enabled,
+           contact_group_id
          )
-         VALUES ($1, $2, $3, $4, 'active', $5, $6)
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8)
          RETURNING ${BOOTSTRAP_SAFE_SELECT_FIELDS}`,
         [
           workspaceId,
@@ -323,6 +372,8 @@ async function createBootstrapToken(options) {
           tokenHash,
           expiresAt,
           options.createdBy || null,
+          downtimeAlertsEnabled,
+          contactGroupId,
         ],
       );
 
@@ -466,7 +517,9 @@ async function validateBootstrapToken(options) {
             revoked_by,
             created_by,
             created_at,
-            updated_at
+            updated_at,
+            downtime_alerts_enabled,
+            contact_group_id
        FROM certops_agent_bootstrap_tokens
       WHERE token_prefix = $1
       LIMIT 1`,
@@ -589,6 +642,7 @@ module.exports = {
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_USED,
+  CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_CREDENTIAL_INVALID,
   CERTOPS_AGENT_CREDENTIAL_MALFORMED,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,
@@ -613,6 +667,8 @@ module.exports = {
     containsGenericCredentialMaterial,
     containsRawAgentCredentialMaterial,
     normalizeName,
+    normalizeOptionalAlertsEnabled,
+    normalizeOptionalContactGroupId,
     normalizeRequiredExpiresAt,
     parseRawAgentCredential,
     parseRawBootstrapToken,

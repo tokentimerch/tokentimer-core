@@ -43,6 +43,7 @@ import {
   gCertopsRenewalJobsCreated,
   gCertopsRenewalScheduler,
   gCertopsDiagnosticAgentsRetired,
+  gCertopsAgentHealthAlerts,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
@@ -87,11 +88,29 @@ const {
   sweepInactiveDiagnosticAgents,
 } = require("../../api/services/certops/agentRegistry.js");
 
+const { queueAgentHealthAlert } = require(
+  "../../api/services/certops/agentHealthAlerts.js",
+);
+const { resolveRenewalPathsForWorkspace } = require(
+  "../../api/services/certops/renewalPathHealth.js",
+);
+
+// Single source of truth for the 10-minute agent liveness threshold, shared
+// with the API's live-read path (agentRegistry.js#computeAgentCompatibility)
+// and the agent-health down/recovery alert transition detector
+// (agentHealthAlerts.js), so this sweep's persisted `status = 'offline'`
+// flip, the dashboard's `livenessState`, and the alert trigger can never
+// disagree about when an agent counts as offline.
+const {
+  DEFAULT_AGENT_OFFLINE_AFTER_MS,
+  resolveAgentOfflineAfterMs,
+} = require("../../api/services/certops/agentLiveness.js");
+export { DEFAULT_AGENT_OFFLINE_AFTER_MS, resolveAgentOfflineAfterMs };
+
 const TERMINAL_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => isTerminalJobStatus(status)),
 );
 
-export const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 export const DEFAULT_LEASE_REAPER_BATCH_SIZE = 100;
 // Hard grace and lease defaults are owned by the API leaseTiming module so
 // nonce TTL (B7) and reaper deferral (B6) cannot drift apart.
@@ -140,6 +159,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "diagnostic-agent-inactivity-sweep": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_TIMEOUT_MS",
+  }),
+  "agent-recovery-alerts": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_TIMEOUT_MS",
   }),
 });
 
@@ -467,18 +490,6 @@ async function completeOwnRow(client, id, claimId, { status, reason }) {
   );
   await client.query("COMMIT");
   return completedOutcome(status, reason);
-}
-
-export function resolveAgentOfflineAfterMs(env = process.env) {
-  const raw = env.CERTOPS_AGENT_OFFLINE_AFTER_MS;
-  if (raw == null || String(raw).trim() === "") {
-    return DEFAULT_AGENT_OFFLINE_AFTER_MS;
-  }
-  const parsed = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return DEFAULT_AGENT_OFFLINE_AFTER_MS;
-  }
-  return parsed;
 }
 
 export function computeBackoffMs(attemptCount) {
@@ -842,6 +853,68 @@ export async function reapExpiredLeases({
 }
 
 /**
+ * Builds a per-agent impact resolver that shares ONE
+ * `resolveRenewalPathsForWorkspace` call across every agent transitioning in
+ * the same workspace during the same sweep tick, rather than one full
+ * workspace resolve per agent (calling `listCertificatesDependentOnAgent`
+ * directly, once per stale agent, would do exactly that -- O(agents)
+ * workspace resolves). A
+ * network partition or host-level outage can take an entire fleet segment
+ * stale in one tick; without batching, N simultaneously-stale agents in one
+ * workspace cost N full certificate+agent re-resolutions in that same tick,
+ * which is the worst possible moment for the worker to be slow.
+ *
+ * The shared projection is computed once per (workspace, resolver instance)
+ * on first access via a memoized promise, so concurrent callers for the same
+ * workspace within one sweep tick await the same in-flight query rather than
+ * issuing their own. Callers that commit an agent-status change between
+ * resolutions invalidate that workspace before the next lookup; otherwise a
+ * later agent would inherit a projection computed before its own transition.
+ * A fresh resolver must be constructed per sweep tick
+ * (see callers below) so the projection always reflects that tick's
+ * just-written agent statuses, never a stale cross-tick cache.
+ */
+function createBatchedImpactResolver({ client, log = logger } = {}) {
+  const workspaceProjections = new Map();
+  const projectionFor = (workspaceId) => {
+    if (!workspaceProjections.has(workspaceId)) {
+      workspaceProjections.set(
+        workspaceId,
+        resolveRenewalPathsForWorkspace({ db: client, workspaceId }),
+      );
+    }
+    return workspaceProjections.get(workspaceId);
+  };
+  const resolver = async function resolveImpactedCertificatesBatched(agent) {
+    try {
+      const targetAgentRowId = String(agent.id);
+      const all = await projectionFor(agent.workspaceId);
+      return all
+        .filter(
+          (entry) =>
+            entry.renewalPathState != null &&
+            entry.dependencies.some((dep) => dep.agentRowId === targetAgentRowId),
+        )
+        .map((entry) => ({
+          id: entry.certificateId,
+          commonName: entry.commonName,
+          renewalPathState: entry.renewalPathState,
+        }));
+    } catch (err) {
+      log.error("certops-agent-impact-resolve-failed", {
+        agentId: agent.agentId,
+        error: err.message,
+      });
+      return [];
+    }
+  };
+  resolver.invalidateWorkspace = (workspaceId) => {
+    workspaceProjections.delete(workspaceId);
+  };
+  return resolver;
+}
+
+/**
  * Stale-agent sweep. certops_agents statuses are 'active'/'offline'/'retired'
  * (Migration 24); 'offline' is a legal status, so stale active agents are
  * marked offline. An agent that registered but never heartbeated is judged
@@ -850,28 +923,129 @@ export async function reapExpiredLeases({
  * (owned by the API heartbeat/claim paths). Retirement is never automated:
  * offline is observational fleet status only.
  */
+/**
+ * Marks agents offline past the liveness threshold and queues exactly one
+ * agent_health down alert per agent that just crossed the edge (transition,
+ * not level: only rows this UPDATE actually flips are candidates, so a
+ * worker tick that finds nothing new to flip queues nothing).
+ * Each candidate owns a separate transaction: its guarded offline UPDATE,
+ * durable incident, and alert intent commit atomically, while a failure for
+ * one agent cannot roll back an unrelated agent that already committed.
+ *
+ * `resolveImpactedCertificates` defaults to `createBatchedImpactResolver`,
+ * which resolves each workspace's full
+ * renewal-path dependency projection at most once per sweep tick (shared
+ * across every agent transitioning in that workspace this tick) and embeds
+ * the dependent auto-renew certificates for each agent from it. Tests that
+ * don't care about enrichment can override it with a stub.
+ */
 export async function sweepStaleAgents({
   client,
   offlineAfterMs,
   log = logger,
+  resolveImpactedCertificates = createBatchedImpactResolver({ client, log }),
+  alertQueuer = queueAgentHealthAlert,
 } = {}) {
-  const result = await client.query(
-    `UPDATE certops_agents
-        SET status = 'offline',
-            updated_at = NOW()
+  const candidatesResult = await client.query(
+    `SELECT id, agent_id, workspace_id, name, hostname, platform,
+            last_seen_at, downtime_alerts_enabled, contact_group_id
+       FROM certops_agents
       WHERE status = 'active'
         AND COALESCE(last_seen_at, created_at)
               < NOW() - ($1 || ' milliseconds')::interval
-      RETURNING id, agent_id, workspace_id, last_seen_at`,
+      ORDER BY workspace_id, id`,
     [String(offlineAfterMs)],
   );
-
-  const staleAgents = result.rows.map((row) => ({
+  const candidates = candidatesResult.rows.map((row) => ({
     id: row.id,
     agentId: row.agent_id,
     workspaceId: row.workspace_id,
+    name: row.name,
+    hostname: row.hostname,
+    platform: row.platform,
     lastSeenAt: row.last_seen_at,
+    downtimeAlertsEnabled: row.downtime_alerts_enabled,
+    contactGroupId: row.contact_group_id,
   }));
+
+  const staleAgents = [];
+  const failures = [];
+  let alertsQueued = 0;
+  for (const candidate of candidates) {
+    let transactionStarted = false;
+    try {
+      await client.query("BEGIN");
+      transactionStarted = true;
+      const transition = await client.query(
+        `UPDATE certops_agents
+            SET status = 'offline',
+                updated_at = NOW()
+          WHERE id = $2
+            AND workspace_id = $3
+            AND status = 'active'
+            AND COALESCE(last_seen_at, created_at)
+                  < NOW() - ($1 || ' milliseconds')::interval
+          RETURNING id, agent_id, workspace_id, name, hostname, platform,
+                    last_seen_at, downtime_alerts_enabled, contact_group_id`,
+        [String(offlineAfterMs), candidate.id, candidate.workspaceId],
+      );
+      if (transition.rows.length === 0) {
+        await client.query("COMMIT");
+        transactionStarted = false;
+        continue;
+      }
+
+      const row = transition.rows[0];
+      const agent = {
+        id: row.id,
+        agentId: row.agent_id,
+        workspaceId: row.workspace_id,
+        name: row.name,
+        hostname: row.hostname,
+        platform: row.platform,
+        lastSeenAt: row.last_seen_at,
+        downtimeAlertsEnabled: row.downtime_alerts_enabled,
+        contactGroupId: row.contact_group_id,
+      };
+      // Resolve after the guarded status flip so the shared renewal-path
+      // resolver observes this agent as offline even when deployments use a
+      // non-default liveness threshold. Only this agent's row is locked;
+      // unrelated agents are no longer coupled to this work.
+      resolveImpactedCertificates.invalidateWorkspace?.(agent.workspaceId);
+      const impactedCertificates = await resolveImpactedCertificates(agent);
+      await client.query(
+        `INSERT INTO certops_agent_health_incidents (
+           agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
+         ) VALUES ($1, $2, NOW(), $3, 'agent_health:' || $1::text || ':down')
+         ON CONFLICT (agent_id) DO NOTHING`,
+        [agent.id, agent.workspaceId, agent.lastSeenAt],
+      );
+      const outcome = await alertQueuer({
+        client,
+        agent,
+        transitionType: "down",
+        impactedCertificates,
+        offlineAfterMs,
+      });
+      if (outcome.queued) alertsQueued += 1;
+      await client.query("COMMIT");
+      transactionStarted = false;
+      staleAgents.push(agent);
+    } catch (error) {
+      if (transactionStarted) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_rollbackError) {
+          // Preserve the transition/alert failure.
+        }
+      }
+      failures.push(error);
+      log.error("certops-stale-agent-transition-failed", {
+        agentId: candidate.agentId,
+        error: error.message,
+      });
+    }
+  }
 
   if (staleAgents.length > 0) {
     log.warn("certops-stale-agents-detected", {
@@ -881,7 +1055,132 @@ export async function sweepStaleAgents({
     });
   }
 
-  return { staleCount: staleAgents.length, staleAgents };
+  if (failures.length > 0) {
+    const error = new AggregateError(
+      failures,
+      `CertOps stale-agent sweep failed for ${failures.length} agent(s): ${failures[0].message}`,
+    );
+    error.code = "CERTOPS_AGENT_HEALTH_PARTIAL_FAILURE";
+    throw error;
+  }
+  return { staleCount: staleAgents.length, staleAgents, alertsQueued };
+}
+
+/**
+ * Recovery counterpart to the down alert above. Runs against
+ * currently-active agents rather than a status transition the SQL layer can
+ * see directly: the flip back to 'active' happens on the agent's own
+ * heartbeat/claim call (agentDispatch.js), not in this worker, so recovery
+ * is detected from the durable incident row created atomically with the
+ * offline transition. The alert queue is delivery state, not incident state.
+ * Candidate discovery is read-only; each incident is then rechecked and
+ * locked in its own transaction so recovery intent/deletion remains atomic
+ * without coupling unrelated agents' outcomes.
+ */
+export async function sweepAgentRecoveries({
+  client,
+  log = logger,
+  resolveImpactedCertificates = createBatchedImpactResolver({ client, log }),
+  alertQueuer = queueAgentHealthAlert,
+} = {}) {
+  const result = await client.query(
+    `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
+            a.last_seen_at, a.downtime_alerts_enabled, a.contact_group_id
+       FROM certops_agents a
+       JOIN certops_agent_health_incidents i ON i.agent_id = a.id
+      WHERE a.status = 'active'
+      ORDER BY a.workspace_id, a.id`,
+  );
+
+  const candidates = result.rows.map((row) => ({
+    id: row.id,
+    agentId: row.agent_id,
+    workspaceId: row.workspace_id,
+    name: row.name,
+    hostname: row.hostname,
+    platform: row.platform,
+    lastSeenAt: row.last_seen_at,
+    downtimeAlertsEnabled: row.downtime_alerts_enabled,
+    contactGroupId: row.contact_group_id,
+  }));
+
+  const failures = [];
+  let alertsQueued = 0;
+  for (const candidate of candidates) {
+    let transactionStarted = false;
+    try {
+      const impactedCertificates = await resolveImpactedCertificates(candidate);
+      await client.query("BEGIN");
+      transactionStarted = true;
+      const locked = await client.query(
+        `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
+                a.last_seen_at, a.downtime_alerts_enabled, a.contact_group_id
+           FROM certops_agents a
+           JOIN certops_agent_health_incidents i ON i.agent_id = a.id
+          WHERE a.id = $1
+            AND a.workspace_id = $2
+            AND a.status = 'active'
+          FOR UPDATE OF i`,
+        [candidate.id, candidate.workspaceId],
+      );
+      if (locked.rows.length === 0) {
+        await client.query("COMMIT");
+        transactionStarted = false;
+        continue;
+      }
+      const row = locked.rows[0];
+      const agent = {
+        id: row.id,
+        agentId: row.agent_id,
+        workspaceId: row.workspace_id,
+        name: row.name,
+        hostname: row.hostname,
+        platform: row.platform,
+        lastSeenAt: row.last_seen_at,
+        downtimeAlertsEnabled: row.downtime_alerts_enabled,
+        contactGroupId: row.contact_group_id,
+      };
+      const outcome = await alertQueuer({
+        client,
+        agent,
+        transitionType: "recovered",
+        impactedCertificates,
+      });
+      if (outcome.queued) alertsQueued += 1;
+      if (outcome.retry !== true) {
+        await client.query(
+          `DELETE FROM certops_agent_health_incidents
+            WHERE agent_id = $1 AND workspace_id = $2`,
+          [agent.id, agent.workspaceId],
+        );
+      }
+      await client.query("COMMIT");
+      transactionStarted = false;
+    } catch (error) {
+      if (transactionStarted) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_rollbackError) {
+          // Preserve the transition/alert failure.
+        }
+      }
+      failures.push(error);
+      log.error("certops-agent-recovery-transition-failed", {
+        agentId: candidate.agentId,
+        error: error.message,
+      });
+    }
+  }
+
+  if (failures.length > 0) {
+    const error = new AggregateError(
+      failures,
+      `CertOps agent-recovery sweep failed for ${failures.length} agent(s): ${failures[0].message}`,
+    );
+    error.code = "CERTOPS_AGENT_HEALTH_PARTIAL_FAILURE";
+    throw error;
+  }
+  return { candidateCount: candidates.length, alertsQueued };
 }
 
 async function withTimeout(promise, timeoutMs, sweepName) {
@@ -1196,6 +1495,28 @@ export async function runCertOpsMaintenance({
   );
   if (results.staleAgents.status === "success") {
     safeGaugeSet(gCertopsStaleAgents, results.staleAgents.result.staleCount);
+    safeGaugeSet(
+      gCertopsAgentHealthAlerts,
+      { transition: "down" },
+      results.staleAgents.result.alertsQueued,
+    );
+  }
+
+  results.agentRecoveryAlerts = await runIsolated(
+    "agent-recovery-alerts",
+    log,
+    () => withClientFn((client) => sweepAgentRecoveries({ client, log })),
+    {
+      enabled: isSweepEnabled("agent-recovery-alerts", env),
+      timeoutMs: resolveSweepTimeoutMs("agent-recovery-alerts", env),
+    },
+  );
+  if (results.agentRecoveryAlerts.status === "success") {
+    safeGaugeSet(
+      gCertopsAgentHealthAlerts,
+      { transition: "recovered" },
+      results.agentRecoveryAlerts.result.alertsQueued,
+    );
   }
 
   results.nonceSweep = await runIsolated(
@@ -1333,6 +1654,10 @@ export async function runCertOpsMaintenance({
       results.diagnosticAgentInactivitySweep.status === "success"
         ? results.diagnosticAgentInactivitySweep.result
         : results.diagnosticAgentInactivitySweep.status,
+    agentRecoveryAlerts:
+      results.agentRecoveryAlerts.status === "success"
+        ? results.agentRecoveryAlerts.result
+        : results.agentRecoveryAlerts.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>

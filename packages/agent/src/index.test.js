@@ -24,6 +24,7 @@ const {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runWindowsDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,
@@ -389,6 +390,207 @@ describe("runDiscoveryScan", () => {
       client,
       log: silentLog,
     });
+
+    assert.equal(outcome.observed, 17);
+    assert.equal(client.calls.reportEvidence.length, 2);
+    assert.equal(client.calls.reportEvidence[0].evidenceItems.length, 16);
+    assert.equal(client.calls.reportEvidence[1].evidenceItems.length, 1);
+  });
+});
+
+describe("runWindowsDiscoveryScan", () => {
+  const WINDOWS_THUMBPRINT = "DEADBEEF".repeat(5);
+
+  it("passes the configured store set to the canonical collector", async () => {
+    const client = createRecordingClient();
+    let receivedStores = null;
+    const collect = ({ stores }) => {
+      receivedStores = stores;
+      return [];
+    };
+
+    await runWindowsDiscoveryScan({
+      client,
+      stores: ["My", "WebHosting"],
+      log: silentLog,
+      collect,
+    });
+
+    assert.deepEqual(receivedStores, ["My", "WebHosting"]);
+  });
+
+  it("reports collected observations as certificate.observed evidence with locationKind/locationSlot metadata", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "windows_store",
+        locationSlot: "LocalMachine/My/example.com",
+        fingerprintSha256: "a".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        serialNumber: "01",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        thumbprint: WINDOWS_THUMBPRINT,
+        keyPresent: true,
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    assert.equal(outcome.warnings, 0);
+    assert.equal(client.calls.reportEvidence.length, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.eventType, "certificate.observed");
+    assert.equal(item.fingerprintSha256, "a".repeat(64));
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.locationKind, "windows_store");
+    assert.equal(byName.locationSlot, "LocalMachine/My/example.com");
+    assert.equal(byName.targetHost, os.hostname());
+    assert.equal(byName.keyPresent, true);
+    assert.equal(byName.storeLocation, "LocalMachine");
+    assert.equal(byName.storeName, "My");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
+    // filePath must never appear for a non-filesystem location.
+    assert.ok(!("filePath" in byName));
+    const serialized = JSON.stringify(item).toLowerCase();
+    assert.ok(!serialized.includes("privatekey"));
+    assert.ok(!serialized.includes("keypath"));
+    assert.ok(!serialized.includes("pfx"));
+    assert.ok(!serialized.includes("export"));
+  });
+
+  it("reports keyPresent: false (not omitted) when the store confirms no private key at this location", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "windows_store",
+        locationSlot: "LocalMachine/My/public-only.example.com",
+        fingerprintSha256: "d".repeat(64),
+        subject: "CN=public-only.example.com",
+        issuer: "CN=public-only.example.com",
+        serialNumber: "09",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "public-only.example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        thumbprint: "CAFEF00D".repeat(5),
+        keyPresent: false,
+      },
+    ];
+
+    await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.keyPresent, false);
+  });
+
+  it("includes IIS-specific metadata (siteName, port, sniHost) for an iis_binding observation", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "iis_binding",
+        locationSlot: "Default Web Site:443#example.com",
+        fingerprintSha256: "b".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        serialNumber: "02",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2027-01-01T00:00:00.000Z",
+        subjectAltNames: "example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        siteName: "Default Web Site",
+        port: 443,
+        sniHost: "example.com",
+        thumbprint: WINDOWS_THUMBPRINT,
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.siteName, "Default Web Site");
+    assert.equal(byName.port, "443");
+    assert.equal(byName.sniHost, "example.com");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
+  });
+
+  it("includes http_sys-specific port metadata without sniHost/siteName", async () => {
+    const client = createRecordingClient();
+    const collect = () => [
+      {
+        locationKind: "http_sys",
+        locationSlot: "0.0.0.0:8443",
+        fingerprintSha256: "c".repeat(64),
+        subject: "CN=example.com",
+        issuer: "CN=example.com",
+        storeLocation: "LocalMachine",
+        storeName: "My",
+        boundAddress: "0.0.0.0",
+        port: 8443,
+        thumbprint: WINDOWS_THUMBPRINT,
+      },
+    ];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
+    assert.equal(byName.port, "8443");
+    assert.equal(byName.boundAddress, "0.0.0.0");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
+    assert.ok(!("siteName" in byName));
+    assert.ok(!("sniHost" in byName));
+  });
+
+  it("sends no evidence when the collector returns no observations (e.g. non-Windows host)", async () => {
+    const client = createRecordingClient();
+    const collect = () => [];
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.observed, 0);
+    assert.equal(outcome.warnings, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("surfaces collector warnings in the returned count without failing the scan", async () => {
+    const client = createRecordingClient();
+    const collect = ({ onWarning }) => {
+      onWarning("windows discovery (iis_binding): powershell exited 1: boom");
+      return [];
+    };
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
+
+    assert.equal(outcome.warnings, 1);
+    assert.equal(outcome.observed, 0);
+  });
+
+  it("chunks evidence bodies to the schema's 16-item maximum", async () => {
+    const client = createRecordingClient();
+    const collect = () =>
+      Array.from({ length: 17 }, (_v, index) => ({
+        locationKind: "windows_store",
+        locationSlot: `LocalMachine/My/cert-${index}.example.com`,
+        fingerprintSha256: index.toString(16).padStart(2, "0").repeat(32),
+        subject: `CN=cert-${index}.example.com`,
+        issuer: `CN=cert-${index}.example.com`,
+        storeLocation: "LocalMachine",
+        storeName: "My",
+      }));
+
+    const outcome = await runWindowsDiscoveryScan({ client, log: silentLog, collect });
 
     assert.equal(outcome.observed, 17);
     assert.equal(client.calls.reportEvidence.length, 2);
@@ -3667,7 +3869,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
           : "";
       } else if (file === "netsh.exe" && (args[1] === "add" || args[1] === "delete")) {
         stdout = "";
-      } else if (file === "certutil.exe" && args[0] === "-store") {
+      } else if (file === "certutil.exe" && args.includes("-store")) {
         stdout = outgoingThumbprint
           ? `My "Personal"\n================ Certificate 0 ================\nSerial Number: 1a2b3c4d5e\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=old.example.com\nCert Hash(sha1): ${outgoingThumbprint.match(/../g).join(" ")}\n${storeKeyContainer ? `  Key Container = ${storeKeyContainer}\n` : ""}CertUtil: -store command completed successfully.\n`
           : `My "Personal"\nCertUtil: -store command completed successfully.\n`;
@@ -3848,9 +4050,8 @@ describe("windows-iis renew job (os-store-managed)", () => {
   it("records ownershipProvenance preexisting for an issuance record that was never upgraded to enrolled_by_agent (container created but certreq -accept's outcome never confirmed)", async () => {
     // Same container name again, WITH a recordIssuedContainer record but
     // WITHOUT the markIssuedContainerAccepted upgrade: proves a bare
-    // "this agent created the container" record is no longer sufficient
-    // on its own, closing the gap a PR review found (2026-08-07) where an
-    // operator-enrolled certificate in an agent-created container could
+    // "this agent created the container" record is not sufficient on its
+    // own: an operator-enrolled certificate in an agent-created container could
     // otherwise inherit tokentimer_installed provenance.
     const job = makeJob();
     recordIssuedContainer({
@@ -3876,8 +4077,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     // container at some point (acceptedThumbprint recorded), but the
     // predecessor certificate this sweep is now looking at carries
     // OTHER_THUMBPRINT -- a mismatch that must NOT resolve to
-    // tokentimer_installed, since it is exactly the scenario the PR
-    // review flagged: an operator (or a later, unrelated attempt) can
+    // tokentimer_installed: an operator (or a later, unrelated attempt) can
     // enroll a different certificate into an agent-owned container name
     // without this agent's own acceptCertificateViaCng having produced
     // that specific certificate.
@@ -4110,7 +4310,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.match(outcome.errorMessage, /deploy action does not yet support windows-iis/);
   });
 
-  describe("store-lock scope for a non-default target store (PR review, 2026-08-07)", () => {
+  describe("store-lock scope for a non-default target store", () => {
     // certreq -accept always populates "My" first, with a non-default
     // target store (e.g. "WebHosting") reached only by a separate, later
     // mirror step -- see acquireWindowsStoreLocks' own doc comment. A
@@ -4286,7 +4486,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
-      if (file === "certutil.exe" && args[0] === "-store") {
+      if (file === "certutil.exe" && args.includes("-store")) {
         if (certutilStoreFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
           return;
@@ -4508,8 +4708,8 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
    */
   function makeReconcileExecStub({ enrolledContainer = null, enrolledInStore = null, delkeyFails = false } = {}) {
     return function execFileStub(file, args, options, callback) {
-      if (file === "certutil.exe" && args[0] === "-store") {
-        const queriedStore = args[1];
+      if (file === "certutil.exe" && args.includes("-store")) {
+        const queriedStore = args[args.indexOf("-store") + 1];
         const showEnrolled =
           enrolledContainer && (enrolledInStore === null || enrolledInStore === queriedStore);
         let stdout = `My "Personal"\n`;
@@ -4582,8 +4782,8 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
 
     const queriedStores = [];
     const execFileImpl = (file, args, options, callback) => {
-      if (file === "certutil.exe" && args[0] === "-store") {
-        queriedStores.push(args[1]);
+      if (file === "certutil.exe" && args.includes("-store")) {
+        queriedStores.push(args[args.indexOf("-store") + 1]);
       }
       return makeReconcileExecStub()(file, args, options, callback);
     };
@@ -4622,7 +4822,11 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
 
     const execFileImpl = (file, args, options, callback) => {
-      if (file === "certutil.exe" && args[0] === "-store" && args[1] === "WebHosting") {
+      if (
+        file === "certutil.exe" &&
+        args.includes("-store") &&
+        args[args.indexOf("-store") + 1] === "WebHosting"
+      ) {
         process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "access denied"));
         return;
       }
@@ -4809,4 +5013,3 @@ describe("verifyDeployedCertificateWithRetry", () => {
     assert.deepEqual(delays, [42]);
   });
 });
-

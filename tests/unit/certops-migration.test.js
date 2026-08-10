@@ -1492,3 +1492,193 @@ describe("migration 44 certificate_evidence trust vocabulary applies against a l
     }
   });
 });
+
+describe("migration 45 generalized observation locality + agent alert settings", () => {
+  const migration = migrations.find((entry) => entry.version === 45);
+
+  it("exists at version 45 with the expected name", () => {
+    assert.ok(migration, "migration 45 expected");
+    assert.equal(
+      migration.name,
+      "certops_agent_observation_locality_and_downtime_alerts",
+    );
+  });
+
+  it("adds a nullable, CHECK-constrained location_kind to both certificate_targets and certificate_instances", () => {
+    for (const table of ["certificate_targets", "certificate_instances"]) {
+      const pattern = new RegExp(
+        `ALTER TABLE ${table}\\s+ADD COLUMN IF NOT EXISTS location_kind TEXT NULL`,
+      );
+      assert.match(migration.sql, pattern, `${table} should gain a nullable location_kind column`);
+    }
+    // Nullable, not defaulted: every pre-existing row (including
+    // agent_filesystem rows written before this migration) must resolve
+    // safely to NULL, not require a backfill.
+    assert.doesNotMatch(migration.sql, /location_kind TEXT NOT NULL/);
+    for (const kind of ["filesystem", "windows_store", "iis_binding", "http_sys"]) {
+      assert.ok(
+        migration.sql.includes(`'${kind}'`),
+        `location_kind CHECK should allow '${kind}'`,
+      );
+    }
+  });
+
+  it("widens source CHECK constraints on all three inventory tables to accept agent_windows without dropping any prior value", () => {
+    for (const table of [
+      "managed_certificates",
+      "certificate_targets",
+      "certificate_instances",
+    ]) {
+      const pattern = new RegExp(
+        `ALTER TABLE ${table}\\s+ADD CONSTRAINT ${table}_source_check CHECK \\(\\s*source IN \\(([^)]+)\\)`,
+      );
+      const match = migration.sql.match(pattern);
+      assert.ok(match, `expected a rewritten source CHECK for ${table}`);
+      const values = match[1].split(",").map((v) => v.trim().replace(/^'|'$/g, ""));
+      assert.ok(values.includes("agent_windows"), `${table} source CHECK must accept agent_windows`);
+      assert.ok(values.includes("agent_filesystem"), `${table} source CHECK must still accept agent_filesystem`);
+      assert.ok(values.includes("manual"), `${table} source CHECK must preserve every prior value (e.g. manual)`);
+    }
+  });
+
+  it("widens the managed_certificates identity indexes to include agent_windows alongside agent_issuance", () => {
+    assert.match(
+      migration.sql,
+      /uq_managed_certificates_workspace_source_ref[\s\S]*?'agent_filesystem', 'agent_issuance', 'agent_windows'/,
+    );
+    assert.match(
+      migration.sql,
+      /uq_managed_certificates_workspace_fingerprint_import[\s\S]*?'agent_filesystem', 'agent_issuance', 'agent_windows'/,
+    );
+  });
+
+  it("adds a dedicated partial unique index for agent_windows certificate_targets identity", () => {
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_agent_windows_source_ref\s+ON certificate_targets\(workspace_id, source, source_ref\)\s+WHERE source = 'agent_windows' AND source_ref IS NOT NULL/,
+    );
+  });
+
+  it("adds per-agent downtime alert settings defaulted to enabled, matching endpoint-alert semantics", () => {
+    assert.match(
+      migration.sql,
+      /ALTER TABLE certops_agents\s+ADD COLUMN IF NOT EXISTS downtime_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE/,
+    );
+    assert.match(
+      migration.sql,
+      /ALTER TABLE certops_agents\s+ADD COLUMN IF NOT EXISTS contact_group_id TEXT NULL/,
+    );
+  });
+
+  it("adds nullable alert-setting columns to bootstrap tokens for backward compatibility", () => {
+    assert.match(
+      migration.sql,
+      /ALTER TABLE certops_agent_bootstrap_tokens\s+ADD COLUMN IF NOT EXISTS downtime_alerts_enabled BOOLEAN NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ALTER TABLE certops_agent_bootstrap_tokens\s+ADD COLUMN IF NOT EXISTS contact_group_id TEXT NULL/,
+    );
+  });
+
+  it("uses only additive DDL (no DROP TABLE/DROP COLUMN)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+    assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
+  });
+});
+
+describe("migration 46 alert_queue agent-health anchor", () => {
+  const migration = migrations.find((entry) => entry.version === 46);
+
+  it("exists at version 46 with the expected name", () => {
+    assert.ok(migration, "migration 46 expected");
+    assert.equal(migration.name, "alert_queue_agent_health_anchor");
+  });
+
+  it("drops the NOT NULL on token_id rather than requiring a synthetic tokens row for agent alerts", () => {
+    assert.match(
+      migration.sql,
+      /ALTER TABLE alert_queue\s+ALTER COLUMN token_id DROP NOT NULL/,
+    );
+  });
+
+  it("adds a nullable certops_agent_id anchor referencing certops_agents with cascade delete", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS certops_agent_id UUID NULL\s+REFERENCES certops_agents\(id\) ON DELETE CASCADE/,
+    );
+  });
+
+  it("replaces any prior anchor CHECK with one requiring token_id OR certops_agent_id, never neither", () => {
+    assert.match(
+      migration.sql,
+      /DROP CONSTRAINT IF EXISTS alert_queue_anchor_check/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD CONSTRAINT alert_queue_anchor_check\s+CHECK \(token_id IS NOT NULL OR certops_agent_id IS NOT NULL\)/,
+    );
+  });
+
+  it("indexes certops_agent_id for the delivery-worker/recovery-sweep lookups", () => {
+    assert.match(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_alert_queue_certops_agent_id\s+ON alert_queue\(certops_agent_id\)/,
+    );
+  });
+
+  it("adds a generic metadata JSONB column defaulted to '{}' so every pre-existing alert row stays valid", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '\{\}'::jsonb/,
+    );
+  });
+
+  it("uses only additive DDL (no DROP TABLE/DROP COLUMN)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+    assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
+  });
+
+  it("keeps every migration version sequential with no gaps", () => {
+    const versions = migrations.map((entry) => entry.version);
+    const sorted = [...versions].sort((a, b) => a - b);
+    assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
+    for (let i = 1; i < sorted.length; i += 1) {
+      assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
+    }
+    assert.equal(sorted[sorted.length - 1], 47);
+  });
+});
+
+describe("migration 47 durable agent-health incidents and anchor XOR", () => {
+  const migration = migrations.find((entry) => entry.version === 47);
+
+  it("adds an exactly-one alert anchor constraint and refuses ambiguous legacy rows", () => {
+    assert.ok(migration);
+    assert.equal(migration.name, "agent_health_incidents_and_alert_anchor_xor");
+    assert.match(
+      migration.sql,
+      /WHERE \(token_id IS NULL\) = \(certops_agent_id IS NULL\)/,
+    );
+    assert.match(
+      migration.sql,
+      /CHECK \(\s*\(token_id IS NOT NULL\) <> \(certops_agent_id IS NOT NULL\)\s*\)/,
+    );
+  });
+
+  it("creates a durable open-incident row keyed by agent with workspace-safe foreign keys", () => {
+    assert.match(
+      migration.sql,
+      /CREATE TABLE IF NOT EXISTS certops_agent_health_incidents/,
+    );
+    assert.match(migration.sql, /agent_id UUID PRIMARY KEY/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, agent_id\)\s+REFERENCES certops_agents\(workspace_id, id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      migration.sql,
+      /INSERT INTO certops_agent_health_incidents[\s\S]+WHERE aq\.alert_key = 'agent_health:' \|\| a\.id::text \|\| ':down'[\s\S]+ON CONFLICT \(agent_id\) DO NOTHING/,
+    );
+  });
+});

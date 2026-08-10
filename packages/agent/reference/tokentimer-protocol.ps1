@@ -29,7 +29,15 @@
 #                                explicit field allowlist.
 #   -ServerUrl URL               Control-plane origin (https:// required).
 #   -AgentId ID                  Agent id (heartbeat/claim/result).
-#   -AgentVersion VERSION        Reported agentVersion string.
+#   -AgentVersion VERSION        Reported agentVersion string. Must start
+#                                with a bare X.Y.Z (the control plane's
+#                                compatibility gate, agentRegistry.js
+#                                computeAgentCompatibility, parses only a
+#                                leading \d+.\d+.\d+ and hard-blocks claim
+#                                with HTTP 409 on anything else, including
+#                                a script-name-prefixed string). Defaults
+#                                to this client's own version, matching
+#                                what every other agent build reports.
 #   -WorkspaceId UUID            Workspace id. Required for register: the
 #                                diagnostic-bootstrap route is scoped to
 #                                one workspace by path segment.
@@ -105,7 +113,7 @@ param(
     [switch]$Json,
     [string]$ServerUrl,
     [string]$AgentId,
-    [string]$AgentVersion = "tokentimer-protocol.ps1/1.0.0",
+    [string]$AgentVersion = "1.0.0",
     [string]$WorkspaceId,
     [string]$SessionCookieFile,
     [string]$CsrfTokenFile,

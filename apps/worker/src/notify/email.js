@@ -126,6 +126,16 @@ function getLogoUrl() {
   return `${baseUrl}/Branding/logo.png`;
 }
 
+/** Escape untrusted text before placing it in an HTML text context. */
+export function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Generate email template matching the welcome email format
 export function generateEmailTemplate({
   title,

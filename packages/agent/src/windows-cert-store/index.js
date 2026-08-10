@@ -1119,7 +1119,7 @@ const THUMBPRINT_PATTERN = /^[0-9A-Fa-f]{40}$/;
  * @param {string} [input.certutilPath] defaults to "certutil.exe".
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   { ok: true }
+ *   { ok: true, keyContainerAlreadyAbsent?: true }
  *   | { ok: false, stage: "delstore"|"delkey", exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
  * >}
  */
@@ -1168,6 +1168,25 @@ async function removeCertificateAndKeyContainer({
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
   const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
   if (delkeyResult.exitCode !== 0) {
+    // Real-host finding (interrupted-cleanup repro, 2026-08-09): unlike
+    // `-delstore` (which silently no-ops with exit 0 for a thumbprint that is
+    // already absent, confirmed on Windows Server 2025 build 26100.32860),
+    // `-delkey` genuinely FAILS with NTE_BAD_KEYSET ("Keyset does not exist")
+    // once the container is already gone. That asymmetry meant a caller
+    // retrying this same call after a crash that landed between a first,
+    // fully successful `-delstore`+`-delkey` pair and the caller persisting
+    // that success (e.g. windows-retention's sweepLedger writing the ledger
+    // row as "removed") would have its retry fail here forever: the delete
+    // already fully succeeded, but the caller has no record of that, so it
+    // keeps retrying an operation whose second half can never succeed again
+    // -- an unrecoverable retry loop despite the real on-disk state already
+    // being exactly the desired end state. NTE_BAD_KEYSET on `-delkey` is
+    // therefore treated the same way `-delstore` already treats a missing
+    // thumbprint: the container being absent IS success for a delete.
+    const combinedOutput = `${delkeyResult.stdout || ""}\n${delkeyResult.stderr || ""}`;
+    if (/NTE_BAD_KEYSET/i.test(combinedOutput)) {
+      return guardReturnValue({ ok: true, keyContainerAlreadyAbsent: true });
+    }
     return guardReturnValue({
       ok: false,
       stage: "delkey",

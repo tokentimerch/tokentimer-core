@@ -53,7 +53,15 @@
 #   --agent-id ID                Agent id. Required for heartbeat/claim/
 #                                 result; ignored by register, which the
 #                                 server assigns (a diag-<uuid> id).
-#   --agent-version VERSION      Reported agentVersion string.
+#   --agent-version VERSION      Reported agentVersion string. Must start
+#                                with a bare X.Y.Z (the control plane's
+#                                compatibility gate, agentRegistry.js
+#                                computeAgentCompatibility, parses only a
+#                                leading \d+.\d+.\d+ and hard-blocks claim
+#                                with HTTP 409 on anything else, including
+#                                a script-name-prefixed string). Defaults
+#                                to this client's own version, matching
+#                                what every other agent build reports.
 #   --workspace-id UUID          Workspace id. Required for register: the
 #                                 diagnostic-bootstrap route is scoped to
 #                                 one workspace by path segment.
@@ -1105,7 +1113,7 @@ TOKENTIMER_STEP=""
 TOKENTIMER_LIVE=0
 TOKENTIMER_SERVER_URL=""
 TOKENTIMER_AGENT_ID=""
-TOKENTIMER_AGENT_VERSION="tokentimer-protocol.sh/${TOKENTIMER_PROTOCOL_VERSION}"
+TOKENTIMER_AGENT_VERSION="${TOKENTIMER_PROTOCOL_VERSION}"
 TOKENTIMER_WORKSPACE_ID=""
 TOKENTIMER_SESSION_COOKIE_FILE=""
 TOKENTIMER_CSRF_TOKEN_FILE=""

@@ -38,6 +38,10 @@ const CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION = migrations.find(
 const CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_job_creation_request_fingerprint",
 );
+const CERTOPS_AGENT_HEALTH_INCIDENT_MIGRATION = migrations.find(
+  (migration) =>
+    migration.name === "agent_health_incidents_and_alert_anchor_xor",
+);
 
 function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -109,6 +113,15 @@ async function expectForeignKeyViolation(query, params) {
     throw new Error("Expected foreign key violation");
   } catch (error) {
     expect(error.code).to.equal("23503");
+  }
+}
+
+async function expectCheckViolation(query, params) {
+  try {
+    await TestUtils.execQuery(query, params);
+    throw new Error("Expected check constraint violation");
+  } catch (error) {
+    expect(error.code).to.equal("23514");
   }
 }
 
@@ -793,6 +806,83 @@ describe("CertOps inventory migration", function () {
       expect(indexes.has(indexName), `missing index ${indexName}`).to.equal(
         true,
       );
+    }
+  });
+
+  it("enforces exactly one alert anchor and creates durable agent-health incidents", async () => {
+    expect(CERTOPS_AGENT_HEALTH_INCIDENT_MIGRATION).to.exist;
+    expect(CERTOPS_AGENT_HEALTH_INCIDENT_MIGRATION.version).to.equal(47);
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-agent-alert-anchor",
+    );
+    try {
+      const token = await TestUtils.execQuery(
+        `INSERT INTO tokens
+           (user_id, workspace_id, created_by, name, expiration, type, category)
+         VALUES ($1, $2, $1, 'Alert anchor token', CURRENT_DATE + 30,
+                 'api_key', 'general')
+         RETURNING id`,
+        [ownerId, workspaceA],
+      );
+      const agent = await TestUtils.execQuery(
+        `INSERT INTO certops_agents
+           (workspace_id, agent_id, name, status, credential_prefix,
+            credential_hash, protocol_version, agent_version)
+         VALUES ($1, $2, 'alert-anchor-agent', 'active', $3, $4,
+                 '1.0.0', '0.11.0')
+         RETURNING id`,
+        [
+          workspaceA,
+          `agent-${crypto.randomUUID()}`,
+          `ttagent_${crypto.randomBytes(8).toString("hex")}`,
+          crypto.randomBytes(32).toString("hex"),
+        ],
+      );
+      const insertAlert = `INSERT INTO alert_queue
+         (user_id, token_id, certops_agent_id, alert_key, threshold_days,
+          due_date, channels, status)
+       VALUES ($1, $2, $3, $4, 0, CURRENT_DATE, '[]'::jsonb, 'pending')`;
+
+      await TestUtils.execQuery(insertAlert, [
+        ownerId,
+        token.rows[0].id,
+        null,
+        `migration-xor-token-${crypto.randomUUID()}`,
+      ]);
+      await TestUtils.execQuery(insertAlert, [
+        ownerId,
+        null,
+        agent.rows[0].id,
+        `migration-xor-agent-${crypto.randomUUID()}`,
+      ]);
+      await expectCheckViolation(insertAlert, [
+        ownerId,
+        null,
+        null,
+        `migration-xor-neither-${crypto.randomUUID()}`,
+      ]);
+      await expectCheckViolation(insertAlert, [
+        ownerId,
+        token.rows[0].id,
+        agent.rows[0].id,
+        `migration-xor-both-${crypto.randomUUID()}`,
+      ]);
+
+      await TestUtils.execQuery(
+        `INSERT INTO certops_agent_health_incidents
+           (workspace_id, agent_id, down_alert_key)
+         VALUES ($1, $2, $3)`,
+        [workspaceA, agent.rows[0].id, `agent_health:${agent.rows[0].id}:down`],
+      );
+      await expectForeignKeyViolation(
+        `UPDATE certops_agent_health_incidents
+            SET workspace_id = $1
+          WHERE agent_id = $2`,
+        [workspaceB, agent.rows[0].id],
+      );
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
   });
 });

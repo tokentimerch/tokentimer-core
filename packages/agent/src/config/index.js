@@ -93,6 +93,16 @@ const DEFAULT_WINDOWS_RETENTION_HOURS = 168;
  * has passed, so sub-hour polling would just be wasted store/handshake
  * probes for no earlier possible outcome. */
 const DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Windows OS-store/IIS/http.sys discovery is a lighter enumeration than the
+// filesystem walk (no file I/O, just certutil/netsh/appcmd queries via
+// ../windows-discovery), so it defaults to a shorter interval to catch
+// renewals/rotations sooner without meaningfully increasing host load.
+// Distinct from the retention-sweep interval above: the two loops observe
+// different things (current inventory vs. superseded-certificate cleanup)
+// on independent cadences.
+const DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS = 30 * 60 * 1000;
+const WINDOWS_DISCOVERY_STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const DEFAULT_WINDOWS_DISCOVERY_STORES = Object.freeze(["My"]);
 // Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
@@ -668,6 +678,7 @@ function validateDiscoveryObject(discovery) {
 }
 
 /**
+/**
  * Validates `windows` in config.json: the retention-sweep policy governing
  * ADR-0012 decision 18's ledger (see ../windows-retention). `null` means
  * "use every documented default", NOT "retention disabled" -- decision 18
@@ -720,6 +731,84 @@ function validateWindowsObject(windows) {
     sweepIntervalMs = windows.sweepIntervalMs;
   }
   return { supersededRetentionHours, sweepIntervalMs };
+}
+
+/**
+ * Windows OS-store/IIS/http.sys discovery config, deliberately independent
+ * of validateDiscoveryObject (filesystem directories are meaningless here,
+ * and this surface only exists on Windows hosts) and of validateWindowsObject
+ * above (retention-sweep policy is a different concern on its own cadence).
+ * Defaults to enabled with no directories/parameters needed -- unlike
+ * filesystem discovery, this scan doesn't require any operator-specified
+ * path; the machine store, IIS sites, and http.sys bindings (via
+ * ../windows-discovery) are all self-discovering. `enabled: false` lets an
+ * operator opt out on a Windows host that doesn't want this surface
+ * reported (e.g. a workstation with unrelated local certificates).
+ */
+function validateWindowsDiscoveryObject(windowsDiscovery) {
+  if (windowsDiscovery === undefined || windowsDiscovery === null) {
+    return {
+      enabled: true,
+      intervalMs: DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS,
+      stores: [...DEFAULT_WINDOWS_DISCOVERY_STORES],
+    };
+  }
+  if (typeof windowsDiscovery !== "object" || Array.isArray(windowsDiscovery)) {
+    throw new Error(
+      "tokentimer-agent: windowsDiscovery in config.json must be an object ({ enabled?, intervalMs? })",
+    );
+  }
+  let enabled = true;
+  if (windowsDiscovery.enabled !== undefined) {
+    if (typeof windowsDiscovery.enabled !== "boolean") {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.enabled must be a boolean, got: " +
+          JSON.stringify(windowsDiscovery.enabled),
+      );
+    }
+    enabled = windowsDiscovery.enabled;
+  }
+  let intervalMs = DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS;
+  if (windowsDiscovery.intervalMs !== undefined) {
+    if (
+      typeof windowsDiscovery.intervalMs !== "number" ||
+      !Number.isInteger(windowsDiscovery.intervalMs) ||
+      windowsDiscovery.intervalMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.intervalMs must be a positive integer " +
+          `(milliseconds), got: ${JSON.stringify(windowsDiscovery.intervalMs)}`,
+      );
+    }
+    intervalMs = windowsDiscovery.intervalMs;
+  }
+  let stores = [...DEFAULT_WINDOWS_DISCOVERY_STORES];
+  if (windowsDiscovery.stores !== undefined) {
+    if (
+      !Array.isArray(windowsDiscovery.stores) ||
+      windowsDiscovery.stores.length < 1 ||
+      windowsDiscovery.stores.length > 32
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.stores must be an array containing 1 to 32 store names",
+      );
+    }
+    const seen = new Set();
+    stores = [];
+    for (const store of windowsDiscovery.stores) {
+      if (typeof store !== "string" || !WINDOWS_DISCOVERY_STORE_PATTERN.test(store)) {
+        throw new Error(
+          "tokentimer-agent: windowsDiscovery.stores contains an invalid store name",
+        );
+      }
+      const key = store.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        stores.push(store);
+      }
+    }
+  }
+  return { enabled, intervalMs, stores };
 }
 
 function validateCaBundlePath(caBundlePath) {
@@ -887,6 +976,8 @@ function validateExecutionObject(execution, configDir) {
  *   declaredCommandProfileNames: string[],
  *   policy: object|null,
  *   discovery: {directories: string[], intervalMs: number}|null,
+ *   windows: {supersededRetentionHours: number, sweepIntervalMs: number},
+ *   windowsDiscovery: {enabled: boolean, intervalMs: number, stores: string[]},
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
  *   requireSignedAgentId: boolean,
@@ -966,6 +1057,14 @@ function loadAgentConfig({ configDir } = {}) {
   // decision 18 has no disabled state.
   const windows = validateWindowsObject(fileConfig.windows);
 
+  // Windows OS-store/IIS/http.sys discovery config. Unlike filesystem
+  // discovery, this has no "disabled by absence" semantics -- it defaults to
+  // enabled (see validateWindowsDiscoveryObject) since it needs no operator-
+  // supplied paths and is a no-op (empty results) on any non-Windows host.
+  // Independent of `windows` above: this is inventory observation, that is
+  // superseded-certificate cleanup.
+  const windowsDiscovery = validateWindowsDiscoveryObject(fileConfig.windowsDiscovery);
+
   const caBundlePath = validateCaBundlePath(
     process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
   );
@@ -1027,6 +1126,7 @@ function loadAgentConfig({ configDir } = {}) {
     policy,
     discovery,
     windows,
+    windowsDiscovery,
     caBundlePath,
     allowInsecureLocalHttp,
     requireSignedAgentId,

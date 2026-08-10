@@ -91,6 +91,12 @@ tests/integration/certops-job-create-api.test.js
 tests/integration/certops-job-read-apis.test.js
 tests/integration/certops-workspace-kill-switch-api.test.js
 tests/integration/certops-k8s-controller-wiring.test.js
+tests/integration/certops-migration-42-windows-site-regex.test.js
+tests/integration/certops-migration-45-46-agent-observation-downtime-alerts.test.js
+tests/integration/certops-diagnostic-agent-orphan-retirement.test.js
+tests/integration/certops-issuance-claim-gating.test.js
+tests/integration/certops-agent-health-alerts-worker-cron.test.js
+tests/integration/certops-renewal-path-health-real-topology.test.js
 
 # Integrations
 tests/integration/github.integration.test.js

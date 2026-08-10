@@ -36,7 +36,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [hasManagerOrViewerRole, setHasManagerOrViewerRole] = useState(false);
   const [planInfo, setPlanInfo] = useState({
     plan: 'oss',
-    alertLimitMonth: 30,
+    // 0 means "no monthly alerting limit configured", matching the
+    // memberLimit/workspaceLimit convention below.
+    alertLimitMonth: 0,
     tokenCount: 0,
     tokenLimit: 0,
   });
@@ -210,7 +212,10 @@ export function useControlCenterData(initialWorkspaceId = '') {
           });
           setPlanInfo({
             plan: planData.plan || 'oss',
-            alertLimitMonth: planData.alertLimitMonth || 30,
+            alertLimitMonth:
+              planData.alertLimitMonth === Infinity
+                ? 0
+                : planData.alertLimitMonth || 0,
             tokenCount: planData.tokenCount || 0,
             tokenLimit: planData.tokenLimit || 0,
             memberCount: Math.max(1, planData.memberCount || 0),
@@ -243,9 +248,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
             logger.warn('Failed to load plan info for viewer:', planError);
             setPlanInfo({
               plan: 'oss',
-              alertLimitMonth: 100,
+              alertLimitMonth: 0,
               tokenCount: 0,
-              tokenLimit: 50,
+              tokenLimit: 0,
             });
             setOrgTokenCount(0);
           }

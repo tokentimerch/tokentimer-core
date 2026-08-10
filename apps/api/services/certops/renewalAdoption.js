@@ -30,6 +30,11 @@ const {
   isAgentDeployableKeyMode,
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
 } = require("./jobs");
+const {
+  WINDOWS_IIS_SITE_PATTERN,
+  WINDOWS_SNI_HOST_PATTERN,
+  WINDOWS_STORE_NAME_PATTERN,
+} = require("./renewalProfile");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_CERTIFICATE_NOT_PROFILED = "CERTOPS_CERTIFICATE_NOT_PROFILED";
@@ -39,6 +44,8 @@ const CERTOPS_RENEWAL_SETUP_MULTI_LOCATION =
   "CERTOPS_RENEWAL_SETUP_MULTI_LOCATION";
 const CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH =
   "CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH";
+const CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE =
+  "CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE";
 
 /**
  * Dedupe key for an adoption intent.
@@ -59,9 +66,14 @@ function adoptionIntentDedupeKey(jobId) {
  * Sources that describe a place the certificate is actually installed, as
  * opposed to a vantage point it was merely observed from. Only a deployment
  * location can be renewed into, so only these count towards the adoption block.
+ * agent_windows belongs here only for actionable IIS binding observations.
+ * A machine-store row can accompany the same IIS certificate, but it is the
+ * underlying observation rather than a second place to deploy. http.sys is
+ * likewise observation-only until it has its own renewal executor.
  */
 const DEPLOYMENT_INSTANCE_SOURCES = Object.freeze([
   "agent_filesystem",
+  "agent_windows",
   "cert_manager",
 ]);
 
@@ -134,6 +146,7 @@ async function countCertificateDeploymentLocations({
       WHERE ci.workspace_id = $1
         AND ci.managed_certificate_id = $2::uuid
         AND ci.source = ANY($3::text[])
+        AND (ci.source <> 'agent_windows' OR ci.location_kind = 'iis_binding')
         AND NOT (ci.status = ANY($4::text[]))`,
     [
       workspaceId,
@@ -143,6 +156,87 @@ async function countCertificateDeploymentLocations({
     ],
   );
   return Number(result.rows[0]?.locations || 0);
+}
+
+async function loadWindowsRenewalTopology({
+  db = pool,
+  workspaceId,
+  certificateId,
+  deployedAgentId,
+} = {}) {
+  const result = await db.query(
+    `SELECT ct.id AS target_id,
+            ct.deployment_reference AS target_reference,
+            ct.windows_store,
+            ct.windows_site,
+            ct.windows_port,
+            ct.windows_sni_host,
+            a.id AS agent_row_id,
+            a.declared_target_selectors
+       FROM certificate_instances ci
+       JOIN certificate_targets ct
+         ON ct.workspace_id = ci.workspace_id AND ct.id = ci.target_id
+       JOIN certops_agents a
+         ON a.workspace_id = ci.workspace_id
+        AND a.id = $3::uuid
+        AND a.status <> 'retired'
+      WHERE ci.workspace_id = $1
+        AND ci.managed_certificate_id = $2::uuid
+        AND ci.source = 'agent_windows'
+        AND ci.location_kind = 'iis_binding'
+        AND ct.target_type = 'windows-iis'
+        AND NOT (ci.status = ANY($4::text[]))
+      ORDER BY ci.observed_at DESC NULLS LAST, ci.updated_at DESC`,
+    [workspaceId, certificateId, deployedAgentId, RETIRED_INSTANCE_STATUSES],
+  );
+
+  const byTarget = new Map();
+  for (const row of result.rows) {
+    if (!byTarget.has(String(row.target_id))) byTarget.set(String(row.target_id), row);
+  }
+  if (byTarget.size !== 1) return null;
+  const row = [...byTarget.values()][0];
+  const selectors = Array.isArray(row.declared_target_selectors)
+    ? row.declared_target_selectors.filter((value) => typeof value === "string" && value)
+    : [];
+  const storedReference =
+    typeof row.target_reference === "string" && row.target_reference.trim()
+      ? row.target_reference.trim()
+      : null;
+  const targetReference =
+    storedReference && selectors.includes(storedReference)
+      ? storedReference
+      : null;
+  if (
+    !targetReference ||
+    typeof row.windows_store !== "string" ||
+    !WINDOWS_STORE_NAME_PATTERN.test(row.windows_store) ||
+    typeof row.windows_site !== "string" ||
+    !WINDOWS_IIS_SITE_PATTERN.test(row.windows_site) ||
+    !Number.isSafeInteger(row.windows_port) ||
+    row.windows_port < 1 ||
+    row.windows_port > 65535 ||
+    (row.windows_sni_host !== null &&
+      row.windows_sni_host !== undefined &&
+      (typeof row.windows_sni_host !== "string" ||
+        !WINDOWS_SNI_HOST_PATTERN.test(row.windows_sni_host)))
+  ) {
+    return null;
+  }
+  return {
+    assignedAgentId: row.agent_row_id,
+    target: {
+      type: "windows-iis",
+      reference: targetReference,
+      store: row.windows_store,
+      binding: {
+        site: row.windows_site,
+        port: row.windows_port,
+        sniHost: row.windows_sni_host || null,
+      },
+      thumbprintSha1: null,
+    },
+  };
 }
 
 /**
@@ -265,6 +359,7 @@ async function detachRenewalProfile({
 function renewalSetupJobCreator({
   certificateId,
   countLocations = countCertificateDeploymentLocations,
+  loadWindowsTopology = loadWindowsRenewalTopology,
   createJob = createCertificateJob,
   enqueueIntent = enqueueRenewalAdoptionIntent,
 } = {}) {
@@ -295,7 +390,8 @@ function renewalSetupJobCreator({
         CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
       );
     }
-    if (!certificate.deployed_cert_path) {
+    const isWindowsDeployment = certificate.key_mode === "os-store-managed";
+    if (!isWindowsDeployment && !certificate.deployed_cert_path) {
       throw renewalSetupError(
         "No discovered deployment path is recorded for this certificate, so automatic renewal has nowhere to deploy to.",
         CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
@@ -320,6 +416,45 @@ function renewalSetupJobCreator({
       );
     }
 
+    let windowsTopology = null;
+    if (isWindowsDeployment) {
+      if (!certificate.deployed_agent_id) {
+        throw renewalSetupError(
+          "The discovered Windows deployment is not associated with an executor agent.",
+          CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE,
+          422,
+        );
+      }
+      windowsTopology = await loadWindowsTopology({
+        db: client,
+        workspaceId,
+        certificateId,
+        deployedAgentId: certificate.deployed_agent_id,
+      });
+      if (!windowsTopology) {
+        throw renewalSetupError(
+          "The discovered Windows certificate does not have one complete IIS store/binding topology with a claimable target selector.",
+          CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE,
+          422,
+        );
+      }
+    }
+
+    const payload = {
+      ...(options.payload || {}),
+      certificateId: String(certificateId),
+    };
+    if (windowsTopology) {
+      // A Windows store/IIS executor has no filesystem certificate path.
+      // Discard a caller-supplied legacy field rather than persisting a mixed
+      // custody shape that no canonical executor should consume.
+      delete payload.certPath;
+      payload.keyMode = "os-store-managed";
+      payload.target = windowsTopology.target;
+    } else {
+      payload.certPath = certificate.deployed_cert_path;
+    }
+
     const outcome = await createJob({
       ...options,
       operation: "renew",
@@ -328,12 +463,12 @@ function renewalSetupJobCreator({
       // Explicit pin from the discovery that found this path: leaving the
       // assignment open would let whichever eligible agent polls first write
       // to a path only this host has.
-      assignedAgentId: options.assignedAgentId || certificate.deployed_agent_id || null,
-      payload: {
-        ...(options.payload || {}),
-        certificateId: String(certificateId),
-        certPath: certificate.deployed_cert_path,
-      },
+      assignedAgentId:
+        windowsTopology?.assignedAgentId ||
+        options.assignedAgentId ||
+        certificate.deployed_agent_id ||
+        null,
+      payload,
       returnOutcome: true,
     });
 
@@ -777,6 +912,7 @@ module.exports = {
   CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
   CERTOPS_RENEWAL_SETUP_MULTI_LOCATION,
   CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+  CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE,
   DEPLOYMENT_INSTANCE_SOURCES,
   PREFLIGHT_COMPLETE_JOB_STATUS,
   RETIRED_INSTANCE_STATUSES,
@@ -789,6 +925,7 @@ module.exports = {
   enqueueRenewalAdoptionIntent,
   loadRenewalSetupIntents,
   loadResumablePreflights,
+  loadWindowsRenewalTopology,
   projectRenewalPreflight,
   projectRenewalSetupState,
   renewalSetupJobCreator,

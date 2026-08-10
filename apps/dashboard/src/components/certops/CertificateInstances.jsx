@@ -9,11 +9,17 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
 } from '@chakra-ui/react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardState } from '../DashboardPrimitives.jsx';
-import { formatDateTime, statusScheme } from './certopsFormat';
+import {
+  formatDateTime,
+  locationKindLabel,
+  statusScheme,
+} from './certopsFormat';
+import { formatRelativeDateTime } from './certopsJobsFormat';
 
 function targetLabel(instance) {
   return (
@@ -28,6 +34,44 @@ function instanceTimestamp(instance) {
   return (
     instance.observedAt || instance.updatedAt || instance.createdAt || null
   );
+}
+
+/**
+ * Connectivity is a SEPARATE fact from `instance.status` (certificate
+ * presence, decided by a live agent's scan) - see the product note that
+ * agent connectivity must never overload certificate_instances.status. A
+ * location with no responsible agent (e.g. cert-manager/domain-checker
+ * observations) has no connectivity concept at all, hence 'unknown' rather
+ * than a misleading 'offline'.
+ */
+function connectivityDescriptor(instance) {
+  const agent = instance.agent;
+  if (!agent) {
+    return {
+      label: 'Unknown',
+      scheme: 'gray',
+      help: 'No agent is responsible for observing this location.',
+    };
+  }
+  if (agent.livenessState === 'live') {
+    return {
+      label: 'Reachable',
+      scheme: 'green',
+      help: `${agent.name || agent.hostname || agent.agentId} last reported in.`,
+    };
+  }
+  if (agent.livenessState === 'retired') {
+    return {
+      label: 'Agent retired',
+      scheme: 'gray',
+      help: `${agent.name || agent.hostname || agent.agentId} has been retired; this location can no longer be verified.`,
+    };
+  }
+  return {
+    label: 'Agent offline',
+    scheme: 'orange',
+    help: `${agent.name || agent.hostname || agent.agentId} has not reported in since ${formatDateTime(agent.lastSeenAt)}.`,
+  };
 }
 
 /**
@@ -76,12 +120,60 @@ function groupByTarget(instances) {
   });
 }
 
+// Cells stay single-line (no wrapping) so rows keep a consistent height, but
+// unlike noOfLines/isTruncated they never clip text with an ellipsis - a
+// long, unbroken value (e.g. a winstore://... key reference) instead makes
+// the table itself wider than its container. TableContainer below scopes the
+// resulting horizontal scrollbar to just this table (see the modal's Grid
+// using minmax(0, 1fr) tracks so that overflow can't bubble up further).
+const NOWRAP_CELL = { whiteSpace: 'nowrap' };
+
 function InstanceRow({ instance, border, muted, indent = false }) {
+  const connectivity = connectivityDescriptor(instance);
   return (
     <Tr>
       <Td borderColor={border} pl={indent ? 8 : undefined}>
-        <Text fontSize='sm' noOfLines={1} color={indent ? muted : undefined}>
+        <Text fontSize='sm' sx={NOWRAP_CELL} color={indent ? muted : undefined}>
           {targetLabel(instance)}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+          {locationKindLabel(instance.locationKind, instance)}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+          {instance.agent?.name ||
+            instance.agent?.hostname ||
+            instance.agent?.agentId ||
+            '--'}
+        </Text>
+      </Td>
+      <Td borderColor={border}>
+        <Tooltip
+          label={connectivity.help}
+          hasArrow
+          placement='top'
+          openDelay={250}
+        >
+          <Badge
+            colorScheme={connectivity.scheme}
+            variant='subtle'
+            textTransform='none'
+            fontSize='xs'
+          >
+            {connectivity.label}
+          </Badge>
+        </Tooltip>
+      </Td>
+      <Td borderColor={border}>
+        <Text
+          fontSize='sm'
+          color={muted}
+          title={formatDateTime(instanceTimestamp(instance))}
+        >
+          {formatRelativeDateTime(instanceTimestamp(instance))}
         </Text>
       </Td>
       <Td borderColor={border}>
@@ -92,16 +184,6 @@ function InstanceRow({ instance, border, muted, indent = false }) {
         >
           {instance.status || 'unknown'}
         </Badge>
-      </Td>
-      <Td borderColor={border}>
-        <Text fontSize='sm' color={muted}>
-          {formatDateTime(instanceTimestamp(instance))}
-        </Text>
-      </Td>
-      <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} noOfLines={1}>
-          {instance.source || '--'}
-        </Text>
       </Td>
     </Tr>
   );
@@ -160,76 +242,110 @@ export default function CertificateInstances({ instances, available, error }) {
       <Table size='sm' variant='simple'>
         <Thead>
           <Tr>
-            <Th>Target</Th>
-            <Th>Status</Th>
-            <Th>Observed</Th>
-            <Th>Source</Th>
+            <Th whiteSpace='nowrap'>Location</Th>
+            <Th whiteSpace='nowrap'>Type</Th>
+            <Th whiteSpace='nowrap'>Agent</Th>
+            <Th whiteSpace='nowrap'>Connectivity</Th>
+            <Th whiteSpace='nowrap'>Last observed</Th>
+            <Th whiteSpace='nowrap'>Certificate state</Th>
           </Tr>
         </Thead>
         <Tbody>
-          {groups.map(({ key, current, history, rotated }) => (
-            <Fragment key={key}>
-              <Tr>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' noOfLines={1}>
-                    {targetLabel(current)}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Badge
-                    colorScheme={statusScheme(current.status)}
-                    variant='subtle'
-                    textTransform='none'
-                  >
-                    {current.status || 'unknown'}
-                  </Badge>
-                  {rotated ? (
-                    <Badge ml={2} colorScheme='purple' variant='outline'>
-                      Renewed
-                    </Badge>
-                  ) : null}
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted}>
-                    {formatDateTime(instanceTimestamp(current))}
-                  </Text>
-                </Td>
-                <Td borderColor={border}>
-                  <Text fontSize='sm' color={muted} noOfLines={1}>
-                    {current.source || '--'}
-                  </Text>
-                </Td>
-              </Tr>
-              {history.length > 0 ? (
-                <Tr key={`${key}-toggle`}>
-                  <Td colSpan={4} borderColor={border} pt={0} pb={2}>
-                    <Button
-                      size='xs'
-                      variant='link'
-                      onClick={() => toggle(key)}
+          {groups.map(({ key, current, history, rotated }) => {
+            const connectivity = connectivityDescriptor(current);
+            return (
+              <Fragment key={key}>
+                <Tr>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' sx={NOWRAP_CELL}>
+                      {targetLabel(current)}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+                      {locationKindLabel(current.locationKind, current)}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+                      {current.agent?.name ||
+                        current.agent?.hostname ||
+                        current.agent?.agentId ||
+                        '--'}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Tooltip
+                      label={connectivity.help}
+                      hasArrow
+                      placement='top'
+                      openDelay={250}
                     >
-                      {expanded.has(key)
-                        ? 'Hide earlier observations'
-                        : `Show ${history.length} earlier observation${
-                            history.length === 1 ? '' : 's'
-                          } at this location`}
-                    </Button>
+                      <Badge
+                        colorScheme={connectivity.scheme}
+                        variant='subtle'
+                        textTransform='none'
+                        fontSize='xs'
+                      >
+                        {connectivity.label}
+                      </Badge>
+                    </Tooltip>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Text
+                      fontSize='sm'
+                      color={muted}
+                      title={formatDateTime(instanceTimestamp(current))}
+                    >
+                      {formatRelativeDateTime(instanceTimestamp(current))}
+                    </Text>
+                  </Td>
+                  <Td borderColor={border}>
+                    <Badge
+                      colorScheme={statusScheme(current.status)}
+                      variant='subtle'
+                      textTransform='none'
+                    >
+                      {current.status || 'unknown'}
+                    </Badge>
+                    {rotated ? (
+                      <Badge ml={2} colorScheme='purple' variant='outline'>
+                        Renewed
+                      </Badge>
+                    ) : null}
                   </Td>
                 </Tr>
-              ) : null}
-              {expanded.has(key)
-                ? history.map(entry => (
-                    <InstanceRow
-                      key={entry.id}
-                      instance={entry}
-                      border={border}
-                      muted={muted}
-                      indent
-                    />
-                  ))
-                : null}
-            </Fragment>
-          ))}
+                {history.length > 0 ? (
+                  <Tr key={`${key}-toggle`}>
+                    <Td colSpan={6} borderColor={border} pt={0} pb={2}>
+                      <Button
+                        size='xs'
+                        variant='link'
+                        onClick={() => toggle(key)}
+                      >
+                        {expanded.has(key)
+                          ? 'Hide earlier observations'
+                          : `Show ${history.length} earlier observation${
+                              history.length === 1 ? '' : 's'
+                            } at this location`}
+                      </Button>
+                    </Td>
+                  </Tr>
+                ) : null}
+                {expanded.has(key)
+                  ? history.map(entry => (
+                      <InstanceRow
+                        key={entry.id}
+                        instance={entry}
+                        border={border}
+                        muted={muted}
+                        indent
+                      />
+                    ))
+                  : null}
+              </Fragment>
+            );
+          })}
         </Tbody>
       </Table>
     </TableContainer>

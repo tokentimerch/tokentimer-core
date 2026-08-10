@@ -530,7 +530,9 @@ function evaluateEligibility(row, {
     retentionHours,
   });
   const instant = now();
-  if (instant.getTime() < deadline.getTime()) {
+  // The deadline instant itself is still inside the retention window. Cleanup
+  // becomes eligible only once the clock is strictly past it.
+  if (instant.getTime() <= deadline.getTime()) {
     return { eligible: false, reason: "deadline_not_reached" };
   }
 
@@ -645,5 +647,4 @@ module.exports = {
   evaluateEligibility,
   sweepLedger,
 };
-
 

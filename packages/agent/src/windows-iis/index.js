@@ -87,6 +87,55 @@ const OUTPUT_EXCERPT_MAX_CHARS = 1024;
 const PRIVATE_KEY_MARKER = "PRIVATE KEY";
 const REDACTED_EXCERPT_PLACEHOLDER = "[redacted]";
 
+/**
+ * `netsh http add sslcert` can fail with "The parameter is incorrect"
+ * immediately after a CNG `certreq -accept` for the same certificate,
+ * even though the identical command succeeds if retried a moment later
+ * (real-host finding, Windows Server 2025 build 26100: SChannel's private
+ * key association for a just-written CNG key container is not always
+ * visible to netsh's own lookup on the very first call after the key
+ * lands in the store). These are bounded, short retries of the ADD call
+ * only (never the preceding DELETE, which is best-effort and idempotent
+ * either way) to absorb that specific, transient settle delay; a genuine
+ * BIND_FAILED (bad thumbprint, wrong store, real parameter error) fails
+ * exactly the same after exhausting them, just slightly slower.
+ *
+ * Widened 2026-08-08 (real-host finding against the same Windows Server
+ * 2025 build, on a `renew` job specifically): the original [300, 700,
+ * 1500] budget (2.5s of added delay across 4 total attempts) was not
+ * always sufficient -- two independent real renewal runs against a
+ * freshly key-rotated CNG certificate still failed after exhausting it,
+ * while a manual retry of the exact same `netsh add sslcert` call a
+ * couple of minutes later succeeded immediately, confirming the
+ * underlying condition really is transient settle delay, just with a
+ * longer tail than originally measured. Widened to a slower-growing,
+ * longer-total schedule (up to ~15.75s of added delay across 6 total
+ * attempts) to cover that observed tail without materially changing
+ * behavior for the common case, which still resolves on an early retry.
+ *
+ * A second, deterministic (not transient) failure mode was misdiagnosed
+ * against this same retry budget on 2026-08-08 (real-host testing on
+ * `certops/agent-health-windows-integration`): two renewal jobs against
+ * the same SNI binding exhausted this entire budget and still failed,
+ * which first looked like "the transient tail is even longer than
+ * measured" and briefly motivated widening this schedule further. It was
+ * not that -- root-caused instead to `formatPreservedParamArgs` replaying
+ * an outgoing binding's `revocationFreshnessTime`/`urlRetrievalTimeout` of
+ * `0` verbatim into the next `add sslcert` call, which this exact netsh
+ * build rejects outright regardless of how many times or how long it is
+ * retried (see that function's own doc comment). Fixed at the source
+ * there; this retry budget stays at the schedule above, which remains
+ * correct for the genuine transient settle delay it targets.
+ */
+const BIND_ADD_RETRY_DELAYS_MS = [300, 700, 1500, 3000, 5000, 5250];
+
+/** Default real-time delay implementation, overridable in tests. */
+function defaultDelayImpl(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /** Default handshake verification budget after a rebind. */
 const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 1000;
 
@@ -432,7 +481,7 @@ async function queryCurrentBinding({
  * disabletls13/disableocspstapling/enabletokenbinding/logextendedevents/
  * enablesessionticket/disablesessionid). A netsh binary older than the
  * host this runs on would simply never emit these newer labels in its
- * `show sslcert` output, so readEnabledDisabledOrNotSet naturally omits
+ * `show sslcert` output, so readSetOrEnabledOrNotSet naturally omits
  * them for that host too -- no version detection needed.
  *
  * @param {string} stdoutText raw `netsh http show sslcert` stdout.
@@ -464,39 +513,28 @@ function parseSslcertParameters(stdoutText) {
     const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled)`, "i").exec(stdoutText);
     return found ? found[1].toLowerCase() === "enabled" : undefined;
   };
-  // The newer per-connection policy flags report a third state, "Not Set"
-  // (netsh's own "never explicitly configured" default), alongside
-  // Enabled/Disabled -- distinct from the classic fields above, which only
-  // ever report Enabled/Disabled. "Not Set" is treated the same as "not
-  // found": omitted, so formatPreservedParamArgs falls back to netsh's own
-  // default on rebind rather than forcing a value that was never actually
-  // configured.
-  const readEnabledDisabledOrNotSet = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled|Not Set)`, "i").exec(stdoutText);
-    if (!found) return undefined;
-    const value = found[1].toLowerCase();
-    if (value === "not set") return undefined;
-    return value === "enabled";
-  };
-  // "Disable Legacy TLS Versions" specifically -- unlike every sibling
-  // per-connection policy flag above, which real captured `netsh show
-  // sslcert` output reports as Enabled/Disabled/Not Set -- is documented by
-  // Microsoft itself with a DIFFERENT, two-state vocabulary: "Set" (the
-  // restriction is active) / "Not Set" (default, never configured), with
-  // no separate "Disabled" text ever shown
-  // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
-  // for Disable Legacy TLS Versions: Set/Not Set"). A PR review found
-  // (2026-08-07) that readEnabledDisabledOrNotSet's Enabled/Disabled/Not-Set
-  // regex never matches a bare "Set", so an outgoing binding with legacy
-  // TLS genuinely disabled had that setting silently DROPPED (not reset,
-  // simply omitted -- formatPreservedParamArgs then emits no
-  // `disablelegacytls=` flag at all) on every rebind, quietly re-exposing
-  // legacy TLS on a binding an operator had deliberately hardened. Accepts
-  // BOTH vocabularies defensively, in case a future Windows build ever
-  // reports Enabled/Disabled for this one field too: "Set" and "Enabled"
-  // both mean the restriction is active; "Not Set" and "Disabled" are both
-  // omitted (never forced), matching every sibling flag's own "do not
-  // force a value that was not observed as explicitly enabled" rule.
+  // The newer per-connection policy flags (Windows Server 2019+) all
+  // report a real Windows Server 2025 host's actual vocabulary as
+  // "Set"/"Not Set", NOT "Enabled"/"Disabled" -- a real-host finding
+  // (2026-08-09) that widens what was originally believed (and fixed,
+  // 2026-08-07) to be a one-off vocabulary quirk unique to "Disable Legacy
+  // TLS Versions". A real captured `netsh http show sslcert` transcript
+  // from a binding with SEVEN of these flags explicitly configured
+  // (disablehttp2, disablequic, disablelegacytls, enabletokenbinding,
+  // logextendedevents, enablesessionticket, disablesessionid, all set via
+  // a real `add sslcert` call) showed every single one rendered as "Set",
+  // never "Enabled" -- proving the original Enabled/Disabled/Not-Set
+  // regex this function used to have for these ten flags never matches a
+  // real positive value on this Windows build, silently DROPPING (not
+  // resetting -- formatPreservedParamArgs then emits no flag at all) every
+  // one of them on every rebind, quietly undoing an operator's
+  // deliberately-configured connection-policy hardening each time a
+  // certificate renews. Accepts all four tokens defensively, in case a
+  // future/older Windows build ever reports Enabled/Disabled for one of
+  // these fields instead: "Set" and "Enabled" both mean the restriction is
+  // active; "Not Set" and "Disabled" are both omitted (never forced,
+  // exactly netsh's own default-on-omission), so an unparsed or
+  // never-configured field costs nothing extra on rebind either way.
   const readSetOrEnabledOrNotSet = (label) => {
     const found = new RegExp(`${label}\\s*:\\s*(Not Set|Set|Enabled|Disabled)`, "i").exec(stdoutText);
     if (!found) return undefined;
@@ -531,17 +569,17 @@ function parseSslcertParameters(stdoutText) {
   assign("ctlStoreName", readNullableString("Ctl Store Name"));
   assign("dsMapperUsage", readEnabledDisabled("DS Mapper Usage"));
   assign("negotiateClientCert", readEnabledDisabled("Negotiate Client Certificate"));
-  assign("rejectConnections", readEnabledDisabledOrNotSet("Reject Connections"));
-  assign("disableHttp2", readEnabledDisabledOrNotSet("Disable HTTP2"));
-  assign("disableQuic", readEnabledDisabledOrNotSet("Disable QUIC"));
+  assign("rejectConnections", readSetOrEnabledOrNotSet("Reject Connections"));
+  assign("disableHttp2", readSetOrEnabledOrNotSet("Disable HTTP2"));
+  assign("disableQuic", readSetOrEnabledOrNotSet("Disable QUIC"));
   assign("disableLegacyTls", readSetOrEnabledOrNotSet("Disable Legacy TLS Versions"));
-  assign("disableTls12", readEnabledDisabledOrNotSet("Disable TLS1\\.2"));
-  assign("disableTls13", readEnabledDisabledOrNotSet("Disable TLS1\\.3"));
-  assign("disableOcspStapling", readEnabledDisabledOrNotSet("Disable OCSP Stapling"));
-  assign("enableTokenBinding", readEnabledDisabledOrNotSet("Enable Token Binding"));
-  assign("logExtendedEvents", readEnabledDisabledOrNotSet("Log Extended Events"));
-  assign("enableSessionTicket", readEnabledDisabledOrNotSet("Enable Session Ticket"));
-  assign("disableSessionId", readEnabledDisabledOrNotSet("Disable Session ID"));
+  assign("disableTls12", readSetOrEnabledOrNotSet("Disable TLS1\\.2"));
+  assign("disableTls13", readSetOrEnabledOrNotSet("Disable TLS1\\.3"));
+  assign("disableOcspStapling", readSetOrEnabledOrNotSet("Disable OCSP Stapling"));
+  assign("enableTokenBinding", readSetOrEnabledOrNotSet("Enable Token Binding"));
+  assign("logExtendedEvents", readSetOrEnabledOrNotSet("Log Extended Events"));
+  assign("enableSessionTicket", readSetOrEnabledOrNotSet("Enable Session Ticket"));
+  assign("disableSessionId", readSetOrEnabledOrNotSet("Disable Session ID"));
 
   return params;
 }
@@ -576,10 +614,28 @@ function formatPreservedParamArgs(parameters = {}) {
   if (parameters.usageCheck !== undefined) {
     args.push(`usagecheck=${flag(parameters.usageCheck)}`);
   }
-  if (parameters.revocationFreshnessTime !== undefined) {
+  // Real-host finding (Windows Server 2025 build 26100.32860): `add
+  // sslcert` rejects an explicit `revocationfreshnesstime=0` or
+  // `urlretrievaltimeout=0` with "The parameter is incorrect", even though
+  // `add sslcert help` documents 0 as a legal value ("If this value is 0,
+  // then the new CRL is updated only if the previous one expires") and even
+  // though every *other* integer value (1, 3600, 1000, ...) is accepted
+  // without error. 0 is also netsh's own default for both fields when they
+  // are omitted entirely from `add sslcert` -- confirmed by binding a
+  // certificate with neither flag present and observing `show sslcert`
+  // still report 0 for both -- so an outgoing binding that reports 0 was
+  // never explicitly customized away from the default in the first place.
+  // Omitting the flag here reproduces that exact same effective value (0,
+  // via netsh's own default-on-omission) without ever hitting the buggy
+  // explicit-0 codepath, so this is strictly no worse than before for the
+  // only value it changes behavior for, and it is what fixed a 100%
+  // reproducible rebind failure on every renewal following an
+  // never-customized initial bind (the common case: nothing before this
+  // fix ever explicitly set these two fields to a non-zero value).
+  if (parameters.revocationFreshnessTime !== undefined && parameters.revocationFreshnessTime !== 0) {
     args.push(`revocationfreshnesstime=${parameters.revocationFreshnessTime}`);
   }
-  if (parameters.urlRetrievalTimeout !== undefined) {
+  if (parameters.urlRetrievalTimeout !== undefined && parameters.urlRetrievalTimeout !== 0) {
     args.push(`urlretrievaltimeout=${parameters.urlRetrievalTimeout}`);
   }
   // A real, non-"(null)" ctlIdentifier is meaningless without its paired
@@ -679,6 +735,8 @@ async function bindCertificate({
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  delayImpl = defaultDelayImpl,
+  addRetryDelaysMs = BIND_ADD_RETRY_DELAYS_MS,
 } = {}) {
   const normalizedThumbprint = normalizeThumbprint(thumbprint);
   if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
@@ -699,28 +757,49 @@ async function bindCertificate({
     timeoutMs,
   );
 
-  const addArgs = [
-    netshPath,
-    "http",
-    "add",
-    "sslcert",
-    selector,
-    `certhash=${normalizedThumbprint}`,
-    `appid=${generateAppId()}`,
-    `certstorename=${store}`,
-    ...formatPreservedParamArgs(preserveParameters),
-  ];
-  assertSafeArgvElements("argv", addArgs);
+  // See BIND_ADD_RETRY_DELAYS_MS's doc comment: a just-accepted CNG
+  // certificate can transiently fail netsh's own key-association lookup
+  // immediately after `certreq -accept`, real-host finding, not a fixture
+  // artifact. Only ever retries this ADD call, with a fresh appid each
+  // attempt (netsh's own bookkeeping key, no correctness meaning); the
+  // preceding DELETE above already ran exactly once, unconditionally.
+  const attemptDelaysMs = [0, ...addRetryDelaysMs];
+  let lastResult = null;
+  for (let attempt = 0; attempt < attemptDelaysMs.length; attempt += 1) {
+    if (attemptDelaysMs[attempt] > 0) {
+      await delayImpl(attemptDelaysMs[attempt]);
+    }
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, addArgs, timeoutMs);
-  if (exitCode !== 0) {
-    return {
+    const addArgs = [
+      netshPath,
+      "http",
+      "add",
+      "sslcert",
+      selector,
+      `certhash=${normalizedThumbprint}`,
+      `appid=${generateAppId()}`,
+      `certstorename=${store}`,
+      ...formatPreservedParamArgs(preserveParameters),
+    ];
+    assertSafeArgvElements("argv", addArgs);
+
+    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, addArgs, timeoutMs);
+    if (exitCode === 0) {
+      return { ok: true };
+    }
+
+    lastResult = {
       ok: false,
       exitCode,
       stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
     };
+
+    const isTransientParameterError = /parameter is incorrect/i.test(String(stderr ?? "") + String(stdout ?? ""));
+    if (!isTransientParameterError) {
+      break;
+    }
   }
-  return { ok: true };
+  return lastResult;
 }
 
 /**
@@ -755,6 +834,7 @@ async function attemptRollback({
   execFileImpl,
   netshPath,
   timeoutMs,
+  delayImpl,
 }) {
   const rollbackResult = await bindCertificate({
     binding,
@@ -764,6 +844,7 @@ async function attemptRollback({
     execFileImpl,
     netshPath,
     timeoutMs,
+    ...(delayImpl !== undefined ? { delayImpl } : {}),
   });
 
   if (!rollbackResult.ok) {
@@ -1017,6 +1098,7 @@ async function deployIisBinding({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   verifyTimeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
   connectImpl,
+  delayImpl = defaultDelayImpl,
 } = {}) {
   assertValidBinding(binding);
   if (!isNonEmptyString(certificatePem)) {
@@ -1058,6 +1140,7 @@ async function deployIisBinding({
       execFileImpl,
       netshPath,
       timeoutMs,
+      delayImpl,
     });
     if (!bindResult.ok) {
       // The preceding delete (inside bindCertificate) already ran
@@ -1074,6 +1157,7 @@ async function deployIisBinding({
               execFileImpl,
               netshPath,
               timeoutMs,
+              delayImpl,
             });
       return guardReturnValue({
         ok: false,
@@ -1134,6 +1218,7 @@ async function deployIisBinding({
     execFileImpl,
     netshPath,
     timeoutMs,
+    delayImpl,
   });
   return guardReturnValue({
     ok: false,
@@ -1153,6 +1238,7 @@ module.exports = {
   WILDCARD_BINDING_ADDRESSES,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_VERIFY_TIMEOUT_MS,
+  BIND_ADD_RETRY_DELAYS_MS,
   OUTPUT_EXCERPT_MAX_CHARS,
   normalizeThumbprint,
   assertValidBinding,

@@ -104,6 +104,7 @@ const {
   assertEvidencePayloadSafe,
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
+const { collectWindowsDiscoveryObservations } = require("./discovery/windows");
 const {
   validateClaimedJob,
   hasReportableJobId,
@@ -2946,8 +2947,8 @@ async function runWindowsIisDeployTail({
       };
     }
     emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
-    // Ownership-provenance upgrade (PR review, 2026-08-07): binds this
-    // record to the ACTUAL accepted certificate's thumbprint, not merely
+    // Bind the ownership record to the actual accepted certificate's
+    // thumbprint, not merely
     // "this agent created the container" -- see windows-cert-store's
     // markIssuedContainerAccepted doc comment and ADR-0012 decision 18.
     // Best-effort/non-fatal for the same reason recordIssuedContainer's
@@ -3133,8 +3134,8 @@ async function runWindowsIisDeployTail({
  * actually created that exact container; and even a genuine
  * recordIssuedContainer record only proves this agent created the
  * CONTAINER, not that this agent's certificate is what is CURRENTLY
- * enrolled to it (a PR review found, 2026-08-07, that an operator who
- * later enrolled a different certificate into an agent-created container
+ * enrolled to it. An operator who later enrolled a different certificate
+ * into an agent-created container
  * -- e.g. one reconcileOrphanedWindowsCngContainers found "enrolled" and
  * therefore left alone -- could otherwise inherit tokentimer_installed
  * provenance for that unrelated certificate). The three signals:
@@ -3471,10 +3472,8 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  * `-delstore My`, see acceptCertificateViaCng's own doc comment). A caller
  * that locked only `targetStore` would leave `My` itself unprotected during
  * that window, letting an unrelated `My`-targeted job's own concurrent
- * `certreq -accept` (or this same job's later `-delstore My`) race it --
- * found in PR review (2026-08-07): runWindowsIisDeployTail was locking only
- * `target.store`, while reconcileOrphanedWindowsCngContainers (below) had
- * already been fixed to correctly lock/query both stores. Normal execution
+ * `certreq -accept` (or this same job's later `-delstore My`) race it.
+ * Normal execution
  * must match that same locking scope, not only the crash-reconciliation
  * path.
  *
@@ -3535,8 +3534,8 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
  *
  * Checks BOTH the default `My` store AND the job's recorded target store
  * (which may be the same store, e.g. the common `My`-only case) before
- * concluding a container is orphaned -- a PR review found (2026-08-07)
- * that checking only the target store is unsafe for a non-default-store
+ * concluding a container is orphaned. Checking only the target store is
+ * unsafe for a non-default-store
  * job: recordWindowsCngContainer's `store` field is the job's FINAL target
  * (e.g. "WebHosting"), written at keygen time, well before certreq -accept
  * ever runs; but `certreq -accept` itself only ever populates the default
@@ -5440,6 +5439,118 @@ async function runDiscoveryScan({ directories, client, log = null }) {
 }
 
 /**
+ * Runs one observe-only Windows OS-store/IIS/http.sys discovery scan and
+ * reports results as `certificate.observed` evidence, the same event type
+ * and evidence pipeline filesystem discovery (runDiscoveryScan) uses. Fills
+ * the product gap this feature exists to close: a certificate that lives
+ * only in the Windows machine certificate store (bound to an IIS site, or
+ * bound directly via http.sys) previously never appeared in Observed
+ * Locations at all.
+ *
+ * A no-op (0 observed, 0 warnings) on any non-Windows host or when
+ * PowerShell/IIS/netsh are unavailable -- see collectWindowsDiscoveryObservations's
+ * own per-surface graceful degradation. Never throws for a missing
+ * prerequisite; the surrounding poll loop only ever needs to handle this
+ * scan raising for a genuinely unexpected error (e.g. evidence reporting
+ * itself failing).
+ *
+ * Exported for direct unit testing.
+ *
+ * @param {object} params
+ * @param {object} params.client from createProtocolClient
+ * @param {(msg: string) => void} [params.log]
+ * @param {typeof collectWindowsDiscoveryObservations} [params.collect] injection seam for tests
+ * @returns {Promise<{ observed: number, warnings: number }>}
+ */
+async function runWindowsDiscoveryScan({
+  client,
+  stores = ["My"],
+  log = null,
+  collect = collectWindowsDiscoveryObservations,
+}) {
+  const warnings = [];
+  const observations = await collect({
+    stores,
+    onWarning: (message) => warnings.push(message),
+  });
+  for (const warning of warnings) emitLog(log, warning);
+
+  const targetHost = os.hostname();
+  const items = [];
+  const observedAt = new Date().toISOString();
+  for (const observation of observations) {
+    // Structured metadata matching agentObservations.js's generalized
+    // observation contract. filePath is
+    // intentionally absent -- locationKind !== 'filesystem' requires
+    // locationSlot instead, never filePath.
+    const metadata = [
+      { name: "locationKind", value: observation.locationKind },
+      { name: "locationSlot", value: observation.locationSlot },
+      { name: "targetHost", value: targetHost },
+      { name: "subject", value: observation.subject ?? null },
+      { name: "issuer", value: observation.issuer ?? null },
+      { name: "serialNumber", value: observation.serialNumber ?? null },
+      { name: "validFrom", value: observation.notBefore ?? null },
+      { name: "validTo", value: observation.notAfter ?? null },
+      // Boolean fact only, read from the certificate's own HasPrivateKey property
+      // by collectWindowsDiscoveryObservations -- never a key path, export,
+      // or blob. The control plane only derives keyMode: 'os-store-managed'
+      // when this is explicitly true (agentObservations.js), so an agent
+      // that genuinely could not determine this should omit the field
+      // rather than guess; this module always has a real boolean here
+      // because listMachineStoreCertificates always returns one.
+      { name: "keyPresent", value: observation.keyPresent === true },
+      { name: "storeLocation", value: observation.storeLocation ?? null },
+      { name: "storeName", value: observation.storeName ?? null },
+      // Public certificate-store coordinate only. This is the certificate's
+      // SHA-1 thumbprint, never key material, a key path, or an export.
+      { name: "thumbprint", value: observation.thumbprint ?? null },
+    ];
+    if (Array.isArray(observation.subjectAltNames) && observation.subjectAltNames.length > 0) {
+      metadata.push({
+        name: "subjectAltNames",
+        value: JSON.stringify(observation.subjectAltNames),
+      });
+    } else if (typeof observation.subjectAltNames === "string" && observation.subjectAltNames.length > 0) {
+      metadata.push({ name: "subjectAltNames", value: observation.subjectAltNames });
+    }
+    if (observation.locationKind === "iis_binding") {
+      metadata.push({ name: "siteName", value: observation.siteName });
+      metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.sniHost) metadata.push({ name: "sniHost", value: observation.sniHost });
+    }
+    if (observation.locationKind === "http_sys") {
+      metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.boundAddress) {
+        metadata.push({ name: "boundAddress", value: observation.boundAddress });
+      }
+    }
+
+    items.push(
+      buildEvidenceItem({
+        eventType: "certificate.observed",
+        observedAt,
+        fingerprintSha256: observation.fingerprintSha256,
+        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${observation.subject})`,
+        metadata,
+      }),
+    );
+  }
+
+  const EVIDENCE_CHUNK_SIZE = 16;
+  for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
+    const body = buildEvidenceBody({
+      jobId: null,
+      evidenceItems: items.slice(start, start + EVIDENCE_CHUNK_SIZE),
+    });
+    assertEvidencePayloadSafe(body);
+    await client.reportEvidence(body);
+  }
+
+  return { observed: items.length, warnings: warnings.length };
+}
+
+/**
  * Performs first-run registration when no credential is stored yet.
  * Requires TOKENTIMER_AGENT_BOOTSTRAP_TOKEN (and optionally
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID) in the environment; the bootstrap
@@ -5968,6 +6079,27 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     }
   }
 
+  // Windows OS-store/IIS/http.sys discovery: unlike filesystem discovery,
+  // this needs no operator-configured directories (self-discovering via
+  // ../windows-discovery's certutil/netsh/appcmd calls), so it starts
+  // whenever config.windowsDiscovery.enabled is true and the host is
+  // actually Windows. It is a no-op elsewhere (isWindows() false), so this
+  // check avoids scheduling a poll loop whose every tick is guaranteed to
+  // be a trivial [] result.
+  if (config.windowsDiscovery && config.windowsDiscovery.enabled && isWindows()) {
+    loops.push(
+      startPollLoop({
+        intervalMs: config.windowsDiscovery.intervalMs,
+        signal: controller.signal,
+        startImmediately: true,
+        onTick: () => runWindowsDiscoveryScan({
+          client,
+          stores: config.windowsDiscovery.stores,
+        }),
+      }),
+    );
+  }
+
   try {
     await Promise.all(loops);
   } finally {
@@ -5999,6 +6131,7 @@ module.exports = {
   isValidCertificateId,
   runDiscoveryScan,
   runWindowsRetentionSweep,
+  runWindowsDiscoveryScan,
   reconcileOrphanedWindowsCngContainers,
   acquireWindowsStoreLocks,
   registerIfNeeded,
