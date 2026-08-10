@@ -1890,7 +1890,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           channel (email or webhook). Successfully sent alerts
                           are not shown here but are counted in the delivery
                           statistics above.{' '}
-                          {alertData.retryHintDate
+                          {alertData.retryHintDate &&
+                          alertData.planInfo.alertLimitMonth > 0
                             ? `If you reached your monthly alerting limit, delivery will resume on ${formatDate(alertData.retryHintDate)} (start of next month).`
                             : ''}
                         </AlertDescription>
