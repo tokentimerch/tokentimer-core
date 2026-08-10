@@ -22,7 +22,7 @@ const REQUIRED_PINS = {
   "brace-expansion": { "*": "5.0.9" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
-  "js-yaml": { "*": "4.3.0" },
+  "js-yaml": { "*": "4.3.1" },
   rollup: { "*": "4.60.0" },
   flatted: { "*": "3.4.2" },
   "serialize-javascript": { "*": "7.0.5" },
@@ -34,7 +34,6 @@ const REQUIRED_PINS = {
   qs: { "*": "6.15.2" },
   "ip-address": { "*": "10.4.0" },
   "form-data": { "*": "4.0.6" },
-  "js-yaml": { "*": "4.3.0" },
   ws: { "*": "8.21.0" },
   "fast-uri": { "*": "3.1.5" },
 };
