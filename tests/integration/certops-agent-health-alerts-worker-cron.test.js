@@ -270,8 +270,23 @@ describe("CertOps agent-health alerting - real worker cron transitions and alert
         );
         expect(recoveredTooEarly.rows).to.have.length(0);
 
-        // Re-arm a down alert and mark it 'sent', simulating the real
-        // delivery-worker having actually delivered it.
+        // The too-early check above closed out the entire incident (not
+        // just the queued alert): a down alert that never got delivered
+        // means the outage was never reported, so sweepAgentRecoveries
+        // deletes both the alert_queue row and the
+        // certops_agent_health_incidents row together, exactly like
+        // sweepStaleAgents creates them together on a fresh transition.
+        // Re-arming a genuinely-delivered down alert therefore has to
+        // recreate both rows as a pair -- inserting only the alert_queue
+        // row would leave no incident for sweepAgentRecoveries' candidate
+        // JOIN to match, and this recovery would be silently skipped.
+        await client.query(
+          `INSERT INTO certops_agent_health_incidents (
+             agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
+           ) VALUES ($1, $2, NOW(), NOW(), $3)
+           ON CONFLICT (agent_id) DO NOTHING`,
+          [agentRowId, workspaceId, `agent_health:${agentRowId}:down`],
+        );
         await client.query(
           `INSERT INTO alert_queue (user_id, certops_agent_id, alert_key, threshold_days, due_date, channels, status)
            VALUES ($1, $2, $3, 0, CURRENT_DATE, '["email"]'::jsonb, 'sent')`,
