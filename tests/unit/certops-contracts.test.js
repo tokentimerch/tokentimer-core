@@ -1581,6 +1581,73 @@ describe("keyReference maxLength parity (C6)", () => {
   });
 });
 
+describe("CertOps OpenAPI response parity", () => {
+  it("documents every renewalPathReason emitted by the runtime resolver", () => {
+    const managedCertificate = openApiComponentSchema(
+      "CertOpsManagedCertificate",
+    );
+    assert.ok(
+      managedCertificate.properties.renewalPathReason.enum.includes(
+        "assigned_agent_retired",
+      ),
+    );
+  });
+
+  it("accepts the nested target object returned by toInstanceRecord and rejects undeclared target fields", () => {
+    const {
+      toInstanceRecord,
+    } = require("../../apps/api/services/certops/inventory");
+    const schema = openApiComponentSchema("CertOpsCertificateInstance");
+    const validate = createOpenApiAjv().compile(schema);
+    const record = {
+      ...toInstanceRecord({
+        id: "11111111-1111-4111-8111-111111111111",
+        workspace_id: "22222222-2222-4222-8222-222222222222",
+        managed_certificate_id: "33333333-3333-4333-8333-333333333333",
+        target_id: "44444444-4444-4444-8444-444444444444",
+        domain_monitor_id: null,
+        token_id: null,
+        status: "active",
+        source: "agent_windows",
+        source_ref:
+          "agent-a/windows-host/iis_binding/Default Web Site:443#app.example.com",
+        location_kind: "iis_binding",
+        observed_fingerprint_sha256: "a".repeat(64),
+        observed_serial_number: "01",
+        observed_subject: "CN=app.example.com",
+        observed_issuer: "CN=Example CA",
+        observed_not_before: new Date("2026-01-01T00:00:00.000Z"),
+        observed_not_after: new Date("2027-01-01T00:00:00.000Z"),
+        deployment_reference: "iis://Default Web Site:443#app.example.com",
+        observed_at: new Date("2026-08-09T12:00:00.000Z"),
+        created_at: new Date("2026-08-09T12:00:00.000Z"),
+        updated_at: new Date("2026-08-09T12:00:00.000Z"),
+        target_name: "windows-host",
+        target_target_type: "windows-iis",
+        target_hostname: "windows-host.example.com",
+        target_location_kind: "iis_binding",
+        target_deployment_reference:
+          "iis://Default Web Site:443#app.example.com",
+      }),
+      agent: null,
+    };
+
+    assert.equal(validate(record), true, JSON.stringify(validate.errors));
+    assert.deepEqual(Object.keys(record.target).sort(), [
+      "deploymentReference",
+      "hostname",
+      "id",
+      "locationKind",
+      "name",
+      "targetType",
+    ]);
+
+    const withUndeclaredTargetField = clone(record);
+    withUndeclaredTargetField.target.internalPath = "not-public";
+    assert.equal(validate(withUndeclaredTargetField), false);
+  });
+});
+
 describe("signed-dispatch payload, wire wrappers, and the action-keyed discriminated union", () => {
   const {
     CERTIFICATE_ACTIONS,

@@ -29,20 +29,11 @@
  * key-presence/binding/site parsing -- those fields always come from the
  * canonical module.
  *
- * Subject Alternative Names are the one field this adapter DOES re-derive
- * independently, rather than trusting ../windows-discovery's own SAN
- * parse: a 2026-08-08 real-host finding (two independent Windows Server
- * 2022 VMs, different SKUs/images) showed `certutil -store -v` -- the only
- * certutil invocation that ever prints the SAN extension -- can fail
- * outright with NTE_NOT_FOUND, on every store and every certificate, while
- * the exact same certificate's bytes remain readable via
- * `Get-ChildItem Cert:\...` (the same call this module already makes for
- * fingerprint completion). Since Node's own X509Certificate parses SANs
- * out of those same already-fetched raw bytes, this adapter derives SANs
- * from that source when available and only falls back to
- * ../windows-discovery's certutil-text-parsed list when it is not (see
- * resolveSubjectAltNames below), so SAN reporting no longer depends on
- * `-v` working at all.
+ * Subject Alternative Names are also derived from those already-fetched
+ * public bytes when available. The canonical scanner uses certutil's
+ * documented global-option ordering (`certutil -v -store <name>`), while
+ * DER parsing remains an independent defense-in-depth path if verbose text
+ * output is unavailable or differs across supported Windows versions.
  */
 
 const { spawnSync } = require("node:child_process");
@@ -243,14 +234,9 @@ function parseNodeSubjectAltName(subjectAltName) {
  * bytes via Node's `X509Certificate#subjectAltName`, rather than relying on
  * ../windows-discovery's parse of certutil's `-v` text dump.
  *
- * This closes a real gap, not a cosmetic one: a 2026-08-08 real-host finding
- * (two independent Windows Server 2022 VMs, different SKUs/images) showed
- * `certutil -store <name> -v` can fail outright (NTE_NOT_FOUND) even though
- * the exact same certificate's bytes are always readable via
- * `Get-ChildItem Cert:\...` -- which this module already does, for every
- * store certificate, to compute fingerprintSha256 above. Deriving SANs from
- * that same already-fetched blob means this adapter's SAN reporting no
- * longer depends on `-v` working at all, on any host.
+ * Deriving SANs from the already-fetched public bytes keeps SAN reporting
+ * independent from certutil's verbose text format and costs no additional
+ * certificate-store access.
  *
  * @param {string|null|undefined} rawCertificateBase64
  * @param {(m: string) => void} onWarning
@@ -352,7 +338,7 @@ function splitIpPortLiteral(ipPort) {
  *   locationKind, locationSlot, fingerprintSha256, subject, issuer,
  *   serialNumber, notBefore, notAfter, subjectAltNames, storeLocation,
  *   storeName, thumbprint, keyPresent, plus siteName/port/sniHost
- *   (iis_binding) or port (http_sys).
+ *   (iis_binding) or boundAddress/port (http_sys).
  */
 async function collectWindowsDiscoveryObservations({
   store,
@@ -541,6 +527,7 @@ async function collectWindowsDiscoveryObservations({
         ...base,
         locationKind: "http_sys",
         locationSlot: `${parsed.address}:${parsed.port}`,
+        boundAddress: parsed.address,
         port: parsed.port,
       });
     }

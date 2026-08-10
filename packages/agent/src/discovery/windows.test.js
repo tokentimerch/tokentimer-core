@@ -517,6 +517,8 @@ describe("collectWindowsDiscoveryObservations", () => {
       const httpSysObservation = observations.find((o) => o.locationKind === "http_sys");
       assert.ok(httpSysObservation, "expected an http_sys observation");
       assert.equal(httpSysObservation.locationSlot, "0.0.0.0:8443");
+      assert.equal(httpSysObservation.boundAddress, "0.0.0.0");
+      assert.equal(httpSysObservation.thumbprint, thumbprint.toLowerCase());
       assert.match(httpSysObservation.fingerprintSha256, /^[a-f0-9]{64}$/);
     },
   );
@@ -594,12 +596,9 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.ok(warnings.some((m) => m.includes("http_sys")));
   });
 
-  // End-to-end regression for the 2026-08-08 real-host finding: on an
-  // affected host, ../windows-discovery's own certutil -v fallback (see its
-  // test suite) already keeps windows_store observations flowing even
-  // though -v itself fails; this test additionally proves the adapter
-  // still recovers real SANs in that exact scenario, via the certificate's
-  // own raw bytes rather than certutil's (broken) -v text dump.
+  // Defense-in-depth regression: if a correctly ordered verbose query still
+  // fails for an unrelated reason, the plain-query fallback keeps store
+  // observations flowing and raw public certificate bytes retain SANs.
   it(
     "still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed",
     // skip-reason: no-host - needs a real openssl binary on PATH.

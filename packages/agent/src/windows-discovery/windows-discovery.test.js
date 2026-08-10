@@ -306,11 +306,11 @@ describe("listMachineStoreCertificates", () => {
     assert.equal(execFileImpl.calls.length, 0);
   });
 
-  it("invokes certutil -store <name> -v with the expected argv", async () => {
+  it("invokes certutil -v -store <name> with the expected argv", async () => {
     const execFileImpl = makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT });
     await listMachineStoreCertificates({ store: "My", execFileImpl, certutilPath: "certutil.exe" });
     assert.equal(execFileImpl.calls.length, 1);
-    assert.deepEqual(execFileImpl.calls[0].args, ["-store", "My", "-v"]);
+    assert.deepEqual(execFileImpl.calls[0].args, ["-v", "-store", "My"]);
   });
 
   it("tags every returned certificate with the queried store name", async () => {
@@ -320,10 +320,8 @@ describe("listMachineStoreCertificates", () => {
     assert.ok(result.certificates.every((cert) => cert.store === "My"));
   });
 
-  // 2026-08-08 real-host finding: `certutil -store <name> -v` failed
-  // outright with NTE_NOT_FOUND on two independent Windows Server 2022
-  // VMs (different SKUs/images), on every store and every certificate,
-  // while the exact same store queried WITHOUT -v succeeded.
+  // Defense in depth: if a correctly ordered verbose call still fails for
+  // an unrelated reason, the non-verbose query preserves core discovery.
   it("falls back to a non-verbose query when the verbose (-v) query fails with a real error, still returning the store's certificates", async () => {
     let call = 0;
     const execFileImpl = (file, args, options, callback) => {
@@ -484,7 +482,7 @@ describe("listIisSites", () => {
 describe("discoverWindowsCertificateInventory", () => {
   it("cross-references store certificates with the bindings and IIS sites that reference them", async () => {
     const execFileImpl = (file, args, options, callback) => {
-      if (args[0] === "-store") {
+      if (args.includes("-store")) {
         return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
       }
       if (args[0] === "list") {
@@ -506,7 +504,7 @@ describe("discoverWindowsCertificateInventory", () => {
 
   it("reports boundSites: [] (not an error) when appcmd/IIS management tools are unavailable", async () => {
     const execFileImpl = (file, args, options, callback) => {
-      if (args[0] === "-store") {
+      if (args.includes("-store")) {
         return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
       }
       if (args[0] === "list") {
@@ -546,7 +544,7 @@ describe("discoverWindowsCertificateInventory", () => {
 
   it("never touches the binding query's actual store scoping (reports bindings for all stores)", async () => {
     const execFileImpl = (file, args, options, callback) => {
-      if (args[0] === "-store") {
+      if (args.includes("-store")) {
         return makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT })(file, args, options, callback);
       }
       return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);

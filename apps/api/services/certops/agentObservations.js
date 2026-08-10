@@ -1,5 +1,7 @@
 "use strict";
 
+const { isIP } = require("node:net");
+
 /**
  * Agent certificate discovery, generalized beyond filesystem paths to Windows
  * machine-store, IIS-binding, and http.sys locations.
@@ -40,13 +42,15 @@ const CERTOPS_AGENT_OBSERVATION_INVALID = "CERTOPS_AGENT_OBSERVATION_INVALID";
 const CERTOPS_AGENT_EVIDENCE_ID_REQUIRED = "CERTOPS_AGENT_EVIDENCE_ID_REQUIRED";
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const WINDOWS_THUMBPRINT_SHA1_PATTERN = /^[A-Fa-f0-9]{40}$/;
 const MAX_PATH = 512;
 const MAX_TEXT = 1024;
 
 // The observation contract's locality discriminator. 'filesystem' uses a
 // filePath identity. The other three are non-filesystem locations reported by Windows
 // discovery; identity for those is `locationSlot`, a stable per-binding string
-// the agent computes (e.g. "Default Web Site:443", "LocalMachine/My/<thumbprint>")
+// the agent computes (e.g. "Default Web Site:443#example.com",
+// "LocalMachine/My/example.com")
 // that survives a certificate rotation at the same location so a renewal
 // refreshes the existing row instead of creating a duplicate.
 const LOCATION_KINDS = new Set([
@@ -152,6 +156,30 @@ function optionalSha256(value, fieldName) {
   return value;
 }
 
+function optionalWindowsThumbprint(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!WINDOWS_THUMBPRINT_SHA1_PATTERN.test(normalized)) {
+    throw observationError(
+      `${fieldName} must be a 40-character hexadecimal SHA-1 thumbprint when supplied`,
+    );
+  }
+  return normalized.toUpperCase();
+}
+
+function optionalWindowsBoundAddress(value, fieldName) {
+  const normalized = optionalText(value, fieldName, 255);
+  if (normalized === null) return null;
+  if (
+    normalized === "*" ||
+    isIP(normalized) !== 0 ||
+    WINDOWS_SNI_HOST_PATTERN.test(normalized)
+  ) {
+    return normalized;
+  }
+  throw observationError(`${fieldName} is invalid`);
+}
+
 function optionalTimestamp(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
@@ -245,11 +273,15 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
       64,
       WINDOWS_STORE_NAME_PATTERN,
     ) || "My";
+  const thumbprint = optionalWindowsThumbprint(
+    clientMeta.thumbprint,
+    "thumbprint",
+  );
   if (locationKind === "windows_store") {
     return {
       storeLocation,
       storeName,
-      thumbprint: optionalText(clientMeta.thumbprint, "thumbprint", 64),
+      thumbprint,
     };
   }
   if (locationKind === "iis_binding") {
@@ -263,6 +295,7 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
         WINDOWS_IIS_SITE_PATTERN,
       ),
       port: parseWindowsPort(clientMeta.port, "port"),
+      thumbprint,
       sniHost: optionalPatternText(
         clientMeta.sniHost,
         "sniHost",
@@ -276,6 +309,11 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
       storeLocation,
       storeName,
       port: parseWindowsPort(clientMeta.port, "port"),
+      thumbprint,
+      boundAddress: optionalWindowsBoundAddress(
+        clientMeta.boundAddress,
+        "boundAddress",
+      ),
     };
   }
   return {};
@@ -288,17 +326,28 @@ function windowsLocationFieldsFor(locationKind, clientMeta) {
  */
 function defaultLocationRef(locationKind, { targetHost, windowsFields, locationSlot, thumbprint }) {
   if (locationKind === "windows_store") {
-    const suffix = thumbprint || locationSlot;
+    const storePrefix = `${windowsFields.storeLocation}/${windowsFields.storeName}/`;
+    const slotSuffix = locationSlot?.startsWith(storePrefix)
+      ? locationSlot.slice(storePrefix.length)
+      : locationSlot;
+    const suffix =
+      optionalWindowsThumbprint(thumbprint, "thumbprint") || slotSuffix;
     return `winstore://${windowsFields.storeLocation}/${windowsFields.storeName}${suffix ? `/${suffix}` : ""}`;
   }
   if (locationKind === "iis_binding") {
-    const site = windowsFields.siteName || locationSlot;
+    if (!windowsFields.siteName) return `iis://${locationSlot}`;
     const port = windowsFields.port ? `:${windowsFields.port}` : "";
-    return `iis://${site}${port}`;
+    const sniHost = windowsFields.sniHost ? `#${windowsFields.sniHost}` : "";
+    return `iis://${windowsFields.siteName}${port}${sniHost}`;
   }
   if (locationKind === "http_sys") {
-    const port = windowsFields.port ? `:${windowsFields.port}` : "";
-    return `http-sys://${targetHost}${port}`;
+    if (!windowsFields.boundAddress || !windowsFields.port) {
+      return `http-sys://${locationSlot}`;
+    }
+    const address = isIP(windowsFields.boundAddress) === 6
+      ? `[${windowsFields.boundAddress}]`
+      : windowsFields.boundAddress;
+    return `http-sys://${address}:${windowsFields.port}`;
   }
   return `file://${targetHost}`;
 }
@@ -318,12 +367,19 @@ function defaultLocationRef(locationKind, { targetHost, windowsFields, locationS
  * whether this observation came from the store enumeration or an IIS/
  * http.sys binding scan.
  */
-function defaultKeyReference(locationKind, { windowsFields, locationSlot, thumbprint }) {
+function defaultKeyReference(
+  locationKind,
+  { windowsFields = {}, thumbprint } = {},
+) {
   if (locationKind === "filesystem") return null;
-  const suffix = thumbprint || locationSlot;
+  const normalizedThumbprint = optionalWindowsThumbprint(
+    thumbprint || windowsFields.thumbprint,
+    "thumbprint",
+  );
+  if (!normalizedThumbprint) return null;
   const storeLocation = windowsFields.storeLocation || "LocalMachine";
   const storeName = windowsFields.storeName || "My";
-  return `winstore://${storeLocation}/${storeName}${suffix ? `/${suffix}` : ""}`;
+  return `winstore://${storeLocation}/${storeName}/${normalizedThumbprint}`;
 }
 
 /**
@@ -635,8 +691,6 @@ async function upsertInventoryForObservation(client, observation) {
         ? `file://${observation.filePath}`
         : defaultKeyReference(observation.locationKind, {
             windowsFields: observation.windowsFields,
-            locationSlot: observation.locationSlot,
-            thumbprint: observation.windowsFields?.thumbprint,
           }),
       // Filesystem adoption uses this path directly. Windows adoption uses
       // the store/site/binding descriptor instead, so its certificate path

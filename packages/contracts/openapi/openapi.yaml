@@ -6891,6 +6891,7 @@ components:
             - not_agent_deployable
             - no_profile
             - certificate_retired
+            - assigned_agent_retired
             - null
           description: Machine-readable reason code for `renewalPathState`.
         renewalPathSummary:
@@ -6944,6 +6945,7 @@ components:
         - targetId
         - status
         - source
+        - target
       properties:
         id:
           type: string
@@ -6980,7 +6982,7 @@ components:
             - iis_binding
             - http_sys
             - null
-          description: What kind of place this location is. Distinct from `source`, which says who/what reported it. Null on rows written before the generalized observation contract; the UI treats null as filesystem.
+          description: What kind of place this location is. Distinct from `source`, which says who/what reported it. Null on rows written before the generalized observation contract; callers must treat null as unknown unless independent source/reference evidence proves a filesystem location.
         responsibleAgentId:
           type: string
           nullable: true
@@ -7013,6 +7015,39 @@ components:
             lastSeenAt:
               type: string
               format: date-time
+              nullable: true
+        target:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - name
+            - targetType
+            - hostname
+            - locationKind
+            - deploymentReference
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            targetType:
+              type: string
+            hostname:
+              type: string
+              nullable: true
+            locationKind:
+              type: string
+              nullable: true
+              enum:
+                - filesystem
+                - windows_store
+                - iis_binding
+                - http_sys
+                - null
+            deploymentReference:
+              type: string
               nullable: true
         observedFingerprintSha256:
           type: string

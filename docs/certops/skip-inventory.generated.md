@@ -40,7 +40,7 @@ Total skips found: 52
 | `packages/agent/src/discovery/windows.test.js` | 389 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 432 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 497 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 606 | still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 605 | still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |

@@ -399,6 +399,8 @@ describe("runDiscoveryScan", () => {
 });
 
 describe("runWindowsDiscoveryScan", () => {
+  const WINDOWS_THUMBPRINT = "DEADBEEF".repeat(5);
+
   it("passes the configured store set to the canonical collector", async () => {
     const client = createRecordingClient();
     let receivedStores = null;
@@ -432,7 +434,7 @@ describe("runWindowsDiscoveryScan", () => {
         subjectAltNames: "example.com",
         storeLocation: "LocalMachine",
         storeName: "My",
-        thumbprint: "deadbeef",
+        thumbprint: WINDOWS_THUMBPRINT,
         keyPresent: true,
       },
     ];
@@ -452,8 +454,14 @@ describe("runWindowsDiscoveryScan", () => {
     assert.equal(byName.keyPresent, true);
     assert.equal(byName.storeLocation, "LocalMachine");
     assert.equal(byName.storeName, "My");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
     // filePath must never appear for a non-filesystem location.
     assert.ok(!("filePath" in byName));
+    const serialized = JSON.stringify(item).toLowerCase();
+    assert.ok(!serialized.includes("privatekey"));
+    assert.ok(!serialized.includes("keypath"));
+    assert.ok(!serialized.includes("pfx"));
+    assert.ok(!serialized.includes("export"));
   });
 
   it("reports keyPresent: false (not omitted) when the store confirms no private key at this location", async () => {
@@ -471,7 +479,7 @@ describe("runWindowsDiscoveryScan", () => {
         subjectAltNames: "public-only.example.com",
         storeLocation: "LocalMachine",
         storeName: "My",
-        thumbprint: "cafef00d",
+        thumbprint: "CAFEF00D".repeat(5),
         keyPresent: false,
       },
     ];
@@ -501,7 +509,7 @@ describe("runWindowsDiscoveryScan", () => {
         siteName: "Default Web Site",
         port: 443,
         sniHost: "example.com",
-        thumbprint: "deadbeef",
+        thumbprint: WINDOWS_THUMBPRINT,
       },
     ];
 
@@ -513,6 +521,7 @@ describe("runWindowsDiscoveryScan", () => {
     assert.equal(byName.siteName, "Default Web Site");
     assert.equal(byName.port, "443");
     assert.equal(byName.sniHost, "example.com");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
   });
 
   it("includes http_sys-specific port metadata without sniHost/siteName", async () => {
@@ -526,8 +535,9 @@ describe("runWindowsDiscoveryScan", () => {
         issuer: "CN=example.com",
         storeLocation: "LocalMachine",
         storeName: "My",
+        boundAddress: "0.0.0.0",
         port: 8443,
-        thumbprint: "deadbeef",
+        thumbprint: WINDOWS_THUMBPRINT,
       },
     ];
 
@@ -537,6 +547,8 @@ describe("runWindowsDiscoveryScan", () => {
     const item = client.calls.reportEvidence[0].evidenceItems[0];
     const byName = Object.fromEntries(item.metadata.map((entry) => [entry.name, entry.value]));
     assert.equal(byName.port, "8443");
+    assert.equal(byName.boundAddress, "0.0.0.0");
+    assert.equal(byName.thumbprint, WINDOWS_THUMBPRINT);
     assert.ok(!("siteName" in byName));
     assert.ok(!("sniHost" in byName));
   });
@@ -3857,7 +3869,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
           : "";
       } else if (file === "netsh.exe" && (args[1] === "add" || args[1] === "delete")) {
         stdout = "";
-      } else if (file === "certutil.exe" && args[0] === "-store") {
+      } else if (file === "certutil.exe" && args.includes("-store")) {
         stdout = outgoingThumbprint
           ? `My "Personal"\n================ Certificate 0 ================\nSerial Number: 1a2b3c4d5e\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=old.example.com\nCert Hash(sha1): ${outgoingThumbprint.match(/../g).join(" ")}\n${storeKeyContainer ? `  Key Container = ${storeKeyContainer}\n` : ""}CertUtil: -store command completed successfully.\n`
           : `My "Personal"\nCertUtil: -store command completed successfully.\n`;
@@ -4474,7 +4486,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
-      if (file === "certutil.exe" && args[0] === "-store") {
+      if (file === "certutil.exe" && args.includes("-store")) {
         if (certutilStoreFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
           return;
@@ -4696,8 +4708,8 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
    */
   function makeReconcileExecStub({ enrolledContainer = null, enrolledInStore = null, delkeyFails = false } = {}) {
     return function execFileStub(file, args, options, callback) {
-      if (file === "certutil.exe" && args[0] === "-store") {
-        const queriedStore = args[1];
+      if (file === "certutil.exe" && args.includes("-store")) {
+        const queriedStore = args[args.indexOf("-store") + 1];
         const showEnrolled =
           enrolledContainer && (enrolledInStore === null || enrolledInStore === queriedStore);
         let stdout = `My "Personal"\n`;
@@ -4770,8 +4782,8 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
 
     const queriedStores = [];
     const execFileImpl = (file, args, options, callback) => {
-      if (file === "certutil.exe" && args[0] === "-store") {
-        queriedStores.push(args[1]);
+      if (file === "certutil.exe" && args.includes("-store")) {
+        queriedStores.push(args[args.indexOf("-store") + 1]);
       }
       return makeReconcileExecStub()(file, args, options, callback);
     };
@@ -4810,7 +4822,11 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
 
     const execFileImpl = (file, args, options, callback) => {
-      if (file === "certutil.exe" && args[0] === "-store" && args[1] === "WebHosting") {
+      if (
+        file === "certutil.exe" &&
+        args.includes("-store") &&
+        args[args.indexOf("-store") + 1] === "WebHosting"
+      ) {
         process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "access denied"));
         return;
       }

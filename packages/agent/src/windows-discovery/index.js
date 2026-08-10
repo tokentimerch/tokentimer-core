@@ -308,11 +308,10 @@ function parseNetshSslcertBindings(stdout) {
  * >}
  */
 async function runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose }) {
-  // -v (verbose) is what gets certutil to dump extensions, including
-  // Subject Alternative Name; without it the per-certificate block only
-  // ever carries the fields already present before this flag was added.
+  // -v is a global certutil option and must precede the -store command.
+  // Verbose output includes extensions such as Subject Alternative Name.
   const argv = verbose
-    ? [certutilPath, "-store", store, "-v"]
+    ? [certutilPath, "-v", "-store", store]
     : [certutilPath, "-store", store];
   assertSafeArgvElements("argv", argv);
 
@@ -348,20 +347,11 @@ async function runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeou
  * matching queryCurrentBinding's "nothing there yet is not a failure"
  * posture in ../windows-iis.
  *
- * Falls back to a non-verbose query on a genuine verbose-mode failure: a
- * 2026-08-08 real-host finding (two independent Windows Server 2022 VMs,
- * different SKUs/images) showed `certutil -store <name> -v` can fail
- * outright with NTE_NOT_FOUND -- on every store, every certificate, even a
- * certificate created seconds earlier -- while the exact same store queried
- * WITHOUT `-v` succeeds and returns every field except the Subject
- * Alternative Name extension (which only `-v` prints). Treating that as a
- * total STORE_QUERY_FAILED would silently drop this host's entire Windows
- * discovery, not just its SAN data. The caller-side adapter
- * (../discovery/windows.js) independently recovers SANs from each
- * certificate's own raw bytes -- which it already fetches for SHA-256
- * fingerprint completion -- so no discovery capability is actually lost
- * even on a host hitting this bug; falling back here only avoids losing
- * subject/issuer/dates/serial/thumbprint/key-presence too.
+ * The verbose query uses certutil's documented global-option order:
+ * `certutil -v -store <name>`. A non-verbose retry remains defense in depth
+ * so a host with unavailable verbose output can still report the core
+ * certificate fields. The caller-side adapter independently recovers SANs
+ * from the certificate's public raw bytes.
  *
  * @param {object} input
  * @param {string} input.store Windows certificate store name (e.g. "My").
@@ -656,4 +646,3 @@ module.exports = {
   listIisSites,
   discoverWindowsCertificateInventory,
 };
-

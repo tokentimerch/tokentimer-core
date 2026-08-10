@@ -553,12 +553,12 @@ describe("certops maintenance worker", () => {
 
     const update = queries.find((entry) => /UPDATE certops_agents/.test(entry.sql));
     assert.match(update.sql, /SET status = 'offline'/);
-    assert.match(update.sql, /WHERE status = 'active'/);
+    assert.match(update.sql, /AND status = 'active'/);
     assert.match(
       update.sql,
       /COALESCE\(last_seen_at, created_at\) < NOW\(\)/,
     );
-    assert.deepStrictEqual(update.params, ["600000"]);
+    assert.deepStrictEqual(update.params, ["600000", "row-1", "ws-1"]);
     assert.ok(
       queries.some((entry) => /INSERT INTO certops_agent_health_incidents/.test(entry.sql)),
       "the durable incident must be written in the offline transaction",
@@ -716,7 +716,7 @@ describe("certops maintenance worker", () => {
     ]);
   });
 
-  it("the default resolveImpactedCertificates resolves each workspace's renewal-path projection at most once per sweep tick, even with multiple stale agents", async () => {
+  it("refreshes the workspace renewal-path projection after each per-agent offline transition", async () => {
     const worker = await import(workerUrl);
     let managedCertificatesQueryCount = 0;
     const client = {
@@ -801,12 +801,13 @@ describe("certops maintenance worker", () => {
 
     assert.strictEqual(result.staleCount, 2);
     assert.strictEqual(queuedCalls.length, 2);
-    // Both agents belong to workspace ws-1: the workspace-wide certificate
-    // projection must be resolved once and shared, not once per agent.
+    // Each per-agent transaction changes liveness before resolving impact.
+    // The next agent must see that newly committed state instead of reusing
+    // a projection from before the previous transition.
     assert.strictEqual(
       managedCertificatesQueryCount,
-      1,
-      "resolveRenewalPathsForWorkspace must be shared across agents in the same workspace within one sweep tick",
+      2,
+      "each committed status transition must invalidate the workspace projection",
     );
   });
 
@@ -877,6 +878,77 @@ describe("certops maintenance worker", () => {
       { staleCount: 1, alertsQueued: 1 },
     );
     assert.ok(queries.includes("COMMIT"));
+  });
+
+  it("keeps unrelated DOWN transitions committed when one agent fails mid-sweep", async () => {
+    const worker = await import(workerUrl);
+    const rows = [
+      {
+        id: "row-1",
+        agent_id: "agent-a",
+        workspace_id: "ws-1",
+        downtime_alerts_enabled: true,
+      },
+      {
+        id: "row-2",
+        agent_id: "agent-b",
+        workspace_id: "ws-1",
+        downtime_alerts_enabled: true,
+      },
+    ];
+    let currentAgentId = null;
+    const committed = [];
+    const rolledBack = [];
+    const alertCalls = [];
+    const client = {
+      async query(sql, params = []) {
+        const normalized = normalizeSql(sql);
+        if (/^SELECT id, agent_id, workspace_id/.test(normalized)) {
+          return { rows };
+        }
+        if (normalized === "BEGIN") return { rows: [] };
+        if (/^UPDATE certops_agents/.test(normalized)) {
+          currentAgentId = params[1];
+          return { rows: [rows.find((row) => row.id === currentAgentId)] };
+        }
+        if (/INSERT INTO certops_agent_health_incidents/.test(normalized)) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (normalized === "COMMIT") {
+          committed.push(currentAgentId);
+          currentAgentId = null;
+          return { rows: [] };
+        }
+        if (normalized === "ROLLBACK") {
+          rolledBack.push(currentAgentId);
+          currentAgentId = null;
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query: ${normalized}`);
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        worker.sweepStaleAgents({
+          client,
+          offlineAfterMs: 600000,
+          log: silentLogger,
+          resolveImpactedCertificates: async () => [],
+          alertQueuer: async ({ agent }) => {
+            alertCalls.push(agent.id);
+            if (agent.id === "row-1") {
+              throw new Error("down persistence failed");
+            }
+            return { queued: true };
+          },
+        }),
+      /down persistence failed/,
+    );
+
+    assert.deepStrictEqual(alertCalls, ["row-1", "row-2"]);
+    assert.deepStrictEqual(rolledBack, ["row-1"]);
+    assert.deepStrictEqual(committed, ["row-2"]);
   });
 
   it("finds active agents with a still-open down alert and queues recovery", async () => {
@@ -980,6 +1052,77 @@ describe("certops maintenance worker", () => {
         /DELETE FROM certops_agent_health_incidents/.test(sql),
       ),
     );
+  });
+
+  it("keeps unrelated RECOVERY transitions committed when one agent fails mid-sweep", async () => {
+    const worker = await import(workerUrl);
+    const rows = [
+      {
+        id: "row-1",
+        agent_id: "agent-a",
+        workspace_id: "ws-1",
+        downtime_alerts_enabled: true,
+      },
+      {
+        id: "row-2",
+        agent_id: "agent-b",
+        workspace_id: "ws-1",
+        downtime_alerts_enabled: true,
+      },
+    ];
+    let currentAgentId = null;
+    const committed = [];
+    const rolledBack = [];
+    const deletedIncidents = [];
+    const alertCalls = [];
+    const client = {
+      async query(sql, params = []) {
+        const normalized = normalizeSql(sql);
+        if (/FROM certops_agents a/.test(normalized)) {
+          if (params.length === 0) return { rows };
+          currentAgentId = params[0];
+          return { rows: [rows.find((row) => row.id === currentAgentId)] };
+        }
+        if (normalized === "BEGIN") return { rows: [] };
+        if (/DELETE FROM certops_agent_health_incidents/.test(normalized)) {
+          deletedIncidents.push(params[0]);
+          return { rows: [], rowCount: 1 };
+        }
+        if (normalized === "COMMIT") {
+          committed.push(currentAgentId);
+          currentAgentId = null;
+          return { rows: [] };
+        }
+        if (normalized === "ROLLBACK") {
+          rolledBack.push(currentAgentId);
+          currentAgentId = null;
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query: ${normalized}`);
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        worker.sweepAgentRecoveries({
+          client,
+          log: silentLogger,
+          resolveImpactedCertificates: async () => [],
+          alertQueuer: async ({ agent }) => {
+            alertCalls.push(agent.id);
+            if (agent.id === "row-1") {
+              throw new Error("recovery persistence failed");
+            }
+            return { queued: true };
+          },
+        }),
+      /recovery persistence failed/,
+    );
+
+    assert.deepStrictEqual(alertCalls, ["row-1", "row-2"]);
+    assert.deepStrictEqual(rolledBack, ["row-1"]);
+    assert.deepStrictEqual(deletedIncidents, ["row-2"]);
+    assert.deepStrictEqual(committed, ["row-2"]);
   });
 
   it("keeps the recovery incident open while DOWN delivery is in flight", async () => {

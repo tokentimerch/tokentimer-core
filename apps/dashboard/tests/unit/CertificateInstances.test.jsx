@@ -144,12 +144,76 @@ describe('CertificateInstances', () => {
     expect(screen.getByText('Unknown')).toBeInTheDocument();
   });
 
-  it('defaults an unrecognized/missing location kind to Filesystem', () => {
+  it('renders a null legacy location kind as Unknown without filesystem evidence', () => {
     renderInstances({
-      instances: [instance({ locationKind: null })],
+      instances: [
+        instance({
+          locationKind: null,
+          source: 'import',
+          deploymentReference: 'legacy-import-record',
+        }),
+      ],
+    });
+
+    expect(screen.getAllByText('Unknown')).toHaveLength(2);
+    expect(screen.queryByText('Filesystem')).not.toBeInTheDocument();
+  });
+
+  it('infers Filesystem only from safe source or reference evidence', () => {
+    renderInstances({
+      instances: [
+        instance({
+          locationKind: null,
+          source: 'agent_filesystem',
+          deploymentReference: 'file://C:/certs/site.pem',
+        }),
+      ],
     });
 
     expect(screen.getByText('Filesystem')).toBeInTheDocument();
+  });
+
+  it('keeps IIS bindings with the same site and port visually distinct by SNI host', () => {
+    renderInstances({
+      instances: [
+        instance({
+          id: 'iis-a',
+          targetId: 'iis-target-a',
+          locationKind: 'iis_binding',
+          deploymentReference: 'iis://Default Web Site:443#example.com',
+        }),
+        instance({
+          id: 'iis-b',
+          targetId: 'iis-target-b',
+          locationKind: 'iis_binding',
+          deploymentReference: 'iis://Default Web Site:443#other.example.com',
+        }),
+      ],
+    });
+
+    expect(
+      screen.getByText('iis://Default Web Site:443#example.com')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('iis://Default Web Site:443#other.example.com')
+    ).toBeInTheDocument();
+  });
+
+  it('shows the HTTP.sys binding address instead of the agent hostname', () => {
+    renderInstances({
+      instances: [
+        instance({
+          locationKind: 'http_sys',
+          deploymentReference: 'http-sys://0.0.0.0:443',
+          target: { hostname: 'edge-host.example.com' },
+        }),
+      ],
+    });
+
+    expect(screen.getByText('http-sys://0.0.0.0:443')).toBeInTheDocument();
+    expect(
+      screen.queryByText('http-sys://edge-host.example.com:443')
+    ).not.toBeInTheDocument();
   });
 
   it('shows a reachable connectivity badge for a location whose responsible agent is live', () => {

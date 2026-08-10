@@ -139,7 +139,7 @@ function InstanceRow({ instance, border, muted, indent = false }) {
       </Td>
       <Td borderColor={border}>
         <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-          {locationKindLabel(instance.locationKind)}
+          {locationKindLabel(instance.locationKind, instance)}
         </Text>
       </Td>
       <Td borderColor={border}>
@@ -263,7 +263,7 @@ export default function CertificateInstances({ instances, available, error }) {
                   </Td>
                   <Td borderColor={border}>
                     <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-                      {locationKindLabel(current.locationKind)}
+                      {locationKindLabel(current.locationKind, current)}
                     </Text>
                   </Td>
                   <Td borderColor={border}>

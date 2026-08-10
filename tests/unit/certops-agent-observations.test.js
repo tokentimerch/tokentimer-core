@@ -23,6 +23,7 @@ const AGENT = {
   workspaceId: "11111111-1111-4111-8111-111111111111",
   hostname: "edge-01.example",
 };
+const WINDOWS_THUMBPRINT = "A1".repeat(20);
 
 describe("normalizeAgentFilesystemObservation", () => {
   it("builds a structured observation and overlays server-owned agentId", () => {
@@ -316,7 +317,7 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
         { name: "targetHost", value: "iis-01.example" },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: "My" },
-        { name: "thumbprint", value: "deadbeef" },
+        { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         { name: "subject", value: "CN=app.example.com" },
         { name: "validFrom", value: "2026-01-01T00:00:00.000Z" },
         { name: "validTo", value: "2027-01-01T00:00:00.000Z" },
@@ -337,10 +338,17 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
     assert.equal(observation.source, "agent_windows");
     assert.equal(observation.windowsFields.storeLocation, "LocalMachine");
     assert.equal(observation.windowsFields.storeName, "My");
-    assert.equal(observation.windowsFields.thumbprint, "deadbeef");
+    assert.equal(observation.windowsFields.thumbprint, WINDOWS_THUMBPRINT);
     assert.equal(
       observation.locationRef,
-      "winstore://LocalMachine/My/deadbeef",
+      `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`,
+    );
+    assert.equal(
+      _test.defaultKeyReference(observation.locationKind, {
+        windowsFields: observation.windowsFields,
+        thumbprint: observation.windowsFields.thumbprint,
+      }),
+      `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`,
     );
   });
 
@@ -390,11 +398,14 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
       evidenceItem: windowsEvidenceItem({
         metadata: [
           { name: "locationKind", value: "iis_binding" },
-          { name: "locationSlot", value: "Default Web Site:443" },
+          { name: "locationSlot", value: "Default Web Site:443#app.example.com" },
           { name: "targetHost", value: "iis-01.example" },
           { name: "siteName", value: "Default Web Site" },
           { name: "port", value: "443" },
           { name: "sniHost", value: "app.example.com" },
+          { name: "storeLocation", value: "LocalMachine" },
+          { name: "storeName", value: "My" },
+          { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         ],
       }),
     });
@@ -404,9 +415,17 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
     assert.equal(observation.windowsFields.siteName, "Default Web Site");
     assert.equal(observation.windowsFields.port, 443);
     assert.equal(observation.windowsFields.sniHost, "app.example.com");
+    assert.equal(observation.windowsFields.thumbprint, WINDOWS_THUMBPRINT);
     assert.equal(
       observation.locationRef,
-      "iis://Default Web Site:443",
+      "iis://Default Web Site:443#app.example.com",
+    );
+    assert.equal(
+      _test.defaultKeyReference(observation.locationKind, {
+        windowsFields: observation.windowsFields,
+        thumbprint: observation.windowsFields.thumbprint,
+      }),
+      `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`,
     );
   });
 
@@ -418,7 +437,11 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
           { name: "locationKind", value: "http_sys" },
           { name: "locationSlot", value: "0.0.0.0:8443" },
           { name: "targetHost", value: "iis-01.example" },
+          { name: "boundAddress", value: "0.0.0.0" },
           { name: "port", value: "8443" },
+          { name: "storeLocation", value: "LocalMachine" },
+          { name: "storeName", value: "My" },
+          { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         ],
       }),
     });
@@ -426,9 +449,15 @@ describe("normalizeAgentFilesystemObservation - Windows locations", () => {
     assert.equal(observation.locationKind, "http_sys");
     assert.equal(observation.windowsFields.siteName, undefined);
     assert.equal(observation.windowsFields.port, 8443);
+    assert.equal(observation.windowsFields.boundAddress, "0.0.0.0");
+    assert.equal(observation.windowsFields.thumbprint, WINDOWS_THUMBPRINT);
+    assert.equal(observation.locationRef, "http-sys://0.0.0.0:8443");
     assert.equal(
-      observation.locationRef,
-      "http-sys://iis-01.example:8443",
+      _test.defaultKeyReference(observation.locationKind, {
+        windowsFields: observation.windowsFields,
+        thumbprint: observation.windowsFields.thumbprint,
+      }),
+      `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`,
     );
   });
 
@@ -574,6 +603,27 @@ describe("_test.windowsLocationFieldsFor", () => {
     assert.equal(fields.thumbprint, null);
   });
 
+  for (const locationKind of ["windows_store", "iis_binding", "http_sys"]) {
+    it(`validates and preserves a SHA-1 thumbprint for ${locationKind}`, () => {
+      const fields = _test.windowsLocationFieldsFor(locationKind, {
+        thumbprint: WINDOWS_THUMBPRINT.toLowerCase(),
+      });
+      assert.equal(fields.thumbprint, WINDOWS_THUMBPRINT);
+    });
+  }
+
+  for (const malformed of ["deadbeef", "G".repeat(40), "A".repeat(41)]) {
+    it(`rejects malformed Windows thumbprint ${JSON.stringify(malformed)}`, () => {
+      assert.throws(
+        () =>
+          _test.windowsLocationFieldsFor("iis_binding", {
+            thumbprint: malformed,
+          }),
+        /40-character hexadecimal SHA-1 thumbprint/,
+      );
+    });
+  }
+
   it("rejects an out-of-range explicit iis_binding port rather than silently collapsing identity", () => {
     // Port is part of binding identity (site/port/optional SNI host/store),
     // matching the DB-level windows_port CHECK (1..65535) on
@@ -621,9 +671,9 @@ describe("_test.defaultLocationRef", () => {
       targetHost: "iis-01.example",
       windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
       locationSlot: "LocalMachine/My/fallback-slot",
-      thumbprint: "deadbeef",
+      thumbprint: WINDOWS_THUMBPRINT,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/deadbeef");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 
   it("falls back to locationSlot for winstore:// when no thumbprint is known", () => {
@@ -633,17 +683,45 @@ describe("_test.defaultLocationRef", () => {
       locationSlot: "LocalMachine/My/fallback-slot",
       thumbprint: null,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/LocalMachine/My/fallback-slot");
+    assert.equal(ref, "winstore://LocalMachine/My/fallback-slot");
   });
 
-  it("builds an http-sys:// URI from the target host, not the (absent) site name", () => {
+  it("builds an IIS URI with the full site, port, and SNI identity", () => {
+    const ref = _test.defaultLocationRef("iis_binding", {
+      targetHost: "iis-01.example",
+      windowsFields: {
+        siteName: "Default Web Site",
+        port: 443,
+        sniHost: "app.example.com",
+      },
+      locationSlot: "Default Web Site:443#app.example.com",
+      thumbprint: WINDOWS_THUMBPRINT,
+    });
+    assert.equal(ref, "iis://Default Web Site:443#app.example.com");
+  });
+
+  it("keeps same-site/port IIS bindings distinct when their SNI hosts differ", () => {
+    const referenceFor = (sniHost) =>
+      _test.defaultLocationRef("iis_binding", {
+        targetHost: "iis-01.example",
+        windowsFields: { siteName: "Default Web Site", port: 443, sniHost },
+        locationSlot: `Default Web Site:443#${sniHost}`,
+        thumbprint: WINDOWS_THUMBPRINT,
+      });
+    assert.notEqual(
+      referenceFor("app-a.example.com"),
+      referenceFor("app-b.example.com"),
+    );
+  });
+
+  it("builds an http-sys:// URI from the real bound address, not the machine hostname", () => {
     const ref = _test.defaultLocationRef("http_sys", {
       targetHost: "iis-01.example",
-      windowsFields: { port: 8443 },
+      windowsFields: { boundAddress: "0.0.0.0", port: 8443 },
       locationSlot: "0.0.0.0:8443",
       thumbprint: null,
     });
-    assert.equal(ref, "http-sys://iis-01.example:8443");
+    assert.equal(ref, "http-sys://0.0.0.0:8443");
   });
 });
 
@@ -670,36 +748,36 @@ describe("_test.defaultKeyReference", () => {
     const ref = _test.defaultKeyReference("iis_binding", {
       windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
       locationSlot: "Default Web Site:8443",
-      thumbprint: "deadbeef",
+      thumbprint: WINDOWS_THUMBPRINT,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/deadbeef");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 
   it("resolves an http_sys key reference to the underlying winstore:// store coordinate, not http-sys://", () => {
     const ref = _test.defaultKeyReference("http_sys", {
       windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
       locationSlot: "0.0.0.0:8443",
-      thumbprint: "deadbeef",
+      thumbprint: WINDOWS_THUMBPRINT,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/deadbeef");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 
-  it("falls back to locationSlot when no thumbprint is known", () => {
+  it("does not reinterpret an IIS binding identity as a custody pointer when no thumbprint is known", () => {
     const ref = _test.defaultKeyReference("iis_binding", {
       windowsFields: { storeLocation: "LocalMachine", storeName: "My" },
       locationSlot: "Default Web Site:8443",
       thumbprint: null,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/Default Web Site:8443");
+    assert.equal(ref, null);
   });
 
-  it("defaults store location/name when the agent omitted them", () => {
+  it("uses default store location/name with a real thumbprint", () => {
     const ref = _test.defaultKeyReference("http_sys", {
       windowsFields: {},
       locationSlot: "0.0.0.0:443",
-      thumbprint: null,
+      thumbprint: WINDOWS_THUMBPRINT,
     });
-    assert.equal(ref, "winstore://LocalMachine/My/0.0.0.0:443");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 });
 
@@ -726,12 +804,7 @@ describe("real-host regression: iis_binding/http_sys observations with a private
     return normalizeKeyReference(keyReference);
   }
 
-  it("accepts a real IIS SNI binding observation with a store-resident private key (Test 9 real-host scenario)", () => {
-    // The shipped agent (packages/agent/src/index.js runWindowsDiscoveryScan)
-    // never transmits a "thumbprint" metadata field for any location kind
-    // today, so windowsFields.thumbprint is always undefined server-side and
-    // defaultKeyReference falls back to locationSlot -- still a stable,
-    // unique winstore:// pointer per binding, just not thumbprint-suffixed.
+  it("accepts an IIS SNI binding observation with a store-resident private key", () => {
     const ref = keyReferenceForObservation({
       evidenceId: "ev_iis_1",
       eventType: "certificate.observed",
@@ -740,16 +813,17 @@ describe("real-host regression: iis_binding/http_sys observations with a private
       metadata: [
         { name: "locationKind", value: "iis_binding" },
         { name: "locationSlot", value: "Default Web Site:8443" },
-        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "targetHost", value: "iis-qa.example.com" },
         { name: "siteName", value: "Default Web Site" },
         { name: "port", value: "8443" },
-        { name: "sniHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "sniHost", value: "iis-qa.example.com" },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: "My" },
+        { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         { name: "keyPresent", value: true },
       ],
     });
-    assert.equal(ref, "winstore://LocalMachine/My/Default Web Site:8443");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 
   it("accepts a real http_sys binding observation with a store-resident private key", () => {
@@ -761,14 +835,16 @@ describe("real-host regression: iis_binding/http_sys observations with a private
       metadata: [
         { name: "locationKind", value: "http_sys" },
         { name: "locationSlot", value: "0.0.0.0:5986" },
-        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "targetHost", value: "iis-qa.example.com" },
+        { name: "boundAddress", value: "0.0.0.0" },
         { name: "port", value: "5986" },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: "My" },
+        { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         { name: "keyPresent", value: true },
       ],
     });
-    assert.equal(ref, "winstore://LocalMachine/My/0.0.0.0:5986");
+    assert.equal(ref, `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`);
   });
 
   it("prefers an explicit thumbprint over locationSlot when the agent does supply one", () => {
@@ -780,14 +856,14 @@ describe("real-host regression: iis_binding/http_sys observations with a private
       metadata: [
         { name: "locationKind", value: "windows_store" },
         { name: "locationSlot", value: "LocalMachine/My/some-cn" },
-        { name: "targetHost", value: "qa-iis01.tokentimer-verify.local" },
+        { name: "targetHost", value: "iis-qa.example.com" },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: "My" },
         { name: "thumbprint", value: "587c96d037a416002a3cbeeb7c6e8c31e1dc2c94" },
         { name: "keyPresent", value: true },
       ],
     });
-    assert.equal(ref, "winstore://LocalMachine/My/587c96d037a416002a3cbeeb7c6e8c31e1dc2c94");
+    assert.equal(ref, "winstore://LocalMachine/My/587C96D037A416002A3CBEEB7C6E8C31E1DC2C94");
   });
 });
 
@@ -960,7 +1036,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
             { name: "targetHost", value: "iis-01.example" },
             { name: "storeLocation", value: "LocalMachine" },
             { name: "storeName", value: "My" },
-            { name: "thumbprint", value: "deadbeef" },
+            { name: "thumbprint", value: WINDOWS_THUMBPRINT },
             { name: "subject", value: "CN=app.example.com" },
             { name: "validFrom", value: "2026-01-01T00:00:00.000Z" },
             { name: "validTo", value: "2027-01-01T00:00:00.000Z" },
@@ -987,6 +1063,11 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
       certInsert.params[19],
       "os-store-managed",
       "a confirmed private-key presence marks the location os-store-managed",
+    );
+    assert.equal(
+      certInsert.params[20],
+      `winstore://LocalMachine/My/${WINDOWS_THUMBPRINT}`,
+      "Windows key custody must point to the real store thumbprint, not the location identity",
     );
     // deployed_cert_path is the 24th bound param; Windows discovery has no
     // filesystem path to offer, unlike filesystem discovery.
@@ -1043,7 +1124,7 @@ describe("persistAgentDiscoveryEvidenceBatch - Windows discovery persistence (ob
         { name: "targetHost", value: "iis-01.example" },
         { name: "storeLocation", value: "LocalMachine" },
         { name: "storeName", value: "My" },
-        { name: "thumbprint", value: "deadbeef" },
+        { name: "thumbprint", value: WINDOWS_THUMBPRINT },
         { name: "validFrom", value: "2026-01-01T00:00:00.000Z" },
         { name: "validTo", value: "2027-01-01T00:00:00.000Z" },
       ],

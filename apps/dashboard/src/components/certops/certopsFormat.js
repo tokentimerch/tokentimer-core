@@ -134,9 +134,24 @@ const LOCATION_KIND_LABELS = {
   http_sys: 'HTTP.sys binding',
 };
 
-export function locationKindLabel(locationKind) {
+export function locationKindLabel(locationKind, location = {}) {
   const key = String(locationKind || '').toLowerCase();
-  return LOCATION_KIND_LABELS[key] || 'Filesystem';
+  if (LOCATION_KIND_LABELS[key]) return LOCATION_KIND_LABELS[key];
+
+  const targetKey = String(location.target?.locationKind || '').toLowerCase();
+  if (LOCATION_KIND_LABELS[targetKey]) return LOCATION_KIND_LABELS[targetKey];
+
+  const source = String(location.source || '').toLowerCase();
+  const deploymentReference =
+    location.deploymentReference || location.target?.deploymentReference || '';
+  if (
+    source === 'agent_filesystem' ||
+    String(deploymentReference).toLowerCase().startsWith('file://')
+  ) {
+    return LOCATION_KIND_LABELS.filesystem;
+  }
+
+  return 'Unknown';
 }
 
 export function sourceLabel(source) {

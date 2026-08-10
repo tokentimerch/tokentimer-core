@@ -5502,6 +5502,9 @@ async function runWindowsDiscoveryScan({
       { name: "keyPresent", value: observation.keyPresent === true },
       { name: "storeLocation", value: observation.storeLocation ?? null },
       { name: "storeName", value: observation.storeName ?? null },
+      // Public certificate-store coordinate only. This is the certificate's
+      // SHA-1 thumbprint, never key material, a key path, or an export.
+      { name: "thumbprint", value: observation.thumbprint ?? null },
     ];
     if (Array.isArray(observation.subjectAltNames) && observation.subjectAltNames.length > 0) {
       metadata.push({
@@ -5518,6 +5521,9 @@ async function runWindowsDiscoveryScan({
     }
     if (observation.locationKind === "http_sys") {
       metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.boundAddress) {
+        metadata.push({ name: "boundAddress", value: observation.boundAddress });
+      }
     }
 
     items.push(
