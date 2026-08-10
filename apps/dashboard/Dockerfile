@@ -1,6 +1,6 @@
 # Build context must be the repo root.
 # Prefer deploy/compose/Dockerfile.dashboard for production Compose/CI images.
-FROM node:22.23.0-slim AS build
+FROM node:22.23.2-slim AS build
 
 ARG VITE_API_URL=
 ARG API_URL=

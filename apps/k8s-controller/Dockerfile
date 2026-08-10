@@ -1,4 +1,4 @@
-FROM node:22.23.0-alpine3.23
+FROM node:22.23.2-alpine3.23
 
 # Keep the controller base aligned with the worker image's patched Alpine base.
 RUN apk update && apk upgrade --no-cache \
