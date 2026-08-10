@@ -16,7 +16,7 @@ RUN go get \
     go mod tidy && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
 
-FROM node:22.23.0-slim
+FROM node:22.23.2-slim
 
 WORKDIR /app
 
