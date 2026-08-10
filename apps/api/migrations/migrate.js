@@ -2955,11 +2955,30 @@ const migrations = [
       -- renewalProfile.js's validateTarget already own, and having both
       -- enforce it invites them to drift. The database stores; the service
       -- layer validates.
+      --
+      -- windows_site's bound is expressed as an unbounded character-class
+      -- match plus a separate char_length() check rather than a single
+      -- '{1,256}' interval: PostgreSQL's regex engine rejects a bounded
+      -- repetition count above 255 outright ("invalid regular expression:
+      -- invalid repetition count(s)"), so a single-interval '{1,256}' CHECK
+      -- would fail to compile on every single non-null insert or update,
+      -- never actually evaluating true or false. Verified directly against
+      -- a real Postgres 17 instance. windows_store's 1-64 bound and
+      -- windows_sni_host's 0-61 bounds are both well under the limit and
+      -- compile fine; only a 256 bound is affected. This is the same split
+      -- certops_trust_anchors.name (below) already uses for its own 1-255
+      -- bound.
       ALTER TABLE certificate_targets
         ADD COLUMN IF NOT EXISTS windows_store TEXT NULL
           CHECK (windows_store IS NULL OR windows_store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
         ADD COLUMN IF NOT EXISTS windows_site TEXT NULL
-          CHECK (windows_site IS NULL OR windows_site ~ '^[A-Za-z0-9 _.:-]{1,256}$'),
+          CHECK (
+            windows_site IS NULL
+            OR (
+              windows_site ~ '^[A-Za-z0-9 _.:-]+$'
+              AND char_length(windows_site) BETWEEN 1 AND 256
+            )
+          ),
         ADD COLUMN IF NOT EXISTS windows_port INTEGER NULL
           CHECK (windows_port IS NULL OR windows_port BETWEEN 1 AND 65535),
         ADD COLUMN IF NOT EXISTS windows_sni_host TEXT NULL
@@ -3163,6 +3182,230 @@ const migrations = [
             'trust.distributed', 'trust.revoked'
           )
         );
+    `,
+  },
+  {
+    version: 45,
+    name: "certops_agent_observation_locality_and_downtime_alerts",
+    sql: `
+      -- Generalized observation locality for Windows/OS-store certificates and
+      -- persistent observed locations. agent_filesystem stays
+      -- exactly as it was (filePath-oriented); a new distinct source,
+      -- agent_windows, carries non-filesystem locations (Windows machine
+      -- certificate store, IIS bindings, http.sys SSL bindings) through the
+      -- SAME managed_certificate -> certificate_target -> certificate_instance
+      -- pipeline rather than a parallel model. location_kind is the
+      -- fine-grained discriminator the UI/API need to render "Type" (Location
+      -- kind) distinctly from target_type/source; it is nullable so every
+      -- pre-existing row (endpoint/domain/import/etc., and pre-migration
+      -- agent_filesystem rows) resolves safely to null/unknown rather than
+      -- requiring a backfill.
+      ALTER TABLE certificate_targets
+        ADD COLUMN IF NOT EXISTS location_kind TEXT NULL
+          CHECK (
+            location_kind IS NULL OR location_kind IN (
+              'filesystem', 'windows_store', 'iis_binding', 'http_sys'
+            )
+          );
+      ALTER TABLE certificate_instances
+        ADD COLUMN IF NOT EXISTS location_kind TEXT NULL
+          CHECK (
+            location_kind IS NULL OR location_kind IN (
+              'filesystem', 'windows_store', 'iis_binding', 'http_sys'
+            )
+          );
+
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem',
+            'agent_issuance', 'agent_windows'
+          )
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_source_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem',
+            'agent_windows'
+          )
+        );
+      ALTER TABLE certificate_instances
+        DROP CONSTRAINT IF EXISTS certificate_instances_source_check;
+      ALTER TABLE certificate_instances
+        ADD CONSTRAINT certificate_instances_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem',
+            'agent_windows'
+          )
+        );
+
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager',
+            'agent_filesystem', 'agent_issuance', 'agent_windows'
+          );
+      -- Same widening for the companion fingerprint-identity index: without
+      -- this, two agent_windows rows sharing one fingerprint (the same
+      -- certificate bound to two IIS sites, observed via two distinct
+      -- source_refs) would collide on this OTHER unique index even though
+      -- their (source, source_ref) identity above is perfectly distinct.
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager',
+            'agent_filesystem', 'agent_issuance', 'agent_windows'
+          );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_agent_windows_source_ref
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'agent_windows' AND source_ref IS NOT NULL;
+
+      -- Windows-observed deployments are real deployment locations for
+      -- renewal-path purposes, same as agent_filesystem/cert_manager.
+      -- renewalAdoption.js's countCertificateDeploymentLocations reads this
+      -- set at query time (no stored list to keep in sync).
+
+      -- Per-agent downtime alert settings.
+      -- alertsEnabled defaults to true (consistent with the endpoint-health
+      -- alerting default of "on unless explicitly turned off");
+      -- contact_group_id is workspace-scoped free reference, resolved the
+      -- same way endpoint/domain alerts resolve contact_group_id (fallback to
+      -- the workspace default contact group at send time, not stored here).
+      --
+      -- Delivery settings live on the agent. Outage incident state is kept in
+      -- the dedicated durable incident table introduced by the forward
+      -- migration that follows the alert-queue anchor migration.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS downtime_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS contact_group_id TEXT NULL;
+
+      -- Bootstrap tokens carry the requested alert settings so they can be
+      -- copied onto the agent row at registration time (the agent row does
+      -- not exist yet when the Deploy Agent modal creates the token).
+      -- Nullable: a token created before this migration has both columns
+      -- NULL, and registration treats NULL alertsEnabled as "use the
+      -- system default (enabled)" -- see agentDispatch.js registerAgent.
+      ALTER TABLE certops_agent_bootstrap_tokens
+        ADD COLUMN IF NOT EXISTS downtime_alerts_enabled BOOLEAN NULL;
+      ALTER TABLE certops_agent_bootstrap_tokens
+        ADD COLUMN IF NOT EXISTS contact_group_id TEXT NULL;
+    `,
+  },
+  {
+    version: 46,
+    name: "alert_queue_agent_health_anchor",
+    sql: `
+      -- Agent-down/recovery notifications use the same alert_queue and
+      -- delivery-worker pipeline as endpoint_health and cert_renewal_failed.
+      -- Those two existing alert types both anchor on
+      -- alert_queue.token_id (a tokens row), because every existing alert is
+      -- ultimately "about" a certificate/token. An agent is not about a
+      -- certificate, so forcing it through a synthetic/hidden tokens row would
+      -- either pollute the Certificates UI or require new hidden-category
+      -- filtering everywhere that lists tokens -- worse than the alternative:
+      -- loosen the NOT NULL and add a second, parallel anchor column.
+      -- token_id remains the anchor for every alert type that has one; this
+      -- only widens the CHECK to also accept certops_agent_id as an anchor, so
+      -- every pre-existing row (which always has token_id) is untouched.
+      ALTER TABLE alert_queue
+        ALTER COLUMN token_id DROP NOT NULL;
+      ALTER TABLE alert_queue
+        ADD COLUMN IF NOT EXISTS certops_agent_id UUID NULL
+          REFERENCES certops_agents(id) ON DELETE CASCADE;
+      ALTER TABLE alert_queue
+        DROP CONSTRAINT IF EXISTS alert_queue_anchor_check;
+      ALTER TABLE alert_queue
+        ADD CONSTRAINT alert_queue_anchor_check
+          CHECK (token_id IS NOT NULL OR certops_agent_id IS NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_alert_queue_certops_agent_id
+        ON alert_queue(certops_agent_id);
+
+      -- Agent-health alerts have no linked tokens/domain_monitors row to
+      -- render from (unlike endpoint_health/cert_renewal_failed, which read
+      -- name/location/issuer straight off the joined token). metadata carries
+      -- everything the delivery-worker content builders need (agent identity,
+      -- last-seen, impacted auto-renew certificates) frozen at the moment the
+      -- transition was detected, so delivery never has to re-join
+      -- certops_agents for rendering. Generic (not agent-specific) and
+      -- defaulted to '{}' so it is safe for every pre-existing alert type to
+      -- leave unset.
+      ALTER TABLE alert_queue
+        ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+    `,
+  },
+  {
+    version: 47,
+    name: "agent_health_incidents_and_alert_anchor_xor",
+    sql: `
+      -- Refuse to hide pre-existing ambiguous anchors. All normal alert
+      -- producers use token_id and agent-health alerts use certops_agent_id.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+            FROM alert_queue
+           WHERE (token_id IS NULL) = (certops_agent_id IS NULL)
+        ) THEN
+          RAISE EXCEPTION
+            'alert_queue contains rows that do not have exactly one anchor';
+        END IF;
+      END
+      $$;
+
+      ALTER TABLE alert_queue
+        DROP CONSTRAINT IF EXISTS alert_queue_anchor_check;
+      ALTER TABLE alert_queue
+        ADD CONSTRAINT alert_queue_anchor_check CHECK (
+          (token_id IS NOT NULL) <> (certops_agent_id IS NOT NULL)
+        );
+
+      -- An open row is durable recovery intent. It is created in the same
+      -- transaction that flips an agent offline and removed only after the
+      -- recovery transition has been queued or deliberately suppressed.
+      CREATE TABLE IF NOT EXISTS certops_agent_health_incidents (
+        agent_id UUID PRIMARY KEY
+          REFERENCES certops_agents(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL
+          REFERENCES workspaces(id) ON DELETE CASCADE,
+        opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ NULL,
+        down_alert_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_agent_health_incidents_workspace_agent
+          FOREIGN KEY (workspace_id, agent_id)
+          REFERENCES certops_agents(workspace_id, id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_health_incidents_workspace
+        ON certops_agent_health_incidents(workspace_id, opened_at);
+
+      -- Preserve recovery intent for outages opened before this table
+      -- existed. Only the canonical per-agent DOWN key represents an open
+      -- incident; unrelated agent-anchored alerts are not backfilled.
+      INSERT INTO certops_agent_health_incidents (
+        agent_id, workspace_id, opened_at, last_seen_at, down_alert_key
+      )
+      SELECT a.id,
+             a.workspace_id,
+             aq.created_at,
+             a.last_seen_at,
+             aq.alert_key
+        FROM alert_queue aq
+        JOIN certops_agents a ON a.id = aq.certops_agent_id
+       WHERE aq.alert_key = 'agent_health:' || a.id::text || ':down'
+      ON CONFLICT (agent_id) DO NOTHING;
     `,
   },
 ];

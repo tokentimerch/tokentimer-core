@@ -3250,78 +3250,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: false
-                      required:
-                        - id
-                        - workspaceId
-                        - managedCertificateId
-                        - targetId
-                        - status
-                        - source
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        workspaceId:
-                          type: string
-                          format: uuid
-                        managedCertificateId:
-                          type: string
-                          format: uuid
-                        targetId:
-                          type: string
-                          format: uuid
-                        domainMonitorId:
-                          type: string
-                          format: uuid
-                          nullable: true
-                        tokenId:
-                          type: integer
-                          nullable: true
-                        status:
-                          type: string
-                        source:
-                          type: string
-                        sourceRef:
-                          type: string
-                          nullable: true
-                        observedFingerprintSha256:
-                          type: string
-                          pattern: "^[a-f0-9]{64}$"
-                          nullable: true
-                        observedSerialNumber:
-                          type: string
-                          nullable: true
-                        observedSubject:
-                          type: string
-                          nullable: true
-                        observedIssuer:
-                          type: string
-                          nullable: true
-                        observedNotBefore:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        observedNotAfter:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        deploymentReference:
-                          type: string
-                          nullable: true
-                        observedAt:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        createdAt:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        updatedAt:
-                          type: string
-                          format: date-time
-                          nullable: true
+                      $ref: "#/components/schemas/CertOpsCertificateInstance"
                   pagination:
                     $ref: "#/components/schemas/Pagination"
         "401":
@@ -3760,78 +3689,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: false
-                      required:
-                        - id
-                        - workspaceId
-                        - managedCertificateId
-                        - targetId
-                        - status
-                        - source
-                      properties:
-                        id:
-                          type: string
-                          format: uuid
-                        workspaceId:
-                          type: string
-                          format: uuid
-                        managedCertificateId:
-                          type: string
-                          format: uuid
-                        targetId:
-                          type: string
-                          format: uuid
-                        domainMonitorId:
-                          type: string
-                          format: uuid
-                          nullable: true
-                        tokenId:
-                          type: integer
-                          nullable: true
-                        status:
-                          type: string
-                        source:
-                          type: string
-                        sourceRef:
-                          type: string
-                          nullable: true
-                        observedFingerprintSha256:
-                          type: string
-                          pattern: "^[a-f0-9]{64}$"
-                          nullable: true
-                        observedSerialNumber:
-                          type: string
-                          nullable: true
-                        observedSubject:
-                          type: string
-                          nullable: true
-                        observedIssuer:
-                          type: string
-                          nullable: true
-                        observedNotBefore:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        observedNotAfter:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        deploymentReference:
-                          type: string
-                          nullable: true
-                        observedAt:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        createdAt:
-                          type: string
-                          format: date-time
-                          nullable: true
-                        updatedAt:
-                          type: string
-                          format: date-time
-                          nullable: true
+                      $ref: "#/components/schemas/CertOpsCertificateInstance"
                   pagination:
                     $ref: "#/components/schemas/Pagination"
         "401":
@@ -5089,6 +4947,10 @@ paths:
                   value:
                     error: CertOps agent bootstrap token request is invalid
                     code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID
+                contactGroupInvalid:
+                  value:
+                    error: Invalid contactGroupId for workspace
+                    code: CERTOPS_AGENT_CONTACT_GROUP_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5275,6 +5137,91 @@ paths:
                 code: CERTOPS_AGENT_RETIRE_BLOCKED
                 dependencies:
                   leasedJobs: 2
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/agents/{agentId}/alert-settings:
+    patch:
+      tags: [CertOps]
+      summary: Update a CertOps agent's downtime alert settings
+      operationId: updateCertOpsAgentAlertSettings
+      description: >-
+        Edits `downtimeAlertsEnabled` and/or `contactGroupId` for an already
+        registered agent. Both fields are independently optional: omit a
+        field to leave it unchanged, or send `contactGroupId: null` to
+        explicitly clear it back to "use the workspace default contact
+        group". At least one field is required. Recorded as a
+        CERTOPS_AGENT_ALERT_SETTINGS_UPDATED audit event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Internal agent record id (UUID), not the protocol agentId string.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                downtimeAlertsEnabled:
+                  type: boolean
+                contactGroupId:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Agent alert settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [agent]
+                properties:
+                  agent:
+                    $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+        "400":
+          description: Request body was empty or contactGroupId does not exist in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                emptyBody:
+                  value:
+                    error: At least one of downtimeAlertsEnabled or contactGroupId is required
+                    code: CERTOPS_AGENT_ALERT_SETTINGS_EMPTY
+                invalidContactGroup:
+                  value:
+                    error: Invalid contactGroupId for workspace
+                    code: CERTOPS_AGENT_CONTACT_GROUP_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the agent was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent not found
+                code: CERTOPS_AGENT_NOT_FOUND
         "422":
           description: Request rejected because it contained private key material
           content:
@@ -6910,6 +6857,234 @@ components:
             Present on the certificate detail response only. Lists are paged
             over many certificates and have no use for a per-certificate
             resume action, so the anti-join behind it is not run for them.
+        renewalPathState:
+          type: string
+          nullable: true
+          enum:
+            - healthy
+            - degraded
+            - unavailable
+            - unknown
+            - null
+          description: >-
+            Derived renewal EXECUTION health: whether a live agent able to run
+            this certificate's configured renewal currently exists. A
+            SEPARATE axis from `status` (lifecycle) and from `renewal.state`
+            above (is auto-renew configured at all) - a certificate can be
+            `status: active`, `renewal.state: auto`, and
+            `renewalPathState: unavailable` at the same time if the agent
+            that would execute the renewal is offline. Null when the
+            question does not apply (auto-renew disabled, no renewal
+            profile, key custody not agent-deployable, or the certificate is
+            retired) rather than a misleading terminal state.
+        renewalPathReason:
+          type: string
+          nullable: true
+          enum:
+            - all_paths_available
+            - partial_location_outage
+            - agent_offline
+            - all_executors_offline
+            - no_execution_target
+            - topology_unknown
+            - auto_renew_disabled
+            - not_agent_deployable
+            - no_profile
+            - certificate_retired
+            - assigned_agent_retired
+            - null
+          description: Machine-readable reason code for `renewalPathState`.
+        renewalPathSummary:
+          type: string
+          nullable: true
+          description: Human-readable one-line explanation of `renewalPathState`, e.g. "The only agent able to renew this certificate is offline."
+        dependencies:
+          type: array
+          description: The resolved set of agents this certificate's renewal path depends on (pinned executor, or every agent declaring the matching deployment-target selector). Empty when `renewalPathState` is null.
+          items:
+            type: object
+            additionalProperties: false
+            required: [agentRowId, agentId, required, online]
+            properties:
+              agentRowId:
+                type: string
+                description: Internal agent record id (UUID).
+              agentId:
+                type: string
+                nullable: true
+                description: Stable protocol-level agent identifier.
+              agentName:
+                type: string
+                nullable: true
+              hostname:
+                type: string
+                nullable: true
+              platform:
+                type: string
+                nullable: true
+              required:
+                type: boolean
+                description: True when this agent is the sole executor (no redundancy); false when it is one of several agents that could equally execute the renewal.
+              online:
+                type: boolean
+                description: Live liveness read using the same 10-minute threshold as the Agent Fleet and the agent-down alert trigger.
+    CertOpsCertificateInstance:
+      type: object
+      additionalProperties: false
+      description: >-
+        A persistent, historical record of one observed certificate
+        location. Rows are never deleted merely because the observing agent
+        goes offline - "agent offline" (cannot currently verify) and
+        "certificate removed" (a live agent explicitly rescanned and found
+        it gone) are deliberately different facts; only the latter ever
+        changes `status`.
+      required:
+        - id
+        - workspaceId
+        - managedCertificateId
+        - targetId
+        - status
+        - source
+        - target
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        managedCertificateId:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+        domainMonitorId:
+          type: string
+          format: uuid
+          nullable: true
+        tokenId:
+          type: integer
+          nullable: true
+        status:
+          type: string
+        source:
+          type: string
+        sourceRef:
+          type: string
+          nullable: true
+        locationKind:
+          type: string
+          nullable: true
+          enum:
+            - filesystem
+            - windows_store
+            - iis_binding
+            - http_sys
+            - null
+          description: What kind of place this location is. Distinct from `source`, which says who/what reported it. Null on rows written before the generalized observation contract; callers must treat null as unknown unless independent source/reference evidence proves a filesystem location.
+        responsibleAgentId:
+          type: string
+          nullable: true
+          description: The protocol-level agentId string of the agent responsible for observing/managing this location, derived server-side from source/sourceRef. Null when no agent owns this location (e.g. cert-manager, domain-checker observations).
+        agent:
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: >-
+            Live connectivity enrichment for `responsibleAgentId`, resolved
+            at read time using the same 10-minute liveness threshold as the
+            Agent Fleet and the agent-down alert trigger. A SEPARATE axis
+            from `status` above (certificate presence, decided by a scan) -
+            an offline agent never changes `status`, only this field.
+          properties:
+            agentId:
+              type: string
+            name:
+              type: string
+              nullable: true
+            hostname:
+              type: string
+              nullable: true
+            platform:
+              type: string
+              nullable: true
+            livenessState:
+              type: string
+              enum: [live, stale, retired]
+            lastSeenAt:
+              type: string
+              format: date-time
+              nullable: true
+        target:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - name
+            - targetType
+            - hostname
+            - locationKind
+            - deploymentReference
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            targetType:
+              type: string
+            hostname:
+              type: string
+              nullable: true
+            locationKind:
+              type: string
+              nullable: true
+              enum:
+                - filesystem
+                - windows_store
+                - iis_binding
+                - http_sys
+                - null
+            deploymentReference:
+              type: string
+              nullable: true
+        observedFingerprintSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          nullable: true
+        observedSerialNumber:
+          type: string
+          nullable: true
+        observedSubject:
+          type: string
+          nullable: true
+        observedIssuer:
+          type: string
+          nullable: true
+        observedNotBefore:
+          type: string
+          format: date-time
+          nullable: true
+        observedNotAfter:
+          type: string
+          format: date-time
+          nullable: true
+        deploymentReference:
+          type: string
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
     CertOpsCertificateRenewalState:
       type: object
       additionalProperties: false
@@ -8987,6 +9162,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        downtimeAlertsEnabled:
+          type: boolean
+          nullable: true
+          description: Alert configuration to copy onto the agent record created when this token is consumed (the agent row does not exist yet at token-creation time). Null on tokens created before this setting existed; registration then defaults the created agent to enabled, matching the certops_agents column default.
+        contactGroupId:
+          type: string
+          nullable: true
+          description: Contact group to copy onto the agent record created when this token is consumed. Null means "use the workspace default contact group".
     CertOpsAgentBootstrapTokenListResponse:
       type: object
       additionalProperties: false
@@ -9012,6 +9195,13 @@ components:
           type: string
           format: date-time
           description: Required. Must be in the future and within 30 days of creation.
+        downtimeAlertsEnabled:
+          type: boolean
+          description: Whether the agent registered with this token should have downtime alerts enabled. Defaults to true.
+        contactGroupId:
+          type: string
+          nullable: true
+          description: Contact group for the agent's downtime alerts. Validated against the workspace's configured contact groups; null uses the workspace default.
     CertOpsAgentBootstrapTokenCreateResponse:
       type: object
       additionalProperties: false
@@ -9059,6 +9249,7 @@ components:
         platform:
           type: string
           nullable: true
+          description: Raw `process.platform` value reported at registration (e.g. win32, linux, darwin). The dashboard maps this to a friendly OS label; unrecognized values render as-is rather than falling back to a placeholder.
         agentVersion:
           type: string
         protocolVersion:
@@ -9077,6 +9268,26 @@ components:
         clockOffsetMs:
           type: integer
           nullable: true
+        livenessState:
+          type: string
+          nullable: true
+          enum: [live, stale, retired, null]
+          description: Computed live on every read from the same 10-minute offline threshold the worker's stale-agent sweep uses (agentLiveness.js), so this can catch an agent that stopped heartbeating before the next sweep persists `status = 'offline'`. Distinct from `status`, which only changes on the agent's own heartbeat/claim calls or the periodic sweep.
+        downtimeAlertsEnabled:
+          type: boolean
+          description: Whether an agent_health down/recovered alert is sent when this agent crosses the 10-minute offline threshold. Defaults to true for every agent, including agents registered before this setting existed.
+        contactGroupId:
+          type: string
+          nullable: true
+          description: Contact group used for this agent's downtime alerts. Null means "use the workspace default contact group".
+        dependentAutoRenewCertificateCount:
+          type: integer
+          minimum: 0
+          description: >-
+            Number of auto-renew certificates whose renewal path currently
+            depends on this agent (as either the sole required executor or a
+            redundant one) - NOT a count of every certificate this agent has
+            ever observed. Present on the agent-list response only.
         createdAt:
           type: string
           format: date-time

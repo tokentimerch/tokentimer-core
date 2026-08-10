@@ -117,10 +117,42 @@ const SOURCE_LABELS = {
   auto_sync: 'Auto sync',
   cert_manager: 'cert-manager',
   agent_filesystem: 'Agent (filesystem)',
+  agent_windows: 'Agent (Windows)',
   agent_issuance: 'Agent (issuance)',
 };
 
 export const MANAGED_CERTIFICATE_SOURCES = Object.keys(SOURCE_LABELS);
+
+// Mirrors the location_kind CHECK constraint added for the generalized
+// observation contract (agent Windows store/IIS/http.sys discovery, plus
+// plain filesystem). Distinct from `source` above: `source` says who/what
+// reported the location, `locationKind` says what kind of place it is.
+const LOCATION_KIND_LABELS = {
+  filesystem: 'Filesystem',
+  windows_store: 'Windows Certificate Store',
+  iis_binding: 'IIS binding',
+  http_sys: 'HTTP.sys binding',
+};
+
+export function locationKindLabel(locationKind, location = {}) {
+  const key = String(locationKind || '').toLowerCase();
+  if (LOCATION_KIND_LABELS[key]) return LOCATION_KIND_LABELS[key];
+
+  const targetKey = String(location.target?.locationKind || '').toLowerCase();
+  if (LOCATION_KIND_LABELS[targetKey]) return LOCATION_KIND_LABELS[targetKey];
+
+  const source = String(location.source || '').toLowerCase();
+  const deploymentReference =
+    location.deploymentReference || location.target?.deploymentReference || '';
+  if (
+    source === 'agent_filesystem' ||
+    String(deploymentReference).toLowerCase().startsWith('file://')
+  ) {
+    return LOCATION_KIND_LABELS.filesystem;
+  }
+
+  return 'Unknown';
+}
 
 export function sourceLabel(source) {
   const key = String(source || '').toLowerCase();
@@ -249,6 +281,71 @@ export function renewalDescriptor(renewal) {
     scheme: 'yellow',
     help: RENEWAL_STATE_FALLBACK_HELP,
     isWarning: true,
+  };
+}
+
+/**
+ * Presentation descriptor for `certificate.renewalPathState`
+ * (renewalPathHealth.js): a SEPARATE axis from `renewal` above. `renewal`
+ * answers "is this certificate configured to auto-renew"; this answers "if
+ * it tried right now, does a live execution path exist to actually run
+ * that renewal". A certificate can be `renewal.state === 'auto'` (correctly
+ * configured) while `renewalPathState === 'unavailable'` (the agent that
+ * would execute it is offline) at the same time - the UI must show both,
+ * never merge them into one badge.
+ *
+ * Returns `null` for a certificate where the question does not apply
+ * (renewalPathState is null server-side: auto-renew disabled, no profile,
+ * not agent-deployable, or retired) so callers render nothing rather than a
+ * misleading badge next to a certificate that was never expected to have a
+ * renewal path in the first place.
+ */
+export function renewalPathDescriptor(certificate) {
+  const state = certificate?.renewalPathState;
+  if (!state) return null;
+
+  const summary = certificate?.renewalPathSummary || null;
+
+  if (state === 'healthy') {
+    return {
+      state,
+      label: 'Healthy',
+      scheme: 'green',
+      help:
+        summary || 'A complete renewal execution path is currently available.',
+      isWarning: false,
+    };
+  }
+  if (state === 'degraded') {
+    return {
+      state,
+      label: 'Degraded',
+      scheme: 'yellow',
+      help:
+        summary ||
+        'One or more renewal execution dependencies are unavailable, but a complete path still exists.',
+      isWarning: true,
+    };
+  }
+  if (state === 'unavailable') {
+    return {
+      state,
+      label: 'Renewal path unavailable',
+      scheme: 'red',
+      help:
+        summary ||
+        'No complete execution path currently exists to perform this certificate\u2019s configured renewal.',
+      isWarning: true,
+    };
+  }
+  return {
+    state: 'unknown',
+    label: 'Renewal path unknown',
+    scheme: 'gray',
+    help:
+      summary ||
+      'TokenTimer does not have enough deployment topology information to determine renewal-path health.',
+    isWarning: false,
   };
 }
 

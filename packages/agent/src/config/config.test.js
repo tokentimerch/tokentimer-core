@@ -423,6 +423,174 @@ describe("loadAgentConfig", () => {
     });
   });
 
+  it("defaults windows to the documented retention defaults, and validates the shape (decision 18)", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { windows } = loadAgentConfig({ configDir: dir });
+      assert.equal(windows.supersededRetentionHours, 168);
+      assert.equal(windows.sweepIntervalMs, 6 * 60 * 60 * 1000);
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windows: { supersededRetentionHours: 48, sweepIntervalMs: 60000 },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { windows } = loadAgentConfig({ configDir: dir });
+      assert.equal(windows.supersededRetentionHours, 48);
+      assert.equal(windows.sweepIntervalMs, 60000);
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windows: { supersededRetentionHours: 1 },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windows\.supersededRetentionHours must be an integer in \[24, 720\]/,
+      );
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windows: { sweepIntervalMs: -1 },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windows\.sweepIntervalMs must be a positive integer/,
+      );
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windows: "not-an-object",
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windows in config\.json must be an object/,
+      );
+    });
+  });
+
+  it("windowsDiscovery defaults to enabled with no config.json entry", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { windowsDiscovery } = loadAgentConfig({ configDir: dir });
+      assert.equal(windowsDiscovery.enabled, true);
+      assert.equal(windowsDiscovery.intervalMs, 30 * 60 * 1000);
+      assert.deepEqual(windowsDiscovery.stores, ["My"]);
+    });
+  });
+
+  it("windowsDiscovery honors an explicit enabled: false and custom intervalMs", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windowsDiscovery: {
+          enabled: false,
+          intervalMs: 5000,
+          stores: ["My", "WebHosting", "webhosting"],
+        },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { windowsDiscovery } = loadAgentConfig({ configDir: dir });
+      assert.equal(windowsDiscovery.enabled, false);
+      assert.equal(windowsDiscovery.intervalMs, 5000);
+      assert.deepEqual(windowsDiscovery.stores, ["My", "WebHosting"]);
+    });
+  });
+
+  it("windowsDiscovery rejects a non-object block and a non-positive-integer intervalMs", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windowsDiscovery: "not-an-object",
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windowsDiscovery in config\.json must be an object/,
+      );
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windowsDiscovery: { intervalMs: -1 },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windowsDiscovery\.intervalMs must be a positive integer/,
+      );
+    });
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        windowsDiscovery: { stores: ["My", "WebHosting; Remove-Item C:\\"] },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /windowsDiscovery\.stores contains an invalid store name/,
+      );
+    });
+  });
+
   it("defaults execution to null when the block is absent", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

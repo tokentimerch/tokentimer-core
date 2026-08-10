@@ -267,8 +267,20 @@ function deriveRenewalProfileFromIssuedCertificate({
   // store/binding profile from ever being built with a Linux certPath shape
   // bolted on, and vice versa.
   if (targetType === "windows-iis") {
+    // Unlike the file-based path below, a windows-iis issuance never carries
+    // its store/binding under deploymentTargets[0] (see
+    // createCertificateIssuanceJob's comment: they live on payload.target,
+    // set once by normalizeIssuanceRequest and left untouched by the job
+    // dispatch). Falling through to the generic sourceTarget (deploymentTargets[0]
+    // or, lacking that, the bare payload) would look for sourceTarget.store on
+    // an object that never has it, and every windows-iis derivation would fail
+    // with a misleading "no store" error instead of reading the field that is
+    // actually there.
+    const windowsSourceTarget = isPlainObject(payload.target)
+      ? payload.target
+      : sourceTarget;
     const windowsTarget = buildWindowsDeploymentTarget(
-      sourceTarget,
+      windowsSourceTarget,
       targetReference,
     );
     const windowsCandidate = {
@@ -557,7 +569,31 @@ async function ensureDerivedRenewalProfile({
       // file on which host receives the result.
       commandRef: profile.acme?.commandRef ?? null,
       caEndpoint: profile.ca?.endpoint ?? null,
+      // certPath is always null for a windows-iis profile (ADR-0012
+      // decisions 1 and 10: its destination is a machine certificate store
+      // + IIS binding, not a file). targetType/windowsStore/
+      // windowsBindingSite/Port/SniHost below are the substitute -- without
+      // them this event told an operator nothing about where a Windows
+      // renewal profile actually deploys, even though deriveRenewalProfileFromIssuedCertificate
+      // computes exactly those fields a few lines above this call.
       certPath: profile.deploymentTargets?.[0]?.certPath ?? null,
+      targetType: profile.target?.type ?? null,
+      windowsStore:
+        profile.target?.type === "windows-iis"
+          ? profile.target.store ?? null
+          : null,
+      windowsBindingSite:
+        profile.target?.type === "windows-iis"
+          ? profile.target.binding?.site ?? null
+          : null,
+      windowsBindingPort:
+        profile.target?.type === "windows-iis"
+          ? profile.target.binding?.port ?? null
+          : null,
+      windowsBindingSniHost:
+        profile.target?.type === "windows-iis"
+          ? profile.target.binding?.sniHost ?? null
+          : null,
       dnsProvider: profile.dns?.provider ?? null,
       dnsZone: profile.dns?.zone ?? null,
       keyAlgorithm: profile.keyAlgorithm ?? null,

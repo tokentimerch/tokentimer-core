@@ -4,6 +4,7 @@ const { writeAudit } = require("../audit");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const { CERTOPS_DISABLED, isCertOpsEnabled } = require("./settings");
 const { createCertificateJob } = require("./jobs");
+const { windowsIisTargetAuditFields } = require("./renewalProfile");
 
 const CERTOPS_WORKSPACE_PAUSED = "CERTOPS_WORKSPACE_PAUSED";
 const CERTOPS_WORKSPACE_NOT_FOUND = "CERTOPS_WORKSPACE_NOT_FOUND";
@@ -382,6 +383,7 @@ async function createManualCertificateJob({
           subjectType: job.subjectType,
           subjectId: job.subjectId,
           source: job.source,
+          ...windowsIisTargetAuditFields(job.payload?.target),
         },
       });
     }

@@ -49,9 +49,12 @@
 #     ambient host-wide access (ADR-0012 decision 11), so the enforcement
 #     point on Windows is agent-local policy (config.json allowlists),
 #     not an OS-level sandbox.
-#   - certbot/acme.sh are POSIX shell tools; the acme/ state subdirectories
-#     install-agent.sh creates for them are not created here. Windows ACME
-#     integration (if any) is a separate, not-yet-scoped surface.
+#   - certbot/acme.sh are POSIX shell tools; the acme/certbot/{config,work,
+#     logs} state subdirectories install-agent.sh creates for certbot are
+#     not created here (certbot itself creates them on first run on any
+#     platform). acme.sh's dnsapi/dns_certops.sh hook copy IS created here
+#     (see below) since acme.sh needs it present before its first run, not
+#     merely on first use.
 #   - A plain Node.js process does not itself speak the Windows Service
 #     Control Manager's control protocol (StartServiceCtrlDispatcher), so
 #     the service's binPath does not point at node.exe directly. It points
@@ -554,6 +557,28 @@ if (-not $script:DryRun) {
 }
 Invoke-Step "apply restricted ACL to $StateDir" { Invoke-PlatformAcl -TargetPath $StateDir -Kind "directory" }
 
+# ---------------------------------------------- acme.sh dnsapi hook (Windows)
+# install-agent.sh symlinks bin/dns_certops.sh into
+# <stateDir>/acme/acme.sh/dnsapi/ so acme.sh's `--dns dns_certops` resolves
+# it by name; this installer had no equivalent, so `acmeKind: "acme.sh"`
+# jobs failed at the DNS-01 step on every Windows install with "dns_certops
+# not found" (found 2026-08-05 during the first real acme.sh run on Windows,
+# via Git Bash - see docs/certops/agent.md's Windows hook note). A plain
+# copy is used instead of a symlink: creating symlinks needs
+# SeCreateSymbolicLinkPrivilege, which is not guaranteed even for an
+# elevated installer session, while a copy has no such dependency and
+# dns_certops.sh does not change independently of the package it ships in.
+$AcmeShDnsApiDir = Join-Path $StateDir "acme\acme.sh\dnsapi"
+$DnsCertopsSrc = Join-Path $PackageDir "bin\dns_certops.sh"
+Invoke-Step "install acme.sh dnsapi\dns_certops.sh hook" {
+    New-Item -ItemType Directory -Force -Path $AcmeShDnsApiDir | Out-Null
+    if (Test-Path -LiteralPath $DnsCertopsSrc) {
+        Copy-Item -LiteralPath $DnsCertopsSrc -Destination (Join-Path $AcmeShDnsApiDir "dns_certops.sh") -Force
+    } else {
+        Write-Log "WARNING: $DnsCertopsSrc not found; acme.sh --dns dns_certops will fail until the package includes bin\dns_certops.sh"
+    }
+}
+
 # ------------------------------------------------------- config.json
 # Fields consumed by the agent's config loader (src/config/index.js):
 # serverUrl (required) and caBundlePath (optional). workspaceId is recorded
@@ -657,6 +682,30 @@ function Test-ServiceHealthy {
     return $false
 }
 
+# Reconfigures an existing service's binPath/DisplayName/StartupType via
+# Win32_Service.Change (WMI), which -- like New-Service above -- calls
+# ChangeServiceConfig directly with no command-line tokenizer in between.
+# `sc.exe config` cannot be used here for the same reason `sc.exe create`
+# cannot be used above: see the binPath-construction comment below this
+# function for the live repro.
+function Set-ServiceBinaryPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName,
+        [Parameter(Mandatory = $true)][string]$BinPath,
+        [Parameter(Mandatory = $true)][string]$DisplayName
+    )
+    $wmiService = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
+    if (-not $wmiService) { Fail "service $ServiceName not found via Win32_Service for reconfiguration" }
+    $changeResult = Invoke-CimMethod -InputObject $wmiService -MethodName Change -Arguments @{
+        PathName    = $BinPath
+        DisplayName = $DisplayName
+        StartMode   = "Automatic"
+    }
+    if ($changeResult.ReturnValue -ne 0) {
+        Fail "Win32_Service.Change failed to update $ServiceName (ReturnValue $($changeResult.ReturnValue))"
+    }
+}
+
 $quotedNode = '"' + $script:NodeExe + '"'
 $quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
 
@@ -679,24 +728,24 @@ $quotedServiceHost = '"' + $serviceHostExe + '"'
 $binPath = "$quotedServiceHost $quotedNode $quotedEntry"
 
 # sc.exe's binPath= value here is three separately-quoted path segments
-# (host exe, node.exe, entry script), which is the documented pattern for
-# a service whose binary takes quoted arguments. Windows PowerShell 5.1's
-# native-argument passing does not re-escape a string that already starts
-# and ends with a double quote, so $binPath reaches sc.exe's own (naive)
-# command-line tokenizer as raw, unwrapped `"..." "..." "..."` text --
-# sc.exe's tokenizer stops at the first embedded quoted segment and
-# treats what follows as unrecognized extra arguments, failing every
-# single time with exit 1639 (invalid command line), confirmed by a live
-# repro on Windows Server 2025 build 26100 / PowerShell 5.1, this script's
-# first real-host run. Wrapping the whole three-segment value in
-# one more outer pair of quotes, with the inner quotes doubled rather than
-# backslash-escaped (sc.exe's own convention, not cmd.exe's), survives
-# PowerShell's native-argument passing intact and round-trips through
-# `sc qc`/WMI PathName byte-for-byte, confirmed live against both
-# `sc.exe create` and `sc.exe config`. $binPath itself is left as the
-# human-readable form for -DryRun/log output; only this escaped variant is
-# ever passed to sc.exe.
-$binPathForScExe = '"' + $binPath.Replace('"', '""') + '"'
+# (host exe, node.exe, entry script). An earlier fix wrapped the whole
+# three-segment value in one more outer pair of quotes with the inner
+# quotes doubled (sc.exe's own escaping convention), which survives
+# PowerShell's native-argument passing and round-trips through `sc qc`
+# when every path segment is itself space-free. It does NOT survive
+# sc.exe's own command-line tokenizer once any inner segment contains a
+# space, e.g. Node's default install path `C:\Program Files\nodejs\node.exe`:
+# live-repro'd on Windows Server 2019 build 17763 (exit 1639, invalid
+# command line) with the doubled-quote value reaching sc.exe byte-for-byte
+# unmodified even via a cmd.exe /c script file, proving the tokenizer
+# itself, not any shell's re-quoting, rejects it. sc.exe's binPath=
+# argument parsing cannot be made to carry an embedded space reliably no
+# matter how it is escaped going in. New-Service/Win32_Service.Change call
+# CreateService/ChangeServiceConfig directly with no command-line tokenizer
+# in between, so $binPath's embedded spaces and quoted segments survive
+# unmodified; both are used below instead of `sc.exe create`/`sc.exe config`
+# for this reason. $binPath itself (unescaped) is what both now take
+# directly, and is also used verbatim for -DryRun/log output.
 
 if ($script:DryRun) {
     Write-Host "[dry-run] sc.exe create/config $ServiceName binPath= $binPath start= auto obj= LocalSystem"
@@ -739,11 +788,10 @@ Invoke-Step "set WER LocalDumps DumpType=0 for node.exe" { Set-WindowsDumpSuppre
 
 $serviceExisted = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
 if (-not $serviceExisted) {
-    & sc.exe create $ServiceName type= own start= auto obj= LocalSystem DisplayName= $ServiceDisplayName binPath= $binPathForScExe | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "sc.exe create failed for $ServiceName (exit $LASTEXITCODE)" }
+    New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName $ServiceDisplayName `
+        -StartupType Automatic -ErrorAction Stop | Out-Null
 } else {
-    & sc.exe config $ServiceName binPath= $binPathForScExe obj= LocalSystem start= auto DisplayName= $ServiceDisplayName | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "sc.exe config failed to update $ServiceName (exit $LASTEXITCODE)" }
+    Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $binPath -DisplayName $ServiceDisplayName
 }
 & sc.exe failureflag $ServiceName 1 | Out-Null
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000 | Out-Null
@@ -786,8 +834,8 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $AppDir
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
-    $rollbackBinPath = $binPathForScExe
-    & sc.exe config $ServiceName binPath= $rollbackBinPath | Out-Null
+    $rollbackBinPath = $binPath
+    Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $ServiceDisplayName
     Set-ServiceEnvironment -ConfigDir $StateDir -Token ""
     Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
     # The credential file's ACL must be re-asserted after rollback, not

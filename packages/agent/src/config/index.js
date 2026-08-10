@@ -76,6 +76,33 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_POLL_INTERVAL_MS = 15000;
 // Discovery is an inventory scan, not a control loop; hourly by default.
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
+/** Decision 18's own bounds ([24, 720] hours); duplicated here (not
+ * imported from ../windows-retention) rather than depending on that
+ * module just for two integer literals, matching this loader's existing
+ * "own copy of the constants it validates against" style elsewhere. */
+const WINDOWS_MIN_RETENTION_HOURS = 24;
+const WINDOWS_MAX_RETENTION_HOURS = 720;
+/** 7 days: long enough that a rollback investigation started the same
+ * week still finds the superseded material, short enough that a fleet
+ * running entirely on defaults does not accumulate months of dead
+ * certificates in the machine store. */
+const DEFAULT_WINDOWS_RETENTION_HOURS = 168;
+/** How often the sweep loop re-evaluates every ledger row. Deliberately
+ * much less frequent than the discovery/heartbeat loops: a sweep only
+ * ever advances a row once its retention deadline (hours, not minutes)
+ * has passed, so sub-hour polling would just be wasted store/handshake
+ * probes for no earlier possible outcome. */
+const DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Windows OS-store/IIS/http.sys discovery is a lighter enumeration than the
+// filesystem walk (no file I/O, just certutil/netsh/appcmd queries via
+// ../windows-discovery), so it defaults to a shorter interval to catch
+// renewals/rotations sooner without meaningfully increasing host load.
+// Distinct from the retention-sweep interval above: the two loops observe
+// different things (current inventory vs. superseded-certificate cleanup)
+// on independent cadences.
+const DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS = 30 * 60 * 1000;
+const WINDOWS_DISCOVERY_STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const DEFAULT_WINDOWS_DISCOVERY_STORES = Object.freeze(["My"]);
 // Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
@@ -314,6 +341,7 @@ const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
   "infomaniak",
   "exoscale",
   "powerdns",
+  "pebble-challtestsrv",
 ]);
 
 /**
@@ -649,6 +677,140 @@ function validateDiscoveryObject(discovery) {
   return { directories, intervalMs };
 }
 
+/**
+/**
+ * Validates `windows` in config.json: the retention-sweep policy governing
+ * ADR-0012 decision 18's ledger (see ../windows-retention). `null` means
+ * "use every documented default", NOT "retention disabled" -- decision 18
+ * has no disabled state; a superseded certificate is always tracked once
+ * created, only the sweep's own cadence and hours-in-store are tunable.
+ * @param {*} windows
+ * @returns {{ supersededRetentionHours: number, sweepIntervalMs: number }}
+ */
+function validateWindowsObject(windows) {
+  if (windows === undefined || windows === null) {
+    return {
+      supersededRetentionHours: DEFAULT_WINDOWS_RETENTION_HOURS,
+      sweepIntervalMs: DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS,
+    };
+  }
+  if (typeof windows !== "object" || Array.isArray(windows)) {
+    throw new Error(
+      "tokentimer-agent: windows in config.json must be an object " +
+        "({ supersededRetentionHours?, sweepIntervalMs? })",
+    );
+  }
+  let supersededRetentionHours = DEFAULT_WINDOWS_RETENTION_HOURS;
+  if (windows.supersededRetentionHours !== undefined) {
+    if (
+      typeof windows.supersededRetentionHours !== "number" ||
+      !Number.isInteger(windows.supersededRetentionHours) ||
+      windows.supersededRetentionHours < WINDOWS_MIN_RETENTION_HOURS ||
+      windows.supersededRetentionHours > WINDOWS_MAX_RETENTION_HOURS
+    ) {
+      throw new Error(
+        "tokentimer-agent: windows.supersededRetentionHours must be an integer in " +
+          `[${WINDOWS_MIN_RETENTION_HOURS}, ${WINDOWS_MAX_RETENTION_HOURS}], got: ` +
+          JSON.stringify(windows.supersededRetentionHours),
+      );
+    }
+    supersededRetentionHours = windows.supersededRetentionHours;
+  }
+  let sweepIntervalMs = DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS;
+  if (windows.sweepIntervalMs !== undefined) {
+    if (
+      typeof windows.sweepIntervalMs !== "number" ||
+      !Number.isInteger(windows.sweepIntervalMs) ||
+      windows.sweepIntervalMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: windows.sweepIntervalMs must be a positive integer " +
+          `(milliseconds), got: ${JSON.stringify(windows.sweepIntervalMs)}`,
+      );
+    }
+    sweepIntervalMs = windows.sweepIntervalMs;
+  }
+  return { supersededRetentionHours, sweepIntervalMs };
+}
+
+/**
+ * Windows OS-store/IIS/http.sys discovery config, deliberately independent
+ * of validateDiscoveryObject (filesystem directories are meaningless here,
+ * and this surface only exists on Windows hosts) and of validateWindowsObject
+ * above (retention-sweep policy is a different concern on its own cadence).
+ * Defaults to enabled with no directories/parameters needed -- unlike
+ * filesystem discovery, this scan doesn't require any operator-specified
+ * path; the machine store, IIS sites, and http.sys bindings (via
+ * ../windows-discovery) are all self-discovering. `enabled: false` lets an
+ * operator opt out on a Windows host that doesn't want this surface
+ * reported (e.g. a workstation with unrelated local certificates).
+ */
+function validateWindowsDiscoveryObject(windowsDiscovery) {
+  if (windowsDiscovery === undefined || windowsDiscovery === null) {
+    return {
+      enabled: true,
+      intervalMs: DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS,
+      stores: [...DEFAULT_WINDOWS_DISCOVERY_STORES],
+    };
+  }
+  if (typeof windowsDiscovery !== "object" || Array.isArray(windowsDiscovery)) {
+    throw new Error(
+      "tokentimer-agent: windowsDiscovery in config.json must be an object ({ enabled?, intervalMs? })",
+    );
+  }
+  let enabled = true;
+  if (windowsDiscovery.enabled !== undefined) {
+    if (typeof windowsDiscovery.enabled !== "boolean") {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.enabled must be a boolean, got: " +
+          JSON.stringify(windowsDiscovery.enabled),
+      );
+    }
+    enabled = windowsDiscovery.enabled;
+  }
+  let intervalMs = DEFAULT_WINDOWS_DISCOVERY_INTERVAL_MS;
+  if (windowsDiscovery.intervalMs !== undefined) {
+    if (
+      typeof windowsDiscovery.intervalMs !== "number" ||
+      !Number.isInteger(windowsDiscovery.intervalMs) ||
+      windowsDiscovery.intervalMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.intervalMs must be a positive integer " +
+          `(milliseconds), got: ${JSON.stringify(windowsDiscovery.intervalMs)}`,
+      );
+    }
+    intervalMs = windowsDiscovery.intervalMs;
+  }
+  let stores = [...DEFAULT_WINDOWS_DISCOVERY_STORES];
+  if (windowsDiscovery.stores !== undefined) {
+    if (
+      !Array.isArray(windowsDiscovery.stores) ||
+      windowsDiscovery.stores.length < 1 ||
+      windowsDiscovery.stores.length > 32
+    ) {
+      throw new Error(
+        "tokentimer-agent: windowsDiscovery.stores must be an array containing 1 to 32 store names",
+      );
+    }
+    const seen = new Set();
+    stores = [];
+    for (const store of windowsDiscovery.stores) {
+      if (typeof store !== "string" || !WINDOWS_DISCOVERY_STORE_PATTERN.test(store)) {
+        throw new Error(
+          "tokentimer-agent: windowsDiscovery.stores contains an invalid store name",
+        );
+      }
+      const key = store.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        stores.push(store);
+      }
+    }
+  }
+  return { enabled, intervalMs, stores };
+}
+
 function validateCaBundlePath(caBundlePath) {
   if (caBundlePath === undefined || caBundlePath === null) return null;
   if (typeof caBundlePath !== "string" || caBundlePath.length === 0) {
@@ -814,6 +976,8 @@ function validateExecutionObject(execution, configDir) {
  *   declaredCommandProfileNames: string[],
  *   policy: object|null,
  *   discovery: {directories: string[], intervalMs: number}|null,
+ *   windows: {supersededRetentionHours: number, sweepIntervalMs: number},
+ *   windowsDiscovery: {enabled: boolean, intervalMs: number, stores: string[]},
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
  *   requireSignedAgentId: boolean,
@@ -888,6 +1052,19 @@ function loadAgentConfig({ configDir } = {}) {
   // null means discovery is disabled entirely.
   const discovery = validateDiscoveryObject(fileConfig.discovery);
 
+  // Windows superseded-certificate retention sweep policy (ADR-0012
+  // decision 18). Always populated (with defaults), unlike discovery:
+  // decision 18 has no disabled state.
+  const windows = validateWindowsObject(fileConfig.windows);
+
+  // Windows OS-store/IIS/http.sys discovery config. Unlike filesystem
+  // discovery, this has no "disabled by absence" semantics -- it defaults to
+  // enabled (see validateWindowsDiscoveryObject) since it needs no operator-
+  // supplied paths and is a no-op (empty results) on any non-Windows host.
+  // Independent of `windows` above: this is inventory observation, that is
+  // superseded-certificate cleanup.
+  const windowsDiscovery = validateWindowsDiscoveryObject(fileConfig.windowsDiscovery);
+
   const caBundlePath = validateCaBundlePath(
     process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
   );
@@ -948,6 +1125,8 @@ function loadAgentConfig({ configDir } = {}) {
     declaredCommandProfileNames,
     policy,
     discovery,
+    windows,
+    windowsDiscovery,
     caBundlePath,
     allowInsecureLocalHttp,
     requireSignedAgentId,
@@ -1528,5 +1707,8 @@ module.exports = {
   MAX_CA_BUNDLE_BYTES,
   OUTBOX_DIR_NAME,
   normalizeDnsPropagationConfig,
+  validateWindowsObject,
+  DEFAULT_WINDOWS_RETENTION_HOURS,
+  DEFAULT_WINDOWS_RETENTION_SWEEP_INTERVAL_MS,
   DEFAULT_REQUIRE_SIGNED_AGENT_ID,
 };

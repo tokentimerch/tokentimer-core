@@ -1398,6 +1398,8 @@ describe("agentDispatch.claimJobs", () => {
               declared_target_selectors: [],
               declared_command_profile_names: [],
               supported_dns_providers: [],
+              declared_capabilities: ["evidence-claim-binding-v1"],
+              capabilities_updated_at: new Date().toISOString(),
             },
           ],
         };

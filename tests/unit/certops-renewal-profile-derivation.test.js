@@ -230,22 +230,34 @@ describe("renewal profile derivation from an issued certificate", () => {
  * A realistic Windows (os-store-managed) issue-job payload: a machine
  * certificate store plus an IIS site binding, keyed on thumbprint, instead
  * of a Linux certPath (ADR-0012 decisions 1 and 10).
+ *
+ * store/binding live under payload.target, exactly as
+ * createCertificateIssuanceJob actually produces it (see its comment:
+ * "already present on options.payload.target") -- never flattened onto the
+ * bare payload and never under deploymentTargets[0]. A real end-to-end run
+ * against a live agent caught a derivation that used a fixture shaped
+ * differently from this and passed anyway.
  */
 function windowsIssuePayload(overrides = {}) {
+  const { target: targetOverrides, ...rest } = overrides;
   return {
     certificateId: CERT_ID,
-    target: { type: "windows-iis", reference: "web-01.example.com" },
+    target: {
+      type: "windows-iis",
+      reference: "web-01.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
+      ...targetOverrides,
+    },
     sans: ["web-01.example.com"],
     caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
     commandRef: "win-acme-dns-cloudflare",
     acmeKind: "certbot",
     dnsProvider: "cloudflare",
     dnsZone: "example.com",
-    store: "My",
-    binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
     keyAlgorithm: "ecdsa",
     keySize: 256,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -285,7 +297,7 @@ describe("renewal profile derivation for a Windows (os-store-managed) issuance",
   it("omits sniHost when the issuance used a non-SNI binding", () => {
     const profile = deriveRenewalProfileFromIssuedCertificate({
       payload: windowsIssuePayload({
-        binding: { site: "Default Web Site", port: 443 },
+        target: { binding: { site: "Default Web Site", port: 443 } },
       }),
       certificate: issuedCertificate(),
     });
@@ -300,7 +312,7 @@ describe("renewal profile derivation for a Windows (os-store-managed) issuance",
       assert.throws(
         () =>
           deriveRenewalProfileFromIssuedCertificate({
-            payload: windowsIssuePayload({ [field]: undefined }),
+            payload: windowsIssuePayload({ target: { [field]: undefined } }),
             certificate: issuedCertificate(),
           }),
         (error) => {
@@ -318,7 +330,7 @@ describe("renewal profile derivation for a Windows (os-store-managed) issuance",
       () =>
         deriveRenewalProfileFromIssuedCertificate({
           payload: windowsIssuePayload({
-            binding: { site: "Default Web Site", port: 70000 },
+            target: { binding: { site: "Default Web Site", port: 70000 } },
           }),
           certificate: issuedCertificate(),
         }),
@@ -328,6 +340,23 @@ describe("renewal profile derivation for a Windows (os-store-managed) issuance",
         return true;
       },
     );
+  });
+
+  it("reads store/binding from payload.target, not from a flattened payload or deploymentTargets[0]", () => {
+    // Regression: createCertificateIssuanceJob never flattens store/binding
+    // onto the bare payload and windows-iis issuance never uses
+    // deploymentTargets. A derivation that fell back to either of those
+    // shapes would throw "no store" against every real windows-iis job.
+    const payload = windowsIssuePayload();
+    assert.equal(payload.store, undefined);
+    assert.equal(payload.binding, undefined);
+    assert.equal(payload.deploymentTargets, undefined);
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload,
+      certificate: issuedCertificate(),
+    });
+    assert.equal(profile.target.store, "My");
+    assert.equal(profile.target.binding.site, "Default Web Site");
   });
 
   it("routes on target.type, not on the presence of certPath, when both are absent", () => {
@@ -543,6 +572,43 @@ describe("derived renewal profile persistence", () => {
       insert.params[1],
       new RegExp(`\\(${CERT_ID}\\)$`),
       "the DB name embeds certificateId so re-derivation of the same certificate hits the same row",
+    );
+  });
+
+  it("writes windows-iis store/binding fields onto the CERTOPS_RENEWAL_PROFILE_DERIVED audit event, not certPath", async () => {
+    // Regression: the audit call used to read only
+    // deploymentTargets[0].certPath, which is always null for a windows-iis
+    // profile, so this event told an operator nothing about which store/
+    // site/port a Windows renewal profile actually deploys to even though
+    // deriveRenewalProfileFromIssuedCertificate computes exactly those
+    // fields a few lines above the audit write.
+    const { state, client } = createClient();
+    const result = await ensureDerivedRenewalProfile({
+      client,
+      workspaceId: WORKSPACE,
+      certificateId: CERT_ID,
+      payload: windowsIssuePayload(),
+      certificate: issuedCertificate(),
+    });
+    assert.equal(result.profileId, PROFILE_ID);
+
+    const auditInsert = state.queries.find((q) =>
+      q.sql.includes("INSERT INTO audit_events"),
+    );
+    assert.ok(auditInsert, "the derivation must be audited");
+    // writeAudit's positional params: actorUserId, subjectUserId, action,
+    // targetType, targetId, channel, metadata, workspaceId.
+    assert.equal(auditInsert.params[2], "CERTOPS_RENEWAL_PROFILE_DERIVED");
+    const metadata = auditInsert.params[6];
+    assert.equal(metadata.targetType, "windows-iis");
+    assert.equal(metadata.windowsStore, "My");
+    assert.equal(metadata.windowsBindingSite, "Default Web Site");
+    assert.equal(metadata.windowsBindingPort, 443);
+    assert.equal(metadata.windowsBindingSniHost, "web-01.example.com");
+    assert.equal(
+      metadata.certPath,
+      null,
+      "certPath must stay null for a windows-iis profile rather than throwing",
     );
   });
 

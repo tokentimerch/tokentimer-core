@@ -5,18 +5,22 @@ import {
   AlertIcon,
   Box,
   Button,
+  ButtonGroup,
+  Checkbox,
   Code,
   FormControl,
   FormHelperText,
   FormLabel,
   HStack,
   Input,
+  Link as ChakraLink,
   Modal,
   ModalBody,
   ModalCloseButton,
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Text,
   VStack,
@@ -30,6 +34,7 @@ import {
 import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { workspaceAPI } from '../../utils/apiClient';
 import { showError, showSuccess } from '../../utils/toast.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme.js';
 import {
@@ -69,13 +74,35 @@ function defaultExpiryLocalValue() {
  * the token from a hidden interactive prompt (or from the
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable) when no
  * --bootstrap-token flag is given, so the secret never lands in shell history.
+ * Same contract on both platforms; only the installer script and shell
+ * differ (see certops-agent-install-windows.mdx for the native Windows
+ * Service installer this Windows command drives).
  */
-function buildTokenlessInstallCommand({ apiUrl, workspaceId }) {
+function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
+  if (os === 'windows') {
+    return [
+      '.\\install-agent.ps1 `',
+      `  --api-url '${apiUrl}' \``,
+      `  --workspace-id '${workspaceId}'`,
+    ].join('\n');
+  }
   return [
     `sudo ./install-agent.sh \\`,
     `  --api-url '${apiUrl}' \\`,
     `  --workspace-id '${workspaceId}'`,
   ].join('\n');
+}
+
+/**
+ * Full install runbook, anchored to the platform-specific step this modal
+ * reproduces interactively. Self-hosted docs (`/docs/self-hosted/...`), not
+ * cloud: this file lives in the self-hosted dashboard bundle.
+ */
+function buildInstallDocsUrl(os) {
+  const base = 'https://tokentimer.ch/docs/self-hosted/runbooks';
+  return os === 'windows'
+    ? `${base}/certops-agent-install-windows#windows-install`
+    : `${base}/certops-agent-install#install`;
 }
 
 function createErrorMessage(err) {
@@ -143,9 +170,17 @@ export default function DeployAgentModal({
 
   const [name, setName] = useState('');
   const [expiresLocal, setExpiresLocal] = useState(defaultExpiryLocalValue());
+  const [downtimeAlertsEnabled, setDowntimeAlertsEnabled] = useState(true);
+  const [contactGroupId, setContactGroupId] = useState('');
+  const [contactGroups, setContactGroups] = useState([]);
+  const [defaultContactGroupId, setDefaultContactGroupId] = useState('');
   const [creating, setCreating] = useState(false);
   const [plaintextToken, setPlaintextToken] = useState('');
   const [secretAcknowledged, setSecretAcknowledged] = useState(false);
+  // 'linux' | 'windows'; only changes which install command/instructions
+  // step 1 shows, never anything server-side (both platforms register
+  // through the same bootstrap-token flow below).
+  const [targetOs, setTargetOs] = useState('linux');
   // 'idle' | 'waiting' | 'registered'
   const [waitState, setWaitState] = useState('idle');
   const [registeredAgent, setRegisteredAgent] = useState(null);
@@ -159,14 +194,39 @@ export default function DeployAgentModal({
 
   const { agents: fleetAgents } = useCertOpsAgents();
 
+  // Contact groups load lazily when the modal opens, same pattern as
+  // CertificateTokenDetailModal / AgentFleetPanel's Edit alerting modal.
+  useEffect(() => {
+    if (!isOpen || !workspaceId) return undefined;
+    let cancelled = false;
+    workspaceAPI
+      .getAlertSettings(workspaceId)
+      .then(settings => {
+        if (cancelled) return;
+        setContactGroups(
+          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
+        );
+        setDefaultContactGroupId(settings?.default_contact_group_id || '');
+      })
+      .catch(() => {
+        if (!cancelled) setContactGroups([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, workspaceId]);
+
   const resetWizard = () => {
     setName('');
     setExpiresLocal(defaultExpiryLocalValue());
+    setDowntimeAlertsEnabled(true);
+    setContactGroupId('');
     setCreating(false);
     setPlaintextToken('');
     setSecretAcknowledged(false);
     setWaitState('idle');
     setRegisteredAgent(null);
+    setTargetOs('linux');
     knownAgentIdsRef.current = null;
     tokenCreatedAtRef.current = null;
   };
@@ -246,6 +306,7 @@ export default function DeployAgentModal({
   const installCommand = buildTokenlessInstallCommand({
     apiUrl,
     workspaceId: workspaceId || '<workspace-id>',
+    os: targetOs,
   });
 
   const hasUnacknowledgedSecret =
@@ -268,6 +329,8 @@ export default function DeployAgentModal({
       const result = await createBootstrapToken(requestWorkspaceId, {
         name: name.trim(),
         expiresAt: expiresAtIso,
+        downtimeAlertsEnabled,
+        contactGroupId: contactGroupId || null,
       });
       const plaintext =
         typeof result?.plaintextToken === 'string'
@@ -327,11 +390,36 @@ export default function DeployAgentModal({
                 Step 1: Run the installer on the target host
               </Text>
               <VStack align='stretch' spacing={2}>
-                <Text fontSize='sm' color={muted}>
-                  From the unpacked agent package directory (
-                  <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
-                  host with Node 22+:
-                </Text>
+                <ButtonGroup size='xs' isAttached variant='outline'>
+                  <Button
+                    colorScheme={targetOs === 'linux' ? 'blue' : undefined}
+                    variant={targetOs === 'linux' ? 'solid' : 'outline'}
+                    onClick={() => setTargetOs('linux')}
+                  >
+                    Linux
+                  </Button>
+                  <Button
+                    colorScheme={targetOs === 'windows' ? 'blue' : undefined}
+                    variant={targetOs === 'windows' ? 'solid' : 'outline'}
+                    onClick={() => setTargetOs('windows')}
+                  >
+                    Windows
+                  </Button>
+                </ButtonGroup>
+                {targetOs === 'windows' ? (
+                  <Text fontSize='sm' color={muted}>
+                    From an elevated (Administrator) PowerShell prompt (
+                    <Code fontSize='xs'>powershell.exe</Code> or{' '}
+                    <Code fontSize='xs'>pwsh</Code>), in the unpacked agent
+                    package's directory:
+                  </Text>
+                ) : (
+                  <Text fontSize='sm' color={muted}>
+                    From the unpacked agent package directory (
+                    <Code fontSize='xs'>packages/agent/scripts</Code>) on a
+                    Linux host with Node 22+:
+                  </Text>
+                )}
                 <CopyableCodeBlock
                   code={installCommand}
                   label='Install command'
@@ -344,6 +432,24 @@ export default function DeployAgentModal({
                   in step 2 below and paste it there, or set the
                   TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
                   running.
+                </Text>
+                <Text fontSize='xs'>
+                  <ChakraLink
+                    onClick={() =>
+                      window.open(
+                        buildInstallDocsUrl(targetOs),
+                        '_blank',
+                        'noopener,noreferrer'
+                      )
+                    }
+                    cursor='pointer'
+                    color='blue.500'
+                    textDecoration='underline'
+                    isExternal
+                  >
+                    Full install guide (
+                    {targetOs === 'windows' ? 'Windows' : 'Linux'})
+                  </ChakraLink>
                 </Text>
               </VStack>
             </Box>
@@ -388,6 +494,47 @@ export default function DeployAgentModal({
                       : 'Required; at most 30 days out. Defaults to 24 hours.'}
                   </FormHelperText>
                 </FormControl>
+
+                <FormControl isDisabled={hasUnacknowledgedSecret}>
+                  <Checkbox
+                    isChecked={downtimeAlertsEnabled}
+                    onChange={event =>
+                      setDowntimeAlertsEnabled(event.target.checked)
+                    }
+                    size='sm'
+                  >
+                    <Text as='span' fontSize='sm'>
+                      Agent downtime alerts
+                    </Text>
+                  </Checkbox>
+                  <FormHelperText>
+                    Alert when this agent has not been seen for 10 minutes.
+                  </FormHelperText>
+                </FormControl>
+
+                {downtimeAlertsEnabled ? (
+                  <FormControl
+                    isDisabled={hasUnacknowledgedSecret}
+                    maxW='280px'
+                  >
+                    <FormLabel fontSize='sm'>Contact group</FormLabel>
+                    <Select
+                      size='sm'
+                      value={contactGroupId}
+                      onChange={event => setContactGroupId(event.target.value)}
+                    >
+                      <option value=''>Default workspace group</option>
+                      {contactGroups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                          {String(g.id) === String(defaultContactGroupId)
+                            ? ' (default)'
+                            : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : null}
 
                 {!plaintextToken ? (
                   <Button

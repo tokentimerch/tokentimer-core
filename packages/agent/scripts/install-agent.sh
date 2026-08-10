@@ -400,6 +400,24 @@ fi
 run mkdir -p "$STATE_DIR"
 run chmod 0700 "$STATE_DIR"
 
+# Every operator-supplied --write-path is bound into the hardened unit's
+# ReadWritePaths= sandbox below, but systemd's mount-namespace setup requires
+# the target to already exist on disk - it does not create it. Without this,
+# the very first `systemctl start` after install fails closed with
+# "Failed to set up mount namespacing: <path>: No such file or directory" /
+# status=226/NAMESPACE, reproduced on every fresh Linux install across every
+# distro tested (Ubuntu 22.04/24.04/26.04, AlmaLinux 9), not an environment
+# fluke. Create and own each path now, matching $STATE_DIR's own treatment
+# above, so the unit started later in this script comes up clean on its
+# first try.
+for write_path in $WRITE_PATHS; do
+  run mkdir -p "$write_path"
+  if [ "$IS_DARWIN" -eq 0 ]; then
+    run chown "$AGENT_USER:$AGENT_USER" "$write_path"
+  fi
+  run chmod 0750 "$write_path"
+done
+
 # ACME tool writable state under the agent state dir (ProtectSystem=strict
 # + ProtectHome=true block /etc/letsencrypt and ~/.acme.sh). The ACME
 # adapter passes --config-dir/--work-dir/--logs-dir (certbot) and

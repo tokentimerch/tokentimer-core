@@ -301,6 +301,78 @@ describe("CertOps workspace kill-switch service", () => {
     assert.equal(pool.queries.some((query) => query.sql === "COMMIT"), true);
   });
 
+  it("names the store/binding for a manually created windows-iis job, not just targetType", async () => {
+    const pool = createStatefulPool(false);
+    let auditMetadata = null;
+    const job = {
+      id: "job-windows-1",
+      operation: "issue",
+      subjectType: "managed_certificate",
+      subjectId: "certificate-1",
+      source: "api",
+      payload: {
+        target: {
+          type: "windows-iis",
+          store: "LocalMachine\\My",
+          binding: { site: "Default Web Site", port: 443, sniHost: "e2e.example.com" },
+        },
+      },
+    };
+
+    await createManualCertificateJob({
+      workspaceId: "workspace-1",
+      dbPool: pool,
+      certOpsEnabledResolver: async () => true,
+      jobCreator: async () => {
+        pool.addJob(job);
+        return { job, created: true };
+      },
+      auditWriter: async ({ action, metadata }) => {
+        if (action === "CERTOPS_JOB_CREATED_MANUAL") auditMetadata = metadata;
+      },
+    });
+
+    assert.ok(auditMetadata);
+    assert.equal(auditMetadata.targetType, "windows-iis");
+    assert.equal(auditMetadata.windowsStore, "LocalMachine\\My");
+    assert.equal(auditMetadata.windowsBindingSite, "Default Web Site");
+    assert.equal(auditMetadata.windowsBindingPort, 443);
+    assert.equal(auditMetadata.windowsBindingSniHost, "e2e.example.com");
+  });
+
+  it("reports only a null targetType (no windows fields) for a non-windows manual job", async () => {
+    const pool = createStatefulPool(false);
+    let auditMetadata = null;
+    const job = {
+      id: "job-linux-1",
+      operation: "issue",
+      subjectType: "managed_certificate",
+      subjectId: "certificate-2",
+      source: "api",
+      payload: { target: { type: "agent-file" } },
+    };
+
+    await createManualCertificateJob({
+      workspaceId: "workspace-1",
+      dbPool: pool,
+      certOpsEnabledResolver: async () => true,
+      jobCreator: async () => {
+        pool.addJob(job);
+        return { job, created: true };
+      },
+      auditWriter: async ({ action, metadata }) => {
+        if (action === "CERTOPS_JOB_CREATED_MANUAL") auditMetadata = metadata;
+      },
+    });
+
+    assert.ok(auditMetadata);
+    assert.equal(auditMetadata.targetType, "agent-file");
+    assert.equal(auditMetadata.windowsStore, null);
+    assert.equal(auditMetadata.windowsBindingSite, null);
+    assert.equal(auditMetadata.windowsBindingPort, null);
+    assert.equal(auditMetadata.windowsBindingSniHost, null);
+  });
+
   it("validates and redacts the bounded operator reason", async () => {
     assert.equal(normalizeReason("token=abc123"), "token=[REDACTED]");
     assert.throws(

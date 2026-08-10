@@ -69,6 +69,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const tls = require("node:tls");
+const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,
@@ -102,6 +104,7 @@ const {
   assertEvidencePayloadSafe,
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
+const { collectWindowsDiscoveryObservations } = require("./discovery/windows");
 const {
   validateClaimedJob,
   hasReportableJobId,
@@ -126,6 +129,8 @@ const {
 const { durabilityMetadataEntries } = require("./platform/durability.js");
 const {
   markSideEffectReached,
+  recordWindowsCngContainer,
+  markWindowsCngContainerReconciled,
   scanUnresolvedJournalEntries,
   hasUnresolvedJournalForJob,
   clearJournalOnTerminal,
@@ -146,6 +151,27 @@ const {
   drainOutbox,
   createEvidenceBuffer,
 } = require("./outbox");
+const {
+  generateCsrViaCng,
+  acceptCertificateViaCng,
+  acquireStoreLock,
+  removeAbandonedKeyContainer,
+  removeCertificateAndKeyContainer,
+  isAgentOwnedContainerName,
+  buildContainerName,
+  recordIssuedContainer,
+  markIssuedContainerAccepted,
+  readIssuedContainerRecord,
+  removeIssuedContainerRecord,
+} = require("./windows-cert-store");
+const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
+const {
+  createLedgerRow,
+  readLedgerRow,
+  sweepLedger,
+  normalizeThumbprint: normalizeRetentionThumbprint,
+} = require("./windows-retention");
+const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -237,6 +263,20 @@ const EXECUTION_ERROR_MESSAGE_MAX_CHARS = 512;
 /** ACME adapter kinds executeJob accepts from a job payload. */
 const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
 
+/** Scratch directory (under the agent state dir) for CNG certreq INF/CSR
+ * artifacts (../windows-cert-store) and IIS-bind accept-certificate temp
+ * files. Never holds private key material -- the CNG key never leaves the
+ * store -- only public CSR/certificate bytes, briefly. */
+const WINDOWS_CERT_STORE_WORK_DIR_NAME = "windows-cert-store-work";
+
+/** Ledger directory (under the agent state dir) for ../windows-retention's
+ * superseded-certificate rows, per decision 18. */
+const WINDOWS_RETENTION_LEDGER_DIR_NAME = "windows-retention";
+
+function isNonEmptyStringValue(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
 /**
  * Actions this agent build can actually execute (executeJob): "revoke" is
  * deliberately absent (always blocked in this build). Sent as the claim's
@@ -260,8 +300,22 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload
  * than gating it on execution.enabled: an observe-only agent never claims work
  * regardless (resolveClaimSupportedActions returns []), so the declaration
  * is inert until execution is actually turned on.
+ *
+ * windows-cert-store-v1 and iis-binding-v1 are platform-gated in addition to
+ * the manifest gate below: this same cross-platform build binary runs on
+ * both Linux and Windows, and a Linux process can never execute
+ * certreq.exe/certutil.exe/netsh.exe, so those two strings are only ever
+ * CANDIDATES when isWindows() is true for the running process. This is
+ * evaluated once at module load (the platform of a running process does not
+ * change), unlike the manifest gate immediately below, which additionally
+ * requires real-host evidence per build before either string reaches
+ * AGENT_DECLARED_CAPABILITIES even on a Windows host.
  */
-const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(["evidence-claim-binding-v1"]);
+const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
+  isWindows()
+    ? ["evidence-claim-binding-v1", "windows-cert-store-v1", "iis-binding-v1"]
+    : ["evidence-claim-binding-v1"],
+);
 
 /**
  * Capabilities this build actually advertises, after the build-time
@@ -386,7 +440,7 @@ const LEASE_TRANSIENT_BACKOFF_MS = 200;
 const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /**
- * VERIFY-RACE-01: max retries for a live verify probe that connects fine
+ * Max retries for a live verify probe that connects fine
  * but reports the *previous* certificate's fingerprint. `maybeReloadForJob`
  * returns as soon as `systemctl reload`/equivalent exits, which only
  * guarantees the reload was requested, not that every worker/connection has
@@ -424,7 +478,7 @@ function sleepMs(ms) {
 }
 
 /**
- * VERIFY-RACE-01 mitigation: retries `probeImpl` (defaults to the real
+ * Retries `probeImpl` (defaults to the real
  * `verifyDeployedCertificate`) when, and only when, the probe connected
  * successfully and got back an actual certificate whose fingerprint simply
  * does not match yet. That specific shape (`actualFingerprintSha256` is a
@@ -1059,6 +1113,34 @@ function resolveJobDeployTargets(job) {
   const jobChainPath = isAbsolutePathLike(job?.chainPath) ? job.chainPath : null;
 
   function pickTargetFields(item, fallbackCertPath) {
+    const resolvedType = typeof item?.type === "string" ? item.type : job?.target?.type ?? "endpoint";
+    // windows-iis has no filesystem certPath/keyPath/chainPath/reload service
+    // and no owner/group/backupDir (deploy/index.js's validateWindowsIisTarget
+    // never validates those fields for it either): its destination is a
+    // machine cert store + IIS binding (store/binding/thumbprintSha1),
+    // carried through unchanged instead of run through the path-fallback
+    // logic below, which would either wrongly require a certPath or wrongly
+    // apply a job-level keyPath/chainPath meant for a filesystem target.
+    if (resolvedType === "windows-iis") {
+      return {
+        type: "windows-iis",
+        reference: typeof item?.reference === "string" && item.reference.length > 0 ? item.reference : null,
+        certPath: null,
+        keyPath: null,
+        chainPath: null,
+        reloadService: null,
+        certMode: null,
+        keyMode: null,
+        chainMode: null,
+        owner: null,
+        group: null,
+        backupDir: null,
+        backupRetentionCount: null,
+        store: item?.store ?? null,
+        binding: item?.binding ?? null,
+        thumbprintSha1: item?.thumbprintSha1 ?? null,
+      };
+    }
     const certPath = isAbsolutePathLike(item?.certPath)
       ? item.certPath
       : fallbackCertPath;
@@ -1069,7 +1151,7 @@ function resolveJobDeployTargets(job) {
       ? item.chainPath
       : jobChainPath;
     return {
-      type: typeof item?.type === "string" ? item.type : job?.target?.type ?? "endpoint",
+      type: resolvedType,
       reference:
         typeof item?.reference === "string" && item.reference.length > 0
           ? item.reference
@@ -1099,7 +1181,16 @@ function resolveJobDeployTargets(job) {
     for (let i = 0; i < job.deploymentTargets.length; i += 1) {
       const item = job.deploymentTargets[i];
       if (!item || typeof item !== "object" || Array.isArray(item)) {
+
         return { error: `job.deploymentTargets[${i}] must be an object` };
+      }
+      // windows-iis carries no filesystem certPath at all (its destination
+      // is store/binding); pickTargetFields' windows-iis branch below
+      // ignores the fallbackCertPath argument entirely, so this loop must
+      // not reject the target for lacking one.
+      if (item.type === "windows-iis") {
+        targets.push(pickTargetFields(item, null));
+        continue;
       }
       const fallbackCert = isAbsolutePathLike(item.reference) ? item.reference : null;
       const certPath = isAbsolutePathLike(item.certPath)
@@ -1115,6 +1206,23 @@ function resolveJobDeployTargets(job) {
       targets.push(pickTargetFields(item, certPath));
     }
     return { targets };
+  }
+
+  if (job?.target?.type === "windows-iis") {
+    return {
+      targets: [
+        pickTargetFields(
+          {
+            type: "windows-iis",
+            reference: job?.target?.reference,
+            store: job?.target?.store,
+            binding: job?.target?.binding,
+            thumbprintSha1: job?.target?.thumbprintSha1,
+          },
+          null,
+        ),
+      ],
+    };
   }
 
   const certPath = resolveJobCertPath(job);
@@ -2118,6 +2226,27 @@ async function executeJob({
   }
 
   if (action === "renew") {
+    // ADR-0012 decisions 9/13: a renew job whose custody is
+    // os-store-managed against a windows-iis target takes the CNG-native
+    // path (key generated inside the CNG store, IIS/http.sys rebind,
+    // retention-ledger bookkeeping) instead of the file-based
+    // key/CSR/deploy path every other keyMode uses. keyMode gating here is
+    // defense in depth: apps/api/services/certops/jobs.js's
+    // AGENT_DEPLOYABLE_KEY_MODES is the control-plane's own gate on
+    // dispatching such a job at all.
+    if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
+      return executeWindowsIisRenewJob({
+        job,
+        jobId,
+        policyEngine,
+        client: claimBoundClient,
+        executionContext,
+        log,
+        leaseOpts,
+        onBeforeMutation: markMutation,
+        journalCtx,
+      });
+    }
     return executeRenewJob({
       job,
       jobId,
@@ -2191,20 +2320,34 @@ async function executeDryRunPlan({
   const preflightIssues = [];
 
   if (action === "renew" || action === "deploy") {
-    const certPath = resolveJobCertPath(job);
-    if (certPath === null) {
-      preflightIssues.push(
-        "no deploy destination (neither job.certPath nor an absolute-path target.reference)",
-      );
+    if (job?.target?.type === "windows-iis") {
+      if (
+        !isNonEmptyStringValue(job?.target?.store) ||
+        job?.target?.binding === null ||
+        typeof job?.target?.binding !== "object" ||
+        !isNonEmptyStringValue(job?.target?.binding?.site) ||
+        !Number.isInteger(job?.target?.binding?.port)
+      ) {
+        preflightIssues.push(
+          "windows-iis target requires target.store and target.binding.{site,port}",
+        );
+      }
     } else {
-      const pathVerdict = policyEngine.checkPath(certPath);
-      if (!pathVerdict.allowed) {
-        return {
-          status: "rejected",
-          rejectionReason: pathVerdict.rejectionReason,
-          keyRotated: null,
-          errorMessage: boundErrorMessage(pathVerdict.detail),
-        };
+      const certPath = resolveJobCertPath(job);
+      if (certPath === null) {
+        preflightIssues.push(
+          "no deploy destination (neither job.certPath nor an absolute-path target.reference)",
+        );
+      } else {
+        const pathVerdict = policyEngine.checkPath(certPath);
+        if (!pathVerdict.allowed) {
+          return {
+            status: "rejected",
+            rejectionReason: pathVerdict.rejectionReason,
+            keyRotated: null,
+            errorMessage: boundErrorMessage(pathVerdict.detail),
+          };
+        }
       }
     }
   }
@@ -2674,6 +2817,1278 @@ async function executeRenewJob({
     discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
   }
   return { ...tail, keyRotated };
+}
+
+/**
+ * Steps 4-6 of the CNG-native windows-iis renewal path: complete CNG
+ * enrollment (`certreq -accept`), rebind IIS/http.sys and verify with a
+ * real TLS handshake, then persist a retention-ledger row for the
+ * certificate the binding previously pointed at, all under the per-store
+ * mutex (decision 13: "the per-target mutex covers the store as well as
+ * the binding, since two jobs racing on the same machine store is as
+ * damaging as two racing on one binding").
+ *
+ * Rollback: deployIisBinding already restores outgoingThumbprint on its
+ * own BIND_FAILED/VERIFY_FAILED paths (see ../windows-iis's own doc
+ * comment); this function does not attempt a second, redundant rollback
+ * on top of that, and never creates a ledger row for a deploy that did
+ * not report ok:true (a ledger row records a cutover that happened, not
+ * an attempt).
+ *
+ * @param {object} params
+ * @param {object} params.target the single resolved windows-iis deploy target.
+ * @param {string} params.stateDir agent state dir (mutex lock file location).
+ * @param {string} params.cngWorkDir CNG accept scratch dir.
+ * @param {string|null} [params.containerName] the CNG key container
+ *   generateCsrViaCng created for this job, if known. Used ONLY to free an
+ *   orphaned container on a bare `certreq -accept` failure (see the
+ *   accept-failure branch below); never touched on any success path or on
+ *   a later addstore/repairstore/delstore-stage failure, since by then the
+ *   container is legitimately bound to an enrolled certificate.
+ * @returns {Promise<{status: string, keyRotated: null, errorMessage?: string, rejectionReason?: string}>}
+ */
+async function runWindowsIisDeployTail({
+  jobId,
+  client,
+  certificatePem,
+  target,
+  stateDir,
+  cngWorkDir,
+  log,
+  containerName = null,
+  leaseOpts = null,
+  onBeforeMutation = null,
+  windowsExecFileImpl,
+  windowsConnectImpl,
+}) {
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
+  if (typeof onBeforeMutation === "function") onBeforeMutation("deploy");
+
+  let storeLock;
+  try {
+    // Locks BOTH the default `My` store and `target.store` (deduplicated
+    // when they are the same) -- see acquireWindowsStoreLocks' own doc
+    // comment for why `target.store` alone is not the actual mutation
+    // scope for a non-default-store job.
+    storeLock = acquireWindowsStoreLocks(stateDir, target.store);
+  } catch (err) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(`could not acquire windows-iis store lock: ${err.message}`),
+    };
+  }
+
+  try {
+    emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
+    const acceptResult = await acceptCertificateViaCng({
+      certificatePem,
+      workDir: cngWorkDir,
+      store: target.store,
+      ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+    });
+    if (!acceptResult.ok) {
+      // Only a bare-accept failure (no `stage`) leaves the CNG key
+      // container genuinely orphaned: `certreq -accept` itself never ran,
+      // or ran and failed before binding any certificate to the key, so
+      // there is no enrolled certificate anywhere referencing this
+      // container yet. A failure at the addstore/repairstore/delstore
+      // mirroring stage is different -- accept already SUCCEEDED, so the
+      // key is bound to a real certificate sitting in the store (at least
+      // in "My"); deleting the container there would corrupt that
+      // certificate's key reference instead of freeing dead weight. Same
+      // best-effort, non-fatal cleanup discipline as the ACME-failure path
+      // in executeWindowsIisRenewJob's finally block.
+      if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
+        try {
+          const cleanup = await removeAbandonedKeyContainer({
+            containerName,
+            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+          });
+          if (cleanup.ok !== true) {
+            emitLog(
+              log,
+              `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+                `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
+                `it will remain orphaned in the CNG key store until manually removed.`,
+            );
+          } else {
+            removeIssuedContainerRecord({ stateDir, containerName });
+          }
+        } catch (err) {
+          emitLog(
+            log,
+            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `${containerName} after certreq -accept failure: ${err.message}`,
+          );
+        }
+      }
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `CNG certificate acceptance failed for job ${jobId} (exit code ${acceptResult.exitCode}).`,
+          metadata: [
+            { name: "step", value: "cng-accept" },
+            { name: "exitCode", value: acceptResult.exitCode },
+            { name: "stderrExcerpt", value: boundMetadataExcerpt(acceptResult.stderrExcerpt) },
+          ],
+        }),
+      ]);
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `CNG certificate acceptance failed (exit code ${acceptResult.exitCode}): ${acceptResult.stderrExcerpt}`,
+        ),
+      };
+    }
+    emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
+    // Bind the ownership record to the actual accepted certificate's
+    // thumbprint, not merely
+    // "this agent created the container" -- see windows-cert-store's
+    // markIssuedContainerAccepted doc comment and ADR-0012 decision 18.
+    // Best-effort/non-fatal for the same reason recordIssuedContainer's
+    // own initial write is: a failure here only makes a future retention
+    // decision for this container more conservative (treats it as
+    // `preexisting` instead of `tokentimer_installed`), never unsafe.
+    if (isNonEmptyStringValue(containerName)) {
+      try {
+        markIssuedContainerAccepted({
+          stateDir,
+          containerName,
+          acceptedThumbprint: acceptResult.thumbprint,
+          store: target.store,
+        });
+      } catch (err) {
+        emitLog(
+          log,
+          `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+            `acceptance provenance (non-fatal, continuing): ${err.message}`,
+        );
+      }
+    }
+
+    // job-payload.schema.json's windowsIisBinding carries only
+    // {site, port, sniHost} -- no explicit address -- so every windows-iis
+    // job binds the IIS-conventional wildcard listener ("*", matching
+    // ../windows-iis's WILDCARD_BINDING_ADDRESSES), with sniHost (when
+    // present) selecting the certificate under that shared listener.
+    const binding = {
+      address: "*",
+      port: target.binding.port,
+      ...(target.binding.sniHost ? { sniHost: target.binding.sniHost } : {}),
+      store: target.store,
+      site: target.binding.site,
+    };
+
+    emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
+    const deployResult = await deployIisBinding({
+      binding,
+      certificatePem,
+      ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      ...(windowsConnectImpl ? { connectImpl: windowsConnectImpl } : {}),
+    });
+
+    if (deployResult.ok !== true) {
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `IIS binding deploy failed for job ${jobId} (${deployResult.code}), rolledBack=${deployResult.rolledBack === true}.`,
+          metadata: [
+            { name: "step", value: "iis-bind" },
+            { name: "code", value: String(deployResult.code) },
+            { name: "rolledBack", value: deployResult.rolledBack === true },
+          ],
+        }),
+      ]);
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `IIS binding deploy failed (${deployResult.code}): ${deployResult.detail} ` +
+            `(rolledBack: ${deployResult.rolledBack === true})`,
+        ),
+      };
+    }
+
+    emitInfo(`job ${jobId}: IIS binding deploy succeeded, verified at ${JSON.stringify(deployResult.verifiedAt)}`);
+    if (deployResult.precedenceWarning) {
+      emitInfo(`job ${jobId}: WARNING: ${deployResult.precedenceWarning}`);
+    }
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "deployment.updated",
+        observedAt: new Date().toISOString(),
+        summary: deployResult.skippedMutation === true
+          ? `IIS binding deploy skipped for job ${jobId}: binding already pointed at this certificate (idempotent); TLS handshake re-verified.`
+          : `IIS binding deploy succeeded for job ${jobId}: certificate rebound and TLS-verified.`,
+        metadata: [
+          { name: "step", value: "iis-bind" },
+          { name: "idempotentSkip", value: deployResult.skippedMutation === true },
+          { name: "boundThumbprint", value: deployResult.boundThumbprint },
+          ...(deployResult.precedenceWarning
+            ? [{ name: "precedenceWarning", value: deployResult.precedenceWarning }]
+            : []),
+        ],
+      }),
+    ]);
+
+    // The control plane's reconciliation (apps/api's reconcileProvisionedCertificate
+    // for an "issue" job, refreshRenewedCertificateEvidence for a later "renew")
+    // looks for a claim-bound validation.passed event with metadata.step === "verify"
+    // carrying fingerprintSha256 and validTo -- the file-based path's runDeployTail
+    // always emits this after a successful live-endpoint check, but deployIisBinding's
+    // own TLS handshake verification above was never surfaced in that shape, so a
+    // windows-iis certificate would deploy correctly on the host and then sit
+    // forever in status 'provisioning' (or with a frozen not_after after a later
+    // renewal), invisible to expiry tracking and the renewal scheduler. Emitting the
+    // same evidence shape here, from the same already-verified certificatePem, closes
+    // that gap without re-running any verification deployIisBinding already did.
+    const deployedFacts = describeDeployedCertificate(certificatePem);
+    const verifyFingerprint = computeCertificateFingerprint(certificatePem);
+    const verifyMetadata = [{ name: "step", value: "verify" }];
+    if (deployedFacts) {
+      for (const [name, value] of [
+        ["serialNumber", deployedFacts.serialNumber],
+        ["validFrom", deployedFacts.validFrom],
+        ["validTo", deployedFacts.validTo],
+        ["subject", deployedFacts.subject],
+        ["issuer", deployedFacts.issuer],
+        [
+          "subjectAltNames",
+          deployedFacts.dnsSans.length > 0 ? deployedFacts.dnsSans.join(",") : null,
+        ],
+      ]) {
+        if (value !== null) verifyMetadata.push({ name, value });
+      }
+    }
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "validation.passed",
+        observedAt: new Date().toISOString(),
+        fingerprintSha256: verifyFingerprint,
+        summary: `Verified deployed certificate fingerprint for job ${jobId} against the live IIS endpoint.`,
+        metadata: verifyMetadata,
+      }),
+    ]);
+
+    // Retention ledger row (decision 18): only for a genuine predecessor
+    // this deploy just superseded. A first-ever bind (outgoingThumbprint
+    // null) or an idempotent skip (outgoing === new) has nothing to retire.
+    if (
+      isNonEmptyStringValue(deployResult.outgoingThumbprint) &&
+      deployResult.outgoingThumbprint !== deployResult.boundThumbprint
+    ) {
+      try {
+        await recordSupersededWindowsCertificate({
+          jobId,
+          stateDir,
+          store: target.store,
+          oldThumbprint: deployResult.outgoingThumbprint,
+          replacementThumbprint: deployResult.boundThumbprint,
+          log,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+      } catch (err) {
+        // A ledger-write failure must never turn an already-succeeded,
+        // TLS-verified cutover into a reported job failure: decision 18's
+        // ledger governs LATER cleanup timing, not whether this renewal
+        // succeeded. The predecessor material simply stays in the store
+        // (the safe failure mode) until an operator or a future sweep
+        // notices; this is logged, not swallowed silently.
+        emitLog(
+          log,
+          `tokentimer-agent: job ${jobId}: failed to record retention-ledger row for ` +
+            `superseded thumbprint ${deployResult.outgoingThumbprint}; predecessor material ` +
+            `remains in the store (safe failure mode): ${err.message}`,
+        );
+      }
+    }
+
+    return { status: "succeeded", keyRotated: null };
+  } finally {
+    storeLock.release();
+  }
+}
+
+/**
+ * Persists a ../windows-retention ledger row for the certificate an IIS
+ * bind just superseded (decision 18: "written in the same operation that
+ * completes cutover verification"). `cngKeyContainerId` and `oldNotAfter`
+ * are looked up from the live machine store rather than threaded through
+ * from the job, since the predecessor's own container/validity are facts
+ * about ITS certificate object, not this job's.
+ *
+ * Ownership is decided by THREE independent signals, ALL required, not
+ * merely container PRESENCE: any non-exportable CNG certificate (one an
+ * operator or a different tool enrolled directly on this host, not just
+ * one this agent installed) also reports a "Key Container =" line in
+ * certutil's output, so presence alone is not evidence this agent may
+ * delete it; a container name matching this agent's own naming convention
+ * alone is a closed-alphabet pattern match, not proof this agent process
+ * actually created that exact container; and even a genuine
+ * recordIssuedContainer record only proves this agent created the
+ * CONTAINER, not that this agent's certificate is what is CURRENTLY
+ * enrolled to it. An operator who later enrolled a different certificate
+ * into an agent-created container
+ * -- e.g. one reconcileOrphanedWindowsCngContainers found "enrolled" and
+ * therefore left alone -- could otherwise inherit tokentimer_installed
+ * provenance for that unrelated certificate). The three signals:
+ *   1. isAgentOwnedContainerName -- the container name matches this
+ *      agent's own buildContainerName convention.
+ *   2. A recordIssuedContainer record exists for that exact container,
+ *      proving THIS agent's own process actually issued it, independent
+ *      of its name.
+ *   3. That record's status has been upgraded to "enrolled_by_agent" (by
+ *      ../windows-cert-store's markIssuedContainerAccepted, called right
+ *      after a successful certreq -accept) AND its acceptedThumbprint
+ *      matches the predecessor certificate's OWN thumbprint -- proving
+ *      this agent's ACME-issued certificate, specifically, is what is
+ *      currently enrolled to that container, not merely that the
+ *      container itself has agent provenance.
+ * All three must hold for ownershipProvenance to be "tokentimer_installed";
+ * any one missing keeps the certificate "preexisting" (permanently
+ * ineligible for automated cleanup per ../windows-retention's
+ * evaluateEligibility), matching decision 18's "never delete material
+ * this agent cannot prove it installed" -- now with a signal tied to the
+ * actual certificate, not only its container.
+ *
+ * A predecessor whose store entry cannot be found (already removed by a
+ * prior sweep), one with no key container at all (e.g. an operator-
+ * imported PFX cert), or one whose key container does not satisfy ALL
+ * THREE ownership signals above, is recorded with ownershipProvenance
+ * "preexisting" and a placeholder container id, which
+ * ../windows-retention's evaluateEligibility's ownership check then keeps
+ * permanently ineligible for automated cleanup -- never deleting material
+ * this agent cannot prove it installed.
+ *
+ * @param {object} params
+ * @returns {Promise<void>}
+ */
+async function recordSupersededWindowsCertificate({
+  jobId,
+  stateDir,
+  store,
+  oldThumbprint,
+  replacementThumbprint,
+  log,
+  execFileImpl,
+}) {
+  const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
+  const normalizedOld = normalizeRetentionThumbprint(oldThumbprint);
+
+  // Idempotent: a retried/duplicate-dispatched job that already recorded
+  // this exact supersession must not throw ROW_ALREADY_EXISTS.
+  const existing = readLedgerRow(ledgerDir, normalizedOld);
+  if (existing !== null) {
+    emitLog(
+      log,
+      `tokentimer-agent: job ${jobId}: retention-ledger row for ${normalizedOld} already exists, skipping (idempotent)`,
+    );
+    return;
+  }
+
+  const storeResult = await listMachineStoreCertificates({
+    store,
+    ...(execFileImpl ? { execFileImpl } : {}),
+  });
+  const predecessor =
+    storeResult.ok === true
+      ? storeResult.certificates.find((cert) => cert.thumbprint === normalizedOld)
+      : null;
+
+  const issuedRecord =
+    predecessor && isAgentOwnedContainerName(predecessor.keyContainer)
+      ? readIssuedContainerRecord({ stateDir, containerName: predecessor.keyContainer })
+      : null;
+
+  const provenConfidently =
+    predecessor !== null &&
+    predecessor !== undefined &&
+    isAgentOwnedContainerName(predecessor.keyContainer) &&
+    issuedRecord !== null &&
+    issuedRecord.status === "enrolled_by_agent" &&
+    isNonEmptyStringValue(issuedRecord.acceptedThumbprint) &&
+    issuedRecord.acceptedThumbprint.toUpperCase() === normalizedOld;
+
+  const ownershipProvenance = provenConfidently ? "tokentimer_installed" : "preexisting";
+  const cngKeyContainerId = provenConfidently
+    ? predecessor.keyContainer
+    : buildContainerName(`unknown-${normalizedOld.slice(0, 16)}`);
+  const oldNotAfter =
+    predecessor && isIsoParseable(predecessor.notAfter)
+      ? new Date(predecessor.notAfter).toISOString()
+      : new Date().toISOString();
+
+  createLedgerRow({
+    ledgerDir,
+    oldThumbprint: normalizedOld,
+    replacementThumbprint: normalizeRetentionThumbprint(replacementThumbprint),
+    cngKeyContainerId,
+    verifiedCutoverAt: new Date().toISOString(),
+    oldNotAfter,
+    ownershipProvenance,
+    store,
+    jobOrRollbackJournalRefs: [{ ref: jobId, active: false }],
+  });
+}
+
+function isIsoParseable(value) {
+  return typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Parses one ../windows-discovery `listHttpSysBindings` entry's `ipPort`
+ * string (an `IP:port` or `Hostname:port` literal, per that module's own
+ * `keyedBy` field) into the `{ address, port }` shape ../windows-iis's
+ * `resolveVerificationTarget` expects. Splits on the LAST colon so a
+ * bracketed IPv6 literal (`[::1]:443`) is not mis-split on one of its own
+ * embedded colons.
+ * @param {string} ipPort
+ * @returns {{ address: string, port: number }|null} null if unparseable.
+ */
+function splitIpPortLiteral(ipPort) {
+  if (!isNonEmptyStringValue(ipPort)) return null;
+  const lastColon = ipPort.lastIndexOf(":");
+  if (lastColon <= 0 || lastColon === ipPort.length - 1) return null;
+  const address = ipPort.slice(0, lastColon);
+  const port = Number(ipPort.slice(lastColon + 1));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { address, port };
+}
+
+/**
+ * Resolves the real TCP host/port/SNI a retention sweep should re-probe
+ * for one ../windows-discovery binding entry, reusing ../windows-iis's own
+ * `resolveVerificationTarget` (the exact same wildcard-to-loopback mapping
+ * decision 13's own bind-time verification step uses) rather than
+ * inventing a second address-resolution policy for the sweep.
+ * @param {{ ipPort: string, keyedBy: "ipport"|"hostnameport" }} binding
+ * @returns {{ host: string, port: number, servername: string|undefined }|null}
+ */
+function resolveSweepVerificationTarget(binding) {
+  const parsed = splitIpPortLiteral(binding.ipPort);
+  if (parsed === null) return null;
+  const isHostnameKeyed = binding.keyedBy === "hostnameport";
+  const target = resolveVerificationTarget({
+    address: isHostnameKeyed ? "*" : parsed.address,
+    ...(isHostnameKeyed ? { sniHost: parsed.address } : {}),
+  });
+  return { host: target.host, port: parsed.port, servername: target.servername };
+}
+
+/**
+ * Opens a real TLS handshake against `host:port` (optionally with SNI) and
+ * returns the sha1(DER) thumbprint of whatever certificate is presented --
+ * the same identifier space every thumbprint in this module and
+ * ../windows-retention's ledger already lives in -- or null on any
+ * connect/handshake failure or timeout. Deliberately does not validate the
+ * chain (`rejectUnauthorized: false`): like ../verify's own fingerprint-
+ * pinned verification, the thumbprint COMPARISON the caller makes against
+ * a known-expected value is the actual verification here, not anything
+ * TLS's own trust store would decide.
+ * @param {object} input
+ * @param {string} input.host
+ * @param {number} input.port
+ * @param {string} [input.servername]
+ * @param {Function} [input.connectImpl] defaults to tls.connect.
+ * @param {number} [input.timeoutMs]
+ * @returns {Promise<string|null>} uppercase 40-hex-char thumbprint, or null.
+ */
+function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000 }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    let socket = null;
+
+    function settle(value) {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      if (socket) {
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort teardown
+        }
+      }
+      resolve(value);
+    }
+
+    timer = setTimeout(() => settle(null), timeoutMs);
+
+    try {
+      socket = connectImpl({
+        host,
+        port,
+        ...(servername !== undefined ? { servername } : {}),
+        rejectUnauthorized: false,
+      });
+    } catch {
+      settle(null);
+      return;
+    }
+
+    socket.on("secureConnect", () => {
+      try {
+        const peerCert = socket.getPeerCertificate();
+        if (!peerCert || !peerCert.raw) {
+          settle(null);
+          return;
+        }
+        settle(crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase());
+      } catch {
+        settle(null);
+      }
+    });
+    socket.on("error", () => settle(null));
+  });
+}
+
+/**
+ * Runs one pass of the ADR-0012 decision 18 retention sweep over every row
+ * in this agent's superseded-certificate ledger (../windows-retention),
+ * re-gathering the live facts evaluateEligibility needs from this host --
+ * this is the periodic caller ../windows-retention's own doc comment
+ * flags as the one piece it deliberately does not own -- and performing
+ * the actual store/key-container deletion for whatever comes back
+ * eligible.
+ *
+ * Fail-safe posture: when a fact-gathering step itself cannot complete
+ * (http.sys or the store cannot be queried), this treats the corresponding
+ * eligibility condition as NOT satisfied (still bound / shared / failed
+ * handshake) rather than as "unknown, assume fine" -- decision 18's own
+ * "a still-bound predecessor is the safe failure mode" principle applied
+ * to the sweep's own fact-gathering, not just to the six conditions
+ * themselves.
+ *
+ * @param {object} input
+ * @param {string} input.stateDir agent state dir (ledger + store-mutex location).
+ * @param {number} input.retentionHours validated `windows.supersededRetentionHours`.
+ * @param {object} [input.log]
+ * @param {Function} [input.execFileImpl] injection point for certutil.exe/netsh.exe.
+ * @param {Function} [input.connectImpl] injection point for the replacement handshake probe.
+ * @returns {Promise<{removed: string[], deferred: object[], deferredCountByReason: Record<string, number>}|null>}
+ *   null when there is no ledger directory yet (nothing has ever been superseded).
+ */
+async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl }) {
+  const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
+  if (!fs.existsSync(ledgerDir)) return null;
+
+  async function gatherContext(row) {
+    const store = row.store || "My";
+
+    const bindingsResult = await listHttpSysBindings({
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    const bindingStillReferencesOldThumbprint =
+      bindingsResult.ok !== true
+        ? true
+        : bindingsResult.bindings.some(
+            (binding) =>
+              isNonEmptyStringValue(binding.thumbprint) &&
+              normalizeRetentionThumbprint(binding.thumbprint) === row.oldThumbprint,
+          );
+
+    const storeResult = await listMachineStoreCertificates({
+      store,
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    const keyContainerSharedWithSurvivor =
+      storeResult.ok !== true
+        ? true
+        : storeResult.certificates.some(
+            (cert) =>
+              cert.thumbprint !== row.oldThumbprint &&
+              isNonEmptyStringValue(cert.keyContainer) &&
+              cert.keyContainer === row.cngKeyContainerId,
+          );
+
+    let replacementPassesHandshakeNow = false;
+    if (bindingsResult.ok === true) {
+      const replacementBinding = bindingsResult.bindings.find(
+        (binding) =>
+          isNonEmptyStringValue(binding.thumbprint) &&
+          normalizeRetentionThumbprint(binding.thumbprint) === row.replacementThumbprint,
+      );
+      const target = replacementBinding ? resolveSweepVerificationTarget(replacementBinding) : null;
+      if (target !== null) {
+        const observedThumbprint = await probeTlsSha1Thumbprint({
+          host: target.host,
+          port: target.port,
+          servername: target.servername,
+          ...(connectImpl ? { connectImpl } : {}),
+        });
+        replacementPassesHandshakeNow = observedThumbprint === row.replacementThumbprint;
+      }
+    }
+
+    return { bindingStillReferencesOldThumbprint, keyContainerSharedWithSurvivor, replacementPassesHandshakeNow };
+  }
+
+  async function performCleanup(row) {
+    const store = row.store || "My";
+    const storeLock = acquireStoreLock(stateDir, store);
+    try {
+      const result = await removeCertificateAndKeyContainer({
+        thumbprint: row.oldThumbprint,
+        store,
+        containerName: row.cngKeyContainerId,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+      if (result.ok !== true) {
+        throw new Error(
+          `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
+            result.stderrExcerpt,
+        );
+      }
+      removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
+    } finally {
+      storeLock.release();
+    }
+  }
+
+  const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
+  emitLog(
+    log,
+    `tokentimer-agent: windows-retention sweep: removed=${summary.removed.length} ` +
+      `deferred=${summary.deferred.length}`,
+  );
+  return summary;
+}
+
+/**
+ * Acquires the store-scoped mutex (../windows-cert-store's acquireStoreLock)
+ * for every store a windows-iis mutation against `targetStore` actually
+ * touches, not merely `targetStore` itself: `certreq -accept` always
+ * populates the default `My` store first regardless of the requested target
+ * store, with a non-default target store (e.g. `WebHosting`) reached only
+ * by a SEPARATE mirror step afterward (`certutil -addstore`/`-repairstore`/
+ * `-delstore My`, see acceptCertificateViaCng's own doc comment). A caller
+ * that locked only `targetStore` would leave `My` itself unprotected during
+ * that window, letting an unrelated `My`-targeted job's own concurrent
+ * `certreq -accept` (or this same job's later `-delstore My`) race it.
+ * Normal execution
+ * must match that same locking scope, not only the crash-reconciliation
+ * path.
+ *
+ * Deduplicated (the common `store: "My"` case acquires one lock, not two)
+ * and always acquired in the SAME deterministic order ("My" first, see the
+ * `Set` iteration order below) every call site uses, so this function and
+ * reconcileOrphanedWindowsCngContainers can never deadlock against each
+ * other by acquiring the same two locks in opposite order.
+ *
+ * @param {string} stateDir
+ * @param {string} targetStore
+ * @returns {{ release: () => void }} `release` releases every lock this
+ *   call acquired, in any order. Throws (without leaking any lock already
+ *   acquired in this call) if any store in the set cannot be locked.
+ */
+function acquireWindowsStoreLocks(stateDir, targetStore) {
+  const storeNames = [...new Set(["My", targetStore])];
+  const locks = [];
+  try {
+    for (const storeName of storeNames) {
+      locks.push(acquireStoreLock(stateDir, storeName));
+    }
+  } catch (err) {
+    for (const lock of locks) lock.release();
+    throw err;
+  }
+  return {
+    release() {
+      for (const lock of locks) lock.release();
+    },
+  };
+}
+
+/**
+ * Startup crash-reconciliation for CNG key containers a windows-iis renewal
+ * attempt created (../windows-cert-store's generateCsrViaCng) but that
+ * never reached cutover before the agent process died: unlike a superseded
+ * certificate (../windows-retention's ledger, which governs material that
+ * WAS successfully enrolled and bound at least once), a container journaled
+ * here by recordWindowsCngContainer but never enrolled to ANY certificate in
+ * EITHER the default `My` store or its recorded target store (see below for
+ * why both) is inert, unbound, and safe to free autonomously -- there is no
+ * certificate, no binding, no rollback value it protects.
+ *
+ * This is the autonomous half of crash recovery job-journal's own doc
+ * comment describes: scanUnresolvedJournalEntries (called separately, at
+ * every startup, unconditionally) still reports the underlying job-attempt
+ * OUTCOME as requiring operator reconciliation (this function does nothing
+ * to resolve that, and does not call clearJournalOnTerminal); this function
+ * only ever frees the one piece of dead-weight state that is unambiguously
+ * safe to clean up on its own -- an orphaned, never-enrolled CNG container
+ * -- and records that it did so via markWindowsCngContainerReconciled, so a
+ * future restart does not repeat the same certutil call against a
+ * container that may have already been freed (or since become legitimately
+ * used by a different, later attempt this sweep has no visibility into, in
+ * which case the store lookup below simply finds it non-orphaned and skips
+ * it every time, indefinitely).
+ *
+ * Checks BOTH the default `My` store AND the job's recorded target store
+ * (which may be the same store, e.g. the common `My`-only case) before
+ * concluding a container is orphaned. Checking only the target store is
+ * unsafe for a non-default-store
+ * job: recordWindowsCngContainer's `store` field is the job's FINAL target
+ * (e.g. "WebHosting"), written at keygen time, well before certreq -accept
+ * ever runs; but `certreq -accept` itself only ever populates the default
+ * `My` store (see acceptCertificateViaCng's own doc comment), with a
+ * SEPARATE, LATER mirroring step (`certutil -addstore`/`-repairstore`/
+ * `-delstore`) moving the certificate into the target store afterward. A
+ * hard crash between those two steps leaves a certificate genuinely using
+ * this key container sitting only in `My`; querying only "WebHosting"
+ * would find nothing there and incorrectly conclude "orphan", deleting a
+ * private key a real, enrolled certificate depends on. Querying both
+ * stores (deduplicated when they are the same) closes that window: the
+ * container is treated as orphaned -- and only then freed -- if and only
+ * if NEITHER store reports a certificate referencing it.
+ *
+ * Fails closed on a store-query error: if either store's lookup cannot be
+ * completed, this entry is skipped (deferred to the next startup) rather
+ * than treated as "not enrolled there", since a query failure is not
+ * evidence of absence and this function must never delete a key it could
+ * not positively rule out as still in use.
+ *
+ * Every entry this function inspects and every cleanup attempt it makes is
+ * independently logged; a failure to free one container defers it to the
+ * next startup rather than throwing, matching this package's "a blocked
+ * cleanup is the safe failure mode" convention elsewhere (../windows-retention's
+ * sweepLedger, this same file's runWindowsRetentionSweep).
+ *
+ * @param {object} input
+ * @param {string} input.stateDir agent state dir (journal + store-mutex location).
+ * @param {object} [input.log]
+ * @param {Function} [input.execFileImpl] injection point for certutil.exe.
+ * @returns {Promise<{ freed: string[], skipped: { containerName: string, reason: string }[] }>}
+ */
+async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl }) {
+  const freed = [];
+  const skipped = [];
+
+  let entries;
+  try {
+    entries = scanUnresolvedJournalEntries(stateDir);
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: windows-cng-container reconciliation: journal scan failed: ${err.message}`,
+    );
+    return { freed, skipped };
+  }
+
+  for (const entry of entries) {
+    const containerName = entry.windowsCngContainerName;
+    if (!isNonEmptyStringValue(containerName)) continue;
+    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+
+    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+    // Deduplicated: the common case (store: "My", or no store recorded at
+    // all) checks the same store only once. Must match
+    // acquireWindowsStoreLocks' own store set exactly, since the lock
+    // acquired below and the certificate query further down must agree on
+    // which stores are in scope.
+    const storesToCheck = [...new Set(["My", targetStore])];
+
+    let storeLocks;
+    try {
+      storeLocks = acquireWindowsStoreLocks(stateDir, targetStore);
+    } catch (err) {
+      // A concurrent enrollment/binding operation legitimately holds one
+      // of these stores' mutexes right now; retry on a future startup
+      // rather than waiting here, since this sweep must never block agent
+      // startup.
+      skipped.push({ containerName, reason: `store locked: ${err.message}` });
+      continue;
+    }
+
+    try {
+      let enrolled = false;
+      let queryFailure = null;
+      for (const storeName of storesToCheck) {
+        const storeResult = await listMachineStoreCertificates({
+          store: storeName,
+          ...(execFileImpl ? { execFileImpl } : {}),
+        });
+        if (storeResult.ok !== true) {
+          queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
+          break;
+        }
+        if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
+          enrolled = true;
+          break;
+        }
+      }
+
+      if (queryFailure) {
+        // Fail closed: a store lookup that could not be completed is NOT
+        // evidence the container is unused there, so this entry must be
+        // deferred rather than treated as safe to delete.
+        skipped.push({ containerName, reason: queryFailure });
+        continue;
+      }
+
+      if (enrolled) {
+        // A later attempt (or an operator) legitimately enrolled a
+        // certificate to this container -- either in "My" (e.g. certreq
+        // -accept succeeded but a crash interrupted the later mirror step
+        // into targetStore) or in targetStore itself -- since the journal
+        // entry was written; never free a container backing a real
+        // certificate.
+        try {
+          markWindowsCngContainerReconciled({
+            stateDir,
+            jobId: entry.jobId,
+            attemptId: entry.attemptId,
+          });
+        } catch {
+          // Best-effort; the container itself is safe either way, and an
+          // un-marked entry is simply re-checked (and again found
+          // enrolled, hence still skipped) on the next startup.
+        }
+        skipped.push({ containerName, reason: "enrolled" });
+        continue;
+      }
+
+      const cleanup = await removeAbandonedKeyContainer({
+        containerName,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+      if (cleanup.ok !== true) {
+        skipped.push({
+          containerName,
+          reason: `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+        });
+        continue;
+      }
+      try {
+        markWindowsCngContainerReconciled({
+          stateDir,
+          jobId: entry.jobId,
+          attemptId: entry.attemptId,
+        });
+      } catch {
+        // Best-effort; the container is already freed regardless.
+      }
+      removeIssuedContainerRecord({ stateDir, containerName });
+      freed.push(containerName);
+    } finally {
+      storeLocks.release();
+    }
+  }
+
+  if (freed.length > 0 || skipped.length > 0) {
+    emitLog(
+      log,
+      `tokentimer-agent: windows-cng-container reconciliation: freed=${freed.length} ` +
+        `skipped=${skipped.length}${skipped.length > 0 ? ` (${skipped.map((s) => s.reason).join("; ")})` : ""}`,
+    );
+  }
+  return { freed, skipped };
+}
+
+/**
+ * Executes a "renew" job whose custody is `os-store-managed` against a
+ * `windows-iis` target (ADR-0012 decisions 9 and 13): the
+ * CNG-native counterpart to executeRenewJob's file-based key/deploy path.
+ *
+ * Steps 1-2 (key + CSR) use ../windows-cert-store's generateCsrViaCng
+ * instead of keys/generateKeyPairToFile + generateCsr: the private key is
+ * generated directly inside the CNG machine key store and never exists as
+ * a file. Step 3 (ACME order) is otherwise IDENTICAL to executeRenewJob's:
+ * the CNG-generated CSR is written to the same job-scoped csrPath the ACME
+ * adapter already expects, so the adapter itself has no CNG-specific
+ * branch at all. Steps 4-6 (runWindowsIisDeployTail) replace
+ * deployCertificate/deployCertificateAndKey with ../windows-cert-store's
+ * acceptCertificateViaCng (completes CNG enrollment) and ../windows-iis's
+ * deployIisBinding (rebind + verify + rollback), then persist a
+ * ../windows-retention ledger row for whatever certificate the binding
+ * previously pointed at.
+ *
+ * Single-target only: a windows-iis job resolving to more than one deploy
+ * target is rejected rather than partially handled, since decision 13's
+ * per-store/binding mutex model is defined for one target at a time.
+ *
+ * @returns {Promise<{status: string, keyRotated: null, errorMessage?: string|null, rejectionReason?: string}>}
+ */
+async function executeWindowsIisRenewJob({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  executionContext,
+  log,
+  leaseOpts = null,
+  onBeforeMutation = null,
+  journalCtx = null,
+}) {
+  const { execution } = executionContext;
+  const commonName = job?.target?.reference;
+  if (typeof commonName !== "string" || commonName.length === 0) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: "renew job has no target.reference to use as the certificate CN",
+    };
+  }
+  if (!isValidCertificateId(job.certificateId)) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `renew job has a missing or malformed certificateId (expected 1-128 chars ` +
+          `matching ^[A-Za-z0-9_.:-]+$, got ${JSON.stringify(job.certificateId)})`,
+      ),
+    };
+  }
+
+  const sansResolved = resolveJobSans(job);
+  if (sansResolved && sansResolved.error) {
+    return { status: "failed", keyRotated: null, errorMessage: sansResolved.error };
+  }
+  const domains =
+    sansResolved && Array.isArray(sansResolved.sans) ? sansResolved.sans : [commonName];
+  const csrCommonName = domains.includes(commonName) ? commonName : domains[0];
+
+  const deployTargetsResolved = resolveJobDeployTargets(job);
+  if (deployTargetsResolved.error) {
+    return { status: "failed", keyRotated: null, errorMessage: deployTargetsResolved.error };
+  }
+  const deployTargets = deployTargetsResolved.targets;
+  if (deployTargets.length !== 1 || deployTargets[0].type !== "windows-iis") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage:
+        "renew job keyMode is os-store-managed but does not resolve to exactly one " +
+        "windows-iis deploy target (multi-target windows-iis renewal is not supported yet)",
+    };
+  }
+  const windowsTarget = deployTargets[0];
+  if (
+    !isNonEmptyStringValue(windowsTarget.store) ||
+    windowsTarget.binding === null ||
+    typeof windowsTarget.binding !== "object" ||
+    !isNonEmptyStringValue(windowsTarget.binding.site) ||
+    !Number.isInteger(windowsTarget.binding.port)
+  ) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: "windows-iis target requires target.store and target.binding.{site,port}",
+    };
+  }
+
+  if (typeof job.commandRef !== "string" || job.commandRef.length === 0) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: "renew job carries no commandRef naming an allowlisted ACME command",
+    };
+  }
+  const commandVerdict = policyEngine.checkCommandRef(job.commandRef);
+  if (!commandVerdict.allowed) {
+    return {
+      status: "rejected",
+      keyRotated: null,
+      rejectionReason: commandVerdict.rejectionReason,
+      errorMessage: boundErrorMessage(commandVerdict.detail),
+    };
+  }
+  if (typeof job.caEndpoint !== "string" || job.caEndpoint.length === 0) {
+    return { status: "failed", keyRotated: null, errorMessage: "renew job carries no caEndpoint" };
+  }
+  if (typeof job.dnsProvider === "string" && job.dnsProvider.length > 0) {
+    const dnsVerdict = policyEngine.checkDnsProvider(job.dnsProvider);
+    if (!dnsVerdict.allowed) {
+      return {
+        status: "rejected",
+        keyRotated: null,
+        rejectionReason: dnsVerdict.rejectionReason,
+        errorMessage: boundErrorMessage(dnsVerdict.detail),
+      };
+    }
+  }
+  if (typeof job.dnsZone === "string" && job.dnsZone.length > 0) {
+    const zoneVerdict = policyEngine.checkDnsZone(job.dnsZone);
+    if (!zoneVerdict.allowed) {
+      return {
+        status: "rejected",
+        keyRotated: null,
+        rejectionReason: zoneVerdict.rejectionReason,
+        errorMessage: boundErrorMessage(zoneVerdict.detail),
+      };
+    }
+  }
+
+  const keyAlgMapped = mapJobKeyAlgorithm(job);
+  if (keyAlgMapped && keyAlgMapped.error) {
+    return { status: "failed", keyRotated: null, errorMessage: keyAlgMapped.error };
+  }
+  const cngAlgorithm = keyAlgMapped && keyAlgMapped.algorithm ? keyAlgMapped.algorithm : "rsa-2048";
+
+  let eabCredentials = null;
+  const eabAccountRef = resolveJobEabAccountRef(job);
+  if (eabAccountRef !== null) {
+    try {
+      eabCredentials = resolveAcmeAccountCredentials(eabAccountRef, {
+        acmeAccounts: executionContext.acmeAccounts,
+      });
+    } catch (err) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `renew job requires ACME account/EAB credentials for ref ${JSON.stringify(eabAccountRef)} ` +
+            `but they are not available locally: ${err.message}`,
+        ),
+      };
+    }
+  }
+  const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
+
+  const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
+  const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
+  const windowsExecFileImpl = executionContext.windowsExecFileImpl;
+  const windowsConnectImpl = executionContext.windowsConnectImpl;
+
+  // Steps 1-2: CNG-native key + CSR. The private key never exists as a
+  // file (it is a CNG key handle inside containerName); only the CSR
+  // (public material) is ever written to disk, at the same job-scoped
+  // csrPath the ACME adapter already expects below.
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
+  if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
+  emitInfo(`job ${jobId}: generating CNG-native key + CSR for CN ${csrCommonName}`);
+  const csrResult = await generateCsrViaCng({
+    commonName: csrCommonName,
+    altNames: domains,
+    jobId: job.certificateId,
+    algorithm: cngAlgorithm,
+    workDir: cngWorkDir,
+    ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+  });
+  if (!csrResult.ok) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `CNG CSR generation failed (exit code ${csrResult.exitCode}): ${csrResult.stderrExcerpt}`,
+      ),
+    };
+  }
+  const containerName = csrResult.containerName;
+  // Recorded onto the same journal entry markMutation("keygen") already
+  // wrote above, so a crash between here and cutover leaves a startup
+  // sweep (reconcileOrphanedWindowsCngContainers) enough information to
+  // autonomously free this exact container -- not just report that SOME
+  // mutation happened. Best-effort: a journal-write failure here must
+  // never abort an otherwise-healthy renewal over a crash-recovery
+  // convenience write; the container remains freeable manually either way.
+  if (journalCtx) {
+    try {
+      recordWindowsCngContainer({
+        ...journalCtx,
+        containerName,
+        store: windowsTarget.store,
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+          `in the job journal (non-fatal, continuing): ${err.message}`,
+      );
+    }
+  }
+  // Durable issuance record (ADR-0012 decision 18's ownership-provenance
+  // gate; see windows-cert-store's ISSUED_CONTAINER_RECORD_DIR_NAME doc
+  // comment): outlives the job-journal entry above, so
+  // recordSupersededWindowsCertificate can later require BOTH the
+  // container's naming convention AND this persisted issuance record
+  // before ever treating a predecessor certificate as this agent's own to
+  // delete. Best-effort for the same reason as the journal write above.
+  try {
+    recordIssuedContainer({
+      stateDir,
+      containerName,
+      jobId,
+      certificateId: job.certificateId,
+    });
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+        `issuance (non-fatal, continuing): ${err.message}`,
+    );
+  }
+  fs.mkdirSync(execution.keysDir, { recursive: true });
+  const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
+  fs.writeFileSync(csrPath, csrResult.csrPem, { mode: 0o600 });
+
+  const stagedCertPath = path.join(execution.keysDir, `${jobId}.cert.pem`);
+  const stagedCertPaths = resolveCertificateOutputPaths(stagedCertPath);
+
+  let certificatePem;
+  try {
+    // Step 3: ACME renewal, unmodified from executeRenewJob's file-based
+    // path -- the adapter only ever sees a csrPath file, never how the CSR
+    // inside it was produced.
+    {
+      const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+      if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+    }
+    if (typeof onBeforeMutation === "function") onBeforeMutation("acme");
+    emitInfo(
+      `job ${jobId}: starting ACME order (${acmeKind}) against ${job.caEndpoint} for ${domains.join(", ")}`,
+    );
+    const adapter = createAcmeAdapter({
+      kind: acmeKind,
+      commandProfile: { argv: commandVerdict.argv },
+      execFileImpl: executionContext.acmeExecFileImpl,
+    });
+    const renewalOpts = {
+      caEndpoint: job.caEndpoint,
+      domains,
+      csrPath,
+      outCertPath: stagedCertPath,
+      stateDir,
+      checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
+    };
+    if (typeof job.preferredChain === "string" && job.preferredChain.length > 0) {
+      renewalOpts.preferredChain = job.preferredChain;
+    } else if (
+      typeof job?.renewalProfile?.preferredChain === "string" &&
+      job.renewalProfile.preferredChain.length > 0
+    ) {
+      renewalOpts.preferredChain = job.renewalProfile.preferredChain;
+    }
+    if (eabCredentials) {
+      renewalOpts.eabKid = eabCredentials.eabKid;
+      renewalOpts.eabHmacKey = eabCredentials.eabHmacKey;
+    }
+    const renewal = await adapter.runRenewal(renewalOpts);
+    if (renewal.allowed === false) {
+      return {
+        status: "rejected",
+        keyRotated: null,
+        rejectionReason: renewal.rejectionReason,
+        errorMessage: boundErrorMessage(renewal.detail),
+      };
+    }
+    if (renewal.renewed !== true) {
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `ACME renewal step failed for job ${jobId} (exit code ${renewal.exitCode}).`,
+          metadata: [
+            { name: "step", value: "acme" },
+            { name: "exitCode", value: renewal.exitCode },
+            { name: "stderrExcerpt", value: boundMetadataExcerpt(renewal.stderrExcerpt) },
+            { name: "stdoutExcerpt", value: boundMetadataExcerpt(renewal.stdoutExcerpt) },
+          ],
+        }),
+      ]);
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `acme step failed with exit code ${renewal.exitCode}: ${acmeFailureDetail(renewal)}`,
+        ),
+      };
+    }
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "validation.passed",
+        observedAt: new Date().toISOString(),
+        summary: `ACME renewal step succeeded for job ${jobId}.`,
+        metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
+      }),
+    ]);
+    emitInfo(`job ${jobId}: ACME order succeeded`);
+
+    const staged = readStagedCertificateChain(stagedCertPaths);
+    if (staged.error) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `acme step reported success but produced no certificate file: ${staged.error}`,
+        ),
+      };
+    }
+    certificatePem = staged.pem;
+  } finally {
+    // The CSR is public material, but it is job-scoped scratch: remove it.
+    // Unlike the file-based path, there is no staged private key to worry
+    // about leaking here -- the CNG key never left the store.
+    fs.rmSync(csrPath, { force: true });
+    for (const stagedArtifact of Object.values(stagedCertPaths)) {
+      fs.rmSync(stagedArtifact, { force: true });
+    }
+    // certificatePem is only ever assigned on the success path above,
+    // just before this finally runs; if the ACME step was rejected,
+    // failed, or produced no certificate (every early `return` above), the
+    // CNG key container generateCsrViaCng just created is now orphaned --
+    // never enrolled, never bound to anything, and (unlike a superseded
+    // cert handled by ../windows-retention's ledger/sweep) never recorded
+    // anywhere else, so this is the only place that can ever free it.
+    // Best-effort and non-fatal: a cleanup failure here must not turn an
+    // already-reported ACME failure into a second, different failure, and
+    // the orphaned container itself is inert (non-exportable, unbound,
+    // and safely re-attemptable) rather than a security or correctness
+    // problem if it is briefly leaked.
+    if (certificatePem === undefined) {
+      try {
+        const cleanup = await removeAbandonedKeyContainer({
+          containerName,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        if (cleanup.ok !== true) {
+          emitLog(
+            log,
+            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
+              `orphaned in the CNG key store until manually removed.`,
+          );
+        } else {
+          removeIssuedContainerRecord({ stateDir, containerName });
+        }
+      } catch (err) {
+        emitLog(
+          log,
+          `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `${containerName} after ACME failure: ${err.message}`,
+        );
+      }
+    }
+  }
+
+  // Steps 4-6: CNG accept + IIS bind + retention, under the store mutex
+  // (decision 13: "the per-target mutex covers the store as well as the
+  // binding").
+  return runWindowsIisDeployTail({
+    jobId,
+    client,
+    certificatePem,
+    target: windowsTarget,
+    stateDir,
+    cngWorkDir,
+    log,
+    containerName,
+    leaseOpts,
+    onBeforeMutation,
+    windowsExecFileImpl,
+    windowsConnectImpl,
+  });
 }
 
 /**
@@ -3840,6 +5255,30 @@ async function executeDeployJob({
     };
   }
 
+  // The windows-iis executor (executeWindowsIisRenewJob / 
+  // runWindowsIisDeployTail) only covers the "renew" action's CNG
+  // CSR->accept->bind sequence, where acceptCertificateViaCng's certreq
+  // -accept has a matching pending request (from the CSR this same job
+  // just generated) to complete. A standalone "deploy" job carries an
+  // arbitrary job.certificatePem with no such pending request, and
+  // certreq -accept matches by public key against one -- there is no
+  // "just rebind an already-in-store certificate to this binding" path
+  // yet (that would need to read the certificate out of the store by
+  // thumbprint, which no module here does). Rather than run this target
+  // through the file-based runDeployReloadVerifyForTargets path below
+  // (which would misbehave: windows-iis targets carry certPath: null),
+  // fail loudly and specifically.
+  if (deployTargetsResolved.targets.some((t) => t.type === "windows-iis")) {
+    return {
+      status: "failed",
+      errorMessage:
+        "deploy action does not yet support windows-iis targets (only renew, " +
+        "via the CNG-native os-store-managed path, does); rebinding an " +
+        "already-issued certificate to a different IIS binding without " +
+        "re-issuing is not implemented",
+    };
+  }
+
   // keysDir is staging/custody only — never an implicit production destination.
   // Resolve a permitted agent-local key for validation / paired install when
   // any target (or the job) names a keyPath, or when a certificateId key exists.
@@ -3981,6 +5420,118 @@ async function runDiscoveryScan({ directories, client, log = null }) {
         observedAt,
         fingerprintSha256: cert.fingerprintSha256,
         summary: `Observed certificate at ${cert.path} (subject: ${cert.subject})`,
+        metadata,
+      }),
+    );
+  }
+
+  const EVIDENCE_CHUNK_SIZE = 16;
+  for (let start = 0; start < items.length; start += EVIDENCE_CHUNK_SIZE) {
+    const body = buildEvidenceBody({
+      jobId: null,
+      evidenceItems: items.slice(start, start + EVIDENCE_CHUNK_SIZE),
+    });
+    assertEvidencePayloadSafe(body);
+    await client.reportEvidence(body);
+  }
+
+  return { observed: items.length, warnings: warnings.length };
+}
+
+/**
+ * Runs one observe-only Windows OS-store/IIS/http.sys discovery scan and
+ * reports results as `certificate.observed` evidence, the same event type
+ * and evidence pipeline filesystem discovery (runDiscoveryScan) uses. Fills
+ * the product gap this feature exists to close: a certificate that lives
+ * only in the Windows machine certificate store (bound to an IIS site, or
+ * bound directly via http.sys) previously never appeared in Observed
+ * Locations at all.
+ *
+ * A no-op (0 observed, 0 warnings) on any non-Windows host or when
+ * PowerShell/IIS/netsh are unavailable -- see collectWindowsDiscoveryObservations's
+ * own per-surface graceful degradation. Never throws for a missing
+ * prerequisite; the surrounding poll loop only ever needs to handle this
+ * scan raising for a genuinely unexpected error (e.g. evidence reporting
+ * itself failing).
+ *
+ * Exported for direct unit testing.
+ *
+ * @param {object} params
+ * @param {object} params.client from createProtocolClient
+ * @param {(msg: string) => void} [params.log]
+ * @param {typeof collectWindowsDiscoveryObservations} [params.collect] injection seam for tests
+ * @returns {Promise<{ observed: number, warnings: number }>}
+ */
+async function runWindowsDiscoveryScan({
+  client,
+  stores = ["My"],
+  log = null,
+  collect = collectWindowsDiscoveryObservations,
+}) {
+  const warnings = [];
+  const observations = await collect({
+    stores,
+    onWarning: (message) => warnings.push(message),
+  });
+  for (const warning of warnings) emitLog(log, warning);
+
+  const targetHost = os.hostname();
+  const items = [];
+  const observedAt = new Date().toISOString();
+  for (const observation of observations) {
+    // Structured metadata matching agentObservations.js's generalized
+    // observation contract. filePath is
+    // intentionally absent -- locationKind !== 'filesystem' requires
+    // locationSlot instead, never filePath.
+    const metadata = [
+      { name: "locationKind", value: observation.locationKind },
+      { name: "locationSlot", value: observation.locationSlot },
+      { name: "targetHost", value: targetHost },
+      { name: "subject", value: observation.subject ?? null },
+      { name: "issuer", value: observation.issuer ?? null },
+      { name: "serialNumber", value: observation.serialNumber ?? null },
+      { name: "validFrom", value: observation.notBefore ?? null },
+      { name: "validTo", value: observation.notAfter ?? null },
+      // Boolean fact only, read from the certificate's own HasPrivateKey property
+      // by collectWindowsDiscoveryObservations -- never a key path, export,
+      // or blob. The control plane only derives keyMode: 'os-store-managed'
+      // when this is explicitly true (agentObservations.js), so an agent
+      // that genuinely could not determine this should omit the field
+      // rather than guess; this module always has a real boolean here
+      // because listMachineStoreCertificates always returns one.
+      { name: "keyPresent", value: observation.keyPresent === true },
+      { name: "storeLocation", value: observation.storeLocation ?? null },
+      { name: "storeName", value: observation.storeName ?? null },
+      // Public certificate-store coordinate only. This is the certificate's
+      // SHA-1 thumbprint, never key material, a key path, or an export.
+      { name: "thumbprint", value: observation.thumbprint ?? null },
+    ];
+    if (Array.isArray(observation.subjectAltNames) && observation.subjectAltNames.length > 0) {
+      metadata.push({
+        name: "subjectAltNames",
+        value: JSON.stringify(observation.subjectAltNames),
+      });
+    } else if (typeof observation.subjectAltNames === "string" && observation.subjectAltNames.length > 0) {
+      metadata.push({ name: "subjectAltNames", value: observation.subjectAltNames });
+    }
+    if (observation.locationKind === "iis_binding") {
+      metadata.push({ name: "siteName", value: observation.siteName });
+      metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.sniHost) metadata.push({ name: "sniHost", value: observation.sniHost });
+    }
+    if (observation.locationKind === "http_sys") {
+      metadata.push({ name: "port", value: String(observation.port) });
+      if (observation.boundAddress) {
+        metadata.push({ name: "boundAddress", value: observation.boundAddress });
+      }
+    }
+
+    items.push(
+      buildEvidenceItem({
+        eventType: "certificate.observed",
+        observedAt,
+        fingerprintSha256: observation.fingerprintSha256,
+        summary: `Observed certificate at ${observation.locationSlot} (${observation.locationKind}, subject: ${observation.subject})`,
         metadata,
       }),
     );
@@ -4148,11 +5699,18 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  * module's rationale (a tampered store is a security signal).
  *
  * Exported for direct unit testing; tests may inject acmeExecFileImpl to
- * stub the ACME child process.
+ * stub the ACME child process, and windowsExecFileImpl/windowsConnectImpl
+ * to stub the certreq.exe/certutil.exe/netsh.exe child processes and the
+ * TLS handshake the CNG/IIS/retention modules invoke
+ * (executeWindowsIisRenewJob, runWindowsIisDeployTail).
  *
  * @param {object} params
  * @param {object} params.config from loadAgentConfig
  * @param {Function} [params.acmeExecFileImpl] test-only execFile override
+ * @param {Function} [params.windowsExecFileImpl] test-only execFile override
+ *   for certreq.exe/certutil.exe/netsh.exe
+ * @param {Function} [params.windowsConnectImpl] test-only tls.connect
+ *   override for the post-bind verification handshake
  * @returns {{
  *   enabled: true,
  *   execution: object,
@@ -4161,9 +5719,11 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   clockEstimator: object,
  *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
  *   acmeExecFileImpl: Function|undefined,
+ *   windowsExecFileImpl: Function|undefined,
+ *   windowsConnectImpl: Function|undefined,
  * }|null}
  */
-function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
+function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
@@ -4204,6 +5764,8 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
     pinnedSigningKey: config.pinnedSigningKey,
     acmeAccounts: config.acmeAccounts || null,
     acmeExecFileImpl,
+    windowsExecFileImpl,
+    windowsConnectImpl,
   };
 }
 
@@ -4239,6 +5801,27 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } catch (err) {
     console.error(
       `tokentimer-agent: job-journal scan failed at startup: ${err.message}`,
+    );
+  }
+
+  // Windows CNG container crash-reconciliation: autonomously frees any
+  // key container a windows-iis renewal created but never enrolled to a
+  // certificate before the process died (see this function's own doc
+  // comment for why this is safe without resolving the journal entry
+  // itself). Best-effort and non-fatal: on a non-Windows host, or one with
+  // no windows-cert-store activity yet, every unresolved entry simply has
+  // no windowsCngContainerName field and this loop does nothing.
+  try {
+    await reconcileOrphanedWindowsCngContainers({
+      stateDir: configDir,
+      log: console.error,
+      ...(executionContext?.windowsExecFileImpl
+        ? { execFileImpl: executionContext.windowsExecFileImpl }
+        : {}),
+    });
+  } catch (err) {
+    console.error(
+      `tokentimer-agent: windows-cng-container reconciliation failed at startup: ${err.message}`,
     );
   }
 
@@ -4461,6 +6044,62 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     );
   }
 
+  // Windows superseded-certificate retention sweep (ADR-0012 decision 18):
+  // only meaningful with execution enabled, since without it no windows-iis
+  // renewal can ever have written a ledger row in the first place.
+  // runWindowsRetentionSweep itself no-ops (returns null) until the ledger
+  // directory exists, so this loop is harmless to start unconditionally on
+  // an execution-enabled agent that has never touched Windows targets.
+  if (executionContext) {
+    const retentionStateDir = resolveAgentStateDir(executionContext);
+    if (retentionStateDir) {
+      loops.push(
+        startPollLoop({
+          intervalMs: config.windows.sweepIntervalMs,
+          signal: controller.signal,
+          startImmediately: true,
+          onTick: () =>
+            runWindowsRetentionSweep({
+              stateDir: retentionStateDir,
+              retentionHours: config.windows.supersededRetentionHours,
+              log: defaultAgentLogger,
+              ...(executionContext.windowsExecFileImpl
+                ? { execFileImpl: executionContext.windowsExecFileImpl }
+                : {}),
+              ...(executionContext.windowsConnectImpl
+                ? { connectImpl: executionContext.windowsConnectImpl }
+                : {}),
+            }).catch((err) => {
+              defaultAgentLogger.error(
+                `tokentimer-agent: windows-retention sweep failed: ${err.message}`,
+              );
+            }),
+        }),
+      );
+    }
+  }
+
+  // Windows OS-store/IIS/http.sys discovery: unlike filesystem discovery,
+  // this needs no operator-configured directories (self-discovering via
+  // ../windows-discovery's certutil/netsh/appcmd calls), so it starts
+  // whenever config.windowsDiscovery.enabled is true and the host is
+  // actually Windows. It is a no-op elsewhere (isWindows() false), so this
+  // check avoids scheduling a poll loop whose every tick is guaranteed to
+  // be a trivial [] result.
+  if (config.windowsDiscovery && config.windowsDiscovery.enabled && isWindows()) {
+    loops.push(
+      startPollLoop({
+        intervalMs: config.windowsDiscovery.intervalMs,
+        signal: controller.signal,
+        startImmediately: true,
+        onTick: () => runWindowsDiscoveryScan({
+          client,
+          stores: config.windowsDiscovery.stores,
+        }),
+      }),
+    );
+  }
+
   try {
     await Promise.all(loops);
   } finally {
@@ -4476,6 +6115,10 @@ module.exports = {
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   executeJob,
   executeDeployJob,
+  executeRenewJob,
+  executeWindowsIisRenewJob,
+  runWindowsIisDeployTail,
+  recordSupersededWindowsCertificate,
   runDeployReloadVerify,
   runDeployReloadVerifyForTargets,
   buildExecutionContext,
@@ -4487,6 +6130,10 @@ module.exports = {
   resolveJobMode,
   isValidCertificateId,
   runDiscoveryScan,
+  runWindowsRetentionSweep,
+  runWindowsDiscoveryScan,
+  reconcileOrphanedWindowsCngContainers,
+  acquireWindowsStoreLocks,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,

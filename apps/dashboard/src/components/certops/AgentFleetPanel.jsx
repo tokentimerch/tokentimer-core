@@ -7,6 +7,9 @@ import {
   Box,
   Button,
   Checkbox,
+  FormControl,
+  FormHelperText,
+  FormLabel,
   HStack,
   Modal,
   ModalBody,
@@ -14,6 +17,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Stack,
   Table,
@@ -26,6 +30,7 @@ import {
   Thead,
   Tr,
   useColorModeValue,
+  VStack,
 } from '@chakra-ui/react';
 import {
   DashboardModalDescription,
@@ -41,8 +46,9 @@ import {
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
-import { retireAgent } from './certopsAgentsApi.js';
+import { retireAgent, updateAgentAlertSettings } from './certopsAgentsApi.js';
 import { formatDateTime, formatRelativeDateTime } from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
@@ -100,6 +106,20 @@ function AgentStatusBadge({ status, fontSize = 'xs' }) {
 function shortId(value) {
   const raw = String(value || '');
   return raw.length > 12 ? `${raw.slice(0, 12)}...` : raw;
+}
+
+// Friendly OS labels for the raw `platform` the agent reports at
+// registration (process.platform - no new protocol field). Unknown/future
+// platform values still render cleanly rather than falling back to "--".
+const PLATFORM_LABELS = {
+  win32: 'Windows',
+  linux: 'Linux',
+  darwin: 'macOS',
+};
+
+function platformLabel(platform) {
+  if (!platform) return '--';
+  return PLATFORM_LABELS[platform] || String(platform);
 }
 
 /** Clock offsets beyond this are flagged as drifted in the fleet table. */
@@ -285,6 +305,169 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
 }
 
 /**
+ * Edit an already-registered agent's downtime alert settings (T3 iteration
+ * decision: the same contact-group UX as Endpoint SSL Monitor). Loads
+ * workspace contact groups lazily on open, same as
+ * CertificateTokenDetailModal, rather than the panel prefetching contacts it
+ * only needs when this modal is open.
+ */
+function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
+  const { workspaceId } = useWorkspace();
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+  } = useDashboardModalProps();
+
+  const [alertsEnabled, setAlertsEnabled] = useState(true);
+  const [contactGroupId, setContactGroupId] = useState('');
+  const [contactGroups, setContactGroups] = useState([]);
+  const [defaultContactGroupId, setDefaultContactGroupId] = useState('');
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isOpen || !agent) return undefined;
+    setAlertsEnabled(agent.downtimeAlertsEnabled !== false);
+    setContactGroupId(agent.contactGroupId || '');
+    setError('');
+    setSubmitting(false);
+    if (!workspaceId) return undefined;
+    let cancelled = false;
+    setLoadingGroups(true);
+    workspaceAPI
+      .getAlertSettings(workspaceId)
+      .then(settings => {
+        if (cancelled) return;
+        setContactGroups(
+          Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
+        );
+        setDefaultContactGroupId(settings?.default_contact_group_id || '');
+      })
+      .catch(() => {
+        if (!cancelled) setContactGroups([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGroups(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, agent, workspaceId]);
+
+  const handleSave = async () => {
+    if (!agent?.id || !workspaceId || submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const { agent: updated } = await updateAgentAlertSettings(
+        workspaceId,
+        agent.id,
+        {
+          downtimeAlertsEnabled: alertsEnabled,
+          contactGroupId: contactGroupId || null,
+        }
+      );
+      showSuccess('Alert settings updated');
+      if (typeof onSaved === 'function') onSaved(updated);
+      onClose();
+    } catch (err) {
+      const code = err?.response?.data?.code;
+      if (code === 'CERTOPS_AGENT_CONTACT_GROUP_INVALID') {
+        setError('That contact group no longer exists in this workspace.');
+      } else {
+        setError(
+          err?.response?.data?.error ||
+            'Could not update alert settings. Please try again.'
+        );
+      }
+      setSubmitting(false);
+    }
+  };
+
+  const agentLabel = agent?.name || agent?.hostname || agent?.agentId || '';
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '480px' }}>
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Edit alerting</DashboardModalTitle>
+          <DashboardModalDescription>
+            {agentLabel ? `Downtime alert settings for ${agentLabel}.` : ''}
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <Stack spacing={4}>
+            <Checkbox
+              isChecked={alertsEnabled}
+              onChange={event => setAlertsEnabled(event.target.checked)}
+              size='sm'
+            >
+              <Text as='span' fontSize='sm'>
+                Alert when this agent has not been seen for 10 minutes
+              </Text>
+            </Checkbox>
+            <FormControl isDisabled={!alertsEnabled || loadingGroups}>
+              <FormLabel fontSize='sm'>Contact group</FormLabel>
+              <Select
+                size='sm'
+                value={contactGroupId}
+                onChange={event => setContactGroupId(event.target.value)}
+              >
+                <option value=''>Default workspace group</option>
+                {contactGroups.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                    {String(g.id) === String(defaultContactGroupId)
+                      ? ' (default)'
+                      : ''}
+                  </option>
+                ))}
+              </Select>
+              <FormHelperText>
+                Down and recovery alerts go to this group's email/webhook
+                channels.
+              </FormHelperText>
+            </FormControl>
+            {error ? (
+              <Alert status='error' borderRadius='md' variant='left-accent'>
+                <AlertIcon />
+                <AlertDescription fontSize='sm'>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </Stack>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Button
+            {...outlineButtonProps}
+            onClick={onClose}
+            isDisabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            {...primaryButtonProps}
+            ml={3}
+            onClick={handleSave}
+            isLoading={submitting}
+            loadingText='Saving'
+          >
+            Save
+          </Button>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+/**
  * Agent fleet table: name/id, status, version, protocol version, clock
  * drift, NTP sync state, pinned job-signing key, last heartbeat, and a
  * manager-only Retire action. Empty state points to the Deploy an agent
@@ -310,6 +493,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     useCertOpsAgents(refreshSignal, { limit, offset });
 
   const [retireTarget, setRetireTarget] = useState(null);
+  const [alertingTarget, setAlertingTarget] = useState(null);
 
   const muted = useColorModeValue('gray.600', 'gray.400');
   const titleColor = useColorModeValue('gray.700', 'gray.200');
@@ -402,6 +586,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
               <Thead>
                 <Tr>
                   <Th>Agent</Th>
+                  <Th>OS</Th>
                   <Th>Status</Th>
                   <Th>Version</Th>
                   <Th>Protocol</Th>
@@ -429,7 +614,34 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                         </Box>
                       </Td>
                       <Td>
-                        <AgentStatusBadge status={displayAgentStatus(agent)} />
+                        <Text fontSize='sm'>
+                          {platformLabel(agent.platform)}
+                        </Text>
+                      </Td>
+                      <Td>
+                        <VStack align='flex-start' spacing={0.5}>
+                          <AgentStatusBadge
+                            status={displayAgentStatus(agent)}
+                          />
+                          {['offline', 'stale'].includes(
+                            String(
+                              displayAgentStatus(agent) || ''
+                            ).toLowerCase()
+                          ) && agent.dependentAutoRenewCertificateCount > 0 ? (
+                            <Text
+                              fontSize='xs'
+                              color='orange.600'
+                              title='Auto-renew certificates whose renewal path currently depends on this agent'
+                            >
+                              {agent.dependentAutoRenewCertificateCount}{' '}
+                              auto-renew{' '}
+                              {agent.dependentAutoRenewCertificateCount === 1
+                                ? 'certificate'
+                                : 'certificates'}{' '}
+                              affected
+                            </Text>
+                          ) : null}
+                        </VStack>
                       </Td>
                       <Td>
                         <Text fontSize='sm' fontFamily='mono'>
@@ -487,16 +699,27 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                       </Td>
                       {canManage ? (
                         <Td textAlign='right'>
-                          {status !== 'retired' ? (
-                            <Button
-                              size='xs'
-                              colorScheme='red'
-                              variant='outline'
-                              onClick={() => setRetireTarget(agent)}
-                            >
-                              Retire
-                            </Button>
-                          ) : null}
+                          <HStack spacing={2} justify='flex-end'>
+                            {status !== 'retired' ? (
+                              <Button
+                                size='xs'
+                                variant='outline'
+                                onClick={() => setAlertingTarget(agent)}
+                              >
+                                Edit alerting
+                              </Button>
+                            ) : null}
+                            {status !== 'retired' ? (
+                              <Button
+                                size='xs'
+                                colorScheme='red'
+                                variant='outline'
+                                onClick={() => setRetireTarget(agent)}
+                              >
+                                Retire
+                              </Button>
+                            ) : null}
+                          </HStack>
                         </Td>
                       ) : null}
                     </Tr>
@@ -525,6 +748,12 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
         onClose={() => setRetireTarget(null)}
         agent={retireTarget}
         onRetire={handleRetire}
+      />
+      <EditAlertingModal
+        isOpen={Boolean(alertingTarget)}
+        onClose={() => setAlertingTarget(null)}
+        agent={alertingTarget}
+        onSaved={() => refresh()}
       />
     </Stack>
   );

@@ -209,7 +209,7 @@ jobs:
           test -n "$(ls *.sha256 2>/dev/null)"
           sha256sum -c ./*.sha256
 
-  # Stage 3: publish Helm to OCI only after verification (chart refs versioned images).
+  # Stage 3a: publish Helm to OCI only after verification (chart refs versioned images).
   publish-helm-chart:
     runs-on: ubuntu-latest
     needs: verify-release
@@ -240,3 +240,56 @@ jobs:
 
       - name: Push chart to OCI registry
         run: helm push .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz oci://${{ env.HELM_OCI_REPO }}
+
+  # Stage 3b: create the public GitHub Release with the agent tarball attached.
+  # Skipped for pre-release tags so a beta dry-run never gets a public release.
+  # `gh release create <tag> <files...>` creates as draft, uploads, then
+  # publishes - the only sequence immutable releases (enabled on this org)
+  # allow assets to be attached in. Title/body are placeholders; the
+  # release-tokentimer-core skill overwrites them via `gh release edit` after.
+  create-release:
+    runs-on: ubuntu-latest
+    needs:
+      - verify-release
+      - publish-helm-chart
+    if: >-
+      !contains(github.ref_name, 'alpha') &&
+      !contains(github.ref_name, 'beta') &&
+      !contains(github.ref_name, 'rc')
+    permissions:
+      contents: write
+    steps:
+      - name: Download agent release artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: agent-release
+          path: agent-dist
+
+      - name: Detect existing GitHub Release for tag
+        id: release_lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release already exists for ${TAG_NAME}; a re-run of this job has nothing left to do here (immutable assets cannot be re-uploaded once published; the release-tokentimer-core skill owns title/body edits from this point on)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release with agent tarball attached
+        if: steps.release_lookup.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          test -n "$(ls agent-dist/*.tgz 2>/dev/null)"
+          test -n "$(ls agent-dist/*.sha256 2>/dev/null)"
+          gh release create "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG_NAME}" \
+            --notes "Automated placeholder release for ${TAG_NAME}. See CHANGELOG.md for what changed; finalized release notes are added shortly after this is published." \
+            agent-dist/*.tgz agent-dist/*.sha256

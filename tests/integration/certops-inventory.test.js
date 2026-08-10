@@ -250,10 +250,12 @@ async function createWorkspaceToken(session, workspaceId, overrides = {}) {
 }
 
 const CERTIFICATE_INSTANCE_FIELDS = [
+  "agent",
   "createdAt",
   "deploymentReference",
   "domainMonitorId",
   "id",
+  "locationKind",
   "managedCertificateId",
   "observedAt",
   "observedFingerprintSha256",
@@ -262,9 +264,11 @@ const CERTIFICATE_INSTANCE_FIELDS = [
   "observedNotBefore",
   "observedSerialNumber",
   "observedSubject",
+  "responsibleAgentId",
   "source",
   "sourceRef",
   "status",
+  "target",
   "targetId",
   "tokenId",
   "updatedAt",

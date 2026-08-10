@@ -50,9 +50,12 @@
         "integration",
         "auto_sync",
         "cert_manager",
+        "agent_filesystem",
+        "agent_issuance",
+        "agent_windows",
         null
       ],
-      "description": "How this public certificate inventory record entered the control plane."
+      "description": "How this public certificate inventory record entered the control plane. agent_filesystem/agent_windows are jobless agent discovery observations (certificate.observed evidence); agent_windows covers non-filesystem locations (Windows machine certificate store, IIS bindings, http.sys SSL bindings)."
     },
     "sourceRef": {
       "type": ["string", "null"],
@@ -118,7 +121,7 @@
     },
     "keyReference": {
       "type": ["string", "null"],
-      "description": "Opaque, non-secret material-locality pointer: which execution plane holds the key, not a path to open to find it. For agent-local sources this is the certificate path (`file://<certPath>`), which is the only coordinate a control plane that never sees the key can honestly record; for cert-manager sources it is the Secret's tls.key coordinate, which Kubernetes publishes itself. Never the key itself."
+      "description": "Opaque, non-secret material-locality pointer: which execution plane holds the key, not a path to open to find it. For agent-local sources this is the certificate path (`file://<certPath>`), which is the only coordinate a control plane that never sees the key can honestly record; for cert-manager sources it is the Secret's tls.key coordinate, which Kubernetes publishes itself; for agent_windows (os-store-managed) sources it is the OS certificate store coordinate (`winstore://<StoreLocation>/<StoreName>/<thumbprint>`), never the key. Never the key itself."
     },
     "createdAt": {
       "type": ["string", "null"],

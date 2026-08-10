@@ -16,11 +16,15 @@ const {
   useCertOpsCanManageMock,
   useCertOpsAgentsMock,
   retireAgentMock,
+  updateAgentAlertSettingsMock,
+  getAlertSettingsMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
   retireAgentMock: vi.fn(),
+  updateAgentAlertSettingsMock: vi.fn(),
+  getAlertSettingsMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -42,6 +46,18 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
   return {
     ...actual,
     retireAgent: retireAgentMock,
+    updateAgentAlertSettings: updateAgentAlertSettingsMock,
+  };
+});
+
+vi.mock('../../src/utils/apiClient', async () => {
+  const actual = await vi.importActual('../../src/utils/apiClient');
+  return {
+    ...actual,
+    workspaceAPI: {
+      ...actual.workspaceAPI,
+      getAlertSettings: getAlertSettingsMock,
+    },
   };
 });
 
@@ -81,6 +97,7 @@ function sampleAgents() {
       agentId: 'agent-active-1',
       name: 'dc1-edge',
       hostname: 'edge01',
+      platform: 'win32',
       status: 'active',
       agentVersion: '1.2.3',
       protocolVersion: 2,
@@ -88,12 +105,15 @@ function sampleAgents() {
       ntpSynced: true,
       pinnedSigningKeyId: 'ttsk_0123456789abcdef',
       lastSeenAt: new Date(Date.now() - 60000).toISOString(),
+      downtimeAlertsEnabled: true,
+      contactGroupId: null,
     },
     {
       id: 'row-2',
       agentId: 'agent-offline-1',
       name: 'dc2-core',
       hostname: 'core01',
+      platform: 'linux',
       status: 'offline',
       agentVersion: '1.2.0',
       protocolVersion: 1,
@@ -101,12 +121,16 @@ function sampleAgents() {
       ntpSynced: false,
       pinnedSigningKeyId: null,
       lastSeenAt: new Date(Date.now() - 3600000).toISOString(),
+      downtimeAlertsEnabled: true,
+      contactGroupId: 'g1',
+      dependentAutoRenewCertificateCount: 3,
     },
     {
       id: 'row-3',
       agentId: 'agent-retired-1',
       name: 'old-agent',
       hostname: 'old01',
+      platform: null,
       status: 'retired',
       agentVersion: '1.0.0',
       protocolVersion: null,
@@ -115,6 +139,8 @@ function sampleAgents() {
       pinnedSigningKeyId: null,
       lastSeenAt: null,
       retiredAt: new Date().toISOString(),
+      downtimeAlertsEnabled: true,
+      contactGroupId: null,
     },
   ];
 }
@@ -125,6 +151,12 @@ describe('AgentFleetPanel', () => {
     useCertOpsCanManageMock.mockReset();
     useCertOpsAgentsMock.mockReset();
     retireAgentMock.mockReset();
+    updateAgentAlertSettingsMock.mockReset();
+    getAlertSettingsMock.mockReset();
+    getAlertSettingsMock.mockResolvedValue({
+      contact_groups: [{ id: 'g1', name: 'On-call' }],
+      default_contact_group_id: 'g1',
+    });
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
   });
 
@@ -177,6 +209,56 @@ describe('AgentFleetPanel', () => {
     expect(screen.getByText('1.2.3')).toBeInTheDocument();
     // Active + offline are retirable, the retired agent is not.
     expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
+  });
+
+  it('renders a friendly OS label from the raw platform, and unknown/missing values safely', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('columnheader', { name: 'OS' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Windows')).toBeInTheDocument();
+    expect(screen.getByText('Linux')).toBeInTheDocument();
+    // The retired row has platform: null; renders the placeholder, not a crash.
+    expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders an unrecognized platform value raw rather than hiding it', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    agents[0].platform = 'freebsd';
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.getByText('freebsd')).toBeInTheDocument();
+  });
+
+  it('shows the dependent auto-renew certificate count for an offline agent', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.getByText(/3 auto-renew certificates affected/)).toBeInTheDocument();
+  });
+
+  it('hides the affected-certificates hint for an active agent or a zero count', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    agents[1].dependentAutoRenewCertificateCount = 0;
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.queryByText(/auto-renew certificate/)).not.toBeInTheDocument();
   });
 
   it('shows a Stale badge instead of Active when livenessState says the heartbeat is overdue (sweep has not yet caught up)', () => {
@@ -259,6 +341,9 @@ describe('AgentFleetPanel', () => {
 
     expect(
       screen.queryByRole('button', { name: 'Retire' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Edit alerting' })
     ).not.toBeInTheDocument();
   });
 
@@ -418,5 +503,71 @@ describe('AgentFleetPanel', () => {
       limit: 20,
       offset: 0,
     });
+  });
+
+  it('opens Edit alerting, loads contact groups, and saves settings', async () => {
+    const refresh = vi.fn();
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents(), refresh })
+    );
+    updateAgentAlertSettingsMock.mockResolvedValue({
+      agent: { id: 'row-1', downtimeAlertsEnabled: false, contactGroupId: 'g1' },
+    });
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Edit alerting' })[0]
+    );
+    expect(await screen.findByText(/Downtime alert settings for/)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
+    });
+    expect(
+      await screen.findByRole('option', { name: 'On-call (default)' })
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByText(
+        'Alert when this agent has not been seen for 10 minutes'
+      )
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateAgentAlertSettingsMock).toHaveBeenCalledWith(
+        'ws-1',
+        'row-1',
+        { downtimeAlertsEnabled: false, contactGroupId: null }
+      );
+      expect(refresh).toHaveBeenCalled();
+    });
+  });
+
+  it('surfaces an error when the selected contact group no longer exists', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+    updateAgentAlertSettingsMock.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { code: 'CERTOPS_AGENT_CONTACT_GROUP_INVALID' },
+      },
+    });
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Edit alerting' })[0]
+    );
+    await screen.findByText(/Downtime alert settings for/);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(
+      await screen.findByText(/no longer exists in this workspace/)
+    ).toBeInTheDocument();
   });
 });

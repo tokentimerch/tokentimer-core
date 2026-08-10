@@ -39,6 +39,9 @@
  *   wave 1: cloudflare, route53, azure-dns, google-cloud-dns, rfc2136,
  *           acme-dns
  *   wave 2: ovhcloud, hetzner, infomaniak, exoscale, powerdns
+ *   test-only: pebble-challtestsrv (Let's Encrypt Pebble's own DNS-01
+ *              mock; never appropriate for a production caEndpoint --
+ *              gate it behind a workspace policy scoped to a test CA)
  *
  * Concurrent safety:
  *   - In-process promise-chain mutex per provider:zone:recordName.
@@ -76,6 +79,7 @@ const hetzner = require("./providers/hetzner.js");
 const infomaniak = require("./providers/infomaniak.js");
 const exoscale = require("./providers/exoscale.js");
 const powerdns = require("./providers/powerdns.js");
+const pebbleChalltestsrv = require("./providers/pebble-challtestsrv.js");
 
 /** Default per-request timeout. Propagation waiting lives in src/dns/propagate.js
  * (invoked by the hook after present/cleanup), not here. */
@@ -135,6 +139,7 @@ const PROVIDER_MODULES = Object.freeze({
   infomaniak,
   exoscale,
   powerdns,
+  "pebble-challtestsrv": pebbleChalltestsrv,
 });
 
 const SUPPORTED_DNS_PROVIDERS = Object.freeze([
@@ -149,6 +154,7 @@ const SUPPORTED_DNS_PROVIDERS = Object.freeze([
   "infomaniak",
   "exoscale",
   "powerdns",
+  "pebble-challtestsrv",
 ]);
 
 /** Defaults when a provider module does not declare `capabilities`. */

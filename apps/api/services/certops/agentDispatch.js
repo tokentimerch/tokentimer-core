@@ -72,9 +72,14 @@ const {
 const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
-  certopsCapabilityFreshnessMs,
   computeAgentCompatibility,
 } = require("./agentRegistry");
+const {
+  EVIDENCE_CLAIM_BINDING_CAPABILITY,
+  evaluateAgentJobEligibility,
+  hasFreshCapability,
+  wireActionForOperation,
+} = require("./agentJobEligibility");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -124,30 +129,62 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
 });
 
 /**
- * Control-plane operation -> agent-facing wire action.
+ * Windows-iis-specific audit fields for a job payload's `target`, shared
+ * across every audit event that reports on a windows-iis issuance or
+ * renewal (CERTOPS_CERTIFICATE_ISSUED, the two _UNRECONCILED events,
+ * CERTOPS_JOB_FAILED, CERTOPS_RENEWAL_PROFILE_DERIVED). Without this, those
+ * events carried only `deployedCertPath`/`certPath`, which is always null
+ * for a windows-iis target (ADR-0012 decisions 1 and 10: the destination is
+ * a machine certificate store + IIS binding, not a file), leaving an
+ * operator no way to tell from the audit log alone which store/site/port a
+ * Windows deployment actually touched.
  *
- * "issue" exists only in the control plane (ADR-0008). Execution is identical
- * to a renewal: same ACME order, same DNS-01 solver, same deploy/reload/verify
- * tail, same agent-local command profile. Adding it to the protocol's action
- * enum would have been a breaking contract change requiring a fleet-wide agent
- * upgrade to buy exactly nothing, so signed dispatch translates it to "renew"
- * instead and agents already in the field run issue jobs unmodified.
- *
- * The asymmetry is deliberate. Do not "fix" it by widening the wire enum.
+ * Takes the *whole* job payload, not payload.target directly, and
+ * normalizes it the same defensive way the claim path already does
+ * (job.payload is jsonb and normally arrives pre-parsed, but is read here
+ * defensively in case it ever arrives as a raw JSON string) — calling
+ * safeParseJson on an already-parsed object would silently discard it, since
+ * safeParseJson only ever parses strings. Returns `{ targetType: null }` for
+ * a missing or malformed target rather than throwing, since every call site
+ * here is inside an audit-metadata object literal, where a thrown error
+ * would abort the write of the event itself.
  */
-const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
-
-function wireActionForOperation(operation) {
-  return WIRE_ACTION_BY_OPERATION[operation] || operation;
+function windowsIisAuditFields(jobPayload) {
+  const payload =
+    jobPayload && typeof jobPayload === "object"
+      ? jobPayload
+      : safeParseJson(jobPayload);
+  const target = payload?.target;
+  const targetType =
+    target && typeof target === "object" && typeof target.type === "string"
+      ? target.type
+      : null;
+  if (targetType !== "windows-iis") {
+    return { targetType };
+  }
+  const binding =
+    target.binding && typeof target.binding === "object"
+      ? target.binding
+      : null;
+  return {
+    targetType,
+    windowsStore: typeof target.store === "string" ? target.store : null,
+    windowsBindingSite:
+      binding && typeof binding.site === "string" ? binding.site : null,
+    windowsBindingPort:
+      binding && Number.isSafeInteger(binding.port) ? binding.port : null,
+    windowsBindingSniHost:
+      binding && typeof binding.sniHost === "string" ? binding.sniHost : null,
+  };
 }
+
+
 
 // Reconciliation of a provisioning certificate only trusts verify evidence that
 // is bound to the current claim, which an agent must explicitly support. Gating
 // claimability on the declared capability keeps an older agent from running an
 // issuance that could never be reconciled, leaving the certificate stuck in
 // 'provisioning' with a succeeded job and no way forward.
-const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
-
 // ADR-0012 decision 1: an agent that declares this capability at
 // registration/heartbeat receives the v2 "exact-byte" signed envelope
 // ({ envelopeVersion: 2, payloadB64, signatureB64, signingKeyId }) instead of
@@ -172,32 +209,6 @@ const SIGNED_PAYLOAD_B64_CAPABILITY = "signed-payload-b64-v1";
 // already be considered liveness-stale has no business being offered a
 // capability-gated job. This is NOT "3x the 30s heartbeat interval" - that
 // reasoning was considered and explicitly rejected (ADR-0012 decision 17).
-
-/**
- * Reusable freshness check for capability-gated claim selection (ADR-0012
- * decision 17). A capability string only counts toward a gate when it is
- * BOTH present in the declared set AND its assertion is fresh; a stale or
- * never-asserted (`capabilitiesUpdatedAt === null`) row fails closed to
- * "gate not satisfied" regardless of what the (stale) array still contains.
- *
- * Any future capability-restricted claim gate should call this rather than
- * re-deriving its own freshness arithmetic.
- */
-function hasFreshCapability({
-  declaredCapabilities,
-  capabilitiesUpdatedAt,
-  capability,
-  env = process.env,
-  now = Date.now(),
-}) {
-  if (!jsonbTextArray(declaredCapabilities).includes(capability)) return false;
-  if (!capabilitiesUpdatedAt) return false;
-  const updatedAtMs = new Date(capabilitiesUpdatedAt).getTime();
-  if (!Number.isFinite(updatedAtMs)) return false;
-  const ageMs = now - updatedAtMs;
-  if (ageMs < 0) return true; // clock skew in the agent's favor is not a staleness signal
-  return ageMs <= certopsCapabilityFreshnessMs(env);
-}
 
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
@@ -468,10 +479,12 @@ async function registerAgent({
          status,
          bootstrap_token_id,
          last_sequence,
-         capabilities_updated_at
+         capabilities_updated_at,
+         downtime_alerts_enabled,
+         contact_group_id
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
-               $15::jsonb, 'active', $13, $14, NOW())
+               $15::jsonb, 'active', $13, $14, NOW(), $16, $17)
        ON CONFLICT (workspace_id, agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
@@ -497,6 +510,13 @@ async function registerAgent({
         // never against a previous registration's high-water mark.
         envelopeSequence(envelope) ?? 0,
         JSON.stringify(normalizeStringList(body.declaredCapabilities, 64)),
+        // Legacy bootstrap tokens (created before migration 45) carry
+        // downtimeAlertsEnabled: null; NULL here means "unset", not "off",
+        // so it must resolve to the column's own TRUE default rather than
+        // to false. A bootstrap token that explicitly opted out (=== false)
+        // is the only way this agent starts with alerting disabled.
+        bootstrapToken.downtimeAlertsEnabled === false ? false : true,
+        bootstrapToken.contactGroupId || null,
       ],
     );
 
@@ -1039,10 +1059,11 @@ async function claimJobs({
     //
     // The operation filter compares against the agent's wire actions
     // (supportedActions), not the control-plane operation column directly:
-    // "issue" is dispatched to agents as "renew" (see WIRE_ACTION_BY_OPERATION
-    // above) and no agent ever declares "issue" as a supported action, so
+    // "issue" is dispatched to agents as "renew" (see
+    // agentJobEligibility.wireActionForOperation) and no agent ever declares
+    // "issue" as a supported action, so
     // without this translation issue jobs would sit at 'pending' forever.
-    // Keep this CASE in sync with WIRE_ACTION_BY_OPERATION if that map grows.
+    // The shared pure predicate below authoritatively rechecks this prefilter.
     //
     // The capability gate covers BOTH ways a job can need claim-bound evidence.
     // Gating operation = 'issue' alone is insufficient: a failed issuance is
@@ -1056,7 +1077,16 @@ async function claimJobs({
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
-              required_dns_provider, required_command_profile
+              required_dns_provider, required_command_profile,
+              EXISTS (
+                SELECT 1
+                  FROM managed_certificates mc
+                 WHERE mc.workspace_id = cj.workspace_id
+                   AND cj.subject_type = 'managed_certificate'
+                   AND cj.subject_id IS NOT NULL
+                   AND mc.id = cj.subject_id::uuid
+                   AND mc.status = 'provisioning'
+              ) AS subject_is_provisioning
          FROM certificate_jobs cj
         WHERE workspace_id = $1
           AND status = 'pending'
@@ -1112,8 +1142,37 @@ async function claimJobs({
       ],
     );
 
+    const eligibilityAgent = {
+      ...agent,
+      supportedOperations: supportedActions,
+      targetSelectors,
+      dnsProviders,
+      commandProfiles,
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      agentKind,
+    };
     const jobs = [];
     for (const row of selected.rows) {
+      // SQL above is a lock-efficient prefilter. This shared pure predicate
+      // is authoritative and is also used by renewal-path health, preventing
+      // the UI from calling a path healthy that dispatch would reject.
+      const eligibility = evaluateAgentJobEligibility({
+        agent: eligibilityAgent,
+        job: {
+          operation: row.operation,
+          executorKind: row.executor_kind,
+          assignedAgentId: row.assigned_agent_id,
+          requiredTargetSelector: row.required_target_selector,
+          requiredDnsProvider: row.required_dns_provider,
+          requiredCommandProfile: row.required_command_profile,
+          subjectIsProvisioning: row.subject_is_provisioning === true,
+        },
+        compatibility,
+        env,
+      });
+      if (!eligibility.eligible) continue;
+
       // Approval-gate re-verification: an approval is bound to a SHA256
       // hash of the canonical payload and canonical execution intent at
       // approval time. If either drifts, the approval is void.
@@ -1507,6 +1566,7 @@ async function reconcileProvisionedCertificate({
         claimId: job.claim_id ? String(job.claim_id) : null,
         agentId: agent?.agentId || null,
         reconciliationReason: reason,
+        ...windowsIisAuditFields(job.payload),
       },
     });
     return { certificateId: String(job.subject_id), promoted: false, reason };
@@ -1641,6 +1701,13 @@ async function reconcileProvisionedCertificate({
         // malformed. It names fields, never their values, so it cannot become a
         // topology disclosure the way the DERIVED event's metadata can.
         detail: derivation?.error || null,
+        // Not the full windowsIisAuditFields() set deliberately: a declined
+        // derivation means the store/binding fields could not be trusted (that
+        // is very often *why* it declined), so only the type discriminator is
+        // safe to record here. Requesting the fuller set from a payload that
+        // failed exactly this validation would surface fields the derivation
+        // itself refused to certify as complete.
+        targetType: text(job.payload?.target?.type),
       },
     });
   }
@@ -1676,6 +1743,10 @@ async function reconcileProvisionedCertificate({
       notAfter,
       subjectAltNames: sans,
       deployedCertPath: text(certificate.deployed_cert_path),
+      // deployedCertPath above is always null for a windows-iis target (its
+      // destination is a certificate store + IIS binding, not a file); these
+      // fields are the substitute, see windowsIisAuditFields.
+      ...windowsIisAuditFields(job.payload),
       profileId: derivation?.profileId || null,
       // Why there is no profile, when there is none. Without this the ISSUED
       // event recorded the absence but never the cause, so an operator seeing
@@ -1813,6 +1884,7 @@ async function refreshRenewedCertificateEvidence({
         claimId: job.claim_id ? String(job.claim_id) : null,
         agentId: agent?.agentId || null,
         reconciliationReason: reason,
+        ...windowsIisAuditFields(job.payload),
       },
     });
     return { certificateId: String(job.subject_id), refreshed: false, reason };
@@ -2154,6 +2226,7 @@ async function ingestResult({
             row.needs_operator_reconciliation,
           ),
           reconciliationReason: row.reconciliation_reason || null,
+          ...windowsIisAuditFields(job.payload),
         },
       });
     }
@@ -2295,6 +2368,7 @@ module.exports = {
     boundReconciliationReason,
     dateToIso,
     envelopeSequence,
+    evaluateAgentJobEligibility,
     findRegistrationReplay,
     normalizeStringList,
     parseReconciliationFromErrorMessage,

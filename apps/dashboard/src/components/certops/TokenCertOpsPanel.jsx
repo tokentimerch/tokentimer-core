@@ -14,6 +14,7 @@ import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
+import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
   expiryDescriptor,
   formatDate,
@@ -126,11 +127,27 @@ function CertOpsPanelBody({ tokenId }) {
             {expiry.label}
           </Badge>
           <RenewalBadge renewal={certificate.renewal} fontSize='sm' />
+          <RenewalPathBadge certificate={certificate} fontSize='sm' />
         </HStack>
         {certificateCount > 1 ? (
           <Text fontSize='xs' color={muted} mb={3}>
             {certificateCount} certificates reference this token. Showing the
             most recently updated active certificate.
+          </Text>
+        ) : null}
+        {certificate.renewalPathState &&
+        certificate.renewalPathState !== 'healthy' ? (
+          <Text
+            fontSize='xs'
+            color={
+              certificate.renewalPathState === 'unknown'
+                ? muted
+                : dashboard.state.warning
+            }
+            mb={3}
+          >
+            {certificate.renewalPathSummary ||
+              'Renewal path health could not be fully explained.'}
           </Text>
         ) : null}
       </GridItem>

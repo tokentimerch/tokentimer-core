@@ -20,6 +20,7 @@ const servicePath = (name) =>
 const {
   RENEWAL_SETUP_OUTCOME_CODES,
   loadResumablePreflights,
+  loadWindowsRenewalTopology,
   projectRenewalPreflight,
   projectRenewalSetupState,
   renewalSetupJobCreator,
@@ -84,7 +85,10 @@ function adoptionClient({ certificate = certificateRow(), instances = [] }) {
       const [, , sources, retired] = params;
       const live = instances.filter(
         (row) =>
-          sources.includes(row.source) && !retired.includes(row.status),
+          sources.includes(row.source) &&
+          !retired.includes(row.status) &&
+          (row.source !== "agent_windows" ||
+            row.location_kind === "iis_binding"),
       );
       const locations = new Set(live.map((row) => row.target_id)).size;
       return { rows: [{ locations }] };
@@ -113,7 +117,15 @@ function responseRecorder() {
  * own error handler, so the assertion is on the status code an operator sees
  * rather than on an internal error object.
  */
-async function adoptAndMapErrors({ client, mode, createJob, enqueueIntent }) {
+async function adoptAndMapErrors({
+  client,
+  mode,
+  createJob,
+  enqueueIntent,
+  loadWindowsTopology,
+  assignedAgentId,
+  payload,
+}) {
   const creator = renewalSetupJobCreator({
     certificateId: CERT_ID,
     createJob:
@@ -123,6 +135,7 @@ async function adoptAndMapErrors({ client, mode, createJob, enqueueIntent }) {
         job: { id: JOB_ID, mode: options.mode || "live" },
       })),
     enqueueIntent: enqueueIntent || (async () => ({ enqueued: true })),
+    ...(loadWindowsTopology ? { loadWindowsTopology } : {}),
   });
 
   try {
@@ -130,6 +143,8 @@ async function adoptAndMapErrors({ client, mode, createJob, enqueueIntent }) {
       client,
       workspaceId: WORKSPACE,
       ...(mode ? { mode } : {}),
+      ...(assignedAgentId ? { assignedAgentId } : {}),
+      ...(payload ? { payload } : {}),
     });
     return { outcome, response: null };
   } catch (err) {
@@ -139,6 +154,104 @@ async function adoptAndMapErrors({ client, mode, createJob, enqueueIntent }) {
     return { outcome: null, response: res };
   }
 }
+
+describe("Windows renewal topology", () => {
+  it("projects one live IIS target into the canonical Windows executor shape", async () => {
+    const client = recordingClient((sql, params) => {
+      assert.match(sql, /ci\.workspace_id = \$1/);
+      assert.deepEqual(params, [
+        WORKSPACE,
+        CERT_ID,
+        "agent-1",
+        ["decommissioned", "missing"],
+      ]);
+      return {
+        rows: [
+          {
+            target_id: "target-1",
+            target_reference: "iis/prod",
+            windows_store: "WebHosting",
+            windows_site: "Default Web Site",
+            windows_port: 443,
+            windows_sni_host: "app.example.com",
+            agent_row_id: "agent-1",
+            declared_target_selectors: ["iis/prod", "iis/backup"],
+          },
+        ],
+      };
+    });
+
+    assert.deepEqual(
+      await loadWindowsRenewalTopology({
+        db: client,
+        workspaceId: WORKSPACE,
+        certificateId: CERT_ID,
+        deployedAgentId: "agent-1",
+      }),
+      {
+        assignedAgentId: "agent-1",
+        target: {
+          type: "windows-iis",
+          reference: "iis/prod",
+          store: "WebHosting",
+          binding: {
+            site: "Default Web Site",
+            port: 443,
+            sniHost: "app.example.com",
+          },
+          thumbprintSha1: null,
+        },
+      },
+    );
+  });
+
+  it("fails closed for ambiguous targets or an unclaimable selector", async () => {
+    const base = {
+      target_reference: null,
+      windows_store: "WebHosting",
+      windows_site: "Default Web Site",
+      windows_port: 443,
+      windows_sni_host: null,
+      agent_row_id: "agent-1",
+      declared_target_selectors: ["iis/a", "iis/b"],
+    };
+    const ambiguous = recordingClient(() => ({
+      rows: [
+        { ...base, target_id: "target-1" },
+        { ...base, target_id: "target-2" },
+      ],
+    }));
+    const unclaimable = recordingClient(() => ({
+      rows: [
+        {
+          ...base,
+          target_id: "target-1",
+          target_reference: "iis/prod",
+          declared_target_selectors: ["iis/other"],
+        },
+      ],
+    }));
+
+    assert.equal(
+      await loadWindowsRenewalTopology({
+        db: ambiguous,
+        workspaceId: WORKSPACE,
+        certificateId: CERT_ID,
+        deployedAgentId: "agent-1",
+      }),
+      null,
+    );
+    assert.equal(
+      await loadWindowsRenewalTopology({
+        db: unclaimable,
+        workspaceId: WORKSPACE,
+        certificateId: CERT_ID,
+        deployedAgentId: "agent-1",
+      }),
+      null,
+    );
+  });
+});
 
 describe("CertOps adoption route refusals", () => {
   it("refuses a certificate deployed in more than one location with 409", async () => {
@@ -217,23 +330,81 @@ describe("CertOps adoption route refusals", () => {
     );
   });
 
-  it("refuses an os-store-managed certificate with 409 until the Windows executor exists", async () => {
-    // The agent would technically be the right custodian for a Windows
-    // certificate-store key, but the real store/site/binding execution
-    // path is not wired up in this build, so this stays refused rather
-    // than adopted into a renewal that can never actually deploy. This is
-    // intentional pending the real executor, which should flip this key
-    // mode back to agent-deployable in the same change that adds it.
+  it("adopts an os-store-managed certificate now that the Windows executor exists", async () => {
+    // Historically this stayed refused with 409 pending the real Windows
+    // store/site/binding execution path; that executor now exists
+    // (packages/agent/src/index.js's executeWindowsIisRenewJob), so
+    // os-store-managed is agent-deployable and adoption proceeds like any
+    // other agent-managed key mode.
+    const client = adoptionClient({
+      certificate: certificateRow({ key_mode: "os-store-managed" }),
+      instances: [
+        {
+          target_id: "store-observation",
+          source: "agent_windows",
+          location_kind: "windows_store",
+          status: "active",
+        },
+        {
+          target_id: "iis-deployment",
+          source: "agent_windows",
+          location_kind: "iis_binding",
+          status: "active",
+        },
+      ],
+    });
+
+    const enqueued = [];
+    let createdOptions = null;
+    const { outcome, response } = await adoptAndMapErrors({
+      client,
+      assignedAgentId: "agent-other",
+      payload: { certPath: "C:\\should-not-survive.pem" },
+      loadWindowsTopology: async () => ({
+        assignedAgentId: "agent-1",
+        target: {
+          type: "windows-iis",
+          reference: "iis/prod",
+          store: "WebHosting",
+          binding: {
+            site: "Default Web Site",
+            port: 443,
+            sniHost: "app.example.com",
+          },
+          thumbprintSha1: null,
+        },
+      }),
+      createJob: async (options) => {
+        createdOptions = options;
+        return { created: true, job: { id: JOB_ID, mode: "real" } };
+      },
+      enqueueIntent: async (args) => {
+        enqueued.push(args);
+        return { enqueued: true };
+      },
+    });
+
+    assert.equal(response, null);
+    assert.equal(outcome.job.id, JOB_ID);
+    assert.equal(enqueued.length, 1);
+    assert.equal(createdOptions.payload.certPath, undefined);
+    assert.equal(createdOptions.payload.keyMode, "os-store-managed");
+    assert.equal(createdOptions.payload.target.store, "WebHosting");
+    assert.equal(createdOptions.assignedAgentId, "agent-1");
+  });
+
+  it("fails closed with a Windows-specific 422 when IIS topology is incomplete", async () => {
     const client = adoptionClient({
       certificate: certificateRow({ key_mode: "os-store-managed" }),
     });
-
-    const { response } = await adoptAndMapErrors({ client });
-
-    assert.equal(response.statusCode, 409);
+    const { response } = await adoptAndMapErrors({
+      client,
+      loadWindowsTopology: async () => null,
+    });
+    assert.equal(response.statusCode, 422);
     assert.equal(
       response.body.code,
-      "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE",
+      "CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE",
     );
   });
 

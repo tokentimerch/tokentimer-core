@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 44
+Total skips found: 52
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -16,23 +16,31 @@ Total skips found: 44
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 148 | re-asserts the ACL when a foreign principal was granted (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 586 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 683 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 780 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 840 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 855 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 868 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1182 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1192 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1203 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1279 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1291 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1304 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 754 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 851 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 948 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1008 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1023 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1036 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1350 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1360 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1371 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1447 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1459 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1472 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 526 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 555 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 343 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 372 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 192 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 283 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 315 | prefers the raw-bytes-derived SANs over windows-discovery's certutil-text-parsed list | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 358 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 389 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 432 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 497 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 605 | still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |

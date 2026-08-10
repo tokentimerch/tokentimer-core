@@ -11,12 +11,14 @@ const {
   useCertOpsAgentsMock,
   createBootstrapTokenMock,
   listAgentsMock,
+  getAlertSettingsMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
   createBootstrapTokenMock: vi.fn(),
   listAgentsMock: vi.fn(),
+  getAlertSettingsMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -39,6 +41,17 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
     ...actual,
     createBootstrapToken: createBootstrapTokenMock,
     listAgents: listAgentsMock,
+  };
+});
+
+vi.mock('../../src/utils/apiClient', async () => {
+  const actual = await vi.importActual('../../src/utils/apiClient');
+  return {
+    ...actual,
+    workspaceAPI: {
+      ...actual.workspaceAPI,
+      getAlertSettings: getAlertSettingsMock,
+    },
   };
 });
 
@@ -91,6 +104,11 @@ describe('DeployAgentModal', () => {
     useCertOpsAgentsMock.mockReset();
     createBootstrapTokenMock.mockReset();
     listAgentsMock.mockReset();
+    getAlertSettingsMock.mockReset();
+    getAlertSettingsMock.mockResolvedValue({
+      contact_groups: [{ id: 'g1', name: 'On-call' }],
+      default_contact_group_id: 'g1',
+    });
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
     useCertOpsAgentsMock.mockReturnValue(agentsState());
     listAgentsMock.mockResolvedValue(agentListResponse([]));
@@ -143,6 +161,9 @@ describe('DeployAgentModal', () => {
     expect(wsArg).toBe('ws-1');
     expect(payload.name).toBe('dc1-edge');
     expect(typeof payload.expiresAt).toBe('string');
+    // Downtime alerts default to enabled with the workspace default group.
+    expect(payload.downtimeAlertsEnabled).toBe(true);
+    expect(payload.contactGroupId).toBe(null);
 
     expect(
       await screen.findByText(/shown only once and registers exactly one agent/)
@@ -317,6 +338,27 @@ describe('DeployAgentModal', () => {
     clearIntervalSpy.mockRestore();
   });
 
+  it('switches step 1 to the Windows install command when the Windows toggle is selected', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+
+    renderModal();
+
+    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Windows' }));
+
+    const commandBlock = screen.getByText(/install-agent\.ps1/);
+    expect(commandBlock.textContent).toContain('--api-url');
+    expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
+    expect(commandBlock.textContent).not.toContain('install-agent.sh');
+    expect(
+      screen.getByText(/elevated \(Administrator\) PowerShell prompt/)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Linux' }));
+    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
+  });
+
   it('disables new-token creation while paused but keeps the flow otherwise visible', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
 
@@ -328,5 +370,77 @@ describe('DeployAgentModal', () => {
     expect(
       screen.getByRole('button', { name: 'Create bootstrap token' })
     ).toBeDisabled();
+  });
+
+  it('shows the downtime alert checkbox checked by default with a contact group selector', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+
+    renderModal();
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: 'Agent downtime alerts',
+    });
+    expect(checkbox).toBeChecked();
+    await waitFor(() => {
+      expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
+    });
+    expect(
+      await screen.findByRole('option', { name: 'On-call (default)' })
+    ).toBeInTheDocument();
+  });
+
+  it('hides the contact group selector once downtime alerts are unchecked, and sends the unchecked state', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+
+    renderModal();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Agent downtime alerts' })
+    );
+    expect(screen.queryByLabelText('Contact group')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'dc1-edge' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+
+    await waitFor(() => {
+      expect(createBootstrapTokenMock).toHaveBeenCalledTimes(1);
+    });
+    const [, payload] = createBootstrapTokenMock.mock.calls[0];
+    expect(payload.downtimeAlertsEnabled).toBe(false);
+  });
+
+  it('sends the explicitly selected contact group id', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+
+    renderModal();
+
+    await screen.findByRole('option', { name: 'On-call (default)' });
+    fireEvent.change(screen.getByLabelText('Contact group'), {
+      target: { value: 'g1' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'dc1-edge' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+
+    await waitFor(() => {
+      expect(createBootstrapTokenMock).toHaveBeenCalledTimes(1);
+    });
+    const [, payload] = createBootstrapTokenMock.mock.calls[0];
+    expect(payload.contactGroupId).toBe('g1');
   });
 });

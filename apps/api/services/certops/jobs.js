@@ -18,6 +18,9 @@ const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   assertRenewalPerCaCapacityAvailable,
 } = require("./renewalCapacity");
+const {
+  resolveAgentJobRoutingRequirements,
+} = require("./agentJobEligibility");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -564,6 +567,23 @@ const ACME_KIND_SET = new Set(ACME_KINDS);
 const COMMAND_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const RELOAD_SERVICE_PATTERN = /^[A-Za-z0-9_.:@-]{1,128}$/;
 const DNS_PROVIDER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+// Mirrors job-payload.schema.json's top-level keyMode enum: the non-secret
+// custody signal the agent's dispatch check reads directly off the job (e.g.
+// executeJob's `job.keyMode === "os-store-managed"` gate for the windows-iis
+// CNG-native executor, packages/agent/src/index.js). Distinct from the
+// per-deploymentTargets-entry keyMode (a POSIX file-permission octal, see
+// job-payload.schema.json's deploymentTargets items) despite the shared name.
+const JOB_KEY_MODES = Object.freeze([
+  "agent-local",
+  "proxy-agent-local",
+  "cert-manager-managed",
+  "appliance-managed",
+  "hsm-managed",
+  "vault-managed",
+  "os-store-managed",
+  "external-unknown",
+]);
+const JOB_KEY_MODE_SET = new Set(JOB_KEY_MODES);
 
 function executionFieldError(fieldName) {
   return serviceError(
@@ -632,6 +652,11 @@ const EXECUTION_FIELD_VALIDATORS = Object.freeze({
       throw executionFieldError("dnsProvider");
     }
   },
+  keyMode(value) {
+    if (typeof value !== "string" || !JOB_KEY_MODE_SET.has(value)) {
+      throw executionFieldError("keyMode");
+    }
+  },
 });
 
 const EXECUTION_FIELD_NAMES = Object.freeze(
@@ -655,6 +680,7 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
     "verifyPort",
     "dnsZone",
     "dnsProvider",
+    "keyMode",
   ]),
   renew: new Set([
     "commandRef",
@@ -667,6 +693,7 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
     "verifyPort",
     "dnsZone",
     "dnsProvider",
+    "keyMode",
   ]),
   deploy: new Set([
     "certPath",
@@ -700,9 +727,26 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
 // accepted, a provisioning certificate row and job were created, and the
 // gap surfaced only later on the execution plane -- potentially after a
 // real, rate-limited ACME order had already been placed.
+//
+// certPath and keyMode are mutually exclusive rather than both-required: a
+// windows-iis target has no filesystem deploy path (issuance.js's
+// normalizeWindowsIssuanceTarget refuses one), it identifies its deploy
+// destination via target.store/target.binding instead, and the agent's
+// executeJob dispatch reads job.keyMode === "os-store-managed" to route to
+// the CNG-native executor (packages/agent/src/index.js). Every other target
+// type deploys to a filesystem path and has no keyMode on the payload today.
 const REQUIRED_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
-  issue: new Set(["commandRef", "caEndpoint", "certPath", "dnsZone", "dnsProvider"]),
+  issue: new Set(["commandRef", "caEndpoint", "dnsZone", "dnsProvider"]),
 });
+
+function requiredExecutionFieldsForOperation(payload, operation) {
+  const base = REQUIRED_EXECUTION_FIELDS_BY_OPERATION[operation];
+  if (!base) return base;
+  if (operation !== "issue") return base;
+  const required = new Set(base);
+  required.add(payload?.target?.type === "windows-iis" ? "keyMode" : "certPath");
+  return required;
+}
 
 // Multi-destination deployment is a real agent capability, but only through a
 // renewalProfile.deploymentTargets array on a renew job. An `issue` payload has
@@ -755,8 +799,10 @@ function validateExecutionFields(payload, operation) {
 
   validateIssueDeploymentTargets(payload, operation);
 
-  const requiredForOperation =
-    REQUIRED_EXECUTION_FIELDS_BY_OPERATION[operation];
+  const requiredForOperation = requiredExecutionFieldsForOperation(
+    payload,
+    operation,
+  );
   if (!requiredForOperation) return;
   for (const fieldName of requiredForOperation) {
     const present =
@@ -1040,30 +1086,34 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     );
   }
 
-  // Explicit caller/payload assignment always wins; only fall back to the
-  // certificate's stored discovery agent (agent_filesystem source) when
-  // neither was supplied, so a caller can still override for a legitimate
-  // hand-off (e.g. re-homing a certificate to a replacement agent).
+  // Derive the same raw requirements consumed by dispatch and renewal-path
+  // health, then apply this write path's validation and normalization.
+  const rawRouting = resolveAgentJobRoutingRequirements({
+    executorKind,
+    assignedAgentId:
+      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
+    requiredTargetSelector: options.requiredTargetSelector,
+    requiredDnsProvider: options.requiredDnsProvider,
+    requiredCommandProfile: options.requiredCommandProfile,
+    payload,
+  });
+
   const assignedAgentId =
     normalizeOptionalShortText(
-      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
+      rawRouting.assignedAgentId,
       "assignedAgentId",
     ) || null;
 
   const requiredTargetSelector =
     normalizeOptionalPublicText(
-      options.requiredTargetSelector ??
-        payload.targetSelector ??
-        (payload.target && typeof payload.target === "object"
-          ? payload.target.reference
-          : null),
+      rawRouting.requiredTargetSelector,
       "requiredTargetSelector",
       512,
     ) || null;
 
   const requiredDnsProvider =
     normalizeOptionalShortText(
-      options.requiredDnsProvider ?? payload.dnsProvider,
+      rawRouting.requiredDnsProvider,
       "requiredDnsProvider",
     ) || null;
   if (
@@ -1075,7 +1125,7 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
 
   const requiredCommandProfile =
     normalizeOptionalShortText(
-      options.requiredCommandProfile ?? payload.commandRef,
+      rawRouting.requiredCommandProfile,
       "requiredCommandProfile",
     ) || null;
   if (
@@ -1104,16 +1154,23 @@ const AGENT_MUTATING_OPERATIONS = new Set([
 // held in the OS certificate store rather than on the agent filesystem.
 // Custody-wise, the agent (not an external appliance, HSM, or vault) is the
 // thing that would rotate it, which is why it is tempting to list it here
-// alongside agent-local and proxy-agent-local. It is deliberately NOT
-// included: this predicate does not mean "the agent owns this key", it
-// means "a job for this key mode can actually be executed", and the
-// Windows store/site/binding execution path (validateTargetConfig's
-// windows-iis dispatch calling real IIS bind APIs, CNG key generation) does
-// not exist yet in this build. A job must never be dispatchable to an
-// execution path that cannot actually execute it, so os-store-managed stays
-// out of this set until the real executor lands; that PR flips this back to
-// deployable in the same change that adds the executor.
-const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
+// alongside agent-local and proxy-agent-local. It IS included as of the
+// windows-iis executor landing in packages/agent/src/index.js
+// (executeWindowsIisRenewJob / runWindowsIisDeployTail): a renew job whose
+// target.type is windows-iis now has a real execution path (CNG CSR ->
+// ACME order -> certreq -accept -> netsh http add sslcert -> TLS-verify ->
+// retention-ledger row), so os-store-managed is no longer dispatchable to a
+// path that cannot execute it. This predicate still means "a job for this
+// key mode can actually be executed", not merely "the agent owns this
+// key" -- the executor exists specifically (and only) for target.type
+// windows-iis; a job with keyMode os-store-managed and any other target
+// type is rejected by resolveJobDeployTargets/executeJob's preflight in
+// the agent itself, not by this set.
+const AGENT_DEPLOYABLE_KEY_MODES = new Set([
+  "agent-local",
+  "proxy-agent-local",
+  "os-store-managed",
+]);
 
 /**
  * Can an agent actually deploy to this certificate's key?
@@ -1199,6 +1256,7 @@ async function resolveManagedCertificateJobDefaults({
   const result = await db.query(
     `SELECT mc.key_mode,
             mc.source,
+            mc.deployed_agent_id,
             mc.public_metadata->'controllerObservation'->>'agentId'
               AS discovery_agent_id,
             cp.status AS profile_status
@@ -1247,6 +1305,12 @@ async function resolveManagedCertificateJobDefaults({
     );
   }
 
+  // Windows store/IIS observations already persist the reporting agent's row
+  // id. The store and binding are host-local, so every later scheduler job
+  // must stay pinned to that same executor just like filesystem discovery.
+  if (row.source === "agent_windows" && row.deployed_agent_id) {
+    return { autoAssignedAgentId: row.deployed_agent_id };
+  }
   if (row.source !== "agent_filesystem" || !row.discovery_agent_id) {
     return { autoAssignedAgentId: null };
   }

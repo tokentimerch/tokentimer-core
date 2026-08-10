@@ -131,6 +131,36 @@ const PATTERNS = [
     re: /[a-z0-9_]+_[0-9a-f]{8}\.plan\.md\b/gi,
     describe: () => "canvas plan filename slug (<name>_<hex8>.plan.md)",
   },
+  {
+    id: "internal-verify-batch-id",
+    // Internal real-host verification batch IDs from the private
+    // manual-acceptance checklist
+    // leak-scan-allow-start
+    // (e.g. "WCNG-02", "WIIS-04", "WRET-01", "WDISC-03", "WE2E-19",
+    // "WOBS-01", "AHA-01", "RPH-01").
+    // leak-scan-allow-end
+    // These are meaningless to a public reader and map 1:1 to line
+    // items in a document that never ships with this repo, so they must
+    // stay out of product source, tests, and the changelog. Extend this
+    // prefix list if the checklist's naming convention grows a new
+    // module family.
+    re: /\b(?:WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH)-\d{1,3}\b/g,
+    describe: () => "internal verification-batch ID (WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH-<number>)",
+  },
+  {
+    id: "internal-finding-id",
+    // Internal finding/defect labels coined ad hoc during a verification
+    // pass
+    // leak-scan-allow-start
+    // (e.g. "VERIFY-RACE-01")
+    // leak-scan-allow-end
+    // and then left behind in the code comment or test title that
+    // documents the actual fix. The fix itself should be described in
+    // plain prose; the ad hoc label adds nothing for a public reader and
+    // ties the public repo back to an internal tracking document.
+    re: /\bVERIFY-RACE-\d{1,3}\b/gi,
+    describe: () => "internal finding ID (VERIFY-RACE-<number>)",
+  },
 ];
 
 // The milestone-code pattern (`\bm\d{1,2}[a-c]?\b`) false-positives on
