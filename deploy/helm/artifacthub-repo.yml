@@ -6,3 +6,11 @@
 # special "artifacthub.io" tag by the publish-helm-chart job in .github/workflows/release.yml
 # on every release. See https://artifacthub.io/docs/topics/repositories/#verified-publisher.
 repositoryID: f3bc26ba-0d50-473e-88ff-45ab49ca2098
+
+# Hide pre-release chart versions (alpha/beta) from the Artifact Hub listing so a
+# pre-release never gets presented to users as the default/latest version. The `v`
+# prefix is omitted below because Artifact Hub strips it before matching.
+# See https://github.com/artifacthub/hub/issues/1359
+ignore:
+  - name: tokentimer
+    version: '^\d+\.\d+\.\d+-(alpha|beta)\.?\d+$'
