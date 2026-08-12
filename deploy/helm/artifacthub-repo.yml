@@ -1,0 +1,8 @@
+# Artifact Hub repository metadata for the tokentimer Helm chart.
+#
+# This chart is published as an OCI artifact (oci://ghcr.io/tokentimerch/charts/tokentimer),
+# not a classic index.yaml Helm repo, so Artifact Hub cannot read this file directly from
+# GitHub. It is kept here as the source of truth and pushed to the OCI registry under the
+# special "artifacthub.io" tag by the publish-helm-chart job in .github/workflows/release.yml
+# on every release. See https://artifacthub.io/docs/topics/repositories/#verified-publisher.
+repositoryID: f3bc26ba-0d50-473e-88ff-45ab49ca2098

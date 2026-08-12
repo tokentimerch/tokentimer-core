@@ -9,6 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-12
+
+### Fixed
+
+- **Renewal-setup jobs for non-Windows deployments failed with `renew job has no target.reference to use as the certificate CN`.** `renewalSetupJobCreator` never populated `payload.target` for filesystem-discovered certificates, even though the agent's `executeRenewJob` requires `target.reference` to build the renewal CSR's CN for every renew job, not just `windows-iis`. Now derives it from the certificate's `common_name` or first subject alternative name, stripping the typed SAN prefix (`DNS:`, `IP Address:`, etc.) that discovery records verbatim. Certificates with no usable name now fail fast with a clear `422 CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME` instead of creating a job that can only fail downstream once an agent claims it. (#161)
+
+### Added
+
+- **Artifact Hub repository metadata for the Helm chart.** `deploy/helm/artifacthub-repo.yml` is now pushed to the chart's OCI repository (`oci://ghcr.io/tokentimerch/charts/tokentimer`) under the reserved `artifacthub.io` tag on every release, enabling Artifact Hub's verified-publisher check for the `tokentimer` chart.
+
+### Changed
+
+- Version metadata bumped to 0.12.1 across all manifests, contracts, and Helm chart.
+
 ## [0.12.0] - 2026-08-10
 
 ### Added

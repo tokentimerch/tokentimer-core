@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/agent",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "private": true,
   "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps",
   "license": "BUSL-1.1",
