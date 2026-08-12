@@ -413,6 +413,7 @@ describe("renewalSetupJobCreator preconditions", () => {
         profile_id: null,
         deployed_cert_path: "/etc/ssl/app/fullchain.pem",
         deployed_agent_id: "agent-9",
+        common_name: "app.example.com",
       }),
       workspaceId: WORKSPACE,
       payload: {},
@@ -445,6 +446,7 @@ describe("renewalSetupJobCreator preconditions", () => {
         key_mode: "agent-local",
         profile_id: null,
         deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+        common_name: "app.example.com",
       }),
       workspaceId: WORKSPACE,
       payload: {},
@@ -472,6 +474,7 @@ describe("renewalSetupJobCreator preconditions", () => {
         profile_id: null,
         deployed_cert_path: "/etc/ssl/app/fullchain.pem",
         deployed_agent_id: "agent-9",
+        common_name: "app.example.com",
       }),
       workspaceId: WORKSPACE,
       payload: {},
@@ -481,6 +484,74 @@ describe("renewalSetupJobCreator preconditions", () => {
     assert.equal(capturedOptions.operation, "renew");
     assert.equal(capturedOptions.subjectId, CERT_ID);
     assert.equal(capturedOptions.payload.certPath, "/etc/ssl/app/fullchain.pem");
+    assert.deepEqual(capturedOptions.payload.target, {
+      type: "domain",
+      reference: "app.example.com",
+    });
+  });
+
+  it("strips the SAN type prefix when deriving target.reference from subjectAltNames", async () => {
+    // Regression test: a filesystem-discovered certificate's common_name
+    // column is frequently the typed first SAN copied verbatim (see
+    // agentObservations.js's certificateFor()), e.g. "DNS:example.com" - the
+    // agent's executeRenewJob uses this value as a bare CN, so the type
+    // prefix must be stripped before it reaches the job payload.
+    let capturedOptions = null;
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 1,
+      createJob: async (options) => {
+        capturedOptions = options;
+        return { job: { id: JOB_ID, mode: "real" }, created: true };
+      },
+      enqueueIntent: async () => ({ enqueued: true, id: OUTBOX_ID }),
+    });
+
+    await jobCreator({
+      client: poolReturning({
+        id: CERT_ID,
+        key_mode: "agent-local",
+        profile_id: null,
+        deployed_cert_path: "/etc/tokentimer-certs/discovered.pem",
+        deployed_agent_id: "agent-9",
+        common_name: "DNS:certops-wsl-prod-test.tokentimer.io",
+        subject_alt_names: ["DNS:certops-wsl-prod-test.tokentimer.io"],
+      }),
+      workspaceId: WORKSPACE,
+      payload: {},
+    });
+
+    assert.deepEqual(capturedOptions.payload.target, {
+      type: "domain",
+      reference: "certops-wsl-prod-test.tokentimer.io",
+    });
+  });
+
+  it("refuses a certificate with no usable common name or SAN on record", async () => {
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 1,
+    });
+    await assert.rejects(
+      () =>
+        jobCreator({
+          client: poolReturning({
+            id: CERT_ID,
+            key_mode: "agent-local",
+            profile_id: null,
+            deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+            deployed_agent_id: "agent-9",
+            common_name: null,
+            subject_alt_names: [],
+          }),
+          workspaceId: WORKSPACE,
+          payload: {},
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME");
+        return true;
+      },
+    );
   });
 });
 
