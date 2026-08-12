@@ -46,6 +46,37 @@ const CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH =
   "CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH";
 const CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE =
   "CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE";
+const CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME =
+  "CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME";
+
+/**
+ * A discovered SAN entry is reported in typed form ("DNS:example.com",
+ * "IP Address:127.0.0.1", ...; see parser.js's splitSubjectAltName and
+ * agentObservations.js's commonNameFromSubject fallback chain). An ACME
+ * certificate frequently has no Subject CN at all, so a filesystem/agent
+ * discovery's commonName column is, in practice, often the first typed SAN
+ * copied verbatim - agentObservations.js's certificateFor() prefers
+ * subjectAltNames[0] over the parsed Subject CN specifically because SAN is
+ * the field browsers and ACME actually trust. executeRenewJob (packages/
+ * agent) uses job.target.reference as a bare name for the renewal CSR's
+ * commonName, so that type prefix has to be stripped before it is usable as
+ * a renew job's target.
+ */
+const SUBJECT_ALT_NAME_TYPE_PREFIX =
+  /^(?:DNS|IP Address|URI|email|RID|Registered ID|DirName|othername):\s*/i;
+
+function deriveDomainTargetReference(certificate) {
+  const rawCommonName =
+    typeof certificate.common_name === "string" ? certificate.common_name.trim() : "";
+  const rawFirstSan =
+    Array.isArray(certificate.subject_alt_names) &&
+    typeof certificate.subject_alt_names[0] === "string"
+      ? certificate.subject_alt_names[0].trim()
+      : "";
+  const raw = rawCommonName || rawFirstSan;
+  const stripped = raw.replace(SUBJECT_ALT_NAME_TYPE_PREFIX, "").trim();
+  return stripped || null;
+}
 
 /**
  * Dedupe key for an adoption intent.
@@ -368,7 +399,7 @@ function renewalSetupJobCreator({
 
     const certResult = await client.query(
       `SELECT id, status, key_mode, profile_id, deployed_cert_path,
-              deployed_agent_id
+              deployed_agent_id, common_name, subject_alt_names
          FROM managed_certificates
         WHERE workspace_id = $1 AND id = $2::uuid
         FOR UPDATE`,
@@ -417,6 +448,7 @@ function renewalSetupJobCreator({
     }
 
     let windowsTopology = null;
+    let domainTargetReference = null;
     if (isWindowsDeployment) {
       if (!certificate.deployed_agent_id) {
         throw renewalSetupError(
@@ -438,6 +470,23 @@ function renewalSetupJobCreator({
           422,
         );
       }
+    } else {
+      // executeRenewJob (packages/agent) unconditionally requires
+      // job.target.reference to use as the renewal CSR's commonName, for
+      // every renew job regardless of deployment type - not just windows-iis.
+      // Without this, every filesystem-discovered certificate's "Set up
+      // renewal" job fails immediately with "renew job has no
+      // target.reference to use as the certificate CN" once claimed, and the
+      // certificate is left parked in renewalSetup state "skipped" /
+      // outcomeCode "job_failed".
+      domainTargetReference = deriveDomainTargetReference(certificate);
+      if (!domainTargetReference) {
+        throw renewalSetupError(
+          "This certificate has no usable common name or subject alternative name on record, so an automatic renewal job cannot be built.",
+          CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME,
+          422,
+        );
+      }
     }
 
     const payload = {
@@ -453,6 +502,7 @@ function renewalSetupJobCreator({
       payload.target = windowsTopology.target;
     } else {
       payload.certPath = certificate.deployed_cert_path;
+      payload.target = { type: "domain", reference: domainTargetReference };
     }
 
     const outcome = await createJob({
@@ -912,6 +962,7 @@ module.exports = {
   CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
   CERTOPS_RENEWAL_SETUP_MULTI_LOCATION,
   CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+  CERTOPS_RENEWAL_SETUP_NO_COMMON_NAME,
   CERTOPS_RENEWAL_SETUP_WINDOWS_TOPOLOGY_INCOMPLETE,
   DEPLOYMENT_INSTANCE_SOURCES,
   PREFLIGHT_COMPLETE_JOB_STATUS,

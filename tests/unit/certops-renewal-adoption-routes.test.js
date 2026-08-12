@@ -68,6 +68,8 @@ function certificateRow(overrides = {}) {
     profile_id: null,
     deployed_cert_path: "/etc/ssl/certs/app.pem",
     deployed_agent_id: "agent-1",
+    common_name: "app.example.com",
+    subject_alt_names: ["app.example.com"],
     ...overrides,
   };
 }
