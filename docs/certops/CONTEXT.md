@@ -409,7 +409,7 @@ flows use this path when `certops.enabled` is on.
 
 ## Editions
 
-- **Core** - source-available (BUSL-1.1), generous free base.
+- **Core** - open source (AGPL-3.0), generous free base.
 - **Cloud** - production SaaS overlay of core (`apps/saas`, `apps/web`).
 - **Enterprise** - licensed overlay; restricted execution and connectors.
 

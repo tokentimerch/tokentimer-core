@@ -2,46 +2,48 @@
 
 ## License
 
-TokenTimer Core is licensed under the Business Source License 1.1 (BUSL-1.1).
+TokenTimer Core is open source, licensed under the GNU Affero General Public
+License v3.0 (AGPLv3). AGPLv3 is approved by the Open Source Initiative (OSI).
 
-This is a **source-available** license, not an open-source license approved by the
-Open Source Initiative (OSI).
+## What AGPLv3 means for you
 
-## Additional Use Grant
+- **Self-host, modify, and integrate freely.** There is no field-of-use
+  restriction: you can run TokenTimer Core in production, modify it, and
+  build on top of it, including for commercial purposes.
+- **Network use triggers source disclosure.** If you run a modified version
+  of TokenTimer Core as a network service (including a hosted or managed
+  offering), you must make the corresponding source code of that modified
+  version available to the users of that service, under AGPLv3.
+- **Redistribution stays copyleft.** Distributing TokenTimer Core, modified
+  or not, keeps it under AGPLv3. You cannot fold it into a closed-source
+  product without a separate commercial license (see below).
 
-You may use the Licensed Work for any purpose, including production use, EXCEPT:
+### Permitted uses
 
-1. Offering the Licensed Work as a hosted service that competes with TokenTimer's
-   commercial offerings (i.e., a "SaaS" or "managed service" based primarily on
-   the Licensed Work).
-
-2. Distributing modified versions of the Licensed Work as a product that competes
-   with TokenTimer.
-
-### Permitted Uses
-
-- Self-hosting TokenTimer for your organization's internal use
-- Modifying TokenTimer for your organization's internal use
+- Self-hosting TokenTimer for your organization
+- Modifying TokenTimer for your own use, including production use
+- Offering TokenTimer as a hosted service, provided you comply with
+  AGPLv3's source-disclosure requirement for any modifications
 - Using TokenTimer in development, testing, and staging environments
 - Integrating TokenTimer with your internal systems
 
-### Prohibited Uses
+### What AGPLv3 does not let you do without a commercial license
 
-- Offering TokenTimer as a managed/hosted service to third parties
-- Reselling TokenTimer or derivative works without a commercial license
-
-## Change Date and Change License
-
-- **Change Date**: Four years from each release date
-- **Change License**: GNU Affero General Public License v3.0 (AGPLv3)
-
-After the Change Date, each version becomes available under the AGPLv3 license,
-making it fully open source with strong copyleft protections.
+- Distribute or host a modified version of TokenTimer without publishing
+  the corresponding source code to its users
+- Embed TokenTimer Core in a closed-source product or appliance
+- Remove or obscure copyright and license notices
 
 ## Commercial Licensing
 
-For uses not covered by the Additional Use Grant, contact sales@tokentimer.ch
-for a commercial license.
+Tokentimer Sàrl holds the copyright to TokenTimer Core and offers a
+commercial license for organizations that want to embed, redistribute, or
+build a closed-source or closed-network product on top of TokenTimer Core
+without the AGPLv3 source-disclosure obligations. Contact sales@tokentimer.ch.
+
+TokenTimer Cloud and TokenTimer Enterprise are built by Tokentimer Sàrl on
+top of TokenTimer Core under this commercial license, which is how they
+remain proprietary, paid offerings alongside the open-source core.
 
 ## Enterprise Edition
 

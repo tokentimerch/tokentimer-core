@@ -55,4 +55,4 @@ Please do **not** open public issues for security vulnerabilities. See [SECURITY
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same [BUSL-1.1 license](LICENSE) that covers the project.
+By contributing, you agree that your contributions will be licensed under the same [AGPLv3 license](LICENSE) that covers the project. To keep the option of commercial dual-licensing (AGPLv3 + a separate commercial license) open, we may ask contributors to sign a contributor license agreement (CLA) granting Tokentimer Sàrl the rights needed to offer that commercial license.

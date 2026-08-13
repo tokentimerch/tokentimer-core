@@ -2,7 +2,7 @@
   "name": "@tokentimer/contracts",
   "version": "0.12.1",
   "private": true,
-  "license": "BUSL-1.1",
+  "license": "AGPL-3.0-or-later",
   "description": "API and queue schema contracts for TokenTimer",
   "type": "module"
 }

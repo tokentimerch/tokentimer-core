@@ -2,7 +2,11 @@
   <a href="https://tokentimer.ch"><img src="docs/assets/logo.svg" alt="TokenTimer" width="120" /></a>
 </p>
 
-<h3 align="center">The token, certificate, license, and secret expiration manager for teams.</h3>
+<h3 align="center">The open-source token, certificate, license, and secret expiration manager for teams.</h3>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="AGPL-3.0 License" /></a>
+</p>
 
 <p align="center">
   <b>
@@ -104,10 +108,8 @@ After receiving a report, TokenTimer will take the following steps:
 
 # License
 
-This project is licensed under the [Business Source License 1.1](LICENSE) with an Additional Use Grant that permits production use for your organization's internal purposes. You may self-host, modify, and integrate TokenTimer freely. The only restriction is offering it as a competing hosted or managed service.
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE). TokenTimer Core is open source: you may self-host, modify, and integrate it freely. If you run a modified version as a network service, you must make the corresponding source available to its users under the same license.
 
-Each release converts to [AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) four years after its publication date.
-
-For commercial licensing or questions, contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
+A commercial license without AGPL's source-disclosure obligations is available for organizations that want to embed or redistribute TokenTimer Core without those terms. Contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
 
 "TokenTimer" is a trademark of Tokentimer Sàrl, Switzerland.
