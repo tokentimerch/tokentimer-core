@@ -9,9 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-08-13
+
+### Fixed
+
+- **Alpha/beta chart versions were listed and could be shown as the default version on Artifact Hub.** Added an `ignore` rule to `deploy/helm/artifacthub-repo.yml` to exclude pre-release semver suffixes (`-alpha*`, `-beta*`) from the Artifact Hub listing.
+- **Chart icon 404'd on Artifact Hub.** `deploy/helm/Chart.yaml`'s `icon` field points at `https://tokentimer.ch/icon.png`, which never existed; `tokentimer.ch` now serves an icon at that path so Artifact Hub can display the chart's logo.
+
 ### Changed
 
 - **TokenTimer Core is now fully open source.** Relicensed from Business Source License 1.1 (source-available) to the GNU Affero General Public License v3.0 (AGPLv3), an OSI-approved open-source license, effective immediately for all versions. Self-hosting, modifying, and integrating TokenTimer Core remains free; running a modified version as a network service now requires publishing the corresponding source under AGPLv3. A commercial license without that source-disclosure obligation remains available (see `COMMERCIAL_TERMS.md`).
+- Version metadata bumped to 0.12.2 across all manifests, contracts, and Helm chart.
 
 ## [0.12.1] - 2026-08-12
 
