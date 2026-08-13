@@ -15,5 +15,5 @@
   "engines": {
     "node": ">=22.0.0 <25.0.0"
   },
-  "license": "BUSL-1.1"
+  "license": "AGPL-3.0-or-later"
 }

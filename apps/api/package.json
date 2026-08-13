@@ -3,7 +3,7 @@
   "version": "0.12.1",
   "private": true,
   "description": "TokenTimer API Service",
-  "license": "BUSL-1.1",
+  "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.13.0",
   "main": "index.js",
   "scripts": {

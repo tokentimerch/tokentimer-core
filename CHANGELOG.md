@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **TokenTimer Core is now fully open source.** Relicensed from Business Source License 1.1 (source-available) to the GNU Affero General Public License v3.0 (AGPLv3), an OSI-approved open-source license, effective immediately for all versions. Self-hosting, modifying, and integrating TokenTimer Core remains free; running a modified version as a network service now requires publishing the corresponding source under AGPLv3. A commercial license without that source-disclosure obligation remains available (see `COMMERCIAL_TERMS.md`).
+
 ## [0.12.1] - 2026-08-12
 
 ### Fixed
