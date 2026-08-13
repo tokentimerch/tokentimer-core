@@ -957,11 +957,12 @@ router.post(
       );
 
       if (!emailResult.success) {
-        logger.error(
-          "Failed to send verification email to:",
+        logger.error("Failed to send verification email", {
           email,
-          emailResult.error,
-        );
+          error: emailResult.error,
+          code: emailResult.code,
+          providerError: emailResult.providerError,
+        });
         // Do not block user flow with 500; respond with emailSent=false
         return res.status(200).json({
           message: "Email service unavailable. Please try again later.",
@@ -1050,7 +1051,7 @@ router.post(
         );
       }
 
-      logger.info("Attempting to send password reset email:", {
+      logger.info("Attempting to send password reset email", {
         email,
         tokenLength: resetToken.length,
         displayName: user.display_name,
@@ -1062,14 +1063,15 @@ router.post(
         user.display_name,
       );
 
-      logger.info("Password reset email result:", emailResult);
+      logger.info("Password reset email result", { email, ...emailResult });
 
       if (!emailResult.success) {
-        logger.error(
-          "Failed to send password reset email to:",
+        logger.error("Failed to send password reset email", {
           email,
-          emailResult.error,
-        );
+          error: emailResult.error,
+          code: emailResult.code,
+          providerError: emailResult.providerError,
+        });
         return res.status(500).json({
           error: "Failed to send password reset email",
           details: emailResult.error,

@@ -447,8 +447,13 @@ function getFromForIndex(index) {
   const addr = SMTP_USERS[index] || process.env.SMTP_USER;
   if (!addr) return null;
   const displayName = process.env.FROM_EMAIL_NAME || "TokenTimer";
+  // FROM_EMAIL only applies in single-account mode; see sendEmailNotification().
+  const fromAddr =
+    SMTP_USERS.length <= 1 && process.env.FROM_EMAIL
+      ? process.env.FROM_EMAIL
+      : addr;
   // Format as display name + address so recipient sees the brand name
-  return `${JSON.stringify(displayName)} <${addr}>`;
+  return `${JSON.stringify(displayName)} <${fromAddr}>`;
 }
 
 // Cached DB-based transporter
@@ -532,7 +537,10 @@ export async function sendEmailNotification({
       });
     }
   }
-  const fromEnv = process.env.FROM_EMAIL; // optional explicit from
+  // FROM_EMAIL is only safe to force onto the From header in single-account
+  // mode; with rotating SMTP_USER accounts it can cause sender-mismatch
+  // rejections (e.g. Amazon SES) if it doesn't match the authenticating account.
+  const fromEnv = SMTP_USERS.length <= 1 ? process.env.FROM_EMAIL : null; // optional explicit from
   try {
     // Check if HTML already contains the full template (with footer)
     // appendFooter handles checking both HTML and Text versions independently

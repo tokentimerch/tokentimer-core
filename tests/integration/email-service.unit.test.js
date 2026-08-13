@@ -68,6 +68,7 @@ function makeNodemailerStub({
   sendAccepted = ["ok@example.com"],
 } = {}) {
   const calls = [];
+  const sendMailCalls = [];
   return {
     createTransport(options = {}) {
       calls.push(options);
@@ -76,13 +77,17 @@ function makeNodemailerStub({
           if (!verifyOk) throw new Error("verify failed");
           return true;
         },
-        async sendMail() {
+        async sendMail(mailOptions) {
+          sendMailCalls.push(mailOptions);
           return { accepted: sendAccepted, response: "250 OK" };
         },
       };
     },
     __getCalls() {
       return calls;
+    },
+    __getSendMailCalls() {
+      return sendMailCalls;
     },
   };
 }
@@ -123,6 +128,7 @@ describe("Email service unit coverage", () => {
     delete process.env.SMTP_SECURE;
     delete process.env.SMTP_REQUIRE_TLS;
     delete process.env.FROM_EMAIL;
+    delete process.env.FROM_EMAIL_NAME;
   });
 
   after(() => {
@@ -271,5 +277,48 @@ describe("Email service unit coverage", () => {
     expect(String(result.error || result.providerError || "")).to.match(
       /(Failed to send email|SMTP|support@example.com|contact)/i,
     );
+  });
+
+  it("uses FROM_EMAIL as the From address in single-account mode (issue #167)", async () => {
+    process.env.SMTP_HOST = "smtp.local";
+    process.env.SMTP_USER = "AKIAEXAMPLE";
+    process.env.SMTP_PASS = "secret";
+    process.env.SMTP_PORT = "587";
+    process.env.FROM_EMAIL = "verified-sender@example.com";
+    process.env.FROM_EMAIL_NAME = "TokenTimer";
+    const nodemailerStub = makeNodemailerStub();
+    const email = requireEmailServiceWithStubs({ nodemailer: nodemailerStub });
+    const result = await email.sendEmail({
+      to: "x@example.com",
+      subject: "Test",
+      text: "Body",
+      html: "<p>Body</p>",
+    });
+    expect(result.success).to.equal(true);
+    const sent = nodemailerStub.__getSendMailCalls();
+    expect(sent).to.have.length(1);
+    expect(sent[0].from).to.include("verified-sender@example.com");
+    expect(sent[0].from).to.not.include("AKIAEXAMPLE");
+  });
+
+  it("keeps From on the authenticating SMTP_USER in multi-account mode", async () => {
+    process.env.SMTP_HOST = "smtp.local";
+    process.env.SMTP_USER = "user1@example.com,user2@example.com";
+    process.env.SMTP_PASS = "p1,p2";
+    process.env.SMTP_PORT = "2525";
+    process.env.FROM_EMAIL = "verified-sender@example.com";
+    const nodemailerStub = makeNodemailerStub();
+    const email = requireEmailServiceWithStubs({ nodemailer: nodemailerStub });
+    const result = await email.sendEmail({
+      to: "x@example.com",
+      subject: "Test",
+      text: "Body",
+      html: "<p>Body</p>",
+    });
+    expect(result.success).to.equal(true);
+    const sent = nodemailerStub.__getSendMailCalls();
+    expect(sent).to.have.length(1);
+    expect(sent[0].from).to.include("user1@example.com");
+    expect(sent[0].from).to.not.include("verified-sender@example.com");
   });
 });

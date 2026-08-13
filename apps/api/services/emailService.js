@@ -435,7 +435,13 @@ function getFromForIndex(index) {
   const addr = SMTP_USERS[index] || process.env.SMTP_USER;
   if (!addr) return null;
   const displayName = process.env.FROM_EMAIL_NAME || "TokenTimer";
-  return `"${displayName}" <${addr}>`;
+  // Only honor FROM_EMAIL in single-account mode; with rotating SMTP_USER
+  // accounts, From must match whichever account authenticated the send.
+  const fromAddr =
+    SMTP_USERS.length <= 1 && process.env.FROM_EMAIL
+      ? process.env.FROM_EMAIL
+      : addr;
+  return `"${displayName}" <${fromAddr}>`;
 }
 
 /**
