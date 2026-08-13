@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-08-13
+
+### Fixed
+
+- **Env-configured SMTP sent verification and reset emails from the raw `SMTP_USER` credential instead of `FROM_EMAIL`.** With a single SMTP account, providers that enforce sender identity (e.g. Amazon SES) rejected the send whenever `SMTP_USER` was an IAM-style access key rather than a verified email address. `getFromForIndex()` in `apps/api/services/emailService.js` and `apps/worker/src/notify/email.js` now honors `FROM_EMAIL` in single-account mode; rotating multi-account SMTP setups keep using the authenticating account's address so senders still match what each account is authorized to send from. (#167)
+- **Email failure logs dropped the underlying SMTP error.** `apps/api/routes/auth.js` now logs `error`, `code`, and `providerError` as structured fields when verification or password-reset emails fail to send, instead of a bare message with no detail.
+
+### Changed
+
+- Version metadata bumped to 0.12.3 across all manifests, contracts, and Helm chart.
+
 ## [0.12.2] - 2026-08-13
 
 ### Fixed

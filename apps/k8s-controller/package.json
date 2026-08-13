@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/k8s-controller",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "main": "src/index.js",
