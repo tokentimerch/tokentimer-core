@@ -7,6 +7,7 @@ const {
   getManagedCertificatesForTokenMock,
   getCertificateInstancesMock,
   probeCertOpsEnabledMock,
+  getCachedCertOpsEnabledMock,
   invalidateCertOpsInventoryCacheMock,
   getWorkspaceCertOpsPauseStateMock,
   updateWorkspaceCertOpsPauseStateMock,
@@ -17,6 +18,9 @@ const {
   getManagedCertificatesForTokenMock: vi.fn(),
   getCertificateInstancesMock: vi.fn(),
   probeCertOpsEnabledMock: vi.fn(),
+  // Always "no cache entry yet" by default so existing tests keep exercising
+  // the async probe path; the caching behavior itself has its own tests.
+  getCachedCertOpsEnabledMock: vi.fn().mockReturnValue(null),
   invalidateCertOpsInventoryCacheMock: vi.fn(),
   getWorkspaceCertOpsPauseStateMock: vi.fn(),
   updateWorkspaceCertOpsPauseStateMock: vi.fn(),
@@ -36,6 +40,7 @@ vi.mock('../../src/components/certops/certopsApi', () => ({
   getManagedCertificatesForToken: getManagedCertificatesForTokenMock,
   getCertificateInstances: getCertificateInstancesMock,
   probeCertOpsEnabled: probeCertOpsEnabledMock,
+  getCachedCertOpsEnabled: getCachedCertOpsEnabledMock,
   invalidateCertOpsInventoryCache: invalidateCertOpsInventoryCacheMock,
   getWorkspaceCertOpsPauseState: getWorkspaceCertOpsPauseStateMock,
   updateWorkspaceCertOpsPauseState: updateWorkspaceCertOpsPauseStateMock,

@@ -111,10 +111,19 @@ export function useCertOpsJobs(filters = {}) {
  * A 404 on getJob clears the job and leaves error empty (job gone is not an
  * outage). Other failures surface a user-readable error string.
  *
+ * `externalRefreshToken` lets a parent (e.g. a job list's own "Refresh"
+ * button) force a refetch of an already-mounted timeline from the outside:
+ * this hook's own `refresh()` only helps a caller that holds this specific
+ * hook instance, but an expanded timeline is normally owned by a child
+ * component (EvidenceTimeline) the parent list doesn't have a handle to.
+ * Any value that changes between renders (a counter, `Date.now()`, ...)
+ * works; it is only ever compared by reference/equality, never read.
+ *
  * @param {string|null|undefined} jobId
+ * @param {*} [externalRefreshToken]
  * @returns {{ enabled: boolean|null, job: object|null, logEntries: object[], logPagination: object|null, evidence: object[], evidencePagination: object|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsJobTimeline(jobId) {
+export function useCertOpsJobTimeline(jobId, externalRefreshToken) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [job, setJob] = useState(null);
@@ -122,7 +131,13 @@ export function useCertOpsJobTimeline(jobId) {
   const [logPagination, setLogPagination] = useState(null);
   const [evidence, setEvidence] = useState([]);
   const [evidencePagination, setEvidencePagination] = useState(null);
-  const [loading, setLoading] = useState(false);
+  // Defaults to true (not false): the very first render happens before any
+  // effect has a chance to run, and a mounted timeline for a real jobId is
+  // always about to check availability/fetch. Defaulting to false here made
+  // that first paint show "Job not found or no longer available" instead of
+  // a spinner, however briefly (worse the more mounts happen, since every
+  // job-row expand mounts a fresh instance of this hook).
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -131,7 +146,30 @@ export function useCertOpsJobTimeline(jobId) {
   }, []);
 
   useEffect(() => {
-    if (!workspaceId || enabled !== true || !jobId) {
+    if (!workspaceId || !jobId) {
+      setJob(null);
+      setLogEntries([]);
+      setLogPagination(null);
+      setEvidence([]);
+      setEvidencePagination(null);
+      setLoading(false);
+      setError('');
+      return undefined;
+    }
+
+    if (enabled === null) {
+      // The availability probe (a separate hook instance per CertOps screen)
+      // hasn't resolved yet for this mount. This is "still finding out",
+      // not "not applicable" -- treat it as loading. Otherwise every fresh
+      // mount (e.g. re-opening a job's evidence timeline) briefly rendered
+      // "Job not found or no longer available" before the probe settled,
+      // even though the job existed the whole time.
+      setLoading(true);
+      setError('');
+      return undefined;
+    }
+
+    if (enabled !== true) {
       setJob(null);
       setLogEntries([]);
       setLogPagination(null);
@@ -192,7 +230,7 @@ export function useCertOpsJobTimeline(jobId) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, jobId, reloadTick]);
+  }, [workspaceId, enabled, jobId, reloadTick, externalRefreshToken]);
 
   return {
     enabled,

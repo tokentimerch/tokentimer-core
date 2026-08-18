@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import {
+  getCachedCertOpsEnabled,
   getCertificateInstances,
   getManagedCertificatesForToken,
   getWorkspaceCertOpsPauseState,
@@ -23,10 +24,19 @@ import { pickPrimaryCertificate } from './certopsFormat';
  */
 export function useCertOpsAvailability() {
   const { workspaceId } = useWorkspace();
-  const [state, setState] = useState({
-    ready: false,
-    enabled: null,
-    error: null,
+  // Lazy-initialized from the module-level cache (not just re-applied inside
+  // the effect below) so a cache hit is reflected in the *first* render, not
+  // one tick later. Every CertOps screen (Jobs, Certificates, Agents, a
+  // single job's evidence timeline, ...) mounts its own copy of this hook;
+  // without this, re-mounting one (e.g. re-opening a job row) always
+  // rendered `enabled: null` for at least one frame before the effect could
+  // apply the cache, which was enough for a child like the evidence timeline
+  // to render "Job not found" before flipping to the real data.
+  const [state, setState] = useState(() => {
+    const cached = workspaceId ? getCachedCertOpsEnabled(workspaceId) : null;
+    return cached
+      ? { ready: true, enabled: cached.enabled, error: null }
+      : { ready: false, enabled: null, error: null };
   });
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -42,7 +52,18 @@ export function useCertOpsAvailability() {
 
     let cancelled = false;
     const controller = new AbortController();
-    setState({ ready: false, enabled: null, error: null });
+
+    // Serve the cached verdict immediately when fresh (matches the lazy
+    // initial state above; re-applied here too since `workspaceId` can
+    // change after mount), then still revalidate in the background so a
+    // real change (flag flipped, workspace switched) is picked up within
+    // the cache TTL.
+    const cached = getCachedCertOpsEnabled(workspaceId);
+    if (cached) {
+      setState({ ready: true, enabled: cached.enabled, error: null });
+    } else {
+      setState({ ready: false, enabled: null, error: null });
+    }
 
     probeCertOpsEnabled(workspaceId, { signal: controller.signal })
       .then(result => {
@@ -56,6 +77,7 @@ export function useCertOpsAvailability() {
       })
       .catch(err => {
         if (cancelled) return;
+        if (cached) return; // Keep serving the cached verdict; background revalidation failed silently.
         const message =
           err?.response?.data?.error ||
           err?.message ||

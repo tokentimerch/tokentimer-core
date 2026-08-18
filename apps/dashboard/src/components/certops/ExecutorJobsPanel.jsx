@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Box,
   Button,
@@ -111,6 +111,16 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
   const [expandedId, setExpandedId] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState(null);
+  // Bumped alongside the list refresh so an already-expanded row's
+  // EvidenceTimeline (a separate hook instance, not something the list's own
+  // refresh() touches) refetches too, instead of silently going stale while
+  // the top-level "Refresh" button spins.
+  const [timelineRefreshToken, setTimelineRefreshToken] = useState(0);
+
+  const refreshAll = useCallback(() => {
+    refresh();
+    setTimelineRefreshToken(tick => tick + 1);
+  }, [refresh]);
 
   const firstPage = () => setPage({ offset: 0 });
   const pageIsPastEnd = Boolean(
@@ -125,7 +135,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
       await decide(workspaceId, job.id, { reason });
       showSuccess(decision === 'approve' ? 'Job approved' : 'Job rejected');
       setDecisionTarget(null);
-      refresh();
+      refreshAll();
     } catch (err) {
       showError(
         decision === 'approve' ? 'Approve failed' : 'Reject failed',
@@ -136,7 +146,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
         'CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL'
       ) {
         setDecisionTarget(null);
-        refresh();
+        refreshAll();
       }
     }
   };
@@ -165,7 +175,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
             ) : null}
             <DashboardActionButton
               variant='outline'
-              onClick={refresh}
+              onClick={refreshAll}
               isLoading={loading}
             >
               Refresh
@@ -345,7 +355,12 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     bg={expandedBg}
                     borderRadius='md'
                   >
-                    {isOpen ? <EvidenceTimeline jobId={job.id} /> : null}
+                    {isOpen ? (
+                      <EvidenceTimeline
+                        jobId={job.id}
+                        refreshToken={timelineRefreshToken}
+                      />
+                    ) : null}
                   </Box>
                 </Collapse>
               </Box>
@@ -368,7 +383,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
       <CreateManualJobModal
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={refresh}
+        onCreated={refreshAll}
       />
       <ApprovalDecisionModal
         isOpen={Boolean(decisionTarget)}

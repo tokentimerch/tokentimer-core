@@ -319,11 +319,34 @@ export async function updateWorkspaceCertOpsPauseState(
   return res.data;
 }
 
+/** @type {Map<string, { at: number, enabled: boolean }>} */
+const enabledProbeCache = new Map();
+const ENABLED_PROBE_TTL_MS = 60_000;
+
+/**
+ * Synchronously reads the last known `certops.enabled` result for a
+ * workspace, if it was probed within the last `ENABLED_PROBE_TTL_MS`.
+ * Lets callers seed state immediately (no "resolving" flash) instead of
+ * always starting from `null` while a fresh probe is in flight.
+ * @returns {{ enabled: boolean }|null}
+ */
+export function getCachedCertOpsEnabled(workspaceId) {
+  const cached = enabledProbeCache.get(String(workspaceId));
+  if (!cached || Date.now() - cached.at >= ENABLED_PROBE_TTL_MS) return null;
+  return { enabled: cached.enabled };
+}
+
 /**
  * Lightweight availability probe used to gate CertOps UI behind the
  * `certops.enabled` rollout flag. The backend hides the routes with a 404 when
  * the flag is off, so a successful list call means CertOps is available to this
  * workspace. Only HTTP 404 means disabled; other failures propagate.
+ *
+ * Every screen under CertOps (Jobs, Certificates, Agents, a single job's
+ * evidence timeline, ...) mounts its own copy of this probe. Without a cache,
+ * re-opening e.g. a job's evidence timeline re-probes from scratch every time
+ * and the UI briefly reports "not available" until that round-trip resolves.
+ * Callers combine this with `getCachedCertOpsEnabled` to avoid that flash.
  * @returns {Promise<{ enabled: boolean }>}
  */
 export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
@@ -333,9 +356,11 @@ export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
       signal,
       _suppressLog: true,
     });
+    enabledProbeCache.set(String(workspaceId), { at: Date.now(), enabled: true });
     return { enabled: true };
   } catch (err) {
     if (err?.response?.status === 404) {
+      enabledProbeCache.set(String(workspaceId), { at: Date.now(), enabled: false });
       return { enabled: false };
     }
     throw err;
