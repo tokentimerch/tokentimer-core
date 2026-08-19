@@ -393,6 +393,16 @@ function getApiLimiter() {
   };
 }
 
+const csrfTokenLimiter = rateLimit({
+  windowMs: intEnv("CSRF_TOKEN_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+  max: intEnv("CSRF_TOKEN_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 60),
+  message: "Too many CSRF token requests, please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: (req) => resolveClientIp(req) || ipKeyGenerator(req),
+});
+
 const noRateLimit = (req, res, next) => next();
 
 /**
@@ -444,6 +454,7 @@ module.exports = {
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
+  csrfTokenLimiter,
   noRateLimit,
   applyGlobalRateLimit,
   normalizeEmail,
