@@ -356,11 +356,17 @@ export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
       signal,
       _suppressLog: true,
     });
-    enabledProbeCache.set(String(workspaceId), { at: Date.now(), enabled: true });
+    enabledProbeCache.set(String(workspaceId), {
+      at: Date.now(),
+      enabled: true,
+    });
     return { enabled: true };
   } catch (err) {
     if (err?.response?.status === 404) {
-      enabledProbeCache.set(String(workspaceId), { at: Date.now(), enabled: false });
+      enabledProbeCache.set(String(workspaceId), {
+        at: Date.now(),
+        enabled: false,
+      });
       return { enabled: false };
     }
     throw err;

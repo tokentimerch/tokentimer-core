@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-08-19
+
+### Fixed
+
+- **A CertOps availability outage could leave a job's evidence timeline spinning forever.** `useCertOpsJobTimeline` treated `enabled === null` exclusively as "still resolving", but the availability hook also returns `null` after a completed probe error. If the availability cache had expired and the probe then failed with a network/5xx error, expanding a job row showed an indefinite spinner with no error or retry path. The hook now distinguishes "not yet resolved" from "resolved with an error" and surfaces the failure with a retry affordance instead. (#170)
+- **A cached "CertOps disabled" verdict could mask a real outage as "feature not enabled".** The availability probe caches its verdict briefly to avoid re-probing on every screen mount; the revalidation failure handler previously kept serving *any* cached verdict, including a cached `enabled: false`. If that verdict was cached from an earlier 404 and the background revalidation then failed with a network/5xx error, the UI kept showing "not enabled" instead of surfacing the outage. Only a cached `enabled: true` is now retained through a failed revalidation (the screens it gates make their own requests that surface the outage on their own); a cached `enabled: false` now surfaces the revalidation failure instead of silently masking it. (#170)
+
+### Security
+
+- **`nanoid`** bumped to `3.3.18`, fixing two infinite-loop denial-of-service issues: [GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8) (`customAlphabet`/`customRandom` loop indefinitely on a size of `0`) and [GHSA-28wg-ghj8-5hjv](https://github.com/advisories/GHSA-28wg-ghj8-5hjv) (`nanoid/non-secure` loops indefinitely on a negative size).
+- **`postcss`** bumped to `8.5.26`, fixing [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849) (path traversal in previous-source-map auto-loading lets an attacker-controlled `sourceMappingURL` disclose arbitrary `.map` files) and [GHSA-fxqj-rqcc-2cmp](https://github.com/advisories/GHSA-fxqj-rqcc-2cmp) (the same disclosure remained reachable when `from` was unset).
+- **`@babel/core`** bumped to `7.29.6`, fixing [GHSA-4x5r-pxfx-6jf8](https://github.com/advisories/GHSA-4x5r-pxfx-6jf8) (arbitrary source-map file read via a crafted `sourceMappingURL` comment when compiling untrusted input).
+
 ## [0.12.3] - 2026-08-13
 
 ### Fixed

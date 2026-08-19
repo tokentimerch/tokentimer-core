@@ -21,7 +21,16 @@ overrides:
   "ajv@6": 6.15.0
   lodash: 4.18.1
   follow-redirects: 1.16.0
-  postcss: 8.5.12
+  # GHSA-r28c-9q8g-f849 / GHSA-fxqj-rqcc-2cmp: path traversal in previous
+  # source map auto-loading (sourceMappingURL) leaks arbitrary .map files;
+  # fixed 8.5.18, incomplete-fix follow-up fixed 8.5.23.
+  postcss: 8.5.26
+  # GHSA-2v37-7h3g-55p8 (size 0, customAlphabet/customRandom, fixed 3.3.18) /
+  # GHSA-28wg-ghj8-5hjv (negative size, non-secure module, fixed 3.3.16).
+  nanoid: 3.3.18
+  # GHSA-4x5r-pxfx-6jf8: arbitrary source map file read via sourceMappingURL
+  # comment when compiling untrusted input; fixed 7.29.6.
+  "@babel/core": 7.29.6
   qs: 6.15.2
   ip-address: 10.4.0
   form-data: 4.0.6
