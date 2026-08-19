@@ -19,6 +19,10 @@ import { pickPrimaryCertificate } from './certopsFormat';
  * CertOps ships behind the `certops.enabled` rollout flag. The backend hides
  * its routes (404) while the flag is off. Only 404 means disabled; other
  * failures are surfaced as `error` so outages are not mistaken for "feature off".
+ * One nuance when a fresh cached verdict exists: a cached `enabled: true` is
+ * served through a failed background revalidation (the gated screens' own
+ * requests surface the outage), but a cached `enabled: false` is not, since
+ * a "feature off" panel makes no further requests that could reveal it.
  *
  * @returns {{ ready: boolean, enabled: boolean|null, error: string|null, retry: function }}
  */
@@ -77,7 +81,15 @@ export function useCertOpsAvailability() {
       })
       .catch(err => {
         if (cancelled) return;
-        if (cached) return; // Keep serving the cached verdict; background revalidation failed silently.
+        // A cached *enabled* verdict keeps being served through a failed
+        // background revalidation: the screens it gates are already fetching
+        // real data, and those requests surface the outage loudly on their
+        // own. A cached *disabled* verdict must not be retained the same
+        // way: it renders "feature off" panels that make no follow-up
+        // requests, so keeping it would let a revalidation outage silently
+        // masquerade as "CertOps is not enabled" (only a 404 may mean
+        // disabled).
+        if (cached?.enabled === true) return;
         const message =
           err?.response?.data?.error ||
           err?.message ||
