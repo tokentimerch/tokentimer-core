@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/contracts",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "description": "API and queue schema contracts for TokenTimer",
