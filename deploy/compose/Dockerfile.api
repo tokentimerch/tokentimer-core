@@ -1,5 +1,5 @@
 # TokenTimer API Dockerfile
-FROM golang:1.26.5-alpine3.23 AS subfinder-builder
+FROM golang:1.26.6-alpine3.23 AS subfinder-builder
 
 RUN apk update && apk upgrade --no-cache && \
     apk add --no-cache ca-certificates git
@@ -13,7 +13,8 @@ RUN go get \
       golang.org/x/sys@v0.46.0 \
       golang.org/x/text@v0.39.0 \
       github.com/yuin/goldmark@v1.7.17 \
-      github.com/cloudflare/circl@v1.6.3 && \
+      github.com/cloudflare/circl@v1.6.3 \
+      github.com/klauspost/compress@v1.18.7 && \
     go mod tidy && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
 
