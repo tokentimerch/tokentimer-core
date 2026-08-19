@@ -1,5 +1,5 @@
 # Build context must be the repo root (see docker-compose.*.yml).
-FROM golang:1.26.5-alpine3.23 AS subfinder-builder
+FROM golang:1.26.6-alpine3.23 AS subfinder-builder
 
 RUN apk update && apk upgrade --no-cache && \
     apk add --no-cache ca-certificates git
@@ -11,7 +11,8 @@ RUN go get \
       golang.org/x/crypto@v0.52.0 \
       golang.org/x/net@v0.55.0 \
       golang.org/x/sys@v0.45.0 \
-      github.com/cloudflare/circl@v1.6.3 && \
+      github.com/cloudflare/circl@v1.6.3 \
+      github.com/klauspost/compress@v1.18.7 && \
     go mod tidy && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
 
