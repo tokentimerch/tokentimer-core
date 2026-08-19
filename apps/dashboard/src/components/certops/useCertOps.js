@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import {
+  getCachedCertOpsEnabled,
   getCertificateInstances,
   getManagedCertificatesForToken,
   getWorkspaceCertOpsPauseState,
@@ -18,15 +19,28 @@ import { pickPrimaryCertificate } from './certopsFormat';
  * CertOps ships behind the `certops.enabled` rollout flag. The backend hides
  * its routes (404) while the flag is off. Only 404 means disabled; other
  * failures are surfaced as `error` so outages are not mistaken for "feature off".
+ * One nuance when a fresh cached verdict exists: a cached `enabled: true` is
+ * served through a failed background revalidation (the gated screens' own
+ * requests surface the outage), but a cached `enabled: false` is not, since
+ * a "feature off" panel makes no further requests that could reveal it.
  *
  * @returns {{ ready: boolean, enabled: boolean|null, error: string|null, retry: function }}
  */
 export function useCertOpsAvailability() {
   const { workspaceId } = useWorkspace();
-  const [state, setState] = useState({
-    ready: false,
-    enabled: null,
-    error: null,
+  // Lazy-initialized from the module-level cache (not just re-applied inside
+  // the effect below) so a cache hit is reflected in the *first* render, not
+  // one tick later. Every CertOps screen (Jobs, Certificates, Agents, a
+  // single job's evidence timeline, ...) mounts its own copy of this hook;
+  // without this, re-mounting one (e.g. re-opening a job row) always
+  // rendered `enabled: null` for at least one frame before the effect could
+  // apply the cache, which was enough for a child like the evidence timeline
+  // to render "Job not found" before flipping to the real data.
+  const [state, setState] = useState(() => {
+    const cached = workspaceId ? getCachedCertOpsEnabled(workspaceId) : null;
+    return cached
+      ? { ready: true, enabled: cached.enabled, error: null }
+      : { ready: false, enabled: null, error: null };
   });
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -42,7 +56,18 @@ export function useCertOpsAvailability() {
 
     let cancelled = false;
     const controller = new AbortController();
-    setState({ ready: false, enabled: null, error: null });
+
+    // Serve the cached verdict immediately when fresh (matches the lazy
+    // initial state above; re-applied here too since `workspaceId` can
+    // change after mount), then still revalidate in the background so a
+    // real change (flag flipped, workspace switched) is picked up within
+    // the cache TTL.
+    const cached = getCachedCertOpsEnabled(workspaceId);
+    if (cached) {
+      setState({ ready: true, enabled: cached.enabled, error: null });
+    } else {
+      setState({ ready: false, enabled: null, error: null });
+    }
 
     probeCertOpsEnabled(workspaceId, { signal: controller.signal })
       .then(result => {
@@ -56,6 +81,15 @@ export function useCertOpsAvailability() {
       })
       .catch(err => {
         if (cancelled) return;
+        // A cached *enabled* verdict keeps being served through a failed
+        // background revalidation: the screens it gates are already fetching
+        // real data, and those requests surface the outage loudly on their
+        // own. A cached *disabled* verdict must not be retained the same
+        // way: it renders "feature off" panels that make no follow-up
+        // requests, so keeping it would let a revalidation outage silently
+        // masquerade as "CertOps is not enabled" (only a 404 may mean
+        // disabled).
+        if (cached?.enabled === true) return;
         const message =
           err?.response?.data?.error ||
           err?.message ||

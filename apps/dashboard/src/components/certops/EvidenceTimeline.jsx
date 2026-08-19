@@ -239,9 +239,9 @@ function TimelineItem({ item, attemptLabel }) {
 /**
  * Full job + evidence timeline for a single CertOps job.
  *
- * @param {{ jobId: string, onClose?: function }} props
+ * @param {{ jobId: string, onClose?: function, refreshToken?: * }} props
  */
-export default function EvidenceTimeline({ jobId, onClose }) {
+export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
   const { muted, border } = useDashboardTheme();
   const failureBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.28)');
   const failureBorder = useColorModeValue('red.200', 'red.700');
@@ -253,7 +253,7 @@ export default function EvidenceTimeline({ jobId, onClose }) {
     evidencePagination,
     loading,
     error,
-  } = useCertOpsJobTimeline(jobId);
+  } = useCertOpsJobTimeline(jobId, refreshToken);
 
   if (loading) {
     return (

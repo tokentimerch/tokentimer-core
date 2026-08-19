@@ -15,6 +15,7 @@ import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 const {
   useCertOpsJobsMock,
   useCertOpsCanManageMock,
+  useCertOpsJobTimelineMock,
   createJobMock,
   approveJobMock,
   rejectJobMock,
@@ -24,6 +25,13 @@ const {
 } = vi.hoisted(() => ({
   useCertOpsJobsMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
+  useCertOpsJobTimelineMock: vi.fn(() => ({
+    job: null,
+    logEntries: [],
+    evidence: [],
+    loading: false,
+    error: '',
+  })),
   createJobMock: vi.fn(),
   approveJobMock: vi.fn(),
   rejectJobMock: vi.fn(),
@@ -67,13 +75,7 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
 
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
   useCertOpsJobs: useCertOpsJobsMock,
-  useCertOpsJobTimeline: () => ({
-    job: null,
-    logEntries: [],
-    evidence: [],
-    loading: false,
-    error: '',
-  }),
+  useCertOpsJobTimeline: useCertOpsJobTimelineMock,
 }));
 
 vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
@@ -125,6 +127,14 @@ function job(overrides = {}) {
 beforeEach(() => {
   useCertOpsJobsMock.mockReset();
   useCertOpsCanManageMock.mockReset();
+  useCertOpsJobTimelineMock.mockClear();
+  useCertOpsJobTimelineMock.mockReturnValue({
+    job: null,
+    logEntries: [],
+    evidence: [],
+    loading: false,
+    error: '',
+  });
   createJobMock.mockReset();
   approveJobMock.mockReset();
   rejectJobMock.mockReset();
@@ -565,6 +575,31 @@ describe('ExecutorJobsPanel list states', () => {
 
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('refetches an expanded row\'s evidence timeline when "Refresh" is clicked', () => {
+    // Regression test: the top-level "Refresh" button used to only call the
+    // job list's own refresh(), leaving an already-expanded row's
+    // EvidenceTimeline (a separate hook instance/fetch) stale - a manager
+    // watching a mid-renewal job never saw newer log/evidence entries land
+    // without collapsing and re-expanding the row.
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()], refresh }));
+
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /Renew/i }));
+    const firstCallCount = useCertOpsJobTimelineMock.mock.calls.length;
+    const firstRefreshToken =
+      useCertOpsJobTimelineMock.mock.calls[firstCallCount - 1][1];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    const lastCallCount = useCertOpsJobTimelineMock.mock.calls.length;
+    const lastRefreshToken =
+      useCertOpsJobTimelineMock.mock.calls[lastCallCount - 1][1];
+    expect(lastRefreshToken).not.toBe(firstRefreshToken);
   });
 
   it('renders a page control, not a caption, when more jobs exist than are shown', () => {

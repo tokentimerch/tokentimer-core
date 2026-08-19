@@ -7,6 +7,7 @@ const {
   getManagedCertificatesForTokenMock,
   getCertificateInstancesMock,
   probeCertOpsEnabledMock,
+  getCachedCertOpsEnabledMock,
   invalidateCertOpsInventoryCacheMock,
   getWorkspaceCertOpsPauseStateMock,
   updateWorkspaceCertOpsPauseStateMock,
@@ -17,6 +18,9 @@ const {
   getManagedCertificatesForTokenMock: vi.fn(),
   getCertificateInstancesMock: vi.fn(),
   probeCertOpsEnabledMock: vi.fn(),
+  // Always "no cache entry yet" by default so existing tests keep exercising
+  // the async probe path; the caching behavior itself has its own tests.
+  getCachedCertOpsEnabledMock: vi.fn().mockReturnValue(null),
   invalidateCertOpsInventoryCacheMock: vi.fn(),
   getWorkspaceCertOpsPauseStateMock: vi.fn(),
   updateWorkspaceCertOpsPauseStateMock: vi.fn(),
@@ -36,17 +40,93 @@ vi.mock('../../src/components/certops/certopsApi', () => ({
   getManagedCertificatesForToken: getManagedCertificatesForTokenMock,
   getCertificateInstances: getCertificateInstancesMock,
   probeCertOpsEnabled: probeCertOpsEnabledMock,
+  getCachedCertOpsEnabled: getCachedCertOpsEnabledMock,
   invalidateCertOpsInventoryCache: invalidateCertOpsInventoryCacheMock,
   getWorkspaceCertOpsPauseState: getWorkspaceCertOpsPauseStateMock,
   updateWorkspaceCertOpsPauseState: updateWorkspaceCertOpsPauseStateMock,
 }));
 
 import {
+  useCertOpsAvailability,
   useWorkspaceCertOps,
   useCertOpsForToken,
   useCertOpsIsWorkspaceAdmin,
   useCertOpsWorkspaceKillSwitch,
 } from '../../src/components/certops/useCertOps.js';
+
+describe('useCertOpsAvailability cached-verdict revalidation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
+    getCachedCertOpsEnabledMock.mockReturnValue(null);
+  });
+
+  it('surfaces a probe failure as an error when there is no cached verdict', async () => {
+    probeCertOpsEnabledMock.mockRejectedValue(
+      Object.assign(new Error('network down'), {
+        response: { status: 500, data: { error: 'Internal error' } },
+      })
+    );
+
+    const { result } = renderHook(() => useCertOpsAvailability());
+
+    await waitFor(() => expect(result.current.error).toBe('Internal error'));
+    expect(result.current.ready).toBe(true);
+    expect(result.current.enabled).toBe(null);
+  });
+
+  it('keeps serving a cached enabled verdict through a failed revalidation', async () => {
+    getCachedCertOpsEnabledMock.mockReturnValue({ enabled: true });
+    probeCertOpsEnabledMock.mockRejectedValue(
+      Object.assign(new Error('network down'), {
+        response: { status: 503, data: { error: 'Service unavailable' } },
+      })
+    );
+
+    const { result } = renderHook(() => useCertOpsAvailability());
+
+    expect(result.current.ready).toBe(true);
+    expect(result.current.enabled).toBe(true);
+    await waitFor(() => expect(probeCertOpsEnabledMock).toHaveBeenCalled());
+    // The failed revalidation must not tear down the working verdict: the
+    // gated screens' own requests are what surface a real outage.
+    expect(result.current.ready).toBe(true);
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.error).toBe(null);
+  });
+
+  it('does not let a cached disabled verdict mask a revalidation outage as "feature off"', async () => {
+    getCachedCertOpsEnabledMock.mockReturnValue({ enabled: false });
+    probeCertOpsEnabledMock.mockRejectedValue(
+      Object.assign(new Error('network down'), {
+        response: { status: 503, data: { error: 'Service unavailable' } },
+      })
+    );
+
+    const { result } = renderHook(() => useCertOpsAvailability());
+
+    // Cached verdict is served first...
+    expect(result.current.enabled).toBe(false);
+    // ...but once revalidation fails, only a 404 may mean disabled, so the
+    // outage must surface as an error instead of "CertOps is not enabled".
+    await waitFor(() =>
+      expect(result.current.error).toBe('Service unavailable')
+    );
+    expect(result.current.ready).toBe(true);
+    expect(result.current.enabled).toBe(null);
+  });
+
+  it('replaces a cached disabled verdict when revalidation resolves enabled', async () => {
+    getCachedCertOpsEnabledMock.mockReturnValue({ enabled: false });
+    probeCertOpsEnabledMock.mockResolvedValue({ enabled: true });
+
+    const { result } = renderHook(() => useCertOpsAvailability());
+
+    expect(result.current.enabled).toBe(false);
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    expect(result.current.error).toBe(null);
+  });
+});
 
 describe('useWorkspaceCertOps fail-closed resolution', () => {
   beforeEach(() => {
