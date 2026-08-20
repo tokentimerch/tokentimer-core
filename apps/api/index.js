@@ -319,6 +319,7 @@ app.use((error, req, res, next) => {
 // (extracted to middleware/rateLimit.js and config/constants.js)
 const {
   speedLimiter,
+  csrfTokenLimiter,
   applyGlobalRateLimit,
   getApiLimiter,
 } = require("./middleware/rateLimit");
@@ -579,7 +580,7 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
 
 // CSRF token endpoint — always rotate (overwrite) so stale cookies after secret
 // rotation or cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
-app.get("/api/csrf-token", (req, res) => {
+app.get("/api/csrf-token", csrfTokenLimiter, (req, res) => {
   const csrfToken = generateCsrfToken(req, res, true, false);
   res.json({ csrfToken });
 });
