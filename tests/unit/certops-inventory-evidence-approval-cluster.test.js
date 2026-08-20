@@ -50,6 +50,11 @@ describe("agent compatibility (H8)", () => {
         CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
         CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
         CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        // Pinned explicitly so this clock-drift assertion doesn't drift with
+        // packages/agent/package.json's version on every release (that default
+        // is intentional for the real "outdated" heuristic, but this test is
+        // about clockDriftState, not the outdated label).
+        CERTOPS_AGENT_LATEST_KNOWN_VERSION: "0.12.0",
         CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS: "5000",
         CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS: "30000",
       },
@@ -57,6 +62,46 @@ describe("agent compatibility (H8)", () => {
     assert.equal(result.compatibilityState, "compatible");
     assert.equal(result.clockDriftState, "alert");
     assert.equal(result.clockDriftMs, 60_000);
+  });
+
+  it("flags an agent more than one minor behind CERTOPS_AGENT_LATEST_KNOWN_VERSION as outdated", () => {
+    // Both bounds pinned explicitly (not left to the packages/agent/package.json
+    // default) so this is the one deterministic, release-proof test asserting
+    // computeAgentCompatibility can actually produce "outdated" — see the
+    // clock-drift test above for why that one pins the same var away from it.
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.10.0",
+        clockOffsetMs: 0,
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.1.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "99.999.999",
+        CERTOPS_AGENT_LATEST_KNOWN_VERSION: "0.12.0",
+      },
+    );
+    assert.equal(result.compatibilityState, "outdated");
+  });
+
+  it("does not flag an agent exactly one minor behind CERTOPS_AGENT_LATEST_KNOWN_VERSION as outdated", () => {
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.11.0",
+        clockOffsetMs: 0,
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.1.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "99.999.999",
+        CERTOPS_AGENT_LATEST_KNOWN_VERSION: "0.12.0",
+      },
+    );
+    assert.equal(result.compatibilityState, "compatible");
   });
 
   it("marks an agent live within the offline threshold", () => {
