@@ -18,6 +18,7 @@ import {
   Badge,
   Checkbox,
   Switch,
+  Tooltip,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -303,6 +304,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
     loading: false,
   });
   const [authorized, setAuthorized] = React.useState(null);
+  const [manualInvitesDisabled, setManualInvitesDisabled] =
+    React.useState(false);
   const [renaming, setRenaming] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState('');
   const [renameSaving, setRenameSaving] = React.useState(false);
@@ -438,6 +441,24 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
         }
       } catch (_) {
         if (!cancelled) setAccountPlan('oss');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load auth feature flags (manual invites may be disabled for SSO-only installs)
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.get(API_ENDPOINTS.AUTH_FEATURES);
+        if (!cancelled) {
+          setManualInvitesDisabled(res?.data?.manualInvitesDisabled === true);
+        }
+      } catch (_) {
+        if (!cancelled) setManualInvitesDisabled(false);
       }
     })();
     return () => {
@@ -940,45 +961,63 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 below; that is separate from workspace manager.
               </Text>
 
-              <HStack spacing={3} mb={4} flexWrap='wrap'>
-                <Input
-                  placeholder='Invite by email'
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  isDisabled={!canManage}
-                  flex='1'
-                  minW='200px'
-                />
-                <Select
-                  value={inviteRole}
-                  onChange={e => setInviteRole(e.target.value)}
-                  maxW={{ base: '100%', sm: '220px' }}
-                  isDisabled={!canManage}
-                >
-                  <option value='viewer'>Viewer</option>
-                  <option value='workspace_manager'>Manager</option>
-                </Select>
-                <Button
-                  onClick={async () => {
-                    if (!currentWorkspace || !inviteEmail) return;
-                    const email = inviteEmail.trim();
-                    if (!/.+@.+\..+/.test(email)) {
-                      showWarning('Invalid email');
-                      return;
-                    }
-                    await workspaceAPI.inviteMember(currentWorkspace.id, {
-                      email,
-                      role: inviteRole,
-                    });
-                    setInviteEmail('');
-                    await reloadMembers(currentWorkspace.id);
-                    await reloadInvitations(currentWorkspace.id);
-                  }}
-                  isDisabled={!canManage}
-                >
-                  Invite
-                </Button>
-              </HStack>
+              {manualInvitesDisabled && (
+                <Alert status='info' borderRadius='md' mb={4} fontSize='sm'>
+                  <AlertIcon />
+                  <AlertDescription>
+                    Manual invites are disabled for this installation. Users
+                    must sign in through your identity provider (SSO/IDM) to get
+                    workspace access.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <Tooltip
+                hasArrow
+                placement='top'
+                label='Manual invites are disabled. Users must sign in via SSO/IDM.'
+                isDisabled={!manualInvitesDisabled}
+              >
+                <HStack spacing={3} mb={4} flexWrap='wrap' w='full'>
+                  <Input
+                    placeholder='Invite by email'
+                    value={inviteEmail}
+                    onChange={e => setInviteEmail(e.target.value)}
+                    isDisabled={!canManage || manualInvitesDisabled}
+                    flex='1'
+                    minW='200px'
+                  />
+                  <Select
+                    value={inviteRole}
+                    onChange={e => setInviteRole(e.target.value)}
+                    maxW={{ base: '100%', sm: '220px' }}
+                    isDisabled={!canManage || manualInvitesDisabled}
+                  >
+                    <option value='viewer'>Viewer</option>
+                    <option value='workspace_manager'>Manager</option>
+                  </Select>
+                  <Button
+                    onClick={async () => {
+                      if (!currentWorkspace || !inviteEmail) return;
+                      const email = inviteEmail.trim();
+                      if (!/.+@.+\..+/.test(email)) {
+                        showWarning('Invalid email');
+                        return;
+                      }
+                      await workspaceAPI.inviteMember(currentWorkspace.id, {
+                        email,
+                        role: inviteRole,
+                      });
+                      setInviteEmail('');
+                      await reloadMembers(currentWorkspace.id);
+                      await reloadInvitations(currentWorkspace.id);
+                    }}
+                    isDisabled={!canManage || manualInvitesDisabled}
+                  >
+                    Invite
+                  </Button>
+                </HStack>
+              </Tooltip>
 
               <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
                 <Table size='sm' minW='600px'>

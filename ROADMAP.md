@@ -84,7 +84,7 @@ rejects key material at every write surface (CI-enforced).
   superseded-material retention. Verified end to end against real Windows
   Server hosts (a real CNG store, a real IIS binding, a real ACME order).
   See ADR-0012.
-- [ ] **Trust-anchor ownership reconciliation (targeting 0.13.0)**: CA
+- [ ] **Trust-anchor ownership reconciliation (targeting 0.14.0)**: CA
   root/intermediate distribution to and revocation from agent hosts.
   Decided in ADR-0012 but not yet implemented; `trust-anchor-deploy-v1`
   stays gated with no executor.
