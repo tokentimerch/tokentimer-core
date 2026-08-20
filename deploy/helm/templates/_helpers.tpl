@@ -213,6 +213,9 @@ ADMIN_NAME: {{ .Values.config.adminName | default "Administrator" | quote }}
 {{- if .Values.config.disableAdminBootstrap }}
 DISABLE_ADMIN_BOOTSTRAP: "true"
 {{- end }}
+{{- if .Values.config.disableManualInvites }}
+DISABLE_MANUAL_INVITES: "true"
+{{- end }}
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}

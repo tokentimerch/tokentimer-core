@@ -18,7 +18,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - `GET /api/auth/features` now includes `manualInvitesDisabled` in its response, documented in `packages/contracts/openapi/openapi.yaml`.
-- `deploy/compose/.env.example` documents `DISABLE_MANUAL_INVITES` (commented out, defaults to enabled).
+- `deploy/compose/.env.example` documents `DISABLE_MANUAL_INVITES` (commented out, defaults to enabled); `docker-compose.yml`'s `api` service now passes the variable through, and the Helm chart exposes it as `config.disableManualInvites`.
 - Version metadata bumped to 0.13.0 across all manifests, contracts, and Helm chart.
 
 ## [0.12.4] - 2026-08-19

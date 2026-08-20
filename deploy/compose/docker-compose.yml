@@ -100,6 +100,10 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-Administrator}
       DISABLE_ADMIN_BOOTSTRAP: ${DISABLE_ADMIN_BOOTSTRAP:-}
 
+      # Block manual workspace invites when users are provisioned exclusively
+      # through an external identity provider (set to true to enable).
+      DISABLE_MANUAL_INVITES: ${DISABLE_MANUAL_INVITES:-}
+
       # Worker <-> API shared secret (falls back to SESSION_SECRET if unset)
       WORKER_API_KEY: ${WORKER_API_KEY:-}
 

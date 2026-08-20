@@ -447,6 +447,10 @@ config:
   adminName: "Administrator"
   # Set to true to skip automatic admin creation (e.g. when users are managed via SSO).
   disableAdminBootstrap: false
+  # Set to true to block manual workspace invites (POST /api/v1/workspaces/:id/members
+  # returns 403 MANUAL_INVITES_DISABLED) when users are provisioned exclusively through
+  # an external identity provider. Existing pending invitations are unaffected.
+  disableManualInvites: false
   nodeEnv: "production"        # set to "development" for debug/testing
   baseUrl: "http://localhost:8080"
   apiUrl: "http://localhost:4000"
