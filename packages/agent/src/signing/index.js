@@ -966,7 +966,7 @@ function checkJobTimeWindow({
  *     shipped with that default and no fleet has reported needing the
  *     override back to `false`. Expected no earlier than the release after
  *     the one that flips the default (the default flip itself targets
- *     0.12.0, so this removal targets 0.13.0 or later). Removing it deletes
+ *     0.12.0, so this removal targets 0.14.0 or later). Removing it deletes
  *     the `if (requireSignedAgentId) { ... } return { allowed: true }`
  *     absence-tolerant branch entirely, so a missing agentId fails closed
  *     unconditionally with no configuration path back to tolerating it.

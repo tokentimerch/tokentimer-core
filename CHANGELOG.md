@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-20
+
+### Added
+
+- **`DISABLE_MANUAL_INVITES` environment variable.** When set to `true`, `POST /api/v1/workspaces/:id/members` returns `403 MANUAL_INVITES_DISABLED` instead of creating an invite, so an operator who provisions every user through an external identity provider can turn off the manual-invite path entirely rather than relying on unenforced convention. The dashboard's Workspaces page reads the new `manualInvitesDisabled` field from `GET /api/auth/features` and disables/hides the invite UI with an explanatory tooltip when the toggle is active, instead of only failing after submit.
+
+### Changed
+
+- `GET /api/auth/features` now includes `manualInvitesDisabled` in its response, documented in `packages/contracts/openapi/openapi.yaml`.
+- `deploy/compose/.env.example` documents `DISABLE_MANUAL_INVITES` (commented out, defaults to enabled).
+- Version metadata bumped to 0.13.0 across all manifests, contracts, and Helm chart.
+
 ## [0.12.4] - 2026-08-19
 
 ### Fixed

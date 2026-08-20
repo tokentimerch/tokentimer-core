@@ -475,6 +475,28 @@ router.delete(
     }
   },
 );
+// Manual invite creation kill switch: once enabled, workspace admins and
+// managers can no longer grant membership through this endpoint (new
+// invites, resends, or direct-add of an existing user), so every grant has
+// to come from SSO/IDM provisioning instead. Invitations already created
+// before the flag was turned on are unaffected: listing them, cancelling
+// them, and accepting them via POST /auth/register all stay on their own
+// routes and are not gated here.
+function manualInvitesDisabled(env = process.env) {
+  return env.DISABLE_MANUAL_INVITES === "true";
+}
+
+function requireManualInvitesEnabled(req, res, next) {
+  if (manualInvitesDisabled()) {
+    return res.status(403).json({
+      error:
+        "Manual invites are disabled for this workspace. Users must be provisioned through your identity provider.",
+      code: "MANUAL_INVITES_DISABLED",
+    });
+  }
+  return next();
+}
+
 // Memberships
 router.post(
   "/api/v1/workspaces/:id/members",
@@ -483,6 +505,7 @@ router.post(
   loadWorkspace,
   requireWorkspaceMembership,
   authorize("membership.invite"),
+  requireManualInvitesEnabled,
   async (req, res) => {
     try {
       const userId = req.user.id;
@@ -1112,4 +1135,6 @@ module.exports = router;
 module.exports._test = {
   redactAuditTopologyForRole,
   AUDIT_TOPOLOGY_FIELDS_BY_ACTION,
+  manualInvitesDisabled,
+  requireManualInvitesEnabled,
 };

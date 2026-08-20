@@ -136,6 +136,12 @@ Not an HTTP endpoint. Runs internally on API startup (`auth/bootstrap.js`):
 
 ### Add Member / Invite User (Admin or Manager)
 
+Returns `403 { code: "MANUAL_INVITES_DISABLED" }` when `DISABLE_MANUAL_INVITES=true`.
+Use this to lock down user provisioning to your identity provider (SSO/IDM)
+only; already-pending invitations and their acceptance via
+`POST /auth/register` are unaffected, as is listing or cancelling existing
+invitations.
+
 ```
 POST /api/v1/workspaces/:id/members
 Content-Type: application/json
@@ -225,7 +231,7 @@ POST /auth/logout
 | Feature | Status |
 |---|---|
 | Admin bootstrap (env vars) | Enabled by default |
-| User invitations (admin only) | Always available |
+| User invitations (admin or manager) | Enabled by default; blockable with `DISABLE_MANUAL_INVITES=true` |
 | Local email/password auth | Always available (not configurable) |
 | Two-factor authentication (TOTP) | Always available, opt-in per user |
 | CSRF protection | Always on (not configurable) |

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.12.4
+  version: 0.13.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -82,6 +82,8 @@ paths:
                   saml:
                     type: boolean
                   oidc:
+                    type: boolean
+                  manualInvitesDisabled:
                     type: boolean
   /api/session:
     get:

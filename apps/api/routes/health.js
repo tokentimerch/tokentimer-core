@@ -29,7 +29,11 @@ router.get("/health", async (req, res) => {
 // Auth features availability endpoint (for frontend conditional UI)
 // Core only supports local email/password
 router.get("/api/auth/features", (_req, res) => {
-  res.json({ saml: false, oidc: false });
+  res.json({
+    saml: false,
+    oidc: false,
+    manualInvitesDisabled: process.env.DISABLE_MANUAL_INVITES === "true",
+  });
 });
 
 // CSRF rejection counter

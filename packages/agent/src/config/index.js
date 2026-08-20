@@ -119,7 +119,7 @@ const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
 // bridge a control plane that has not yet completed step 1 of the rollout
 // above. Flip the compiled-in default here to `true` once step 1 has been
 // deployed and confirmed fleet-wide (targets 0.12.0); remove the flag and
-// the absence-tolerant branch entirely one release after that (0.13.0 or
+// the absence-tolerant branch entirely one release after that (0.14.0 or
 // later), once no fleet still needs the override back to `false`. Do not
 // remove on a calendar date alone -- only once both conditions hold.
 const DEFAULT_REQUIRE_SIGNED_AGENT_ID = false;

@@ -470,6 +470,7 @@ export const API_ENDPOINTS = {
   LOGOUT: '/api/logout',
   VERIFY_EMAIL: '/auth/verify-email',
   RESET_PASSWORD: '/auth/reset-password',
+  AUTH_FEATURES: '/api/auth/features',
 
   // User management
   GET_SESSION: '/api/session',
