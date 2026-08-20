@@ -50,6 +50,11 @@ describe("agent compatibility (H8)", () => {
         CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
         CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
         CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        // Pinned explicitly so this clock-drift assertion doesn't drift with
+        // packages/agent/package.json's version on every release (that default
+        // is intentional for the real "outdated" heuristic, but this test is
+        // about clockDriftState, not the outdated label).
+        CERTOPS_AGENT_LATEST_KNOWN_VERSION: "0.12.0",
         CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS: "5000",
         CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS: "30000",
       },
