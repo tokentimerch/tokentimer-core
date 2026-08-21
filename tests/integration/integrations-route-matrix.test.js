@@ -159,7 +159,8 @@ describe("Integrations route matrix", function () {
         .set("Cookie", viewerSession.cookie)
         .send(route.body);
       expect(res.status).to.equal(403);
-      expect(res.body.error).to.equal("Forbidden");
+      expect(res.body.error).to.equal("Forbidden: insufficient role");
+      expect(res.body.code).to.equal("INSUFFICIENT_ROLE");
     }
   });
 
