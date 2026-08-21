@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/worker",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.13.0",
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@tokentimer/log-scrub": "workspace:*",
+    "@tokentimer/webhook-safety": "workspace:*",
     "axios": "1.18.0",
     "nodemailer": "9.0.1",
     "pg": "8.18.0",

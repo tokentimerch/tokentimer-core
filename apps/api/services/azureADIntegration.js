@@ -1,7 +1,12 @@
 "use strict";
 
 const axios = require("axios");
-const { tryParseDate, formatDateYmd } = require("./integrationUtils");
+const {
+  tryParseDate,
+  formatDateYmd,
+  CREDENTIALED_AXIOS_REDIRECTS,
+  assertSameOriginFollowUp,
+} = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
 /**
@@ -13,13 +18,24 @@ const { logger } = require("../utils/logger");
  * Base URL: https://graph.microsoft.com/v1.0
  */
 
-async function graphRequest({ token, method = "GET", path, params = {} }) {
-  const baseUrl = "https://graph.microsoft.com/v1.0";
+const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
-  // Properly construct URL - join base URL and path
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  const fullUrl = baseUrl + cleanPath;
-  const url = new URL(fullUrl);
+async function graphRequest({ token, method = "GET", path, params = {} }) {
+  // Accept absolute URLs as-is (Graph returns full URLs in @odata.nextLink,
+  // whose path already contains /v1.0 - prepending the base again would
+  // produce /v1.0/v1.0/... and break pagination with a 404). Absolute
+  // follow-up URLs must stay on the Graph origin.
+  let url;
+  if (/^https?:\/\//i.test(path)) {
+    url = assertSameOriginFollowUp(
+      path,
+      GRAPH_BASE_URL,
+      "Microsoft Graph pagination URL",
+    );
+  } else {
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    url = new URL(GRAPH_BASE_URL + cleanPath);
+  }
 
   // Add query parameters
   Object.entries(params).forEach(([key, value]) => {
@@ -40,6 +56,7 @@ async function graphRequest({ token, method = "GET", path, params = {} }) {
       url: url.toString(),
       headers,
       timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      ...CREDENTIALED_AXIOS_REDIRECTS,
     });
     return response.data;
   } catch (error) {
@@ -86,14 +103,13 @@ async function listApplications({ token, maxItems = 500 }) {
 
   do {
     try {
-      let path = "/applications";
+      const path = "/applications";
       let data;
 
       if (nextLink) {
-        // Microsoft Graph returns full URLs in @odata.nextLink
-        const nextUrl = new URL(nextLink);
-        path = nextUrl.pathname + nextUrl.search;
-        data = await graphRequest({ token, method: "GET", path });
+        // Microsoft Graph returns full URLs in @odata.nextLink; pass them
+        // through unchanged so the /v1.0 prefix is not duplicated.
+        data = await graphRequest({ token, method: "GET", path: nextLink });
       } else {
         // First page
         data = await graphRequest({
@@ -131,13 +147,12 @@ async function listServicePrincipals({ token, maxItems = 500 }) {
 
   do {
     try {
-      let path = "/servicePrincipals";
+      const path = "/servicePrincipals";
       let data;
 
       if (nextLink) {
-        const nextUrl = new URL(nextLink);
-        path = nextUrl.pathname + nextUrl.search;
-        data = await graphRequest({ token, method: "GET", path });
+        // Pass @odata.nextLink through unchanged (see listApplications).
+        data = await graphRequest({ token, method: "GET", path: nextLink });
       } else {
         data = await graphRequest({
           token,
@@ -178,7 +193,7 @@ async function scanAzureAD({
     .trim()
     .replace(/[\r\n\t]/g, "");
 
-  if (cleanToken.length === 0 || cleanToken.length > 3000) {
+  if (cleanToken.length === 0 || cleanToken.length > 5000) {
     throw new Error("Invalid token format");
   }
   if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000) {

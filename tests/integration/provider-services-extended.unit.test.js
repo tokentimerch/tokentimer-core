@@ -123,6 +123,36 @@ describe("Provider services extended unit coverage", () => {
     expect(sps.map((s) => s.id)).to.deep.equal(["sp-1", "sp-2"]);
   });
 
+  it("azure AD refuses service principal pagination URLs off graph.microsoft.com", async () => {
+    let call = 0;
+    const axiosMock = async (config) => {
+      call += 1;
+      expect(config.maxRedirects).to.equal(0);
+      return {
+        data: {
+          value: [{ id: "sp-1" }],
+          "@odata.nextLink": "https://attacker.example/v1.0/servicePrincipals",
+        },
+      };
+    };
+    const azureAd = requireWithMocks(
+      resolveServiceModule("azureADIntegration"),
+      {
+        axios: axiosMock,
+      },
+    );
+    try {
+      await azureAd._test.listServicePrincipals({
+        token: "header.payload.signature",
+        maxItems: 10,
+      });
+      throw new Error("Expected pagination URL to be rejected");
+    } catch (err) {
+      expect(String(err && err.message)).to.match(/left the expected host/);
+    }
+    expect(call).to.equal(1);
+  });
+
   it("vault parsing helpers detect data kind and parse fallback certificate strings", () => {
     const vault = require(resolveServiceModule("vaultIntegration"));
 

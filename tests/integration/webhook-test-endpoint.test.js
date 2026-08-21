@@ -22,6 +22,16 @@ describe("Webhook test endpoint behavior", function () {
     expect(res.body.error).to.match(/Webhook host not allowed/i);
   });
 
+  it("rejects IPv6 loopback with the private-IP block message", async () => {
+    const res = await request(BASE)
+      .post("/api/test-webhook")
+      .set("Cookie", cookie)
+      .send({ url: "http://[::1]/webhook", kind: "generic" })
+      .expect(400);
+    expect(res.body.code).to.equal("WEBHOOK_PRIVATE_IP_BLOCKED");
+    expect(res.body.error).to.match(/private\/reserved IP/i);
+  });
+
   it("returns timeout/connection errors as friendly messages", async () => {
     // Unroutable TLD often fails quickly
     const res = await request(BASE)

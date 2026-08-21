@@ -87,6 +87,40 @@ describe("Provider service unit coverage", () => {
       );
     });
 
+    // Regression guard: AWS STS explicitly documents that session token size
+    // is not fixed ("typically less than 4096 bytes, but that can vary").
+    // A stale local cap of 2000 chars silently rejected valid AssumeRole /
+    // GetSessionToken credentials (e.g. with session tags or chained roles)
+    // with "Invalid sessionToken format" before any AWS call was made.
+    it("accepts a sessionToken above the old 2000-char cap", async () => {
+      const aws = require(resolveServiceModule("awsIntegration"));
+      const result = await aws.scanAWS({
+        accessKeyId: "AKIAEXAMPLE123",
+        secretAccessKey: "super-secret-key",
+        sessionToken: "x".repeat(3500),
+        region: "us-east-1",
+        // Skip every scan type so this stays a pure validation test with no
+        // AWS SDK client instantiation or network calls.
+        include: { secrets: false, iam: false, certificates: false },
+      });
+      expect(result).to.have.property("items").that.is.an("array");
+      expect(result).to.have.property("summary").that.is.an("array");
+    });
+
+    it("still rejects a sessionToken over the 5000-char hard cap", async () => {
+      const aws = require(resolveServiceModule("awsIntegration"));
+      await expectReject(
+        () =>
+          aws.scanAWS({
+            accessKeyId: "AKIAEXAMPLE123",
+            secretAccessKey: "super-secret-key",
+            sessionToken: "x".repeat(6000),
+            region: "us-east-1",
+          }),
+        /Invalid sessionToken format/,
+      );
+    });
+
     it("scans secrets, certificates, and IAM keys with mocked SDKs", async () => {
       class ListSecretsCommand {
         constructor(input) {
@@ -254,6 +288,102 @@ describe("Provider service unit coverage", () => {
       ).to.equal(true);
       expect(result.summary.some((s) => s.type === "iam_keys")).to.equal(true);
     });
+
+    // Regression guard: ACM ListCertificates defaults to server-side
+    // filtering that only returns RSA_1024/RSA_2048 certificates, so ECDSA
+    // and RSA_3072/RSA_4096 certs were silently missing from scans. It also
+    // paginates with NextToken, which was previously ignored.
+    it("requests all ACM key types and follows NextToken pagination", async () => {
+      class ListCertificatesCommand {
+        constructor(input) {
+          this.input = input;
+        }
+      }
+      class DescribeCertificateCommand {
+        constructor(input) {
+          this.input = input;
+        }
+      }
+
+      const listInputs = [];
+      class ACMClient {
+        async send(command) {
+          if (command instanceof ListCertificatesCommand) {
+            listInputs.push(command.input);
+            if (!command.input.NextToken) {
+              return {
+                CertificateSummaryList: [
+                  {
+                    DomainName: "ecdsa.example.com",
+                    CertificateArn: "arn:aws:acm:us-east-1:123:certificate/ec",
+                  },
+                ],
+                NextToken: "page-2",
+              };
+            }
+            return {
+              CertificateSummaryList: [
+                {
+                  DomainName: "rsa4096.example.com",
+                  CertificateArn: "arn:aws:acm:us-east-1:123:certificate/rsa",
+                },
+              ],
+            };
+          }
+          if (command instanceof DescribeCertificateCommand) {
+            return {
+              Certificate: {
+                DomainName: command.input.CertificateArn.endsWith("ec")
+                  ? "ecdsa.example.com"
+                  : "rsa4096.example.com",
+                NotAfter: new Date("2026-06-01T00:00:00Z"),
+                Status: "ISSUED",
+              },
+            };
+          }
+          throw new Error("Unexpected ACM command");
+        }
+      }
+
+      const mocks = {
+        "@aws-sdk/client-acm": {
+          ACMClient,
+          ListCertificatesCommand,
+          DescribeCertificateCommand,
+        },
+      };
+      const aws = requireWithMocks(
+        resolveServiceModule("awsIntegration"),
+        mocks,
+      );
+
+      const result = await withPatchedLoad(mocks, () =>
+        aws.scanAWS({
+          accessKeyId: "AKIAEXAMPLE123",
+          secretAccessKey: "super-secret-key",
+          region: "us-east-1",
+          include: { secrets: false, iam: false, certificates: true },
+          maxItems: 10,
+        }),
+      );
+
+      const certs = result.items.filter((i) => i.source === "aws-acm");
+      expect(certs.map((c) => c.name).sort()).to.deep.equal([
+        "ecdsa.example.com",
+        "rsa4096.example.com",
+      ]);
+      expect(listInputs).to.have.length(2);
+      for (const input of listInputs) {
+        expect(input.Includes?.keyTypes).to.include.members([
+          "RSA_2048",
+          "RSA_4096",
+          "EC_prime256v1",
+          "EC_secp384r1",
+          "EC_secp521r1",
+        ]);
+      }
+      expect(listInputs[1].NextToken).to.equal("page-2");
+    });
   });
 
   describe("Azure Key Vault integration", () => {
@@ -312,6 +442,104 @@ describe("Provider service unit coverage", () => {
       });
       expect(result).to.equal(null);
     });
+
+    // Regression guard: the keys list API returns the key identifier in
+    // `kid`, not `id` (unlike secrets/certificates which use `id`). Reading
+    // `id` meant every key was skipped as "missing name" and the keys scan
+    // always reported zero items.
+    it("extracts key names from the kid field returned by the keys list API", async () => {
+      const axiosMock = async (config) => {
+        if (config.url && config.url.includes("/keys")) {
+          return {
+            data: {
+              value: [
+                {
+                  kid: "https://vault.example.com/keys/signing-key",
+                  attributes: {
+                    enabled: true,
+                    exp: 1893456000,
+                    created: 1704067200,
+                  },
+                },
+              ],
+            },
+          };
+        }
+        return { data: { value: [] } };
+      };
+      const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await azure.scanAzure({
+        vaultUrl: "https://vault.example.com",
+        token: "test-token",
+        include: { secrets: false, certificates: false, keys: true },
+        maxItems: 10,
+      });
+      const keys = result.items.filter(
+        (i) => i.source === "azure-key-vault-key",
+      );
+      expect(keys).to.have.length(1);
+      expect(keys[0].name).to.equal("signing-key");
+      expect(keys[0].expiration).to.be.a("string");
+    });
+
+    it("refuses Key Vault pagination URLs that leave the vault host", async () => {
+      const requestedUrls = [];
+      const axiosMock = async (config) => {
+        requestedUrls.push(config.url);
+        expect(config.maxRedirects).to.equal(0);
+        return {
+          data: {
+            value: [{ id: "https://vault.example.com/secrets/s1" }],
+            nextLink: "http://127.0.0.1:9/secrets?api-version=7.4",
+          },
+        };
+      };
+      const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+        axios: axiosMock,
+      });
+      await expectReject(
+        () =>
+          azure._test.listSecrets({
+            vaultUrl: "https://vault.example.com",
+            token: "test-token",
+            maxItems: 10,
+          }),
+        /left the expected host/,
+      );
+      expect(requestedUrls).to.have.length(1);
+      expect(String(requestedUrls[0])).to.match(/vault\.example\.com/);
+    });
+
+    it("follows Key Vault pagination URLs that stay on the vault host", async () => {
+      const requestedUrls = [];
+      const axiosMock = async (config) => {
+        requestedUrls.push(config.url);
+        expect(config.maxRedirects).to.equal(0);
+        if (requestedUrls.length === 1) {
+          return {
+            data: {
+              value: [{ id: "s1" }],
+              nextLink:
+                "https://vault.example.com/secrets?api-version=7.4&$skiptoken=abc",
+            },
+          };
+        }
+        return { data: { value: [{ id: "s2" }] } };
+      };
+      const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
+        axios: axiosMock,
+      });
+      const secrets = await azure._test.listSecrets({
+        vaultUrl: "https://vault.example.com",
+        token: "test-token",
+        maxItems: 10,
+      });
+      expect(secrets.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
+      expect(requestedUrls[1]).to.match(/vault\.example\.com/);
+      expect(requestedUrls[1]).to.match(/skiptoken=abc/);
+    });
   });
 
   describe("Azure AD integration", () => {
@@ -343,10 +571,10 @@ describe("Provider service unit coverage", () => {
     });
 
     it("paginates applications via nextLink", async () => {
-      let call = 0;
-      const axiosMock = async () => {
-        call += 1;
-        if (call === 1) {
+      const requestedUrls = [];
+      const axiosMock = async (config) => {
+        requestedUrls.push(config.url);
+        if (requestedUrls.length === 1) {
           return {
             data: {
               value: [{ id: "app-1" }],
@@ -368,6 +596,70 @@ describe("Provider service unit coverage", () => {
         maxItems: 10,
       });
       expect(apps.map((a) => a.id)).to.deep.equal(["app-1", "app-2"]);
+      // Regression guard: @odata.nextLink already contains the /v1.0 prefix.
+      // Re-prepending the Graph base URL produced /v1.0/v1.0/... which 404s
+      // and silently truncated tenants with more than one page of apps.
+      expect(requestedUrls[1]).to.equal(
+        "https://graph.microsoft.com/v1.0/applications?$skiptoken=abc",
+      );
+      expect(requestedUrls[1]).to.not.match(/v1\.0\/v1\.0/);
+    });
+
+    it("refuses Graph pagination URLs that leave graph.microsoft.com", async () => {
+      const requestedUrls = [];
+      const axiosMock = async (config) => {
+        requestedUrls.push(config.url);
+        expect(config.maxRedirects).to.equal(0);
+        return {
+          data: {
+            value: [{ id: "app-1" }],
+            "@odata.nextLink": "http://127.0.0.1:9/v1.0/applications",
+          },
+        };
+      };
+      const azureAd = requireWithMocks(
+        resolveServiceModule("azureADIntegration"),
+        {
+          axios: axiosMock,
+        },
+      );
+      await expectReject(
+        () =>
+          azureAd._test.listApplications({
+            token: "header.payload.signature",
+            maxItems: 10,
+          }),
+        /left the expected host/,
+      );
+      expect(requestedUrls).to.have.length(1);
+      expect(String(requestedUrls[0])).to.match(/graph\.microsoft\.com/);
+    });
+
+    // Regression guard: real Microsoft Graph access tokens (especially with
+    // group/role claims) routinely exceed 3000 characters. A stale local cap
+    // of 3000 silently rejected valid tokens with "Invalid token format"
+    // before the request ever reached Microsoft Graph. The route layer
+    // already allows up to 5000 chars, so the service must match.
+    it("accepts a token above the old 3000-char cap and within the 5000-char route limit", async () => {
+      const axiosMock = async () => ({ data: { value: [] } });
+      const azureAd = requireWithMocks(
+        resolveServiceModule("azureADIntegration"),
+        { axios: axiosMock },
+      );
+      const result = await azureAd.scanAzureAD({
+        token: "x".repeat(4000),
+        include: { applications: true, servicePrincipals: false },
+      });
+      expect(result).to.have.property("items").that.is.an("array");
+      expect(result).to.have.property("summary").that.is.an("array");
+    });
+
+    it("still rejects a token over the 5000-char hard cap", async () => {
+      const azureAd = require(resolveServiceModule("azureADIntegration"));
+      await expectReject(
+        () => azureAd.scanAzureAD({ token: "x".repeat(6000) }),
+        /Invalid token format/,
+      );
     });
   });
 

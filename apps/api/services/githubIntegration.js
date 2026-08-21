@@ -1,6 +1,7 @@
 "use strict";
 
 const axios = require("axios");
+const { CREDENTIALED_AXIOS_REDIRECTS } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
 async function githubRequest({
@@ -25,6 +26,7 @@ async function githubRequest({
     params: method === "GET" ? params : undefined,
     data: method !== "GET" ? params : undefined,
     timeout, // Use provided timeout (allows shorter timeout for initial connection check)
+    ...CREDENTIALED_AXIOS_REDIRECTS,
   };
 
   try {

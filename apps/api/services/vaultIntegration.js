@@ -4,6 +4,7 @@ const { X509Certificate } = require("crypto");
 const {
   discoverExpiryFromObject,
   formatDateYmd,
+  isHttpRedirectStatus,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
@@ -49,9 +50,20 @@ async function vaultRequest({
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
+      redirect: "manual",
     });
 
     clearTimeout(timeoutId);
+
+    if (isHttpRedirectStatus(res.status)) {
+      // Match CREDENTIALED_AXIOS_REDIRECTS: surface a client error, never
+      // propagate the provider's 3xx as our own response status.
+      const err = new Error(
+        `Vault ${method} ${url.pathname} refused redirect`,
+      );
+      err.status = 400;
+      throw err;
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -78,7 +90,7 @@ async function vaultRequest({
         method,
         path: url.pathname,
         address: address.replace(/\/\/[^@]+@/, "//***@"),
-        timeoutMs: 30000,
+        timeoutMs: 120000,
       });
       const err = new Error(`Vault ${method} ${url.pathname} timeout`);
       err.status = 408;
@@ -113,10 +125,16 @@ async function listMounts({ address, token }) {
       method: "GET",
       path: "/v1/sys/mounts",
     });
-    // data looks like: { "secret/": { type: "kv", options: { version: "2" }, ... }, ... }
+    // Vault wraps the mount table in the `data` field; the duplicated
+    // top-level keys are legacy back-compat and not guaranteed on newer
+    // versions.
+    const mountTable =
+      data && typeof data.data === "object" && data.data !== null
+        ? data.data
+        : data || {};
     const mounts = [];
-    for (const [path, meta] of Object.entries(data || {})) {
-      if (!meta || typeof meta !== "object") continue;
+    for (const [path, meta] of Object.entries(mountTable)) {
+      if (!meta || typeof meta !== "object" || !meta.type) continue;
       const type = meta.type;
       mounts.push({ path, type, options: meta.options || {} });
     }
@@ -714,6 +732,7 @@ module.exports = {
 // Test-only exports for unit coverage of parsing helpers
 if (process.env.NODE_ENV === "test") {
   module.exports._test = {
+    vaultRequest,
     parseCertificateFromUnknown,
     parseCertificatePemForDatesAndNames,
     isBase64Like,

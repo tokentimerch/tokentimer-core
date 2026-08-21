@@ -9,8 +9,8 @@ const {
 const {
   loadWorkspace,
   requireWorkspaceMembership,
+  requireWorkspaceManager,
   requireIntegrationQuota,
-  requireNotViewer,
 } = require("../services/rbac");
 const Token = require("../db/models/Token");
 
@@ -32,6 +32,15 @@ const {
 } = require("../services/importCleanup");
 
 const router = require("express").Router();
+
+// Workspace membership and manager/admin role are required for every
+// workspace-scoped integration call. Quota is checked separately afterwards
+// and is a no-op in core.
+const requireIntegrationWorkspaceAccess = [
+  loadWorkspace,
+  requireWorkspaceMembership,
+  requireWorkspaceManager,
+];
 
 // Shared post-scan hook (issue #69): applies user-defined include/exclude
 // filter rules to the scanned items and attaches matched/excluded counts so
@@ -61,11 +70,11 @@ function summarizeImportErrors(errors) {
 }
 
 // --- Vault integration: scan mounts for inventory/expirations ---
-// Note: requireIntegrationQuota handles workspace validation, role check, and quota enforcement
 router.post(
   "/api/v1/integrations/vault/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -251,7 +260,7 @@ router.post(
   "/api/v1/integrations/vault/mounts",
   getApiLimiter(),
   requireAuth,
-  requireNotViewer,
+  ...requireIntegrationWorkspaceAccess,
   async (req, res) => {
     try {
       const { address, token } = req.body || {};
@@ -626,6 +635,7 @@ router.post(
   "/api/v1/integrations/gitlab/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -807,6 +817,7 @@ router.post(
   "/api/v1/integrations/github/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -993,7 +1004,7 @@ router.post(
   "/api/v1/integrations/aws/detect-regions",
   getApiLimiter(),
   requireAuth,
-  requireNotViewer,
+  ...requireIntegrationWorkspaceAccess,
   async (req, res) => {
     try {
       const { accessKeyId, secretAccessKey, sessionToken } = req.body || {};
@@ -1027,7 +1038,7 @@ router.post(
             targetType: "integration",
             targetId: null,
             channel: null,
-            workspaceId: null,
+            workspaceId: req.workspace?.id || null,
             metadata: {
               provider: "aws",
               regionsFound: result.regionsWithSecrets?.length || 0,
@@ -1095,6 +1106,7 @@ router.post(
   "/api/v1/integrations/aws/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -1247,6 +1259,7 @@ router.post(
   "/api/v1/integrations/azure/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -1405,6 +1418,7 @@ router.post(
   "/api/v1/integrations/gcp/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response
@@ -1536,6 +1550,7 @@ router.post(
   "/api/v1/integrations/azure-ad/scan",
   getApiLimiter(),
   requireAuth,
+  ...requireIntegrationWorkspaceAccess,
   requireIntegrationQuota,
   async (req, res) => {
     // Helper to include quota in any response

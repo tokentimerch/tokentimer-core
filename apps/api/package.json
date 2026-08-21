@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/api",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "description": "TokenTimer API Service",
   "license": "AGPL-3.0-or-later",
@@ -20,6 +20,7 @@
     "@aws-sdk/client-secrets-manager": "3.1045.0",
     "@aws-sdk/client-sts": "3.1045.0",
     "@tokentimer/log-scrub": "workspace:*",
+    "@tokentimer/webhook-safety": "workspace:*",
     "ajv": "8.18.0",
     "ajv-formats": "3.0.1",
     "axios": "1.18.0",

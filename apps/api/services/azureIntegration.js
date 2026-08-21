@@ -1,7 +1,13 @@
 "use strict";
 
 const axios = require("axios");
-const { tryParseDate, formatDateYmd } = require("./integrationUtils");
+const { X509Certificate } = require("crypto");
+const {
+  tryParseDate,
+  formatDateYmd,
+  CREDENTIALED_AXIOS_REDIRECTS,
+  assertSameOriginFollowUp,
+} = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
 async function azureRequest({
@@ -25,6 +31,7 @@ async function azureRequest({
       url: url.toString(),
       headers,
       timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      ...CREDENTIALED_AXIOS_REDIRECTS,
     });
     return response.data;
   } catch (error) {
@@ -51,6 +58,29 @@ async function azureRequest({
   }
 }
 
+async function azureListPage({ vaultUrl, token, nextLink, defaultPath }) {
+  const url = nextLink
+    ? assertSameOriginFollowUp(
+        nextLink,
+        vaultUrl,
+        "Azure Key Vault pagination URL",
+      )
+    : new URL(defaultPath, vaultUrl.endsWith("/") ? vaultUrl : `${vaultUrl}/`);
+  url.searchParams.set("api-version", "7.4");
+  if (!nextLink) url.searchParams.set("maxresults", "25");
+
+  const response = await axios({
+    method: "GET",
+    url: url.toString(),
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+    ...CREDENTIALED_AXIOS_REDIRECTS,
+  });
+  return response.data;
+}
+
 async function listSecrets({ vaultUrl, token, maxItems = 500 }) {
   const secrets = [];
   let nextLink = null;
@@ -59,22 +89,12 @@ async function listSecrets({ vaultUrl, token, maxItems = 500 }) {
 
   do {
     try {
-      const path = nextLink ? new URL(nextLink).pathname : "/secrets";
-      const fullUrl = nextLink || `${vaultUrl}${path}`;
-      const url = new URL(fullUrl);
-      url.searchParams.set("api-version", "7.4");
-      if (!nextLink) url.searchParams.set("maxresults", "25");
-
-      const response = await axios({
-        method: "GET",
-        url: url.toString(),
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      const data = await azureListPage({
+        vaultUrl,
+        token,
+        nextLink,
+        defaultPath: "/secrets",
       });
-
-      const data = response.data;
       if (Array.isArray(data.value)) {
         secrets.push(...data.value);
       } else if (Array.isArray(data)) {
@@ -135,22 +155,12 @@ async function listCertificates({ vaultUrl, token, maxItems = 500 }) {
 
   do {
     try {
-      const path = nextLink ? new URL(nextLink).pathname : "/certificates";
-      const fullUrl = nextLink || `${vaultUrl}${path}`;
-      const url = new URL(fullUrl);
-      url.searchParams.set("api-version", "7.4");
-      if (!nextLink) url.searchParams.set("maxresults", "25");
-
-      const response = await axios({
-        method: "GET",
-        url: url.toString(),
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      const data = await azureListPage({
+        vaultUrl,
+        token,
+        nextLink,
+        defaultPath: "/certificates",
       });
-
-      const data = response.data;
       if (Array.isArray(data.value)) {
         certificates.push(...data.value);
       } else if (Array.isArray(data)) {
@@ -201,22 +211,12 @@ async function listKeys({ vaultUrl, token, maxItems = 500 }) {
 
   do {
     try {
-      const path = nextLink ? new URL(nextLink).pathname : "/keys";
-      const fullUrl = nextLink || `${vaultUrl}${path}`;
-      const url = new URL(fullUrl);
-      url.searchParams.set("api-version", "7.4");
-      if (!nextLink) url.searchParams.set("maxresults", "25");
-
-      const response = await axios({
-        method: "GET",
-        url: url.toString(),
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      const data = await azureListPage({
+        vaultUrl,
+        token,
+        nextLink,
+        defaultPath: "/keys",
       });
-
-      const data = response.data;
       if (Array.isArray(data.value)) {
         keys.push(...data.value);
       } else if (Array.isArray(data)) {
@@ -449,9 +449,27 @@ async function scanAzure({
                   ? tryParseDate(new Date(cert.attributes.exp * 1000))
                   : null;
 
-              // Extract subject from x509 if available
-              const subject =
-                certDetails?.sid || certDetails?.subject || certName;
+              // CertificateBundle has no top-level subject/issuer: the X.509
+              // subject lives in policy.x509_props.subject and the issuer name
+              // in policy.issuer.name ("Self", "Unknown", or a CA provider).
+              // The authoritative values come from the certificate itself,
+              // returned base64-DER-encoded in `cer`.
+              let subject = certDetails?.policy?.x509_props?.subject || null;
+              let issuer = certDetails?.policy?.issuer?.name || null;
+              if (certDetails?.cer) {
+                try {
+                  const parsed = new X509Certificate(
+                    Buffer.from(certDetails.cer, "base64"),
+                  );
+                  subject = parsed.subject || subject;
+                  issuer = parsed.issuer || issuer;
+                } catch (e) {
+                  logger.debug("Failed to parse Azure certificate cer", {
+                    certName,
+                    error: e.message,
+                  });
+                }
+              }
 
               items.push({
                 source: "azure-key-vault-certificate",
@@ -460,8 +478,8 @@ async function scanAzure({
                 type: "ssl_cert",
                 expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                 location: `azure:${normalizedUrl}/certificates/${certName}`,
-                issuer: certDetails?.issuer?.name || cert.issuer?.name || null,
-                subject: subject,
+                issuer: issuer,
+                subject: subject || certName,
                 created_at: certDetails?.attributes?.created
                   ? new Date(
                       certDetails.attributes.created * 1000,
@@ -507,9 +525,11 @@ async function scanAzure({
         for (const key of keyList) {
           if (items.length >= maxItems) break;
 
-          // Extract key name from id URL (remove version if present)
-          // id format: "https://vault.vault.azure.net/keys/key-name" or with version
-          const pathParts = key.id ? key.id.split("/").filter(Boolean) : [];
+          // Extract key name from identifier URL (remove version if present)
+          // The keys list API returns the identifier in `kid` (not `id`):
+          // "https://vault.vault.azure.net/keys/key-name" or with version
+          const keyId = key.kid || key.id;
+          const pathParts = keyId ? keyId.split("/").filter(Boolean) : [];
           const keysIndex = pathParts.indexOf("keys");
           const keyName =
             keysIndex >= 0 && pathParts[keysIndex + 1]
@@ -517,7 +537,7 @@ async function scanAzure({
               : null;
 
           if (!keyName) {
-            logger.warn("Azure key missing name", { keyId: key.id });
+            logger.warn("Azure key missing name", { keyId });
             continue;
           }
 

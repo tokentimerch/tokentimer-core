@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/dashboard",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.13.0",

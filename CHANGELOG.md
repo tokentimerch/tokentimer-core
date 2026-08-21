@@ -9,6 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-21
+
+### Security
+
+- **Workspace invitation replay could restore removed membership or a downgraded role.** Login-time invitation processing matched on email/alias regardless of whether the invitation had already been accepted, so a stale, already-accepted invitation record could be reprocessed later and re-grant a membership that had since been removed, or restore a role that had since been downgraded. Invitation lookups now only consider invitations that have not yet been accepted, and acceptance now deletes the matched invitation by its own ID rather than by the address predicate that matched it. Credit: security researcher **pal0x**.
+- **Integration scan routes did not enforce workspace authorization.** `POST` scan/detect endpoints for the GitHub, GitLab, AWS, Azure AD, GCP, and Vault integrations (plus their `vault/mounts` and `aws/detect-regions` helpers) were authenticated but not authorized against the target workspace, because the quota middleware they relied on for workspace scoping was a no-op. These routes now require the caller to be a member of the target workspace with a manager or admin role before a scan or helper request runs. Credit: security researcher **pal0x**.
+- **Outbound integration requests did not re-validate redirects or provider follow-up URLs.** The initial request to a provider was checked against the configured destination allowlist, but a `3xx` redirect response or a provider-supplied follow-up URL (for example Azure's `nextLink` pagination cursor) was followed without re-checking the destination, which could be used to carry a credentialed request to an unintended origin. Outbound integration clients now refuse to follow credentialed redirects and enforce that every follow-up/pagination URL stays on the same origin as the original, allowlisted request. Credit: security researcher **pal0x**.
+- **Webhook SSRF guard did not classify IPv6, IPv4-mapped IPv6, or AAAA-only destinations.** The private/reserved-destination check for webhook test and delivery requests only classified plain IPv4 literals and only resolved `A` records, so an IPv6 literal, an IPv4-mapped IPv6 literal (for example `::ffff:127.0.0.1`), or a hostname that resolves only to a private `AAAA` record could reach internal infrastructure undetected. The check is now a shared classifier that normalizes IPv4-mapped/translated IPv6 forms, blocks private/reserved ranges for both address families, and resolves both `A` and `AAAA` records, rejecting the destination if any resolved address is blocked. Self-hosted operators who intentionally point webhooks at a private network can still opt out via the existing `WEBHOOK_ALLOW_PRIVATE_IPS` environment variable, now also exposed through the Helm chart as `config.webhookAllowPrivateIps`. Credit: security researcher **pal0x**.
+
+### Fixed
+
+- **Azure AD and AWS integration scans rejected freshly issued access tokens.** Bearer/session-token length validation was capped below the length of real-world Azure AD access tokens and AWS STS session tokens, so a token that had just been issued could fail with "Invalid token format" before the scan ever reached the provider. The length ceiling has been raised for both integrations.
+- **DNS-01 challenge propagation could fail permanently on IPv6-less hosts.** Authoritative name-server discovery can return IPv6-only servers; when the agent's host had no usable IPv6 route, the default `verificationMode: "all"` treated the resulting per-server query failure as a permanent propagation failure instead of dropping the unreachable address family from the poll set. Propagation now detects unreachable name-server address families up front and excludes them, and treats a per-query network-unreachable error against a remaining target as transient rather than a hard failure.
+- **Switching provider tabs in the import-tokens modal could leak the other provider's URL.** Restored auto-sync scan parameters were shared between the GitHub and GitLab forms, so switching from a GitLab tab with a saved configuration to the GitHub tab could prefill the GitHub URL field with the GitLab instance's URL. Restored parameters are now tagged with the provider they belong to and are only passed to the matching form.
+- A failed webhook test no longer shows a duplicate, generic error toast on top of the specific inline error already shown at the call site.
+- `requireWorkspaceManager` now returns a clearer `403 Forbidden: insufficient role` response (`INSUFFICIENT_ROLE` error code) instead of a bare `Forbidden`.
+
+### Changed
+
+- `WEBHOOK_ALLOW_PRIVATE_IPS` is now also configurable through the Helm chart (`config.webhookAllowPrivateIps`), matching the existing Docker Compose support.
+- Version metadata bumped to 0.13.1 across all manifests, contracts, and the Helm chart.
+
 ## [0.13.0] - 2026-08-20
 
 ### Added

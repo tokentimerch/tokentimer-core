@@ -169,10 +169,15 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   }, [initialAutoSyncScanParams]);
 
   const detectAwsRegions = async () => {
+    if (!workspaceId) {
+      onError && onError('Please select a workspace first.');
+      return;
+    }
     onError && onError(null);
     setAwsDetecting(true);
     try {
       const res = await awsAPI.detectRegions({
+        workspaceId,
         accessKeyId: awsAccessKeyId,
         secretAccessKey: awsSecretAccessKey,
       });

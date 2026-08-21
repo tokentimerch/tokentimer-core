@@ -372,11 +372,25 @@ describe("Core services unit coverage", () => {
         "Owner Person",
       );
 
+      const inviteSelect = queryLog.find(
+        (q) =>
+          q.text.includes("FROM workspace_invitations") &&
+          q.text.includes("SELECT"),
+      );
+      expect(inviteSelect).to.exist;
+      expect(inviteSelect.text).to.match(/accepted_at\s+IS\s+NULL\s+AND\s+\(/i);
+
       expect(
         queryLog.some((q) =>
           q.text.includes(
             "UPDATE workspace_invitations SET accepted_at = NOW()",
           ),
+        ),
+      ).to.equal(true);
+      expect(
+        queryLog.some((q) =>
+          q.text.includes("DELETE FROM workspace_invitations") &&
+          q.text.includes("id = ANY($1::uuid[])"),
         ),
       ).to.equal(true);
       expect(

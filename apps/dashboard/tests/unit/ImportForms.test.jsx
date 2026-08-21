@@ -237,6 +237,9 @@ describe('Dashboard import forms', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Detect Regions' }));
     await waitFor(() => expect(awsDetectRegionsMock).toHaveBeenCalledTimes(1));
+    expect(awsDetectRegionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'ws-aws' })
+    );
 
     fireEvent.click(screen.getByRole('button', { name: /Scan us-east-1/i }));
     await waitFor(() => expect(awsScanMock).toHaveBeenCalledTimes(1));

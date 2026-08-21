@@ -14,6 +14,10 @@ const {
   waitForTxtAbsent,
   zoneCandidatesForHostname,
   resolveTxtViaServers,
+  isVerificationPolicySatisfied,
+  isAddressFamilyUnreachableError,
+  filterServersByUsableAddressFamily,
+  resolverIpFamily,
 } = require("./propagate.js");
 const { findLongestManagedZone, resolveChallengeZone } = require("./zone.js");
 const { withFileLock } = require("./lockfile.js");
@@ -275,6 +279,292 @@ test("resolveTxtViaServers still rejects on a non-transient resolver error code"
       }),
     /boom/,
   );
+});
+
+test("resolveTxtViaServers still rejects address-family unreachability instead of treating it as empty", async () => {
+  class FakeResolver {
+    setServers() {}
+    resolveTxt(_name, callback) {
+      callback(Object.assign(new Error("queryTxt ECONNREFUSED"), { code: "ECONNREFUSED" }));
+    }
+  }
+  await assert.rejects(
+    () =>
+      resolveTxtViaServers("_acme-challenge.example.com", ["2606:4700:4700::1111"], {
+        Resolver: FakeResolver,
+      }),
+    (err) => err && err.code === "ECONNREFUSED",
+  );
+});
+
+function ipv4PlusLinkLocalIfaces() {
+  return {
+    Ethernet: [
+      { address: "192.0.2.10", family: "IPv4", internal: false },
+      { address: "fe80::1", family: "IPv6", internal: false, scopeid: 12 },
+    ],
+  };
+}
+
+function dualStackIfaces() {
+  return {
+    Ethernet: [
+      { address: "192.0.2.10", family: "IPv4", internal: false },
+      { address: "fe80::1", family: "IPv6", internal: false, scopeid: 12 },
+      { address: "2001:db8::10", family: "IPv6", internal: false },
+    ],
+  };
+}
+
+test("resolverIpFamily parses bare IPs and bracketed IPv6 with port", () => {
+  assert.equal(resolverIpFamily("203.0.113.1"), 4);
+  assert.equal(resolverIpFamily("203.0.113.1:53"), 4);
+  assert.equal(resolverIpFamily("2606:4700:4700::1111"), 6);
+  assert.equal(resolverIpFamily("[2606:4700:4700::1111]:53"), 6);
+  assert.equal(resolverIpFamily(""), 0);
+});
+
+test("filterServersByUsableAddressFamily drops AAAA when the host only has IPv4 plus IPv6 link-local", () => {
+  const filtered = filterServersByUsableAddressFamily(
+    ["203.0.113.1", "2606:4700:4700::1111", "203.0.113.2"],
+    { networkInterfaces: ipv4PlusLinkLocalIfaces },
+  );
+  assert.deepEqual(filtered, ["203.0.113.1", "203.0.113.2"]);
+});
+
+test("filterServersByUsableAddressFamily keeps the original set when every discovered NS is the unusable family", () => {
+  const onlyV6 = ["2606:4700:4700::1111", "2606:4700:4700::1001"];
+  const filtered = filterServersByUsableAddressFamily(onlyV6, {
+    networkInterfaces: ipv4PlusLinkLocalIfaces,
+  });
+  assert.deepEqual(filtered, onlyV6);
+});
+
+test("isVerificationPolicySatisfied ignores skipped servers but still requires reachable ones under all", () => {
+  assert.equal(
+    isVerificationPolicySatisfied(
+      [
+        { matched: true, skipped: false },
+        { matched: false, skipped: true },
+      ],
+      "all",
+      null,
+    ),
+    true,
+  );
+  assert.equal(
+    isVerificationPolicySatisfied(
+      [
+        { matched: true, skipped: false },
+        { matched: false, skipped: false },
+        { matched: false, skipped: true },
+      ],
+      "all",
+      null,
+    ),
+    false,
+  );
+  assert.equal(
+    isVerificationPolicySatisfied(
+      [
+        { matched: false, skipped: true },
+        { matched: false, skipped: true },
+      ],
+      "all",
+      null,
+    ),
+    false,
+  );
+});
+
+function unreachableTxtError(code, server) {
+  return Object.assign(new Error(`queryTxt ${code} ${server}`), { code });
+}
+
+test("waitForTxtPresent skips IPv6 ECONNREFUSED and succeeds when IPv4 NS confirm the TXT", async () => {
+  const present = await waitForTxtPresent(
+    {
+      recordName: "_acme-challenge.example.com",
+      txtValue: "abc",
+      config: normalizePropagationConfig({
+        timeoutMs: 500,
+        intervalMs: 1,
+        checkAuthoritative: true,
+      }),
+    },
+    {
+      networkInterfaces: dualStackIfaces,
+      discoverAuthoritativeResolverIps: async () => [
+        "203.0.113.1",
+        "2606:4700:4700::1111",
+      ],
+      resolveTxt: async (_name, servers) => {
+        const server = servers[0];
+        if (resolverIpFamily(server) === 6) {
+          throw unreachableTxtError("ECONNREFUSED", server);
+        }
+        return ["abc"];
+      },
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(present.ok, true);
+  const byServer = Object.fromEntries(
+    present.serverResults.map((entry) => [entry.server, entry]),
+  );
+  assert.equal(byServer["203.0.113.1"].matched, true);
+  assert.equal(byServer["203.0.113.1"].skipped, false);
+  assert.equal(byServer["2606:4700:4700::1111"].skipped, true);
+  assert.equal(byServer["2606:4700:4700::1111"].matched, false);
+});
+
+test("waitForTxtPresent skips IPv6 ENETUNREACH and succeeds when IPv4 NS confirm the TXT", async () => {
+  const present = await waitForTxtPresent(
+    {
+      recordName: "_acme-challenge.example.com",
+      txtValue: "abc",
+      config: normalizePropagationConfig({
+        timeoutMs: 500,
+        intervalMs: 1,
+        checkAuthoritative: true,
+      }),
+    },
+    {
+      networkInterfaces: dualStackIfaces,
+      discoverAuthoritativeResolverIps: async () => [
+        "203.0.113.1",
+        "2606:4700:4700::1111",
+      ],
+      resolveTxt: async (_name, servers) => {
+        const server = servers[0];
+        if (resolverIpFamily(server) === 6) {
+          throw unreachableTxtError("ENETUNREACH", server);
+        }
+        return ["abc"];
+      },
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(present.ok, true);
+  const v6 = present.serverResults.find((entry) => entry.server === "2606:4700:4700::1111");
+  assert.equal(v6.skipped, true);
+});
+
+test("waitForTxtPresent still fails when a reachable IPv4 NS lacks the TXT even if IPv6 NS are skipped", async () => {
+  const present = await waitForTxtPresent(
+    {
+      recordName: "_acme-challenge.example.com",
+      txtValue: "abc",
+      config: normalizePropagationConfig({
+        timeoutMs: 50,
+        intervalMs: 1,
+        checkAuthoritative: true,
+      }),
+    },
+    {
+      networkInterfaces: dualStackIfaces,
+      discoverAuthoritativeResolverIps: async () => [
+        "203.0.113.1",
+        "203.0.113.2",
+        "2606:4700:4700::1111",
+      ],
+      resolveTxt: async (_name, servers) => {
+        const server = servers[0];
+        if (resolverIpFamily(server) === 6) {
+          throw unreachableTxtError("EHOSTUNREACH", server);
+        }
+        if (server === "203.0.113.1") {
+          return ["abc"];
+        }
+        return [];
+      },
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(present.ok, false);
+  assert.match(present.detail, /timed out/);
+  const byServer = Object.fromEntries(
+    present.serverResults.map((entry) => [entry.server, entry]),
+  );
+  assert.equal(byServer["203.0.113.1"].matched, true);
+  assert.equal(byServer["203.0.113.2"].matched, false);
+  assert.equal(byServer["203.0.113.2"].skipped, false);
+  assert.equal(byServer["2606:4700:4700::1111"].skipped, true);
+});
+
+test("waitForTxtPresent fails immediately when every discovered NS is address-family unreachable", async () => {
+  const present = await waitForTxtPresent(
+    {
+      recordName: "_acme-challenge.example.com",
+      txtValue: "abc",
+      config: normalizePropagationConfig({
+        timeoutMs: 5000,
+        intervalMs: 1,
+        checkAuthoritative: true,
+      }),
+    },
+    {
+      networkInterfaces: dualStackIfaces,
+      discoverAuthoritativeResolverIps: async () => [
+        "2606:4700:4700::1111",
+        "2606:4700:4700::1001",
+      ],
+      resolveTxt: async (_name, servers) => {
+        throw unreachableTxtError("ECONNREFUSED", servers[0]);
+      },
+      sleep: async () => {
+        throw new Error("should not sleep when every nameserver is unreachable");
+      },
+    },
+  );
+
+  assert.equal(present.ok, false);
+  assert.equal(present.attempts, 1);
+  assert.match(present.detail, /no reachable nameservers/);
+  assert.ok(present.serverResults.every((entry) => entry.skipped === true));
+});
+
+test("waitForTxtPresent does not poll AAAA NS when the host has no usable IPv6 route", async () => {
+  const polled = [];
+  const present = await waitForTxtPresent(
+    {
+      recordName: "_acme-challenge.example.com",
+      txtValue: "abc",
+      config: normalizePropagationConfig({
+        timeoutMs: 500,
+        intervalMs: 1,
+        checkAuthoritative: true,
+      }),
+    },
+    {
+      networkInterfaces: ipv4PlusLinkLocalIfaces,
+      discoverAuthoritativeResolverIps: async () => [
+        "203.0.113.1",
+        "2606:4700:4700::1111",
+      ],
+      resolveTxt: async (_name, servers) => {
+        polled.push(servers[0]);
+        return ["abc"];
+      },
+      sleep: async () => {},
+    },
+  );
+
+  assert.equal(present.ok, true);
+  assert.deepEqual(polled, ["203.0.113.1"]);
+  assert.deepEqual(present.servers, ["203.0.113.1"]);
+});
+
+test("isAddressFamilyUnreachableError matches only connection-family codes", () => {
+  assert.equal(isAddressFamilyUnreachableError({ code: "ECONNREFUSED" }), true);
+  assert.equal(isAddressFamilyUnreachableError({ code: "ENETUNREACH" }), true);
+  assert.equal(isAddressFamilyUnreachableError({ code: "EHOSTUNREACH" }), true);
+  assert.equal(isAddressFamilyUnreachableError({ code: "ENODATA" }), false);
+  assert.equal(isAddressFamilyUnreachableError({ code: "ESERVFAIL" }), false);
+  assert.equal(isAddressFamilyUnreachableError({ code: "EFORMERR" }), false);
 });
 
 test("withFileLock reclaims a stale lock via atomic rename, not unlink-by-path", async () => {

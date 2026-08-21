@@ -216,6 +216,9 @@ DISABLE_ADMIN_BOOTSTRAP: "true"
 {{- if .Values.config.disableManualInvites }}
 DISABLE_MANUAL_INVITES: "true"
 {{- end }}
+{{- if .Values.config.webhookAllowPrivateIps }}
+WEBHOOK_ALLOW_PRIVATE_IPS: "true"
+{{- end }}
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}

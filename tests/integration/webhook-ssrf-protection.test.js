@@ -31,6 +31,20 @@ describe("Webhook SSRF Protection", function () {
       expect(res.body.code).to.equal("WEBHOOK_HOST_NOT_ALLOWED");
     });
 
+    it("rejects IPv4-mapped loopback for generic webhooks", async () => {
+      const cookie = await freshUserCookie();
+      const res = await request(BASE)
+        .post("/api/test-webhook")
+        .set("Cookie", cookie)
+        .send({
+          url: "http://[::ffff:127.0.0.1]:8080/webhook",
+          kind: "generic",
+        });
+
+      expect(res.status).to.equal(400);
+      expect(res.body.code).to.equal("WEBHOOK_PRIVATE_IP_BLOCKED");
+    });
+
     it("rejects internal network URLs for provider webhooks", async () => {
       const cookie = await freshUserCookie();
       const res = await request(BASE)
