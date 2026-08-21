@@ -376,3 +376,144 @@ describe("ensureInitialWorkspaceForUser (shared default workspace)", () => {
     assert.strictEqual(created.params[1], DEFAULT_WORKSPACE_NAME);
   });
 });
+
+describe("ensureInitialWorkspaceForUser (pending invitation matching)", () => {
+  function makeInvitePool({ inviteRows = [], alreadyMember = true } = {}) {
+    const queryLog = [];
+    const pool = {
+      query: async (sql, params) => {
+        const text = String(sql);
+        queryLog.push({ text, params });
+        if (
+          text.includes("FROM workspace_invitations") &&
+          text.includes("SELECT")
+        ) {
+          return { rowCount: inviteRows.length, rows: inviteRows };
+        }
+        if (text.includes("FROM workspace_memberships WHERE user_id")) {
+          return alreadyMember
+            ? { rowCount: 1, rows: [{}] }
+            : { rowCount: 0, rows: [] };
+        }
+        return { rowCount: 1, rows: [] };
+      },
+      connect: async () => {
+        throw new Error("should not open transaction");
+      },
+    };
+    return { pool, queryLog };
+  }
+
+  function invitationSelect(queryLog) {
+    return queryLog.find(
+      (q) =>
+        q.text.includes("FROM workspace_invitations") &&
+        q.text.includes("SELECT"),
+    );
+  }
+
+  it("restricts login-time matching to pending invitations for all alias forms", async () => {
+    const { pool, queryLog } = makeInvitePool();
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool);
+    await ensureInitialWorkspaceForUser(
+      "user-pending",
+      "User.Name+tag@gmail.com",
+      "Gmail User",
+    );
+
+    const select = invitationSelect(queryLog);
+    assert.ok(select);
+    assert.match(select.text, /accepted_at\s+IS\s+NULL\s+AND\s+\(/i);
+    assert.deepStrictEqual(select.params, [
+      "user.name+tag@gmail.com",
+      "gmail.com",
+      "user.name",
+      true,
+      "username",
+    ]);
+  });
+
+  it("accepts a plus-alias invitation then deletes by matched invitation id", async () => {
+    const inviteId = "11111111-1111-1111-1111-111111111111";
+    const { pool, queryLog } = makeInvitePool({
+      inviteRows: [
+        {
+          id: inviteId,
+          workspace_id: "ws-invite",
+          role: "workspace_manager",
+        },
+      ],
+    });
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool);
+    await ensureInitialWorkspaceForUser(
+      "user-alias",
+      "member@example.com",
+      "Alias User",
+    );
+
+    const select = invitationSelect(queryLog);
+    assert.ok(select);
+    assert.deepStrictEqual(select.params, [
+      "member@example.com",
+      "example.com",
+      "member",
+      false,
+      "member",
+    ]);
+
+    const membership = queryLog.find(
+      (q) =>
+        q.text.includes("INSERT INTO workspace_memberships") &&
+        q.params?.[1] === "ws-invite" &&
+        q.params?.[2] === "workspace_manager",
+    );
+    assert.ok(membership);
+
+    const accept = queryLog.find((q) =>
+      q.text.includes("UPDATE workspace_invitations SET accepted_at = NOW()"),
+    );
+    assert.ok(accept);
+    assert.match(accept.text, /accepted_at IS NULL/);
+    assert.deepStrictEqual(accept.params, [inviteId]);
+
+    const cleanup = queryLog.find((q) =>
+      q.text.includes("DELETE FROM workspace_invitations"),
+    );
+    assert.ok(cleanup);
+    assert.match(cleanup.text, /id = ANY\(\$1::uuid\[\]\)/);
+    assert.deepStrictEqual(cleanup.params, [[inviteId]]);
+    assert.strictEqual(
+      queryLog.some(
+        (q) =>
+          q.text.includes("DELETE FROM workspace_invitations") &&
+          q.text.includes("LOWER(email)"),
+      ),
+      false,
+    );
+  });
+
+  it("does not apply membership when the pending-only lookup returns no rows", async () => {
+    const { pool, queryLog } = makeInvitePool({ inviteRows: [] });
+    const { ensureInitialWorkspaceForUser } = loadWorkspaceService(pool);
+    await ensureInitialWorkspaceForUser(
+      "user-accepted",
+      "member@example.com",
+      "Accepted User",
+    );
+
+    assert.strictEqual(
+      queryLog.some((q) => q.text.includes("INSERT INTO workspace_memberships")),
+      false,
+    );
+    assert.strictEqual(
+      queryLog.some((q) =>
+        q.text.includes("UPDATE workspace_invitations SET accepted_at"),
+      ),
+      false,
+    );
+    assert.strictEqual(
+      queryLog.some((q) => q.text.includes("DELETE FROM workspace_invitations")),
+      false,
+    );
+  });
+});

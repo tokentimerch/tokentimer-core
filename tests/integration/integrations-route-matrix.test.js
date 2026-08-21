@@ -13,7 +13,33 @@ describe("Integrations route matrix", function () {
   let adminSession;
   let viewerUser;
   let viewerSession;
+  let managerUser;
+  let managerSession;
+  let removedUser;
+  let removedSession;
+  let foreignUser;
+  let foreignSession;
   let workspaceId;
+  let foreignWorkspaceId;
+
+  const workspaceScanRoutes = [
+    { path: "/api/v1/integrations/vault/scan", body: {} },
+    { path: "/api/v1/integrations/vault/mounts", body: {} },
+    { path: "/api/v1/integrations/gitlab/scan", body: {} },
+    { path: "/api/v1/integrations/github/scan", body: {} },
+    { path: "/api/v1/integrations/aws/detect-regions", body: {} },
+    { path: "/api/v1/integrations/aws/scan", body: {} },
+    { path: "/api/v1/integrations/azure/scan", body: {} },
+    { path: "/api/v1/integrations/gcp/scan", body: {} },
+    { path: "/api/v1/integrations/azure-ad/scan", body: {} },
+  ];
+
+  const allRoutes = [
+    ...workspaceScanRoutes,
+    { path: "/api/v1/integrations/vault/import", body: { items: [] } },
+    { path: "/api/v1/integrations/check-duplicates", body: { items: [] } },
+    { path: "/api/v1/integrations/import", body: { items: [] } },
+  ];
 
   before(async () => {
     adminUser = await TestUtils.createVerifiedTestUser();
@@ -39,30 +65,57 @@ describe("Integrations route matrix", function () {
        ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = 'viewer'`,
       [viewerUser.id, workspaceId, adminUser.id],
     );
+
+    managerUser = await TestUtils.createVerifiedTestUser();
+    managerSession = await TestUtils.loginTestUser(
+      managerUser.email,
+      "SecureTest123!@#",
+    );
+    await TestUtils.execQuery(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       VALUES ($1, $2, 'workspace_manager', $3)
+       ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = 'workspace_manager'`,
+      [managerUser.id, workspaceId, adminUser.id],
+    );
+
+    removedUser = await TestUtils.createVerifiedTestUser();
+    removedSession = await TestUtils.loginTestUser(
+      removedUser.email,
+      "SecureTest123!@#",
+    );
+    await TestUtils.execQuery(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       VALUES ($1, $2, 'workspace_manager', $3)
+       ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = 'workspace_manager'`,
+      [removedUser.id, workspaceId, adminUser.id],
+    );
+    await TestUtils.execQuery(
+      `DELETE FROM workspace_memberships WHERE user_id = $1 AND workspace_id = $2`,
+      [removedUser.id, workspaceId],
+    );
+
+    foreignUser = await TestUtils.createVerifiedTestUser();
+    foreignSession = await TestUtils.loginTestUser(
+      foreignUser.email,
+      "SecureTest123!@#",
+    );
+    const foreignWs = await request(BASE)
+      .get("/api/v1/workspaces?limit=50&offset=0")
+      .set("Cookie", foreignSession.cookie)
+      .expect(200);
+    foreignWorkspaceId = foreignWs?.body?.items?.[0]?.id;
   });
 
   after(async () => {
     await TestUtils.cleanupTestUser(adminUser.email, adminSession.cookie);
     await TestUtils.cleanupTestUser(viewerUser.email, viewerSession.cookie);
+    await TestUtils.cleanupTestUser(managerUser.email, managerSession.cookie);
+    await TestUtils.cleanupTestUser(removedUser.email, removedSession.cookie);
+    await TestUtils.cleanupTestUser(foreignUser.email, foreignSession.cookie);
   });
 
-  const scanRoutes = [
-    { path: "/api/v1/integrations/vault/scan", body: {} },
-    { path: "/api/v1/integrations/vault/mounts", body: {} },
-    { path: "/api/v1/integrations/vault/import", body: { items: [] } },
-    { path: "/api/v1/integrations/gitlab/scan", body: {} },
-    { path: "/api/v1/integrations/github/scan", body: {} },
-    { path: "/api/v1/integrations/aws/detect-regions", body: {} },
-    { path: "/api/v1/integrations/aws/scan", body: {} },
-    { path: "/api/v1/integrations/azure/scan", body: {} },
-    { path: "/api/v1/integrations/gcp/scan", body: {} },
-    { path: "/api/v1/integrations/azure-ad/scan", body: {} },
-    { path: "/api/v1/integrations/check-duplicates", body: { items: [] } },
-    { path: "/api/v1/integrations/import", body: { items: [] } },
-  ];
-
   it("enforces auth guard across provider routes", async () => {
-    for (const route of scanRoutes) {
+    for (const route of allRoutes) {
       const res = await request(BASE)
         .post(`${route.path}?workspace_id=${workspaceId}`)
         .send(route.body);
@@ -70,9 +123,81 @@ describe("Integrations route matrix", function () {
     }
   });
 
-  it("allows worker bearer on aws detect-regions without workspace_id", async () => {
+  it("requires workspace_id on scan and helper routes", async () => {
+    for (const route of workspaceScanRoutes) {
+      const res = await request(BASE)
+        .post(route.path)
+        .set("Cookie", adminSession.cookie)
+        .send(route.body);
+      expect(res.status).to.equal(400);
+      expect(res.body.code).to.equal("WORKSPACE_REQUIRED");
+    }
+  });
+
+  it("rejects unknown and foreign workspace ids on scan routes", async () => {
+    const missingId = "00000000-0000-4000-8000-000000000001";
+    const missingRes = await request(BASE)
+      .post(`/api/v1/integrations/github/scan?workspace_id=${missingId}`)
+      .set("Cookie", adminSession.cookie)
+      .send({});
+    expect(missingRes.status).to.equal(404);
+
+    for (const route of workspaceScanRoutes) {
+      const res = await request(BASE)
+        .post(`${route.path}?workspace_id=${foreignWorkspaceId}`)
+        .set("Cookie", adminSession.cookie)
+        .send(route.body);
+      expect(res.status).to.equal(403);
+      expect(res.body.error).to.match(/not a workspace member/i);
+    }
+  });
+
+  it("rejects viewers on scan and helper routes", async () => {
+    for (const route of workspaceScanRoutes) {
+      const res = await request(BASE)
+        .post(`${route.path}?workspace_id=${workspaceId}`)
+        .set("Cookie", viewerSession.cookie)
+        .send(route.body);
+      expect(res.status).to.equal(403);
+      expect(res.body.error).to.equal("Forbidden");
+    }
+  });
+
+  it("rejects a removed member whose session is still valid", async () => {
+    for (const route of workspaceScanRoutes) {
+      const res = await request(BASE)
+        .post(`${route.path}?workspace_id=${workspaceId}`)
+        .set("Cookie", removedSession.cookie)
+        .send(route.body);
+      expect(res.status).to.equal(403);
+      expect(res.body.error).to.match(/not a workspace member/i);
+    }
+  });
+
+  it("lets managers and admins through workspace authorization", async () => {
+    const sessions = [managerSession, adminSession];
+    for (const cookieHolder of sessions) {
+      const res = await request(BASE)
+        .post(`/api/v1/integrations/github/scan?workspace_id=${workspaceId}`)
+        .set("Cookie", cookieHolder.cookie)
+        .send({});
+      expect(res.status).to.equal(400);
+      expect(res.body.error).to.match(/baseUrl and token/i);
+    }
+  });
+
+  it("accepts workspace_id in the request body", async () => {
     const res = await request(BASE)
-      .post("/api/v1/integrations/aws/detect-regions")
+      .post("/api/v1/integrations/github/scan")
+      .set("Cookie", adminSession.cookie)
+      .send({ workspace_id: workspaceId });
+    expect(res.status).to.equal(400);
+    expect(res.body.error).to.match(/baseUrl and token/i);
+  });
+
+  it("allows worker bearer on aws detect-regions when workspace_id is present", async () => {
+    const res = await request(BASE)
+      .post(`/api/v1/integrations/aws/detect-regions?workspace_id=${workspaceId}`)
       .set("Authorization", `Bearer ${WORKER_SECRET}`)
       .send({});
 

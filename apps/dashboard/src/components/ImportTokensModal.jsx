@@ -1018,6 +1018,12 @@ export default function ImportTokensModal({
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
   const [restoredScanParams, setRestoredScanParams] = React.useState(null);
+  // Provider the restored scan_params belong to. The GitLab/GitHub forms
+  // mount before the auto-sync refetch for the new provider resolves, so
+  // handing them untagged params would seed one provider's form with the
+  // other's saved values (e.g. GitHub URL prefilled with gitlab.com).
+  const [restoredScanParamsFor, setRestoredScanParamsFor] =
+    React.useState(null);
   const [restoredFilterRules, setRestoredFilterRules] = React.useState(null);
   const [restoredCleanupObsolete, setRestoredCleanupObsolete] =
     React.useState(null);
@@ -1076,6 +1082,7 @@ export default function ImportTokensModal({
           // saved scan_params so reopening the modal shows the configured
           // values instead of the defaults.
           setRestoredScanParams(sp);
+          setRestoredScanParamsFor(source);
           setRestoredFilterRules(
             Array.isArray(sp.filterRules) ? sp.filterRules : null
           );
@@ -1165,10 +1172,12 @@ export default function ImportTokensModal({
         } else if (source === 'aws') {
           setAwsAutoSyncScanParams(null);
           setRestoredScanParams(null);
+          setRestoredScanParamsFor(null);
           setRestoredFilterRules(null);
           setRestoredCleanupObsolete(null);
         } else {
           setRestoredScanParams(null);
+          setRestoredScanParamsFor(null);
           setRestoredFilterRules(null);
           setRestoredCleanupObsolete(null);
         }
@@ -2662,9 +2671,21 @@ export default function ImportTokensModal({
                   extractQuotaFromError={extractQuotaFromError}
                   autoSyncManageMode={autoSyncManageMode}
                   contactGroups={contactGroups}
-                  initialScanParams={restoredScanParams}
-                  initialFilterRules={restoredFilterRules}
-                  initialCleanupObsolete={restoredCleanupObsolete}
+                  initialScanParams={
+                    restoredScanParamsFor === 'gitlab'
+                      ? restoredScanParams
+                      : null
+                  }
+                  initialFilterRules={
+                    restoredScanParamsFor === 'gitlab'
+                      ? restoredFilterRules
+                      : null
+                  }
+                  initialCleanupObsolete={
+                    restoredScanParamsFor === 'gitlab'
+                      ? restoredCleanupObsolete
+                      : null
+                  }
                 />
               ) : null}
 
@@ -2694,9 +2715,21 @@ export default function ImportTokensModal({
                   formatQuotaError={formatQuotaError}
                   extractQuotaFromError={extractQuotaFromError}
                   contactGroups={contactGroups}
-                  initialScanParams={restoredScanParams}
-                  initialFilterRules={restoredFilterRules}
-                  initialCleanupObsolete={restoredCleanupObsolete}
+                  initialScanParams={
+                    restoredScanParamsFor === 'github'
+                      ? restoredScanParams
+                      : null
+                  }
+                  initialFilterRules={
+                    restoredScanParamsFor === 'github'
+                      ? restoredFilterRules
+                      : null
+                  }
+                  initialCleanupObsolete={
+                    restoredScanParamsFor === 'github'
+                      ? restoredCleanupObsolete
+                      : null
+                  }
                 />
               ) : null}
 

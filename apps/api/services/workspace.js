@@ -28,20 +28,23 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
     const invites = await pool.query(
       `SELECT id, workspace_id, role
          FROM workspace_invitations
-        WHERE LOWER(email) = $1
-           OR (
-                LOWER(SPLIT_PART(email,'@',2)) = $2
-            AND regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', '') = $3
-              )
-           OR (
-                $4::boolean = TRUE
-            AND LOWER(SPLIT_PART(email,'@',2)) IN ('gmail.com','googlemail.com')
-            AND regexp_replace(
-                  regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', ''),
-                  '\\.',
-                  '',
-                  'g'
-                ) = $5
+        WHERE accepted_at IS NULL
+          AND (
+                LOWER(email) = $1
+             OR (
+                  LOWER(SPLIT_PART(email,'@',2)) = $2
+              AND regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', '') = $3
+                )
+             OR (
+                  $4::boolean = TRUE
+              AND LOWER(SPLIT_PART(email,'@',2)) IN ('gmail.com','googlemail.com')
+              AND regexp_replace(
+                    regexp_replace(SPLIT_PART(LOWER(email),'@',1), '\\+.*', ''),
+                    '\\.',
+                    '',
+                    'g'
+                  ) = $5
+                )
               )`,
       [emailLc, domainPart, localNoPlus, isGmailLike, gmailCanonicalLocal],
     );
@@ -55,7 +58,7 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
         );
         try {
           await pool.query(
-            "UPDATE workspace_invitations SET accepted_at = NOW() WHERE id = $1",
+            "UPDATE workspace_invitations SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL",
             [row.id],
           );
         } catch (_err) {
@@ -81,8 +84,8 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
       }
       try {
         await pool.query(
-          "DELETE FROM workspace_invitations WHERE LOWER(email) = $1",
-          [emailLc],
+          "DELETE FROM workspace_invitations WHERE id = ANY($1::uuid[])",
+          [invites.rows.map((row) => row.id)],
         );
       } catch (_err) {
         logger.warn("DB operation failed", { error: _err.message });

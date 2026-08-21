@@ -1,7 +1,11 @@
 "use strict";
 
 const axios = require("axios");
-const { tryParseDate, formatDateYmd } = require("./integrationUtils");
+const {
+  tryParseDate,
+  formatDateYmd,
+  CREDENTIALED_AXIOS_REDIRECTS,
+} = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
 async function gitlabRequest({
@@ -26,6 +30,7 @@ async function gitlabRequest({
     params: method === "GET" ? params : undefined,
     data: method !== "GET" ? params : undefined,
     timeout, // Use provided timeout (allows shorter timeout for initial connection check)
+    ...CREDENTIALED_AXIOS_REDIRECTS,
   };
 
   try {

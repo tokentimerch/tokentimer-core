@@ -1,7 +1,11 @@
 "use strict";
 
 const axios = require("axios");
-const { tryParseDate, formatDateYmd } = require("./integrationUtils");
+const {
+  tryParseDate,
+  formatDateYmd,
+  CREDENTIALED_AXIOS_REDIRECTS,
+} = require("./integrationUtils");
 const { logger } = require("../utils/logger");
 
 async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
@@ -24,6 +28,7 @@ async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
       headers,
       data: body ? JSON.stringify(body) : undefined,
       timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+      ...CREDENTIALED_AXIOS_REDIRECTS,
     });
     return response.data;
   } catch (error) {
@@ -75,6 +80,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
           Authorization: `Bearer ${accessToken}`,
         },
         timeout: 120000, // 120 second timeout (increased for up to 2000 items)
+        ...CREDENTIALED_AXIOS_REDIRECTS,
       });
 
       const data = response.data;
@@ -115,6 +121,7 @@ async function getSecretVersions({ projectId, accessToken, secretId }) {
         Authorization: `Bearer ${accessToken}`,
       },
       timeout: 30000,
+      ...CREDENTIALED_AXIOS_REDIRECTS,
     });
 
     const versions = Array.isArray(response.data.versions)
@@ -161,6 +168,7 @@ async function getSecretVersion({
         Authorization: `Bearer ${accessToken}`,
       },
       timeout: 30000,
+      ...CREDENTIALED_AXIOS_REDIRECTS,
     });
 
     return response.data;

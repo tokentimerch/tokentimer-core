@@ -86,7 +86,7 @@ async function scanAWS({
   }
   if (
     sessionToken &&
-    (typeof sessionToken !== "string" || sessionToken.length > 2000)
+    (typeof sessionToken !== "string" || sessionToken.length > 5000)
   ) {
     throw new Error("Invalid sessionToken format");
   }
@@ -190,8 +190,20 @@ async function scanAWSSingleRegion({
         },
       });
       logger.info("Listing AWS Secrets Manager secrets", { region });
-      const listResponse = await client.send(new ListSecretsCommand({}));
-      const secrets = listResponse.SecretList || [];
+      // ListSecrets returns at most 100 entries per call; paginate with
+      // NextToken or accounts with >100 secrets get silently truncated.
+      const secrets = [];
+      let secretsNextToken;
+      do {
+        const listResponse = await client.send(
+          new ListSecretsCommand({
+            MaxResults: 100,
+            NextToken: secretsNextToken,
+          }),
+        );
+        secrets.push(...(listResponse.SecretList || []));
+        secretsNextToken = listResponse.NextToken;
+      } while (secretsNextToken && secrets.length < maxItems);
       logger.info("AWS Secrets Manager list response", {
         region,
         totalSecretsFound: secrets.length,
@@ -280,10 +292,34 @@ async function scanAWSSingleRegion({
       logger.info("Listing AWS ACM certificates", { region });
       // ACM has a hard limit of 1000 for MaxItems
       const acmMaxItems = Math.min(maxItems, 1000);
-      const listResponse = await client.send(
-        new ListCertificatesCommand({ MaxItems: acmMaxItems }),
-      );
-      const certificates = listResponse.CertificateSummaryList || [];
+      // Two ACM ListCertificates gotchas:
+      // 1. Default server-side filtering returns only RSA_1024/RSA_2048
+      //    certificates, silently hiding ECDSA and RSA_3072/RSA_4096 certs,
+      //    so every supported key type must be requested explicitly.
+      // 2. A page can contain fewer items than MaxItems even when more
+      //    certificates exist, so NextToken must be followed.
+      const ACM_ALL_KEY_TYPES = [
+        "RSA_1024",
+        "RSA_2048",
+        "RSA_3072",
+        "RSA_4096",
+        "EC_prime256v1",
+        "EC_secp384r1",
+        "EC_secp521r1",
+      ];
+      const certificates = [];
+      let acmNextToken;
+      do {
+        const listResponse = await client.send(
+          new ListCertificatesCommand({
+            MaxItems: acmMaxItems,
+            Includes: { keyTypes: ACM_ALL_KEY_TYPES },
+            NextToken: acmNextToken,
+          }),
+        );
+        certificates.push(...(listResponse.CertificateSummaryList || []));
+        acmNextToken = listResponse.NextToken;
+      } while (acmNextToken && certificates.length < acmMaxItems);
       logger.info("AWS ACM list response", {
         region,
         totalCertificatesFound: certificates.length,
@@ -396,8 +432,19 @@ async function scanAWSSingleRegion({
           requestTimeout: 120000, // 120 second timeout (increased for up to 2000 items)
         },
       });
-      const usersResponse = await client.send(new ListUsersCommand({}));
-      const users = usersResponse.Users || [];
+      // ListUsers returns at most 100 users per call by default; paginate
+      // with Marker or IAM keys past the first 100 users are never seen.
+      const users = [];
+      let usersMarker;
+      do {
+        const usersResponse = await client.send(
+          new ListUsersCommand({ MaxItems: 1000, Marker: usersMarker }),
+        );
+        users.push(...(usersResponse.Users || []));
+        usersMarker = usersResponse.IsTruncated
+          ? usersResponse.Marker
+          : undefined;
+      } while (usersMarker && users.length < maxItems);
       let iamKeysCount = 0;
       const BATCH_SIZE = 10;
 
@@ -499,7 +546,7 @@ async function detectAWSRegions({
   }
   if (
     sessionToken &&
-    (typeof sessionToken !== "string" || sessionToken.length > 2000)
+    (typeof sessionToken !== "string" || sessionToken.length > 5000)
   ) {
     throw new Error("Invalid sessionToken format");
   }
@@ -641,7 +688,23 @@ async function detectAWSRegions({
         requestHandler: createDetectRequestHandler(),
       });
       const listResponse = await client.send(
-        new ListCertificatesCommand({ MaxItems: 1 }),
+        new ListCertificatesCommand({
+          MaxItems: 1,
+          // Without an explicit keyTypes filter ACM only returns
+          // RSA_1024/RSA_2048 certs, so a region holding only ECDSA or
+          // larger RSA certs would be reported as empty.
+          Includes: {
+            keyTypes: [
+              "RSA_1024",
+              "RSA_2048",
+              "RSA_3072",
+              "RSA_4096",
+              "EC_prime256v1",
+              "EC_secp384r1",
+              "EC_secp521r1",
+            ],
+          },
+        }),
       );
       return listResponse.CertificateSummaryList?.length || 0;
     };

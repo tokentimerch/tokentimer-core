@@ -59,6 +59,9 @@ const actionPolicy = {
   // same admin level as the kill switch and renewal profile management
   // rather than the workspace_manager level ordinary job creation uses.
   "certops.trust_anchor.manage": "admin",
+  // Scan and import both mutate workspace inventory (or probe provider
+  // credentials on behalf of a workspace), so they sit at manager.
+  "integration.use": "workspace_manager",
 };
 
 /**
@@ -87,6 +90,15 @@ function can(userRole, action) {
   return hasAtLeastRole(userRole, minRole);
 }
 
+function resolveWorkspaceId(req) {
+  return (
+    req.params?.id ||
+    req.params?.workspaceId ||
+    req.query?.workspace_id ||
+    req.body?.workspace_id
+  );
+}
+
 /**
  * Express middleware to load workspace and set authorization context
  * @param {Object} req - Express request object
@@ -96,8 +108,7 @@ function can(userRole, action) {
  */
 async function loadWorkspace(req, res, next) {
   try {
-    const workspaceId =
-      req.params.id || req.params.workspaceId || req.query.workspace_id;
+    const workspaceId = resolveWorkspaceId(req);
     if (!workspaceId)
       return res
         .status(400)
@@ -147,8 +158,7 @@ async function loadWorkspace(req, res, next) {
   } catch (e) {
     logger.error("loadWorkspace middleware failed", {
       error: e.message,
-      workspaceId:
-        req.params?.id || req.params?.workspaceId || req.query?.workspace_id,
+      workspaceId: resolveWorkspaceId(req),
       userId: req.user?.id,
     });
     return next(e);
@@ -242,6 +252,25 @@ function requireWorkspaceMembership(req, res, next) {
 }
 
 /**
+ * Require admin or workspace_manager on the loaded workspace.
+ * Matches the integration import policy: viewers and non-members are denied.
+ * @param {Object} req - Express request object (must have req.authz.workspaceRole)
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ * @returns {void}
+ */
+function requireWorkspaceManager(req, res, next) {
+  const role = req.authz?.workspaceRole;
+  if (!role || !hasAtLeastRole(role, "workspace_manager")) {
+    return res.status(403).json({
+      error: "Forbidden: insufficient role",
+      code: "INSUFFICIENT_ROLE",
+    });
+  }
+  return next();
+}
+
+/**
  * Create Express middleware to authorize an action based on user role
  * @param {string} action - The action to authorize (e.g., "workspace.update", "membership.invite")
  * @returns {Function} Express middleware function
@@ -271,15 +300,16 @@ function requirePaidPlan(req, res, next) {
 
 /**
  * Middleware to check and enforce integration scan quota per workspace.
- * Note: tokentimer-core does not enforce integration quotas
- * Integration endpoints return stubs - quota enforcement is handled by variant overlays
+ * Note: tokentimer-core does not enforce integration quotas. This is a
+ * pass-through only and must never be treated as workspace authorization.
+ * Access control belongs on loadWorkspace / requireWorkspaceMembership /
+ * requireWorkspaceManager. Quota enforcement is handled by variant overlays.
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next middleware function
  * @returns {void}
  */
 function requireIntegrationQuota(req, res, next) {
-  // Pass through - integrations are stubbed out in core
   return next();
 }
 
@@ -398,6 +428,7 @@ module.exports = {
   loadWorkspace,
   loadSection,
   requireWorkspaceMembership,
+  requireWorkspaceManager,
   authorize,
   getUserWorkspaceRole,
   hasAtLeastRole,

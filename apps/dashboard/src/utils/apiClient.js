@@ -429,8 +429,13 @@ export const handleApiError = (error, customMessage = null) => {
   const isIntegrationScan =
     requestUrl.includes('/api/v1/integrations/') &&
     (requestUrl.includes('/scan') || requestUrl.includes('/detect-regions'));
+  // Webhook test calls (alertAPI.testWebhook) already show their own
+  // contextual toast at the call site in AlertPreferences.jsx; without this
+  // the auto-toast below fires in addition to that one, showing the same
+  // error message twice (e.g. "Webhook blocked: ... private/reserved IP").
+  const isWebhookTest = requestUrl.includes('/api/test-webhook');
 
-  if (message && !suppressToast && !isIntegrationScan) {
+  if (message && !suppressToast && !isIntegrationScan && !isWebhookTest) {
     const shortMessage = `${
       message.split(
         /\. (Clear cache|Generate|If this persists|Reference:|Verify|Ensure|Wait)/
@@ -516,7 +521,8 @@ export const API_ENDPOINTS = {
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>
     `/api/v1/integrations/vault/scan?workspace_id=${encodeURIComponent(workspaceId)}`,
-  VAULT_MOUNTS: '/api/v1/integrations/vault/mounts',
+  VAULT_MOUNTS: workspaceId =>
+    `/api/v1/integrations/vault/mounts?workspace_id=${encodeURIComponent(workspaceId)}`,
   VAULT_IMPORT: id =>
     `/api/v1/integrations/vault/import?workspace_id=${encodeURIComponent(id)}`,
   // GitLab integration (workspace_id required for scan)
@@ -526,7 +532,8 @@ export const API_ENDPOINTS = {
   GITHUB_SCAN: workspaceId =>
     `/api/v1/integrations/github/scan?workspace_id=${encodeURIComponent(workspaceId)}`,
   // AWS integration (workspace_id required for scan)
-  AWS_DETECT_REGIONS: '/api/v1/integrations/aws/detect-regions',
+  AWS_DETECT_REGIONS: workspaceId =>
+    `/api/v1/integrations/aws/detect-regions?workspace_id=${encodeURIComponent(workspaceId)}`,
   AWS_SCAN: workspaceId =>
     `/api/v1/integrations/aws/scan?workspace_id=${encodeURIComponent(workspaceId)}`,
   // Azure integration (workspace_id required for scan)
@@ -1173,10 +1180,13 @@ export const vaultAPI = {
       throw err;
     }
   },
-  listMounts: async ({ address, token }) => {
+  listMounts: async ({ workspaceId, address, token }) => {
+    if (!workspaceId) {
+      throw new Error('workspaceId is required for integration scans');
+    }
     try {
       const res = await apiClient.post(
-        API_ENDPOINTS.VAULT_MOUNTS,
+        API_ENDPOINTS.VAULT_MOUNTS(workspaceId),
         { address, token },
         { _suppressLog: true }
       );
@@ -1314,10 +1324,14 @@ export const githubAPI = {
 // AWS integration API
 export const awsAPI = {
   detectRegions: async ({
+    workspaceId,
     accessKeyId,
     secretAccessKey,
     sessionToken = null,
   }) => {
+    if (!workspaceId) {
+      throw new Error('workspaceId is required for integration scans');
+    }
     try {
       const payload = {
         accessKeyId,
@@ -1327,7 +1341,7 @@ export const awsAPI = {
       // Region detection can take 30-60 seconds (checking 26+ regions)
       // Note: detectRegions is a utility endpoint, no quota check required
       const res = await apiClient.post(
-        API_ENDPOINTS.AWS_DETECT_REGIONS,
+        API_ENDPOINTS.AWS_DETECT_REGIONS(workspaceId),
         payload,
         {
           _suppressLog: true,
