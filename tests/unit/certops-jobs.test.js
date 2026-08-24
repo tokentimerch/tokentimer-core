@@ -2497,3 +2497,265 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
     assert.equal(job.status, "pending");
   });
 });
+
+describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk renewal materializer)", () => {
+  const MANUAL_RENEWAL_CERT_ID = "c1111111-1111-4111-8111-111111111111";
+
+  function validRenewalProfileSource() {
+    return {
+      schemaVersion: 1,
+      profileId: "profile-1",
+      profileName: "web-tls",
+      sanPolicy: {
+        mode: "exact",
+        sans: ["app.example.com"],
+        allowWildcards: false,
+      },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+      keyRotationPolicy: { rotateOnRenew: true },
+      preferredChain: null,
+      ca: {
+        endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+        accountRef: null,
+        eabRef: null,
+      },
+      acme: { kind: "certbot", commandRef: "acme-renew-default" },
+      dns: { provider: "cloudflare", zone: "example.com" },
+      deploymentTargets: [
+        {
+          type: "endpoint",
+          reference: "host/web",
+          certPath: "/etc/ssl/certs/app.pem",
+          reloadService: "nginx",
+        },
+      ],
+      target: {
+        type: "endpoint",
+        reference: "host/web",
+        certPath: "/etc/ssl/certs/app.pem",
+      },
+      verification: { host: "app.example.com", port: 443, requireMatch: true },
+    };
+  }
+
+  function certificateRow(overrides = {}) {
+    return {
+      id: MANUAL_RENEWAL_CERT_ID,
+      workspace_id: WORKSPACE_A,
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      not_after: new Date("2026-08-01T00:00:00.000Z"),
+      key_mode: "agent-local",
+      profile_id: "profile-1",
+      profile_name: "web-tls",
+      profile_key_mode: "agent-local",
+      profile_public_metadata: { renewalProfile: validRenewalProfileSource() },
+      ...overrides,
+    };
+  }
+
+  function createManualRenewalMemoryClient({ certificates = [] } = {}) {
+    const jobs = [];
+    let nextJob = 1;
+
+    return {
+      jobs,
+      async query(sql, params = []) {
+        const normalizedSql = sql.replace(/\s+/g, " ");
+
+        if (normalizedSql.includes("pg_advisory_xact_lock")) {
+          return { rows: [{ pg_advisory_xact_lock: "" }] };
+        }
+
+        if (normalizedSql.includes("FROM managed_certificates")) {
+          const [workspaceId, id] = params;
+          const row = certificates.find(
+            (cert) => cert.workspace_id === workspaceId && cert.id === id,
+          );
+          return { rows: row ? [row] : [] };
+        }
+
+        if (
+          normalizedSql.includes("FROM certificate_jobs") &&
+          normalizedSql.includes("operation = ANY($3::text[])") &&
+          normalizedSql.includes("FOR UPDATE")
+        ) {
+          return { rows: [] };
+        }
+
+        if (normalizedSql.includes("idempotency_key = $2")) {
+          return { rows: [] };
+        }
+
+        if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
+          const createdAt = new Date(Date.UTC(2026, 5, 30, 0, 0, 0));
+          const row = {
+            id: `job-${nextJob++}`,
+            workspace_id: params[0],
+            operation: params[1],
+            status: params[2],
+            mode: params[3],
+            source: params[4],
+            executor_kind: params[5],
+            requested_by_user_id: params[6],
+            requested_by_api_token_id: params[7],
+            idempotency_key: params[8],
+            subject_type: params[9],
+            subject_id: params[10],
+            payload: json(params[11]),
+            result_metadata: json(params[12]),
+            error_code: params[13],
+            error_message: params[14],
+            assigned_agent_id: params[15],
+            required_target_selector: params[16],
+            required_dns_provider: params[17],
+            required_command_profile: params[18],
+            created_at: createdAt,
+            updated_at: createdAt,
+            queued_at: params[19],
+            started_at: params[20],
+            completed_at: params[21],
+            canceled_at: params[22],
+            creation_request_hash: params[23],
+          };
+          jobs.push(row);
+          return { rows: [row] };
+        }
+
+        throw new Error(
+          `Unhandled query in manual renewal test client: ${normalizedSql}`,
+        );
+      },
+    };
+  }
+
+  it("materializes the exact same payload the scheduler would build, when the manual request supplies no override", async () => {
+    const { buildRenewalJobPayload } = require(
+      path.resolve(
+        __dirname,
+        "../../apps/api/services/certops/renewalProfile.js",
+      ),
+    );
+    const { manualRenewalJobCreator } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const certificate = certificateRow();
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificate],
+    });
+
+    const job = await manualRenewalJobCreator({
+      certificateId: MANUAL_RENEWAL_CERT_ID,
+    })({
+      client,
+      workspaceId: WORKSPACE_A,
+      source: "api",
+    });
+
+    const schedulerPayload = buildRenewalJobPayload({ certificate });
+    const { mode, ...persistedPayloadWithoutMode } = job.payload;
+    assert.equal(mode, "real");
+    assert.deepEqual(
+      { ...persistedPayloadWithoutMode, reason: schedulerPayload.reason },
+      schedulerPayload,
+    );
+    assert.equal(job.operation, "renew");
+    assert.equal(job.subjectType, "managed_certificate");
+    assert.equal(job.subjectId, MANUAL_RENEWAL_CERT_ID);
+  });
+
+  it("fails at creation time, before any row is inserted, when the certificate has no stored renewal profile", async () => {
+    const { CERTOPS_RENEWAL_PROFILE_INCOMPLETE } = require(
+      path.resolve(
+        __dirname,
+        "../../apps/api/services/certops/renewalProfile.js",
+      ),
+    );
+    const { manualRenewalJobCreator } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificateRow({ profile_id: null })],
+    });
+
+    await assert.rejects(
+      () =>
+        manualRenewalJobCreator({ certificateId: MANUAL_RENEWAL_CERT_ID })({
+          client,
+          workspaceId: WORKSPACE_A,
+          source: "api",
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+    assert.equal(client.jobs.length, 0);
+  });
+
+  it("fails at creation time with a certificate-not-found error for an unknown certificateId", async () => {
+    const { CERTOPS_CERTIFICATE_NOT_FOUND, manualRenewalJobCreator } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createManualRenewalMemoryClient({ certificates: [] });
+
+    await assert.rejects(
+      () =>
+        manualRenewalJobCreator({ certificateId: MANUAL_RENEWAL_CERT_ID })({
+          client,
+          workspaceId: WORKSPACE_A,
+          source: "api",
+        }),
+      (error) => error?.code === CERTOPS_CERTIFICATE_NOT_FOUND,
+    );
+    assert.equal(client.jobs.length, 0);
+  });
+
+  it("applies an allowlisted reason override on top of the materialized profile", async () => {
+    const { manualRenewalJobCreator } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const certificate = certificateRow();
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificate],
+    });
+
+    const job = await manualRenewalJobCreator({
+      certificateId: MANUAL_RENEWAL_CERT_ID,
+    })({
+      client,
+      workspaceId: WORKSPACE_A,
+      source: "api",
+      payload: { reason: "customer requested" },
+    });
+
+    assert.equal(job.payload.reason, "customer requested");
+    assert.equal(job.payload.commandRef, "acme-renew-default");
+    assert.equal(job.payload.caEndpoint, certificate.profile_public_metadata.renewalProfile.ca.endpoint);
+  });
+
+  it("rejects an override of a field outside the allowlist before touching the certificate row", async () => {
+    const { CERTOPS_RENEWAL_OVERRIDE_INVALID } = require(
+      path.resolve(
+        __dirname,
+        "../../apps/api/services/certops/renewalProfile.js",
+      ),
+    );
+    const { manualRenewalJobCreator } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificateRow()],
+    });
+
+    await assert.rejects(
+      () =>
+        manualRenewalJobCreator({ certificateId: MANUAL_RENEWAL_CERT_ID })({
+          client,
+          workspaceId: WORKSPACE_A,
+          source: "api",
+          payload: { caEndpoint: "https://operator-supplied.example/acme" },
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
+    );
+    assert.equal(client.jobs.length, 0);
+  });
+});

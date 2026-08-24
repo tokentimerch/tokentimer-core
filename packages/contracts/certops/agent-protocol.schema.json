@@ -319,6 +319,10 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Single-use dispatch nonce from the signed job payload, consumed by the server-side replay ledger at result ingestion (ADR-0003, 7.4). Non-secret opaque reference."
+        },
+        "trustResult": {
+          "type": ["object", "null"],
+          "description": "Typed trust-anchor result for a distribute-trust/revoke-trust job, absent (or null) for every other job family. Deliberately shape-only here: this envelope's scope is shape/enum/type checks, and the authoritative contract is trust-result-contract.schema.json, which the control plane validates at result ingestion before cross-checking the result against the signed job and touching the installation row. It is not $ref'd because the agent's vendored validator is compiled from this file alone and cannot resolve a sibling schema at build time; duplicating the trust contract's body here would create a second source of truth that could silently drift."
         }
       }
     },
@@ -369,7 +373,9 @@
                   "deployment.updated",
                   "validation.passed",
                   "validation.failed",
-                  "policy.checked"
+                  "policy.checked",
+                  "trust.distributed",
+                  "trust.revoked"
                 ]
               },
               "observedAt": {

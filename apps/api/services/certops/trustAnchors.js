@@ -1,0 +1,1458 @@
+"use strict";
+
+/**
+ * Trust-anchor ownership-aware orchestration service. See
+ * docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
+ *
+ * This is the ONLY module that may create a distribute-trust or revoke-trust
+ * certificate_jobs row: every other write path (routes, automation, bulk
+ * operations) must call createTrustJob below rather than
+ * jobs.createCertificateJob directly, because a trust job's job row and its
+ * certops_trust_anchor_installations ownership-reference row must always
+ * advance together, in one transaction, or not at all.
+ *
+ * TERMINOLOGY (read before touching anchor-level "revoke"): the
+ * certops_trust_anchors.status column is CHECK (status IN ('active',
+ * 'revoked')) and is deliberately NOT renamed -- no migration exists for it
+ * and none should be added. "revoke-trust" means ONLY the wire-level
+ * per-installation dispatch operation. The anchor-level lifecycle action
+ * ("this anchor accepts no new distributions") is called "retire" throughout
+ * this file's public surface -- function names, error messages, audit
+ * actions, route paths -- even though it still writes status = 'revoked'.
+ */
+
+const { X509Certificate, createHash } = require("node:crypto");
+const { pool } = require("../../db/database");
+const { writeAudit } = require("../audit");
+const { parsePublicCertificateMaterial } = require("./parser");
+const {
+  lockWorkspaceForCertOpsSideEffect,
+} = require("./workspaceKillSwitch");
+const {
+  createCertificateJob,
+  normalizePublicObject,
+  normalizeWorkspaceId,
+  normalizeRequiredId,
+  isTrustAnchorOperation,
+  serviceError: jobServiceError,
+} = require("./jobs");
+const {
+  validateTrustResult,
+} = require("../../../../packages/contracts/certops/validate-trust-result.cjs");
+
+// --- Error codes ---
+const CERTOPS_TRUST_ANCHOR_INVALID = "CERTOPS_TRUST_ANCHOR_INVALID";
+const CERTOPS_TRUST_ANCHOR_NOT_FOUND = "CERTOPS_TRUST_ANCHOR_NOT_FOUND";
+const CERTOPS_TRUST_ANCHOR_PEM_INVALID = "CERTOPS_TRUST_ANCHOR_PEM_INVALID";
+const CERTOPS_TRUST_ANCHOR_NOT_ACTIVE = "CERTOPS_TRUST_ANCHOR_NOT_ACTIVE";
+const CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED =
+  "CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED";
+const CERTOPS_TRUST_JOB_OPERATION_INVALID =
+  "CERTOPS_TRUST_JOB_OPERATION_INVALID";
+const CERTOPS_TRUST_INSTALLATION_NOT_FOUND =
+  "CERTOPS_TRUST_INSTALLATION_NOT_FOUND";
+const CERTOPS_TRUST_RESULT_INVALID = "CERTOPS_TRUST_RESULT_INVALID";
+const CERTOPS_TRUST_RESULT_MISMATCH = "CERTOPS_TRUST_RESULT_MISMATCH";
+const CERTOPS_TRUST_RESULT_STALE_GENERATION =
+  "CERTOPS_TRUST_RESULT_STALE_GENERATION";
+const ANCHOR_TYPES = Object.freeze(["root", "intermediate"]);
+const ANCHOR_TYPE_SET = new Set(ANCHOR_TYPES);
+const ANCHOR_STATUSES = Object.freeze(["active", "revoked"]);
+const ANCHOR_SOURCES = Object.freeze(["api", "system"]);
+
+const STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const OWNER_MAX_LENGTH = 128;
+const NAME_MAX_LENGTH = 255;
+
+// How far in the future a freshly pending row is scheduled for its first
+// reconciliation pass. A pending transition dispatched
+// to an agent that never reports back must surface as alertable, not be
+// retried forever; the sweep worker (certops-worker.js) is what actually
+// acts on next_reconcile_at once it is due.
+const DEFAULT_RECONCILE_DELAY_MS = 15 * 60 * 1000;
+
+function trustAnchorError(message, code) {
+  return jobServiceError(message, code);
+}
+
+function dateToIso(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+async function withTransaction(dbPool, fn) {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is more useful to the caller.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// --- Normalization helpers ---
+
+function normalizeName(value) {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > NAME_MAX_LENGTH) {
+    throw trustAnchorError(
+      "Trust anchor name is required and must be 1-255 characters",
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return name;
+}
+
+function normalizeAnchorType(value) {
+  if (!ANCHOR_TYPE_SET.has(value)) {
+    throw trustAnchorError(
+      `anchorType must be one of: ${ANCHOR_TYPES.join(", ")}`,
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return value;
+}
+
+function normalizeAnchorSource(value) {
+  if (value === undefined || value === null) return "api";
+  if (!ANCHOR_SOURCES.includes(value)) {
+    throw trustAnchorError(
+      `source must be one of: ${ANCHOR_SOURCES.join(", ")}`,
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return value;
+}
+
+function normalizeStore(value) {
+  if (typeof value !== "string" || !STORE_PATTERN.test(value)) {
+    throw trustAnchorError(
+      "store must be 1-64 characters matching [A-Za-z0-9 _.-]",
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return value;
+}
+
+function normalizeOwner(value) {
+  const owner = typeof value === "string" ? value.trim() : "";
+  if (!owner || owner.length > OWNER_MAX_LENGTH) {
+    throw trustAnchorError(
+      "owner is required and must be 1-128 characters",
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return owner;
+}
+
+function normalizeAgentId(value) {
+  const agentId = typeof value === "string" ? value.trim() : "";
+  if (!agentId) {
+    throw trustAnchorError(
+      "agentId is required for a trust-anchor job: distribute-trust/" +
+        "revoke-trust always target one specific agent's trust store",
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return agentId;
+}
+
+function normalizeIdempotencyKey(value) {
+  const key = typeof value === "string" ? value.trim() : "";
+  if (!key) {
+    // Required, not merely accepted: a trust mutation is not naturally
+    // retry-safe on its own.
+    throw trustAnchorError(
+      "idempotencyKey is required to create a distribute-trust or " +
+        "revoke-trust job",
+      CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+    );
+  }
+  return key;
+}
+
+// trust-job-payload.schema.json's "metadata" property is an ARRAY of
+// {name, value} entries (mirroring job-payload.schema.json's own metadata
+// field), not a free-form object -- unlike createCertificateJob's own
+// "payload" option, which normalizePublicObject accepts as a plain object.
+// A caller's publicMetadata is taken here in that same plain-object shape
+// for this file's own call convention, then converted to the array shape
+// the signed payload actually requires. Entries that would not pass the
+// schema's own name pattern or value union are dropped rather than thrown,
+// matching this schema family's "sanitized, never fatal" metadata
+// discipline elsewhere (see trust-result-contract.schema.json's
+// failureCategory comment for the same principle applied to a different
+// field).
+const METADATA_NAME_PATTERN =
+  /^(?!.*(?:private[-_]?key|encrypted[-_]?private[-_]?key|key[-_]?material|pfx[-_]?blob|jks[-_]?blob|tls[-_]?key|ca[-_]?private[-_]?key|keystore[-_]?password|private[-_]?key[-_]?password|key[-_]?password|key[-_]?pem|password|secret|credential))[A-Za-z0-9_.:-]{1,64}$/i;
+
+function buildTrustJobPublicMetadataEntries(publicMetadata) {
+  if (!publicMetadata || typeof publicMetadata !== "object") return [];
+  const entries = [];
+  for (const [name, rawValue] of Object.entries(publicMetadata)) {
+    if (entries.length >= 32) break;
+    if (!METADATA_NAME_PATTERN.test(name)) continue;
+    const valueType = typeof rawValue;
+    if (
+      rawValue !== null &&
+      valueType !== "string" &&
+      valueType !== "number" &&
+      valueType !== "boolean"
+    ) {
+      continue;
+    }
+    if (valueType === "string" && rawValue.length > 512) continue;
+    entries.push({ name, value: rawValue });
+  }
+  return entries;
+}
+
+// --- PEM parsing / validation ---
+
+/**
+ * Parses and validates a caller-supplied CA certificate PEM:
+ * exactly one certificate block (a bundle/multi-cert PEM is rejected), and
+ * Basic Constraints CA=true (a leaf certificate is rejected). The
+ * fingerprint is always computed server-side over the parsed DER, never
+ * trusted from client input. anchorType ("root" vs "intermediate") is an
+ * explicit caller decision, not inferred from the certificate's own
+ * self-signedness: the "never infer the destination store from
+ * untrusted material" principle applies at creation time too, not only at
+ * dispatch time.
+ *
+ * @returns {{ pem: string, fingerprintSha256: string, subjectCommonName: string|null }}
+ */
+function parseAndValidateAnchorPem(pemInput) {
+  if (typeof pemInput !== "string" || pemInput.trim().length === 0) {
+    throw trustAnchorError(
+      "pem is required and must be a non-empty string",
+      CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = parsePublicCertificateMaterial(pemInput);
+  } catch (error) {
+    throw trustAnchorError(
+      error?.message || "Trust anchor PEM could not be parsed",
+      CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+    );
+  }
+
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw trustAnchorError(
+      "Trust anchor PEM must contain exactly one certificate; bundles and " +
+        "multi-certificate PEM input are rejected",
+      CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+    );
+  }
+
+  const [entry] = parsed;
+  let x509;
+  try {
+    x509 = new X509Certificate(entry.certificatePem);
+  } catch (_error) {
+    throw trustAnchorError(
+      "Trust anchor PEM could not be parsed",
+      CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+    );
+  }
+
+  if (x509.ca !== true) {
+    throw trustAnchorError(
+      "Trust anchor PEM must be a CA certificate (Basic Constraints " +
+        "CA=true); leaf certificates are rejected",
+      CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+    );
+  }
+
+  const fingerprintSha256 =
+    entry.fingerprintSha256 ||
+    createHash("sha256").update(x509.raw).digest("hex");
+
+  return {
+    pem: entry.certificatePem,
+    fingerprintSha256: fingerprintSha256.toLowerCase(),
+    subjectCommonName: entry.commonName || null,
+  };
+}
+
+// --- Anchor row shaping ---
+
+function anchorFromRow(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    name: row.name,
+    anchorType: row.anchor_type,
+    fingerprintSha256: row.fingerprint_sha256,
+    subjectCommonName: row.subject_common_name || null,
+    status: row.status,
+    source: row.source,
+    publicMetadata: row.public_metadata || {},
+    createdBy: row.created_by || null,
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+    revokedAt: dateToIso(row.revoked_at),
+  };
+}
+
+const ANCHOR_SELECT_FIELDS = `
+  id, workspace_id, name, anchor_type, fingerprint_sha256,
+  subject_common_name, status, source, public_metadata, created_by,
+  created_at, updated_at, revoked_at
+`;
+
+// --- Anchor CRUD ---
+
+/**
+ * Creates (or re-approves, if the same fingerprint already exists) a trust
+ * anchor row. Re-approving the same fingerprint updates the existing row
+ * rather than creating a duplicate "same CA, second row" record (decision
+ * 6's own unique-index comment), and reactivates a previously retired
+ * anchor rather than leaving a stale 'revoked' row shadowing the new
+ * approval.
+ */
+async function createTrustAnchor(options = {}) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const name = normalizeName(options.name);
+  const anchorType = normalizeAnchorType(options.anchorType);
+  const source = normalizeAnchorSource(options.source);
+  const publicMetadata = normalizePublicObject(
+    options.publicMetadata,
+    "publicMetadata",
+  );
+  const createdByUserId = options.createdByUserId ?? null;
+
+  const { pem, fingerprintSha256, subjectCommonName } =
+    parseAndValidateAnchorPem(options.pem);
+
+  const result = await db.query(
+    `INSERT INTO certops_trust_anchors (
+       workspace_id, name, pem, anchor_type, fingerprint_sha256,
+       subject_common_name, source, public_metadata, created_by
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+     ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE SET
+       name = EXCLUDED.name,
+       -- Re-approving reactivates: an operator who re-submits a retired
+       -- anchor's PEM is explicitly deciding it should accept new
+       -- distributions again (decision 20g's "retire" is reversible by a
+       -- fresh approval, not a one-way anchor deletion).
+       status = 'active',
+       revoked_at = NULL,
+       source = EXCLUDED.source,
+       public_metadata = EXCLUDED.public_metadata,
+       subject_common_name = EXCLUDED.subject_common_name,
+       updated_at = NOW()
+     RETURNING ${ANCHOR_SELECT_FIELDS}`,
+    [
+      workspaceId,
+      name,
+      pem,
+      anchorType,
+      fingerprintSha256,
+      subjectCommonName,
+      source,
+      JSON.stringify(publicMetadata),
+      createdByUserId,
+    ],
+  );
+
+  const anchor = anchorFromRow(result.rows[0]);
+
+  await writeAudit({
+    client: db,
+    actorUserId: createdByUserId,
+    subjectUserId: createdByUserId,
+    action: "CERTOPS_TRUST_ANCHOR_APPROVED",
+    targetType: "certops_trust_anchor",
+    targetId: anchor.id,
+    workspaceId,
+    metadata: {
+      trustAnchorId: anchor.id,
+      fingerprintSha256: anchor.fingerprintSha256,
+      anchorType: anchor.anchorType,
+      name: anchor.name,
+    },
+  });
+
+  return anchor;
+}
+
+async function listTrustAnchors(options = {}) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const status =
+    options.status && ANCHOR_STATUSES.includes(options.status)
+      ? options.status
+      : null;
+
+  const result = await db.query(
+    `SELECT ${ANCHOR_SELECT_FIELDS}
+       FROM certops_trust_anchors
+      WHERE workspace_id = $1
+        AND ($2::text IS NULL OR status = $2::text)
+      ORDER BY created_at DESC`,
+    [workspaceId, status],
+  );
+  return result.rows.map(anchorFromRow);
+}
+
+async function getTrustAnchorById(db, workspaceId, anchorId) {
+  const result = await db.query(
+    `SELECT ${ANCHOR_SELECT_FIELDS}
+       FROM certops_trust_anchors
+      WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, anchorId],
+  );
+  return anchorFromRow(result.rows[0]);
+}
+
+/**
+ * Anchor-level "retire". Sets the underlying
+ * status column to 'revoked' -- the DB enum is unchanged and no
+ * migration renames it -- but every user/audit-facing surface here calls
+ * this "retire", never "revoke", so it is never confused with the
+ * wire-level revoke-trust job operation (certificate_jobs.operation =
+ * 'revoke-trust', a completely different, per-installation action).
+ * Retiring never fans out removal jobs against existing installations
+ *: an installation needs its own, separately authorized
+ * revoke-trust job via createTrustJob. Idempotent: retiring an
+ * already-retired anchor is a no-op success (retiredNow: false) rather
+ * than an error, matching this codebase's other idempotent lifecycle
+ * actions (see agentRegistry.retireAgent).
+ */
+async function retireTrustAnchor(options = {}) {
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const anchorId = normalizeRequiredId(
+    options.anchorId,
+    CERTOPS_TRUST_ANCHOR_INVALID,
+  );
+  const retiredByUserId = options.retiredByUserId ?? null;
+  const reason =
+    typeof options.reason === "string" && options.reason.trim()
+      ? options.reason.trim().slice(0, 500)
+      : null;
+
+  return withTransaction(options.dbPool || pool, async (client) => {
+    await lockWorkspaceForCertOpsSideEffect({ client, workspaceId });
+
+    const existing = await client.query(
+      `SELECT ${ANCHOR_SELECT_FIELDS}
+         FROM certops_trust_anchors
+        WHERE workspace_id = $1 AND id = $2
+        FOR UPDATE`,
+      [workspaceId, anchorId],
+    );
+    if (!existing.rows[0]) {
+      throw trustAnchorError(
+        "Trust anchor not found",
+        CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+      );
+    }
+    if (existing.rows[0].status === "revoked") {
+      return { anchor: anchorFromRow(existing.rows[0]), retiredNow: false };
+    }
+
+    const updated = await client.query(
+      `UPDATE certops_trust_anchors
+          SET status = 'revoked',
+              revoked_at = NOW(),
+              updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2
+        RETURNING ${ANCHOR_SELECT_FIELDS}`,
+      [workspaceId, anchorId],
+    );
+    const anchor = anchorFromRow(updated.rows[0]);
+
+    await writeAudit({
+      client,
+      actorUserId: retiredByUserId,
+      subjectUserId: retiredByUserId,
+      action: "CERTOPS_TRUST_ANCHOR_RETIRED",
+      targetType: "certops_trust_anchor",
+      targetId: anchor.id,
+      workspaceId,
+      metadata: {
+        trustAnchorId: anchor.id,
+        fingerprintSha256: anchor.fingerprintSha256,
+        anchorType: anchor.anchorType,
+        ...(reason ? { reason } : {}),
+      },
+    });
+
+    return { anchor, retiredNow: true };
+  });
+}
+
+// --- Installation row helpers ---
+
+const INSTALLATION_SELECT_FIELDS = `
+  id, workspace_id, trust_anchor_id, host, store, fingerprint_sha256,
+  owner, transition_state, provenance, agent_id, last_job_id,
+  transition_generation, last_attempt_at, last_error, next_reconcile_at,
+  public_metadata, created_at, updated_at
+`;
+
+function installationFromRow(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    trustAnchorId: String(row.trust_anchor_id),
+    host: row.host,
+    store: row.store,
+    fingerprintSha256: row.fingerprint_sha256,
+    owner: row.owner,
+    transitionState: row.transition_state,
+    provenance: row.provenance,
+    agentId: String(row.agent_id),
+    lastJobId: row.last_job_id ? String(row.last_job_id) : null,
+    transitionGeneration: row.transition_generation,
+    lastAttemptAt: dateToIso(row.last_attempt_at),
+    lastError: row.last_error || null,
+    nextReconcileAt: dateToIso(row.next_reconcile_at),
+    publicMetadata: row.public_metadata || {},
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+  };
+}
+
+/**
+ * Locks (or creates, if absent) the ownership-reference row for
+ * (workspace, agent, store, fingerprint, owner) inside the caller's
+ * transaction. SELECT ... FOR UPDATE, never an in-process mutex, is what
+ * serializes concurrent same-fingerprint requests on this exact row --
+ * the same idiom agentDispatch.js's claimJobs/renewJobLease/ingestResult
+ * already use (lock the row, always inside one DB transaction).
+ */
+async function lockOrCreateInstallation({
+  client,
+  workspaceId,
+  trustAnchorId,
+  agentId,
+  store,
+  fingerprintSha256,
+  owner,
+  host,
+}) {
+  const locked = await client.query(
+    `SELECT ${INSTALLATION_SELECT_FIELDS}
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1
+        AND agent_id = $2
+        AND store = $3
+        AND fingerprint_sha256 = $4
+        AND owner = $5
+      FOR UPDATE`,
+    [workspaceId, agentId, store, fingerprintSha256, owner],
+  );
+  if (locked.rows[0]) return { row: locked.rows[0], created: false };
+
+  // A fresh row starts pending_install/tokentimer_installed at generation 1
+  // (the column default); createTrustJob below immediately advances it to
+  // the correct transition_state/provenance/generation for the requested
+  // operation inside the same transaction, so this insert alone is never
+  // observable as a terminal state.
+  const inserted = await client.query(
+    `INSERT INTO certops_trust_anchor_installations (
+       workspace_id, trust_anchor_id, host, store, fingerprint_sha256,
+       owner, agent_id, provenance
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'tokentimer_installed')
+     ON CONFLICT (workspace_id, agent_id, store, fingerprint_sha256, owner)
+       DO NOTHING
+     RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+    [workspaceId, trustAnchorId, host, store, fingerprintSha256, owner, agentId],
+  );
+  if (inserted.rows[0]) return { row: inserted.rows[0], created: true };
+
+  // Lost the insert race to a concurrent transaction; lock its row instead.
+  const retried = await client.query(
+    `SELECT ${INSTALLATION_SELECT_FIELDS}
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1
+        AND agent_id = $2
+        AND store = $3
+        AND fingerprint_sha256 = $4
+        AND owner = $5
+      FOR UPDATE`,
+    [workspaceId, agentId, store, fingerprintSha256, owner],
+  );
+  return { row: retried.rows[0], created: false };
+}
+
+// --- Terminal-state unwinding ---
+//
+// event                                    pending_install row      pending_remove row
+// approval denied or expired               deleted (never a real    reverted to installed
+// cancelled                                 reference; nothing to    (the anchor was never
+// permanently failed                        revert to)               actually removed)
+// capability-freshness rejection
+//
+// A superseded-by-newer-generation row is handled implicitly: the newer
+// transition's own row/generation is authoritative, and the superseded
+// generation's own eventual result is rejected outright by the
+// stale-generation check in ingestTrustJobResult below, never applied here.
+
+const TRUST_JOB_TERMINAL_NEGATIVE_STATUSES = new Set([
+  "rejected",
+  "cancelled",
+  "failed",
+  "blocked",
+]);
+
+/**
+ * Applies the terminal-state transition table above to the installation row
+ * `last_job_id` points at, for a trust job that just reached one of the
+ * terminal-negative statuses. Called from the generic job-terminal-state
+ * hook (see wireTrustAnchorTerminalHook) rather than a bespoke trust-only
+ * polling loop, so a denied approval, an operator cancellation, or a
+ * permanently failed dispatch all unwind the same way regardless of which
+ * code path drove the job to that status.
+ *
+ * Only unwinds the CURRENT generation: if a newer transition has already
+ * advanced transition_generation past what this job was dispatched for,
+ * this job's terminal outcome is stale and must not touch the row.
+ */
+async function unwindTerminalTrustJob({ client, job }) {
+  if (!isTrustAnchorOperation(job.operation)) return null;
+  if (!TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(job.status)) return null;
+
+  const locked = await client.query(
+    `SELECT ${INSTALLATION_SELECT_FIELDS}
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1 AND last_job_id = $2
+      FOR UPDATE`,
+    [job.workspace_id || job.workspaceId, job.id],
+  );
+  const row = locked.rows[0];
+  if (!row) return null;
+
+  if (row.transition_state === "pending_install") {
+    // Never a real reference existed; delete outright.
+    const deleted = await client.query(
+      `DELETE FROM certops_trust_anchor_installations
+        WHERE id = $1
+        RETURNING id`,
+      [row.id],
+    );
+    return deleted.rows[0] ? { action: "deleted", installationId: row.id } : null;
+  }
+  if (row.transition_state === "pending_remove") {
+    // The anchor was never actually removed; the reference the row
+    // represents is still real.
+    const reverted = await client.query(
+      `UPDATE certops_trust_anchor_installations
+          SET transition_state = 'installed',
+              last_error = $2,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id`,
+      [row.id, `terminal_${job.status}`.slice(0, 128)],
+    );
+    return reverted.rows[0]
+      ? { action: "reverted_to_installed", installationId: row.id }
+      : null;
+  }
+  // Already installed/removed: nothing pending to unwind.
+  return null;
+}
+
+/**
+ * Wired into the existing job-terminal-state code path: call this
+ * alongside (or from) whatever already marks a certificate_jobs row
+ * rejected/cancelled/failed/blocked. This file does not itself listen for
+ * job-status changes -- there is no separate polling loop for trust jobs
+ * -- the caller (jobApprovals.rejectJob/invalidateApproval,
+ * agentDispatch.ingestResult's failure branch, or an explicit
+ * cancellation route) is responsible for invoking this once the job row
+ * is locked and its terminal status is about to be persisted, passing the
+ * already-locked job row and the same transaction client.
+ */
+async function onTrustJobTerminalTransition({ client, job }) {
+  return unwindTerminalTrustJob({ client, job });
+}
+
+// --- Idempotent trust-job creation ---
+
+/**
+ * The ONLY path that creates a distribute-trust or revoke-trust
+ * certificate_jobs row. Advances the installation row's transition_state
+ * and transition_generation in the SAME transaction as the job insert, so
+ * the two can never be observed apart. idempotencyKey is required (decision
+ * 20c): a replay with the same key returns the same job and the same
+ * transitionGeneration it originally created (both are read back from the
+ * persisted job payload, which is immutable after insert, so a replay never
+ * needs to re-derive or re-lock the installation row at all).
+ */
+async function createTrustJob(options = {}) {
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  if (!isTrustAnchorOperation(options.operation)) {
+    throw trustAnchorError(
+      `operation must be one of: distribute-trust, revoke-trust`,
+      CERTOPS_TRUST_JOB_OPERATION_INVALID,
+    );
+  }
+  const operation = options.operation;
+  const trustAnchorId = normalizeRequiredId(
+    options.trustAnchorId,
+    CERTOPS_TRUST_ANCHOR_INVALID,
+  );
+  const agentId = normalizeAgentId(options.agentId);
+  const store = normalizeStore(options.store);
+  const owner = normalizeOwner(options.owner);
+  const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
+  const publicMetadata = normalizePublicObject(
+    options.publicMetadata,
+    "publicMetadata",
+  );
+
+  return options.client
+    ? runCreateTrustJob(options.client, {
+        workspaceId,
+        operation,
+        trustAnchorId,
+        agentId,
+        store,
+        owner,
+        idempotencyKey,
+        publicMetadata,
+        requiresApproval: options.requiresApproval === true,
+        requestedByUserId: options.requestedByUserId ?? null,
+        requestedByApiTokenId: options.requestedByApiTokenId ?? null,
+        source: options.source || "api",
+        env: options.env || process.env,
+      })
+    : withTransaction(options.dbPool || pool, (client) =>
+        runCreateTrustJob(client, {
+          workspaceId,
+          operation,
+          trustAnchorId,
+          agentId,
+          store,
+          owner,
+          idempotencyKey,
+          publicMetadata,
+          requiresApproval: options.requiresApproval === true,
+          requestedByUserId: options.requestedByUserId ?? null,
+          requestedByApiTokenId: options.requestedByApiTokenId ?? null,
+          source: options.source || "api",
+          env: options.env || process.env,
+        }),
+      );
+}
+
+async function runCreateTrustJob(client, params) {
+  const {
+    workspaceId,
+    operation,
+    trustAnchorId,
+    agentId,
+    store,
+    owner,
+    idempotencyKey,
+    publicMetadata,
+    requiresApproval,
+    requestedByUserId,
+    requestedByApiTokenId,
+    source,
+    env,
+  } = params;
+
+  await lockWorkspaceForCertOpsSideEffect({ client, workspaceId, env });
+
+  // The anchor is locked first so its status and immutable routing columns
+  // cannot change under us while the installation row and job are written.
+  const anchorLock = await client.query(
+    `SELECT id, workspace_id, anchor_type, fingerprint_sha256, status
+       FROM certops_trust_anchors
+      WHERE workspace_id = $1 AND id = $2
+      FOR UPDATE`,
+    [workspaceId, trustAnchorId],
+  );
+  const anchor = anchorLock.rows[0];
+  if (!anchor) {
+    throw trustAnchorError(
+      "Trust anchor not found",
+      CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+    );
+  }
+  if (operation === "distribute-trust" && anchor.status !== "active") {
+    // Decision 20f invariant: a retired anchor acquires no new
+    // pending_install rows.
+    throw trustAnchorError(
+      "Trust anchor is retired and cannot be distributed; retire is not " +
+        "reversible without a fresh approval",
+      CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+    );
+  }
+
+  const { row: installationRow, created: installationCreated } =
+    await lockOrCreateInstallation({
+      client,
+      workspaceId,
+      trustAnchorId,
+      agentId,
+      store,
+      fingerprintSha256: anchor.fingerprint_sha256,
+      owner,
+      host: agentId,
+    });
+
+  if (operation === "revoke-trust" && installationCreated) {
+    // Nothing was ever tracked for this tuple; there is no reference to
+    // release. Roll back the just-inserted placeholder row rather than
+    // leaving a phantom pending_remove behind.
+    await client.query(
+      `DELETE FROM certops_trust_anchor_installations WHERE id = $1`,
+      [installationRow.id],
+    );
+    throw trustAnchorError(
+      "No tracked installation exists for this agent/store/owner; nothing " +
+        "to remove",
+      CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+    );
+  }
+
+  const nextTransitionState =
+    operation === "distribute-trust" ? "pending_install" : "pending_remove";
+  const nextReconcileAt = new Date(Date.now() + DEFAULT_RECONCILE_DELAY_MS);
+
+  // Safe under the FOR UPDATE lock already held above. provenance is
+  // deliberately left untouched: neither removing an anchor nor
+  // re-distributing one changes the record of who originally installed the
+  // material.
+  const advanced = await client.query(
+    `UPDATE certops_trust_anchor_installations
+        SET transition_state = $2,
+            transition_generation = transition_generation + 1,
+            last_attempt_at = NOW(),
+            last_error = NULL,
+            next_reconcile_at = $3,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+    [installationRow.id, nextTransitionState, nextReconcileAt],
+  );
+  const installation = installationFromRow(advanced.rows[0]);
+
+  // Volatile values must stay out of the stored payload: createCertificateJob
+  // fingerprints it into creation_request_hash, so anything that varies per
+  // call (a fresh requestedAt, the transition generation) would make an
+  // idempotent replay hash differently and be rejected as a conflict. Both
+  // are resolved at dispatch time instead (see agentDispatch.js).
+  const payload = {
+    trustAnchorId: anchor.id,
+    anchorType: anchor.anchor_type,
+    fingerprintSha256: anchor.fingerprint_sha256,
+  };
+  const metadataEntries = buildTrustJobPublicMetadataEntries(publicMetadata);
+  if (metadataEntries.length > 0) payload.metadata = metadataEntries;
+
+  const outcome = await createCertificateJob({
+    client,
+    workspaceId,
+    operation,
+    subjectType: "trust_anchor",
+    subjectId: anchor.id,
+    payload,
+    idempotencyKey,
+
+    assignedAgentId: agentId,
+    executorKind: "agent",
+    requiresApproval,
+    requestedByUserId,
+    requestedByApiTokenId,
+    source,
+    env,
+    returnOutcome: true,
+  });
+  const job = outcome.job;
+  const created = outcome.created === true;
+
+  if (created) {
+    await client.query(
+      `UPDATE certops_trust_anchor_installations
+          SET last_job_id = $2, updated_at = NOW()
+        WHERE id = $1`,
+      [installation.id, job.id],
+    );
+    installation.lastJobId = String(job.id);
+
+    await writeAudit({
+      client,
+      actorUserId: requestedByUserId,
+      subjectUserId: requestedByUserId,
+      action:
+        operation === "distribute-trust"
+          ? "CERTOPS_TRUST_DISTRIBUTE_JOB_CREATED"
+          : "CERTOPS_TRUST_REVOKE_JOB_CREATED",
+      targetType: "certificate_job",
+      targetId: job.id,
+      workspaceId,
+      metadata: {
+        jobId: String(job.id),
+        trustAnchorId: anchor.id,
+        agentId,
+        store,
+        owner,
+        transitionGeneration: installation.transitionGeneration,
+      },
+    });
+  } else {
+    // Idempotent replay: undo the speculative generation bump above so a
+    // replayed request is indistinguishable from the original having run
+    // exactly once. createCertificateJob's own replay path already
+    // detected the duplicate before any of the SQL above could have been
+    // observed by another transaction (this transaction still holds the
+    // installation row's lock), so reverting here is safe.
+    await client.query(
+      `UPDATE certops_trust_anchor_installations
+          SET transition_state = $2,
+              transition_generation = $3,
+              next_reconcile_at = $4,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [
+        installation.id,
+        installationRow.transition_state,
+        installationRow.transition_generation,
+        installationRow.next_reconcile_at,
+      ],
+    );
+    // The row was restored to the generation the original request created,
+    // and this transaction still holds its lock, so it is authoritative.
+    installation.transitionGeneration = installationRow.transition_generation;
+    installation.transitionState = installationRow.transition_state;
+    installation.lastJobId = installationRow.last_job_id
+      ? String(installationRow.last_job_id)
+      : String(job.id);
+  }
+
+  return {
+    job,
+    created,
+    transitionGeneration: installation.transitionGeneration,
+    installation,
+  };
+}
+
+/**
+ * jobCreator swapped in by routes/certops.js for the generic manual-job
+ * route's trust-anchor branch, mirroring manualRenewalJobCreator's (jobs.js)
+ * calling convention exactly: a factory closed over the caller-supplied
+ * fields the generic route body doesn't otherwise carry (trustAnchorId,
+ * agentId, store, owner), returning a function createManualCertificateJob
+ * (workspaceKillSwitch.js) can call with { client, workspaceId, ... } the
+ * same way it calls createCertificateJob for every other operation. This
+ * function -- not createCertificateJob -- is therefore the only thing the
+ * generic route ever calls for distribute-trust/revoke-trust, which is what
+ * makes createTrustJob the by-construction only path into a trust job even
+ * from that shared entry point (see this file's top-of-file doc comment).
+ */
+function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
+  return async function manualTrustJobCreator(options) {
+    const outcome = await createTrustJob({
+      client: options.client,
+      workspaceId: options.workspaceId,
+      operation: options.operation,
+      trustAnchorId,
+      agentId,
+      store,
+      owner,
+      idempotencyKey: options.idempotencyKey,
+      publicMetadata: options.payload,
+      requiresApproval: options.requiresApproval === true,
+      requestedByUserId: options.requestedByUserId ?? null,
+      requestedByApiTokenId: options.requestedByApiTokenId ?? null,
+      source: options.source || "api",
+      env: options.env || process.env,
+    });
+    // createManualCertificateJob (workspaceKillSwitch.js) reads
+    // outcome.job/outcome.created off whatever jobCreator returns, exactly
+    // the shape createCertificateJob's own returnOutcome:true already
+    // produces -- this wrapper is transparent to that caller.
+    return { job: outcome.job, created: outcome.created };
+  };
+}
+
+// --- Dispatch-time revalidation ---
+
+/**
+ * Must be called immediately before a distribute-trust/revoke-trust job is
+ * signed for dispatch (see jobSigning.signJobForDispatch's caller in
+ * agentDispatch.claimJobs), inside the same transaction that holds the job
+ * row lock. Re-checks the anchor's CURRENT status and re-verifies that the
+ * job's signed pem/anchorType/fingerprintSha256 still match the anchor row,
+ * as defense-in-depth even though those anchor columns are immutable after
+ * creation.
+ *
+ * - distribute-trust: the anchor must still be 'active'. If it was retired
+ *   after approval but before dispatch, the pending install is unwound
+ *   (deleted) instead of being dispatched, and this
+ *   function returns { allow: false, reason }.
+ * - revoke-trust: always permitted regardless of anchor status. Removing
+ *   distribution of retired material is exactly what retirement must still
+ *   allow.
+ *
+ * Returns { allow: true, anchor, pem, transitionGeneration } when dispatch
+ * may proceed (pem only for distribute-trust, read back fresh here rather
+ * than trusting a stale copy on the job payload) or { allow: false, reason }
+ * when the caller must skip this job instead of signing it.
+ */
+async function revalidateTrustJobForDispatch({ client, job }) {
+  if (!isTrustAnchorOperation(job.operation)) {
+    return { allow: true };
+  }
+  const workspaceId = job.workspace_id || job.workspaceId;
+  const payload =
+    job.payload && typeof job.payload === "object" ? job.payload : {};
+  const trustAnchorId = payload.trustAnchorId || job.subject_id;
+
+  const anchorResult = await client.query(
+    `SELECT id, pem, anchor_type, fingerprint_sha256, status
+       FROM certops_trust_anchors
+      WHERE workspace_id = $1 AND id = $2
+      FOR UPDATE`,
+    [workspaceId, trustAnchorId],
+  );
+  const anchor = anchorResult.rows[0];
+  if (!anchor) {
+    // The anchor row itself is gone (should be unreachable: anchor rows are
+    // additive-only, decision 6). Fail closed rather than dispatch against
+    // nothing.
+    return { allow: false, reason: "trust_anchor_not_found" };
+  }
+
+  if (
+    anchor.anchor_type !== payload.anchorType ||
+    anchor.fingerprint_sha256 !== payload.fingerprintSha256
+  ) {
+    // A routing disagreement between the signed intent and the anchor's
+    // current row is a detectable inconsistency, never a silent reroute
+    //. Both columns are immutable after insert, so reaching
+    // this branch indicates a programmer error elsewhere, not a normal
+    // runtime condition -- fail closed all the same.
+    return { allow: false, reason: "trust_anchor_payload_mismatch" };
+  }
+
+  if (job.operation === "distribute-trust" && anchor.status !== "active") {
+    await unwindTerminalTrustJob({
+      client,
+      job: { ...job, status: "rejected", workspace_id: workspaceId },
+    });
+    return { allow: false, reason: "trust_anchor_retired" };
+  }
+
+  const installation = await client.query(
+    `SELECT transition_generation, store
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1 AND last_job_id = $2
+      FOR UPDATE`,
+    [workspaceId, job.id],
+  );
+  const installationRow = installation.rows[0];
+  if (!installationRow) {
+    // Every trust job is created alongside its installation row in one
+    // transaction, so a job with no row is a broken invariant, not a race.
+    return { allow: false, reason: "trust_installation_not_found" };
+  }
+
+  return {
+    allow: true,
+    anchor: anchorFromRow(anchor),
+    pem: job.operation === "distribute-trust" ? anchor.pem : undefined,
+    // The agent must echo this back on its result so a superseded
+    // transition's late result is rejected as stale. It is
+    // resolved here rather than read off the job payload because the stored
+    // payload is fingerprinted for idempotency and cannot carry a value that
+    // changes per transition.
+    transitionGeneration: installationRow.transition_generation,
+  };
+}
+
+// --- Result ingestion ---
+
+/**
+ * Validates an agent-reported trust-job result against
+ * trust-result-contract.schema.json (shape) and against the persisted
+ * job/installation row: agentId, store, fingerprintSha256, and
+ * transitionGeneration must all match what was signed. Rejects a
+ * stale-generation result outright and never advances the row from an
+ * unvalidated result.
+ *
+ * Called by (or from) the same result-ingestion transaction
+ * agentDispatch.ingestResult already opens for every job family, once that
+ * caller has identified the job as a trust-anchor operation, so the
+ * installation row and the job row's terminal status advance together.
+ *
+ * On a validated, matching result: advances the installation row per the
+ * outcome enum -- preexisting/installed both settle at transition_state
+ * 'installed' (provenance is left as whatever lockOrCreateInstallation/
+ * runCreateTrustJob already recorded, since a result cannot retroactively
+ * change history about who originally installed the material);
+ * already_absent/removed both settle at 'removed'.
+ */
+async function ingestTrustJobResult({ client, job, result }) {
+  if (!isTrustAnchorOperation(job.operation)) {
+    throw trustAnchorError(
+      "ingestTrustJobResult was called for a non-trust-anchor job",
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+  }
+
+  const shapeCheck = validateTrustResult(result);
+  if (!shapeCheck.valid) {
+    const error = trustAnchorError(
+      "Trust job result does not match trust-result-contract.schema.json",
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+    error.validationErrors = shapeCheck.errors;
+    throw error;
+  }
+
+  const workspaceId = job.workspace_id || job.workspaceId;
+
+  const installationLock = await client.query(
+    `SELECT ${INSTALLATION_SELECT_FIELDS}
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1 AND last_job_id = $2
+      FOR UPDATE`,
+    [workspaceId, job.id],
+  );
+  const installationRow = installationLock.rows[0];
+  if (!installationRow) {
+    throw trustAnchorError(
+      "No installation row references this trust job",
+      CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+    );
+  }
+
+  // A result whose agentId, store, fingerprint, or transitionGeneration
+  // differs from the signed job it claims to answer is rejected, not merely
+  // logged. This is a service-layer check against persisted state: schema
+  // validation alone cannot express "matches what was signed".
+  if (String(result.agentId) !== String(installationRow.agent_id)) {
+    throw trustAnchorError(
+      "Result agentId does not match the installation this job was signed for",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  if (result.store !== installationRow.store) {
+    throw trustAnchorError(
+      "Result store does not match the installation this job was signed for",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  if (result.trustAnchorId !== String(installationRow.trust_anchor_id)) {
+    throw trustAnchorError(
+      "Result trustAnchorId does not match the signed job",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  // Whichever fingerprint the agent actually observed (before or after the
+  // mutation; at least one is non-null for every outcome) must be the
+  // fingerprint this installation row was created to track. Decoupled from
+  // any payload field so this check still runs even if the stored payload
+  // shape ever changes.
+  const observedFingerprint =
+    result.observedFingerprintAfter || result.observedFingerprintBefore;
+  if (
+    observedFingerprint &&
+    observedFingerprint !== installationRow.fingerprint_sha256
+  ) {
+    throw trustAnchorError(
+      "Result fingerprint does not match the installation this job was signed for",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+
+  // Decision 20f: a stale-generation result (one whose transitionGeneration
+  // no longer matches the row's current generation) is rejected outright,
+  // never applied to the row -- it is evidence of a superseded transition.
+  if (result.transitionGeneration !== installationRow.transition_generation) {
+    throw trustAnchorError(
+      "Result transitionGeneration is stale; a newer transition has " +
+        "already superseded this generation",
+      CERTOPS_TRUST_RESULT_STALE_GENERATION,
+    );
+  }
+
+  const nextState =
+    result.outcome === "preexisting" || result.outcome === "installed"
+      ? "installed"
+      : "removed";
+  // A result whose outcome implies the material is now installed but whose
+  // provenance-relevant flag says the agent performed no mutation (i.e.
+  // 'preexisting') must not overwrite an existing 'tokentimer_installed'
+  // provenance with 'preexisting' -- provenance only ever tightens toward
+  // "we know we put this here", never loosens.
+  const nextProvenance =
+    result.outcome === "installed"
+      ? "tokentimer_installed"
+      : installationRow.provenance;
+  const sanitizedFailure =
+    typeof result.failureCategory === "string"
+      ? result.failureCategory.slice(0, 128)
+      : null;
+
+  const updated = await client.query(
+    `UPDATE certops_trust_anchor_installations
+        SET transition_state = $2,
+            provenance = $3,
+            last_error = $4,
+            next_reconcile_at = NULL,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+    [installationRow.id, nextState, nextProvenance, sanitizedFailure],
+  );
+
+  return installationFromRow(updated.rows[0]);
+}
+
+// --- Reconciliation sweep support ---
+
+/**
+ * Finds pending_* installation rows past their next_reconcile_at, locking
+ * each with SELECT ... FOR UPDATE SKIP LOCKED so multiple worker replicas
+ * never both act on the same row. Identifies and locks candidates only;
+ * sweepOverdueTrustInstallations below decides what happens to each.
+ */
+async function findOverdueTrustInstallations({ client, limit = 50 }) {
+  const result = await client.query(
+    `SELECT tai.id, tai.workspace_id, tai.trust_anchor_id, tai.host,
+            tai.store, tai.fingerprint_sha256, tai.owner,
+            tai.transition_state, tai.provenance, tai.agent_id,
+            tai.last_job_id, tai.transition_generation, tai.last_attempt_at,
+            tai.last_error, tai.next_reconcile_at, tai.public_metadata,
+            tai.created_at, tai.updated_at,
+            cj.status AS last_job_status,
+            cj.operation AS last_job_operation
+       FROM certops_trust_anchor_installations tai
+       LEFT JOIN certificate_jobs cj
+         ON cj.workspace_id = tai.workspace_id AND cj.id = tai.last_job_id
+      WHERE tai.transition_state IN ('pending_install', 'pending_remove')
+        AND tai.next_reconcile_at IS NOT NULL
+        AND tai.next_reconcile_at <= NOW()
+      ORDER BY tai.next_reconcile_at
+      LIMIT $1
+      FOR UPDATE OF tai SKIP LOCKED`,
+    [limit],
+  );
+  return result.rows.map((row) => ({
+    installation: installationFromRow(row),
+    lastJobStatus: row.last_job_status || null,
+    lastJobOperation: row.last_job_operation || null,
+  }));
+}
+
+/**
+ * Marks an overdue row as reported/alerted rather than silently retried:
+ * clearing next_reconcile_at is how a row is marked not currently eligible
+ * for automatic revalidation. Records a sanitized failure category. Called
+ * by the sweep worker once it has classified a row as stale rather than
+ * redispatchable.
+ */
+async function markTrustInstallationStale({ client, installationId, reason }) {
+  const sanitized = typeof reason === "string" ? reason.slice(0, 128) : "reconciliation_stale";
+  const updated = await client.query(
+    `UPDATE certops_trust_anchor_installations
+        SET next_reconcile_at = NULL,
+            last_error = $2,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+    [installationId, sanitized],
+  );
+  return installationFromRow(updated.rows[0]);
+}
+
+/**
+ * Reschedules an overdue row for a later reconciliation pass, used when the
+ * sweep decides a row deserves another look rather than being marked
+ * stale/alertable yet.
+ */
+async function rescheduleTrustInstallation({
+  client,
+  installationId,
+  delayMs = DEFAULT_RECONCILE_DELAY_MS,
+}) {
+  const nextReconcileAt = new Date(Date.now() + delayMs);
+  const updated = await client.query(
+    `UPDATE certops_trust_anchor_installations
+        SET next_reconcile_at = $2,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+    [installationId, nextReconcileAt],
+  );
+  return installationFromRow(updated.rows[0]);
+}
+
+// How long a pending_install/pending_remove row may keep being rescheduled
+// before the sweep gives up and reports it as stale rather than looking
+// again (decision 20f: "reported, not silently retried forever"). Measured
+// from last_attempt_at (set when the transition now stuck was created/
+// advanced -- see runCreateTrustJob), not from an attempt counter: this row
+// shape (migration 48) has no per-row attempt count, only a timestamp.
+const DEFAULT_MAX_RECONCILE_AGE_MS = 6 * DEFAULT_RECONCILE_DELAY_MS;
+
+/**
+ * The reconciliation sweep, called by apps/worker/src/certops-worker.js on
+ * the same tick-based schedule as this codebase's other certops sweeps. Owns
+ * one transaction for the whole batch: findOverdueTrustInstallations's
+ * SELECT ... FOR UPDATE SKIP LOCKED holds each candidate locked for the rest
+ * of this function, so a concurrent worker replica never double-acts on a
+ * row this instance already claimed.
+ *
+ * This sweep never signs or assigns a job itself (it has no agent-facing
+ * signing/nonce context); agentDispatch.claimJobs is what redispatches.
+ *
+ * Per-row disposition:
+ *  - job already terminal-negative: unwind now and count it in `unwound`.
+ *    onTrustJobTerminalTransition should have done this already, so a row
+ *    found here is itself the alertable anomaly.
+ *  - job still in flight, within maxAgeMs: reschedule for another look.
+ *  - job still in flight, past maxAgeMs: mark stale, so an operator sees an
+ *    unresolved transition instead of it cycling forever.
+ *  - no job row at all (unreachable: every installation row is created with
+ *    a job in the same transaction): treated as past its age budget.
+ */
+async function sweepOverdueTrustInstallations({
+  dbPool = pool,
+  limit = 50,
+  maxAgeMs = DEFAULT_MAX_RECONCILE_AGE_MS,
+  reconcileDelayMs = DEFAULT_RECONCILE_DELAY_MS,
+  now = () => Date.now(),
+} = {}) {
+  const summary = {
+    scanned: 0,
+    unwound: 0,
+    rescheduled: 0,
+    markedStale: 0,
+  };
+
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const overdue = await findOverdueTrustInstallations({ client, limit });
+    summary.scanned = overdue.length;
+
+    for (const { installation, lastJobStatus, lastJobOperation } of overdue) {
+      if (
+        lastJobStatus &&
+        TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(lastJobStatus)
+      ) {
+        // Should already have been unwound by onTrustJobTerminalTransition
+        // when that terminal status was first written; finding one here
+        // means that hook was missed somewhere upstream. Unwind it now
+        // (closing the gap) rather than leaving a dead transition behind.
+        await unwindTerminalTrustJob({
+          client,
+          job: {
+            id: installation.lastJobId,
+            operation: lastJobOperation,
+            status: lastJobStatus,
+            workspace_id: installation.workspaceId,
+          },
+        });
+        summary.unwound += 1;
+        continue;
+      }
+
+      const lastAttemptAtMs = installation.lastAttemptAt
+        ? new Date(installation.lastAttemptAt).getTime()
+        : NaN;
+      const ageMs = Number.isFinite(lastAttemptAtMs)
+        ? now() - lastAttemptAtMs
+        : Infinity;
+
+      if (ageMs > maxAgeMs) {
+        await markTrustInstallationStale({
+          client,
+          installationId: installation.id,
+          reason: lastJobStatus
+            ? `reconciliation_stale_job_${lastJobStatus}`
+            : "reconciliation_stale_no_job",
+        });
+        summary.markedStale += 1;
+        continue;
+      }
+
+      await rescheduleTrustInstallation({
+        client,
+        installationId: installation.id,
+        delayMs: reconcileDelayMs,
+      });
+      summary.rescheduled += 1;
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // Preserve the original sweep error.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return summary;
+}
+
+module.exports = {
+  CERTOPS_TRUST_ANCHOR_INVALID,
+  CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+  CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+  CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+  CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+  CERTOPS_TRUST_JOB_OPERATION_INVALID,
+  CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+  CERTOPS_TRUST_RESULT_INVALID,
+  CERTOPS_TRUST_RESULT_MISMATCH,
+  CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  ANCHOR_TYPES,
+  DEFAULT_RECONCILE_DELAY_MS,
+  parseAndValidateAnchorPem,
+  createTrustAnchor,
+  listTrustAnchors,
+  getTrustAnchorById,
+  retireTrustAnchor,
+  anchorFromRow,
+  installationFromRow,
+  normalizeStore,
+  normalizeOwner,
+  normalizeAgentId,
+  normalizeIdempotencyKey,
+  createTrustJob,
+  manualTrustJobCreator,
+  onTrustJobTerminalTransition,
+  unwindTerminalTrustJob,
+  TRUST_JOB_TERMINAL_NEGATIVE_STATUSES,
+  revalidateTrustJobForDispatch,
+  ingestTrustJobResult,
+  findOverdueTrustInstallations,
+  markTrustInstallationStale,
+  rescheduleTrustInstallation,
+  sweepOverdueTrustInstallations,
+  DEFAULT_MAX_RECONCILE_AGE_MS,
+};

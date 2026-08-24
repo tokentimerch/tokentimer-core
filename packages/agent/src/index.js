@@ -172,6 +172,12 @@ const {
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
 const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
+const {
+  resolveTrustStorePrerequisites,
+  distributeTrust,
+  revokeTrust,
+  trustStoreCommandRefForFamily,
+} = require("./trust-store");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -311,11 +317,31 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload
  * requires real-host evidence per build before either string reaches
  * AGENT_DECLARED_CAPABILITIES even on a Windows host.
  */
+/**
+ * Whether this host's trust-store executor prerequisites resolve (see
+ * ./trust-store's own resolveTrustStorePrerequisites doc comment):
+ * Windows always; Debian/RHEL-family Linux only if the concrete
+ * trust-store directory/update-command actually resolve. Evaluated once
+ * at module load, same timing rationale as isWindows() above (the
+ * running host's own filesystem/PATH does not change mid-process).
+ * `index.js` calls this exported function rather than duplicating
+ * platform-sniffing inline (this module's own spec).
+ */
+const AGENT_TRUST_STORE_PREREQUISITES = resolveTrustStorePrerequisites();
+
 const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
-    ? ["evidence-claim-binding-v1", "windows-cert-store-v1", "iis-binding-v1"]
-    : ["evidence-claim-binding-v1"],
+    ? [
+        "evidence-claim-binding-v1",
+        "windows-cert-store-v1",
+        "iis-binding-v1",
+        "trust-anchor-deploy-v1",
+      ]
+    : AGENT_TRUST_STORE_PREREQUISITES.candidate
+      ? ["evidence-claim-binding-v1", "trust-anchor-deploy-v1"]
+      : ["evidence-claim-binding-v1"],
 );
+
 
 /**
  * Capabilities this build actually advertises, after the build-time
@@ -337,12 +363,13 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
  * itself already resolved from env/config.json against the compiled-in
  * default inside packages/agent/src/config/index.js), never from that
  * compiled-in default directly. This matters because the same build binary
- * ships with the flag defaulting to false but must correctly advertise the
- * capability the moment an operator flips it to true at runtime, and must
- * stop advertising it if a config override brings it back to false, with no
- * rebuild in either direction. When effective value is false, absence of
- * agentId is still tolerated by the compatibility decoder (see
- * checkAgentIdBinding), so advertising the capability then would overclaim.
+ * ships with the flag defaulting to true but must correctly stop
+ * advertising the capability the moment an operator overrides it back to
+ * false for a temporary rollback, and must resume advertising it once that
+ * override is removed, with no rebuild in either direction. When effective
+ * value is false, absence of agentId is still tolerated by the
+ * compatibility decoder (see checkAgentIdBinding), so advertising the
+ * capability then would overclaim.
  */
 function resolveDeclaredCapabilities(requireSignedAgentId) {
   return requireSignedAgentId
@@ -1989,6 +2016,10 @@ async function handleSignedJob({
       keyRotated: outcome.keyRotated ?? null,
       errorMessage: outcome.errorMessage ?? null,
       clockOffsetMs: clockEstimator.getOffsetMs(),
+      // Only trust-anchor jobs produce this. Omitted entirely (not sent as
+      // null) for every other job family so their result bodies are
+      // byte-identical to before.
+      ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
     },
     evidence: evidenceBodies,
     log,
@@ -2119,6 +2150,13 @@ async function handleObserveOnlyJob({
  * @param {object} [params.leaseClient] protocol client for B6 lease renew
  * @param {object} params.executionContext from buildExecutionContext
  * @param {(msg: string) => void} [params.log]
+ * @param {object|null} [params.trustStoreSeams] TEST-ONLY: forwarded verbatim to
+ *   executeTrustJob's own trustStoreSeams parameter when action is
+ *   distribute-trust/revoke-trust, so tests can inject fake exec/fs/spawn
+ *   implementations into ../trust-store without ever touching a real
+ *   certutil.exe/update-ca-certificates/update-ca-trust process or the
+ *   real machine trust store. Always null/omitted in production call
+ *   sites.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
  */
 async function executeJob({
@@ -2132,6 +2170,7 @@ async function executeJob({
   leaseState = null,
   executionContext,
   log = console.error,
+  trustStoreSeams = null,
 }) {
   const { execution } = executionContext;
   const action = job.action;
@@ -2193,6 +2232,39 @@ async function executeJob({
         "does not define one yet (awaiting the deploy job contract), so " +
         "there is nothing to deploy",
     };
+  }
+
+  if (action === "distribute-trust" || action === "revoke-trust") {
+    // Mirrors the renew/deploy/reload ordering below: signed job.mode
+    // wins; local execution.dryRun only ever refuses a REAL job outright.
+    // executeTrustJob's own jobMode==="dry_run" branch already returns
+    // dry_run_complete with no mutation attempted, so it is always safe to
+    // call directly for a dry_run job; a real job is still gated on the
+    // same local safety refusal executeDryRunPlan's sibling check applies
+    // to renew/deploy/reload, since executeDryRunPlan itself has no
+    // trust-action branch to route through instead.
+    if (jobMode !== "dry_run" && execution.dryRun === true) {
+      return {
+        status: "blocked",
+        errorMessage:
+          "refusing mode:\"real\" job because local execution.dryRun is true; " +
+          "set execution.dryRun to false to perform real side effects, or ask " +
+          "the control plane for a mode:\"dry_run\" job",
+      };
+    }
+    return executeTrustJob({
+      job,
+      jobId,
+      action,
+      jobMode,
+      policyEngine,
+      client: claimBoundClient,
+      log,
+      leaseOpts,
+      executionContext,
+      onBeforeMutation: markMutation,
+      trustStoreSeams,
+    });
   }
 
   if (action !== "renew" && action !== "deploy" && action !== "reload") {
@@ -5369,6 +5441,179 @@ async function executeReloadJob({
 }
 
 /**
+ * Executes a signed `distribute-trust`/`revoke-trust` job, dispatching to the
+ * cross-platform ./trust-store executor. Mirrors the other execute*Job
+ * functions' shape (job/jobId/policyEngine/client/log/leaseOpts/
+ * onBeforeMutation in, {status, rejectionReason, keyRotated, errorMessage}
+ * out) so handleClaimedJob's generic result-reporting path needs no
+ * trust-specific branch.
+ *
+ * Policy gate: on Debian/RHEL-family, the family's update command
+ * (update-ca-certificates/update-ca-trust) is resolved through
+ * policyEngine.checkCommandRef against a trust-specific command-ref name
+ * (./trust-store's TRUST_STORE_COMMAND_REFS), structurally distinct from every
+ * ACME/reload commandRef a renew job carries. A policy config missing that
+ * entry rejects the job with command_not_allowlisted before any mutation.
+ * Windows certutil is not commandRef-gated, matching ./windows-cert-store's
+ * established posture for the same tool.
+ *
+ * The typed trust-result-contract.schema.json object is returned as
+ * `trustResult` and carried on the wire by agent-protocol.schema.json's
+ * resultBody.trustResult; the full result is also reported as evidence
+ * metadata.
+ *
+ * Exported for direct unit testing.
+ *
+ * @param {object} params
+ * @param {object} params.job the verified trust-job-payload.schema.json payload.
+ * @param {string} params.jobId
+ * @param {"distribute-trust"|"revoke-trust"} params.action
+ * @param {"real"|"dry_run"} params.jobMode
+ * @param {object} params.policyEngine
+ * @param {object} params.client evidence-reporting client
+ * @param {(msg: string) => void} [params.log]
+ * @param {object} [params.leaseOpts]
+ * @param {object} [params.executionContext] from buildExecutionContext, for resolveAgentStateDir.
+ * @param {((stage: string) => void)|null} [params.onBeforeMutation]
+ * @param {object|null} [params.trustStoreSeams] TEST-ONLY: merged into the
+ *   seams object passed to ../trust-store's distributeTrust/revokeTrust
+ *   (execFileImpl/spawnImpl/fsImpl/etc.), letting tests substitute fake
+ *   implementations so no real certutil.exe/update-ca-certificates/
+ *   update-ca-trust process or real machine trust store is ever touched
+ *   by a wiring test. No production call site in this module ever sets
+ *   this parameter.
+ * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated: null, errorMessage: string|null, trustResult?: object }>}
+ */
+async function executeTrustJob({
+  job,
+  jobId,
+  action,
+  jobMode,
+  policyEngine,
+  client,
+  log,
+  leaseOpts = null,
+  executionContext = null,
+  onBeforeMutation = null,
+  trustStoreSeams = null,
+}) {
+  if (
+    !isNonEmptyStringValue(job.trustAnchorId) ||
+    (job.anchorType !== "root" && job.anchorType !== "intermediate") ||
+    !isNonEmptyStringValue(job.fingerprintSha256)
+  ) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage:
+        "trust job is missing a valid trustAnchorId/anchorType/fingerprintSha256",
+    };
+  }
+  if (action === "distribute-trust" && typeof job.pem !== "string") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: "distribute-trust job carries no pem field",
+    };
+  }
+
+  if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage:
+        "trust-store executor prerequisites do not resolve on this host " +
+        "(neither Windows nor a detected Debian/RHEL-family trust store)",
+    };
+  }
+  const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+
+  let updateCommandArgv;
+  if (family === "debian" || family === "rhel") {
+    const commandRefName = trustStoreCommandRefForFamily(family);
+    const commandVerdict = policyEngine.checkCommandRef(commandRefName);
+    if (!commandVerdict.allowed) {
+      return {
+        status: "rejected",
+        rejectionReason: commandVerdict.rejectionReason,
+        keyRotated: null,
+        errorMessage: boundErrorMessage(commandVerdict.detail),
+      };
+    }
+    updateCommandArgv = commandVerdict.argv;
+  }
+
+  if (jobMode === "dry_run") {
+    return { status: "dry_run_complete", keyRotated: null, errorMessage: null };
+  }
+
+  const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+  if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+
+  if (typeof onBeforeMutation === "function") {
+    onBeforeMutation(action === "distribute-trust" ? "trust-install" : "trust-remove");
+  }
+
+  const stateDir = resolveAgentStateDir(executionContext);
+  if (!stateDir) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage:
+        "trust job cannot run: no agent state directory is configured to " +
+        "hold the local ownership-receipt store",
+    };
+  }
+  const receiptDir = path.join(stateDir, "trust-receipts");
+  const workDir = path.join(stateDir, "trust-work");
+  // trustStoreSeams is a TEST-ONLY extension point (never populated by any
+  // real production call site in this module): it lets tests inject fake
+  // exec/fs/spawn implementations into ../trust-store's distributeTrust/
+  // revokeTrust the same way ../trust-store/trust-store.test.js already
+  // does directly, without ever letting a wiring test through executeJob/
+  // executeTrustJob reach a REAL certutil.exe, update-ca-certificates, or
+  // update-ca-trust invocation against this host's actual machine trust
+  // store. Merged after updateCommandArgv so a test can still override it
+  // too if needed, but production code never sets this parameter.
+  const seams = { updateCommandArgv, ...(trustStoreSeams || {}) };
+
+  const trustResult =
+    action === "distribute-trust"
+      ? await distributeTrust({ job, family, receiptDir, workDir, seams })
+      : await revokeTrust({ job, family, receiptDir, seams });
+
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: action === "distribute-trust" ? "trust.distributed" : "trust.revoked",
+      observedAt: trustResult.observedAt,
+      summary:
+        `Trust job ${jobId} (${action}) resolved store=${trustResult.store} ` +
+        `outcome=${trustResult.outcome}.`,
+      metadata: [
+        { name: "trustAnchorId", value: trustResult.trustAnchorId },
+        { name: "store", value: trustResult.store },
+        { name: "outcome", value: trustResult.outcome },
+        { name: "mutationPerformed", value: trustResult.mutationPerformed },
+        { name: "receiptState", value: trustResult.receipt.state },
+        { name: "failureCategory", value: trustResult.failureCategory },
+      ],
+    }),
+  ]);
+
+  if (trustResult.failureCategory) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `trust job ${trustResult.action} did not complete: ${trustResult.failureCategory}`,
+      ),
+      trustResult,
+    };
+  }
+  return { status: "succeeded", keyRotated: null, errorMessage: null, trustResult };
+}
+
+/**
  * Runs one observe-only discovery scan over the configured directories and
  * reports parsed certificates as `certificate.observed` evidence. Only
  * public fields ever leave the host: the discovery module never reads key
@@ -6117,6 +6362,7 @@ module.exports = {
   executeDeployJob,
   executeRenewJob,
   executeWindowsIisRenewJob,
+  executeTrustJob,
   runWindowsIisDeployTail,
   recordSupersededWindowsCertificate,
   runDeployReloadVerify,
@@ -6156,5 +6402,6 @@ module.exports = {
   VERIFY_TRANSIENT_RETRY_DELAYS_MS,
   AGENT_CANDIDATE_CAPABILITIES,
   AGENT_DECLARED_CAPABILITIES,
+  AGENT_TRUST_STORE_PREREQUISITES,
   resolveDeclaredCapabilities,
 };

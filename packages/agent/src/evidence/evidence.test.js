@@ -207,6 +207,8 @@ test("EVENT_TYPES mirrors the schema enum exactly", () => {
     "validation.passed",
     "validation.failed",
     "policy.checked",
+    "trust.distributed",
+    "trust.revoked",
   ]);
 });
 

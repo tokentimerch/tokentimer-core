@@ -116,6 +116,39 @@ check with its own specific rejection reason, rather than always being
 caught first, if at all, by the coarser pre-decode length check. The
 decoded-payload bound itself, the ADR's actual content-size policy, is
 unchanged.
+**A tenth amendment (2026-08-24, post-acceptance) adds decision 20**, which
+carries `certops_trust_anchor_installations` (decision 6's ownership-reference
+table) the rest of the way from "identified by free-text host/store/
+fingerprint/owner" to "identified by the agent that holds it, with job
+linkage, retry/reconcile metadata, terminal-state handling, idempotent
+creation, and a typed result contract that reference implies." This closes a
+gap decision 6 left open rather than a defect in it: decision 6 fixed *what a
+trust anchor is* and *how ownership is counted*; decision 20 fixes *which
+fleet row owns a given installation* and *what a job result is allowed to do
+to that row's state*, neither of which decision 6 needed to answer while
+trust anchors were still a persistence shape with no dispatch path.
+**This amendment is schema/design only: it adds one additive migration and
+one new contract schema file. It does not implement dispatch, the
+reconciliation sweep, the agent-local receipt, or any change to the
+existing trust-anchor service/route code; decision 20 documents the contract
+those later changes must implement, the same relationship decision 18 has to
+`packages/agent/src/windows-retention/index.js`.**
+
+**An eleventh amendment (2026-08-24, same day, post-acceptance) implements
+the contract the tenth amendment deferred.** Dispatch (`agentDispatch.js`),
+the reconciliation sweep (`trustAnchors.js`'s `sweepOverdueTrustInstallations`,
+scheduled by `apps/worker/src/certops-worker.js`), the agent-local ownership
+receipt (`packages/agent/src/trust-store/receipt.js`), and the cross-platform
+agent executor (`packages/agent/src/trust-store/index.js`) all landed in the
+same wave as the tenth amendment's schema, rather than as later, separate
+work. `trustAnchors.js`, `agentJobEligibility.js`, `agentDispatch.js`,
+`jobs.js`, and `routes/certops.js` are all touched by this amendment. Every
+acceptance-criteria sentence below that says otherwise (**"neither the
+migration nor the new schema file touches ..."**, decision 20d's **"no
+receipt module ... is added here"**) describes the tenth amendment's own
+scope at the moment it landed, not the state of the code after this
+eleventh amendment; both are amendments to the same ADR and are read
+together, not the second superseding the first's wording in place.
 
 ## Context
 
@@ -1998,6 +2031,247 @@ not appear in process arguments, environment, logs, evidence, or crash
 diagnostics captured during that run; the shipped documentation states the
 residual swap/pagefile risk plainly rather than implying a stronger guarantee
 than this decision makes.
+
+### 20. Trust-anchor ownership rows gain agent linkage, terminal-state handling, idempotent creation, an ownership-receipt contract, and a typed result schema
+
+**Added by the tenth amendment.** Decision 6's `certops_trust_anchor_installations`
+table was deliberately scoped to the persistence shape alone: no dispatch
+path existed yet, so the table identified a row by `(host, store,
+fingerprint, owner)` free text and carried no link to the fleet row that
+would eventually execute the transition, no link to the job that dispatched
+it, and no retry/reconcile metadata. That scope was correct at the time and
+is now insufficient: a free-text `host`/`owner` cannot distinguish two
+concurrent transitions from the same agent, or a crashed transition from a
+legitimate retry, and with no `agent_id` a reconciliation sweep has no fleet
+row to revalidate or redispatch against. This decision closes that gap with
+one additive migration and documents the surrounding contract a later
+dispatch/orchestration change must implement against it.
+
+**(a) Schema delta.** `certops_trust_anchor_installations` gains `agent_id`
+(the `certops_agents` row that holds this installation; immutable after
+insert, enforced in services rather than by trigger, the same convention
+migration 27's `executor_kind` already established), `last_job_id` (nullable
+linkage to the certops job that last touched the row), `transition_generation`
+(an integer counter, defaulting to 1 on row creation and incremented by 1
+each time a job is created against the row, so a job result may only advance
+the generation it was created for; in practice this means a row's first
+dispatched transition carries generation 2, not 1 -- see the migration's own
+comment on this column), `last_attempt_at`, `last_error` (a sanitized
+failure category only, never raw exception text or anything that could carry
+secret material), and `next_reconcile_at` (when the reconciliation sweep
+should next revalidate this row). `host` remains on the row as a
+display/audit snapshot -- useful for a human reading an installation's
+history even after an agent is renamed or reprovisioned -- but is no longer
+part of the uniqueness tuple: the unique identity index moves from
+`(workspace_id, host, store, fingerprint_sha256, owner)` to
+`(workspace_id, agent_id, store, fingerprint_sha256, owner)`, since `agent_id`,
+not the free-text hostname an agent happens to report, is the actual join
+key a reconciliation sweep or a stale-result check needs. The migration
+asserts the table is empty before tightening `agent_id` to `NOT NULL`,
+because this table has no write path anywhere in the codebase yet (dispatch
+and result-handling are the later, separate change this decision's contract
+is written for) and a fabricated backfill value would be exactly the kind of
+silently-wrong ownership fact decision 6 already treats as unacceptable for
+this table.
+
+**(b) Terminal-state transition table.** `transition_state` keeps the four
+values decision 6 defined (`pending_install`, `installed`, `pending_remove`,
+`removed`); this decision does not widen that enum, because every terminal
+negative outcome below resolves to one of those four values or to the row's
+deletion, not to a fifth state:
+
+```text
+event                                    pending_install row      pending_remove row
+approval denied or expired               deleted (never a real    reverted to installed
+cancelled                                 reference; nothing to    (the anchor was never
+permanently failed                        revert to)               actually removed, so
+rejected by the capability-                                        the reference the row
+  freshness gate (decision 17)                                     represents is still real)
+
+superseded by a newer transition         the newer transition's own row/generation is
+                                          authoritative; the superseded generation's own
+                                          eventual result (if one still arrives) is a
+                                          stale-generation result under (c) below and is
+                                          rejected outright, never applied to the row
+```
+
+**The reconciliation sweep must never redispatch a denied or cancelled
+transition.** A denied, expired, or cancelled transition reflects a decision
+that was already made and must not be silently retried by an automated
+sweep; reaching that generation again requires a new, explicitly authorized
+request (a new job, a new generation), never an automatic resubmission of the
+same one. This is the schema-level reason `next_reconcile_at` exists as an
+explicit, separately-clearable column rather than being inferred from
+`transition_state` alone: clearing it is how the later orchestration work
+marks a row "not currently eligible for automatic revalidation" independently
+of what `transition_state` says.
+
+**(c) Idempotent trust-job creation.** Trust jobs already persist through
+`certificate_jobs`, which has carried a client-supplied `idempotencyKey`
+(column `idempotency_key`, unique per `(workspace_id, idempotency_key)`, with
+a replay returning the existing job rather than creating a second one) since
+migration 24, following the same field name and semantics documented there.
+This decision makes that requirement explicit for trust-job creation
+specifically, rather than leaving it as an implication of generic job
+infrastructure: **the route that creates a `distribute-trust` or
+`revoke-trust` job must require `idempotencyKey`, not merely accept it**,
+because a trust mutation is not naturally retry-safe on its own (a lost
+response to a successful `distribute-trust` call must not become a second,
+redundant job against the same anchor/agent/generation). A retry that
+supplies the same `idempotencyKey` must return the same job and the same
+`transitionGeneration` it originally created, not a new one, matching the
+existing `idempotencyKey` replay contract's own guarantee that a matching
+replay is indistinguishable from the original request's result.
+
+**(d) Agent-local ownership receipt (implemented by the eleventh amendment
+at `packages/agent/src/trust-store/receipt.js`).**
+This reuses decision 18's restart-safe, ACL-protected, atomic-write ledger
+pattern (`packages/agent/src/windows-retention`), keyed here by
+`(store, fingerprintSha256)` instead of by thumbprint, and carrying `jobId`
+and `transitionGeneration` instead of a superseded-certificate pair. The
+sequencing decision 18 already established applies unchanged: the intent
+record is written and fsynced **before** the OS-level store mutation is
+attempted, and the receipt is finalized only **after** the mutation
+completes, using the same sibling-temp-file-plus-rename atomic write decision
+18 requires, so a torn or partially-written receipt is never mistaken for a
+valid one. Two crash-recovery cases must be told apart, and the second is the
+one a naive implementation gets wrong:
+
+- **Crash before the mutation.** Only the intent record exists; the mutation
+  was never attempted or never completed. Safe to retry the mutation (or to
+  report the attempt as not performed) on next startup or next sweep pass.
+- **Mutation succeeded, but the result was lost** (process crash or restart
+  between completing the OS-level mutation and reporting a result to the
+  control plane). The receipt's own local state, not a bare "is the material
+  present in the store" check, is what must decide this case: a recovery path
+  that only asks "is it present" and answers "preexisting" for material this
+  agent itself just installed would let a later removal delete material a
+  different, unrelated owner legitimately depends on -- exactly the failure
+  decision 6's provenance column exists to prevent, reintroduced at the
+  recovery boundary rather than the write boundary. The receipt's own
+  recorded intent (this agent's own prior write, not the store's current
+  contents) is what tells "I put this here and lost the confirmation" apart
+  from "this was already here before I ever touched it."
+- **Missing or corrupt receipt fails safe: never remove.** A `revoke-trust`
+  execution that cannot read a usable receipt for its `(store,
+  fingerprintSha256)` must not treat that absence as license to proceed; it
+  reports the receipt as missing/corrupt and takes no removal action,
+  mirroring decision 18's "a missing row fails closed" rule for the
+  superseded-certificate ledger.
+- **No private key material ever appears in the receipt.** There is none in
+  this flow (a trust anchor has no private key, per decision 6), but the
+  receipt schema must state this explicitly rather than relying on that fact
+  being obvious, the same discipline decision 19 applies to its own
+  key-memory boundary.
+- **Platform-specific protection.** Windows reuses the SYSTEM-ACL model
+  decision 10 and the retention ledger already apply to agent-created state.
+  Linux requires a root-owned private directory and file (mode `0700`/`0600`
+  respectively) with a directory `fsync` around the atomic rename, matching
+  decision 10's directory-fsync discussion for this agent's other
+  atomically-written state.
+
+This was a design contract only at the time the tenth amendment introduced
+it; the eleventh amendment above implements it in full at
+`packages/agent/src/trust-store/receipt.js`, with the reconciliation sweep
+scheduled from `apps/worker/src/certops-worker.js`.
+
+**(e) Typed trust result/evidence contract.** A new sibling schema file,
+`packages/contracts/certops/trust-result-contract.schema.json`, defines the
+shape of an agent-reported trust-job result: the observed pre/post
+fingerprint at the store, the resolved concrete store name, a closed outcome
+enum (`preexisting`, `installed`, `already_absent`, `removed`), the local
+receipt id and state from (d), the `transitionGeneration` and `jobId` the
+result claims to advance, whether a mutation was attempted and whether it was
+performed, and a sanitized failure category. **The server must advance the
+installation row's state only from a validated result, and must reject any
+result whose `agentId`, `store`, `fingerprintSha256`, or
+`transitionGeneration` differs from the signed job it claims to answer.**
+That cross-check is a service-layer responsibility against the persisted
+job/installation row (schema validation alone cannot express "matches what
+was signed"), and is binding on whichever later change wires trust-job result
+handling into the dispatch path.
+
+**(f) Corrected invariants.** An earlier framing of this table's invariants
+said "installation count consistent with anchor status," which is wrong: an
+active anchor with zero installations is a completely legal state (an
+approved anchor nobody has distributed yet). The invariants this table
+actually holds are:
+
+- A retired anchor acquires no new `pending_install` rows.
+- Physical removal from a store only occurs once zero live owner references
+  to that `(store, fingerprint)` remain, per decision 6's reference-counting
+  model.
+- `preexisting` material is never physically removed, regardless of age or
+  request; only `tokentimer_installed` material is ever removable.
+- `pending_*` rows older than the reconciliation sweep's SLA are **reported**,
+  as a visible, alertable condition -- not silently retried forever, per (b)
+  above.
+- A stale-generation result (one whose `transitionGeneration` no longer
+  matches the row's current generation) is rejected outright, per (c) and
+  (e) above.
+
+**(g) Verb vocabulary.** Three distinct operations have been informally
+conflated in earlier discussion of this feature and must be used
+consistently in schema, service code, and UI copy going forward:
+
+- **Retire** (anchor-level): the anchor accepts no new distributions; its
+  history is kept, not deleted, per decision 6's additive-only anchor rows.
+  Retiring an anchor never automatically fans out removal jobs against
+  existing installations -- an existing installation needs a separately
+  authorized remove-distribution operation, because an operator retiring an
+  anchor for future use is a different decision from an operator wanting it
+  actively stripped from every host that already has it.
+- **Remove distribution** (installation-level): release one owner/target
+  reference to an anchor at a specific `(store, fingerprint)`, per decision
+  6's reference-counting model. This may or may not trigger a physical
+  `revoke-trust` wire operation, depending on whether other live references
+  remain.
+- **Revoke-trust** (wire-level): the signed dispatch operation
+  (`trust-job-payload.schema.json`'s `action: "revoke-trust"`) that physically
+  removes material from a host's machine trust store. This is the mechanism a
+  remove-distribution operation invokes once it determines the last reference
+  is gone; it is never itself the anchor-level or reference-level decision.
+
+**(h) Cross-process serialization (implemented by the eleventh amendment
+in `trustAnchors.js`'s row-level locking).** Per-transition serialization must be
+database-enforced -- row-level locking or an explicit lease claim -- never an
+in-process mutex, because concurrent API/worker replicas (Cloud runs several)
+must not race on the same `(workspace, agent, store, fingerprint)` tuple even
+though this repository's own tests run single-process and would never
+observe such a race locally. Every advance of `transition_generation` must be
+a compare-and-swap against the row's current generation, not an unconditional
+write, so two concurrent writers can never both believe they advanced the
+same transition.
+
+**(i) Dispatch-time revalidation (implemented by the eleventh amendment in
+`trustAnchors.js`'s `revalidateTrustJobForDispatch`, called from
+`agentDispatch.js`).** Anchor state must be revalidated immediately before
+signing a trust job, not only at approval time: `distribute-trust` requires
+the anchor still be `active` at the moment of signing, and if the anchor was
+retired after approval but before dispatch, the pending install must be
+unwound rather than dispatched. `revoke-trust` remains permitted against a
+retired anchor, since removing distribution of retired material is exactly
+the operation retirement is supposed to still allow, per (g) above. Anchor
+`pem`, `anchor_type`, and `fingerprint_sha256` remain immutable after creation
+(decision 6 never defined an update path for them, and this decision
+reaffirms that no update path should ever exist): a routing decision as
+security-sensitive as which store a CA certificate is destined for must never
+change out from under an already-approved anchor row.
+
+**Acceptance (for the tenth amendment's own schema/contract scope at the
+moment it landed; the eleventh amendment above implements items b/c/d/g/h/i
+in the same wave, so the final sentence below describes the tenth
+amendment's diff in isolation, not the state of the code today):** migration
+48 adds exactly the six columns in (a) to `certops_trust_anchor_installations`,
+asserts the table is empty before tightening `agent_id` to `NOT NULL`, and
+replaces the `host`-keyed unique identity index with an `agent_id`-keyed one
+without dropping any other column; `trust-result-contract.schema.json`
+validates a result object carrying every field named in (e) and rejects one
+missing `transitionGeneration`, missing `receipt`, or carrying an
+`additionalProperties` violation; considered on its own, that schema/contract
+diff does not touch `trustAnchors.js`, `agentJobEligibility.js`,
+`agentDispatch.js`, `jobs.js`, or `routes/certops.js` -- the eleventh
+amendment's diff is what touches those files, to implement items b/c/d/g/h/i.
 
 ## Alternatives considered
 

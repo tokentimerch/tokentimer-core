@@ -16,26 +16,19 @@
 // passes --allow-missing-tables. This is deliberate: a skip means a real
 // check did not run, and treating that the same as a pass would let a
 // downstream schema change silently stop being verified. Pass
-// --allow-missing-tables only in environments that are known to predate the
-// tables these assertions target (e.g. this branch, before the trust-anchor
-// migration lands); CI's seeded-database job should NOT pass it, so a
-// migration that changes the schema in an unexpected way still fails loudly
-// here instead of skipping quietly.
+// --allow-missing-tables only against a database that genuinely predates a
+// migration these assertions target; CI's seeded-database job runs the full
+// migration set first and does NOT pass it, so a migration that changes the
+// schema in an unexpected way still fails loudly here instead of skipping
+// quietly.
 //
 // ASSUMPTIONS AND LIMITATIONS (read before trusting a green run):
 //
-//   1/2. certops_trust_anchors and its ownership-reference rows do not
-//        exist in this codebase's migration history yet (only in
-//        docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md
-//        as a planned decision). Both assertions are written defensively:
-//        they check for the table via information_schema.tables first and
-//        report SKIPPED (not-yet-applicable) rather than a false pass or a
-//        crash, until a future migration introduces it. Whether a run with
-//        skipped assertions exits zero or non-zero is controlled by
-//        --allow-missing-tables above. A reasonable reconciliation-sweep
-//        interval constant (ASSUMED_RECONCILIATION_SWEEP_INTERVAL_MS below)
-//        is pre-declared for whoever wires assertion 2 up once the table
-//        exists.
+//   1/2. The trust-anchor assertions check certops_trust_anchors and
+//        certops_trust_anchor_installations for real, against the schema
+//        migration 48 added. They still probe information_schema.tables
+//        first and report SKIPPED rather than crashing if run against an
+//        older database that predates that migration.
 //
 //   3. certops_agents.capabilities_updated_at is real and checked for real:
 //      no row may have a value in the future.
@@ -56,13 +49,16 @@
 
 const { Pool } = require("pg");
 
-// Placeholder for assertion 2 (ownership-reference rows must not sit in
-// pending_install/pending_remove past one reconciliation sweep). No sweep
-// interval is defined anywhere in this codebase yet (the reconciler itself
-// does not exist), so this is a documented assumption, not a value read
-// from real configuration. Whoever implements the reconciler should replace
-// this with the real configured interval.
-const ASSUMED_RECONCILIATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+// Mirrors DEFAULT_RECONCILE_DELAY_MS in
+// apps/api/services/certops/trustAnchors.js, which is how long the sweep
+// waits before looking at a pending row again. Kept as a literal rather than
+// imported so this script stays a standalone .cjs check with no app imports.
+const RECONCILIATION_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+
+// The sweep gives up on a row after DEFAULT_MAX_RECONCILE_AGE_MS (6 sweep
+// intervals) and clears next_reconcile_at. Allow that plus one interval of
+// slack before calling a still-scheduled row a real failure.
+const STALE_PENDING_GRACE_MULTIPLIER = 7;
 
 const CAPABILITIES_CHANGED_AUDIT_ACTION = "CERTOPS_AGENT_CAPABILITIES_CHANGED";
 
@@ -116,26 +112,72 @@ async function columnExists(pool, tableName, columnName) {
  */
 async function assertTrustAnchorOwnershipCountsConsistent(pool) {
   const name = "trust-anchor ownership counts consistent with status";
-  if (!(await tableExists(pool, "certops_trust_anchors"))) {
+  if (
+    !(await tableExists(pool, "certops_trust_anchors")) ||
+    !(await tableExists(pool, "certops_trust_anchor_installations"))
+  ) {
     return {
       name,
       status: "skip",
       detail:
-        "certops_trust_anchors does not exist yet in this codebase's " +
-        "migration history (planned in ADR-0012, not yet implemented); " +
-        "not yet applicable.",
+        "certops_trust_anchors and/or certops_trust_anchor_installations " +
+        "does not exist yet in this database; not yet applicable.",
     };
   }
-  // Table exists: this branch intentionally left unimplemented until the
-  // real ownership-reference table/column names are known, rather than
-  // guessing a schema that would silently check the wrong thing.
+
+  // A retired ('revoked') anchor may still have 'installed' rows awaiting
+  // removal and 'pending_remove' rows in flight, but a 'pending_install'
+  // row means a distribution was created after retirement.
+  const retiredWithPendingInstall = await pool.query(
+    `SELECT ta.id, COUNT(tai.id)::int AS pending_installs
+       FROM certops_trust_anchors ta
+       JOIN certops_trust_anchor_installations tai
+         ON tai.workspace_id = ta.workspace_id
+        AND tai.trust_anchor_id = ta.id
+      WHERE ta.status = 'revoked'
+        AND tai.transition_state = 'pending_install'
+      GROUP BY ta.id`,
+  );
+
+  // Anchor rows are additive-only, so every installation row must resolve
+  // to an existing anchor in the same workspace.
+  const orphanedInstallations = await pool.query(
+    `SELECT tai.id, tai.trust_anchor_id
+       FROM certops_trust_anchor_installations tai
+       LEFT JOIN certops_trust_anchors ta
+         ON ta.workspace_id = tai.workspace_id AND ta.id = tai.trust_anchor_id
+      WHERE ta.id IS NULL`,
+  );
+
+  const problems = [];
+  if (retiredWithPendingInstall.rowCount > 0) {
+    problems.push(
+      `${retiredWithPendingInstall.rowCount} retired anchor(s) still have ` +
+        "pending_install rows: " +
+        retiredWithPendingInstall.rows
+          .map((row) => `${row.id} (${row.pending_installs})`)
+          .join(", "),
+    );
+  }
+  if (orphanedInstallations.rowCount > 0) {
+    problems.push(
+      `${orphanedInstallations.rowCount} installation row(s) reference a ` +
+        "missing anchor: " +
+        orphanedInstallations.rows
+          .map((row) => `${row.id} -> ${row.trust_anchor_id}`)
+          .join(", "),
+    );
+  }
+
+  if (problems.length > 0) {
+    return { name, status: "fail", detail: problems.join("; ") };
+  }
   return {
     name,
-    status: "skip",
+    status: "pass",
     detail:
-      "certops_trust_anchors exists but this script has not been updated " +
-      "with the real ownership-reference table/column names yet; update " +
-      "this assertion when that schema lands.",
+      "no retired anchor has a pending_install row, and every installation " +
+      "row resolves to an existing anchor in its workspace.",
   };
 }
 
@@ -147,23 +189,52 @@ async function assertTrustAnchorOwnershipCountsConsistent(pool) {
  */
 async function assertNoStalePendingOwnershipReferences(pool) {
   const name = "no ownership-reference row stuck in pending_install/pending_remove";
-  if (!(await tableExists(pool, "certops_trust_anchors"))) {
+  if (!(await tableExists(pool, "certops_trust_anchor_installations"))) {
     return {
       name,
       status: "skip",
       detail:
-        "no ownership-reference table exists yet (see assertion 1); not " +
-        "yet applicable. Assumed reconciliation-sweep interval for when " +
-        `this becomes applicable: ${ASSUMED_RECONCILIATION_SWEEP_INTERVAL_MS}ms ` +
-        "(not read from real configuration; no reconciler exists yet).",
+        "certops_trust_anchor_installations does not exist yet in this " +
+        "database; not yet applicable.",
+    };
+  }
+
+  // The sweep clears next_reconcile_at when it gives up on a row and marks
+  // it stale, so a row that is still pending WITH next_reconcile_at set and
+  // well past due is one the sweep is failing to process. A row whose
+  // next_reconcile_at is NULL has already been reported and is excluded.
+  const staleGraceMs = STALE_PENDING_GRACE_MULTIPLIER * RECONCILIATION_SWEEP_INTERVAL_MS;
+  const stale = await pool.query(
+    `SELECT id, transition_state, last_attempt_at, next_reconcile_at
+       FROM certops_trust_anchor_installations
+      WHERE transition_state IN ('pending_install', 'pending_remove')
+        AND next_reconcile_at IS NOT NULL
+        AND next_reconcile_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+      ORDER BY next_reconcile_at
+      LIMIT 20`,
+    [staleGraceMs],
+  );
+
+  if (stale.rowCount > 0) {
+    return {
+      name,
+      status: "fail",
+      detail:
+        `${stale.rowCount} row(s) still pending more than ${staleGraceMs}ms ` +
+        "past their next_reconcile_at, which means the reconciliation sweep " +
+        "is not draining them: " +
+        stale.rows
+          .map((row) => `${row.id} (${row.transition_state})`)
+          .join(", "),
     };
   }
   return {
     name,
-    status: "skip",
+    status: "pass",
     detail:
-      "certops_trust_anchors exists but this script has not been updated " +
-      "with the real ownership-reference table/column names yet.",
+      "every pending_install/pending_remove row is either within its " +
+      `${staleGraceMs}ms reconciliation budget or already reported ` +
+      "(next_reconcile_at cleared).",
   };
 }
 

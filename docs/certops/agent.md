@@ -128,7 +128,7 @@ matrix may work but are not covered by CI or release sign-off.
 | Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh` itself has no CI dry-run (unlike `install-agent.ps1`'s Windows dry-run above), so a real host run is the only verification path for the Linux installer today. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
 | Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` fails closed below build 14393, the first widely-deployed release with both WDAC and CNG non-exportable key custody generally available (see the "Windows build-number floor" note later in this document). Real end-to-end verified on **Windows Server 2025** (build 26100), **Windows Server 2022** (build 20348), and **Windows Server 2019**: full agent install, CNG-native issue with real IIS binding, unattended auto-renew, and the CNG/IIS/retention/discovery module-level real-host checks all produced identical results on all three, with no code path found to differ between them. Other Windows Server releases from build 14393 onward are expected to work the same way but are not independently verified; Windows 10/11 desktop SKUs are not verified as agent hosts at all. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
-| PostgreSQL (control plane) | `13+`, or `pgcrypto` on an older server | CertOps migrations (including 42-44) use `gen_random_uuid()`, native since PostgreSQL 13. |
+| PostgreSQL (control plane) | `15+` | Several CertOps migrations use `ON DELETE SET NULL (column_list)` on composite foreign keys, native since PostgreSQL 15; `gen_random_uuid()` alone would only require 13+. The bundled local-dev compose (`deploy/compose/docker-compose.postgres.yml`) runs `postgres:17-alpine`. |
 
 ### Wire-contract compatibility (upgrade ordering)
 
@@ -140,7 +140,7 @@ components in still matters:
 | --- | --- | --- | --- |
 | `declaredCapabilities` on heartbeat (not just register) | the release that admits `declaredCapabilities` in `heartbeatBody` | Upgrade the server first. An older server's `heartbeatBody` schema is `additionalProperties: false` with no `declaredCapabilities`, so it rejects the field outright rather than ignoring it. | A heartbeat carrying capabilities fails schema validation against an un-upgraded server. |
 | Envelope v2 (`signed-payload-b64-v1`) | the release that ships dual-format dispatch | Either order; this is dispatch-time, not connection-time. An agent advertising the capability gets v2 once its capability declaration is fresh (`CERTOPS_CAPABILITY_FRESHNESS_MS`); every other agent gets v1. | None: an agent that never advertises the capability, or whose declaration goes stale, simply keeps getting v1. |
-| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* flip `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` (agent-side) to `true`. | Flipping the agent-side flag before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent. |
+| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* upgrade the agent (`CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` now defaults to `true`, enforcing this automatically). If any agent still talks to a control plane that has not finished emitting `agentId`, set `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID=false` on that agent first as a temporary rollback. | Upgrading the agent before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent, unless the rollback override is set. |
 | `agent-id-binding-v1` capability (reference clients) | same release as required `agentId` above | Reference clients advertise this capability only once their local `agentId` enforcement is actually the effective behavior, not merely because the shipped code supports it. | A client advertising the capability while its own enforcement flag is still off would falsely promise a guarantee it is not enforcing. |
 | Enterprise pin | `tokentimer-enterprise` at the matching core version | Bump and pin core and enterprise together; do not let one lag. | Enterprise CI can silently stop skipping edition-gated core tests it must skip if the cross-repo marker it depends on drifts from core. |
 
@@ -243,6 +243,23 @@ Top level:
 | `allowedCaEndpoints` | string[] | Full-URL exact match after trailing-slash normalization. |
 | `allowedDnsZones` | string[] | Suffix match with dot boundary (`sub.example.com` covered by `example.com`, `evilexample.com` is not). |
 | `allowedDnsProviders` | string[] | Exact match. |
+
+Trust-anchor distribution (`trust-anchor-deploy-v1`) resolves its platform-native
+update command through this same `allowedCommands` map, under two dedicated
+profile names that no other job family uses:
+
+| Profile name | Platform | Typical `argv` |
+|--------------|----------|----------------|
+| `trust-store:update-ca-certificates` | Debian/Ubuntu | `["/usr/sbin/update-ca-certificates"]` |
+| `trust-store:update-ca-trust` | RHEL/Fedora | `["/usr/bin/update-ca-trust", "extract"]` |
+
+Because these names are distinct from every ACME/reload profile, a renewal-only
+agent grants no trust-store command execution, and a trust-only agent grants no
+renewal command execution. An agent whose policy omits the profile for its own
+platform rejects a trust job with `command_not_allowlisted` before attempting
+any mutation. On Windows the store is mutated via `certutil`, which is not
+`commandRef`-gated (the same posture as the Windows certificate-store deploy
+target).
 
 `discovery` block:
 

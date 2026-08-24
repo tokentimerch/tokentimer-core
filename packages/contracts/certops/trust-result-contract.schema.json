@@ -1,0 +1,237 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/trust-result-contract.schema.json",
+  "title": "CertOps Trust Anchor Job Result",
+  "description": "Typed agent-reported result/evidence for a distribute-trust or revoke-trust job (ADR-0012 decision 20e), the sibling of trust-job-payload.schema.json on the way back. A trust result is not a generic executor-event response: it carries the observed pre/post fingerprint state, the resolved concrete store, a closed outcome vocabulary, the agent-local ownership-receipt identity/state (decision 20d), and the transition generation the result claims to advance, so the server can validate a result against the signed job it claims to answer before ever touching certops_trust_anchor_installations. Composes the shared signed-dispatch-payload definitions for jobId/workspaceId/agentId (the same identity fields the job itself was signed with) rather than redefining them, so a result's identity fields are held to the same shape as a job's. additionalProperties: false at every level: a trust result can never be mistaken for, or grown into, a different job family's result shape. The server MUST reject any result whose agentId, store, fingerprint, or transitionGeneration differs from the signed job it claims to answer (ADR-0012 decision 20e) -- this schema constrains shape only; that cross-check is a service-layer responsibility against the persisted job/installation row, not something a standalone JSON-schema validator can express.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "workspaceId",
+    "agentId",
+    "trustAnchorId",
+    "action",
+    "transitionGeneration",
+    "store",
+    "outcome",
+    "mutationAttempted",
+    "mutationPerformed",
+    "receipt",
+    "observedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "jobId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+    },
+    "workspaceId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/workspaceId"
+    },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
+    "trustAnchorId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "certops_trust_anchors.id (text-cast), matching trust-job-payload.schema.json's trustAnchorId. The row this result reports against."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "distribute-trust",
+        "revoke-trust"
+      ],
+      "description": "Echoes the job's own action (trust-job-payload.schema.json#/properties/action), so a result naming the wrong action for its jobId is a detectable shape violation, not merely a downstream logic error."
+    },
+    "transitionGeneration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The certops_trust_anchor_installations.transition_generation this result claims to advance (ADR-0012 decision 20a/20c). The server must reject a result whose transitionGeneration does not match the installation row's current generation at receipt time: a stale-generation result is evidence of a superseded transition, not a valid update to the current one."
+    },
+    "store": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9 _.-]{1,64}$",
+      "description": "The concrete machine trust store the agent actually resolved anchorType into and operated against (mirrors certops_trust_anchor_installations.store). Reported back rather than only signed forward, so a routing disagreement between the signed intent and the agent's own resolution is a detectable inconsistency (ADR-0012 decision 6)."
+    },
+    "observedFingerprintBefore": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the material the agent found already present at (store, fingerprint) before performing this operation, or null if nothing was present. Distinguishing 'nothing observed' from 'observed and matched' is what lets the server tell preexisting apart from already_absent on the outcome enum below."
+    },
+    "observedFingerprintAfter": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the material present at (store, fingerprint) immediately after this operation, or null if nothing is present. For a successful distribute-trust this equals the job's signed fingerprintSha256; for a successful revoke-trust this is null."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "preexisting",
+        "installed",
+        "already_absent",
+        "removed"
+      ],
+      "description": "Closed outcome vocabulary (ADR-0012 decision 20e). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: distribute-trust performed the mutation and observedFingerprintAfter now matches. already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. This enum names the same four provenance/mutation combinations decision 6's provenance column and this decision's mutationPerformed flag jointly imply, so the server never has to infer an outcome from a boolean pair."
+    },
+    "mutationAttempted": {
+      "type": "boolean",
+      "description": "Whether the agent attempted an OS-level store mutation at all. False for preexisting/already_absent outcomes; true whenever the agent tried, whether or not the attempt succeeded."
+    },
+    "mutationPerformed": {
+      "type": "boolean",
+      "description": "Whether the OS-level store mutation actually completed. Must be false whenever mutationAttempted is false. A result with mutationAttempted true and mutationPerformed false is a failed-attempt report, not a terminal installed/removed outcome, and must carry a non-null failureCategory."
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state"
+      ],
+      "description": "The agent-local ownership receipt (ADR-0012 decision 20d) this result was produced under, keyed by (store, fingerprint) on the agent's own host. Carried here so the server's copy of installation state and the agent's own recovery state can be cross-referenced during an audit or a reconciliation-sweep dispute, without the server ever needing to read the agent's local receipt file directly.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Opaque local receipt identifier, stable for the lifetime of the (store, fingerprint) pair on this agent."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "intent_written",
+            "finalized",
+            "missing",
+            "corrupt"
+          ],
+          "description": "The receipt's own lifecycle state at the moment this result was produced (ADR-0012 decision 20d). intent_written: the pre-mutation intent record was fsynced but the receipt was not yet finalized (expected only on a failed-attempt or crash-recovery result). finalized: the receipt was written and finalized after the mutation, the normal terminal case. missing or corrupt: the agent could not read a usable prior receipt for this (store, fingerprint) and therefore failed safe (never removed, per decision 20d); a result reporting missing or corrupt must not report outcome 'removed'."
+        }
+      }
+    },
+    "failureCategory": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "description": "Sanitized failure category only, mirroring certops_trust_anchor_installations.last_error's own discipline: never a raw exception message, stack trace, or any string that could carry secret material. Null when mutationPerformed is true and no failure occurred."
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the agent captured the pre/post observations this result reports, per this program's usual RFC3339 timestamp convention."
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only, same shape as trust-job-payload.schema.json's own metadata array.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mutationAttempted": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mutationPerformed": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mutationAttempted": {
+            "const": true
+          },
+          "mutationPerformed": {
+            "const": false
+          }
+        },
+        "required": [
+          "mutationAttempted",
+          "mutationPerformed"
+        ]
+      },
+      "then": {
+        "required": [
+          "failureCategory"
+        ],
+        "properties": {
+          "failureCategory": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "removed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "receipt": {
+            "properties": {
+              "state": {
+                "not": {
+                  "enum": ["missing", "corrupt"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

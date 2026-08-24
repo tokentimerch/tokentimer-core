@@ -10,8 +10,10 @@
  * windows-cert-store-v1 and iis-binding-v1's executors exist and have been
  * real-host verified (Windows Server 2019/2022/2025; see
  * docs/certops/agent.md and the real-host verification runbook), so
- * ./qualified-capabilities.json now names both. trust-anchor-deploy-v1 has
- * no executor at all yet (targets 0.14.0) and stays unqualified.
+ * ./qualified-capabilities.json now names both. trust-anchor-deploy-v1's
+ * executor exists (../trust-store) but has not been real-host verified on
+ * each supported platform yet, so it stays unqualified: a build advertises
+ * it only once the manifest names it.
  * This list itself never changes based on evidence -- it is the fixed set
  * of strings the build-time manifest is allowed to name at all; whether a
  * given build's manifest actually qualifies one is a release decision made

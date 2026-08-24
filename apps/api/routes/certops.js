@@ -99,7 +99,7 @@ const {
   isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
-  validateJobPayloadForOperation,
+  manualRenewalJobCreator,
 } = require("../services/certops/jobs");
 const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
@@ -107,9 +107,11 @@ const {
   resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
 const {
+  CERTOPS_RENEWAL_OVERRIDE_INVALID,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   resolveRenewalProfileSnapshot,
+  validateRenewalManualOverrides,
 } = require("../services/certops/renewalProfile");
 const {
   CERTOPS_PROFILE_FIELD_IMMUTABLE,
@@ -135,6 +137,22 @@ const {
   getWorkspaceCertOpsPauseState,
   setWorkspaceCertOpsPauseState,
 } = require("../services/certops/workspaceKillSwitch");
+const {
+  CERTOPS_TRUST_ANCHOR_INVALID,
+  CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+  CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+  CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+  CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+  CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+  CERTOPS_TRUST_JOB_OPERATION_INVALID,
+  CERTOPS_TRUST_RESULT_INVALID,
+  CERTOPS_TRUST_RESULT_MISMATCH,
+  CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  createTrustAnchor,
+  listTrustAnchors,
+  manualTrustJobCreator,
+  retireTrustAnchor,
+} = require("../services/certops/trustAnchors");
 const {
   CERTOPS_CERTIFICATE_NOT_PROFILED,
   CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
@@ -536,6 +554,61 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  // Trust-anchor CRUD and trust-job creation (ADR-0012 decisions 6/20),
+  // delegated to services/certops/trustAnchors.js. err.message already
+  // names the specific field/reason (see that file's normalize* helpers),
+  // so it is surfaced verbatim rather than replaced with a generic string.
+  if (err?.code === CERTOPS_TRUST_ANCHOR_NOT_FOUND) {
+    return res.status(404).json({
+      error: err.message || "Trust anchor not found",
+      code: CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+    });
+  }
+  if (err?.code === CERTOPS_TRUST_INSTALLATION_NOT_FOUND) {
+    return res.status(404).json({
+      error: err.message || "Trust anchor installation not found",
+      code: CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+    });
+  }
+  if (
+    err?.code === CERTOPS_TRUST_ANCHOR_INVALID ||
+    err?.code === CERTOPS_TRUST_ANCHOR_PEM_INVALID ||
+    err?.code === CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED ||
+    err?.code === CERTOPS_TRUST_JOB_OPERATION_INVALID
+  ) {
+    return res.status(400).json({
+      error: err.message || "Trust anchor request is invalid",
+      code: err.code,
+    });
+  }
+  // 409, not 400: the request is well-formed, but a distribute-trust job
+  // was requested against an anchor that is not currently active (retired,
+  // or retired between approval and dispatch -- see revalidateTrustJobForDispatch).
+  if (err?.code === CERTOPS_TRUST_ANCHOR_NOT_ACTIVE) {
+    return res.status(409).json({
+      error: err.message || "Trust anchor is not active",
+      code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+    });
+  }
+  // Result-ingestion codes (agentDispatch.js's ingestResult, not this route)
+  // are mapped here too so any future route/tool that surfaces the same
+  // service errors gets a consistent response shape.
+  if (err?.code === CERTOPS_TRUST_RESULT_INVALID) {
+    return res.status(400).json({
+      error: err.message || "Trust job result is invalid",
+      code: CERTOPS_TRUST_RESULT_INVALID,
+    });
+  }
+  if (
+    err?.code === CERTOPS_TRUST_RESULT_MISMATCH ||
+    err?.code === CERTOPS_TRUST_RESULT_STALE_GENERATION
+  ) {
+    return res.status(409).json({
+      error: err.message || "Trust job result does not match the job",
+      code: err.code,
+    });
+  }
+
   if (
     err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
     err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
@@ -543,6 +616,16 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "Certificate renewal profile is missing or invalid",
       code: err.code,
+    });
+  }
+
+  // The message names exactly which field was rejected (and, for reason,
+  // why), so it is surfaced verbatim rather than replaced with a generic
+  // one -- see validateRenewalManualOverrides (renewalProfile.js).
+  if (err?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID) {
+    return res.status(400).json({
+      error: err.message || "Renewal override is invalid",
+      code: CERTOPS_RENEWAL_OVERRIDE_INVALID,
     });
   }
 
@@ -754,12 +837,37 @@ function createManualCertificateJobHandler({
       }
 
       // An issue job has to create the certificate identity before the job
-      // that references it, so it swaps in a different creator. Everything
-      // else (workspace lock, kill switch, audit row) is shared.
+      // that references it, so it swaps in a different creator. A renew job
+      // swaps in one too: it materializes the payload from the certificate's
+      // stored renewal profile (the same call the scheduler makes for the
+      // same certificate) instead of trusting whatever payload the request
+      // supplied, so a manual renew can never diverge from what an
+      // automatic renewal of the same certificate would execute. See
+      // manualRenewalJobCreator (jobs.js) for the override allowlist this
+      // enforces on req.body.payload. A trust-anchor operation (distribute-
+      // trust/revoke-trust) swaps in a third creator for the same reason:
+      // trustAnchors.createTrustJob -- not this route, not
+      // createCertificateJob directly -- is the only path allowed to create
+      // that job, because its installation-row state machine (ADR-0012
+      // decision 20) has to advance in the same transaction as the job
+      // insert. subjectId is the trust anchor's id (subjectType is already
+      // forced to "trust_anchor" by jobs.js's own validation for these two
+      // operations); agentId/store/owner are trust-specific fields the
+      // generic body does not otherwise carry. Everything else (workspace
+      // lock, kill switch, audit row) is shared with every other operation.
       const jobCreator =
         req.body?.operation === "issue"
           ? createCertificateIssuanceJob
-          : undefined;
+          : req.body?.operation === "renew"
+            ? manualRenewalJobCreator({ certificateId: req.body?.subjectId })
+            : isTrustAnchorOperation(req.body?.operation)
+              ? manualTrustJobCreator({
+                  trustAnchorId: req.body?.subjectId,
+                  agentId: req.body?.agentId,
+                  store: req.body?.store,
+                  owner: req.body?.owner,
+                })
+              : undefined;
       const { job } = await manualJobCreator({
         ...jobCreateOptionsFromRequest(req),
         ...(jobCreator ? { jobCreator } : {}),
@@ -923,14 +1031,13 @@ function bulkRenewCertificatesHandler({
       });
     }
 
-    // The payload is a whole-request field; validate it once up front (with
-    // a representative certificateId stamped in, as each item's payload
-    // will be) so a bad payload is a 400 instead of N identical item errors.
+    // The payload is a whole-request field: every item shares it as an
+    // override on top of that certificate's own stored renewal profile
+    // (manualRenewalJobCreator, jobs.js), so validate it once up front
+    // against the same override allowlist a real per-item run would apply,
+    // rather than surfacing N identical item errors.
     try {
-      validateJobPayloadForOperation(
-        { ...parsed.payload, certificateId: parsed.certificateIds[0] },
-        "renew",
-      );
+      validateRenewalManualOverrides(parsed.payload);
     } catch (err) {
       if (typeof err?.code === "string" && err.code) {
         return res.status(400).json({
@@ -991,7 +1098,8 @@ function bulkRenewCertificatesHandler({
           operation: "renew",
           subjectType: "managed_certificate",
           subjectId: certificateId,
-          payload: { ...parsed.payload, certificateId },
+          payload: parsed.payload,
+          jobCreator: manualRenewalJobCreator({ certificateId }),
           requiresApproval: parsed.requiresApproval,
           idempotencyKey: bulkRenewItemIdempotencyKey(
             parsed.idempotencyKey,
@@ -2212,6 +2320,138 @@ router.post(
   requireCertOpsWriteRole,
   requireWorkspaceCertOpsActive,
   bulkRenewCertificatesHandler(),
+);
+
+// Trust-anchor CRUD (ADR-0012 decisions 6/20). Every route here is gated
+// by certops.trust_anchor.manage (admin), one level above the
+// workspace_manager bar the rest of this file's write routes use, because
+// a trust anchor changes what every certificate on a host is trusted
+// against, not just one certificate's lifecycle -- see
+// createManualCertificateJobHandler's own comment on the identical
+// distribute-trust/revoke-trust gate above. "retire" (not "revoke") is the
+// anchor-level verb throughout this surface; see trustAnchors.js's
+// top-of-file TERMINOLOGY comment and retireTrustAnchor for why.
+function trustAnchorIdFromParams(req, res) {
+  const anchorId = String(req.params.anchorId || "");
+  if (!UUID_PATTERN.test(anchorId)) {
+    res.status(400).json({
+      error: "Trust anchor identifier is invalid",
+      code: CERTOPS_TRUST_ANCHOR_INVALID,
+    });
+    return null;
+  }
+  return anchorId;
+}
+
+router.get(
+  "/api/v1/workspaces/:id/certops/trust-anchors",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.trust_anchor.manage"),
+  async (req, res) => {
+    try {
+      const anchors = await listTrustAnchors({
+        workspaceId: req.workspace.id,
+        status: req.query.status,
+      });
+      return res.json({ items: anchors });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps trust anchor list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list trust anchors",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/trust-anchors",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  authorize("certops.trust_anchor.manage"),
+  requireWorkspaceCertOpsActive,
+  async (req, res) => {
+    try {
+      const anchor = await withCertOpsTransaction((client) =>
+        createTrustAnchor({
+          client,
+          workspaceId: req.workspace.id,
+          name: req.body?.name,
+          anchorType: req.body?.anchorType,
+          pem: req.body?.pem,
+          source: "api",
+          publicMetadata: req.body?.metadata,
+          createdByUserId: req.user?.id || null,
+        }),
+      );
+      return res.status(201).json({ trustAnchor: anchor });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps trust anchor creation failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create trust anchor",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/trust-anchors/:anchorId/retire",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  authorize("certops.trust_anchor.manage"),
+  requireWorkspaceCertOpsActive,
+  async (req, res) => {
+    const anchorId = trustAnchorIdFromParams(req, res);
+    if (!anchorId) return null;
+
+    try {
+      const result = await retireTrustAnchor({
+        workspaceId: req.workspace.id,
+        anchorId,
+        reason: req.body?.reason,
+        retiredByUserId: req.user?.id || null,
+      });
+      return res.json({
+        trustAnchor: result.anchor,
+        retiredNow: result.retiredNow,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps trust anchor retire failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        anchorId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to retire trust anchor",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
 );
 
 router.post(

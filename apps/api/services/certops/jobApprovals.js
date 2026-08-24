@@ -53,6 +53,7 @@ const {
   serviceError,
   validateRenewalProfileOnPayload,
 } = require("./jobs");
+const { onTrustJobTerminalTransition } = require("./trustAnchors");
 
 // --- Frozen error codes ---
 // 403-shaped: the requester may not approve their own job.
@@ -505,6 +506,17 @@ async function rejectJob(options) {
       CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
     );
   }
+
+  // ADR-0012 decision 20b: an approval denial is one of the terminal-
+  // negative transitions the trust-anchor transition table names by name
+  // ("approval denied or expired"). Unwinding here, inside the same
+  // decision transaction rejectJob already runs in, keeps the job's
+  // rejected status and the installation row's unwound state from ever
+  // being observed apart.
+  await onTrustJobTerminalTransition({
+    client: db,
+    job: { ...job, status: row.status },
+  });
 
   const approval = await insertApprovalDecision(db, {
     workspaceId,

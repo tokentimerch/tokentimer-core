@@ -1848,6 +1848,7 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
       action: "distribute-trust",
       anchorType: "root",
       fingerprintSha256: "a".repeat(64),
+      transitionGeneration: 2,
       pem: "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
       mode: "real",
       requestedAt: "2026-01-01T00:00:00.000Z",
@@ -1867,6 +1868,35 @@ describe("signed-dispatch payload, wire wrappers, and the action-keyed discrimin
     const result = validateSignedJob(job);
     assert.equal(result.valid, true, JSON.stringify(result.errors));
     assert.match(result.schemaId, /trust-job-payload\.schema\.json$/);
+  });
+
+  it("rejects a trust job with no transitionGeneration", () => {
+    // The agent echoes this back on its result and the server rejects any
+    // result that does not match the installation row's current generation,
+    // so a dispatch without it could only ever produce a stale result.
+    const job = baseTrustJob();
+    delete job.transitionGeneration;
+    const result = validateSignedJob(job);
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some(
+        (error) => error.params?.missingProperty === "transitionGeneration",
+      ),
+      JSON.stringify(result.errors),
+    );
+  });
+
+  it("rejects a trust job whose transitionGeneration is not a positive integer", () => {
+    for (const value of [0, -1, 1.5, "2", null]) {
+      const result = validateSignedJob(
+        baseTrustJob({ transitionGeneration: value }),
+      );
+      assert.equal(
+        result.valid,
+        false,
+        `transitionGeneration ${JSON.stringify(value)} must be rejected`,
+      );
+    }
   });
 
   it("rejects a distribute-trust job missing the required pem", () => {

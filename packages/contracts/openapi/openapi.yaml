@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.13.3
+  version: 0.14.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -5158,6 +5158,191 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/trust-anchors:
+    get:
+      tags: [CertOps]
+      summary: List CertOps trust anchors
+      operationId: listCertOpsTrustAnchors
+      description: >-
+        Returns the workspace's approved trust-anchor CAs (ADR-0012 decision
+        6/20). Manager-only. The private key never enters this record; only
+        the CA's public certificate, its SHA-256 fingerprint, and approval
+        metadata are stored and returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [active, revoked]
+          description: Filter by anchor status. Omit to return anchors of every status.
+      responses:
+        "200":
+          description: Trust anchor list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsTrustAnchorListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Approve a CertOps trust anchor
+      operationId: createCertOpsTrustAnchor
+      description: >-
+        Approves a CA certificate as a trust anchor that distribute-trust
+        jobs may install into an agent's trust store (ADR-0012 decision 6).
+        `pem` must contain exactly one CA certificate (Basic Constraints
+        CA=true); bundles and leaf certificates are rejected. Re-submitting
+        the same fingerprint updates the existing row in place and
+        reactivates it if it was previously retired, rather than creating a
+        duplicate record. Recorded as a CERTOPS_TRUST_ANCHOR_APPROVED audit
+        event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsCreateTrustAnchorRequest"
+      responses:
+        "201":
+          description: Trust anchor approved (created or reactivated)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsCreateTrustAnchorResponse"
+        "400":
+          description: Trust anchor request is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                anchorInvalid:
+                  value:
+                    error: Trust anchor name is required and must be 1-255 characters
+                    code: CERTOPS_TRUST_ANCHOR_INVALID
+                pemInvalid:
+                  value:
+                    error: Trust anchor PEM must be a CA certificate (Basic Constraints CA=true); leaf certificates are rejected
+                    code: CERTOPS_TRUST_ANCHOR_PEM_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workspace CertOps is paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/trust-anchors/{anchorId}/retire:
+    post:
+      tags: [CertOps]
+      summary: Retire a CertOps trust anchor
+      operationId: retireCertOpsTrustAnchor
+      description: >-
+        Marks a trust anchor as revoked so future distribute-trust jobs can
+        no longer target it (ADR-0012 decision 20g). Retiring an
+        already-retired anchor is idempotent and returns `retiredNow: false`.
+        Retiring an anchor does not remove any trust material an agent has
+        already installed; that requires a separate revoke-trust job.
+        Recorded as a CERTOPS_TRUST_ANCHOR_RETIRED audit event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: anchorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Trust anchor record id (UUID).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsRetireTrustAnchorRequest"
+      responses:
+        "200":
+          description: Trust anchor retired (or already retired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRetireTrustAnchorResponse"
+        "400":
+          description: Trust anchor identifier is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Trust anchor identifier is invalid
+                code: CERTOPS_TRUST_ANCHOR_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the trust anchor was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                anchorNotFound:
+                  value:
+                    error: Trust anchor not found
+                    code: CERTOPS_TRUST_ANCHOR_NOT_FOUND
+        "409":
+          description: Workspace CertOps is paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/agents/{agentId}/alert-settings:
     patch:
       tags: [CertOps]
@@ -9378,6 +9563,114 @@ components:
       properties:
         agent:
           $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+    CertOpsTrustAnchor:
+      type: object
+      additionalProperties: false
+      description: Public trust-anchor record. The CA's private key is never accepted or stored; only the public certificate is kept.
+      required:
+        - id
+        - workspaceId
+        - name
+        - anchorType
+        - fingerprintSha256
+        - status
+        - source
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        anchorType:
+          type: string
+          enum: [root, intermediate]
+        fingerprintSha256:
+          type: string
+          description: Lowercase hex SHA-256 fingerprint of the CA certificate. Unique per workspace; re-approving the same fingerprint updates the existing row instead of creating a duplicate.
+        subjectCommonName:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, revoked]
+        source:
+          type: string
+          enum: [api, system]
+        publicMetadata:
+          type: object
+          additionalProperties: true
+        createdBy:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsTrustAnchorListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsTrustAnchor"
+    CertOpsCreateTrustAnchorRequest:
+      type: object
+      additionalProperties: false
+      required: [name, anchorType, pem]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        anchorType:
+          type: string
+          enum: [root, intermediate]
+        pem:
+          type: string
+          description: PEM-encoded CA certificate. Must contain exactly one certificate with Basic Constraints CA=true; bundles and leaf certificates are rejected.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Free-form public metadata attached to the anchor. Never accepts private key or secret material.
+    CertOpsCreateTrustAnchorResponse:
+      type: object
+      additionalProperties: false
+      required: [trustAnchor]
+      properties:
+        trustAnchor:
+          $ref: "#/components/schemas/CertOpsTrustAnchor"
+    CertOpsRetireTrustAnchorRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Attributable justification, recorded on the CERTOPS_TRUST_ANCHOR_RETIRED audit event.
+    CertOpsRetireTrustAnchorResponse:
+      type: object
+      additionalProperties: false
+      required: [trustAnchor, retiredNow]
+      properties:
+        trustAnchor:
+          $ref: "#/components/schemas/CertOpsTrustAnchor"
+        retiredNow:
+          type: boolean
+          description: False when the anchor was already revoked before this request (idempotent no-op).
     CertOpsDiagnosticBootstrapRequest:
       type: object
       additionalProperties: false

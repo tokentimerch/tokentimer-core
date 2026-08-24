@@ -58,7 +58,9 @@
         "deployment.updated",
         "validation.passed",
         "validation.failed",
-        "policy.checked"
+        "policy.checked",
+        "trust.distributed",
+        "trust.revoked"
       ]
     },
     "source": {

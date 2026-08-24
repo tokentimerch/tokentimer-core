@@ -26,6 +26,10 @@
  *      24-hour inactivity TTL via the four-branch orphan-retirement state
  *      machine (apps/api/services/certops/agentRegistry.js, ADR-0012
  *      decision 7).
+ *   7. Trust-anchor reconciliation sweep: revalidate/reschedule or report
+ *      stale certops_trust_anchor_installations rows past their
+ *      next_reconcile_at (apps/api/services/certops/trustAnchors.js,
+ *      ADR-0012 decision 20b/20f/20h).
  *
  * Zero-custody: nothing here reads or writes private key material.
  */
@@ -45,6 +49,7 @@ import {
   gCertopsRenewalScheduler,
   gCertopsDiagnosticAgentsRetired,
   gCertopsAgentHealthAlerts,
+  gCertopsTrustAnchorReconciliation,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
@@ -95,6 +100,14 @@ const { queueAgentHealthAlert } = require(
 const { resolveRenewalPathsForWorkspace } = require(
   "../../api/services/certops/renewalPathHealth.js",
 );
+
+// ADR-0012 decision 20b/20f/20h: the reconciliation half of the trust-anchor
+// ownership state machine (the creation/dispatch/result-ingestion half lives
+// in the API service and is exercised by the agent-poll and result-report
+// routes, not this worker).
+const {
+  sweepOverdueTrustInstallations,
+} = require("../../api/services/certops/trustAnchors.js");
 
 // Single source of truth for the 10-minute agent liveness threshold, shared
 // with the API's live-read path (agentRegistry.js#computeAgentCompatibility)
@@ -164,6 +177,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "agent-recovery-alerts": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_TIMEOUT_MS",
+  }),
+  "trust-anchor-reconciliation": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_TIMEOUT_MS",
   }),
 });
 
@@ -1634,6 +1651,39 @@ export async function runCertOpsMaintenance({
     safeGaugeSet(gCertopsDiagnosticAgentsRetired, { outcome: "error" }, errors);
   }
 
+  // ADR-0012 decision 20b/20f/20h: this sweep only revalidates/reschedules
+  // or marks stale a certops_trust_anchor_installations row that is already
+  // pending -- it never signs or dispatches a job itself (that is
+  // agentDispatch.claimJobs's job, on the agent's own poll cadence).
+  results.trustAnchorReconciliation = await runIsolated(
+    "trust-anchor-reconciliation",
+    log,
+    () => sweepOverdueTrustInstallations({ dbPool }),
+    {
+      enabled: isSweepEnabled("trust-anchor-reconciliation", env),
+      timeoutMs: resolveSweepTimeoutMs("trust-anchor-reconciliation", env),
+    },
+  );
+  if (results.trustAnchorReconciliation.status === "success") {
+    const { unwound, rescheduled, markedStale } =
+      results.trustAnchorReconciliation.result;
+    safeGaugeSet(
+      gCertopsTrustAnchorReconciliation,
+      { outcome: "unwound" },
+      unwound,
+    );
+    safeGaugeSet(
+      gCertopsTrustAnchorReconciliation,
+      { outcome: "rescheduled" },
+      rescheduled,
+    );
+    safeGaugeSet(
+      gCertopsTrustAnchorReconciliation,
+      { outcome: "marked_stale" },
+      markedStale,
+    );
+  }
+
   log.info("CertOps maintenance worker finished", {
     leaseReaper:
       results.leaseReaper.status === "success"
@@ -1667,6 +1717,10 @@ export async function runCertOpsMaintenance({
       results.agentRecoveryAlerts.status === "success"
         ? results.agentRecoveryAlerts.result
         : results.agentRecoveryAlerts.status,
+    trustAnchorReconciliation:
+      results.trustAnchorReconciliation.status === "success"
+        ? results.trustAnchorReconciliation.result
+        : results.trustAnchorReconciliation.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>

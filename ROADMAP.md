@@ -85,9 +85,12 @@ rejects key material at every write surface (CI-enforced).
   Server hosts (a real CNG store, a real IIS binding, a real ACME order).
   See ADR-0012.
 - [ ] **Trust-anchor ownership reconciliation (targeting 0.14.0)**: CA
-  root/intermediate distribution to and revocation from agent hosts.
-  Decided in ADR-0012 but not yet implemented; `trust-anchor-deploy-v1`
-  stays gated with no executor.
+  root/intermediate distribution to and revocation from agent hosts, with
+  reference-counted ownership so removal never deletes material TokenTimer
+  did not install. Control plane, agent executor (Windows, Debian/Ubuntu,
+  RHEL/Fedora), and reconciliation sweep are implemented;
+  `trust-anchor-deploy-v1` stays unqualified pending real-host verification
+  on each supported platform, so no build advertises it yet. See ADR-0012.
 - [ ] **Consolidation guards** (non-blocking, lands incrementally):
   shared SSRF egress module, versioned encryption envelopes, audit hash chain,
   enum/type-drift and control-plane-keygen CI guards.

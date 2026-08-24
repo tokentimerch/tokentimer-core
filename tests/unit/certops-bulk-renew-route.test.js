@@ -28,6 +28,9 @@ const { CERTOPS_CERTIFICATE_NOT_FOUND } = require(
 const { CERTOPS_JOB_INVALID } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
+const { CERTOPS_RENEWAL_OVERRIDE_INVALID } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/renewalProfile.js"),
+);
 
 const { bulkRenewCertificatesHandler, parseBulkRenewRequest } =
   certOpsRouter._test;
@@ -97,7 +100,8 @@ describe("CertOps bulk-renew route", () => {
       assert.strictEqual(call.operation, "renew");
       assert.strictEqual(call.subjectType, "managed_certificate");
       assert.strictEqual(call.subjectId, uuid(index + 1));
-      assert.strictEqual(call.payload.certificateId, uuid(index + 1));
+      assert.deepStrictEqual(call.payload, {});
+      assert.strictEqual(typeof call.jobCreator, "function");
       assert.strictEqual(call.source, "api");
       assert.strictEqual(call.requiresApproval, false);
       assert.strictEqual(call.requestedByUserId, 42);
@@ -255,7 +259,7 @@ describe("CertOps bulk-renew route", () => {
     assert.strictEqual(res.body.results[1].ok, false);
   });
 
-  it("passes requiresApproval and shared payload through to the service path", async () => {
+  it("passes requiresApproval and an allowlisted payload override through to the service path", async () => {
     const creatorCalls = [];
     const handler = bulkRenewCertificatesHandler({
       certificateLoader: async () => ({ id: "found" }),
@@ -270,7 +274,7 @@ describe("CertOps bulk-renew route", () => {
       makeRequest({
         certificateIds: [uuid(1)],
         requiresApproval: true,
-        payload: { caEndpoint: "https://ca.example.com/acme" },
+        payload: { reason: "customer-requested" },
       }),
       res,
     );
@@ -278,9 +282,31 @@ describe("CertOps bulk-renew route", () => {
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(creatorCalls[0].requiresApproval, true);
     assert.deepStrictEqual(creatorCalls[0].payload, {
-      caEndpoint: "https://ca.example.com/acme",
-      certificateId: uuid(1),
+      reason: "customer-requested",
     });
+  });
+
+  it("rejects a non-allowlisted payload override with 400 before any item runs", async () => {
+    const handler = bulkRenewCertificatesHandler({
+      certificateLoader: async () => {
+        throw new Error("loader must not run on a rejected override");
+      },
+      manualJobCreator: async () => {
+        throw new Error("creator must not run on a rejected override");
+      },
+    });
+
+    const res = responseRecorder();
+    await handler(
+      makeRequest({
+        certificateIds: [uuid(1)],
+        payload: { caEndpoint: "https://ca.example.com/acme" },
+      }),
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(res.body.code, CERTOPS_RENEWAL_OVERRIDE_INVALID);
   });
 
   it("rejects whole-request shape problems with 400 before any item runs", async () => {

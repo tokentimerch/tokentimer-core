@@ -957,17 +957,20 @@ function checkJobTimeWindow({
  *     signature did not verify".
  *
  *     SUNSET (absence tolerance only, never mismatch tolerance, which does
- *     not exist): this whole ABSENCE branch is ADR-0012 decision 3 step 3's
- *     bridge for a control plane that has not yet completed step 1, and is
- *     scoped to disappear once that gap is closed fleet-wide. Do not remove
- *     it on a calendar date; remove it once BOTH hold: (1)
- *     CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID's compiled-in default has been
- *     flipped to `true` (step 4), and (2) at least one full release has
- *     shipped with that default and no fleet has reported needing the
- *     override back to `false`. Expected no earlier than the release after
- *     the one that flips the default (the default flip itself targets
- *     0.12.0, so this removal targets 0.14.0 or later). Removing it deletes
- *     the `if (requireSignedAgentId) { ... } return { allowed: true }`
+ *     not exist): CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID's compiled-in
+ *     default has now flipped to `true` (ADR-0012 decision 3, step 4), so
+ *     this whole ABSENCE branch is only reachable when an operator has
+ *     explicitly overridden the flag back to `false` (env var or
+ *     config.json) as a temporary rollback for a control plane that has
+ *     not yet finished emitting agentId on every dispatch. The branch
+ *     itself is still scoped to disappear once no fleet still needs that
+ *     rollback path. Do not remove it on a calendar date; remove it once at
+ *     least one full release has shipped with the `true` default and no
+ *     fleet has reported needing the override back to `false`. Expected no
+ *     earlier than the release after the one that flipped the default (the
+ *     default flip itself targets 0.14.0, so this removal targets 0.15.0
+ *     or later -- not this release). Removing it deletes the
+ *     `if (requireSignedAgentId) { ... } return { allowed: true }`
  *     absence-tolerant branch entirely, so a missing agentId fails closed
  *     unconditionally with no configuration path back to tolerating it.
  *

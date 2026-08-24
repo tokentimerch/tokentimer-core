@@ -6,9 +6,12 @@ const path = require("node:path");
 
 const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_OVERRIDE_INVALID,
   RENEWAL_PROFILE_SCHEMA_VERSION,
+  buildManualRenewalJobPayload,
   buildRenewalJobPayload,
   resolveRenewalProfileSnapshot,
+  validateRenewalManualOverrides,
   validateRenewalProfile,
   windowsIisTargetAuditFields,
 } = require(
@@ -390,6 +393,117 @@ describe("certops renewal profile", () => {
           profile_id: null,
         }),
       (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+  });
+});
+
+describe("certops manual renewal payload materialization", () => {
+  function certificateForRenewal(overrides = {}) {
+    const sourceProfile = validProfile();
+    return {
+      id: "cert-manual-1",
+      profile_id: "profile-1",
+      profile_name: "web-tls",
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      key_mode: "agent-local",
+      not_after: new Date("2026-08-01T00:00:00.000Z"),
+      profile_public_metadata: { renewalProfile: sourceProfile },
+      ...overrides,
+    };
+  }
+
+  it("matches the scheduler's payload exactly when no override is supplied", () => {
+    const certificate = certificateForRenewal();
+
+    // The scheduler (renewalScheduler.js) always calls buildRenewalJobPayload
+    // with no explicit reason, so it gets the "expiry-threshold" default.
+    // Comparing against that same default here isolates the one difference
+    // routes/certops.js's manual/bulk wiring deliberately introduces (its own
+    // default reason, e.g. "manual") from the actual materialization this
+    // test is defending: absent an override, buildManualRenewalJobPayload
+    // must reproduce every renewalProfile and execution field the scheduler
+    // would produce for the identical certificate, byte for byte.
+    const schedulerPayload = buildRenewalJobPayload({ certificate });
+    const manualPayload = buildManualRenewalJobPayload({
+      certificate,
+      defaultReason: "expiry-threshold",
+    });
+
+    assert.deepEqual(manualPayload, schedulerPayload);
+  });
+
+  it("fails fast with the same profile-incomplete error the scheduler would raise", () => {
+    const certificate = certificateForRenewal({ profile_id: null });
+
+    assert.throws(
+      () => buildRenewalJobPayload({ certificate }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+    assert.throws(
+      () => buildManualRenewalJobPayload({ certificate }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+  });
+
+  it("applies an allowlisted reason override and changes nothing else", () => {
+    const certificate = certificateForRenewal();
+    const withoutOverride = buildManualRenewalJobPayload({
+      certificate,
+      defaultReason: "manual",
+    });
+    const withOverride = buildManualRenewalJobPayload({
+      certificate,
+      defaultReason: "manual",
+      overrides: { reason: "customer requested an early renewal" },
+    });
+
+    assert.equal(withOverride.reason, "customer requested an early renewal");
+    assert.deepEqual(
+      { ...withOverride, reason: withoutOverride.reason },
+      withoutOverride,
+    );
+  });
+
+  it("rejects an override of a field outside the allowlist", () => {
+    const certificate = certificateForRenewal();
+    assert.throws(
+      () =>
+        buildManualRenewalJobPayload({
+          certificate,
+          overrides: { commandRef: "operator-supplied-command" },
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
+    );
+    assert.throws(
+      () =>
+        buildManualRenewalJobPayload({
+          certificate,
+          overrides: { renewalProfile: validProfile() },
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
+    );
+  });
+
+  it("validateRenewalManualOverrides normalizes empty/absent overrides and rejects a too-long reason", () => {
+    assert.deepEqual(validateRenewalManualOverrides(undefined), {});
+    assert.deepEqual(validateRenewalManualOverrides(null), {});
+    assert.deepEqual(validateRenewalManualOverrides({}), {});
+    assert.deepEqual(validateRenewalManualOverrides({ reason: "ok" }), {
+      reason: "ok",
+    });
+
+    assert.throws(
+      () => validateRenewalManualOverrides({ reason: "x".repeat(257) }),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
+    );
+    assert.throws(
+      () => validateRenewalManualOverrides("not-an-object"),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
+    );
+    assert.throws(
+      () => validateRenewalManualOverrides({ target: {} }),
+      (error) => error?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID,
     );
   });
 });
