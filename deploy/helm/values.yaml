@@ -471,11 +471,8 @@ config:
   # outside of trusted, fully self-hosted environments.
   webhookAllowAllHosts: false
 
-  # Corporate proxy support for outbound HTTP(S) (fetch/undici and axios).
-  # Requires Node 22.21.0+ or 24.0.0+ on the API/worker images for the
-  # fetch/undici path this chart actually relies on; a startup warning is
-  # logged (non-fatal) on unsupported versions. See
-  # https://nodejs.org/api/cli.html#node_use_env_proxy1.
+  # Corporate proxy support for outbound HTTP(S) requests (fetch/undici
+  # and axios). See docs/CONFIGURATION.md.
   useEnvProxy: false
   # Name of an existing Kubernetes Secret (created outside this chart)
   # containing HTTP_PROXY and HTTPS_PROXY keys. Proxy URLs commonly embed

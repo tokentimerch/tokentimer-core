@@ -185,14 +185,10 @@ When `existingSecret` is set for a group, the chart renders **no keys** for that
 
 Self-hosted deployments behind a corporate proxy can make the API's
 `fetch`/undici calls (e.g. the webhook Test button, OAuth/SAML callbacks) and
-the worker's `axios` calls honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. `axios`
-already reads these vars on any Node version; `config.useEnvProxy` additionally
-sets `NODE_USE_ENV_PROXY=1` so `fetch`/undici do too, which requires the
-API/worker images to run **Node 22.21.0+ or 24.0.0+** (not any `23.x` release).
-On an unsupported Node version the API and worker log a
-non-fatal startup warning and `fetch`/undici simply ignore the proxy vars.
-`config.useEnvProxy` also sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` on
-both, silencing Node's own experimental-feature warning for `EnvHttpProxyAgent`.
+the worker's `axios` calls honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`.
+`config.useEnvProxy` sets `NODE_USE_ENV_PROXY=1` on the API and worker, and
+also sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA`, silencing Node's own
+experimental-feature warning for `EnvHttpProxyAgent`.
 
 Proxy URLs commonly embed credentials (`http://user:pass@proxy:3128`), so this
 chart intentionally has no plaintext proxy URL value. Point `config.useEnvProxy`
