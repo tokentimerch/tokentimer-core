@@ -39,7 +39,7 @@ services:
       - NODE_ENV=development
       - PORT=4000
       - OPENAPI_SPEC_PATH=/contracts/openapi/openapi.yaml
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -137,7 +137,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -198,7 +198,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -259,7 +259,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -318,7 +318,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -363,7 +363,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
@@ -410,7 +410,7 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
-      # Corporate proxy support (Node 22.21.0+ / 24.0.0+ for fetch - see docs/CONFIGURATION.md)
+      # Corporate proxy support - see docs/CONFIGURATION.md
       - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
       - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
       - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
