@@ -11,6 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.13.2] - 2026-08-25
 
+### Added
+
+- **Vault scans can now be narrowed by secrets engine, asset kind, and include/exclude rules.** The Vault import form gained a secrets-engine picker (load the engine list and tick which KV/PKI mounts to scan), asset-kind checkboxes (certificates, secrets & keys; all selected by default), and the same ordered include/exclude filter-rules editor already available for GitHub and GitLab imports. Rules can match the Vault location (`vault:mount/path`), so a whole engine, a folder, or a single secret can be included or excluded. The scan endpoint accepts a matching optional `categories` parameter, now documented in the OpenAPI contract along with the previously undocumented `pathPrefix`, `maxItemsPerMount`, and `filterRules` request fields.
+
 ### Fixed
 
 - **The webhook Test button could not reach Microsoft Teams destinations set up through Power Automate or Logic Apps.** The webhook destination allowlist only recognized the legacy `*.webhook.office.com` Teams connector hosts, not the `*.logic.azure.com` / `*.environment.api.powerplatform.com` hosts that Power Automate and Logic Apps flows actually use, nor the bare `office.com` / `office365.com` apex domains. All four are now in the built-in provider list.
@@ -20,6 +24,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`tests/integration/webhook-test-endpoint.test.js` intermittently reported the wrong status code post-merge.** The Power Automate/Teams and `WEBHOOK_EXTRA_PROVIDER_HOSTS` cases both reach the real network-fetch stage and arm the test-webhook endpoint's 5-second per-user cooldown; sharing one authenticated user across the whole suite let that cooldown leak into the unrelated IPv6-loopback and connection-error cases below, which then received `429` instead of their actual expected response. Each cooldown-arming case now uses its own authenticated user, and the `WEBHOOK_EXTRA_PROVIDER_HOSTS` case is exercised via `docker-compose.test.yml`'s API environment instead of mutating the test runner's own `process.env` (which never reached the separate Dockerized API and made that assertion pass for the wrong reason). All webhook-test-endpoint cases now also explicitly assert the response is never `429`.
 - **HashiCorp Vault KV scans only reported one certificate per secret.** When a KV v2 secret stored several certificates under different keys (a common layout for CA bundles), the scanner inspected every key but stopped at the first certificate it found and reported the secret as a single inventory item, silently dropping the rest. Every certificate key in a secret is now returned as its own item; secrets with a single certificate keep their existing identity so previously imported tokens are updated in place rather than duplicated.
 - **The Vault KV "Path Prefix" field returned no results when pointed at an exact secret instead of a folder.** The prefix was only ever resolved as a folder to `LIST`, so entering the full path to a specific secret (rather than its parent folder) returned an empty scan with no indication of why. The prefix now also resolves as an exact secret path when the folder listing comes up empty.
+- **A Vault KV "Path Prefix" that included the secrets engine's own name returned an empty scan.** Prefixes are relative to each scanned engine, but a path copied from the Vault CLI or UI usually includes the mount name itself (e.g. `staging/team/app` for a secret at `team/app` inside the `staging/` engine). A leading prefix segment matching the scanned engine's name is now stripped instead of silently matching nothing.
 
 ### Changed
 

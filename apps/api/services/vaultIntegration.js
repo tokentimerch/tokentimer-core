@@ -477,10 +477,23 @@ async function scanKvV2({
   pathPrefix = "",
 }) {
   const mountPath = mount.path; // already ends with '/'
-  const trimmedPrefix =
+  let trimmedPrefix =
     typeof pathPrefix === "string"
       ? pathPrefix.replace(/^\/+|\/+$/g, "")
       : "";
+  // A prefix copied from the Vault CLI/UI often includes the mount name
+  // itself (e.g. "staging/test/test" when scanning the "staging/" engine).
+  // The prefix is only meant to filter paths *inside* a mount, so strip a
+  // leading segment that matches this mount's own name; otherwise it would
+  // never match anything and silently return an empty scan.
+  const mountName = mountPath.replace(/\/$/, "");
+  if (mountName) {
+    if (trimmedPrefix === mountName) {
+      trimmedPrefix = "";
+    } else if (trimmedPrefix.startsWith(`${mountName}/`)) {
+      trimmedPrefix = trimmedPrefix.slice(mountName.length + 1);
+    }
+  }
   const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
   const keys = await listKvV2KeysRecursive({
     address,
@@ -644,6 +657,7 @@ async function scanVault({
   mounts: mountFilters = null,
   maxItemsPerMount = 250,
   pathPrefix = "",
+  categories = null,
 }) {
   if (!address || !token) {
     logger.error("Vault scan missing required parameters", {
@@ -664,12 +678,22 @@ async function scanVault({
     throw new Error(`Invalid Vault address: ${e.message}`);
   }
 
+  // Allowlist of asset categories to keep (e.g. only "cert"). Empty/absent
+  // means no filtering, matching the "all kinds" default in the UI.
+  const categorySet =
+    Array.isArray(categories) && categories.length > 0
+      ? new Set(categories.map((c) => String(c)))
+      : null;
+  const keepByCategory = (item) =>
+    !categorySet || categorySet.has(String(item.category));
+
   logger.info("Starting Vault scan", {
     address: address.replace(/\/\/[^@]+@/, "//***@"),
     includeKV: include.kv,
     includePKI: include.pki,
     pathPrefix: pathPrefix || "none",
     mountFilters: mountFilters?.length || "none",
+    categories: categorySet ? [...categorySet] : "all",
   });
 
   let mounts;
@@ -722,13 +746,14 @@ async function scanVault({
     if (m.type === "kv") {
       try {
         logger.debug("Scanning Vault KV mount", { mount: m.path });
-        const { items, truncated } = await scanKvV2({
+        const { items: rawItems, truncated } = await scanKvV2({
           address,
           token,
           mount: m,
           maxItems: maxItemsPerMount,
           pathPrefix,
         });
+        const items = rawItems.filter(keepByCategory);
         results.push(...items);
         summary.push({
           mount: m.path,
@@ -752,12 +777,13 @@ async function scanVault({
     } else if (m.type === "pki") {
       try {
         logger.debug("Scanning Vault PKI mount", { mount: m.path });
-        const { items, truncated } = await scanPki({
+        const { items: rawItems, truncated } = await scanPki({
           address,
           token,
           mount: m,
           maxItems: maxItemsPerMount,
         });
+        const items = rawItems.filter(keepByCategory);
         results.push(...items);
         summary.push({
           mount: m.path,

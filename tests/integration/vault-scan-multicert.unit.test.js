@@ -262,5 +262,99 @@ describe("Vault KV scan behavior", () => {
       const res = await scan("does/not/exist");
       expect(res.items).to.have.length(0);
     });
+
+    it("strips a leading mount-name segment copied into the prefix", async () => {
+      // Customers often copy the full Vault path including the mount name
+      // (e.g. from `vault kv get secret/common/ca`); that leading "secret/"
+      // must not be treated as part of the in-mount path.
+      const res = await scan("secret/common/ca");
+      expect(res.items).to.have.length(2);
+      for (const item of res.items) {
+        expect(item.category).to.equal("cert");
+        expect(item.path).to.equal("common/ca");
+      }
+    });
+
+    it("treats a prefix equal to just the mount name as no prefix", async () => {
+      const res = await scan("secret");
+      expect(res.items).to.have.length(3);
+    });
+  });
+
+  describe("scanVault category filtering", () => {
+    const routes = {
+      "GET /v1/sys/mounts": {
+        status: 200,
+        body: {
+          data: { "secret/": { type: "kv", options: { version: "2" } } },
+        },
+      },
+      "LIST /v1/secret/metadata/": {
+        status: 200,
+        body: { data: { keys: ["ca", "creds"] } },
+      },
+      "GET /v1/secret/data/ca": {
+        status: 200,
+        body: {
+          data: {
+            data: { certificate: TEST_PEM },
+            metadata: { created_time: "2026-01-01T00:00:00Z" },
+          },
+        },
+      },
+      "GET /v1/secret/data/creds": {
+        status: 200,
+        body: {
+          data: {
+            data: { password: "hunter2" },
+            metadata: { created_time: "2026-01-01T00:00:00Z" },
+          },
+        },
+      },
+    };
+
+    let vault;
+
+    before(async () => {
+      vault = await startFakeVault(routes);
+    });
+
+    after(async () => {
+      if (vault) await vault.close();
+    });
+
+    it("returns every category when no filter is given", async () => {
+      const res = await mod.scanVault({
+        address: vault.address,
+        token: "test-token",
+        include: { kv: true, pki: false },
+      });
+      expect(res.items).to.have.length(2);
+    });
+
+    it("keeps only cert items when categories is ['cert']", async () => {
+      const res = await mod.scanVault({
+        address: vault.address,
+        token: "test-token",
+        include: { kv: true, pki: false },
+        categories: ["cert"],
+      });
+      expect(res.items).to.have.length(1);
+      expect(res.items[0].category).to.equal("cert");
+      expect(res.summary).to.deep.equal([
+        { mount: "secret/", type: "kv", found: 1, truncated: false },
+      ]);
+    });
+
+    it("keeps only key_secret items when categories is ['key_secret']", async () => {
+      const res = await mod.scanVault({
+        address: vault.address,
+        token: "test-token",
+        include: { kv: true, pki: false },
+        categories: ["key_secret"],
+      });
+      expect(res.items).to.have.length(1);
+      expect(res.items[0].category).to.equal("key_secret");
+    });
   });
 });

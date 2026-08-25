@@ -1150,6 +1150,8 @@ export const vaultAPI = {
     mounts = [],
     maxItemsPerMount = 250,
     pathPrefix,
+    categories = undefined,
+    filterRules = undefined,
   }) => {
     if (!workspaceId) {
       throw new Error('workspaceId is required for integration scans');
@@ -1162,6 +1164,12 @@ export const vaultAPI = {
         mounts: Array.isArray(mounts) ? mounts : [],
         maxItemsPerMount,
         pathPrefix,
+        ...(Array.isArray(categories) && categories.length > 0
+          ? { categories }
+          : {}),
+        ...(Array.isArray(filterRules) && filterRules.length > 0
+          ? { filterRules }
+          : {}),
       };
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_SCAN(workspaceId),

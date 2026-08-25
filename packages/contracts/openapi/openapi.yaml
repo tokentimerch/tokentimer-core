@@ -9063,6 +9063,45 @@ components:
           type: array
           items:
             type: string
+        maxItemsPerMount:
+          type: integer
+          minimum: 1
+          maximum: 2000
+        pathPrefix:
+          type: string
+          description: >-
+            Folder inside each KV engine, or an exact secret path. A leading
+            segment matching the mount's own name is ignored.
+        categories:
+          type: array
+          description: >-
+            Asset categories to keep in the scan result. Omit to keep all.
+          items:
+            type: string
+            enum: [cert, key_secret]
+        filterRules:
+          type: array
+          maxItems: 50
+          description: >-
+            Ordered include/exclude rules applied to scan results before
+            import. Exclude rules always win; when include rules exist, only
+            matching items are kept.
+          items:
+            type: object
+            required: [action, matchType, field, value]
+            properties:
+              action:
+                type: string
+                enum: [include, exclude]
+              matchType:
+                type: string
+                enum: [regex, exact]
+              field:
+                type: string
+                enum: [name, description, location]
+              value:
+                type: string
+                maxLength: 500
     VaultMountsRequest:
       type: object
       required: [address, token]

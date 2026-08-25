@@ -99,6 +99,7 @@ router.post(
         maxItemsPerMount,
         pathPrefix,
         filterRules,
+        categories,
       } = req.body || {};
       // Prevent caching of sensitive responses
       res.set("Cache-Control", "no-store");
@@ -110,6 +111,19 @@ router.post(
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError)
         return res.status(400).json(withQuota({ error: filterRulesError }));
+      const VAULT_ASSET_CATEGORIES = ["cert", "key_secret"];
+      if (
+        categories !== undefined &&
+        categories !== null &&
+        (!Array.isArray(categories) ||
+          categories.some((c) => !VAULT_ASSET_CATEGORIES.includes(c)))
+      ) {
+        return res.status(400).json(
+          withQuota({
+            error: `categories must be an array containing only: ${VAULT_ASSET_CATEGORIES.join(", ")}`,
+          }),
+        );
+      }
       // Basic allowlist for schemes
       try {
         const u = new URL(address);
@@ -153,6 +167,7 @@ router.post(
           typeof pathPrefix === "string"
             ? pathPrefix.trim().replace(/^\/+|\/+$/g, "")
             : "",
+        categories: Array.isArray(categories) ? categories : null,
       });
       applyScanFilterRulesToResult(filterRules, result);
 
