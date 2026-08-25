@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **HashiCorp Vault KV scans only reported one certificate per secret.** When a KV v2 secret stored several certificates under different keys (a common layout for CA bundles), the scanner inspected every key but stopped at the first certificate it found and reported the secret as a single inventory item, silently dropping the rest. Every certificate key in a secret is now returned as its own item; secrets with a single certificate keep their existing identity so previously imported tokens are updated in place rather than duplicated.
+- **The Vault KV "Path Prefix" field returned no results when pointed at an exact secret instead of a folder.** The prefix was only ever resolved as a folder to `LIST`, so entering the full path to a specific secret (rather than its parent folder) returned an empty scan with no indication of why. The prefix now also resolves as an exact secret path when the folder listing comes up empty.
+
 ## [0.13.2] - 2026-08-25
 
 ### Fixed

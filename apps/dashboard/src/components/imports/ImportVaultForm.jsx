@@ -424,7 +424,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                   size='sm'
                 />
                 <Text fontSize='xs' color={helpTextColor} mt={1}>
-                  Only scan secrets under this path. Leave empty to scan all.
+                  Folder inside each KV engine (e.g., prod/api) or an exact
+                  secret path. Leave empty to scan all.
                 </Text>
               </Box>
             </AccordionPanel>
