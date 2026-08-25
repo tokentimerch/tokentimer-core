@@ -109,6 +109,41 @@ describe("Config package unit coverage", () => {
         restore();
       }
     });
+
+    it("includes the office.com/office365.com apexes and Power Automate hosts by default", async () => {
+      const network = await importFresh("packages/config/src/network.js");
+      const defaults = network.getDefaultWebhookHosts();
+      expect(defaults).to.include("office.com");
+      expect(defaults).to.include("office365.com");
+      expect(defaults).to.include("*.logic.azure.com");
+      expect(defaults).to.include("*.environment.api.powerplatform.com");
+
+      const restore = setEnv({
+        WEBHOOK_ALLOW_ALL_HOSTS: "false",
+        WEBHOOK_PROVIDER_HOSTS: "",
+        WEBHOOK_EXTRA_PROVIDER_HOSTS: "",
+      });
+      try {
+        expect(network.isWebhookAllowed("https://office.com/path")).to.equal(
+          true,
+        );
+        expect(
+          network.isWebhookAllowed("https://office365.com/path"),
+        ).to.equal(true);
+        expect(
+          network.isWebhookAllowed(
+            "https://prod-00.westus.logic.azure.com/path",
+          ),
+        ).to.equal(true);
+        expect(
+          network.isWebhookAllowed(
+            "https://xyz.02.environment.api.powerplatform.com/path",
+          ),
+        ).to.equal(true);
+      } finally {
+        restore();
+      }
+    });
   });
 
   describe("database config", () => {

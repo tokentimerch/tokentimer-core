@@ -22,6 +22,39 @@ describe("Webhook test endpoint behavior", function () {
     expect(res.body.error).to.match(/Webhook host not allowed/i);
   });
 
+  it("accepts a Power Automate / Logic Apps host for kind=teams", async () => {
+    const res = await request(BASE)
+      .post("/api/test-webhook")
+      .set("Cookie", cookie)
+      .send({
+        url: "https://prod-00.westus.logic.azure.com:443/workflows/abc123/triggers/manual/paths/invoke",
+        kind: "teams",
+      });
+    // Not blocked by the friendly provider allowlist; any remaining
+    // failure must come from the network call itself, never
+    // WEBHOOK_HOST_NOT_ALLOWED.
+    expect(res.body.code).to.not.equal("WEBHOOK_HOST_NOT_ALLOWED");
+  });
+
+  it("honors WEBHOOK_EXTRA_PROVIDER_HOSTS end-to-end through the route", async () => {
+    const extraHost = "hooks.integration-test.example.com";
+    const original = process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = extraHost;
+    try {
+      const res = await request(BASE)
+        .post("/api/test-webhook")
+        .set("Cookie", cookie)
+        .send({ url: `https://${extraHost}/webhook`, kind: "slack" });
+      // Previously WEBHOOK_EXTRA_PROVIDER_HOSTS was parsed but never
+      // merged into the actual allowlist, so this always came back
+      // WEBHOOK_HOST_NOT_ALLOWED. It must not anymore.
+      expect(res.body.code).to.not.equal("WEBHOOK_HOST_NOT_ALLOWED");
+    } finally {
+      if (original === undefined) delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+      else process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = original;
+    }
+  });
+
   it("rejects IPv6 loopback with the private-IP block message", async () => {
     const res = await request(BASE)
       .post("/api/test-webhook")

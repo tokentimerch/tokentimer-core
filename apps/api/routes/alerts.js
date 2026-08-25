@@ -13,6 +13,7 @@ const { testWebhookUrl } = require("../config/constants");
 const {
   shouldEnforcePrivateIpCheck,
   validateResolvedIP,
+  webhookHostAllowed,
 } = require("../utils/webhookSafety");
 const systemSettings = require("../services/systemSettings");
 const {
@@ -1675,42 +1676,6 @@ router.post(
           code: "TEST_WEBHOOK_COOLDOWN",
         });
       }
-      // Allowed provider hosts (align with apps/worker delivery logic)
-      const DEFAULT_PROVIDER_HOSTS = [
-        "hooks.slack.com",
-        "discord.com",
-        "discordapp.com",
-        "outlook.office.com",
-        "webhook.office.com",
-        "office.com",
-        "office365.com",
-        "events.eu.pagerduty.com",
-        "*.office.com",
-        "*.office365.com",
-        "events.pagerduty.com",
-        "*.pagerduty.com",
-      ];
-      const hostMatchesAllowed = (hostname, allowedList) => {
-        for (const entry of allowedList) {
-          if (entry.startsWith("*.")) {
-            const suffix = entry.slice(1); // .domain
-            if (hostname.endsWith(suffix)) return true;
-          }
-          if (hostname === entry) return true;
-        }
-        return false;
-      };
-      const extraHostsEnv = (
-        process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS ||
-        process.env.WEBHOOK_PROVIDER_HOSTS ||
-        ""
-      )
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const ALLOW_ALL_HOSTS =
-        String(process.env.WEBHOOK_ALLOW_ALL_HOSTS || "").toLowerCase() ===
-          "true" || extraHostsEnv.includes("*");
       const {
         url,
         kind = "generic",
@@ -1746,16 +1711,15 @@ router.post(
           : "warning";
       };
 
-      // Friendly provider allowlist check
+      // Friendly provider allowlist check (shared with worker delivery via
+      // @tokentimer/webhook-safety, honors WEBHOOK_EXTRA_PROVIDER_HOSTS /
+      // WEBHOOK_PROVIDER_HOSTS and WEBHOOK_ALLOW_ALL_HOSTS).
       const lowerKind = String(req.body?.kind || "generic").toLowerCase();
       if (lowerKind !== "generic") {
-        const allowed = hostMatchesAllowed(
-          target.hostname,
-          DEFAULT_PROVIDER_HOSTS,
-        );
-        if (!allowed && !ALLOW_ALL_HOSTS) {
+        const allowed = webhookHostAllowed(target.hostname);
+        if (!allowed) {
           return res.status(400).json({
-            error: `Webhook host not allowed for provider (${lowerKind}). Use a domain such as hooks.slack.com, discord.com, outlook.office.com/webhook.office.com, office365.com, or events.pagerduty.com`,
+            error: `Webhook host not allowed for provider (${lowerKind}). Use a domain such as hooks.slack.com, discord.com, a Teams Workflows / Power Automate host (*.environment.api.powerplatform.com or *.logic.azure.com), or events.pagerduty.com. Self-hosted deployments can add hosts via WEBHOOK_EXTRA_PROVIDER_HOSTS.`,
             code: "WEBHOOK_HOST_NOT_ALLOWED",
           });
         }

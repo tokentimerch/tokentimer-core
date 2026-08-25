@@ -171,8 +171,8 @@ the origins users and integrations actually use in the browser.
 | `WEBHOOK_ALLOW_ALL_HOSTS`                 | Allow all webhook destinations when `true`                                  | `false`                               | Webhook security     |
 | `WEBHOOK_ALLOW_PRIVATE_IPS`               | Allow webhook delivery to private/reserved IPs when `true` (self-hosted)    | `false`                               | Webhook security     |
 | `WEBHOOK_ENFORCE_PRIVATE_IP_CHECK`        | Force the private-IP check even when `NODE_ENV=test` (test infrastructure)  | `false`                               | Webhook security     |
-| `WEBHOOK_PROVIDER_HOSTS`                  | Extra allowed provider hosts                                                | `empty (built-in list still allowed)` | Webhook security     |
-| `WEBHOOK_EXTRA_PROVIDER_HOSTS`            | Additional allowed hosts                                                    | `empty`                               | Webhook security     |
+| `WEBHOOK_PROVIDER_HOSTS`                  | Legacy alias for `WEBHOOK_EXTRA_PROVIDER_HOSTS`. Both variables are parsed and unioned together (not a fallback -- if both are set, hosts from either are allowed). Neither variable replaces the built-in provider allowlist (Slack, Discord, Teams incl. legacy `office.com`/`office365.com`, PagerDuty, and Power Automate/Logic Apps `*.logic.azure.com` / `*.environment.api.powerplatform.com`), which is always allowed in addition to whatever these add. Prefer `WEBHOOK_EXTRA_PROVIDER_HOSTS` for new entries. | `empty (built-in list still allowed)` | Webhook security     |
+| `WEBHOOK_EXTRA_PROVIDER_HOSTS`            | Additional allowed hosts, unioned with the built-in provider allowlist above and with `WEBHOOK_PROVIDER_HOSTS` if both are set (comma-separated) | `empty`                               | Webhook security     |
 | `VAULT_ADDRESS_ALLOWLIST`                 | Vault integration host allowlist                                            | `empty (no host restriction)`         | Integration security |
 | `AZURE_VAULT_ADDRESS_ALLOWLIST`           | Azure Key Vault host allowlist                                              | `empty (no host restriction)`         | Integration security |
 | `GITHUB_ADDRESS_ALLOWLIST`                | GitHub host allowlist                                                       | `empty (no host restriction)`         | Integration security |
@@ -186,6 +186,45 @@ the origins users and integrations actually use in the browser.
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
+
+## Proxy
+
+Corporate proxy support for outbound HTTP(S) calls: the API's `fetch`/undici
+calls (e.g. the webhook Test button, OAuth/SAML callbacks) and the worker's
+`axios` calls (which already honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on
+any Node version; `NODE_USE_ENV_PROXY` only changes `fetch`/undici behavior).
+
+The table below is the variable **inside the container**, which is what Node
+actually reads. Docker Compose sources each one from a dedicated,
+`TOKENTIMER_`-prefixed `.env` input (`TOKENTIMER_USE_ENV_PROXY`,
+`TOKENTIMER_HTTP_PROXY`, `TOKENTIMER_HTTPS_PROXY`, `TOKENTIMER_NO_PROXY`)
+rather than the bare name, so a corporate shell's own ambient `HTTP_PROXY` (or
+`NODE_USE_ENV_PROXY`) can never silently apply to your containers. Set
+`TOKENTIMER_USE_ENV_PROXY=1` whenever you set the proxy URLs in `.env`, or the
+API's `fetch` stays unproxied (the Test button keeps failing) while the
+worker's `axios` still proxies real delivery -- exactly the half-on state
+this release fixes.
+
+| Variable              | Description                                                                     | Default value | Scope       |
+| --------------------- | -------------------------------------------------------------------------------- | -------------- | ----------- |
+| `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. Requires Node **22.21.0+ or 24.0.0+** for `fetch`/undici (not any `23.x` release). Node's native `node:http`/`node:https` modules need a later floor, **24.5.0+**, but neither the API nor the worker use those modules directly today (API uses `fetch`, worker uses `axios`), so that later floor doesn't gate anything here. On an unsupported version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (`axios` keeps working regardless of Node version). Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
+| `HTTP_PROXY`           | Proxy URL for plain HTTP destinations, e.g. `http://user:pass@proxy:3128`. Compose input: `TOKENTIMER_HTTP_PROXY`. | `unset`        | API, worker |
+| `HTTPS_PROXY`          | Proxy URL for HTTPS destinations. Compose input: `TOKENTIMER_HTTPS_PROXY`.        | `unset`        | API, worker |
+| `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |
+
+**Helm.** The chart does not accept plain-text proxy URLs as values (they
+commonly embed credentials). Set `config.useEnvProxy: true` plus
+`config.proxyExistingSecret` (name of a pre-existing Secret containing
+`HTTP_PROXY`/`HTTPS_PROXY` keys, mounted via `envFrom`; **required** -- the
+chart fails the render if `useEnvProxy=true` without it) and, optionally,
+`config.noProxy` for extra `NO_PROXY` entries -- the chart always appends
+`localhost`, `127.0.0.1`, `::1`, the in-cluster API service hostname, and
+`.svc`/`.cluster.local`, so intra-cluster calls never route through the
+proxy. When `networkPolicy.enabled` and `config.useEnvProxy` are both `true`,
+`networkPolicy.egress.proxyCidrs`/`proxyPorts` are **required** (the chart
+fails the render naming whichever is missing, rather than silently rendering
+a NetworkPolicy that blocks the proxy it was just told to use). See
+[`deploy/helm/README.md`](../deploy/helm/README.md) for details and examples.
 
 ## CertOps (certificate operations)
 

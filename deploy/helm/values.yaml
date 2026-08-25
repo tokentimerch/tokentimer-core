@@ -25,7 +25,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.13.1"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
@@ -111,7 +111,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.13.1"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -158,7 +158,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.13.1"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -303,7 +303,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.13.1"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -456,6 +456,40 @@ config:
   # blocks these to prevent SSRF against internal infrastructure; only enable
   # this if webhook targets intentionally live on a private network.
   webhookAllowPrivateIps: false
+
+  # Extra allowed webhook destination hosts (comma-separated). Legacy alias,
+  # parsed and unioned together with webhookExtraProviderHosts (not a
+  # fallback -- if both are set, hosts from either are allowed); not a
+  # full-list override of the built-in provider allowlist (Slack,
+  # Discord, Teams, PagerDuty, Power Automate/Logic Apps).
+  webhookProviderHosts: ""
+  # Extra allowed webhook destination hosts (comma-separated). Unioned with
+  # webhookProviderHosts when both are set.
+  webhookExtraProviderHosts: ""
+  # Set to true to allow webhook alert/test destinations to any host,
+  # bypassing the friendly-provider allowlist entirely. Not recommended
+  # outside of trusted, fully self-hosted environments.
+  webhookAllowAllHosts: false
+
+  # Corporate proxy support for outbound HTTP(S) (fetch/undici and axios).
+  # Requires Node 22.21.0+ or 24.0.0+ on the API/worker images for the
+  # fetch/undici path this chart actually relies on; a startup warning is
+  # logged (non-fatal) on unsupported versions. See
+  # https://nodejs.org/api/cli.html#node_use_env_proxy1.
+  useEnvProxy: false
+  # Name of an existing Kubernetes Secret (created outside this chart)
+  # containing HTTP_PROXY and HTTPS_PROXY keys. Proxy URLs commonly embed
+  # credentials (http://user:pass@proxy:3128), so there is intentionally no
+  # plaintext proxy URL value in this chart. Required when useEnvProxy=true
+  # (the chart fails the render otherwise); mounted via envFrom on the API
+  # Deployment and all worker CronJobs.
+  proxyExistingSecret: ""
+  # Comma-separated NO_PROXY overrides. Always combined with localhost,
+  # 127.0.0.1, ::1, the in-cluster API service hostname, and .svc/.cluster.local,
+  # so intra-cluster API calls never accidentally route through the proxy.
+  # Only emitted when useEnvProxy=true.
+  noProxy: ""
+
   nodeEnv: "production"        # set to "development" for debug/testing
   baseUrl: "http://localhost:8080"
   apiUrl: "http://localhost:4000"
@@ -595,6 +629,18 @@ networkPolicy:
     kubeApiServerCidrs: []
     # Match the effective destination port, which may differ from Service 443.
     kubeApiServerPort: 443
+    # Corporate proxy egress. Destination CIDRs the proxy configured via
+    # config.useEnvProxy lives on. Empty list (default) renders no proxy
+    # egress rule. Required (chart fails the render otherwise) when
+    # config.useEnvProxy=true and networkPolicy.enabled=true.
+    proxyCidrs: []
+    # Ports opened to proxyCidrs above. Defaults open BOTH 3128 and 8080 to
+    # every listed CIDR; narrow this list if your proxy only listens on one
+    # of them. Required (non-empty, each an integer 1-65535) under the same
+    # condition as proxyCidrs.
+    proxyPorts:
+      - 3128
+      - 8080
 
 # -- Pod Security (shared defaults) --------------------------------------------
 podSecurityContext:

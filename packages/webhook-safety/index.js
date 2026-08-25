@@ -294,9 +294,133 @@ async function validateResolvedIP(hostname, options = {}) {
   }
 }
 
+/**
+ * Friendly provider host allowlist shared by the Test button (API), the
+ * worker's delivery path, and self-hosted configuration checks. This is a
+ * usability guardrail (stops accidental "generic webhook" typos to the
+ * wrong provider), not the SSRF private-IP defense above.
+ *
+ * office.com/office365.com cover legacy Teams incoming webhooks (Microsoft
+ * is deprecating that connector); the *.logic.azure.com and
+ * *.environment.api.powerplatform.com wildcards cover Power Automate /
+ * Logic Apps flows used as the modern Teams webhook replacement.
+ */
+const DEFAULT_WEBHOOK_PROVIDER_HOSTS = [
+  "hooks.slack.com",
+  "discord.com",
+  "discordapp.com",
+  "outlook.office.com",
+  "webhook.office.com",
+  "office.com",
+  "office365.com",
+  "*.office.com",
+  "*.office365.com",
+  "events.pagerduty.com",
+  "events.eu.pagerduty.com",
+  "*.pagerduty.com",
+  "*.logic.azure.com",
+  "*.environment.api.powerplatform.com",
+];
+
+/**
+ * Normalize a single host/pattern entry: trim whitespace, lowercase, and
+ * strip exactly one trailing DNS root dot. Wildcard prefixes ("*.") are
+ * left intact. Safe to apply repeatedly (idempotent).
+ */
+function normalizeWebhookHostEntry(value) {
+  let host = String(value || "").trim().toLowerCase();
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  return host;
+}
+
+function parseWebhookHostList(raw) {
+  return String(raw || "")
+    .split(",")
+    .map(normalizeWebhookHostEntry)
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Raw extras list from env, normalized but not yet unioned with defaults.
+ * WEBHOOK_PROVIDER_HOSTS is a legacy alias for WEBHOOK_EXTRA_PROVIDER_HOSTS;
+ * both are parsed and de-duped together so a self-hosted operator who has
+ * either variable set (or both, e.g. mid-migration from the legacy name)
+ * never loses previously-allowed hosts. Read at call time so tests can
+ * mutate env vars. Includes the literal "*" sentinel if either variable
+ * has it; callers that need the allow-all flag check this list directly
+ * (see allowAllWebhookHosts). getWebhookProviderHosts() strips it out.
+ */
+function getExtraWebhookProviderHosts() {
+  const extra = parseWebhookHostList(process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS);
+  const legacy = parseWebhookHostList(process.env.WEBHOOK_PROVIDER_HOSTS);
+  return [...new Set([...extra, ...legacy])];
+}
+
+/**
+ * De-duped union of the canonical default provider hosts and any
+ * self-hosted extras from env. Read at call time (not cached at module
+ * load) so tests and runtime env changes are picked up immediately.
+ * Never includes the literal "*" sentinel: that's consumed entirely by
+ * allowAllWebhookHosts() and must never be matched as a literal hostname.
+ */
+function getWebhookProviderHosts() {
+  const defaults = DEFAULT_WEBHOOK_PROVIDER_HOSTS.map(
+    normalizeWebhookHostEntry,
+  );
+  const extras = getExtraWebhookProviderHosts().filter(
+    (entry) => entry !== "*",
+  );
+  return [...new Set([...defaults, ...extras])];
+}
+
+/**
+ * Whether the provider allowlist should be bypassed entirely. True when
+ * WEBHOOK_ALLOW_ALL_HOSTS=true, or when the extras env var contains the
+ * literal sentinel "*". Read at call time.
+ */
+function allowAllWebhookHosts() {
+  const flag = String(process.env.WEBHOOK_ALLOW_ALL_HOSTS || "")
+    .trim()
+    .toLowerCase();
+  if (flag === "true") return true;
+  return getExtraWebhookProviderHosts().includes("*");
+}
+
+/**
+ * Match a hostname against a single allowlist entry. Wildcard entries
+ * ("*.domain.tld") match both the bare apex and any subdomain.
+ */
+function hostMatchesEntry(hostname, entry) {
+  if (entry.startsWith("*.")) {
+    return hostname === entry.slice(2) || hostname.endsWith(entry.slice(1));
+  }
+  return hostname === entry;
+}
+
+/**
+ * Whether a hostname is allowed as a "friendly provider" webhook target
+ * (Slack, Discord, Teams, PagerDuty, Power Automate/Logic Apps, or a
+ * self-hosted extra). Returns true immediately when allow-all is set.
+ * A literal "*" entry in the host list is never itself treated as a
+ * hostname to match; it is consumed entirely by allowAllWebhookHosts().
+ *
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function webhookHostAllowed(hostname) {
+  if (allowAllWebhookHosts()) return true;
+  const host = normalizeWebhookHostEntry(hostname);
+  const allowList = getWebhookProviderHosts();
+  return allowList.some((entry) => hostMatchesEntry(host, entry));
+}
+
 module.exports = {
   isPrivateOrReservedIP,
   allowPrivateWebhookIPs,
   shouldEnforcePrivateIpCheck,
   validateResolvedIP,
+  DEFAULT_WEBHOOK_PROVIDER_HOSTS,
+  getWebhookProviderHosts,
+  allowAllWebhookHosts,
+  webhookHostAllowed,
 };

@@ -210,6 +210,48 @@ describe("Core services unit coverage", () => {
       expect(calls).to.have.length(2);
     });
 
+    it("accepts a Power Automate / Logic Apps host for kind=teams", async () => {
+      const constants = loadConstantsWith((raw, defaults) => defaults);
+      global.fetch = async () => ({
+        status: 200,
+        text: async () => "",
+      });
+
+      const res = await constants.testWebhookUrl(
+        "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke",
+        "teams",
+      );
+      expect(res.success).to.equal(true);
+    });
+
+    it("honors WEBHOOK_EXTRA_PROVIDER_HOSTS for the provider allowlist", async () => {
+      const original = process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+      process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "hooks.custom-extra.example.com";
+      try {
+        const constants = loadConstantsWith((raw, defaults) => defaults);
+        global.fetch = async () => ({
+          status: 200,
+          text: async () => "ok",
+        });
+
+        const allowed = await constants.testWebhookUrl(
+          "https://hooks.custom-extra.example.com/webhook",
+          "slack",
+        );
+        expect(allowed.success).to.equal(true);
+
+        const stillDisallowed = await constants.testWebhookUrl(
+          "https://not-in-list.example.com/webhook",
+          "slack",
+        );
+        expect(stillDisallowed.success).to.equal(false);
+        expect(stillDisallowed.error).to.match(/not allowed/i);
+      } finally {
+        if (original === undefined) delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+        else process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = original;
+      }
+    });
+
     it("returns timeout message on AbortError", async () => {
       const constants = loadConstantsWith((raw, defaults) => defaults);
       global.fetch = async () => {

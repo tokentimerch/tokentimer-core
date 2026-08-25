@@ -19,59 +19,6 @@ async function validateResolvedIP(hostname) {
   });
 }
 
-// Allowlist of well-known hosts for specific providers; generic webhooks can target any https host
-const DEFAULT_PROVIDER_HOSTS = [
-  "hooks.slack.com",
-  "discord.com",
-  "discordapp.com",
-  "outlook.office.com", // MS Teams webhook URL
-  "webhook.office.com", // MS Teams webhook URL
-  "office.com",
-  "office365.com", // MS Teams incoming webhook
-  "*.office.com", // MS Teams wildcard
-  "*.office365.com", // MS Teams wildcard
-  "events.pagerduty.com", // PagerDuty Events v2 API endpoint (US)
-  "events.eu.pagerduty.com", // PagerDuty Events v2 API endpoint (EU)
-  "*.pagerduty.com", // Allow regional variants
-];
-
-function getExtendedProviderHosts() {
-  const raw =
-    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS ||
-    process.env.WEBHOOK_PROVIDER_HOSTS ||
-    "";
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-function hostMatchesAllowed(hostname, allowedList) {
-  for (const entry of allowedList) {
-    if (entry.startsWith("*.") && hostname.endsWith(entry.slice(1)))
-      return true;
-    if (hostname === entry) return true;
-  }
-  return false;
-}
-
-const PROVIDER_HOSTS = [
-  ...new Set([...DEFAULT_PROVIDER_HOSTS, ...getExtendedProviderHosts()]),
-];
-
-// Allow-all switch via env: set WEBHOOK_ALLOW_ALL_HOSTS=true or include '*' in WEBHOOK_PROVIDER_HOSTS
-const _extraHostsEnv = (
-  process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS ||
-  process.env.WEBHOOK_PROVIDER_HOSTS ||
-  ""
-)
-  .split(",")
-  .map((s) => s.trim())
-  .filter((s) => s.length > 0);
-const ALLOW_ALL_HOSTS =
-  String(process.env.WEBHOOK_ALLOW_ALL_HOSTS || "").toLowerCase() === "true" ||
-  _extraHostsEnv.includes("*");
-
 function normalizeSeverity(raw) {
   const s = String(raw || "").toLowerCase();
   if (s === "critical" || s === "error" || s === "warning" || s === "info")
@@ -147,13 +94,15 @@ export async function postJson(webhookUrl, body, kind = "generic") {
     const lowerKind = String(kind || "generic").toLowerCase();
     if (
       lowerKind !== "generic" &&
-      !ALLOW_ALL_HOSTS &&
-      !hostMatchesAllowed(url.hostname, PROVIDER_HOSTS)
+      !webhookSafety.webhookHostAllowed(url.hostname)
     ) {
       logger.error(
         `Webhook host not allowed for provider: ${url.hostname} (kind: ${kind})`,
       );
-      logger.error(`Allowed hosts:`, PROVIDER_HOSTS);
+      logger.error(
+        `Allowed hosts:`,
+        webhookSafety.getWebhookProviderHosts(),
+      );
       try {
         cDeniedHost.labels(lowerKind, url.hostname).inc();
       } catch (_) {}
@@ -177,7 +126,7 @@ export async function postJson(webhookUrl, body, kind = "generic") {
     if (process.env.NODE_ENV === "test") {
       if (
         lowerKind !== "generic" &&
-        (ALLOW_ALL_HOSTS || hostMatchesAllowed(url.hostname, PROVIDER_HOSTS))
+        webhookSafety.webhookHostAllowed(url.hostname)
       ) {
         // Convention in tests:
         // - Any path containing "bad" or ending with "/__fail__" => forced failure

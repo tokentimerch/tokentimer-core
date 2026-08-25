@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.13.1
+  version: 0.13.2
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -1895,7 +1895,15 @@ paths:
       tags: [Alerts]
       summary: Send test webhook
       operationId: sendTestWebhook
-      description: Sends a test webhook payload to validate destination settings.
+      description: >-
+        Sends a test webhook payload to validate destination settings. For
+        non-generic kinds (slack, teams, discord, pagerduty) the destination
+        host must match the built-in provider allowlist (Slack, Discord,
+        Teams, PagerDuty, and Power Automate/Logic Apps hosts) or a host added
+        via WEBHOOK_EXTRA_PROVIDER_HOSTS; other hosts are rejected with a 400
+        and code WEBHOOK_HOST_NOT_ALLOWED. Destinations resolving to
+        private/reserved IPs are rejected unless WEBHOOK_ALLOW_PRIVATE_IPS is
+        enabled (self-hosted only).
       requestBody:
         required: true
         content:

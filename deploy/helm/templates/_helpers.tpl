@@ -219,6 +219,19 @@ DISABLE_MANUAL_INVITES: "true"
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
+{{- if .Values.config.webhookProviderHosts }}
+WEBHOOK_PROVIDER_HOSTS: {{ .Values.config.webhookProviderHosts | quote }}
+{{- end }}
+{{- if .Values.config.webhookExtraProviderHosts }}
+WEBHOOK_EXTRA_PROVIDER_HOSTS: {{ .Values.config.webhookExtraProviderHosts | quote }}
+{{- end }}
+{{- if .Values.config.webhookAllowAllHosts }}
+WEBHOOK_ALLOW_ALL_HOSTS: "true"
+{{- end }}
+{{- if .Values.config.useEnvProxy }}
+NODE_USE_ENV_PROXY: "1"
+NO_PROXY: {{ list "localhost" "127.0.0.1" "::1" (printf "%s-api" (include "tokentimer.fullname" .)) ".svc" ".cluster.local" .Values.config.noProxy | compact | join "," | quote }}
+{{- end }}
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"
 {{- end }}
@@ -298,6 +311,7 @@ Stable secret inputs (avoids randAlphaNum in checksum/secret during helm templat
   "twilioExistingSecret" (.Values.twilio.existingSecret | default "")
   "adminEmail" (.Values.config.adminEmail | default "")
   "disableAdminBootstrap" .Values.config.disableAdminBootstrap
+  "proxyExistingSecret" (.Values.config.proxyExistingSecret | default "")
   | toYaml | sha256sum }}
 {{- end -}}
 
@@ -351,6 +365,10 @@ and any existing secrets for DB / SMTP / Twilio.
 {{- if .Values.twilio.existingSecret }}
 - secretRef:
     name: {{ .Values.twilio.existingSecret }}
+{{- end }}
+{{- if and .Values.config.useEnvProxy .Values.config.proxyExistingSecret }}
+- secretRef:
+    name: {{ .Values.config.proxyExistingSecret }}
 {{- end }}
 {{- end }}
 
@@ -489,6 +507,32 @@ secret.secretName and configMap.name may use Helm tpl.
   {{- end -}}
   {{- if and (eq (len .Values.networkPolicy.egress.controllerApiCidrs) 0) (not .Values.api.enabled) -}}
     {{- fail "networkPolicy.egress.controllerApiCidrs is required when networkPolicy is enabled and api.enabled=false" -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* ---- Corporate proxy helpers ---- */}}
+
+{{/*
+Validates the corporate-proxy configuration surface. config.useEnvProxy gates
+the ConfigMap vars, the Secret mount, and the NetworkPolicy egress rule
+together so axios (worker) and fetch (API) can never end up half-proxied.
+*/}}
+{{- define "tokentimer.proxyValidate" -}}
+{{- if .Values.config.useEnvProxy -}}
+  {{- $_ := required "config.proxyExistingSecret is required when config.useEnvProxy=true" .Values.config.proxyExistingSecret -}}
+  {{- if .Values.networkPolicy.enabled -}}
+    {{- if eq (len .Values.networkPolicy.egress.proxyCidrs) 0 -}}
+      {{- fail "networkPolicy.egress.proxyCidrs is required when config.useEnvProxy=true and networkPolicy.enabled=true" -}}
+    {{- end -}}
+    {{- if eq (len .Values.networkPolicy.egress.proxyPorts) 0 -}}
+      {{- fail "networkPolicy.egress.proxyPorts is required when config.useEnvProxy=true and networkPolicy.enabled=true" -}}
+    {{- end -}}
+    {{- range $port := .Values.networkPolicy.egress.proxyPorts -}}
+      {{- if or (ne ($port | toString) ($port | int | toString)) (lt (int $port) 1) (gt (int $port) 65535) -}}
+        {{- fail (printf "networkPolicy.egress.proxyPorts entries must be integers in 1-65535, got %v" $port) -}}
+      {{- end -}}
+    {{- end -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}

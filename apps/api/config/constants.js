@@ -3,6 +3,7 @@ const { logger } = require("../utils/logger");
 const {
   shouldEnforcePrivateIpCheck,
   validateResolvedIP,
+  webhookHostAllowed,
 } = require("../utils/webhookSafety");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
@@ -41,33 +42,8 @@ async function testWebhookUrl(
     const target = new URL(url);
     if (!/^https?:$/.test(target.protocol))
       return { success: false, error: "Webhook URL must be http(s)" };
-    const DEFAULT_PROVIDER_HOSTS = [
-      "hooks.slack.com",
-      "discord.com",
-      "discordapp.com",
-      "outlook.office.com",
-      "webhook.office.com",
-      "office.com",
-      "office365.com",
-      "events.eu.pagerduty.com",
-      "*.office.com",
-      "*.office365.com",
-      "events.pagerduty.com",
-      "*.pagerduty.com",
-    ];
-    const hostMatchesAllowed = (hostname, allowedList) => {
-      for (const entry of allowedList) {
-        if (entry.startsWith("*.") && hostname.endsWith(entry.slice(1)))
-          return true;
-        if (hostname === entry) return true;
-      }
-      return false;
-    };
     const lowerKind = String(kind || "generic").toLowerCase();
-    if (
-      lowerKind !== "generic" &&
-      !hostMatchesAllowed(target.hostname, DEFAULT_PROVIDER_HOSTS)
-    ) {
+    if (lowerKind !== "generic" && !webhookHostAllowed(target.hostname)) {
       return { success: false, error: "Webhook host not allowed for provider" };
     }
     if (lowerKind === "pagerduty") {
