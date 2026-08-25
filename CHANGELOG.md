@@ -24,7 +24,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The webhook host allowlist, its `WEBHOOK_PROVIDER_HOSTS`/`WEBHOOK_EXTRA_PROVIDER_HOSTS`/`WEBHOOK_ALLOW_ALL_HOSTS` environment variables, and the new proxy variables are now also configurable through the Helm chart (`config.webhookProviderHosts`, `config.webhookExtraProviderHosts`, `config.webhookAllowAllHosts`, `config.useEnvProxy`, `config.proxyExistingSecret`, `config.noProxy`), matching the existing Docker Compose support. NetworkPolicy egress rules gained matching `networkPolicy.egress.proxyCidrs`/`proxyPorts` for clusters that enable `useEnvProxy`.
 - Version metadata bumped to 0.13.2 across all manifests, contracts, and the Helm chart.
 - A new CI job (`pnpm run test:proxy-smoke`) proves the `NODE_USE_ENV_PROXY` behavior above end to end with a real local forward proxy and a real HTTPS target, for both `fetch` and `axios`, on every supported Node.js version, so a regression in either client's proxy handling now blocks the pipeline instead of only surfacing in a self-hosted operator's environment.
-- `ci.yml` now also runs on `pull_request` (previously only on `push` to `main`/`master`), so CI failures surface on the PR itself instead of after merge.
 
 ## [0.13.1] - 2026-08-21
 
