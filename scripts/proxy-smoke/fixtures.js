@@ -123,7 +123,7 @@ function createForwardProxy({ hostAliases = {} } = {}) {
   }
 
   function close() {
-    // Destroy raw CONNECT tunnel sockets ourselves — they bypass the
+    // Destroy raw CONNECT tunnel sockets ourselves; they bypass the
     // http.Server request lifecycle entirely, so closeAllConnections()
     // (below) never reaches them.
     for (const socket of tunnelSockets) socket.destroy();

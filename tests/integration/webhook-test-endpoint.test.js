@@ -23,13 +23,19 @@ describe("Webhook test endpoint behavior", function () {
   });
 
   it("accepts a Power Automate / Logic Apps host for kind=teams", async () => {
+    // Own user: this case reaches the real network-fetch stage, which arms
+    // the 5s per-user test-webhook cooldown. Sharing `cookie` with the other
+    // cases below would make them intermittently see 429 instead of their
+    // actual expected response.
+    const { cookie: teamsCookie } = await TestUtils.createAuthenticatedUser();
     const res = await request(BASE)
       .post("/api/test-webhook")
-      .set("Cookie", cookie)
+      .set("Cookie", teamsCookie)
       .send({
         url: "https://prod-00.westus.logic.azure.com:443/workflows/abc123/triggers/manual/paths/invoke",
         kind: "teams",
       });
+    expect(res.status).to.not.equal(429);
     // Not blocked by the friendly provider allowlist; any remaining
     // failure must come from the network call itself, never
     // WEBHOOK_HOST_NOT_ALLOWED.
@@ -37,22 +43,25 @@ describe("Webhook test endpoint behavior", function () {
   });
 
   it("honors WEBHOOK_EXTRA_PROVIDER_HOSTS end-to-end through the route", async () => {
+    // The Dockerized API under test runs in its own process/container, so
+    // mutating process.env here would only affect this test-runner process,
+    // never the API actually receiving the request. The extra host below
+    // must instead be configured on the API service itself (see
+    // WEBHOOK_EXTRA_PROVIDER_HOSTS in deploy/compose/docker-compose.test.yml).
     const extraHost = "hooks.integration-test.example.com";
-    const original = process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
-    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = extraHost;
-    try {
-      const res = await request(BASE)
-        .post("/api/test-webhook")
-        .set("Cookie", cookie)
-        .send({ url: `https://${extraHost}/webhook`, kind: "slack" });
-      // Previously WEBHOOK_EXTRA_PROVIDER_HOSTS was parsed but never
-      // merged into the actual allowlist, so this always came back
-      // WEBHOOK_HOST_NOT_ALLOWED. It must not anymore.
-      expect(res.body.code).to.not.equal("WEBHOOK_HOST_NOT_ALLOWED");
-    } finally {
-      if (original === undefined) delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
-      else process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = original;
-    }
+    // Own user: also reaches the network-fetch stage and must not leak
+    // cooldown into the cases below.
+    const { cookie: extraHostCookie } =
+      await TestUtils.createAuthenticatedUser();
+    const res = await request(BASE)
+      .post("/api/test-webhook")
+      .set("Cookie", extraHostCookie)
+      .send({ url: `https://${extraHost}/webhook`, kind: "slack" });
+    expect(res.status).to.not.equal(429);
+    // Previously WEBHOOK_EXTRA_PROVIDER_HOSTS was parsed but never
+    // merged into the actual allowlist, so this always came back
+    // WEBHOOK_HOST_NOT_ALLOWED. It must not anymore.
+    expect(res.body.code).to.not.equal("WEBHOOK_HOST_NOT_ALLOWED");
   });
 
   it("rejects IPv6 loopback with the private-IP block message", async () => {
@@ -70,7 +79,8 @@ describe("Webhook test endpoint behavior", function () {
     const res = await request(BASE)
       .post("/api/test-webhook")
       .set("Cookie", cookie)
-      .send({ url: "https://example.invalid/webhook", kind: "generic" })
-      .expect((res) => expect([400, 502, 504, 500]).to.include(res.status));
+      .send({ url: "https://example.invalid/webhook", kind: "generic" });
+    expect(res.status).to.not.equal(429);
+    expect([400, 502, 504, 500]).to.include(res.status);
   });
 });

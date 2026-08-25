@@ -231,6 +231,8 @@ WEBHOOK_ALLOW_ALL_HOSTS: "true"
 {{- if .Values.config.useEnvProxy }}
 NODE_USE_ENV_PROXY: "1"
 NO_PROXY: {{ list "localhost" "127.0.0.1" "::1" (printf "%s-api" (include "tokentimer.fullname" .)) ".svc" ".cluster.local" .Values.config.noProxy | compact | join "," | quote }}
+# Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental" startup warning.
+NODE_OPTIONS: "--disable-warning=UNDICI-EHPA"
 {{- end }}
 {{- if .Values.monitoring.metrics.enabled }}
 ENABLE_METRICS: "true"

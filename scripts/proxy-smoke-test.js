@@ -42,7 +42,7 @@ const results = [];
 function record(name, passed, detail) {
   results.push({ name, passed, detail });
   const status = passed ? "PASS" : "FAIL";
-  console.log(`[${status}] ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`[${status}] ${name}${detail ? ` - ${detail}` : ""}`);
 }
 
 /**
@@ -110,7 +110,7 @@ function baseEnv(extra) {
 }
 
 async function main() {
-  console.log(`Node.js ${process.version} — NODE_USE_ENV_PROXY supported: ${isNodeUseEnvProxySupported()}`);
+  console.log(`Node.js ${process.version} - NODE_USE_ENV_PROXY supported: ${isNodeUseEnvProxySupported()}`);
   if (!isNodeUseEnvProxySupported()) {
     console.error(
       "This Node.js version does not support NODE_USE_ENV_PROXY for fetch/undici (requires 22.21.0+ or 24.0.0+). " +
@@ -214,7 +214,7 @@ async function main() {
       JSON.stringify(axiosHttp),
     );
 
-    // --- 5: NO_PROXY bypass — fixture must see nothing, for both clients ---
+    // --- 5: NO_PROXY bypass - fixture must see nothing, for both clients ---
     resetConnections();
     const fetchNoProxy = await runProbe(
       FETCH_PROBE_PATH,
