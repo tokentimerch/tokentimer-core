@@ -6,6 +6,7 @@ import {
   Text,
   Input,
   Switch,
+  Checkbox,
   Button,
   Badge,
   Accordion,
@@ -18,12 +19,19 @@ import {
   IconButton,
   Tooltip,
   Link as ChakraLink,
+  Spinner,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff, FiHelpCircle } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
+
+const VAULT_CATEGORY_OPTIONS = [
+  { value: 'cert', label: 'Certificates' },
+  { value: 'key_secret', label: 'Secrets & keys' },
+];
 
 function getVaultItemDetails(item) {
   const details = [];
@@ -128,6 +136,23 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       return '';
     }
   });
+
+  // Secrets-engine (mount) picker. Empty `availableMounts` means the picker
+  // hasn't been engaged yet, so scans keep scanning every mount (unchanged
+  // default behavior) until the user explicitly loads and narrows the list.
+  const [availableMounts, setAvailableMounts] = React.useState([]);
+  const [selectedMountPaths, setSelectedMountPaths] = React.useState(new Set());
+  const [isLoadingMounts, setIsLoadingMounts] = React.useState(false);
+  const [mountsError, setMountsError] = React.useState(null);
+
+  // Asset-kind filter: all kinds Vault can produce are included by default.
+  const [selectedCategories, setSelectedCategories] = React.useState(
+    new Set(VAULT_CATEGORY_OPTIONS.map(c => c.value))
+  );
+
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+
   const [isScanning, setIsScanning] = React.useState(false);
   const [vaultItems, setVaultItems] = React.useState([]);
   const [summary, setSummary] = React.useState([]);
@@ -147,6 +172,60 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     onSelectionChange && onSelectionChange(selectedRowsVault.size);
   }, [selectedRowsVault.size, onSelectionChange]);
 
+  const loadMounts = async () => {
+    if (!vaultAddress || !vaultAddress.trim()) {
+      setMountsError('Vault address is required');
+      return;
+    }
+    if (!vaultToken || !vaultToken.trim()) {
+      setMountsError('Vault token is required');
+      return;
+    }
+    setIsLoadingMounts(true);
+    setMountsError(null);
+    try {
+      const mounts = await vaultAPI.listMounts({
+        workspaceId,
+        address: vaultAddress,
+        token: vaultToken,
+      });
+      const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
+      setAvailableMounts(scannable);
+      setSelectedMountPaths(new Set(scannable.map(m => m.path)));
+    } catch (e) {
+      setAvailableMounts([]);
+      setMountsError(e?.message || 'Failed to load secrets engines');
+    } finally {
+      setIsLoadingMounts(false);
+    }
+  };
+
+  const toggleMount = path => {
+    setSelectedMountPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const toggleCategory = value => {
+    setSelectedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  };
+
+  // Only send an explicit mount list when the picker was used and the user
+  // narrowed it down; otherwise every mount is scanned (unchanged default).
+  const mountsFilterForScan = () => {
+    if (availableMounts.length === 0) return null;
+    if (selectedMountPaths.size >= availableMounts.length) return null;
+    return Array.from(selectedMountPaths);
+  };
+
   const doVaultScan = async () => {
     if (!workspaceId) {
       onError && onError('Please select a workspace first.');
@@ -161,24 +240,36 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       onError && onError('Vault token is required');
       return;
     }
+    if (availableMounts.length > 0 && selectedMountPaths.size === 0) {
+      onError && onError('Select at least one secrets engine to scan.');
+      return;
+    }
+    if (selectedCategories.size === 0) {
+      onError && onError('Select at least one asset kind to scan.');
+      return;
+    }
 
     onError && onError(null);
     setIsScanning(true);
     setVaultItems([]);
     setSummary([]);
+    setFilterSummary(null);
     try {
       const res = await vaultAPI.scan({
         workspaceId,
         address: vaultAddress,
         token: vaultToken,
         include: { kv: includeKV, pki: includePKI },
-        mounts: null,
+        mounts: mountsFilterForScan(),
         maxItemsPerMount,
         pathPrefix,
+        categories: Array.from(selectedCategories),
+        filterRules: sanitizeFilterRules(filterRules),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('vault');
       }
@@ -256,6 +347,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         include: { kv: includeKV, pki: includePKI },
         pathPrefix: pathPrefix || '',
         maxItemsPerMount,
+        mounts: mountsFilterForScan(),
+        categories: Array.from(selectedCategories),
+        filterRules: sanitizeFilterRules(filterRules),
       },
     }),
   }));
@@ -393,44 +487,161 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
           </Button>
         </HStack>
 
+        <Box>
+          <Text fontSize='sm' mb={1}>
+            Asset kinds to scan
+          </Text>
+          <HStack spacing={4} flexWrap='wrap'>
+            {VAULT_CATEGORY_OPTIONS.map(opt => (
+              <Checkbox
+                key={opt.value}
+                size='sm'
+                isChecked={selectedCategories.has(opt.value)}
+                onChange={() => toggleCategory(opt.value)}
+              >
+                {opt.label}
+              </Checkbox>
+            ))}
+          </HStack>
+          <Text fontSize='xs' color={helpTextColor} mt={1}>
+            All kinds are scanned by default. Uncheck a kind to skip it, e.g.
+            uncheck Secrets &amp; keys to only import certificates.
+          </Text>
+        </Box>
+
         {/* Advanced options - collapsible */}
         <Accordion allowToggle>
           <AccordionItem border='none'>
             <AccordionButton px={0}>
               <Box flex='1' textAlign='left'>
                 <Text fontSize='sm' color={helpTextColor}>
-                  Advanced: Path filtering
+                  Advanced: Secrets engines and path filtering
                 </Text>
               </Box>
               <AccordionIcon />
             </AccordionButton>
             <AccordionPanel pb={4} px={0}>
-              <Box>
-                <Text fontSize='sm' mb={1}>
-                  Path prefix (KV only)
-                </Text>
-                <Input
-                  placeholder='e.g., prod/api (optional)'
-                  value={pathPrefix}
-                  onChange={e => {
-                    setPathPrefix(e.target.value);
-                    try {
-                      localStorage.setItem(
-                        'tt_vault_path_prefix',
-                        e.target.value
-                      );
-                    } catch (_) {}
-                  }}
-                  size='sm'
-                />
-                <Text fontSize='xs' color={helpTextColor} mt={1}>
-                  Folder inside each KV engine (e.g., prod/api) or an exact
-                  secret path. Leave empty to scan all.
-                </Text>
-              </Box>
+              <VStack align='stretch' spacing={4}>
+                <Box>
+                  <HStack justify='space-between' mb={1}>
+                    <Text fontSize='sm'>Secrets engines (mounts)</Text>
+                    <Button
+                      size='xs'
+                      variant='outline'
+                      leftIcon={
+                        isLoadingMounts ? (
+                          <Spinner size='xs' />
+                        ) : (
+                          <FiRefreshCw />
+                        )
+                      }
+                      onClick={loadMounts}
+                      isDisabled={
+                        isLoadingMounts || !vaultAddress || !vaultToken
+                      }
+                    >
+                      {availableMounts.length > 0 ? 'Refresh' : 'Load engines'}
+                    </Button>
+                  </HStack>
+                  {mountsError ? (
+                    <Text fontSize='xs' color='red.400' mb={1}>
+                      {mountsError}
+                    </Text>
+                  ) : null}
+                  {availableMounts.length > 0 ? (
+                    <Box
+                      border='1px solid'
+                      borderColor={borderColor}
+                      borderRadius='md'
+                      p={2}
+                      maxH='180px'
+                      overflowY='auto'
+                    >
+                      <VStack align='stretch' spacing={1}>
+                        {availableMounts.map(m => {
+                          const kvVersion =
+                            m.type === 'kv'
+                              ? String(m.options?.version || '1')
+                              : null;
+                          const unsupported = kvVersion === '1';
+                          return (
+                            <Checkbox
+                              key={m.path}
+                              size='sm'
+                              isChecked={selectedMountPaths.has(m.path)}
+                              onChange={() => toggleMount(m.path)}
+                            >
+                              {m.path} ({m.type}
+                              {kvVersion ? ` v${kvVersion}` : ''})
+                              {unsupported ? (
+                                <Text
+                                  as='span'
+                                  fontSize='2xs'
+                                  color='orange.400'
+                                  ml={1}
+                                >
+                                  KV v1 not supported
+                                </Text>
+                              ) : null}
+                            </Checkbox>
+                          );
+                        })}
+                      </VStack>
+                    </Box>
+                  ) : (
+                    <Text fontSize='xs' color={helpTextColor}>
+                      All secrets engines are scanned by default. Load the list
+                      to include or exclude specific ones (e.g. only the
+                      &quot;staging&quot; KV engine).
+                    </Text>
+                  )}
+                </Box>
+                <Box>
+                  <Text fontSize='sm' mb={1}>
+                    Path prefix (KV only)
+                  </Text>
+                  <Input
+                    placeholder='e.g., prod/api (optional)'
+                    value={pathPrefix}
+                    onChange={e => {
+                      setPathPrefix(e.target.value);
+                      try {
+                        localStorage.setItem(
+                          'tt_vault_path_prefix',
+                          e.target.value
+                        );
+                      } catch (_) {}
+                    }}
+                    size='sm'
+                  />
+                  <Text fontSize='xs' color={helpTextColor} mt={1}>
+                    Folder inside each KV engine (e.g., prod/api) or an exact
+                    secret path. Leave empty to scan all. Do not include the
+                    engine name itself, use the secrets engines picker above for
+                    that.
+                  </Text>
+                </Box>
+              </VStack>
             </AccordionPanel>
           </AccordionItem>
         </Accordion>
+
+        <FilterRulesEditor
+          rules={filterRules}
+          onChange={setFilterRules}
+          borderColor={borderColor}
+          helpTextColor={helpTextColor}
+        />
+        {filterSummary ? (
+          <HStack spacing={2}>
+            <Badge colorScheme='green'>
+              {filterSummary.matchedCount} matched
+            </Badge>
+            <Badge colorScheme='red'>
+              {filterSummary.excludedCount} excluded by rules
+            </Badge>
+          </HStack>
+        ) : null}
       </VStack>
 
       {summary.length > 0 ? (
