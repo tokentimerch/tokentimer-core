@@ -2,6 +2,7 @@
 import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import { pool } from "./db.js";
 import { logger } from "./logger.js";
+import { isNodeUseEnvProxySupported } from "@tokentimer/node-compat";
 
 const POSITIVE_INTEGER_PATTERN = /^\d+$/;
 const CRON_FIELD_COUNT = 5;
@@ -726,6 +727,15 @@ function printHelp() {
 
 async function main() {
   try {
+    if (
+      process.env.NODE_USE_ENV_PROXY === "1" &&
+      !isNodeUseEnvProxySupported()
+    ) {
+      logger.warn(
+        `NODE_USE_ENV_PROXY=1 is set but Node.js ${process.version} does not support it (requires 22.21.0+ or 24.5.0+); proxy environment variables will be ignored.`,
+      );
+    }
+
     const parsed = parseRunnerArgs(process.argv.slice(2));
     if (parsed.help) {
       printHelp();

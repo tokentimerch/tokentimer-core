@@ -424,4 +424,132 @@ controller_cidr_policy="$(component_blocks "${controller_network_cidrs}" Network
 assert_contains "${controller_cidr_policy}" 'cidr: "198.51.100.0/24"' "controller explicit API CIDR egress"
 assert_not_contains "${controller_cidr_policy}" 'app.kubernetes.io/component: api' "controller external API CIDR egress"
 
+# ---------------------------------------------------------------------------
+# Corporate proxy support (config.useEnvProxy / networkPolicy.egress.proxy*)
+# ---------------------------------------------------------------------------
+
+expect_proxy_failure() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+  local dest="${OUT}/proxy-invalid-${name}.log"
+  echo "==> helm template ${RELEASE_NAME} [proxy invalid:${name}]" >&2
+  if helm template "${RELEASE_NAME}" "${CHART}" \
+    --set config.adminEmail=ci@example.com \
+    "$@" \
+    > "${dest}" 2>&1; then
+    fail "proxy render unexpectedly succeeded: ${name}"
+  fi
+  if ! grep -Fq -- "${expected}" "${dest}"; then
+    fail "proxy failure ${name} did not mention ${expected}"
+  fi
+}
+
+echo "==> assert proxy env vars and secretRef render when config.useEnvProxy=true"
+proxy_enabled="${OUT}/rendered-proxy-enabled.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set config.noProxy=custom.internal \
+  > "${proxy_enabled}"
+assert_contains "$(cat "${proxy_enabled}")" 'NODE_USE_ENV_PROXY: "1"' "proxy enabled NODE_USE_ENV_PROXY"
+proxy_no_proxy_line="$(grep -m1 '^  NO_PROXY:' "${proxy_enabled}" || true)"
+[[ -n "${proxy_no_proxy_line}" ]] || fail "proxy enabled render missing NO_PROXY key"
+assert_contains "${proxy_no_proxy_line}" 'localhost' "proxy enabled NO_PROXY localhost entry"
+assert_contains "${proxy_no_proxy_line}" '127.0.0.1' "proxy enabled NO_PROXY loopback IPv4 entry"
+assert_contains "${proxy_no_proxy_line}" '::1' "proxy enabled NO_PROXY loopback IPv6 entry"
+assert_contains "${proxy_no_proxy_line}" "${RELEASE_NAME}-api" "proxy enabled NO_PROXY in-cluster API hostname"
+assert_contains "${proxy_no_proxy_line}" '.svc' "proxy enabled NO_PROXY .svc suffix"
+assert_contains "${proxy_no_proxy_line}" '.cluster.local' "proxy enabled NO_PROXY .cluster.local suffix"
+assert_contains "${proxy_no_proxy_line}" 'custom.internal' "proxy enabled NO_PROXY custom entry"
+proxy_enabled_secretref_count="$(grep -c 'name: corporate-proxy' "${proxy_enabled}" || true)"
+[[ "${proxy_enabled_secretref_count}" -ge 2 ]] || fail "proxy secretRef should mount on api Deployment and worker CronJobs (found ${proxy_enabled_secretref_count})"
+
+echo "==> assert proxy env vars and secretRef absent by default (config.useEnvProxy=false)"
+proxy_disabled="${OUT}/rendered-proxy-disabled.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  > "${proxy_disabled}"
+assert_not_contains "$(cat "${proxy_disabled}")" 'NODE_USE_ENV_PROXY' "default-safe proxy render"
+assert_not_contains "$(cat "${proxy_disabled}")" 'NO_PROXY' "default-safe proxy render"
+
+expect_proxy_failure use-env-proxy-without-secret 'proxyExistingSecret' \
+  --set config.useEnvProxy=true
+
+echo "==> assert webhook host allowlist env vars render"
+webhook_hosts_rendered="${OUT}/rendered-webhook-hosts.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.webhookProviderHosts=custom.example.com \
+  --set config.webhookExtraProviderHosts=extra.example.com \
+  --set config.webhookAllowAllHosts=true \
+  > "${webhook_hosts_rendered}"
+assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_PROVIDER_HOSTS: "custom.example.com"' "webhook provider hosts"
+assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_EXTRA_PROVIDER_HOSTS: "extra.example.com"' "webhook extra provider hosts"
+assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_ALLOW_ALL_HOSTS: "true"' "webhook allow all hosts"
+
+expect_proxy_failure network-policy-without-proxy-cidrs 'proxyCidrs' \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set-json 'networkPolicy.egress.proxyCidrs=[]'
+expect_proxy_failure proxy-cidrs-without-ports 'networkPolicy.egress.proxyPorts' \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.proxyCidrs[0]=10.0.0.0/8 \
+  --set-json 'networkPolicy.egress.proxyPorts=[]'
+expect_proxy_failure proxy-port-out-of-range 'networkPolicy.egress.proxyPorts' \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.proxyCidrs[0]=10.0.0.0/8 \
+  --set-string networkPolicy.egress.proxyPorts[0]=99999
+expect_proxy_failure proxy-port-not-a-number 'networkPolicy.egress.proxyPorts' \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.proxyCidrs[0]=10.0.0.0/8 \
+  --set-string networkPolicy.egress.proxyPorts[0]=notanumber
+
+echo "==> assert NetworkPolicy proxy egress renders for api and worker when useEnvProxy=true"
+proxy_network_policy="${OUT}/rendered-proxy-network-policy.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.proxyCidrs[0]=192.0.2.50/32 \
+  --set networkPolicy.egress.proxyPorts[0]=3128 \
+  > "${proxy_network_policy}"
+assert_contains "$(cat "${proxy_network_policy}")" 'cidr: 192.0.2.50/32' "proxy NetworkPolicy CIDR present"
+assert_contains "$(cat "${proxy_network_policy}")" 'port: 3128' "proxy NetworkPolicy port present"
+proxy_policy_blocks_count="$(grep -c 'cidr: 192.0.2.50/32' "${proxy_network_policy}" || true)"
+[[ "${proxy_policy_blocks_count}" -ge 2 ]] || fail "proxy NetworkPolicy CIDR should render for both api and worker (found ${proxy_policy_blocks_count})"
+
+echo "==> assert NetworkPolicy proxy egress absent when useEnvProxy=false (default) even with proxyCidrs set"
+proxy_network_policy_disabled="${OUT}/rendered-proxy-network-policy-disabled.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.proxyCidrs[0]=192.0.2.50/32 \
+  --set networkPolicy.egress.proxyPorts[0]=3128 \
+  > "${proxy_network_policy_disabled}"
+assert_not_contains "$(cat "${proxy_network_policy_disabled}")" '192.0.2.50/32' "proxy NetworkPolicy gated on useEnvProxy"
+
+echo "==> assert CertOps controller receives no proxy vars or egress even when proxy is enabled"
+controller_with_proxy="$(render_controller with-proxy-enabled \
+  --set config.useEnvProxy=true \
+  --set config.proxyExistingSecret=corporate-proxy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=192.0.2.10/32 \
+  --set networkPolicy.egress.proxyCidrs[0]=192.0.2.50/32 \
+  --set networkPolicy.egress.proxyPorts[0]=3128)"
+controller_with_proxy_deployment="$(component_blocks "${controller_with_proxy}" Deployment)"
+controller_with_proxy_policy="$(component_blocks "${controller_with_proxy}" NetworkPolicy)"
+assert_not_contains "${controller_with_proxy_deployment}" 'NODE_USE_ENV_PROXY' "controller Deployment excluded from proxy env"
+assert_not_contains "${controller_with_proxy_deployment}" 'name: corporate-proxy' "controller Deployment excluded from proxy secretRef"
+assert_not_contains "${controller_with_proxy_policy}" '192.0.2.50/32' "controller NetworkPolicy excluded from proxy egress"
+
 echo "helm-template-verify: ok -> ${OUT}"

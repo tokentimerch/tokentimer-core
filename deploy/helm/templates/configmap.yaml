@@ -4,5 +4,6 @@ metadata:
   name: {{ include "tokentimer.fullname" . }}-config
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
+{{- include "tokentimer.proxyValidate" . }}
 data:
   {{- include "tokentimer.configmapData" . | nindent 2 }}

@@ -126,11 +126,15 @@ export function getDefaultWebhookHosts() {
     "discordapp.com",
     "outlook.office.com",
     "webhook.office.com",
+    "office.com",
+    "office365.com",
     "*.office.com",
     "*.office365.com",
     "events.pagerduty.com",
     "events.eu.pagerduty.com",
     "*.pagerduty.com",
+    "*.logic.azure.com",
+    "*.environment.api.powerplatform.com",
   ];
 }
 

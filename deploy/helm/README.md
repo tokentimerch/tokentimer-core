@@ -181,6 +181,79 @@ twilio:
 
 When `existingSecret` is set for a group, the chart renders **no keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts.
 
+### Corporate Proxy
+
+Self-hosted deployments behind a corporate proxy can make the API's
+`fetch`/undici calls (e.g. the webhook Test button, OAuth/SAML callbacks) and
+the worker's `axios` calls honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. `axios`
+already reads these vars on any Node version; `config.useEnvProxy` additionally
+sets `NODE_USE_ENV_PROXY=1` so `fetch`/undici do too, which requires the
+API/worker images to run **Node 22.21.0+ or 24.5.0+** (not any `23.x` release,
+not `24.0.0`-`24.4.x`). On an unsupported Node version the API and worker log a
+non-fatal startup warning and `fetch`/undici simply ignore the proxy vars.
+
+Proxy URLs commonly embed credentials (`http://user:pass@proxy:3128`), so this
+chart intentionally has no plaintext proxy URL value. Point `config.useEnvProxy`
+at an existing Secret instead:
+
+```yaml
+config:
+  useEnvProxy: true
+  proxyExistingSecret: "my-proxy-credentials"  # must contain HTTP_PROXY, HTTPS_PROXY
+  noProxy: "internal.example.com"              # extra NO_PROXY entries (optional)
+```
+
+`config.proxyExistingSecret` is **required** when `config.useEnvProxy=true`
+(the chart fails the render otherwise, naming `proxyExistingSecret`) since the
+flag alone does nothing without proxy URLs. `config.noProxy` is always
+combined with `localhost`, `127.0.0.1`, `::1`, the in-cluster API service
+hostname, and `.svc`/`.cluster.local`, so intra-cluster API calls never
+accidentally route through the proxy.
+
+Proxy env vars are injected into the API Deployment and all six worker
+CronJobs. The optional CertOps controller and the dashboard are deliberately
+excluded: the dashboard serves static assets with no outbound calls, and the
+controller talks only to the Kubernetes API and the TokenTimer API
+(`certops.controller.api.url`), which are normally in-cluster. If you point
+`certops.controller.api.url` at an external TokenTimer API that is only
+reachable through the proxy, route that traffic at the network layer instead;
+the controller does not read `HTTP_PROXY`/`HTTPS_PROXY`.
+
+When `networkPolicy.enabled` is also true, egress to the proxy is closed by
+default like every other destination. Open it with:
+
+```yaml
+networkPolicy:
+  egress:
+    proxyCidrs:
+      - 10.0.0.0/8      # the proxy's destination CIDR(s)
+    proxyPorts:
+      - 3128
+```
+
+This rule only renders when `config.useEnvProxy=true`. When it is,
+`networkPolicy.egress.proxyCidrs` and `networkPolicy.egress.proxyPorts` are
+both **required** and validated (`proxyPorts` entries must be integers
+`1`-`65535`) as soon as `networkPolicy.enabled=true` -- the chart fails the
+render naming whichever is missing, rather than silently rendering a
+NetworkPolicy that blocks the proxy it was just told to use. The default
+`proxyPorts` (`3128`, `8080`) opens **both** ports to every listed CIDR;
+narrow the list if your proxy only listens on one of them.
+
+The friendly webhook-destination allowlist (Slack, Discord, Teams, PagerDuty,
+Power Automate/Logic Apps by default) has its own, unrelated values:
+
+```yaml
+config:
+  webhookExtraProviderHosts: "custom.webhook.host"  # unioned with the built-in list
+  webhookAllowAllHosts: false                       # true bypasses the allowlist entirely
+```
+
+`config.webhookProviderHosts` is a legacy alias, read only as a fallback when
+`webhookExtraProviderHosts` is unset. This allowlist guards against
+webhook-destination typos; it is separate from `config.webhookAllowPrivateIps`,
+which is the SSRF private-IP guard.
+
 ### CertOps Controller
 
 The customer-cluster CertOps controller is a separate image and is disabled by

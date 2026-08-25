@@ -26,6 +26,16 @@ const swaggerUi = require("swagger-ui-express");
 const client = require("prom-client");
 const { doubleCsrf } = require("csrf-csrf");
 const { logger, resolveClientIp } = require("./utils/logger.js");
+const { isNodeUseEnvProxySupported } = require("@tokentimer/node-compat");
+
+if (
+  process.env.NODE_USE_ENV_PROXY === "1" &&
+  !isNodeUseEnvProxySupported()
+) {
+  logger.warn(
+    `NODE_USE_ENV_PROXY=1 is set but Node.js ${process.version} does not support it (requires 22.21.0+ or 24.5.0+); proxy environment variables will be ignored.`,
+  );
+}
 const { writeAudit } = require("./services/audit");
 const {
   loadWorkspace,

@@ -78,6 +78,47 @@ describe("Worker notify extended unit coverage", () => {
     expect(String(result.error)).to.match(/not allowed/i);
   });
 
+  it("postJson accepts a Power Automate / Logic Apps host for kind=teams", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ALLOW_ALL_HOSTS;
+    delete process.env.WEBHOOK_PROVIDER_HOSTS;
+    delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+
+    const webhooks = await importFresh("apps/worker/src/notify/webhooks.js");
+    const result = await webhooks.postJson(
+      "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke",
+      { hello: "world" },
+      "teams",
+    );
+    expect(result.success).to.equal(true);
+  });
+
+  it("postJson honors multiple webhook host env vars set simultaneously", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ALLOW_ALL_HOSTS;
+    process.env.WEBHOOK_PROVIDER_HOSTS = "legacy-alias.example.com";
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "modern-extra.example.com";
+
+    const webhooks = await importFresh("apps/worker/src/notify/webhooks.js");
+
+    // WEBHOOK_EXTRA_PROVIDER_HOSTS takes precedence; the legacy
+    // WEBHOOK_PROVIDER_HOSTS alias is only consulted when it's unset.
+    const modern = await webhooks.postJson(
+      "https://modern-extra.example.com/hook",
+      { hello: "world" },
+      "slack",
+    );
+    expect(modern.success).to.equal(true);
+
+    const legacy = await webhooks.postJson(
+      "https://legacy-alias.example.com/hook",
+      { hello: "world" },
+      "slack",
+    );
+    expect(legacy.success).to.equal(false);
+    expect(String(legacy.error)).to.match(/not allowed/i);
+  });
+
   it("postJson test mode returns deterministic success/failure for provider hosts", async () => {
     process.env.NODE_ENV = "test";
     const webhooks = await importFresh("apps/worker/src/notify/webhooks.js");

@@ -39,6 +39,11 @@ services:
       - NODE_ENV=development
       - PORT=4000
       - OPENAPI_SPEC_PATH=/contracts/openapi/openapi.yaml
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -129,6 +134,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -182,6 +192,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -235,6 +250,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -286,6 +306,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -323,6 +348,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -362,6 +392,11 @@ services:
     environment:
       - NODE_ENV=development
       - TZ=${TZ:-UTC}
+      # Corporate proxy support (Node 22.21.0+ / 24.5.0+ only — see docs/CONFIGURATION.md)
+      - NODE_USE_ENV_PROXY=${TOKENTIMER_USE_ENV_PROXY:-}
+      - HTTP_PROXY=${TOKENTIMER_HTTP_PROXY:-}
+      - HTTPS_PROXY=${TOKENTIMER_HTTPS_PROXY:-}
+      - NO_PROXY=${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer

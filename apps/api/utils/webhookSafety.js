@@ -11,6 +11,10 @@ const {
   isPrivateOrReservedIP,
   allowPrivateWebhookIPs,
   shouldEnforcePrivateIpCheck,
+  DEFAULT_WEBHOOK_PROVIDER_HOSTS,
+  getWebhookProviderHosts,
+  allowAllWebhookHosts,
+  webhookHostAllowed,
 } = shared;
 
 async function validateResolvedIP(hostname, options = {}) {
@@ -32,4 +36,8 @@ module.exports = {
   allowPrivateWebhookIPs,
   shouldEnforcePrivateIpCheck,
   validateResolvedIP,
+  DEFAULT_WEBHOOK_PROVIDER_HOSTS,
+  getWebhookProviderHosts,
+  allowAllWebhookHosts,
+  webhookHostAllowed,
 };

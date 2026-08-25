@@ -118,6 +118,21 @@ spec:
         - protocol: TCP
           port: 443
     {{- end }}
+    # Corporate proxy (only when config.useEnvProxy is enabled)
+    {{- if .Values.config.useEnvProxy }}
+    {{- with .Values.networkPolicy.egress.proxyCidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.proxyPorts }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
 
 ---
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -252,6 +267,21 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
+    # Corporate proxy (only when config.useEnvProxy is enabled)
+    {{- if .Values.config.useEnvProxy }}
+    {{- with .Values.networkPolicy.egress.proxyCidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.proxyPorts }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
     {{- end }}
     {{- if .Values.monitoring.metrics.pushgatewayUrl }}
     # Pushgateway

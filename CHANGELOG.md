@@ -9,6 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-25
+
+### Fixed
+
+- **The webhook Test button could not reach Microsoft Teams destinations set up through Power Automate or Logic Apps.** The webhook destination allowlist only recognized the legacy `*.webhook.office.com` Teams connector hosts, not the `*.logic.azure.com` / `*.environment.api.powerplatform.com` hosts that Power Automate and Logic Apps flows actually use, nor the bare `office.com` / `office365.com` apex domains. All four are now in the built-in provider list.
+- **`WEBHOOK_EXTRA_PROVIDER_HOSTS` was silently ignored by the webhook Test button and by `constants.testWebhookUrl`.** Both read the environment variable but never merged it into the allowlist check actually applied to the request, so a self-hosted operator who added a custom destination host could still not test (or persist, since a webhook must pass its test before it can be saved) a webhook pointed at it. Both call sites now consume the same shared allowlist helper as webhook delivery, so extras are honored everywhere consistently.
+- **Corporate HTTP(S) proxies were not honored for outbound webhook requests**, including the Test button and real alert delivery, even when `HTTP_PROXY` / `HTTPS_PROXY` were set on the host or in `.env`, because neither Docker Compose nor the Helm chart passed those variables into the containers, and Node's `fetch`/`undici` do not read them by default regardless. Setting the new `NODE_USE_ENV_PROXY=1` (Docker Compose) or `config.useEnvProxy: true` (Helm, alongside `config.proxyExistingSecret` pointing at a Secret with `HTTP_PROXY`/`HTTPS_PROXY` keys) now proxies both the Test button and delivery consistently, on Node.js 22.21.0+ or 24.5.0+. A non-fatal startup warning is logged if this is enabled on an unsupported Node.js version.
+
+### Changed
+
+- The webhook host allowlist, its `WEBHOOK_PROVIDER_HOSTS`/`WEBHOOK_EXTRA_PROVIDER_HOSTS`/`WEBHOOK_ALLOW_ALL_HOSTS` environment variables, and the new proxy variables are now also configurable through the Helm chart (`config.webhookProviderHosts`, `config.webhookExtraProviderHosts`, `config.webhookAllowAllHosts`, `config.useEnvProxy`, `config.proxyExistingSecret`, `config.noProxy`), matching the existing Docker Compose support. NetworkPolicy egress rules gained matching `networkPolicy.egress.proxyCidrs`/`proxyPorts` for clusters that enable `useEnvProxy`.
+- Version metadata bumped to 0.13.2 across all manifests, contracts, and the Helm chart.
+- A new CI job (`pnpm run test:proxy-smoke`) proves the `NODE_USE_ENV_PROXY` behavior above end to end with a real local forward proxy and a real HTTPS target, for both `fetch` and `axios`, on every supported Node.js version, so a regression in either client's proxy handling now blocks the pipeline instead of only surfacing in a self-hosted operator's environment.
+
 ## [0.13.1] - 2026-08-21
 
 ### Security
