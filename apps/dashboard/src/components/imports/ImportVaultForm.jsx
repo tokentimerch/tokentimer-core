@@ -47,6 +47,13 @@ function getVaultItemDetails(item) {
   if (item.subject) {
     details.push({ label: 'Subject', value: item.subject, maxLines: 2 });
   }
+  // Filter rules match against `item.location` (e.g. `vault:secret/prod/cert`),
+  // which always carries the `vault:` scheme prefix that "Path" above omits.
+  // Shown so an "Exact" location rule can be copied verbatim, same as the
+  // "Location" detail on the GitLab/GitHub import forms.
+  if (typeof item.location === 'string' && item.location) {
+    details.push({ label: 'Location', value: item.location });
+  }
   return details;
 }
 
