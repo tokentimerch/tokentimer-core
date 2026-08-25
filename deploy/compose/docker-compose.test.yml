@@ -75,6 +75,11 @@ services:
       # NODE_ENV=test (see apps/api/utils/webhookSafety.js). Only set on the
       # API: delivery workers post to local mock targets during tests.
       - WEBHOOK_ENFORCE_PRIVATE_IP_CHECK=true
+      # Exercises the self-hosted allowlist escape hatch end-to-end against
+      # this API container. tests/integration/webhook-test-endpoint.test.js
+      # asserts this exact host is accepted; setting it in the test runner's
+      # own process.env would have no effect on this separate container.
+      - WEBHOOK_EXTRA_PROVIDER_HOSTS=hooks.integration-test.example.com
       - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
       - NODE_OPTIONS=${NODE_V8_COVERAGE:+--require=/app/apps/api/coverage-flush-hook.cjs}
     depends_on:

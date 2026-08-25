@@ -191,6 +191,8 @@ sets `NODE_USE_ENV_PROXY=1` so `fetch`/undici do too, which requires the
 API/worker images to run **Node 22.21.0+ or 24.0.0+** (not any `23.x` release).
 On an unsupported Node version the API and worker log a
 non-fatal startup warning and `fetch`/undici simply ignore the proxy vars.
+`config.useEnvProxy` also sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` on
+both, silencing Node's own experimental-feature warning for `EnvHttpProxyAgent`.
 
 Proxy URLs commonly embed credentials (`http://user:pass@proxy:3128`), so this
 chart intentionally has no plaintext proxy URL value. Point `config.useEnvProxy`

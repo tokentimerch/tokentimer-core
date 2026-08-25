@@ -63,6 +63,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
 
       # Database
       DB_HOST: postgres
@@ -187,6 +190,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
 
       # Database
       DB_HOST: postgres
@@ -257,6 +263,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
 
       # Database
       DB_HOST: postgres
@@ -342,6 +351,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
 
       # Database
       DB_HOST: postgres
@@ -421,6 +433,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-tokentimer}
@@ -460,6 +475,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-tokentimer}
@@ -502,6 +520,9 @@ services:
       HTTP_PROXY: ${TOKENTIMER_HTTP_PROXY:-}
       HTTPS_PROXY: ${TOKENTIMER_HTTPS_PROXY:-}
       NO_PROXY: ${TOKENTIMER_NO_PROXY:-localhost,127.0.0.1,::1,api,postgres}
+      # Silences Node's "[UNDICI-EHPA] EnvHttpProxyAgent is experimental"
+      # startup warning; harmless no-op when NODE_USE_ENV_PROXY is unset.
+      NODE_OPTIONS: --disable-warning=UNDICI-EHPA
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-tokentimer}

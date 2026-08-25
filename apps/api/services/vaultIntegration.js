@@ -344,6 +344,131 @@ async function readKvV2Secret({ address, token, mountPath, secretPath }) {
   return { data: payload.data || {}, metadata: payload.metadata || {} };
 }
 
+function resolveCertName({ subject, pathName, field, multipleCerts }) {
+  // Determine best name: prefer Vault path unless CN is clearly a domain name
+  const cn = subject ? subject.replace(/^CN=/, "").split(",")[0].trim() : null;
+
+  // Generic/test CNs that should be ignored in favor of path name
+  const isGenericCN =
+    cn &&
+    /^(test|example|localhost|default|cert|certificate|ca|root|intermediate)$/i.test(
+      cn,
+    );
+
+  // Use CN only if:
+  // 1. It's not generic AND
+  // 2. It looks like a domain (contains .) OR is meaningful (>8 chars)
+  const useCN = cn && !isGenericCN && (cn.includes(".") || cn.length > 8);
+  // When a secret holds several certificates, the path name alone cannot
+  // distinguish them; append the KV field name.
+  const fallbackName = multipleCerts ? `${pathName}/${field}` : pathName;
+  return { cn, isGenericCN, name: useCN ? cn : fallbackName };
+}
+
+// Builds one scan item per certificate found in the secret's key/value
+// pairs, or a single non-cert item when no value parses as a certificate.
+function buildKvSecretItems({ mountPath, key, secret }) {
+  const data = secret.data || {};
+  const keyCount = Object.keys(data).length;
+  const inferred = inferKindFromData(`${mountPath}${key}`, data);
+  const fallbackExpires = discoverExpiryFromObject(data);
+  const vaultPath = `${mountPath}${key}`.replace(/\/$/, "");
+  const pathName = key.split("/").filter(Boolean).pop() || vaultPath; // Get last segment of path
+
+  const base = {
+    source: "vault-kv",
+    mount: mountPath,
+    path: key,
+    created_at: secret.metadata?.created_time || null,
+    updated_at: secret.metadata?.updated_time || null,
+  };
+
+  // Collect ALL certificate values: a single KV secret frequently stores
+  // several certificates under different field names, and each must become
+  // its own item (previously only the first one was reported).
+  const certs = [];
+  for (const [field, v] of Object.entries(data)) {
+    if (typeof v !== "string") continue;
+    let parsed = null;
+    if (isLikelyPemCertificate(v)) {
+      parsed = parseCertificatePemForDatesAndNames(v);
+    } else if (isBase64Like(v)) {
+      parsed = parseCertificateFromUnknown(v);
+    }
+    if (parsed) {
+      certs.push({ field, parsed });
+      logger.debug("Vault secret contains certificate", {
+        path: `${mountPath}${key}`,
+        field,
+        hasSubject: !!parsed.subject,
+      });
+    }
+  }
+
+  if (certs.length === 0) {
+    // Log classification for debugging
+    if (keyCount > 3) {
+      logger.debug("Vault secret with multiple keys", {
+        path: `${mountPath}${key}`,
+        keyCount,
+        classifiedAs: `${inferred.category}/${inferred.type}`,
+        keys: Object.keys(data).slice(0, 5), // Log first 5 key names
+      });
+    }
+    return [
+      {
+        ...base,
+        name: pathName,
+        category: inferred.category,
+        type: inferred.type,
+        expiration: fallbackExpires ? formatDateYmd(fallbackExpires) : null,
+        issuer: null,
+        subject: null,
+        location: `vault:${mountPath}${key}`,
+      },
+    ];
+  }
+
+  const multipleCerts = certs.length > 1;
+  return certs.map(({ field, parsed }) => {
+    const subject = parsed.subject || null;
+    const issuer = parsed.issuer || null;
+    const { cn, isGenericCN, name } = resolveCertName({
+      subject,
+      pathName,
+      field,
+      multipleCerts,
+    });
+    const expires = parsed.notAfter || fallbackExpires;
+
+    logger.debug("Vault certificate name resolution", {
+      cn,
+      isGenericCN,
+      pathName,
+      selectedName: name,
+      path: vaultPath,
+      field,
+    });
+
+    return {
+      ...base,
+      secret_key: field,
+      name,
+      category: "cert",
+      type: "ssl_cert",
+      expiration: expires ? formatDateYmd(expires) : null,
+      issuer,
+      subject,
+      // Single-cert secrets keep the legacy location so tokens imported
+      // before per-key scanning still dedupe on (name, location);
+      // multi-cert secrets need one location per KV field.
+      location: multipleCerts
+        ? `vault:${mountPath}${key}#${field}`
+        : `vault:${mountPath}${key}`,
+    };
+  });
+}
+
 async function scanKvV2({
   address,
   token,
@@ -352,10 +477,11 @@ async function scanKvV2({
   pathPrefix = "",
 }) {
   const mountPath = mount.path; // already ends with '/'
-  const normalizedPrefix =
-    typeof pathPrefix === "string" && pathPrefix.length > 0
-      ? `${pathPrefix.replace(/^\/+|\/+$/g, "")}/`
+  const trimmedPrefix =
+    typeof pathPrefix === "string"
+      ? pathPrefix.replace(/^\/+|\/+$/g, "")
       : "";
+  const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
   const keys = await listKvV2KeysRecursive({
     address,
     token,
@@ -363,11 +489,31 @@ async function scanKvV2({
     prefix: normalizedPrefix,
     limit: maxItems,
   });
+  if (trimmedPrefix) {
+    // The prefix may point at an exact secret (leaf) rather than a folder.
+    // LIST only enumerates folders, so probe the leaf directly; both a
+    // secret "a/b" and a folder "a/b/" can legitimately coexist in KV v2.
+    try {
+      await readKvV2Secret({
+        address,
+        token,
+        mountPath,
+        secretPath: trimmedPrefix,
+      });
+      keys.unshift(trimmedPrefix);
+    } catch (_e) {
+      // Not a readable secret; folder listing (possibly empty) stands.
+    }
+  }
   const items = [];
+  let truncated = false;
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
-    if (items.length >= maxItems) break;
+    if (items.length >= maxItems) {
+      truncated = true;
+      break;
+    }
     const batch = keys.slice(i, i + BATCH_SIZE);
 
     const batchResults = await Promise.all(
@@ -385,103 +531,23 @@ async function scanKvV2({
           // Skip secrets we cannot read
           return null;
         }
-        const data = secret.data || {};
-        const keyCount = Object.keys(data).length;
-        let { category, type } = inferKindFromData(`${mountPath}${key}`, data);
-        let issuer = null;
-        let subject = null;
-        let expires = discoverExpiryFromObject(data);
-        let hasCertificateContent = false;
-
-        // Heuristic: look for PEM certs in values (overrides path-based inference)
-        for (const v of Object.values(data)) {
-          if (typeof v !== "string") continue;
-          let parsed = null;
-          if (isLikelyPemCertificate(v)) {
-            parsed = parseCertificatePemForDatesAndNames(v);
-            hasCertificateContent = true;
-          } else if (isBase64Like(v)) {
-            parsed = parseCertificateFromUnknown(v);
-            if (parsed) hasCertificateContent = true;
-          }
-          if (parsed) {
-            category = "cert";
-            type = "ssl_cert";
-            issuer = parsed.issuer || issuer;
-            subject = parsed.subject || subject;
-            if (!expires && parsed.notAfter) expires = parsed.notAfter;
-            logger.debug("Vault secret contains certificate", {
-              path: `${mountPath}${key}`,
-              hasSubject: !!subject,
-            });
-            break;
-          }
-        }
-
-        // Log classification for debugging
-        if (keyCount > 3 && !hasCertificateContent) {
-          logger.debug("Vault secret with multiple keys", {
-            path: `${mountPath}${key}`,
-            keyCount,
-            classifiedAs: `${category}/${type}`,
-            keys: Object.keys(data).slice(0, 5), // Log first 5 key names
-          });
-        }
-
-        // Determine best name: prefer Vault path unless CN is clearly a domain name
-        const cn = subject
-          ? subject.replace(/^CN=/, "").split(",")[0].trim()
-          : null;
-
-        // Generic/test CNs that should be ignored in favor of path name
-        const isGenericCN =
-          cn &&
-          /^(test|example|localhost|default|cert|certificate|ca|root|intermediate)$/i.test(
-            cn,
-          );
-
-        const vaultPath = `${mountPath}${key}`.replace(/\/$/, "");
-        const pathName = key.split("/").filter(Boolean).pop() || vaultPath; // Get last segment of path
-
-        // Use CN only if:
-        // 1. It's not generic AND
-        // 2. It looks like a domain (contains .) OR is meaningful (>8 chars)
-        const useCN = cn && !isGenericCN && (cn.includes(".") || cn.length > 8);
-        const name = useCN ? cn : pathName;
-
-        logger.debug("Vault certificate name resolution", {
-          cn,
-          isGenericCN,
-          pathName,
-          selectedName: name,
-          path: vaultPath,
-        });
-
-        return {
-          source: "vault-kv",
-          mount: mountPath,
-          path: key,
-          name,
-          category,
-          type,
-          expiration: expires ? formatDateYmd(expires) : null,
-          issuer,
-          subject,
-          location: `vault:${mountPath}${key}`,
-          created_at: secret.metadata?.created_time || null,
-          updated_at: secret.metadata?.updated_time || null,
-        };
+        return buildKvSecretItems({ mountPath, key, secret });
       }),
     );
 
     // Add non-null results to items
-    for (const item of batchResults) {
-      if (item && items.length < maxItems) {
-        items.push(item);
+    for (const secretItems of batchResults) {
+      if (!secretItems) continue;
+      for (const item of secretItems) {
+        if (items.length < maxItems) {
+          items.push(item);
+        } else {
+          truncated = true;
+        }
       }
     }
   }
-  return { items, truncated: keys.length > items.length };
+  return { items, truncated };
 }
 
 async function tryListPkiCertSerials({ address, token, mountPath }) {
@@ -738,5 +804,6 @@ if (process.env.NODE_ENV === "test") {
     isBase64Like,
     discoverExpiryFromObject,
     inferKindFromData,
+    buildKvSecretItems,
   };
 }

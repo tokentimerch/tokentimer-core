@@ -118,6 +118,7 @@ tests/integration/frontend-integration.test.js
 tests/integration/email-content-formatting.test.js
 tests/integration/vault.parsing.unit.test.js
 tests/integration/vault-parsing-extended.unit.test.js
+tests/integration/vault-scan-multicert.unit.test.js
 tests/integration/integration-utils.unit.test.js
 tests/integration/provider-services.unit.test.js
 tests/integration/provider-services-extended.unit.test.js
