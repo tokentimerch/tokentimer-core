@@ -1,5 +1,6 @@
 import { pool, withClient } from "./db.js";
 import { isNodeEntrypoint } from "./is-node-entrypoint.js";
+import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
 import {
   cDelivery,
   cRetry,
@@ -2708,6 +2709,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
 // Run delivery worker if this file is executed directly
 if (isNodeEntrypoint(import.meta.url)) {
+  warnIfNodeUseEnvProxyUnsupported();
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 

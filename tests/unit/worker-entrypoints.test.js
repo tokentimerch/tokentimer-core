@@ -95,4 +95,64 @@ describe("worker entrypoints", () => {
       );
     }
   });
+
+  it("calls the shared NODE_USE_ENV_PROXY warning from every entrypoint Helm's CronJobs invoke directly", () => {
+    // Helm's CronJobs run these six scripts directly (see
+    // deploy/helm/templates/cronjob-*.yaml `command:`), never through
+    // runner.js, so the warning must be wired into each one individually
+    // rather than relying on a single check inside runner.js.
+    const entrypoints = [
+      "queue-manager.js",
+      "delivery-worker.js",
+      "weekly-digest-runner.js",
+      "auto-sync-worker.js",
+      "endpoint-check-worker.js",
+      "certops-worker.js",
+    ];
+
+    for (const file of entrypoints) {
+      const source = readRepoFile("apps", "worker", "src", file);
+      assert.match(
+        source,
+        /from ["']\.\/proxy-compat-check\.js["']/,
+        `${file} must import the shared proxy-compat-check helper`,
+      );
+      assert.match(
+        source,
+        /warnIfNodeUseEnvProxyUnsupported\(\)/,
+        `${file} must call warnIfNodeUseEnvProxyUnsupported()`,
+      );
+    }
+
+    const runner = readRepoFile("apps", "worker", "src", "runner.js");
+    assert.match(runner, /from ["']\.\/proxy-compat-check\.js["']/);
+    assert.match(runner, /warnIfNodeUseEnvProxyUnsupported\(\)/);
+  });
+
+  it("keeps every Helm worker CronJob command pointed at one of the six standalone entrypoints", () => {
+    const cronjobFiles = {
+      "cronjob-discovery.yaml": "queue-manager.js",
+      "cronjob-delivery.yaml": "delivery-worker.js",
+      "cronjob-weekly-digest.yaml": "weekly-digest-runner.js",
+      "cronjob-auto-sync.yaml": "auto-sync-worker.js",
+      "cronjob-endpoint-check.yaml": "endpoint-check-worker.js",
+      "cronjob-certops.yaml": "certops-worker.js",
+    };
+
+    for (const [template, entrypoint] of Object.entries(cronjobFiles)) {
+      const source = readRepoFile(
+        "deploy",
+        "helm",
+        "templates",
+        template,
+      );
+      assert.match(
+        source,
+        new RegExp(
+          `command:\\s*\\["node",\\s*"apps/worker/src/${escapeRegex(entrypoint)}"\\]`,
+        ),
+        `${template} must invoke ${entrypoint} directly (not runner.js)`,
+      );
+    }
+  });
 });

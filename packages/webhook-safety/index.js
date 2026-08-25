@@ -342,28 +342,34 @@ function parseWebhookHostList(raw) {
 
 /**
  * Raw extras list from env, normalized but not yet unioned with defaults.
- * WEBHOOK_PROVIDER_HOSTS is a legacy alias for WEBHOOK_EXTRA_PROVIDER_HOSTS,
- * used only as a fallback when the latter is unset/empty — it is never a
- * full-list override. Read at call time so tests can mutate env vars.
+ * WEBHOOK_PROVIDER_HOSTS is a legacy alias for WEBHOOK_EXTRA_PROVIDER_HOSTS;
+ * both are parsed and de-duped together so a self-hosted operator who has
+ * either variable set (or both, e.g. mid-migration from the legacy name)
+ * never loses previously-allowed hosts. Read at call time so tests can
+ * mutate env vars. Includes the literal "*" sentinel if either variable
+ * has it; callers that need the allow-all flag check this list directly
+ * (see allowAllWebhookHosts). getWebhookProviderHosts() strips it out.
  */
 function getExtraWebhookProviderHosts() {
-  const raw =
-    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS ||
-    process.env.WEBHOOK_PROVIDER_HOSTS ||
-    "";
-  return parseWebhookHostList(raw);
+  const extra = parseWebhookHostList(process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS);
+  const legacy = parseWebhookHostList(process.env.WEBHOOK_PROVIDER_HOSTS);
+  return [...new Set([...extra, ...legacy])];
 }
 
 /**
  * De-duped union of the canonical default provider hosts and any
  * self-hosted extras from env. Read at call time (not cached at module
  * load) so tests and runtime env changes are picked up immediately.
+ * Never includes the literal "*" sentinel: that's consumed entirely by
+ * allowAllWebhookHosts() and must never be matched as a literal hostname.
  */
 function getWebhookProviderHosts() {
   const defaults = DEFAULT_WEBHOOK_PROVIDER_HOSTS.map(
     normalizeWebhookHostEntry,
   );
-  const extras = getExtraWebhookProviderHosts();
+  const extras = getExtraWebhookProviderHosts().filter(
+    (entry) => entry !== "*",
+  );
   return [...new Set([...defaults, ...extras])];
 }
 
@@ -396,7 +402,7 @@ function hostMatchesEntry(hostname, entry) {
  * (Slack, Discord, Teams, PagerDuty, Power Automate/Logic Apps, or a
  * self-hosted extra). Returns true immediately when allow-all is set.
  * A literal "*" entry in the host list is never itself treated as a
- * hostname to match — it is consumed entirely by allowAllWebhookHosts().
+ * hostname to match; it is consumed entirely by allowAllWebhookHosts().
  *
  * @param {string} hostname
  * @returns {boolean}
@@ -404,7 +410,7 @@ function hostMatchesEntry(hostname, entry) {
 function webhookHostAllowed(hostname) {
   if (allowAllWebhookHosts()) return true;
   const host = normalizeWebhookHostEntry(hostname);
-  const allowList = getWebhookProviderHosts().filter((entry) => entry !== "*");
+  const allowList = getWebhookProviderHosts();
   return allowList.some((entry) => hostMatchesEntry(host, entry));
 }
 

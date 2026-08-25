@@ -458,12 +458,13 @@ config:
   webhookAllowPrivateIps: false
 
   # Extra allowed webhook destination hosts (comma-separated). Legacy alias,
-  # consumed only as a fallback when webhookExtraProviderHosts is unset/empty;
-  # not a full-list override of the built-in provider allowlist (Slack,
+  # parsed and unioned together with webhookExtraProviderHosts (not a
+  # fallback -- if both are set, hosts from either are allowed); not a
+  # full-list override of the built-in provider allowlist (Slack,
   # Discord, Teams, PagerDuty, Power Automate/Logic Apps).
   webhookProviderHosts: ""
-  # Extra allowed webhook destination hosts (comma-separated). Takes
-  # precedence over webhookProviderHosts when both are set.
+  # Extra allowed webhook destination hosts (comma-separated). Unioned with
+  # webhookProviderHosts when both are set.
   webhookExtraProviderHosts: ""
   # Set to true to allow webhook alert/test destinations to any host,
   # bypassing the friendly-provider allowlist entirely. Not recommended
@@ -471,8 +472,9 @@ config:
   webhookAllowAllHosts: false
 
   # Corporate proxy support for outbound HTTP(S) (fetch/undici and axios).
-  # Requires Node 22.21.0+ or 24.5.0+ on the API/worker images; a startup
-  # warning is logged (non-fatal) on unsupported versions. See
+  # Requires Node 22.21.0+ or 24.0.0+ on the API/worker images for the
+  # fetch/undici path this chart actually relies on; a startup warning is
+  # logged (non-fatal) on unsupported versions. See
   # https://nodejs.org/api/cli.html#node_use_env_proxy1.
   useEnvProxy: false
   # Name of an existing Kubernetes Secret (created outside this chart)

@@ -93,7 +93,7 @@ describe("Worker notify extended unit coverage", () => {
     expect(result.success).to.equal(true);
   });
 
-  it("postJson honors multiple webhook host env vars set simultaneously", async () => {
+  it("postJson honors both webhook host env vars simultaneously (union, not fallback)", async () => {
     process.env.NODE_ENV = "test";
     delete process.env.WEBHOOK_ALLOW_ALL_HOSTS;
     process.env.WEBHOOK_PROVIDER_HOSTS = "legacy-alias.example.com";
@@ -101,8 +101,8 @@ describe("Worker notify extended unit coverage", () => {
 
     const webhooks = await importFresh("apps/worker/src/notify/webhooks.js");
 
-    // WEBHOOK_EXTRA_PROVIDER_HOSTS takes precedence; the legacy
-    // WEBHOOK_PROVIDER_HOSTS alias is only consulted when it's unset.
+    // Both WEBHOOK_EXTRA_PROVIDER_HOSTS and the legacy WEBHOOK_PROVIDER_HOSTS
+    // alias are unioned, so hosts from either are allowed simultaneously.
     const modern = await webhooks.postJson(
       "https://modern-extra.example.com/hook",
       { hello: "world" },
@@ -115,8 +115,7 @@ describe("Worker notify extended unit coverage", () => {
       { hello: "world" },
       "slack",
     );
-    expect(legacy.success).to.equal(false);
-    expect(String(legacy.error)).to.match(/not allowed/i);
+    expect(legacy.success).to.equal(true);
   });
 
   it("postJson test mode returns deterministic success/failure for provider hosts", async () => {

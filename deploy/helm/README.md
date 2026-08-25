@@ -188,8 +188,8 @@ Self-hosted deployments behind a corporate proxy can make the API's
 the worker's `axios` calls honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. `axios`
 already reads these vars on any Node version; `config.useEnvProxy` additionally
 sets `NODE_USE_ENV_PROXY=1` so `fetch`/undici do too, which requires the
-API/worker images to run **Node 22.21.0+ or 24.5.0+** (not any `23.x` release,
-not `24.0.0`-`24.4.x`). On an unsupported Node version the API and worker log a
+API/worker images to run **Node 22.21.0+ or 24.0.0+** (not any `23.x` release).
+On an unsupported Node version the API and worker log a
 non-fatal startup warning and `fetch`/undici simply ignore the proxy vars.
 
 Proxy URLs commonly embed credentials (`http://user:pass@proxy:3128`), so this
@@ -209,6 +209,26 @@ flag alone does nothing without proxy URLs. `config.noProxy` is always
 combined with `localhost`, `127.0.0.1`, `::1`, the in-cluster API service
 hostname, and `.svc`/`.cluster.local`, so intra-cluster API calls never
 accidentally route through the proxy.
+
+Changing which Secret is referenced by `proxyExistingSecret` (or first
+enabling `useEnvProxy`) triggers a rolling restart via `checksum/secret`,
+like any other Helm value change, since that's a change to the rendered
+manifest. Updating the data inside an existing, externally-managed Secret
+(e.g. rotating the proxy password) does not: `checksum/secret` only hashes
+the Secret's name, not its contents. Pick up rotated credentials for the API
+Deployment with:
+
+```bash
+kubectl rollout restart deployment/<release>-tokentimer-api -n <namespace>
+```
+
+The six worker CronJobs need no equivalent restart: each scheduled run
+starts a fresh Pod that reads the Secret's current data, so a rotated value
+takes effect on the next trigger automatically. Also sufficient: a
+`helm upgrade` (bumps `.Release.Revision`, which restarts the API via
+`checksum/helm-release-revision` regardless of whether any value changed),
+or an external Secret-reloader controller (e.g. Stakater Reloader) watching
+the Secret named in `proxyExistingSecret`.
 
 Proxy env vars are injected into the API Deployment and all six worker
 CronJobs. The optional CertOps controller and the dashboard are deliberately
@@ -249,8 +269,9 @@ config:
   webhookAllowAllHosts: false                       # true bypasses the allowlist entirely
 ```
 
-`config.webhookProviderHosts` is a legacy alias, read only as a fallback when
-`webhookExtraProviderHosts` is unset. This allowlist guards against
+`config.webhookProviderHosts` is a legacy alias, parsed and unioned together
+with `webhookExtraProviderHosts` (not a fallback -- if both are set, hosts
+from either are allowed). This allowlist guards against
 webhook-destination typos; it is separate from `config.webhookAllowPrivateIps`,
 which is the SSRF private-IP guard.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { weeklyDigestJob } from "./weekly-digest.js";
 import { logger } from "./logger.js";
+import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
 import {
   gWeeklyDigestLastRun,
   gWeeklyDigestLastRunSuccess,
@@ -8,6 +9,7 @@ import {
 } from "./metrics.js";
 
 async function run() {
+  warnIfNodeUseEnvProxyUnsupported();
   logger.info("Starting weekly digest runner...");
   try {
     await weeklyDigestJob();

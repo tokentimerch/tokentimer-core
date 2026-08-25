@@ -11,6 +11,7 @@
 
 import { pool, withClient } from "./db.js";
 import { isNodeEntrypoint } from "./is-node-entrypoint.js";
+import { warnIfNodeUseEnvProxyUnsupported } from "./proxy-compat-check.js";
 import { logger } from "./logger.js";
 import {
   cAutoSync,
@@ -484,6 +485,7 @@ async function runAutoSync() {
 
 // Entry point
 if (isNodeEntrypoint(import.meta.url)) {
+  warnIfNodeUseEnvProxyUnsupported();
   void (async () => {
     try {
       await runAutoSync();

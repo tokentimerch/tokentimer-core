@@ -54,6 +54,15 @@ describe("DEFAULT_WEBHOOK_PROVIDER_HOSTS", () => {
 });
 
 describe("getWebhookProviderHosts", () => {
+  it("never includes the literal '*' allow-all sentinel, even when set", () => {
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "*";
+    assert.ok(!getWebhookProviderHosts().includes("*"));
+
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "";
+    process.env.WEBHOOK_PROVIDER_HOSTS = "*";
+    assert.ok(!getWebhookProviderHosts().includes("*"));
+  });
+
   it("falls back cleanly to just the defaults when env vars are unset/empty", () => {
     delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
     delete process.env.WEBHOOK_PROVIDER_HOSTS;
@@ -78,17 +87,33 @@ describe("getWebhookProviderHosts", () => {
     assert.strictEqual(hosts.length, DEFAULT_WEBHOOK_PROVIDER_HOSTS.length + 1);
   });
 
-  it("WEBHOOK_PROVIDER_HOSTS is used as the extras fallback only when WEBHOOK_EXTRA_PROVIDER_HOSTS is unset", () => {
+  it("WEBHOOK_PROVIDER_HOSTS (legacy alias) is used on its own when WEBHOOK_EXTRA_PROVIDER_HOSTS is unset", () => {
     process.env.WEBHOOK_PROVIDER_HOSTS = "legacy-alias.example.com";
-    let hosts = getWebhookProviderHosts();
+    const hosts = getWebhookProviderHosts();
     assert.ok(hosts.includes("legacy-alias.example.com"));
+  });
 
+  it("unions WEBHOOK_PROVIDER_HOSTS and WEBHOOK_EXTRA_PROVIDER_HOSTS when both are set", () => {
+    process.env.WEBHOOK_PROVIDER_HOSTS = "legacy-alias.example.com";
     process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "modern.example.com";
-    hosts = getWebhookProviderHosts();
-    assert.ok(hosts.includes("modern.example.com"));
+    const hosts = getWebhookProviderHosts();
     assert.ok(
-      !hosts.includes("legacy-alias.example.com"),
-      "WEBHOOK_PROVIDER_HOSTS must be ignored once WEBHOOK_EXTRA_PROVIDER_HOSTS is set",
+      hosts.includes("modern.example.com"),
+      "WEBHOOK_EXTRA_PROVIDER_HOSTS entries must be present",
+    );
+    assert.ok(
+      hosts.includes("legacy-alias.example.com"),
+      "WEBHOOK_PROVIDER_HOSTS entries must also be present (union, not fallback)",
+    );
+  });
+
+  it("dedupes when the same host appears in both variables", () => {
+    process.env.WEBHOOK_PROVIDER_HOSTS = "shared.example.com";
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "shared.example.com";
+    const hosts = getWebhookProviderHosts();
+    assert.strictEqual(
+      hosts.filter((h) => h === "shared.example.com").length,
+      1,
     );
   });
 
@@ -172,11 +197,17 @@ describe("webhookHostAllowed", () => {
     );
   });
 
-  it("a literal '*' entry never itself matches literally as a hostname", () => {
+  it("a literal '*' entry is excluded from the returned host list and never itself matches literally as a hostname", () => {
     process.env.WEBHOOK_ALLOW_ALL_HOSTS = "false";
-    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "hooks.internal.example.com";
-    // Sanity: allow-all is off, so an unrelated host is rejected.
-    assert.strictEqual(webhookHostAllowed("random.example"), false);
+    process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "hooks.internal.example.com,*";
+    assert.ok(
+      !getWebhookProviderHosts().includes("*"),
+      "* must never appear in the returned host list; it is an allow-all sentinel, not a hostname",
+    );
+    // allowAllWebhookHosts() consumes "*" separately from the returned host
+    // list, so it still takes effect even though getWebhookProviderHosts()
+    // strips the sentinel out.
+    assert.strictEqual(webhookHostAllowed("random.example"), true);
   });
 
   it("normalizes the checked hostname (case, trailing dot)", () => {

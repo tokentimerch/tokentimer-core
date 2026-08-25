@@ -113,7 +113,7 @@ async function main() {
   console.log(`Node.js ${process.version} — NODE_USE_ENV_PROXY supported: ${isNodeUseEnvProxySupported()}`);
   if (!isNodeUseEnvProxySupported()) {
     console.error(
-      "This Node.js version does not support NODE_USE_ENV_PROXY (requires 22.21.0+ or 24.5.0+). " +
+      "This Node.js version does not support NODE_USE_ENV_PROXY for fetch/undici (requires 22.21.0+ or 24.0.0+). " +
         "The CI matrix must only select supported versions; refusing to run a smoke test that " +
         "cannot exercise the feature it proves.",
     );
