@@ -32,9 +32,12 @@ FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
 # CVE-2026-9256 / CVE-2026-49975: pin nginx=1.28.3-r4 (patched Alpine 3.23 revision).
+# libcrypto3/libssl3=3.5.7-r0 was superseded upstream by 3.5.8-r0; pin to 3.5.8-r0 instead,
+# the currently selectable Alpine 3.23 revision (apk upgrade already installs it, forcing the
+# old pin back down conflicts with nginx/libcurl/ca-certificates which require the newer one).
 # Drop unused nginx-module-* packages first; their r1 revisions block apk upgrades.
 RUN apk update && apk upgrade --no-cache \
-    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && apk add --no-cache libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
     && apk del --no-cache \
         nginx \
         nginx-module-acme \
@@ -43,7 +46,7 @@ RUN apk update && apk upgrade --no-cache \
         nginx-module-njs \
         nginx-module-xslt \
     && apk add --no-cache 'nginx~1.28.3' \
-    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0" \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.8-r0" \
     && nginx_version="$(apk info -v nginx | sed 's/^nginx-//')" \
     && test "$(apk version -t "$nginx_version" "1.28.3-r4")" != "<" \
     && mkdir -p /run/nginx
