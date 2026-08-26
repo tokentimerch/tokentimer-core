@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -91,6 +92,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGcp.size);
@@ -176,6 +178,19 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup: cleanupObsolete
+          ? {
+              enabled: true,
+              provider: 'gcp',
+              // GCP scans always cover Secret Manager secrets only.
+              scannedSources: ['gcp-secret-manager'],
+              // All rediscovered locations (whole scan, not just selection)
+              // so unselected-but-still-present items are never deleted.
+              scannedLocations: gcpItems
+                .map(it => it.location)
+                .filter(Boolean),
+            }
+          : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -257,6 +272,26 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           Scan
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            size='sm'
+            colorScheme='red'
+          >
+            Remove previously imported secrets no longer found at the source
+          </Checkbox>
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported secrets from this GCP project that
+              no longer appear anywhere in this scan's results, regardless
+              of which items you select for import below. This cannot be
+              undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {gcpSummary.length > 0 && (
         <Box
           border='1px solid'

@@ -80,6 +80,39 @@ describe("importCleanup.validateCleanupRequest", () => {
       null,
     );
   });
+
+  it("accepts valid payloads for every non-git provider", () => {
+    const validByProvider = {
+      vault: ["vault-kv", "vault-pki"],
+      aws: ["aws-secrets-manager", "aws-acm", "aws-iam-key"],
+      azure: [
+        "azure-key-vault-secret",
+        "azure-key-vault-certificate",
+        "azure-key-vault-key",
+      ],
+      "azure-ad": [
+        "azure-ad-client-secret",
+        "azure-ad-certificate",
+        "azure-ad-sp-secret",
+        "azure-ad-sp-certificate",
+      ],
+      gcp: ["gcp-secret-manager"],
+    };
+    for (const [provider, scannedSources] of Object.entries(
+      validByProvider,
+    )) {
+      assert.strictEqual(
+        validateCleanupRequest({
+          enabled: true,
+          provider,
+          scannedSources,
+          scannedLocations: [],
+        }),
+        null,
+        `${provider} should accept its own source kinds`,
+      );
+    }
+  });
 });
 
 describe("importCleanup.SOURCE_LOCATION_PATTERNS", () => {
@@ -136,6 +169,121 @@ describe("importCleanup.SOURCE_LOCATION_PATTERNS", () => {
         "github:repos/org/repo/keys/12",
       ),
       true,
+    );
+  });
+
+  it("vault-kv and vault-pki are mutually exclusive", () => {
+    const kvLocation = "vault:secret/data/myapp/apikey";
+    const pkiLocation = "vault:pki/cert/39:dd:7a:1b";
+
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["vault-kv"].test(kvLocation),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["vault-pki"].test(kvLocation),
+      false,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["vault-pki"].test(pkiLocation),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["vault-kv"].test(pkiLocation),
+      false,
+    );
+  });
+
+  it("aws source patterns are scoped by kind, not region", () => {
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["aws-secrets-manager"].test(
+        "aws:secretsmanager:us-east-1:arn:aws:secretsmanager:us-east-1:123:secret:foo",
+      ),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["aws-acm"].test(
+        "aws:acm:eu-west-1:arn:aws:acm:eu-west-1:123:certificate/abc",
+      ),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["aws-iam-key"].test(
+        "aws:iam:us-east-1:someuser/AKIAEXAMPLE",
+      ),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["aws-iam-key"].test(
+        "aws:secretsmanager:us-east-1:arn:...",
+      ),
+      false,
+    );
+  });
+
+  it("azure key vault patterns distinguish secrets/certificates/keys", () => {
+    const secret = "azure:https://my-vault.vault.azure.net/secrets/foo";
+    const cert = "azure:https://my-vault.vault.azure.net/certificates/foo";
+    const key = "azure:https://my-vault.vault.azure.net/keys/foo";
+
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-key-vault-secret"].test(secret),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-key-vault-certificate"].test(cert),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-key-vault-key"].test(key),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-key-vault-secret"].test(cert),
+      false,
+    );
+  });
+
+  it("azure-ad patterns distinguish apps/service-principals and secrets/certs", () => {
+    const appSecret = "azure-ad:applications/app-1/secrets/key-1";
+    const appCert = "azure-ad:applications/app-1/certificates/key-1";
+    const spSecret = "azure-ad:servicePrincipals/sp-1/secrets/key-1";
+    const spCert = "azure-ad:servicePrincipals/sp-1/certificates/key-1";
+
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-ad-client-secret"].test(appSecret),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-ad-certificate"].test(appCert),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-ad-sp-secret"].test(spSecret),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-ad-sp-certificate"].test(spCert),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["azure-ad-client-secret"].test(spSecret),
+      false,
+    );
+  });
+
+  it("gcp-secret-manager matches Secret Manager locations", () => {
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["gcp-secret-manager"].test(
+        "gcp:my-project-123/secrets/foo",
+      ),
+      true,
+    );
+    assert.strictEqual(
+      SOURCE_LOCATION_PATTERNS["gcp-secret-manager"].test(
+        "gcp:my-project-123/other/foo",
+      ),
+      false,
     );
   });
 

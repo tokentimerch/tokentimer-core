@@ -41,8 +41,12 @@ const SOURCE_LOCATION_PATTERNS = {
   "github-ssh-key": /^github:user\/keys\//,
   "github-secret": /^github:repos\/.+\/actions\/secrets\//,
   "github-deploy-key": /^github:repos\/.+\/keys\//,
-  "vault-kv": /^vault:/,
-  "vault-pki": /^vault:/,
+  // PKI certs always live at "<mount>/cert/<serial>"; KV entries are
+  // everything else under the vault: prefix. Distinguishing the two here
+  // (instead of both matching every vault: location) means a KV-only scan
+  // with cleanup enabled never touches PKI certs, and vice versa.
+  "vault-kv": /^vault:(?!.+\/cert\/[^/]+$).+/,
+  "vault-pki": /^vault:.+\/cert\/[^/]+$/,
   "aws-secrets-manager": /^aws:secretsmanager:/,
   "aws-acm": /^aws:acm:/,
   "aws-iam-key": /^aws:iam:/,

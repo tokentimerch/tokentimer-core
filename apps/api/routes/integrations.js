@@ -383,10 +383,19 @@ router.post(
         return res.status(403).json({ error: "Forbidden" });
       }
       const workspaceId = req.workspace.id;
-      const { items, default_category, default_type, contact_group_id } =
-        req.body || {};
+      const {
+        items,
+        default_category,
+        default_type,
+        contact_group_id,
+        cleanup,
+      } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "items array required" });
+      }
+      const cleanupError = validateCleanupRequest(cleanup);
+      if (cleanupError) {
+        return res.status(400).json({ error: cleanupError });
       }
       // Reuse core validation constraints for type/category; allow past expiration for imports
       const ALLOWED_TYPES = [
@@ -602,6 +611,32 @@ router.post(
           });
         }
       }
+      // Remove previously imported tokens that are no longer present at the
+      // source. Opt-in via the `cleanup` payload; scoped to the provider
+      // prefix and the source kinds included in this scan. Only attempted
+      // when the scan returned at least one item, so an empty/broken scan
+      // can never mass-delete a workspace.
+      let cleanupDeleted = [];
+      if (cleanup && cleanup.enabled === true) {
+        try {
+          const cleanupResult = await cleanupObsoleteTokens({
+            workspaceId,
+            actorUserId: req.user.id,
+            cleanup,
+            reason:
+              cleanup.reason === "auto_sync_cleanup"
+                ? "auto_sync_cleanup"
+                : "import_cleanup",
+          });
+          cleanupDeleted = cleanupResult.deleted;
+        } catch (cleanupErr) {
+          logger.error("Obsolete token cleanup failed", {
+            error: cleanupErr.message,
+            workspaceId,
+          });
+        }
+      }
+
       // Batch audit summary (best-effort)
       try {
         await writeAudit({
@@ -619,6 +654,7 @@ router.post(
             ...(errors.length > 0
               ? { errors: summarizeImportErrors(errors) }
               : {}),
+            deleted_count: cleanupDeleted.length,
             source: "vault",
           },
         });
@@ -629,6 +665,8 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
+        deleted_count: cleanupDeleted.length,
+        deleted: cleanupDeleted,
         created,
         updated,
         errors,

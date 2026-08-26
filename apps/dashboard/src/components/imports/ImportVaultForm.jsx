@@ -159,6 +159,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // Source kinds included in the last scan; cleanup only touches these.
+  const [lastScanSources, setLastScanSources] = React.useState([]);
 
   const [isScanning, setIsScanning] = React.useState(false);
   const [vaultItems, setVaultItems] = React.useState([]);
@@ -277,6 +280,10 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
+      const scannedSources = [];
+      if (includeKV) scannedSources.push('vault-kv');
+      if (includePKI) scannedSources.push('vault-pki');
+      setLastScanSources(scannedSources);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('vault');
       }
@@ -337,6 +344,19 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         workspaceId,
         items: selected,
         defaults: vaultDefaults,
+        cleanup:
+          cleanupObsolete && lastScanSources.length > 0
+            ? {
+                enabled: true,
+                provider: 'vault',
+                scannedSources: lastScanSources,
+                // All rediscovered locations (whole scan, not just selection)
+                // so unselected-but-still-present items are never deleted.
+                scannedLocations: vaultItems
+                  .map(it => it.location)
+                  .filter(Boolean),
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -514,6 +534,28 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             All kinds are scanned by default. Uncheck a kind to skip it, e.g.
             uncheck Secrets &amp; keys to only import certificates.
           </Text>
+        </Box>
+
+        <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+          <VStack align='stretch' spacing={2}>
+            <Checkbox
+              isChecked={cleanupObsolete}
+              onChange={e => setCleanupObsolete(e.target.checked)}
+              size='sm'
+              colorScheme='red'
+            >
+              Remove previously imported items no longer found at the source
+            </Checkbox>
+            {cleanupObsolete ? (
+              <Text fontSize='xs' color='red.400' pl={6}>
+                Deletes previously imported items of the asset kinds scanned
+                above (KV, PKI, or both) that no longer appear anywhere in
+                this scan's results, regardless of which items you select for
+                import below. Asset kinds you did not scan for are never
+                affected. This cannot be undone.
+              </Text>
+            ) : null}
+          </VStack>
         </Box>
 
         {/* Advanced options - collapsible */}

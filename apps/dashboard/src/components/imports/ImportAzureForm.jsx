@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -95,6 +96,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAzure.size);
@@ -180,6 +182,24 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup: cleanupObsolete
+          ? {
+              enabled: true,
+              provider: 'azure',
+              // Azure Key Vault scans always cover all three kinds, so
+              // cleanup is always safe to scope to all of them.
+              scannedSources: [
+                'azure-key-vault-secret',
+                'azure-key-vault-certificate',
+                'azure-key-vault-key',
+              ],
+              // All rediscovered locations (whole scan, not just selection)
+              // so unselected-but-still-present items are never deleted.
+              scannedLocations: azureItems
+                .map(it => it.location)
+                .filter(Boolean),
+            }
+          : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -267,6 +287,26 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           Scan
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            size='sm'
+            colorScheme='red'
+          >
+            Remove previously imported items no longer found at the source
+          </Checkbox>
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported secrets, certificates, and keys
+              from this Key Vault that no longer appear anywhere in this
+              scan's results, regardless of which items you select for
+              import below. This cannot be undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {azureSummary.length > 0 && (
         <Box
           border='1px solid'

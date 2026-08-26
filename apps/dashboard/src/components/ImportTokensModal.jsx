@@ -999,6 +999,12 @@ export default function ImportTokensModal({
   const [selectedRowsAzureAD, setSelectedRowsAzureAD] = React.useState(
     new Set()
   );
+  const [azureADCleanupObsolete, setAzureADCleanupObsolete] =
+    React.useState(false);
+  // Source kinds included in the last scan; cleanup only touches these.
+  const [azureADLastScanSources, setAzureADLastScanSources] = React.useState(
+    []
+  );
 
   // Show/hide toggle for secret fields
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -1925,6 +1931,14 @@ export default function ImportTokensModal({
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureADItems(items);
       setAzureADSummary(Array.isArray(res?.summary) ? res.summary : []);
+      const scannedSources = [];
+      if (azureADIncludeApps) {
+        scannedSources.push('azure-ad-client-secret', 'azure-ad-certificate');
+      }
+      if (azureADIncludeSPs) {
+        scannedSources.push('azure-ad-sp-secret', 'azure-ad-sp-certificate');
+      }
+      setAzureADLastScanSources(scannedSources);
       if (items.length > 0)
         setScanSucceededFor(prev => new Set(prev).add('azure-ad'));
 
@@ -1977,6 +1991,20 @@ export default function ImportTokensModal({
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup:
+          azureADCleanupObsolete && azureADLastScanSources.length > 0
+            ? {
+                enabled: true,
+                provider: 'azure-ad',
+                scannedSources: azureADLastScanSources,
+                // All rediscovered locations (whole scan, not just
+                // selection) so unselected-but-still-present items are
+                // never deleted.
+                scannedLocations: azureADItems
+                  .map(it => it.location)
+                  .filter(Boolean),
+              }
+            : undefined,
       });
       onImported && onImported(selected);
     } catch (e) {
@@ -2909,6 +2937,32 @@ export default function ImportTokensModal({
                       Scan
                     </Button>
                   </HStack>
+                  <Box border='1px solid' borderColor={border} borderRadius='md' p={3}>
+                    <VStack align='stretch' spacing={2}>
+                      <Checkbox
+                        isChecked={azureADCleanupObsolete}
+                        onChange={e =>
+                          setAzureADCleanupObsolete(e.target.checked)
+                        }
+                        size='sm'
+                        colorScheme='red'
+                      >
+                        Remove previously imported items no longer found at
+                        the source
+                      </Checkbox>
+                      {azureADCleanupObsolete ? (
+                        <Text fontSize='xs' color='red.400' pl={6}>
+                          Deletes previously imported secrets and
+                          certificates of the item types scanned above (App
+                          Registrations, Service Principals, or both) that no
+                          longer appear anywhere in this scan's results,
+                          regardless of which items you select for import
+                          below. Item types you did not scan for are never
+                          affected. This cannot be undone.
+                        </Text>
+                      ) : null}
+                    </VStack>
+                  </Box>
                   {azureADSummary.length > 0 && !error && (
                     <Box
                       border='1px solid'

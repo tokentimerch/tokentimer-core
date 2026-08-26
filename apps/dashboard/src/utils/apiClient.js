@@ -1203,13 +1203,14 @@ export const vaultAPI = {
       throw new Error(handleApiError(e, 'Failed to load mounts'));
     }
   },
-  import: async ({ workspaceId, items, defaults = {} }) => {
+  import: async ({ workspaceId, items, defaults = {}, cleanup }) => {
     try {
       const payload = {
         items,
         default_category: defaults.category,
         default_type: defaults.type,
         contact_group_id: defaults.contact_group_id || null,
+        ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_IMPORT(workspaceId),
@@ -1217,12 +1218,17 @@ export const vaultAPI = {
       );
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
+      const deletedCount = res?.data?.deleted_count || 0;
+      const deletedSuffix =
+        deletedCount > 0
+          ? `, removed ${deletedCount} obsolete item${deletedCount !== 1 ? 's' : ''}`
+          : '';
       if (updatedCount > 0) {
         showSuccessMessage(
-          `Imported ${createdCount} new items, updated ${updatedCount} existing items`
+          `Imported ${createdCount} new items, updated ${updatedCount} existing items${deletedSuffix}`
         );
       } else {
-        showSuccessMessage(`Imported ${createdCount} items`);
+        showSuccessMessage(`Imported ${createdCount} items${deletedSuffix}`);
       }
       return res.data;
     } catch (e) {

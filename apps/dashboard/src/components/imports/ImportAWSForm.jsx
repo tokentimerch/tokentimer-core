@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -148,6 +149,9 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // Source kinds included in the last scan; cleanup only touches these.
+  const [lastScanSources, setLastScanSources] = React.useState([]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAws.size);
@@ -305,6 +309,9 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const aggregatedSummary = Object.values(summaryByType);
         setAwsItems(allItems);
         setAwsSummary(aggregatedSummary);
+        // All-regions scan always includes IAM (global) plus secrets and
+        // certificates for every detected region.
+        setLastScanSources(['aws-iam-key', 'aws-secrets-manager', 'aws-acm']);
         if (allItems.length > 0) {
           onScanSuccess && onScanSuccess('aws');
         }
@@ -332,6 +339,13 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const items = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(items);
         setAwsSummary(Array.isArray(res?.summary) ? res.summary : []);
+        // IAM keys are account-wide (not region-scoped), so a global-only
+        // scan sees the whole population and can safely support cleanup.
+        // A single specific-region scan only sees one region's secrets and
+        // certificates out of the whole account, so it must never enable
+        // cleanup for those kinds (the location patterns aren't region-
+        // scoped) - leave lastScanSources empty in that case.
+        setLastScanSources(isGlobalScan ? ['aws-iam-key'] : []);
         if (items.length > 0) {
           onScanSuccess && onScanSuccess('aws');
         }
@@ -385,6 +399,19 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup:
+          cleanupObsolete && lastScanSources.length > 0
+            ? {
+                enabled: true,
+                provider: 'aws',
+                scannedSources: lastScanSources,
+                // All rediscovered locations (whole scan, not just selection)
+                // so unselected-but-still-present items are never deleted.
+                scannedLocations: awsItems
+                  .map(it => it.location)
+                  .filter(Boolean),
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -472,6 +499,35 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           Detect Regions
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            isDisabled={awsRegion !== 'all-regions' && awsRegion !== 'global'}
+            size='sm'
+            colorScheme='red'
+          >
+            Remove previously imported items no longer found at the source
+          </Checkbox>
+          <Text fontSize='xs' color={helpTextColor} pl={6}>
+            Only available for &quot;All Regions + Global&quot; or
+            &quot;Global (IAM only)&quot; scans. AWS secrets and certificates
+            can exist in any region, so a single-region scan never sees
+            enough of the account to safely judge what is obsolete.
+          </Text>
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported items of the item types scanned
+              above (secrets, certificates, and/or IAM keys, depending on the
+              scan you run) that no longer appear anywhere in this scan's
+              results, regardless of which items you select for import
+              below. Item types you did not scan for are never affected.
+              This cannot be undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {(awsDetectedRegions.length > 0 ||
         (awsIamInfo && awsIamInfo.keysCount > 0)) && (
         <VStack align='stretch' spacing={3}>
