@@ -167,8 +167,10 @@ async function cleanupObsoleteTokens({
     }
 
     for (const subScope of completeSubScopes) {
+      // Dimension placeholders start after the 7 fixed params below ($1-$7),
+      // so the offset here must stay in sync with that fixed param count.
       const { sql: dimensionSql, params: dimensionParams } =
-        buildDimensionFilterSql(subScope.dimensions, 6);
+        buildDimensionFilterSql(subScope.dimensions, 8);
       const params = [
         workspaceId,
         cleanup.provider,
