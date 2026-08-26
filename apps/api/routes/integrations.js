@@ -864,6 +864,38 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record. Host
+      // anchors the instance so two self-hosted GitLab servers with
+      // colliding numeric user/project/group ids never share a cleanup
+      // scope.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.host && result.ownerKey) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "gitlab",
+            identityContext: { host: result.host, ownerKey: result.ownerKey },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GitLab scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {
@@ -1049,6 +1081,37 @@ router.post(
         maxItems: maxItems || 500,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record. Host
+      // anchors the instance so two GitHub Enterprise servers with
+      // colliding numeric user/repo ids never share a cleanup scope.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.host && result.ownerKey) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "github",
+            identityContext: { host: result.host, ownerKey: result.ownerKey },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GitHub scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {

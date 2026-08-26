@@ -445,6 +445,12 @@ async function scanGitLab({
   const normalizedUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   const isGitLabCloud = normalizedUrl.toLowerCase().includes("gitlab.com");
 
+  // The host anchors every GitLab token's provenance (see
+  // sourceIdentity.js) so that two self-hosted GitLab instances with
+  // colliding numeric user/project/group ids can never cross-delete each
+  // other's tokens.
+  const host = new URL(normalizedUrl).host;
+
   logger.info("Starting GitLab scan", {
     baseUrl: baseUrl.replace(/\/\/[^@]+@/, "//***@"),
     maxItems,
@@ -454,11 +460,11 @@ async function scanGitLab({
   const items = [];
   const summary = [];
   const BATCH_SIZE = 10; // Concurrency limit for parallel API calls
+  let currentUser = null;
 
   try {
     // Get current user info (works on both cloud and self-hosted)
     // Use short timeout (15s) for initial connection check - fail fast if unreachable
-    let currentUser = null;
     try {
       currentUser = await gitlabRequest({
         baseUrl: normalizedUrl,
@@ -588,6 +594,8 @@ async function scanGitLab({
 
                   items.push({
                     source: "gitlab-project-token",
+                    sourceKind: "gitlab-project-token",
+                    sourceObjectId: `${project.id}:${pt.id}`,
                     name: pt.name || `Project Access Token (${pt.id})`,
                     category: "key_secret",
                     type: "api_key",
@@ -622,9 +630,11 @@ async function scanGitLab({
         });
         summary.push({
           type: "project_access_tokens",
+          sourceKind: "gitlab-project-token",
           found: projectTokensCount,
           skippedRevoked,
           skippedExpired,
+          complete: true,
         });
       } catch (e) {
         // Feature may not be available on older self-hosted instances
@@ -713,6 +723,8 @@ async function scanGitLab({
 
                   items.push({
                     source: "gitlab-group-token",
+                    sourceKind: "gitlab-group-token",
+                    sourceObjectId: `${group.id}:${gt.id}`,
                     name: gt.name || `Group Access Token (${gt.id})`,
                     category: "key_secret",
                     type: "api_key",
@@ -746,9 +758,11 @@ async function scanGitLab({
         });
         summary.push({
           type: "group_access_tokens",
+          sourceKind: "gitlab-group-token",
           found: groupTokensCount,
           skippedRevoked,
           skippedExpired,
+          complete: true,
         });
       } catch (e) {
         // Feature may not be available on older self-hosted instances
@@ -923,6 +937,8 @@ async function scanGitLab({
 
                 items.push({
                   source: "gitlab-pat",
+                  sourceKind: "gitlab-pat",
+                  sourceObjectId: String(pat.id),
                   name: pat.name || `Personal Access Token (${pat.id})`,
                   category: "key_secret",
                   type: "api_key",
@@ -997,6 +1013,8 @@ async function scanGitLab({
 
               items.push({
                 source: "gitlab-pat",
+                sourceKind: "gitlab-pat",
+                sourceObjectId: String(pat.id),
                 name: pat.name || `Personal Access Token (${pat.id})`,
                 category: "key_secret",
                 type: "api_key",
@@ -1029,12 +1047,14 @@ async function scanGitLab({
         });
         summary.push({
           type: "personal_access_tokens",
+          sourceKind: "gitlab-pat",
           found: patsFound,
           skippedExpired,
           skippedUserPATs: filters.excludeUserPATs
             ? skippedUserPATs
             : undefined,
           skippedBotUserPATs,
+          complete: true,
         });
       } catch (e) {
         // On self-hosted instances with older versions, this endpoint may not exist
@@ -1044,14 +1064,21 @@ async function scanGitLab({
           );
           summary.push({
             type: "personal_access_tokens",
+            sourceKind: "gitlab-pat",
             note: "Not available (GitLab 13.3+ required)",
+            complete: false,
           });
         } else {
           logger.warn("Personal access tokens scan failed", {
             error: e.message,
             status: e.status,
           });
-          summary.push({ type: "personal_access_tokens", error: e.message });
+          summary.push({
+            type: "personal_access_tokens",
+            sourceKind: "gitlab-pat",
+            error: e.message,
+            complete: false,
+          });
         }
       }
     }
@@ -1118,6 +1145,8 @@ async function scanGitLab({
 
                   items.push({
                     source: "gitlab-deploy-token",
+                    sourceKind: "gitlab-deploy-token",
+                    sourceObjectId: `${project.id}:${dt.id}`,
                     name: dt.name || `Deploy Token (${dt.id})`,
                     category: "key_secret",
                     type: "api_key",
@@ -1143,13 +1172,23 @@ async function scanGitLab({
           projectsWithTokens,
           tokensFound: deployTokensCount,
         });
-        summary.push({ type: "deploy_tokens", found: deployTokensCount });
+        summary.push({
+          type: "deploy_tokens",
+          sourceKind: "gitlab-deploy-token",
+          found: deployTokensCount,
+          complete: true,
+        });
       } catch (e) {
         logger.warn("Deploy tokens scan failed", {
           error: e.message,
           status: e.status,
         });
-        summary.push({ type: "deploy_tokens", error: e.message });
+        summary.push({
+          type: "deploy_tokens",
+          sourceKind: "gitlab-deploy-token",
+          error: e.message,
+          complete: false,
+        });
       }
     }
 
@@ -1195,6 +1234,8 @@ async function scanGitLab({
 
                   items.push({
                     source: "gitlab-trigger-token",
+                    sourceKind: "gitlab-trigger-token",
+                    sourceObjectId: `${project.id}:${trigger.id}`,
                     name:
                       trigger.description ||
                       `Pipeline Trigger Token (${trigger.id})`,
@@ -1242,16 +1283,23 @@ async function scanGitLab({
         });
         summary.push({
           type: "pipeline_trigger_tokens",
+          sourceKind: "gitlab-trigger-token",
           found: triggerTokensCount,
           projectsScanned,
           projectsSkipped,
+          complete: projectsSkipped === 0,
         });
       } catch (e) {
         logger.warn("Pipeline trigger tokens scan failed", {
           error: e.message,
           status: e.status,
         });
-        summary.push({ type: "pipeline_trigger_tokens", error: e.message });
+        summary.push({
+          type: "pipeline_trigger_tokens",
+          sourceKind: "gitlab-trigger-token",
+          error: e.message,
+          complete: false,
+        });
       }
     }
 
@@ -1277,6 +1325,8 @@ async function scanGitLab({
 
           items.push({
             source: "gitlab-ssh-key",
+            sourceKind: "gitlab-ssh-key",
+            sourceObjectId: String(key.id),
             name: key.title || `SSH Key (${key.id})`,
             category: "key_secret",
             type: "ssh_key",
@@ -1286,9 +1336,19 @@ async function scanGitLab({
             last_used_at: key.last_used_at || null,
           });
         }
-        summary.push({ type: "ssh_keys", found: sshKeys.length });
+        summary.push({
+          type: "ssh_keys",
+          sourceKind: "gitlab-ssh-key",
+          found: sshKeys.length,
+          complete: true,
+        });
       } catch (e) {
-        summary.push({ type: "ssh_keys", error: e.message });
+        summary.push({
+          type: "ssh_keys",
+          sourceKind: "gitlab-ssh-key",
+          error: e.message,
+          complete: false,
+        });
       }
     }
   } catch (e) {
@@ -1420,7 +1480,7 @@ async function scanGitLab({
     ...resultsByType,
   });
 
-  return { items, summary };
+  return { items, summary, host, ownerKey: currentUser?.id ? String(currentUser.id) : null };
 }
 
 module.exports = {

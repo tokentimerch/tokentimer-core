@@ -220,6 +220,8 @@ async function scanGitHub({
 
   const items = [];
   const summary = [];
+  let host = null;
+  let ghUser = null;
 
   try {
     // Normalize baseUrl (default to github.com if not provided)
@@ -233,10 +235,15 @@ async function scanGitHub({
         ? "https://api.github.com"
         : normalizedUrl;
 
+    // The host anchors every GitHub token's provenance (see
+    // sourceIdentity.js) so that two GitHub Enterprise instances with
+    // colliding user/repo ids can never cross-delete each other's tokens.
+    host = new URL(apiBase).host;
+
     // Get current user info
     // Use short timeout (15s) for initial connection check - fail fast if unreachable
     try {
-      await githubRequest({
+      ghUser = await githubRequest({
         baseUrl: apiBase,
         token,
         method: "GET",
@@ -304,6 +311,8 @@ async function scanGitHub({
           // GitHub SSH keys don't have expiration dates in the API
           items.push({
             source: "github-ssh-key",
+            sourceKind: "github-ssh-key",
+            sourceObjectId: String(key.id),
             name: key.title || `SSH Key (${key.id})`,
             category: "key_secret",
             type: "ssh_key",
@@ -313,7 +322,12 @@ async function scanGitHub({
             last_used_at: key.last_used_at || null,
           });
         }
-        summary.push({ type: "ssh_keys", found: sshKeys.length });
+        summary.push({
+          type: "ssh_keys",
+          sourceKind: "github-ssh-key",
+          found: sshKeys.length,
+          complete: true,
+        });
       } catch (e) {
         logger.error("GitHub SSH keys scan failed", {
           error: e.message,
@@ -330,13 +344,17 @@ async function scanGitHub({
         if (e.status === 403) {
           summary.push({
             type: "ssh_keys",
+            sourceKind: "github-ssh-key",
             error:
               "Your PAT needs 'read:public_key' or 'admin:public_key' scope",
+            complete: false,
           });
         } else {
           summary.push({
             type: "ssh_keys",
+            sourceKind: "github-ssh-key",
             error: e.message || "Unknown error",
+            complete: false,
           });
         }
       }
@@ -351,6 +369,7 @@ async function scanGitHub({
           maxItems: 100,
         });
         let secretsCount = 0;
+        let reposFailed = 0;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
@@ -372,6 +391,8 @@ async function scanGitHub({
                   // GitHub secrets don't expose expiration dates in the API
                   items.push({
                     source: "github-secret",
+                    sourceKind: "github-secret",
+                    sourceObjectId: `${repo.id}:${secret.name}`,
                     name: secret.name || `Secret (${secret.name})`,
                     category: "key_secret",
                     type: "secret",
@@ -385,20 +406,36 @@ async function scanGitHub({
                   secretsCount++;
                 }
               } catch (_e) {
-                // Skip repos we can't access
+                // Skip repos we can't access, but count them so a scan
+                // that couldn't see every repo's secrets is never reported
+                // complete for this sub-scope.
+                reposFailed++;
               }
             }),
           );
         }
-        summary.push({ type: "repository_secrets", found: secretsCount });
+        summary.push({
+          type: "repository_secrets",
+          sourceKind: "github-secret",
+          found: secretsCount,
+          reposFailed,
+          complete: reposFailed === 0,
+        });
       } catch (e) {
         if (e.status === 403) {
           summary.push({
             type: "repository_secrets",
+            sourceKind: "github-secret",
             error: "Your PAT needs 'repo' scope",
+            complete: false,
           });
         } else {
-          summary.push({ type: "repository_secrets", error: e.message });
+          summary.push({
+            type: "repository_secrets",
+            sourceKind: "github-secret",
+            error: e.message,
+            complete: false,
+          });
         }
       }
     }
@@ -412,6 +449,7 @@ async function scanGitHub({
           maxItems: 100,
         });
         let deployKeysCount = 0;
+        let reposFailed = 0;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
@@ -432,6 +470,8 @@ async function scanGitHub({
                   if (items.length >= maxItems) break;
                   items.push({
                     source: "github-deploy-key",
+                    sourceKind: "github-deploy-key",
+                    sourceObjectId: `${repo.id}:${key.id}`,
                     name: key.title || `Deploy Key (${key.id})`,
                     category: "key_secret",
                     type: "ssh_key",
@@ -444,14 +484,25 @@ async function scanGitHub({
                   deployKeysCount++;
                 }
               } catch (_e) {
-                // Skip repos we can't access
+                reposFailed++;
               }
             }),
           );
         }
-        summary.push({ type: "deploy_keys", found: deployKeysCount });
+        summary.push({
+          type: "deploy_keys",
+          sourceKind: "github-deploy-key",
+          found: deployKeysCount,
+          reposFailed,
+          complete: reposFailed === 0,
+        });
       } catch (e) {
-        summary.push({ type: "deploy_keys", error: e.message });
+        summary.push({
+          type: "deploy_keys",
+          sourceKind: "github-deploy-key",
+          error: e.message,
+          complete: false,
+        });
       }
     }
 
@@ -567,7 +618,7 @@ async function scanGitHub({
   }
 
   logger.info("GitHub scan completed", { itemsFound: items.length });
-  return { items, summary };
+  return { items, summary, host, ownerKey: ghUser?.id ? String(ghUser.id) : null };
 }
 
 module.exports = {
