@@ -221,6 +221,7 @@ async function runAutoSync() {
           schedule_tz,
           last_sync_status: previousStatus,
           created_by: createdBy,
+          cleanup_obsolete: cleanupObsoleteFlag,
         } = config;
         logger.info(`Syncing ${provider} for workspace ${workspace_id}`);
 
@@ -324,6 +325,7 @@ async function runAutoSync() {
           });
           const scanResult = scanResponse.data;
           const itemsCount = scanResult?.items?.length || 0;
+          const scanId = scanResult?.scan_id || null;
 
           // 2. Import: delegate to the existing import endpoint so deduplication,
           //    sanitization, type validation, and audit logging are identical to
@@ -332,49 +334,36 @@ async function runAutoSync() {
           let importErrorCount = 0;
           let importErrors = [];
           let deletedCount = 0;
-          if (itemsCount > 0) {
+          const cleanupObsolete =
+            cleanupObsoleteFlag === true || scan_params?.cleanupObsolete === true;
+          // A scan that legitimately finds zero items in a fully-scanned,
+          // complete scope is still a real "everything here is now obsolete"
+          // result -- it must still reach the import endpoint (with an empty
+          // items array) so the cleanup engine gets a chance to run, not be
+          // silently skipped just because there was nothing new to import.
+          if (itemsCount > 0 || (cleanupObsolete && scanId)) {
             const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
-            // Cleanup of obsolete tokens is only attempted when the scan
-            // returned at least one item, so an empty/broken scan can never
-            // mass-delete a workspace.
+            // The cleanup request itself is fully provider-agnostic: it just
+            // points the shared cleanup engine at this scan's scan_id,
+            // exactly like a manual import does. The engine (not this
+            // worker) is the one place that knows which sub-scopes are
+            // complete and safe to clean.
             let cleanup;
-            if (scan_params?.cleanupObsolete === true) {
-              const scannedSources = [];
-              if (provider === "gitlab") {
-                const f = scan_params?.filters || {};
-                if (f.includePATs !== false) scannedSources.push("gitlab-pat");
-                if (f.includeProjectTokens !== false)
-                  scannedSources.push("gitlab-project-token");
-                if (f.includeGroupTokens !== false)
-                  scannedSources.push("gitlab-group-token");
-                if (f.includeDeployTokens !== false)
-                  scannedSources.push("gitlab-deploy-token");
-                if (f.includeTriggerTokens === true)
-                  scannedSources.push("gitlab-trigger-token");
-                if (f.includeSSHKeys === true)
-                  scannedSources.push("gitlab-ssh-key");
-              } else if (provider === "github") {
-                const inc = scan_params?.include || {
-                  tokens: true,
-                  sshKeys: true,
-                  deployKeys: true,
-                  secrets: true,
-                };
-                if (inc.sshKeys) scannedSources.push("github-ssh-key");
-                if (inc.deployKeys) scannedSources.push("github-deploy-key");
-                if (inc.secrets) scannedSources.push("github-secret");
-              }
-              if (scannedSources.length > 0) {
-                cleanup = {
-                  enabled: true,
-                  provider,
-                  scannedSources,
-                  scannedLocations: (scanResult.items || [])
-                    .map((it) => it.location)
-                    .filter(Boolean),
-                  reason: "auto_sync_cleanup",
-                };
-              }
+            if (cleanupObsolete && scanId) {
+              cleanup = {
+                enabled: true,
+                provider,
+                scan_id: scanId,
+                reason: "auto_sync_cleanup",
+              };
+            } else if (cleanupObsolete && !scanId) {
+              // The scan endpoint didn't persist a scan record (e.g. it
+              // couldn't resolve identity for this provider) -- refuse to
+              // guess at scope rather than skip cleanup silently.
+              logger.warn(
+                `Auto-sync cleanup requested for ${provider} but the scan did not return a scan_id; skipping cleanup this run`,
+                { workspace_id, configId: id },
+              );
             }
             const importResponse = await axios.post(
               importUrl,
