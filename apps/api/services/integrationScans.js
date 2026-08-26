@@ -18,6 +18,7 @@
  */
 
 const { pool } = require("../db/database");
+const { resolveSourceIdentity } = require("./sourceIdentity");
 
 async function createScan({
   workspaceId,
@@ -136,10 +137,70 @@ async function claimScanForCleanup({ scanId, workspaceId, provider, client }) {
   return res.rows[0] || null;
 }
 
+/**
+ * Non-destructive lookup used by import to validate a client-submitted
+ * `scan_id` belongs to this workspace/provider and to read back its
+ * authoritative started_at (for the observation fence) -- distinct from
+ * claimScanForCleanup, which is the one-time destructive claim.
+ */
+async function getScan({ scanId, workspaceId, provider, client = null }) {
+  const db = client || pool;
+  if (!scanId) return null;
+  const res = await db.query(
+    `SELECT id, source_instance, source_owner_key, started_at, completed_at, cleanup_scope, cleanup_consumed_at
+     FROM integration_scans
+     WHERE id = $1 AND workspace_id = $2 AND provider = $3`,
+    [scanId, workspaceId, provider],
+  );
+  return res.rows[0] || null;
+}
+
+/**
+ * End-to-end helper for the common case: resolve this provider's identity
+ * from the raw scan context, create the scan row, persist every discovered
+ * item (metadata only), and finalize with the caller-computed sub-scopes --
+ * one call from a scan route instead of every route re-deriving identity
+ * and re-sequencing create/record/finalize by hand.
+ *
+ * @param {string} provider
+ * @param {Object} identityContext - Passed to resolveSourceIdentity(provider, ...).
+ * @param {Array<{sourceKind, sourceObjectId, dimensions}>} items - Metadata-only discovered items.
+ * @param {Array<{sourceKind, dimensions, complete, reason}>} subScopes - Per-kind/dimension completeness.
+ * @returns {Promise<{scanId: string, startedAt: Date, instance: string, ownerKey: string, ownerDisplay: string|null}>}
+ */
+async function persistScan({
+  workspaceId,
+  provider,
+  identityContext,
+  items,
+  subScopes,
+  createdBy = null,
+}) {
+  const identity = resolveSourceIdentity(provider, identityContext);
+  const scan = await createScan({
+    workspaceId,
+    provider,
+    instance: identity.instance,
+    ownerKey: identity.ownerKey,
+    createdBy,
+  });
+  await recordScanItems(scan.id, items);
+  await finalizeScan(scan.id, subScopes);
+  return {
+    scanId: scan.id,
+    startedAt: scan.startedAt,
+    instance: identity.instance,
+    ownerKey: identity.ownerKey,
+    ownerDisplay: identity.ownerDisplay,
+  };
+}
+
 module.exports = {
   createScan,
   recordScanItems,
   finalizeScan,
   lookupScanItems,
   claimScanForCleanup,
+  getScan,
+  persistScan,
 };

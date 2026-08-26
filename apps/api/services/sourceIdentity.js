@@ -17,7 +17,7 @@
  * @property {string} instance - Host/account/project/vault/tenant identifying this connection.
  * @property {string} ownerKey - Immutable principal id scoping ownership within the instance.
  * @property {string|null} ownerDisplay - Mutable human-readable label (UI only).
- * @property {Object} dimensions - Provider-specific narrowing (mount, region, source kind, ...).
+ * @property {Object} dimensions - Provider-specific per-token narrowing (mount+path for Vault, region+service for AWS, source kind for Azure/Azure AD, ...). Distinct from a scan's coarser sub-scope filter (e.g. a requested path *prefix*), which callers build separately when finalizing a scan.
  */
 
 function requireString(value, field, provider) {
@@ -58,9 +58,13 @@ function resolveSourceIdentity(provider, context = {}) {
     case "vault": {
       // Vault has no separate per-object ownership concept beyond "which
       // server (and, for Enterprise namespaces, which namespace)": ownerKey
-      // mirrors instance. dimensions carry the actual narrowing applied by
-      // the scan (mount/path/category/KV-vs-PKI) so cleanup can be scoped
-      // to exactly what was scanned, not "the whole Vault server".
+      // mirrors instance. dimensions describe *this token's own* narrowing
+      // (which mount, which exact path, which category) -- kvOrPki is
+      // deliberately omitted here since that distinction is already carried
+      // by the token's source_kind field, not duplicated into dimensions.
+      // Scan-level sub-scope filters (e.g. a requested path *prefix*) are a
+      // separate, coarser concept built by the caller when finalizing the
+      // scan, not by this per-token resolver.
       const address = requireString(context.address, "address", provider);
       const instance = context.namespace
         ? `${address}::${String(context.namespace)}`
@@ -71,9 +75,8 @@ function resolveSourceIdentity(provider, context = {}) {
         ownerDisplay: instance,
         dimensions: {
           mount: context.mount ?? null,
-          pathPrefix: context.pathPrefix ?? null,
+          path: context.path ?? null,
           category: context.category ?? null,
-          kvOrPki: context.kvOrPki ?? null,
         },
       };
     }

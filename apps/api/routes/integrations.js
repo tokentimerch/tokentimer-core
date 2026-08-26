@@ -30,6 +30,10 @@ const {
   validateCleanupRequest,
   cleanupObsoleteTokens,
 } = require("../services/importCleanup");
+const {
+  persistScan,
+} = require("../services/integrationScans");
+const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
 
@@ -170,6 +174,43 @@ router.post(
         categories: Array.isArray(categories) ? categories : null,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record of what was
+      // covered, so a later import's cleanup request can be driven by
+      // scan_id instead of trusting reconstructed client-side scan state.
+      // Best-effort: a persistence failure must not block returning scan
+      // results to the user, it only means cleanup won't be offered.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "vault",
+            identityContext: { address },
+            createdBy: req.user?.id || null,
+            items: result.items.map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {
+                mount: item.mount,
+                path: item.path,
+                category: item.category,
+              },
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: s.dimensions || { mount: s.mount },
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.hasErrors ? "read_errors" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Vault scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -389,14 +430,43 @@ router.post(
         default_type,
         contact_group_id,
         cleanup,
+        scan_id: scanId,
       } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "items array required" });
       }
-      const cleanupError = validateCleanupRequest(cleanup);
+      const cleanupError = validateCleanupRequest(
+        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
+          ? { ...cleanup, scanId }
+          : cleanup,
+      );
       if (cleanupError) {
         return res.status(400).json({ error: cleanupError });
       }
+      const effectiveCleanup =
+        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
+          ? { ...cleanup, scanId }
+          : cleanup;
+
+      // Bind each submitted item to the scan that actually discovered it
+      // (metadata-only integration_scan_items rows), so provenance comes
+      // from what the backend recorded, never from client-echoed fields.
+      // Items that don't bind (no scan_id, stale scan_id, or the item
+      // wasn't part of that scan) import unattributed, same as before this
+      // feature existed -- never a cleanup candidate.
+      const bindingPairs = items.map((it) => ({
+        sourceKind: it?.sourceKind || it?.source || "vault-kv",
+        sourceObjectId:
+          it?.sourceObjectId ||
+          String(it?.location || "").replace(/^vault:/, ""),
+      }));
+      const { resolveForItem } = await bindImportItemsToScan({
+        scanId: scanId || null,
+        workspaceId,
+        provider: "vault",
+        pairs: bindingPairs,
+      });
+
       // Reuse core validation constraints for type/category; allow past expiration for imports
       const ALLOWED_TYPES = [
         "ssl_cert",
@@ -424,7 +494,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (const it of items) {
+      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+        const it = items[itemIndex];
         try {
           const name = String(it?.name || "").trim();
           let expiration = it?.expiration || it?.expiresAt || null;
@@ -534,15 +605,30 @@ router.post(
             last_used: it?.last_used_at || it?.last_used || null,
             created_at: it?.created_at || null,
             imported_at: new Date(),
+            ...(resolveForItem(itemIndex) || {}),
           };
 
-          // Check if token with same name and location already exists in this workspace
+          // Provenance-aware imports upsert by source identity so
+          // re-scanning updates the same row even if name/location changed.
+          // Items that didn't bind to a scan (legacy behavior) fall back to
+          // the old name+location match -- see the "ambiguous legacy rows"
+          // policy in importCleanup.js: we never try to retrofit provenance
+          // onto a pre-existing ambiguous row by guessing.
           let tok;
-          const existingToken = await Token.findByNameLocationAndWorkspace(
-            tokenPayload.name,
-            tokenPayload.location,
-            workspaceId,
-          );
+          const existingToken = tokenPayload.source_object_id
+            ? await Token.findBySourceIdentity({
+                workspaceId,
+                sourceProvider: tokenPayload.source_provider,
+                sourceInstance: tokenPayload.source_instance,
+                sourceOwnerKey: tokenPayload.source_owner_key,
+                sourceKind: tokenPayload.source_kind,
+                sourceObjectId: tokenPayload.source_object_id,
+              })
+            : await Token.findByNameLocationAndWorkspace(
+                tokenPayload.name,
+                tokenPayload.location,
+                workspaceId,
+              );
 
           if (existingToken) {
             // Update existing token with new characteristics
@@ -612,19 +698,18 @@ router.post(
         }
       }
       // Remove previously imported tokens that are no longer present at the
-      // source. Opt-in via the `cleanup` payload; scoped to the provider
-      // prefix and the source kinds included in this scan. Only attempted
-      // when the scan returned at least one item, so an empty/broken scan
-      // can never mass-delete a workspace.
+      // source. Opt-in via the `cleanup` payload, driven by a backend-
+      // persisted scan_id (see importCleanup.js for the full safety
+      // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
-      if (cleanup && cleanup.enabled === true) {
+      if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
           const cleanupResult = await cleanupObsoleteTokens({
             workspaceId,
             actorUserId: req.user.id,
-            cleanup,
+            cleanup: { ...effectiveCleanup, provider: "vault" },
             reason:
-              cleanup.reason === "auto_sync_cleanup"
+              effectiveCleanup.reason === "auto_sync_cleanup"
                 ? "auto_sync_cleanup"
                 : "import_cleanup",
           });
