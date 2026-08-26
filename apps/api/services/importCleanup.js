@@ -12,6 +12,15 @@
  *   - Only tokens matching a location pattern of a source kind that was part
  *     of this scan (a PAT-less scan never deletes PAT entries).
  *   - Only tokens that were previously imported (imported_at IS NOT NULL).
+ *
+ * Known limitation: candidates are scoped by provider prefix only, not by
+ * the specific account/vault/project/instance that was scanned. A workspace
+ * that has imported from two instances of the same provider (two AWS
+ * accounts, two Key Vaults, two self-hosted GitLab servers, etc.) will have
+ * cleanup delete tokens from instance B when scanning instance A, since B's
+ * locations never appear in A's scan results. Tracked in GitHub issue #71
+ * ("Support multiple auto-sync configurations per provider in a workspace"),
+ * whose acceptance criteria already call for per-instance token attribution.
  */
 
 const { pool } = require("../db/database");
