@@ -77,6 +77,44 @@ async function expectReject(promiseFactory, pattern) {
   }
 }
 
+// Builds a JWT-shaped (but unsigned) token string containing a `tid` claim
+// of at least `minLength` characters, since scanAzureAD now requires a
+// tenant id to attribute scan results (see sourceIdentity.js) and refuses
+// tokens that don't decode to one.
+function fakeAzureAdToken(minLength = 0) {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString(
+    "base64",
+  );
+  let padLength = 0;
+  let token;
+  do {
+    const payload = Buffer.from(
+      JSON.stringify({
+        tid: "11111111-1111-1111-1111-111111111111",
+        aud: "https://graph.microsoft.com",
+        pad: "x".repeat(padLength),
+      }),
+    ).toString("base64");
+    token = `${header}.${payload}.signature`;
+    padLength += 100;
+  } while (token.length < minLength);
+  return token;
+}
+
+// Every scanAWS() call now resolves the STS account id up front (it anchors
+// AWS token provenance -- see sourceIdentity.js), so any test that reaches
+// past input validation needs this mocked regardless of which AWS service
+// it's actually exercising.
+function mockSts(accountId = "123456789012") {
+  class GetCallerIdentityCommand {}
+  class STSClient {
+    async send() {
+      return { Account: accountId, Arn: "arn:aws:iam::123456789012:user/test" };
+    }
+  }
+  return { "@aws-sdk/client-sts": { STSClient, GetCallerIdentityCommand } };
+}
+
 describe("Provider service unit coverage", () => {
   describe("AWS integration", () => {
     it("validates required credentials", async () => {
@@ -93,16 +131,19 @@ describe("Provider service unit coverage", () => {
     // GetSessionToken credentials (e.g. with session tags or chained roles)
     // with "Invalid sessionToken format" before any AWS call was made.
     it("accepts a sessionToken above the old 2000-char cap", async () => {
-      const aws = require(resolveServiceModule("awsIntegration"));
-      const result = await aws.scanAWS({
-        accessKeyId: "AKIAEXAMPLE123",
-        secretAccessKey: "super-secret-key",
-        sessionToken: "x".repeat(3500),
-        region: "us-east-1",
-        // Skip every scan type so this stays a pure validation test with no
-        // AWS SDK client instantiation or network calls.
-        include: { secrets: false, iam: false, certificates: false },
-      });
+      const stsMocks = mockSts();
+      const aws = requireWithMocks(resolveServiceModule("awsIntegration"), stsMocks);
+      const result = await withPatchedLoad(stsMocks, () =>
+        aws.scanAWS({
+          accessKeyId: "AKIAEXAMPLE123",
+          secretAccessKey: "super-secret-key",
+          sessionToken: "x".repeat(3500),
+          region: "us-east-1",
+          // Skip every scan type so this stays a pure validation test with no
+          // AWS SDK client instantiation or network calls.
+          include: { secrets: false, iam: false, certificates: false },
+        }),
+      );
       expect(result).to.have.property("items").that.is.an("array");
       expect(result).to.have.property("summary").that.is.an("array");
     });
@@ -256,6 +297,7 @@ describe("Provider service unit coverage", () => {
           ListCertificatesCommand,
           DescribeCertificateCommand,
         },
+        ...mockSts(),
       };
       const aws = requireWithMocks(
         resolveServiceModule("awsIntegration"),
@@ -351,6 +393,7 @@ describe("Provider service unit coverage", () => {
           ListCertificatesCommand,
           DescribeCertificateCommand,
         },
+        ...mockSts(),
       };
       const aws = requireWithMocks(
         resolveServiceModule("awsIntegration"),
@@ -422,7 +465,7 @@ describe("Provider service unit coverage", () => {
         token: "test-token",
         maxItems: 10,
       });
-      expect(result).to.deep.equal([]);
+      expect(result.items).to.deep.equal([]);
     });
 
     it("returns null on 404 for getSecret", async () => {
@@ -536,7 +579,7 @@ describe("Provider service unit coverage", () => {
         token: "test-token",
         maxItems: 10,
       });
-      expect(secrets.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
+      expect(secrets.items.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
       expect(requestedUrls[1]).to.match(/vault\.example\.com/);
       expect(requestedUrls[1]).to.match(/skiptoken=abc/);
     });
@@ -595,7 +638,7 @@ describe("Provider service unit coverage", () => {
         token: "header.payload.signature",
         maxItems: 10,
       });
-      expect(apps.map((a) => a.id)).to.deep.equal(["app-1", "app-2"]);
+      expect(apps.items.map((a) => a.id)).to.deep.equal(["app-1", "app-2"]);
       // Regression guard: @odata.nextLink already contains the /v1.0 prefix.
       // Re-prepending the Graph base URL produced /v1.0/v1.0/... which 404s
       // and silently truncated tenants with more than one page of apps.
@@ -647,7 +690,7 @@ describe("Provider service unit coverage", () => {
         { axios: axiosMock },
       );
       const result = await azureAd.scanAzureAD({
-        token: "x".repeat(4000),
+        token: fakeAzureAdToken(4000),
         include: { applications: true, servicePrincipals: false },
       });
       expect(result).to.have.property("items").that.is.an("array");

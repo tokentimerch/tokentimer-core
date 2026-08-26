@@ -1512,6 +1512,38 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record (per source
+      // kind completeness: secrets/certificates/keys tracked independently
+      // so a failure or truncation in one kind never marks another kind
+      // complete), so import's cleanup request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "azure",
+            identityContext: { vaultUrl },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Azure Key Vault scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {
@@ -1774,6 +1806,39 @@ router.post(
         maxItems: maxItems || 500,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record (Applications
+      // and Service Principals tracked as independent completeness
+      // dimensions, so a global item cap or partial failure in one never
+      // silently marks the other "scanned"), so import's cleanup request
+      // can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.tenantId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "azure-ad",
+            identityContext: { tenantId: result.tenantId },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Azure AD scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
