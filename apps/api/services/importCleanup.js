@@ -1,77 +1,69 @@
 /**
  * Obsolete-token cleanup for integration imports and auto-sync.
  *
- * When a scan completes and cleanup is requested, previously imported tokens
- * that belong to the scanned provider AND fall inside the scanned scope
- * (source kinds actually included in this scan) but were NOT rediscovered
- * are hard-deleted with a TOKEN_DELETED audit event.
+ * Cleanup runs against a backend-persisted `integration_scans` row (see
+ * integrationScans.js), never against frontend-reconstructed
+ * `scannedSources`/`scannedLocations`. The scan record is the single
+ * authoritative statement of what was actually, completely scanned.
  *
- * Safety rules:
- *   - Only tokens in the same workspace.
- *   - Only tokens whose location starts with the provider prefix (e.g. "gitlab:").
- *   - Only tokens matching a location pattern of a source kind that was part
- *     of this scan (a PAT-less scan never deletes PAT entries).
- *   - Only tokens that were previously imported (imported_at IS NOT NULL).
+ * Safety rules (all enforced inside one DB transaction):
+ *   - The scan must exist, belong to this workspace/provider, be completed,
+ *     and not already have been consumed by an earlier cleanup. The claim
+ *     (`UPDATE ... WHERE cleanup_consumed_at IS NULL RETURNING`) is atomic,
+ *     so a scan_id can drive at most one destructive cleanup even under
+ *     concurrent requests.
+ *   - Cleanup is refused unless the scan reports at least one *complete*
+ *     sub-scope. "Complete" means fully enumerated, not "found something":
+ *     a scan that legitimately finds zero items in a fully-scanned scope
+ *     still cleans up everything in that scope, because that is a true
+ *     obsolete-everything result. A sub-scope reported truncated/errored is
+ *     never used as a deletion basis.
+ *   - Candidate tokens are scoped by provider + instance + owner key (never
+ *     just a provider prefix), so a second AWS account / Key Vault / GitHub
+ *     Enterprise host / etc. in the same workspace is never touched by a
+ *     scan of a different instance.
+ *   - Candidate selection uses a NOT EXISTS anti-join against
+ *     integration_scan_items for this scan_id (no giant IN-lists), so it
+ *     scales with "how many tokens exist", not "how many locations were
+ *     scanned".
+ *   - Observation fence: a token is never deleted if its
+ *     `source_observed_at` is newer than the cleanup-driving scan's
+ *     `started_at`. This stops a stale/slow scan's cleanup from deleting
+ *     something a newer, faster, concurrent scan just (re)discovered.
+ *   - Legacy tokens (imported before per-instance provenance existed) have
+ *     `source_provider IS NULL` and can never match any scope filter here,
+ *     so they are structurally excluded from this cleanup path forever --
+ *     not a "best effort", a hard exclusion by construction.
  *
- * Known limitation: candidates are scoped by provider prefix only, not by
- * the specific account/vault/project/instance that was scanned. A workspace
- * that has imported from two instances of the same provider (two AWS
- * accounts, two Key Vaults, two self-hosted GitLab servers, etc.) will have
- * cleanup delete tokens from instance B when scanning instance A, since B's
- * locations never appear in A's scan results. Tracked in GitHub issue #71
- * ("Support multiple auto-sync configurations per provider in a workspace"),
- * whose acceptance criteria already call for per-instance token attribution.
+ * Known, deliberate limitation: legacy tokens are never adopted into a new
+ * scan's provenance by guessing. If a legacy token's underlying object is
+ * rediscovered by a provenance-aware scan, the import path inserts a new,
+ * fully-attributed row for it; the old ambiguous row is left alone and is
+ * only ever removable by the user manually.
  */
 
 const { pool } = require("../db/database");
 const { writeAudit } = require("./audit");
 const { logger } = require("../utils/logger");
+const { claimScanForCleanup } = require("./integrationScans");
 
-const PROVIDER_PREFIXES = {
-  gitlab: "gitlab:",
-  github: "github:",
-  vault: "vault:",
-  aws: "aws:",
-  azure: "azure:",
-  "azure-ad": "azure-ad:",
-  gcp: "gcp:",
-};
-
-// Location shape per scan source kind. A stored token is only eligible for
-// cleanup when its location matches the pattern of a source kind that was
-// included in the current scan.
-const SOURCE_LOCATION_PATTERNS = {
-  "gitlab-pat": /^gitlab:(users\/[^/]+\/)?personal_access_tokens\//,
-  "gitlab-project-token": /^gitlab:projects\/[^/]+\/access_tokens\//,
-  "gitlab-group-token": /^gitlab:groups\/[^/]+\/access_tokens\//,
-  "gitlab-deploy-token": /^gitlab:projects\/[^/]+\/deploy_tokens\//,
-  "gitlab-trigger-token": /^gitlab:projects\/[^/]+\/triggers\//,
-  "gitlab-ssh-key": /^gitlab:user\/keys\//,
-  "github-ssh-key": /^github:user\/keys\//,
-  "github-secret": /^github:repos\/.+\/actions\/secrets\//,
-  "github-deploy-key": /^github:repos\/.+\/keys\//,
-  // PKI certs always live at "<mount>/cert/<serial>"; KV entries are
-  // everything else under the vault: prefix. Distinguishing the two here
-  // (instead of both matching every vault: location) means a KV-only scan
-  // with cleanup enabled never touches PKI certs, and vice versa.
-  "vault-kv": /^vault:(?!.+\/cert\/[^/]+$).+/,
-  "vault-pki": /^vault:.+\/cert\/[^/]+$/,
-  "aws-secrets-manager": /^aws:secretsmanager:/,
-  "aws-acm": /^aws:acm:/,
-  "aws-iam-key": /^aws:iam:/,
-  "azure-key-vault-secret": /^azure:.+\/secrets\//,
-  "azure-key-vault-certificate": /^azure:.+\/certificates\//,
-  "azure-key-vault-key": /^azure:.+\/keys\//,
-  "azure-ad-client-secret": /^azure-ad:applications\/.+\/secrets\//,
-  "azure-ad-certificate": /^azure-ad:applications\/.+\/certificates\//,
-  "azure-ad-sp-secret": /^azure-ad:servicePrincipals\/.+\/secrets\//,
-  "azure-ad-sp-certificate": /^azure-ad:servicePrincipals\/.+\/certificates\//,
-  "gcp-secret-manager": /^gcp:.+\/secrets\//,
-};
+const KNOWN_PROVIDERS = [
+  "github",
+  "gitlab",
+  "vault",
+  "aws",
+  "azure",
+  "azure-ad",
+  "gcp",
+];
 
 /**
- * Validates a cleanup payload. Returns null when valid, otherwise an error
- * string suitable for a 400 response.
+ * Validates a cleanup request payload. Returns null when valid, otherwise
+ * an error string suitable for a 400 response.
+ *
+ * Contract: `{ enabled: true, provider, scanId, reason? }`. The scan itself
+ * (not this payload) carries the scope/completeness data; this object only
+ * says "yes, run cleanup, driven by this scan".
  */
 function validateCleanupRequest(cleanup) {
   if (cleanup === undefined || cleanup === null) return null;
@@ -79,29 +71,47 @@ function validateCleanupRequest(cleanup) {
     return "cleanup must be an object";
   }
   if (cleanup.enabled !== true) return null;
-  if (!PROVIDER_PREFIXES[cleanup.provider]) {
-    return `cleanup.provider must be one of: ${Object.keys(PROVIDER_PREFIXES).join(", ")}`;
+  if (!KNOWN_PROVIDERS.includes(cleanup.provider)) {
+    return `cleanup.provider must be one of: ${KNOWN_PROVIDERS.join(", ")}`;
   }
-  if (!Array.isArray(cleanup.scannedSources) || cleanup.scannedSources.length === 0) {
-    return "cleanup.scannedSources must be a non-empty array of source kinds";
-  }
-  for (const s of cleanup.scannedSources) {
-    if (!SOURCE_LOCATION_PATTERNS[s]) {
-      return `cleanup.scannedSources contains unknown source kind: ${s}`;
-    }
-  }
-  if (!Array.isArray(cleanup.scannedLocations)) {
-    return "cleanup.scannedLocations must be an array of location strings";
-  }
-  if (cleanup.scannedLocations.length > 50000) {
-    return "cleanup.scannedLocations is too large";
+  if (typeof cleanup.scanId !== "string" || cleanup.scanId.trim() === "") {
+    return "cleanup.scanId is required (cleanup must be driven by a completed backend scan)";
   }
   return null;
 }
 
+// A sub-scope's dimension filter narrows which candidate tokens fall inside
+// it. Only keys the scan actually recorded are compared; a key absent from
+// the sub-scope's dimensions means "not narrowed on this axis" for that
+// provider (e.g. an AWS sub-scope with no `service` means "this region,
+// every service checked in it"). `pathPrefix` (Vault) is a prefix match
+// against the token's own recorded `path` dimension; everything else is
+// exact-match.
+function buildDimensionFilterSql(dimensions, paramOffset) {
+  const clauses = [];
+  const params = [];
+  let p = paramOffset;
+  const dims = dimensions && typeof dimensions === "object" ? dimensions : {};
+  for (const [key, value] of Object.entries(dims)) {
+    if (value === null || value === undefined || value === "") continue;
+    if (key === "pathPrefix") {
+      clauses.push(`(t.source_dimensions->>'path') LIKE $${p}`);
+      params.push(`${String(value)}%`);
+      p++;
+    } else {
+      clauses.push(`(t.source_dimensions->>'${key.replace(/[^a-zA-Z0-9_]/g, "")}') = $${p}`);
+      params.push(String(value));
+      p++;
+    }
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", params };
+}
+
 /**
- * Deletes workspace tokens that were previously imported from the given
- * provider, fall inside the scanned scope, and were not rediscovered.
+ * Deletes workspace tokens that belong to the scan's provider/instance/
+ * owner, fall inside a sub-scope the scan reported complete, and were not
+ * rediscovered by that scan -- all inside one transaction with the scan
+ * claim, the delete, and the audit write.
  *
  * @returns {Promise<{deleted: Array<{id:number,name:string,location:string}>}>}
  */
@@ -113,78 +123,145 @@ async function cleanupObsoleteTokens({
 }) {
   const deleted = [];
   if (!cleanup || cleanup.enabled !== true) return { deleted };
-
-  const prefix = PROVIDER_PREFIXES[cleanup.provider];
-  if (!prefix) return { deleted };
-
-  const patterns = (cleanup.scannedSources || [])
-    .map((s) => SOURCE_LOCATION_PATTERNS[s])
-    .filter(Boolean);
-  if (patterns.length === 0) return { deleted };
-
-  const rediscovered = new Set(
-    (cleanup.scannedLocations || [])
-      .map((l) => String(l || "").trim())
-      .filter(Boolean),
-  );
-
-  // Candidates: previously imported tokens from this provider in this workspace.
-  const candidatesRes = await pool.query(
-    `SELECT id, name, location FROM tokens
-     WHERE workspace_id = $1
-       AND imported_at IS NOT NULL
-       AND location LIKE $2`,
-    [workspaceId, `${prefix}%`],
-  );
-
-  for (const row of candidatesRes.rows) {
-    const location = String(row.location || "");
-    // Only delete inside the scanned scope.
-    if (!patterns.some((p) => p.test(location))) continue;
-    if (rediscovered.has(location)) continue;
-
-    try {
-      // Reuse the manual delete semantics: clear queue entries and linked
-      // endpoint monitors so they don't become orphaned.
-      await pool.query("DELETE FROM alert_queue WHERE token_id = $1", [row.id]);
-      await pool.query("DELETE FROM domain_monitors WHERE token_id = $1", [
-        row.id,
-      ]);
-      await pool.query("DELETE FROM tokens WHERE id = $1", [row.id]);
-      deleted.push({ id: row.id, name: row.name, location });
-      try {
-        await writeAudit({
-          actorUserId: actorUserId || null,
-          subjectUserId: actorUserId || null,
-          action: "TOKEN_DELETED",
-          targetType: "token",
-          targetId: row.id,
-          channel: null,
-          workspaceId,
-          metadata: {
-            name: row.name,
-            location,
-            reason,
-            provider: cleanup.provider,
-          },
-        });
-      } catch (auditErr) {
-        logger.warn("Cleanup audit write failed", { error: auditErr.message });
-      }
-    } catch (delErr) {
-      logger.warn("Obsolete token cleanup failed for token", {
-        tokenId: row.id,
-        error: delErr.message,
-      });
-    }
+  const validationError = validateCleanupRequest(cleanup);
+  if (validationError) {
+    throw new Error(`Invalid cleanup request: ${validationError}`);
   }
 
-  return { deleted };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const scan = await claimScanForCleanup({
+      scanId: cleanup.scanId,
+      workspaceId,
+      provider: cleanup.provider,
+      client,
+    });
+    if (!scan) {
+      await client.query("ROLLBACK");
+      logger.warn("Cleanup refused: scan not found, incomplete, or already consumed", {
+        workspaceId,
+        provider: cleanup.provider,
+        scanId: cleanup.scanId,
+      });
+      return { deleted: [] };
+    }
+
+    const subScopes = Array.isArray(scan.cleanup_scope?.subScopes)
+      ? scan.cleanup_scope.subScopes
+      : [];
+    const completeSubScopes = subScopes.filter((s) => s && s.complete === true);
+    if (completeSubScopes.length === 0) {
+      // The scan was claimed (consumed) even though it drove no deletions,
+      // by design: a scan that produced nothing usable for cleanup should
+      // not be replayable either, since replay-ability is exactly the
+      // property claiming exists to remove.
+      await client.query("COMMIT");
+      logger.info("Cleanup ran but no sub-scope was complete; nothing deleted", {
+        workspaceId,
+        provider: cleanup.provider,
+        scanId: cleanup.scanId,
+      });
+      return { deleted: [] };
+    }
+
+    for (const subScope of completeSubScopes) {
+      const { sql: dimensionSql, params: dimensionParams } =
+        buildDimensionFilterSql(subScope.dimensions, 6);
+      const params = [
+        workspaceId,
+        cleanup.provider,
+        scan.source_instance,
+        scan.source_owner_key,
+        String(subScope.sourceKind),
+        scan.id,
+        scan.started_at,
+        ...dimensionParams,
+      ];
+      // Anti-join: candidates are previously-imported tokens in this exact
+      // provider/instance/owner/kind scope that have no matching row in
+      // integration_scan_items for *this* scan -- i.e. not rediscovered.
+      // The observation fence (source_observed_at <= scan.started_at)
+      // excludes anything a newer, still-running concurrent scan already
+      // touched, even if this (older, slower) scan is the one committing
+      // first.
+      const res = await client.query(
+        `SELECT t.id, t.name, t.location
+         FROM tokens t
+         WHERE t.workspace_id = $1
+           AND t.imported_at IS NOT NULL
+           AND t.source_provider = $2
+           AND t.source_instance = $3
+           AND t.source_owner_key = $4
+           AND t.source_kind = $5
+           AND (t.source_observed_at IS NULL OR t.source_observed_at <= $7)
+           ${dimensionSql}
+           AND NOT EXISTS (
+             SELECT 1 FROM integration_scan_items si
+             WHERE si.scan_id = $6
+               AND si.source_kind = t.source_kind
+               AND si.source_object_id = t.source_object_id
+           )
+         FOR UPDATE`,
+        params,
+      );
+
+      for (const row of res.rows) {
+        try {
+          await client.query("DELETE FROM alert_queue WHERE token_id = $1", [row.id]);
+          await client.query("DELETE FROM domain_monitors WHERE token_id = $1", [row.id]);
+          await client.query("DELETE FROM tokens WHERE id = $1", [row.id]);
+          deleted.push({ id: row.id, name: row.name, location: row.location });
+          await writeAudit({
+            client,
+            actorUserId: actorUserId || null,
+            subjectUserId: actorUserId || null,
+            action: "TOKEN_DELETED",
+            targetType: "token",
+            targetId: row.id,
+            channel: null,
+            workspaceId,
+            metadata: {
+              name: row.name,
+              location: row.location,
+              reason,
+              provider: cleanup.provider,
+              scanId: scan.id,
+              sourceKind: subScope.sourceKind,
+            },
+          });
+        } catch (delErr) {
+          // A per-token failure must not silently roll back deletions that
+          // already succeeded in this loop, but it also must not be
+          // swallowed: surface it so the caller's audit summary reflects a
+          // partial cleanup rather than a clean one.
+          logger.error("Obsolete token cleanup failed for token; aborting transaction", {
+            tokenId: row.id,
+            error: delErr.message,
+          });
+          throw delErr;
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+    return { deleted };
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackErr) {
+      logger.warn("Cleanup rollback failed", { error: _rollbackErr.message });
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = {
-  PROVIDER_PREFIXES,
-  SOURCE_LOCATION_PATTERNS,
+  KNOWN_PROVIDERS,
   validateCleanupRequest,
   cleanupObsoleteTokens,
+  buildDimensionFilterSql,
 };

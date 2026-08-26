@@ -3553,6 +3553,97 @@ const migrations = [
         ON certops_trust_reference_release_idempotency(workspace_id, trust_anchor_id, agent_id, store, owner);
     `,
   },
+  {
+    version: 50,
+    name: "import_cleanup_scan_provenance",
+    sql: `
+      -- Per-instance/owner provenance for imported tokens. NULL on every
+      -- pre-existing row (legacy tokens cannot be safely backfilled from the
+      -- old free-text "location" column alone) and populated going forward
+      -- by the source identity resolver on every import/auto-sync path.
+      -- source_owner_key is an immutable principal id (e.g. a numeric
+      -- GitHub/GitLab user or repo id, an AWS/GCP/Azure account or project
+      -- id) -- never a mutable display name -- so cleanup matching never
+      -- depends on something a user can rename. source_owner_display is
+      -- kept separately for UI only.
+      --
+      -- source_owner_key is NOT NULL DEFAULT '' rather than nullable:
+      -- Postgres treats NULL as distinct in unique indexes, which would
+      -- silently defeat uq_tokens_source_identity below for every provider
+      -- using the '' ownership sentinel (Vault/AWS/Azure/Azure AD/GCP).
+      ALTER TABLE tokens
+        ADD COLUMN IF NOT EXISTS source_provider TEXT NULL,
+        ADD COLUMN IF NOT EXISTS source_instance TEXT NULL,
+        ADD COLUMN IF NOT EXISTS source_owner_key TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS source_owner_display TEXT NULL,
+        ADD COLUMN IF NOT EXISTS source_kind TEXT NULL,
+        ADD COLUMN IF NOT EXISTS source_dimensions JSONB NULL,
+        ADD COLUMN IF NOT EXISTS source_object_id TEXT NULL,
+        ADD COLUMN IF NOT EXISTS source_observed_at TIMESTAMPTZ NULL;
+
+      -- Upsert identity for provenance-aware imports: one row per distinct
+      -- upstream object per workspace/provider/instance/owner/kind. Legacy
+      -- rows (source_object_id IS NULL) are intentionally excluded rather
+      -- than backfilled -- see integration_scans below.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_tokens_source_identity
+        ON tokens (workspace_id, source_provider, source_instance, source_owner_key, source_kind, source_object_id)
+        WHERE source_object_id IS NOT NULL;
+
+      -- Cleanup candidate-selection scope (provider+instance+owner+kind),
+      -- used by the anti-join in importCleanup.js.
+      CREATE INDEX IF NOT EXISTS idx_tokens_source_scope
+        ON tokens (workspace_id, source_provider, source_instance, source_owner_key, source_kind);
+
+      -- One row per completed (or attempted) scan. cleanup_scope records,
+      -- per source kind/dimension actually scanned, whether that sub-scope
+      -- was fully enumerated ("complete") or degraded (truncated/errored) --
+      -- the authoritative contract cleanup checks before deleting anything.
+      -- cleanup_consumed_at is the single-use claim: a scan can drive at
+      -- most one destructive cleanup.
+      CREATE TABLE IF NOT EXISTS integration_scans (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        source_instance TEXT NOT NULL,
+        source_owner_key TEXT NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ NULL,
+        cleanup_scope JSONB NOT NULL DEFAULT '{}'::jsonb,
+        cleanup_consumed_at TIMESTAMPTZ NULL,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_integration_scans_scope
+        ON integration_scans(workspace_id, provider, source_instance, source_owner_key);
+
+      -- Metadata-only record of every item a scan actually rediscovered
+      -- (never secret material). Import binds client-submitted items to a
+      -- real row here by (scan_id, source_kind, source_object_id) instead of
+      -- trusting whatever provenance the client claims, and cleanup's
+      -- anti-join uses this table to find tokens NOT rediscovered.
+      CREATE TABLE IF NOT EXISTS integration_scan_items (
+        id BIGSERIAL PRIMARY KEY,
+        scan_id UUID NOT NULL REFERENCES integration_scans(id) ON DELETE CASCADE,
+        source_kind TEXT NOT NULL,
+        source_object_id TEXT NOT NULL,
+        source_dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_integration_scan_items_identity
+        ON integration_scan_items(scan_id, source_kind, source_object_id);
+      CREATE INDEX IF NOT EXISTS idx_integration_scan_items_scan
+        ON integration_scan_items(scan_id);
+
+      -- connection_key lets a future multi-config-per-provider workspace
+      -- distinguish auto-sync configs pointing at different instances of
+      -- the same provider. cleanup_obsolete makes scheduled-sync cleanup an
+      -- explicit per-config opt-in, matching manual import's opt-in cleanup
+      -- checkbox rather than being implied by scan_params.
+      ALTER TABLE auto_sync_configs
+        ADD COLUMN IF NOT EXISTS connection_key TEXT NULL,
+        ADD COLUMN IF NOT EXISTS cleanup_obsolete BOOLEAN NOT NULL DEFAULT FALSE;
+    `,
+  },
 ];
 
 async function runMigrations() {
