@@ -287,9 +287,22 @@ function isNonEmptyStringValue(value) {
  * Actions this agent build can actually execute (executeJob): "revoke" is
  * deliberately absent (always blocked in this build). Sent as the claim's
  * supportedActions when execution is enabled so the control plane's claim
- * query only leases jobs this agent can run.
+ * query only leases jobs this agent can run. distribute-trust/revoke-trust
+ * are always included here (unlike the manifest-gated capability strings
+ * above): the trust-store executor module itself resolves per-host
+ * prerequisites and rejects with already_absent/failureCategory at execute
+ * time on hosts that can't support it, so gating the claim itself is not
+ * needed for correctness, and would otherwise leave every real host
+ * permanently unable to claim distribute-trust/revoke-trust jobs.
  */
-const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
+const EXECUTABLE_JOB_ACTIONS = Object.freeze([
+  "noop",
+  "renew",
+  "deploy",
+  "reload",
+  "distribute-trust",
+  "revoke-trust",
+]);
 
 /**
  * Named behaviours this agent build supports, declared at registration and

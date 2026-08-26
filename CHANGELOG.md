@@ -20,6 +20,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Retiring an anchor stops new distributions but never silently fans out removals; existing installations are removed only by an explicitly authorized removal. A reconciliation sweep in the worker reschedules transitions that are still in flight and reports ones that stop making progress instead of retrying them forever.
   - New endpoints: `GET`/`POST /api/v1/workspaces/:id/certops/trust-anchors` and `POST /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/retire`, gated behind the new `certops.trust_anchor.manage` permission (workspace admin only).
   - New database migration adds the `certops_trust_anchors` and `certops_trust_anchor_installations` tables, plus `agent_id`/`last_job_id`/`transition_generation`/`last_attempt_at`/`last_error`/`next_reconcile_at` columns on the installations table. Requires PostgreSQL 15+ (see Configuration).
+  - An execution-enabled agent now advertises `distribute-trust`/`revoke-trust` among its claimable actions, so the control plane's claim query and the `trust-anchor-deploy-v1` capability-freshness gate actually see and dispatch these jobs to real agents.
 
 ### Changed
 

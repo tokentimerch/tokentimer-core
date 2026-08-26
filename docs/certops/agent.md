@@ -694,9 +694,10 @@ re-execution and reports `orphaned_unknown_effect` with
 `needsOperatorReconciliation=true` so an operator can reconcile host state.
 Terminal outcomes clear the journal entry when reporting completes.
 
-Supported actions: `renew`, `deploy`, `reload`, `noop`. `revoke` is always
-`blocked` (out of scope for this agent build). `deploy` without a `certificatePem` field
-is `blocked` (see section 7).
+Supported actions: `renew`, `deploy`, `reload`, `noop`, `distribute-trust`,
+`revoke-trust`. `revoke` (managed-certificate revocation, distinct from
+`revoke-trust`) is always `blocked` (out of scope for this agent build).
+`deploy` without a `certificatePem` field is `blocked` (see section 7).
 
 The control plane additionally has an `issue` job operation, used for
 first-time issuance of a certificate that has no inventory row yet. It is a

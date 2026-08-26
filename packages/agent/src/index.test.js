@@ -969,6 +969,12 @@ describe("observe-only claim policy (B3)", () => {
     );
     assert.ok(EXECUTABLE_JOB_ACTIONS.includes("renew"));
     assert.ok(EXECUTABLE_JOB_ACTIONS.includes("deploy"));
+    // Regression guard: without these, distribute-trust/revoke-trust jobs
+    // are never claimed by any real agent (the control plane's claim query
+    // ANY-matches operation against this list) even though the executor
+    // and capability-freshness gate are otherwise fully wired up.
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("distribute-trust"));
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("revoke-trust"));
   });
 
   it("never polls the claim endpoint when observe-only", () => {
