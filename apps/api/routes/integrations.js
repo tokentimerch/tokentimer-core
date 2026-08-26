@@ -1309,6 +1309,37 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record of what was
+      // covered (per region+service completeness), so import's cleanup
+      // request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.accountId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "aws",
+            identityContext: { accountId: result.accountId },
+            createdBy: req.user?.id || null,
+            items: result.items.map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: { region: region || "us-east-1", service: item.sourceKind },
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: s.region ? { region: s.region, service: s.service } : { service: s.service },
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("AWS scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {
@@ -1904,6 +1935,7 @@ router.post(
         contact_group_id,
         filterRules,
         cleanup,
+        scan_id: scanId,
       } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "items array required" });
@@ -1912,14 +1944,72 @@ router.post(
       if (filterRulesError) {
         return res.status(400).json({ error: filterRulesError });
       }
-      const cleanupError = validateCleanupRequest(cleanup);
+      const cleanupError = validateCleanupRequest(
+        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
+          ? { ...cleanup, scanId }
+          : cleanup,
+      );
       if (cleanupError) {
         return res.status(400).json({ error: cleanupError });
       }
+      const effectiveCleanup =
+        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
+          ? { ...cleanup, scanId }
+          : cleanup;
       // Issue #69: apply include/exclude rules at import time too, so
       // auto-sync (which posts scan items here) honors the same rules.
       const { items: itemsToImport, excludedCount: filteredOutCount } =
         applyFilterRules(filterRules, items);
+
+      // Derive which of the 7 known providers each item's `source` belongs
+      // to (azure-ad must be checked before the plainer "azure" prefix),
+      // then bind each item to the scan that actually discovered it -- see
+      // scanBinding.js. Grouped per-provider since a single import batch is
+      // expected to come from one provider's scan, but nothing here assumes
+      // that beyond grouping the lookup calls.
+      const deriveProvider = (source) => {
+        const s = String(source || "");
+        if (s.startsWith("gitlab")) return "gitlab";
+        if (s.startsWith("github")) return "github";
+        if (s.startsWith("aws")) return "aws";
+        if (s.startsWith("azure-ad")) return "azure-ad";
+        if (s.startsWith("azure")) return "azure";
+        if (s.startsWith("gcp")) return "gcp";
+        return null;
+      };
+      const itemProviders = itemsToImport.map((it) => deriveProvider(it?.source));
+      const resolvers = new Array(itemsToImport.length).fill(null);
+      const providersPresent = [...new Set(itemProviders.filter(Boolean))];
+      for (const provider of providersPresent) {
+        const indices = [];
+        const pairs = [];
+        itemsToImport.forEach((it, idx) => {
+          if (itemProviders[idx] !== provider) return;
+          indices.push(idx);
+          pairs.push({
+            sourceKind: it?.sourceKind || it?.source || provider,
+            sourceObjectId:
+              it?.sourceObjectId || String(it?.location || "").trim(),
+          });
+        });
+        try {
+          const { resolveForItem } = await bindImportItemsToScan({
+            scanId: scanId || null,
+            workspaceId,
+            provider,
+            pairs,
+          });
+          indices.forEach((originalIdx, i) => {
+            resolvers[originalIdx] = resolveForItem(i);
+          });
+        } catch (bindErr) {
+          logger.warn("Scan binding failed for provider group", {
+            provider,
+            error: bindErr.message,
+          });
+        }
+      }
+
       const ALLOWED_TYPES = [
         "ssl_cert",
         "tls_cert",
@@ -1942,7 +2032,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (const it of itemsToImport) {
+      for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
+        const it = itemsToImport[itemIndex];
         try {
           // Sanitize and validate name (HTML escape for XSS protection)
           let name = String(it?.name || "").trim();
@@ -2286,15 +2377,29 @@ router.post(
             last_used: parseIntegrationDate(it?.last_used_at || it?.last_used),
             created_at: parseIntegrationDate(it?.created_at),
             imported_at: new Date(),
+            ...(resolvers[itemIndex] || {}),
           };
 
-          // Check if token with same name and location already exists in this workspace
+          // Provenance-aware imports upsert by source identity (immune to
+          // name/location drift); items that didn't bind to a scan fall
+          // back to the pre-existing name+location match. See
+          // importCleanup.js for why ambiguous legacy rows are never
+          // retrofitted with guessed provenance.
           let tok;
-          const existingToken = await Token.findByNameLocationAndWorkspace(
-            tokenPayload.name,
-            tokenPayload.location,
-            workspaceId,
-          );
+          const existingToken = tokenPayload.source_object_id
+            ? await Token.findBySourceIdentity({
+                workspaceId,
+                sourceProvider: tokenPayload.source_provider,
+                sourceInstance: tokenPayload.source_instance,
+                sourceOwnerKey: tokenPayload.source_owner_key,
+                sourceKind: tokenPayload.source_kind,
+                sourceObjectId: tokenPayload.source_object_id,
+              })
+            : await Token.findByNameLocationAndWorkspace(
+                tokenPayload.name,
+                tokenPayload.location,
+                workspaceId,
+              );
 
           if (existingToken) {
             // Update existing token with new characteristics
@@ -2368,17 +2473,18 @@ router.post(
           });
         }
       }
-      // Item 4 (0.10.0): remove previously imported tokens that are no longer
-      // present at the source. Opt-in via the `cleanup` payload; scoped to the
-      // provider prefix and the source kinds included in this scan.
+      // Remove previously imported tokens that are no longer present at the
+      // source. Opt-in via the `cleanup` payload, driven by a backend-
+      // persisted scan_id (see importCleanup.js for the full safety
+      // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
-      if (cleanup && cleanup.enabled === true) {
+      if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
           const cleanupResult = await cleanupObsoleteTokens({
             workspaceId,
             actorUserId: req.user.id,
-            cleanup,
-            reason: cleanup.reason === "auto_sync_cleanup"
+            cleanup: effectiveCleanup,
+            reason: effectiveCleanup.reason === "auto_sync_cleanup"
               ? "auto_sync_cleanup"
               : "import_cleanup",
           });

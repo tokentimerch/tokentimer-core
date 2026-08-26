@@ -1,18 +1,18 @@
 "use strict";
 
 /**
- * Unit tests for importCleanup validation and scope patterns.
- * DB-dependent deletion behavior is covered by integration tests.
- * Only the pure exports are exercised here; requiring the module creates a
- * pg Pool but never connects.
+ * Unit tests for importCleanup's pure exports: request validation and the
+ * dimension-filter SQL builder used by the scan-scoped anti-join. DB-backed
+ * deletion behavior (claim, anti-join, observation fence, transaction) is
+ * covered by integration tests since it requires a real database.
  */
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const {
+  KNOWN_PROVIDERS,
   validateCleanupRequest,
-  SOURCE_LOCATION_PATTERNS,
-  PROVIDER_PREFIXES,
+  buildDimensionFilterSql,
 } = require("../../apps/api/services/importCleanup");
 
 describe("importCleanup.validateCleanupRequest", () => {
@@ -29,267 +29,135 @@ describe("importCleanup.validateCleanupRequest", () => {
   it("ignores payloads with enabled !== true", () => {
     assert.strictEqual(validateCleanupRequest({ enabled: false }), null);
     assert.strictEqual(validateCleanupRequest({}), null);
-  });
-
-  it("requires a known provider when enabled", () => {
-    assert.match(
-      validateCleanupRequest({ enabled: true, provider: "bitbucket" }),
-      /provider must be one of/,
-    );
-  });
-
-  it("requires non-empty scannedSources with known kinds", () => {
-    assert.match(
-      validateCleanupRequest({
-        enabled: true,
-        provider: "gitlab",
-        scannedSources: [],
-      }),
-      /non-empty array/,
-    );
-    assert.match(
-      validateCleanupRequest({
-        enabled: true,
-        provider: "gitlab",
-        scannedSources: ["gitlab-unknown"],
-      }),
-      /unknown source kind/,
-    );
-  });
-
-  it("requires scannedLocations array", () => {
-    assert.match(
-      validateCleanupRequest({
-        enabled: true,
-        provider: "gitlab",
-        scannedSources: ["gitlab-pat"],
-        scannedLocations: "gitlab:x",
-      }),
-      /must be an array/,
-    );
-  });
-
-  it("accepts a valid payload", () => {
+    // Even a garbage provider/scanId is ignored when cleanup isn't enabled --
+    // this must never be a backdoor to validate an otherwise-inert payload.
     assert.strictEqual(
-      validateCleanupRequest({
-        enabled: true,
-        provider: "gitlab",
-        scannedSources: ["gitlab-pat", "gitlab-deploy-token"],
-        scannedLocations: ["gitlab:personal_access_tokens/1"],
-      }),
+      validateCleanupRequest({ enabled: false, provider: "nope" }),
       null,
     );
   });
 
-  it("accepts valid payloads for every non-git provider", () => {
-    const validByProvider = {
-      vault: ["vault-kv", "vault-pki"],
-      aws: ["aws-secrets-manager", "aws-acm", "aws-iam-key"],
-      azure: [
-        "azure-key-vault-secret",
-        "azure-key-vault-certificate",
-        "azure-key-vault-key",
-      ],
-      "azure-ad": [
-        "azure-ad-client-secret",
-        "azure-ad-certificate",
-        "azure-ad-sp-secret",
-        "azure-ad-sp-certificate",
-      ],
-      gcp: ["gcp-secret-manager"],
-    };
-    for (const [provider, scannedSources] of Object.entries(
-      validByProvider,
-    )) {
+  it("requires a known provider when enabled", () => {
+    assert.match(
+      validateCleanupRequest({
+        enabled: true,
+        provider: "bitbucket",
+        scanId: "11111111-1111-1111-1111-111111111111",
+      }),
+      /provider must be one of/,
+    );
+  });
+
+  it("requires a non-empty scanId string when enabled", () => {
+    assert.match(
+      validateCleanupRequest({ enabled: true, provider: "gitlab" }),
+      /scanId is required/,
+    );
+    assert.match(
+      validateCleanupRequest({
+        enabled: true,
+        provider: "gitlab",
+        scanId: "",
+      }),
+      /scanId is required/,
+    );
+    assert.match(
+      validateCleanupRequest({
+        enabled: true,
+        provider: "gitlab",
+        scanId: "   ",
+      }),
+      /scanId is required/,
+    );
+    assert.match(
+      validateCleanupRequest({
+        enabled: true,
+        provider: "gitlab",
+        scanId: 12345,
+      }),
+      /scanId is required/,
+    );
+  });
+
+  it("accepts a valid payload for every known provider", () => {
+    for (const provider of KNOWN_PROVIDERS) {
       assert.strictEqual(
         validateCleanupRequest({
           enabled: true,
           provider,
-          scannedSources,
-          scannedLocations: [],
+          scanId: "11111111-1111-1111-1111-111111111111",
         }),
         null,
-        `${provider} should accept its own source kinds`,
+        `${provider} should accept a valid scanId payload`,
       );
     }
+  });
+
+  it("KNOWN_PROVIDERS covers exactly the seven supported integrations", () => {
+    assert.deepStrictEqual(
+      [...KNOWN_PROVIDERS].sort(),
+      [
+        "aws",
+        "azure",
+        "azure-ad",
+        "gcp",
+        "github",
+        "gitlab",
+        "vault",
+      ].sort(),
+    );
   });
 });
 
-describe("importCleanup.SOURCE_LOCATION_PATTERNS", () => {
-  it("gitlab-pat matches both PAT location shapes", () => {
-    const p = SOURCE_LOCATION_PATTERNS["gitlab-pat"];
-    assert.strictEqual(p.test("gitlab:personal_access_tokens/42"), true);
-    assert.strictEqual(
-      p.test("gitlab:users/alice/personal_access_tokens/42"),
-      true,
-    );
-    assert.strictEqual(p.test("gitlab:projects/7/access_tokens/42"), false);
+describe("importCleanup.buildDimensionFilterSql", () => {
+  it("returns an empty filter for no dimensions", () => {
+    const { sql, params } = buildDimensionFilterSql(null, 5);
+    assert.strictEqual(sql, "");
+    assert.deepStrictEqual(params, []);
   });
 
-  it("gitlab token type patterns are mutually exclusive", () => {
-    const samples = {
-      "gitlab-project-token": "gitlab:projects/7/access_tokens/1",
-      "gitlab-group-token": "gitlab:groups/3/access_tokens/1",
-      "gitlab-deploy-token": "gitlab:projects/7/deploy_tokens/1",
-      "gitlab-trigger-token": "gitlab:projects/7/triggers/1",
-      "gitlab-ssh-key": "gitlab:user/keys/1",
-    };
-    for (const [kind, location] of Object.entries(samples)) {
-      assert.strictEqual(
-        SOURCE_LOCATION_PATTERNS[kind].test(location),
-        true,
-        `${kind} should match ${location}`,
-      );
-      for (const [otherKind, pattern] of Object.entries(
-        SOURCE_LOCATION_PATTERNS,
-      )) {
-        if (otherKind === kind || !otherKind.startsWith("gitlab-")) continue;
-        assert.strictEqual(
-          pattern.test(location),
-          false,
-          `${otherKind} should not match ${location}`,
-        );
-      }
-    }
+  it("skips null/undefined/empty-string dimension values", () => {
+    const { sql, params } = buildDimensionFilterSql(
+      { region: null, service: undefined, mount: "" },
+      5,
+    );
+    assert.strictEqual(sql, "");
+    assert.deepStrictEqual(params, []);
   });
 
-  it("github patterns match the integration location shapes", () => {
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["github-ssh-key"].test("github:user/keys/9"),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["github-secret"].test(
-        "github:repos/org/repo/actions/secrets/MY_SECRET",
-      ),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["github-deploy-key"].test(
-        "github:repos/org/repo/keys/12",
-      ),
-      true,
-    );
+  it("builds an exact-match clause for a plain dimension key", () => {
+    const { sql, params } = buildDimensionFilterSql({ region: "us-east-1" }, 3);
+    assert.match(sql, /\(t\.source_dimensions->>'region'\) = \$3/);
+    assert.deepStrictEqual(params, ["us-east-1"]);
   });
 
-  it("vault-kv and vault-pki are mutually exclusive", () => {
-    const kvLocation = "vault:secret/data/myapp/apikey";
-    const pkiLocation = "vault:pki/cert/39:dd:7a:1b";
-
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["vault-kv"].test(kvLocation),
-      true,
+  it("builds a prefix-match clause against the token's own 'path' for pathPrefix", () => {
+    const { sql, params } = buildDimensionFilterSql(
+      { pathPrefix: "staging/db" },
+      2,
     );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["vault-pki"].test(kvLocation),
-      false,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["vault-pki"].test(pkiLocation),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["vault-kv"].test(pkiLocation),
-      false,
-    );
+    assert.match(sql, /\(t\.source_dimensions->>'path'\) LIKE \$2/);
+    assert.deepStrictEqual(params, ["staging/db%"]);
   });
 
-  it("aws source patterns are scoped by kind, not region", () => {
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["aws-secrets-manager"].test(
-        "aws:secretsmanager:us-east-1:arn:aws:secretsmanager:us-east-1:123:secret:foo",
-      ),
-      true,
+  it("combines multiple dimensions with AND and sequential placeholders", () => {
+    const { sql, params } = buildDimensionFilterSql(
+      { mount: "secret/", pathPrefix: "app1", category: "cert" },
+      1,
     );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["aws-acm"].test(
-        "aws:acm:eu-west-1:arn:aws:acm:eu-west-1:123:certificate/abc",
-      ),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["aws-iam-key"].test(
-        "aws:iam:us-east-1:someuser/AKIAEXAMPLE",
-      ),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["aws-iam-key"].test(
-        "aws:secretsmanager:us-east-1:arn:...",
-      ),
-      false,
-    );
+    assert.match(sql, / AND /);
+    assert.match(sql, /\$1/);
+    assert.match(sql, /\$2/);
+    assert.match(sql, /\$3/);
+    assert.deepStrictEqual(params, ["secret/", "app1%", "cert"]);
   });
 
-  it("azure key vault patterns distinguish secrets/certificates/keys", () => {
-    const secret = "azure:https://my-vault.vault.azure.net/secrets/foo";
-    const cert = "azure:https://my-vault.vault.azure.net/certificates/foo";
-    const key = "azure:https://my-vault.vault.azure.net/keys/foo";
-
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-key-vault-secret"].test(secret),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-key-vault-certificate"].test(cert),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-key-vault-key"].test(key),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-key-vault-secret"].test(cert),
-      false,
-    );
-  });
-
-  it("azure-ad patterns distinguish apps/service-principals and secrets/certs", () => {
-    const appSecret = "azure-ad:applications/app-1/secrets/key-1";
-    const appCert = "azure-ad:applications/app-1/certificates/key-1";
-    const spSecret = "azure-ad:servicePrincipals/sp-1/secrets/key-1";
-    const spCert = "azure-ad:servicePrincipals/sp-1/certificates/key-1";
-
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-ad-client-secret"].test(appSecret),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-ad-certificate"].test(appCert),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-ad-sp-secret"].test(spSecret),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-ad-sp-certificate"].test(spCert),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["azure-ad-client-secret"].test(spSecret),
-      false,
-    );
-  });
-
-  it("gcp-secret-manager matches Secret Manager locations", () => {
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["gcp-secret-manager"].test(
-        "gcp:my-project-123/secrets/foo",
-      ),
-      true,
-    );
-    assert.strictEqual(
-      SOURCE_LOCATION_PATTERNS["gcp-secret-manager"].test(
-        "gcp:my-project-123/other/foo",
-      ),
-      false,
-    );
-  });
-
-  it("every provider prefix has a colon suffix", () => {
-    for (const prefix of Object.values(PROVIDER_PREFIXES)) {
-      assert.strictEqual(prefix.endsWith(":"), true);
-    }
+  it("sanitizes non-pathPrefix dimension keys to a safe identifier", () => {
+    // Defense in depth: dimension keys ultimately come from scan-recorded
+    // data, not raw user input, but the SQL builder must never interpolate
+    // an unsanitized key into the query string regardless.
+    const { sql } = buildDimensionFilterSql({ "bad key'; --": "x" }, 1);
+    assert.doesNotMatch(sql, /'; --/);
+    assert.match(sql, /badkey/);
   });
 });

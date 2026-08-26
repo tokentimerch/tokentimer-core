@@ -1646,7 +1646,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 49);
+    assert.equal(sorted[sorted.length - 1], 50);
   });
 });
 
@@ -1780,6 +1780,100 @@ describe("migration 48 trust-anchor installation agent linkage", () => {
     assert.match(
       migration.sql,
       /CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_next_reconcile\s+ON certops_trust_anchor_installations\(next_reconcile_at\)\s+WHERE next_reconcile_at IS NOT NULL;/,
+    );
+  });
+
+  it("uses only additive DDL (no DROP TABLE/DROP COLUMN)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+    assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
+  });
+});
+
+describe("migration 50 import cleanup scan provenance", () => {
+  const migration = migrations.find((entry) => entry.version === 50);
+
+  it("exists with the expected name", () => {
+    assert.ok(migration);
+    assert.equal(migration.name, "import_cleanup_scan_provenance");
+  });
+
+  it("adds provenance columns to tokens; owner_key is NOT NULL DEFAULT '' so the sentinel value participates correctly in the unique index below, the rest nullable so existing rows stay valid", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_provider TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_instance TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_owner_key TEXT NOT NULL DEFAULT ''/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_owner_display TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_kind TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_dimensions JSONB NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_object_id TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS source_observed_at TIMESTAMPTZ NULL/,
+    );
+  });
+
+  it("scopes the upsert identity index to rows that actually have a source_object_id", () => {
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_tokens_source_identity\s+ON tokens \(workspace_id, source_provider, source_instance, source_owner_key, source_kind, source_object_id\)\s+WHERE source_object_id IS NOT NULL/,
+    );
+  });
+
+  it("creates integration_scans with a single-use cleanup claim column", () => {
+    assert.match(
+      migration.sql,
+      /CREATE TABLE IF NOT EXISTS integration_scans/,
+    );
+    assert.match(migration.sql, /cleanup_consumed_at TIMESTAMPTZ NULL/);
+    assert.match(
+      migration.sql,
+      /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+    );
+  });
+
+  it("creates integration_scan_items keyed uniquely per scan/kind/object", () => {
+    assert.match(
+      migration.sql,
+      /CREATE TABLE IF NOT EXISTS integration_scan_items/,
+    );
+    assert.match(
+      migration.sql,
+      /scan_id UUID NOT NULL REFERENCES integration_scans\(id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_integration_scan_items_identity\s+ON integration_scan_items\(scan_id, source_kind, source_object_id\)/,
+    );
+  });
+
+  it("adds an opt-in cleanup flag and connection_key to auto_sync_configs, defaulted safely", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS connection_key TEXT NULL/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS cleanup_obsolete BOOLEAN NOT NULL DEFAULT FALSE/,
     );
   });
 
