@@ -536,7 +536,12 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
           </Text>
         </Box>
 
-        <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <Box
+          border='1px solid'
+          borderColor={borderColor}
+          borderRadius='md'
+          p={3}
+        >
           <VStack align='stretch' spacing={2}>
             <Checkbox
               isChecked={cleanupObsolete}
@@ -549,10 +554,10 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             {cleanupObsolete ? (
               <Text fontSize='xs' color='red.400' pl={6}>
                 Deletes previously imported items of the asset kinds scanned
-                above (KV, PKI, or both) that no longer appear anywhere in
-                this scan's results, regardless of which items you select for
-                import below. Asset kinds you did not scan for are never
-                affected. This cannot be undone.
+                above (KV, PKI, or both) that no longer appear anywhere in this
+                scan's results, regardless of which items you select for import
+                below. Asset kinds you did not scan for are never affected. This
+                cannot be undone.
               </Text>
             ) : null}
           </VStack>

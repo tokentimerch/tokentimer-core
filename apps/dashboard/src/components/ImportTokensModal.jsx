@@ -2937,7 +2937,12 @@ export default function ImportTokensModal({
                       Scan
                     </Button>
                   </HStack>
-                  <Box border='1px solid' borderColor={border} borderRadius='md' p={3}>
+                  <Box
+                    border='1px solid'
+                    borderColor={border}
+                    borderRadius='md'
+                    p={3}
+                  >
                     <VStack align='stretch' spacing={2}>
                       <Checkbox
                         isChecked={azureADCleanupObsolete}
@@ -2947,18 +2952,18 @@ export default function ImportTokensModal({
                         size='sm'
                         colorScheme='red'
                       >
-                        Remove previously imported items no longer found at
-                        the source
+                        Remove previously imported items no longer found at the
+                        source
                       </Checkbox>
                       {azureADCleanupObsolete ? (
                         <Text fontSize='xs' color='red.400' pl={6}>
-                          Deletes previously imported secrets and
-                          certificates of the item types scanned above (App
-                          Registrations, Service Principals, or both) that no
-                          longer appear anywhere in this scan's results,
-                          regardless of which items you select for import
-                          below. Item types you did not scan for are never
-                          affected. This cannot be undone.
+                          Deletes previously imported secrets and certificates
+                          of the item types scanned above (App Registrations,
+                          Service Principals, or both) that no longer appear
+                          anywhere in this scan's results, regardless of which
+                          items you select for import below. Item types you did
+                          not scan for are never affected. This cannot be
+                          undone.
                         </Text>
                       ) : null}
                     </VStack>

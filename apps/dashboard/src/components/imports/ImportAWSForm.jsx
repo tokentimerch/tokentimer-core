@@ -511,19 +511,18 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             Remove previously imported items no longer found at the source
           </Checkbox>
           <Text fontSize='xs' color={helpTextColor} pl={6}>
-            Only available for &quot;All Regions + Global&quot; or
-            &quot;Global (IAM only)&quot; scans. AWS secrets and certificates
-            can exist in any region, so a single-region scan never sees
-            enough of the account to safely judge what is obsolete.
+            Only available for &quot;All Regions + Global&quot; or &quot;Global
+            (IAM only)&quot; scans. AWS secrets and certificates can exist in
+            any region, so a single-region scan never sees enough of the account
+            to safely judge what is obsolete.
           </Text>
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported items of the item types scanned
-              above (secrets, certificates, and/or IAM keys, depending on the
-              scan you run) that no longer appear anywhere in this scan's
-              results, regardless of which items you select for import
-              below. Item types you did not scan for are never affected.
-              This cannot be undone.
+              Deletes previously imported items of the item types scanned above
+              (secrets, certificates, and/or IAM keys, depending on the scan you
+              run) that no longer appear anywhere in this scan's results,
+              regardless of which items you select for import below. Item types
+              you did not scan for are never affected. This cannot be undone.
             </Text>
           ) : null}
         </VStack>

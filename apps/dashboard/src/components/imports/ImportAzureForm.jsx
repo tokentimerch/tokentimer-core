@@ -299,10 +299,10 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           </Checkbox>
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported secrets, certificates, and keys
-              from this Key Vault that no longer appear anywhere in this
-              scan's results, regardless of which items you select for
-              import below. This cannot be undone.
+              Deletes previously imported secrets, certificates, and keys from
+              this Key Vault that no longer appear anywhere in this scan's
+              results, regardless of which items you select for import below.
+              This cannot be undone.
             </Text>
           ) : null}
         </VStack>

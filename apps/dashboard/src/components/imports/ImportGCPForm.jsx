@@ -186,9 +186,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               scannedSources: ['gcp-secret-manager'],
               // All rediscovered locations (whole scan, not just selection)
               // so unselected-but-still-present items are never deleted.
-              scannedLocations: gcpItems
-                .map(it => it.location)
-                .filter(Boolean),
+              scannedLocations: gcpItems.map(it => it.location).filter(Boolean),
             }
           : undefined,
       });
@@ -284,10 +282,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           </Checkbox>
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported secrets from this GCP project that
-              no longer appear anywhere in this scan's results, regardless
-              of which items you select for import below. This cannot be
-              undone.
+              Deletes previously imported secrets from this GCP project that no
+              longer appear anywhere in this scan's results, regardless of which
+              items you select for import below. This cannot be undone.
             </Text>
           ) : null}
         </VStack>
