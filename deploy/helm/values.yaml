@@ -25,7 +25,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.3"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
@@ -111,7 +111,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.3"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -158,7 +158,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.13.3"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -303,7 +303,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.13.2"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.13.3"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -524,7 +524,11 @@ config:
 
 # -- SMTP (optional) ----------------------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
-# Precedence: System Settings DB (admin UI) > env vars here > code defaults.
+# Precedence: env vars here > System Settings DB (admin UI) > code defaults.
+# Env-set fields are locked (read-only) in the admin UI.
+# user/password are optional: leave both empty to send through an anonymous
+# (no-auth) relay authorized by source network; setting only one of the two
+# is treated as not configured. With no user, set fromEmail.
 # existingSecret replaces all SMTP keys; must contain:
 #   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_EMAIL, FROM_EMAIL_NAME
 smtp:
@@ -542,7 +546,7 @@ smtp:
 
 # -- Twilio WhatsApp (optional) -----------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
-# Precedence: System Settings DB (admin UI) > env vars here > disabled.
+# Precedence: env vars here > System Settings DB (admin UI) > disabled.
 # existingSecret replaces all Twilio keys; must contain all TWILIO_* keys.
 twilio:
   accountSid: ""

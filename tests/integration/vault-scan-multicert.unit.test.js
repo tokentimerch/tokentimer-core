@@ -129,12 +129,18 @@ describe("Vault KV scan behavior", () => {
       ]);
       const fields = items.map((i) => i.secret_key).sort();
       expect(fields).to.deep.equal(["app1-cert", "app2-cert", "root-ca"]);
-      // Legacy CN-based naming is preserved: the fixture cert has no CN, so
-      // the subject string is used as the name for every item; identity is
-      // carried by the per-key location.
-      for (const item of items) {
-        expect(item.name).to.be.a("string").and.not.be.empty;
-      }
+      // The fixture cert has no CN, so each item falls back to its
+      // "pathName/field" name; identity is carried by the per-key location
+      // regardless. (Regression coverage: this used to be the raw,
+      // multi-attribute subject string when the CN check mis-parsed
+      // Node's newline-delimited subject format - see the dedicated
+      // resolveCertName/extractCommonName tests below.)
+      const names = items.map((i) => i.name).sort();
+      expect(names).to.deep.equal([
+        "ca/app1-cert",
+        "ca/app2-cert",
+        "ca/root-ca",
+      ]);
     });
 
     it("keeps the legacy location for single-cert secrets", () => {
@@ -176,6 +182,65 @@ describe("Vault KV scan behavior", () => {
       expect(items[0].category).to.equal("key_secret");
       expect(items[0].type).to.equal("password");
       expect(items[0].location).to.equal("vault:secret/db/creds");
+    });
+  });
+
+  describe("resolveCertName / extractCommonName (CN extraction from subject)", () => {
+    it("extracts the CN from a newline-delimited RDN string with CN last (Node's actual X509Certificate.subject format)", () => {
+      const { cn } = mod._test.resolveCertName({
+        subject: "C=US\nST=California\nO=Example Corp\nCN=app.example.com",
+        pathName: "apps/web",
+        field: "certificate",
+        multipleCerts: false,
+      });
+      expect(cn).to.equal("app.example.com");
+    });
+
+    it("uses the extracted CN as the item name when it looks like a real domain", () => {
+      const { name } = mod._test.resolveCertName({
+        subject: "C=US\nST=California\nO=Example Corp\nCN=app.example.com",
+        pathName: "apps/web",
+        field: "certificate",
+        multipleCerts: false,
+      });
+      expect(name).to.equal("app.example.com");
+    });
+
+    it("falls back to path/field instead of the raw subject string when CN is a generic dev value (regression: previously the entire multi-attribute subject was used as the name)", () => {
+      const { cn, isGenericCN, name } = mod._test.resolveCertName({
+        subject:
+          "C=CH\nST=Zurich\nL=Zurich\nO=Demo Testing\nOU=Local Development\nCN=localhost",
+        pathName: "common/ca",
+        field: "app1-cert",
+        multipleCerts: true,
+      });
+      expect(cn).to.equal("localhost");
+      expect(isGenericCN).to.equal(true);
+      expect(name).to.equal("common/ca/app1-cert");
+    });
+
+    it("falls back to path/field when the subject has no CN attribute at all", () => {
+      const { cn, name } = mod._test.resolveCertName({
+        subject: "C=AU\nST=Some-State\nO=Internet Widgits Pty Ltd",
+        pathName: "common/ca",
+        field: "root-ca",
+        multipleCerts: true,
+      });
+      expect(cn).to.equal(null);
+      expect(name).to.equal("common/ca/root-ca");
+    });
+  });
+
+  describe("extractCommonName", () => {
+    it("finds CN regardless of position or delimiter", () => {
+      expect(
+        mod._test.extractCommonName("CN=app.example.com,O=Example Corp"),
+      ).to.equal("app.example.com");
+      expect(
+        mod._test.extractCommonName("O=Example Corp\nCN=app.example.com"),
+      ).to.equal("app.example.com");
+      expect(mod._test.extractCommonName("O=Example Corp")).to.equal(null);
+      expect(mod._test.extractCommonName(null)).to.equal(null);
     });
   });
 

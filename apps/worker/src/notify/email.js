@@ -66,6 +66,15 @@ function resolveSmtpSecurity(port, secureOverride, requireTlsOverride) {
   };
 }
 
+/**
+ * SMTP auth is either fully present (user + pass) or fully absent
+ * (anonymous/no-auth relay). Exactly one being set is an incomplete
+ * configuration. Mirrors systemSettings.js's hasBalancedSmtpAuth in the API.
+ */
+function hasBalancedSmtpAuth(user, pass) {
+  return Boolean(user) === Boolean(pass);
+}
+
 async function getDbSmtpConfig() {
   const now = Date.now();
   if (_dbSmtpCache && now - _dbSmtpCacheTime < DB_SMTP_CACHE_TTL) {
@@ -91,8 +100,14 @@ async function getDbSmtpConfig() {
       secure: row.smtp_secure || null,
       requireTls: row.smtp_require_tls || null,
     };
-    // Only cache if we have the minimum required fields
-    if (config.host && config.user && config.pass) {
+    // Only cache if we have the minimum required fields: a host, balanced
+    // auth (both user+pass, or neither for an anonymous relay), and a
+    // From address to send as when there's no authenticating account.
+    const hasMinimum =
+      config.host &&
+      hasBalancedSmtpAuth(config.user, config.pass) &&
+      (config.fromEmail || config.user);
+    if (hasMinimum) {
       _dbSmtpCache = config;
       _dbSmtpCacheTime = now;
       return config;
@@ -413,14 +428,16 @@ function getTransporterForIndex(index) {
   );
   const user = SMTP_USERS[index] || process.env.SMTP_USER;
   const pass = SMTP_PASS[index] || SMTP_PASS[0] || process.env.SMTP_PASS;
-  if (!host || !user || !pass) return null;
+  if (!host) return null;
+  // Anonymous relay: both absent is valid; only one being set is invalid.
+  if (!hasBalancedSmtpAuth(user, pass)) return null;
   if (transporters[index]) return transporters[index];
   const tx = nodemailer.createTransport({
     host,
     port,
     secure: smtpSecurity.secure,
     requireTLS: smtpSecurity.requireTLS,
-    auth: { user, pass },
+    ...(user && pass ? { auth: { user, pass } } : {}),
     connectionTimeout: 30000,
     socketTimeout: 30000,
     tls: { rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED },
@@ -444,14 +461,20 @@ export function getTransporterAsync() {
 }
 
 function getFromForIndex(index) {
-  const addr = SMTP_USERS[index] || process.env.SMTP_USER;
-  if (!addr) return null;
+  const authAddr = SMTP_USERS[index] || process.env.SMTP_USER;
   const displayName = process.env.FROM_EMAIL_NAME || "TokenTimer";
+  // Anonymous relay: no authenticating account to derive a From address
+  // from, so FROM_EMAIL is required in that case.
+  if (!authAddr) {
+    return process.env.FROM_EMAIL
+      ? `${JSON.stringify(displayName)} <${process.env.FROM_EMAIL}>`
+      : null;
+  }
   // FROM_EMAIL only applies in single-account mode; see sendEmailNotification().
   const fromAddr =
     SMTP_USERS.length <= 1 && process.env.FROM_EMAIL
       ? process.env.FROM_EMAIL
-      : addr;
+      : authAddr;
   // Format as display name + address so recipient sees the brand name
   return `${JSON.stringify(displayName)} <${fromAddr}>`;
 }
@@ -477,7 +500,9 @@ async function getDbTransporter() {
     port,
     secure: smtpSecurity.secure,
     requireTLS: smtpSecurity.requireTLS,
-    auth: { user: config.user, pass: config.pass },
+    ...(config.user && config.pass
+      ? { auth: { user: config.user, pass: config.pass } }
+      : {}),
     connectionTimeout: 30000,
     socketTimeout: 30000,
     tls: { rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED },

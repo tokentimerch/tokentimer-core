@@ -95,22 +95,30 @@ function makeNodemailerStub({
 function requireEmailServiceWithStubs(stubs = {}) {
   const resolved = resolveEmailServiceModule();
   delete require.cache[resolved];
+  const defaultSystemSettings = {
+    hasBalancedSmtpAuth(user, pass) {
+      return Boolean(user) === Boolean(pass);
+    },
+    async isSmtpConfigured() {
+      return false;
+    },
+    async getSettingValue() {
+      return null;
+    },
+  };
+  const { "./systemSettings": systemSettingsOverride, ...restStubs } = stubs;
+  const mergedSystemSettings = systemSettingsOverride
+    ? { ...defaultSystemSettings, ...systemSettingsOverride }
+    : defaultSystemSettings;
   return withPatchedLoad(
     {
       nodemailer: makeNodemailerStub(),
       "prom-client": makePromClientStub(),
-      "./systemSettings": {
-        async isSmtpConfigured() {
-          return false;
-        },
-        async getSettingValue() {
-          return null;
-        },
-      },
+      "./systemSettings": mergedSystemSettings,
       "../utils/logger.js": {
         logger: { info() {}, warn() {}, error() {}, debug() {} },
       },
-      ...stubs,
+      ...restStubs,
     },
     () => require(resolved),
   );
@@ -149,6 +157,40 @@ describe("Email service unit coverage", () => {
     expect(Boolean(email.isSMTPConfigured())).to.equal(true);
   });
 
+  it("reports SMTP configured for an anonymous relay (host only, no auth)", () => {
+    process.env.SMTP_HOST = "smtp.local";
+    process.env.SMTP_PORT = "25";
+    const email = requireEmailServiceWithStubs();
+    expect(Boolean(email.isSMTPConfigured())).to.equal(true);
+  });
+
+  it("reports SMTP not configured when only SMTP_USER is set (unbalanced auth)", () => {
+    process.env.SMTP_HOST = "smtp.local";
+    process.env.SMTP_USER = "user@smtp.local";
+    const email = requireEmailServiceWithStubs();
+    expect(Boolean(email.isSMTPConfigured())).to.equal(false);
+  });
+
+  it("sends via an anonymous relay without an auth object", async () => {
+    process.env.SMTP_HOST = "smtp.local";
+    process.env.SMTP_PORT = "25";
+    process.env.FROM_EMAIL = "noreply@example.com";
+    const nodemailerStub = makeNodemailerStub();
+    const email = requireEmailServiceWithStubs({ nodemailer: nodemailerStub });
+    const result = await email.sendEmail({
+      to: "x@example.com",
+      subject: "Test",
+      text: "Body",
+      html: "<p>Body</p>",
+    });
+    expect(result.success).to.equal(true);
+    const calls = nodemailerStub.__getCalls();
+    expect(calls.length).to.be.greaterThan(0);
+    expect(calls[0].auth).to.equal(undefined);
+    const sent = nodemailerStub.__getSendMailCalls();
+    expect(sent[0].from).to.include("noreply@example.com");
+  });
+
   it("resolves transporter from DB settings when pool is provided", async () => {
     const email = requireEmailServiceWithStubs({
       "./systemSettings": {
@@ -170,6 +212,31 @@ describe("Email service unit coverage", () => {
     const transporter = await email.getResolvedTransporter();
     expect(transporter).to.be.an("object");
     expect(transporter.verify).to.be.a("function");
+  });
+
+  it("resolves an anonymous DB transporter without auth when host-only", async () => {
+    const nodemailerStub = makeNodemailerStub();
+    const email = requireEmailServiceWithStubs({
+      nodemailer: nodemailerStub,
+      "./systemSettings": {
+        async isSmtpConfigured() {
+          return true;
+        },
+        async getSettingValue(_pool, key) {
+          const map = {
+            smtp_host: "smtp.db.local",
+            smtp_port: "25",
+          };
+          return map[key] || null;
+        },
+      },
+    });
+    email.setPool({ fake: true });
+    const transporter = await email.getResolvedTransporter();
+    expect(transporter).to.be.an("object");
+    const calls = nodemailerStub.__getCalls();
+    expect(calls.length).to.be.greaterThan(0);
+    expect(calls[calls.length - 1].auth).to.equal(undefined);
   });
 
   it("falls back to env transporter when DB settings are incomplete", async () => {
