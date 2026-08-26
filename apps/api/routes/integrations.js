@@ -1668,6 +1668,36 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record, so import's
+      // cleanup request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "gcp",
+            identityContext: { projectId },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GCP scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {

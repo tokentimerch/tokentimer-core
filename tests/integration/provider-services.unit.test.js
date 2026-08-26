@@ -740,7 +740,7 @@ describe("Provider service unit coverage", () => {
         accessToken: "token",
         maxItems: 5,
       });
-      expect(secrets).to.deep.equal([]);
+      expect(secrets.items).to.deep.equal([]);
     });
 
     it("returns null on 404 for getSecretVersion", async () => {
