@@ -9903,7 +9903,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke]
+                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
