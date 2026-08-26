@@ -299,4 +299,85 @@ describe("Worker notifier credential fallback", () => {
     expect(result.success).to.equal(true);
     expect(createdHosts).to.include("db.smtp.local");
   });
+
+  it("sends via an anonymous (no-auth) SMTP relay from env", async () => {
+    process.env.SMTP_HOST = "anon.smtp.local";
+    process.env.SMTP_PORT = "25";
+    process.env.FROM_EMAIL = "noreply@example.com";
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+
+    const createdOptions = [];
+    nodemailer.createTransport = (options = {}) => {
+      createdOptions.push(options);
+      return {
+        async verify() {
+          return true;
+        },
+        async sendMail() {
+          return { accepted: ["ok@example.com"], response: "250 OK" };
+        },
+      };
+    };
+
+    const email = await importFresh(emailModulePath);
+    const result = await email.sendEmailNotification({
+      to: "recipient@example.com",
+      subject: "Anonymous relay test",
+      text: "Hello",
+      html: "<p>Hello</p>",
+    });
+
+    expect(result.success, JSON.stringify(result)).to.equal(true);
+    expect(createdOptions.length).to.be.greaterThan(0);
+    expect(createdOptions[0].auth).to.equal(undefined);
+  });
+
+  it("uses an anonymous (no-auth) DB SMTP relay when env is not configured", async () => {
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_PORT;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+
+    dbPool.query = async () => ({
+      rows: [
+        {
+          smtp_host: "anon-db.smtp.local",
+          smtp_port: "25",
+          smtp_user: null,
+          smtp_pass_encrypted: null,
+          smtp_from_email: "db-noreply@example.com",
+          smtp_from_name: "TokenTimer DB",
+          smtp_secure: "false",
+          smtp_require_tls: "false",
+        },
+      ],
+    });
+
+    const createdOptions = [];
+    nodemailer.createTransport = (options = {}) => {
+      createdOptions.push(options);
+      return {
+        async verify() {
+          return true;
+        },
+        async sendMail() {
+          return { accepted: ["ok@example.com"], response: "250 OK" };
+        },
+      };
+    };
+
+    const email = await importFresh(emailModulePath);
+    const result = await email.sendEmailNotification({
+      to: "recipient@example.com",
+      subject: "Anonymous DB relay test",
+      text: "Hello",
+      html: "<p>Hello</p>",
+    });
+
+    expect(result.success, JSON.stringify(result)).to.equal(true);
+    expect(createdOptions.length).to.be.greaterThan(0);
+    expect(createdOptions[0].auth).to.equal(undefined);
+    expect(createdOptions[0].host).to.equal("anon-db.smtp.local");
+  });
 });

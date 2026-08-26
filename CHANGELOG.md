@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-08-26
+
+### Added
+
+- **SMTP now supports anonymous (no-auth) relays.** `SMTP_USER`/`SMTP_PASS` (env or System Settings) can both be left unset to send through an internal relay that authorizes by source network instead of credentials; leaving only one of the two set is still treated as an incomplete configuration. With no `SMTP_USER`, set `FROM_EMAIL` (or the System Settings "From email") so there is still a sender address to send as. Nodemailer transporters are constructed without an `auth` block at all when unauthenticated, since passing an empty `auth` object requests authentication with blank credentials rather than skipping it.
+
+### Fixed
+
+- **SMTP/Twilio configuration precedence was documented backwards in `deploy/compose/.env.example` and `deploy/helm/values.yaml`.** Both claimed System Settings DB values override env vars; the actual resolution (`systemSettings` service) is **env var > System Settings DB > code default**, and env-set fields are locked read-only in the admin UI. Comments corrected.
+- **A certificate's name could be shown as its entire raw subject string instead of its Common Name, when scanning Vault KV or PKI secrets.** Node's `X509Certificate.subject`/`.issuer` return a newline-delimited RDN string (e.g. `C=US\nO=Example\nCN=example.com`), with the Common Name conventionally last rather than first; the name-resolution logic assumed a comma-delimited, CN-first format instead, so whenever the CN wasn't the very first attribute (the common case for any certificate with country/state/org fields) the whole raw subject string was used as the item's name. Common Name extraction is now delimiter- and position-independent.
+
+### Changed
+
+- Version metadata bumped to 0.13.3 across all manifests, contracts, and the Helm chart.
+
 ## [0.13.2] - 2026-08-25
 
 ### Added

@@ -555,13 +555,27 @@ async function isWhatsAppAvailable(pool) {
 }
 
 /**
- * Check if SMTP is configured from env or DB.
+ * SMTP auth is either fully present (user + pass, for a normal
+ * authenticated relay) or fully absent (an anonymous/no-auth relay,
+ * commonly an internal relay gated by network policy instead of
+ * credentials). Exactly one of the two being set is treated as an
+ * incomplete/invalid configuration rather than an implicit opt-in to
+ * unauthenticated sending.
+ */
+function hasBalancedSmtpAuth(user, pass) {
+  return Boolean(user) === Boolean(pass);
+}
+
+/**
+ * Check if SMTP is configured from env or DB. A host with no
+ * username/password is considered configured (anonymous relay); a host
+ * with only one of the two set is not.
  */
 async function isSmtpConfigured(pool) {
   const host = await getSettingValue(pool, "smtp_host");
   const user = await getSettingValue(pool, "smtp_user");
   const pass = await getSettingValue(pool, "smtp_pass");
-  return !!(host && user && pass);
+  return Boolean(host) && hasBalancedSmtpAuth(user, pass);
 }
 
 module.exports = {
@@ -581,6 +595,7 @@ module.exports = {
   saveJsonColumn,
   isWhatsAppAvailable,
   isSmtpConfigured,
+  hasBalancedSmtpAuth,
   invalidateCache,
   encrypt,
   decrypt,

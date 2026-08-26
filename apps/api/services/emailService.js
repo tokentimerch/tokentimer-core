@@ -52,10 +52,12 @@ const emailConfig = {
     process.env.SMTP_SECURE,
     process.env.SMTP_REQUIRE_TLS,
   ),
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+  // Anonymous relays (no username/password) must not receive an `auth`
+  // object at all -- nodemailer treats a present-but-empty `auth` as a
+  // request to authenticate with blank credentials, not as "skip auth".
+  ...(process.env.SMTP_USER && process.env.SMTP_PASS
+    ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }
+    : {}),
   // Add timeout and connection settings
   connectionTimeout: 60000, // 60 seconds
   greetingTimeout: 30000, // 30 seconds
@@ -404,10 +406,13 @@ const SMTP_PASS = parseList(process.env.SMTP_PASS);
 
 const transportersCache = [];
 function getTransporterForIndex(index) {
+  if (!process.env.SMTP_HOST) return null;
   const user = SMTP_USERS[index] || process.env.SMTP_USER;
   // Use password matching the same index when multiple credentials are provided
   const pass = SMTP_PASS[index] || SMTP_PASS[0] || process.env.SMTP_PASS;
-  if (!user || !pass || !process.env.SMTP_HOST) return null;
+  // Anonymous relay: both absent is valid (no-auth). Only one being set
+  // is an invalid/incomplete configuration.
+  if (!systemSettings.hasBalancedSmtpAuth(user, pass)) return null;
   if (transportersCache[index]) return transportersCache[index];
   const smtpSecurity = resolveSmtpSecurity(
     process.env.SMTP_PORT,
@@ -419,7 +424,7 @@ function getTransporterForIndex(index) {
     port: process.env.SMTP_PORT,
     secure: smtpSecurity.secure,
     requireTLS: smtpSecurity.requireTLS,
-    auth: { user, pass },
+    ...(user && pass ? { auth: { user, pass } } : {}),
     connectionTimeout: 60000,
     greetingTimeout: 30000,
     socketTimeout: 60000,
@@ -432,25 +437,39 @@ function getTransporterForIndex(index) {
 }
 
 function getFromForIndex(index) {
-  const addr = SMTP_USERS[index] || process.env.SMTP_USER;
-  if (!addr) return null;
+  const authAddr = SMTP_USERS[index] || process.env.SMTP_USER;
   const displayName = process.env.FROM_EMAIL_NAME || "TokenTimer";
+  // Anonymous relay: there is no authenticating account to derive a From
+  // address from, so FROM_EMAIL is required in that case.
+  if (!authAddr) {
+    return process.env.FROM_EMAIL
+      ? `"${displayName}" <${process.env.FROM_EMAIL}>`
+      : null;
+  }
   // Only honor FROM_EMAIL in single-account mode; with rotating SMTP_USER
   // accounts, From must match whichever account authenticated the send.
   const fromAddr =
     SMTP_USERS.length <= 1 && process.env.FROM_EMAIL
       ? process.env.FROM_EMAIL
-      : addr;
+      : authAddr;
   return `"${displayName}" <${fromAddr}>`;
 }
 
 /**
- * Check if SMTP is configured via environment variables (synchronous check)
- * @returns {boolean} True if SMTP_HOST, SMTP_USER, and SMTP_PASS are all set
+ * Check if SMTP is configured via environment variables (synchronous check).
+ * A host with no username/password is a valid anonymous-relay config; a
+ * host with only one of the two set is not (see hasBalancedSmtpAuth).
+ * @returns {boolean} True if SMTP_HOST is set and auth is either fully
+ *   present (user + pass) or fully absent
  */
 const isSMTPConfigured = () => {
-  const configured =
-    process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_HOST;
+  const configured = Boolean(
+    process.env.SMTP_HOST &&
+      systemSettings.hasBalancedSmtpAuth(
+        process.env.SMTP_USER,
+        process.env.SMTP_PASS,
+      ),
+  );
   logger.info("SMTP Configuration check:", {
     SMTP_HOST: process.env.SMTP_HOST ? "SET" : "NOT SET",
     SMTP_PORT: process.env.SMTP_PORT ? "SET" : "NOT SET",
@@ -489,7 +508,9 @@ async function getResolvedTransporter() {
     _pool,
     "smtp_require_tls",
   );
-  if (!host || !user || !pass) return transporter; // fallback
+  if (!host) return transporter; // fallback
+  // Anonymous relay: both absent is valid; only one being set is invalid.
+  if (!systemSettings.hasBalancedSmtpAuth(user, pass)) return transporter; // fallback
   const key = `${host}:${port}:${user}:${secureSetting || ""}:${requireTlsSetting || ""}`;
   if (_resolvedTransporter && _resolvedTransporterKey === key)
     return _resolvedTransporter;
@@ -503,7 +524,7 @@ async function getResolvedTransporter() {
     port: parseInt(port || "0", 10) || undefined,
     secure: smtpSecurity.secure,
     requireTLS: smtpSecurity.requireTLS,
-    auth: { user, pass },
+    ...(user && pass ? { auth: { user, pass } } : {}),
     connectionTimeout: 60000,
     greetingTimeout: 30000,
     socketTimeout: 60000,
@@ -628,12 +649,22 @@ async function sendWithDbSmtpFallback({ kind, to, baseMail }) {
       userSetting?.source === "database" ? userSetting.value : null;
     const dbPass =
       passSetting?.source === "database" ? passSetting.value : null;
-    if (!dbHost || !dbUser || !dbPass) return null;
+    if (!dbHost) return null;
+    // Anonymous relay: both absent is valid; only one being set is invalid.
+    if (!systemSettings.hasBalancedSmtpAuth(dbUser, dbPass)) return null;
 
     const tx = await getResolvedTransporter();
     const dbFromEmail =
       (await systemSettings.getSettingValue(_pool, "smtp_from_email")) ||
       dbUser;
+    if (!dbFromEmail) {
+      // No SMTP_USER to derive a From address from (anonymous relay) and
+      // no explicit From configured either; nothing to send with.
+      logger.warn(
+        "DB SMTP fallback: no From address configured. Set smtp_from_email for an anonymous (no-auth) relay.",
+      );
+      return null;
+    }
     const dbFromName =
       (await systemSettings.getSettingValue(_pool, "smtp_from_name")) ||
       process.env.FROM_EMAIL_NAME ||
@@ -1046,11 +1077,15 @@ const sendEmail = async (options) => {
       const dbHost = await systemSettings.getSettingValue(_pool, "smtp_host");
       const dbUser = await systemSettings.getSettingValue(_pool, "smtp_user");
       const dbPass = await systemSettings.getSettingValue(_pool, "smtp_pass");
-      if (dbHost && dbUser && dbPass) {
+      const dbFromEmail =
+        (await systemSettings.getSettingValue(_pool, "smtp_from_email")) ||
+        dbUser;
+      if (
+        dbHost &&
+        systemSettings.hasBalancedSmtpAuth(dbUser, dbPass) &&
+        dbFromEmail
+      ) {
         const tx = await getResolvedTransporter();
-        const dbFromEmail =
-          (await systemSettings.getSettingValue(_pool, "smtp_from_email")) ||
-          dbUser;
         const dbFromName =
           (await systemSettings.getSettingValue(_pool, "smtp_from_name")) ||
           process.env.FROM_EMAIL_NAME ||

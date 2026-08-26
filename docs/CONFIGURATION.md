@@ -130,6 +130,12 @@ the origins users and integrations actually use in the browser.
 | `SMTP_REQUIRE_TLS`         | Require STARTTLS upgrade           | `true`                                                    | API, worker email |
 | `SMTP_REJECT_UNAUTHORIZED` | Reject invalid TLS certs           | `unset`                                                   | API, worker email |
 
+`SMTP_USER`/`SMTP_PASS` are optional: leave both unset to send through an
+anonymous (no-auth) relay, e.g. an internal relay that authorizes by source
+IP/network instead of credentials. Setting only one of the two is treated as
+an incomplete configuration and SMTP is reported as not configured. With no
+`SMTP_USER`, set `FROM_EMAIL` so there is still an address to send from.
+
 ## Alerts, limits, and webhooks
 
 | Variable                                  | Description                                                                 | Default value                         | Scope                |

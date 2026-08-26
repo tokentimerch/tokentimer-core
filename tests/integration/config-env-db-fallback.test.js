@@ -222,6 +222,84 @@ describe("System Settings: ENV vs DB Fallback", () => {
       }
     });
 
+    it("returns true for an anonymous relay (host set, no user/pass)", async () => {
+      const restore = setEnv({
+        SMTP_HOST: "smtp.test.com",
+        SMTP_USER: undefined,
+        SMTP_PASS: undefined,
+      });
+      try {
+        systemSettings.invalidateCache();
+        const fakePool = {
+          query: async () => ({
+            rows: [
+              {
+                smtp_host: null,
+                smtp_user: null,
+                smtp_pass_encrypted: null,
+              },
+            ],
+          }),
+        };
+        const result = await systemSettings.isSmtpConfigured(fakePool);
+        expect(result).to.equal(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when only user is set without a password (unbalanced auth)", async () => {
+      const restore = setEnv({
+        SMTP_HOST: "smtp.test.com",
+        SMTP_USER: "user",
+        SMTP_PASS: undefined,
+      });
+      try {
+        systemSettings.invalidateCache();
+        const fakePool = {
+          query: async () => ({
+            rows: [
+              {
+                smtp_host: null,
+                smtp_user: null,
+                smtp_pass_encrypted: null,
+              },
+            ],
+          }),
+        };
+        const result = await systemSettings.isSmtpConfigured(fakePool);
+        expect(result).to.equal(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when only pass is set without a username (unbalanced auth)", async () => {
+      const restore = setEnv({
+        SMTP_HOST: "smtp.test.com",
+        SMTP_USER: undefined,
+        SMTP_PASS: "pass",
+      });
+      try {
+        systemSettings.invalidateCache();
+        const fakePool = {
+          query: async () => ({
+            rows: [
+              {
+                smtp_host: null,
+                smtp_user: null,
+                smtp_pass_encrypted: null,
+              },
+            ],
+          }),
+        };
+        const result = await systemSettings.isSmtpConfigured(fakePool);
+        expect(result).to.equal(false);
+      } finally {
+        restore();
+      }
+    });
+
     it("returns false when host is missing", async () => {
       const restore = setEnv({
         SMTP_HOST: undefined,

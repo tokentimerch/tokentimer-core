@@ -232,7 +232,8 @@ function parseCertificatePemForDatesAndNames(pem) {
   try {
     const cert = new X509Certificate(pem);
     const notAfter = new Date(cert.validTo);
-    // Subject and issuer in string form (e.g., 'CN=example.com, O=Org')
+    // Subject and issuer as Node's newline-delimited RDN string, e.g.
+    // "C=US\nO=Example\nCN=example.com" (CN is typically last, not first).
     const subject = cert.subject;
     const issuer = cert.issuer;
     return { notAfter, subject, issuer };
@@ -344,9 +345,24 @@ async function readKvV2Secret({ address, token, mountPath, secretPath }) {
   return { data: payload.data || {}, metadata: payload.metadata || {} };
 }
 
+// Node's `X509Certificate.subject`/`.issuer` return a newline-delimited RDN
+// string (e.g. "C=US\nO=Example\nCN=example.com"), not the comma-delimited,
+// CN-first form some other tooling (like `openssl x509 -subject`) emits, and
+// CN is conventionally the *last* RDN rather than the first. Find the RDN
+// that starts with "CN=" regardless of its position or the delimiter used.
+function extractCommonName(subject) {
+  if (typeof subject !== "string" || !subject) return null;
+  const cnRdn = subject
+    .split(/[\n,]+/)
+    .find((part) => /^CN=/i.test(part.trim()));
+  if (!cnRdn) return null;
+  const value = cnRdn.trim().replace(/^CN=/i, "").trim();
+  return value || null;
+}
+
 function resolveCertName({ subject, pathName, field, multipleCerts }) {
   // Determine best name: prefer Vault path unless CN is clearly a domain name
-  const cn = subject ? subject.replace(/^CN=/, "").split(",")[0].trim() : null;
+  const cn = extractCommonName(subject);
 
   // Generic/test CNs that should be ignored in favor of path name
   const isGenericCN =
@@ -622,9 +638,8 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
         const notAfter = parsed && parsed.notAfter ? parsed.notAfter : null;
         const subject = parsed && parsed.subject ? parsed.subject : null;
         const issuer = parsed && parsed.issuer ? parsed.issuer : null;
-        const name = subject
-          ? subject.replace(/^CN=/, "").split(",")[0].trim()
-          : `${mountPath}cert/${serial}`;
+        const name =
+          extractCommonName(subject) || `${mountPath}cert/${serial}`;
         return {
           source: "vault-pki",
           mount: mountPath,
@@ -831,5 +846,7 @@ if (process.env.NODE_ENV === "test") {
     discoverExpiryFromObject,
     inferKindFromData,
     buildKvSecretItems,
+    resolveCertName,
+    extractCommonName,
   };
 }
