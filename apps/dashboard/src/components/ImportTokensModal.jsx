@@ -1001,10 +1001,8 @@ export default function ImportTokensModal({
   );
   const [azureADCleanupObsolete, setAzureADCleanupObsolete] =
     React.useState(false);
-  // Source kinds included in the last scan; cleanup only touches these.
-  const [azureADLastScanSources, setAzureADLastScanSources] = React.useState(
-    []
-  );
+  // The backend-authoritative scan record cleanup is driven from.
+  const [azureADLastScanId, setAzureADLastScanId] = React.useState(null);
 
   // Show/hide toggle for secret fields
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -1931,14 +1929,7 @@ export default function ImportTokensModal({
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureADItems(items);
       setAzureADSummary(Array.isArray(res?.summary) ? res.summary : []);
-      const scannedSources = [];
-      if (azureADIncludeApps) {
-        scannedSources.push('azure-ad-client-secret', 'azure-ad-certificate');
-      }
-      if (azureADIncludeSPs) {
-        scannedSources.push('azure-ad-sp-secret', 'azure-ad-sp-certificate');
-      }
-      setAzureADLastScanSources(scannedSources);
+      setAzureADLastScanId(res?.scan_id || null);
       if (items.length > 0)
         setScanSucceededFor(prev => new Set(prev).add('azure-ad'));
 
@@ -1954,6 +1945,7 @@ export default function ImportTokensModal({
       // Clear summary on error to prevent showing partial/error data
       setAzureADItems([]);
       setAzureADSummary([]);
+      setAzureADLastScanId(null);
       // Handle quota exceeded error
       if (isQuotaExceededError(e)) {
         setError(formatQuotaError(e));
@@ -1992,17 +1984,11 @@ export default function ImportTokensModal({
         items: selected,
         defaults: {},
         cleanup:
-          azureADCleanupObsolete && azureADLastScanSources.length > 0
+          azureADCleanupObsolete && azureADLastScanId
             ? {
                 enabled: true,
                 provider: 'azure-ad',
-                scannedSources: azureADLastScanSources,
-                // All rediscovered locations (whole scan, not just
-                // selection) so unselected-but-still-present items are
-                // never deleted.
-                scannedLocations: azureADItems
-                  .map(it => it.location)
-                  .filter(Boolean),
+                scanId: azureADLastScanId,
               }
             : undefined,
       });
@@ -2951,19 +2937,34 @@ export default function ImportTokensModal({
                         }
                         size='sm'
                         colorScheme='red'
+                        isDisabled={!azureADLastScanId}
                       >
                         Remove previously imported items no longer found at the
                         source
                       </Checkbox>
+                      {!azureADLastScanId ? (
+                        <Text fontSize='xs' color={muted} pl={6}>
+                          Run a scan first; cleanup is driven by the backend's
+                          record of what that scan covered.
+                        </Text>
+                      ) : azureADSummary.some(s => s.complete === false) ? (
+                        <Text fontSize='xs' color='orange.400' pl={6}>
+                          The last scan didn't fully complete for every item
+                          type above (see the errors below). The backend will
+                          only clean up App Registrations or Service Principals
+                          it confirmed were fully scanned; nothing incomplete or
+                          errored is ever touched.
+                        </Text>
+                      ) : null}
                       {azureADCleanupObsolete ? (
                         <Text fontSize='xs' color='red.400' pl={6}>
                           Deletes previously imported secrets and certificates
                           of the item types scanned above (App Registrations,
                           Service Principals, or both) that no longer appear
                           anywhere in this scan's results, regardless of which
-                          items you select for import below. Item types you did
-                          not scan for are never affected. This cannot be
-                          undone.
+                          items you select for import below. Item types this
+                          scan couldn't fully complete are never affected. This
+                          cannot be undone.
                         </Text>
                       ) : null}
                     </VStack>

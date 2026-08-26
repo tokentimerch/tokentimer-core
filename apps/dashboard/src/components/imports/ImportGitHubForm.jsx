@@ -130,8 +130,9 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
-  // Source kinds included in the last scan; cleanup only touches these.
-  const [lastScanSources, setLastScanSources] = React.useState([]);
+  // The backend-authoritative scan record cleanup is driven from; the
+  // backend (not this form) decides which sub-scopes are safe to clean.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   // Restore persisted rules from auto-sync scan_params
   React.useEffect(() => {
@@ -203,11 +204,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       setGithubItems(items);
       setGithubSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
-      const scannedSources = [];
-      if (githubIncludeSSHKeys) scannedSources.push('github-ssh-key');
-      if (githubIncludeDeployKeys) scannedSources.push('github-deploy-key');
-      if (githubIncludeSecrets) scannedSources.push('github-secret');
-      setLastScanSources(scannedSources);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('github');
       }
@@ -225,6 +222,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       setGithubItems([]);
       setGithubSummary([]);
       setFilterSummary(null);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -298,16 +296,11 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         items: selected,
         defaults: {},
         cleanup:
-          cleanupObsolete && lastScanSources.length > 0
+          cleanupObsolete && lastScanId
             ? {
                 enabled: true,
                 provider: 'github',
-                scannedSources: lastScanSources,
-                // All rediscovered locations (whole scan, not just selection)
-                // so unselected-but-still-present tokens are never deleted.
-                scannedLocations: githubItems
-                  .map(it => it.location)
-                  .filter(Boolean),
+                scanId: lastScanId,
               }
             : undefined,
       });
@@ -449,15 +442,30 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             onChange={e => setCleanupObsolete(e.target.checked)}
             size='sm'
             colorScheme='red'
+            isDisabled={!lastScanId}
           >
             Remove previously imported tokens no longer found at the source
           </Checkbox>
+          {!lastScanId ? (
+            <Text fontSize='xs' color={helpTextColor} pl={6}>
+              Run a scan first; cleanup is driven by the backend's record of
+              what that scan covered.
+            </Text>
+          ) : githubSummary.some(s => s.complete === false) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              The last scan didn't fully complete for every item type above (see
+              the errors below). The backend will only clean up the item types
+              and scopes it confirmed were fully scanned; nothing incomplete or
+              errored is ever touched.
+            </Text>
+          ) : null}
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
               Deletes previously imported tokens of the item types scanned above
               that no longer appear anywhere in this scan's results, regardless
               of which items you select for import below. Item types you did not
-              scan for are never affected. This cannot be undone.
+              scan for, or that this scan couldn't fully complete, are never
+              affected. This cannot be undone.
             </Text>
           ) : null}
         </VStack>

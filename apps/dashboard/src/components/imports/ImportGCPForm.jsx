@@ -93,6 +93,8 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGcp.size);
@@ -126,6 +128,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       const items = Array.isArray(res?.items) ? res.items : [];
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('gcp');
       }
@@ -139,6 +142,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     } catch (e) {
       setGcpItems([]);
       setGcpSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -178,17 +182,14 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         workspaceId,
         items: selected,
         defaults: {},
-        cleanup: cleanupObsolete
-          ? {
-              enabled: true,
-              provider: 'gcp',
-              // GCP scans always cover Secret Manager secrets only.
-              scannedSources: ['gcp-secret-manager'],
-              // All rediscovered locations (whole scan, not just selection)
-              // so unselected-but-still-present items are never deleted.
-              scannedLocations: gcpItems.map(it => it.location).filter(Boolean),
-            }
-          : undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'gcp',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -277,9 +278,21 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             onChange={e => setCleanupObsolete(e.target.checked)}
             size='sm'
             colorScheme='red'
+            isDisabled={!lastScanId}
           >
             Remove previously imported secrets no longer found at the source
           </Checkbox>
+          {!lastScanId ? (
+            <Text fontSize='xs' color={helpTextColor} pl={6}>
+              Run a scan first; cleanup is driven by the backend's record of
+              what that scan covered.
+            </Text>
+          ) : gcpSummary.some(s => s.complete === false) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              The last scan didn't fully complete (see the errors below). The
+              backend refuses to clean up an incomplete or truncated scan.
+            </Text>
+          ) : null}
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
               Deletes previously imported secrets from this GCP project that no

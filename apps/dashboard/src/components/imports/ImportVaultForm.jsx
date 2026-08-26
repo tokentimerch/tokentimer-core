@@ -160,8 +160,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
-  // Source kinds included in the last scan; cleanup only touches these.
-  const [lastScanSources, setLastScanSources] = React.useState([]);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   const [isScanning, setIsScanning] = React.useState(false);
   const [vaultItems, setVaultItems] = React.useState([]);
@@ -280,10 +280,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
-      const scannedSources = [];
-      if (includeKV) scannedSources.push('vault-kv');
-      if (includePKI) scannedSources.push('vault-pki');
-      setLastScanSources(scannedSources);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('vault');
       }
@@ -297,6 +294,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     } catch (e) {
       setVaultItems([]);
       setSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -345,16 +343,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         items: selected,
         defaults: vaultDefaults,
         cleanup:
-          cleanupObsolete && lastScanSources.length > 0
+          cleanupObsolete && lastScanId
             ? {
                 enabled: true,
                 provider: 'vault',
-                scannedSources: lastScanSources,
-                // All rediscovered locations (whole scan, not just selection)
-                // so unselected-but-still-present items are never deleted.
-                scannedLocations: vaultItems
-                  .map(it => it.location)
-                  .filter(Boolean),
+                scanId: lastScanId,
               }
             : undefined,
       });
@@ -548,16 +541,31 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               onChange={e => setCleanupObsolete(e.target.checked)}
               size='sm'
               colorScheme='red'
+              isDisabled={!lastScanId}
             >
               Remove previously imported items no longer found at the source
             </Checkbox>
+            {!lastScanId ? (
+              <Text fontSize='xs' color={helpTextColor} pl={6}>
+                Run a scan first; cleanup is driven by the backend's record of
+                what that scan covered.
+              </Text>
+            ) : summary.some(s => s.complete === false) ? (
+              <Text fontSize='xs' color='orange.400' pl={6}>
+                The last scan didn't fully complete for every mount above (see
+                the errors below). The backend will only clean up mounts and
+                asset kinds it confirmed were fully scanned; nothing incomplete,
+                truncated, or errored is ever touched.
+              </Text>
+            ) : null}
             {cleanupObsolete ? (
               <Text fontSize='xs' color='red.400' pl={6}>
                 Deletes previously imported items of the asset kinds scanned
                 above (KV, PKI, or both) that no longer appear anywhere in this
                 scan's results, regardless of which items you select for import
-                below. Asset kinds you did not scan for are never affected. This
-                cannot be undone.
+                below. Asset kinds or mounts you did not scan for, or that this
+                scan couldn't fully complete, are never affected. This cannot be
+                undone.
               </Text>
             ) : null}
           </VStack>
