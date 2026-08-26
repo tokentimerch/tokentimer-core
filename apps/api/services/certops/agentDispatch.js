@@ -2100,7 +2100,7 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              source, payload
+              source, payload, assigned_agent_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2

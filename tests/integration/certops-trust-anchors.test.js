@@ -867,7 +867,16 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
 
   // --- Result ingestion (decision 20e/20f) ----------------------------------
 
-  it("rejects a result whose agentId does not match the signed job", async () => {
+  it("rejects a result for a job whose assigned agent does not match the installation's agent", async () => {
+    // Regression guard: the agent-identity leg of this check compares
+    // job.assigned_agent_id (certops_agents.id, a UUID) against
+    // installationRow.agent_id (the same UUID space), never
+    // result.agentId (the agent's wire-format identity string, e.g.
+    // "candidate-<host>-<pid>", a different identifier space that is never
+    // persisted on the installation row). A previous version of this check
+    // compared result.agentId to installationRow.agent_id directly, which
+    // could never match for any real agent and made every live
+    // distribute-trust/revoke-trust result ingestion fail.
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
     const outcome = await createTrustJob(
@@ -878,6 +887,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       }),
     );
     const job = await getJobRow(outcome.job.id);
+    job.assigned_agent_id = crypto.randomUUID();
     const installationRow = await getInstallationById(outcome.installation.id);
 
     await expectServiceError(
@@ -889,7 +899,6 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
             job,
             installationRow,
             outcome: "installed",
-            agentIdOverride: crypto.randomUUID(),
           }),
         }),
       ),

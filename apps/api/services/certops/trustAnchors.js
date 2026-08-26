@@ -1144,13 +1144,27 @@ async function ingestTrustJobResult({ client, job, result }) {
     );
   }
 
-  // A result whose agentId, store, fingerprint, or transitionGeneration
-  // differs from the signed job it claims to answer is rejected, not merely
-  // logged. This is a service-layer check against persisted state: schema
-  // validation alone cannot express "matches what was signed".
-  if (String(result.agentId) !== String(installationRow.agent_id)) {
+  // A result whose store, fingerprint, or transitionGeneration differs from
+  // the signed job it claims to answer is rejected, not merely logged. This
+  // is a service-layer check against persisted state: schema validation
+  // alone cannot express "matches what was signed".
+  //
+  // The agent-identity leg of that check compares job.assigned_agent_id
+  // (certops_agents.id, a UUID, set at job creation from the same agentId
+  // runCreateTrustJob used for the installation row) against
+  // installationRow.agent_id (the same UUID space, per
+  // fk_certops_trust_anchor_installations_agent). result.agentId is not a
+  // candidate for this comparison: it is the agent's wire-format identity
+  // string (certops_agents.agent_id, echoed back verbatim from the signed
+  // dispatch payload), a different identifier for the same agent that is
+  // never persisted on the installation row. Ownership of the *claim* itself
+  // (that the caller reporting this result is the agent that actually holds
+  // the job) is re-proven by agentDispatch.ingestResult before this function
+  // is ever called; this check instead guards that the installation row
+  // found via last_job_id really is the one this job was created for.
+  if (String(job.assigned_agent_id) !== String(installationRow.agent_id)) {
     throw trustAnchorError(
-      "Result agentId does not match the installation this job was signed for",
+      "Job's assigned agent does not match the installation this job was signed for",
       CERTOPS_TRUST_RESULT_MISMATCH,
     );
   }
