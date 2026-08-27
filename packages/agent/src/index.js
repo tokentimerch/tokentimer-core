@@ -631,7 +631,7 @@ async function renewJobLeaseOrAbort({
       if (required) {
         emitLog(
           log,
-          `tokentimer-agent: mandatory lease confirmation for job ${jobId} failed: ${err.message}`,
+          `mandatory lease confirmation for job ${jobId} failed: ${err.message}`,
         );
         const abort = {
           status: "blocked",
@@ -651,7 +651,7 @@ async function renewJobLeaseOrAbort({
       if (graceDeadline === null || nowMs >= graceDeadline) {
         emitLog(
           log,
-          `tokentimer-agent: lease renew for job ${jobId} failed at/after confirmed expiry: ${err.message}`,
+          `lease renew for job ${jobId} failed at/after confirmed expiry: ${err.message}`,
         );
         const abort = {
           status: "blocked",
@@ -694,7 +694,7 @@ async function renewJobLeaseOrAbort({
 
       emitLog(
         log,
-        `tokentimer-agent: lease renew for job ${jobId} transient failure ` +
+        `lease renew for job ${jobId} transient failure ` +
           `${failures}/${MAX_LEASE_TRANSIENT_RETRIES} (retrying before expiry): ${err.message}`,
       );
       const beforeSleep = now();
@@ -881,7 +881,7 @@ function adoptSigningKeyRotation({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: refusing signing-key rotation adoption: ${err.message}`,
+      `refusing signing-key rotation adoption: ${err.message}`,
     );
     return { adopted: false, reason: "invalid_pem" };
   }
@@ -893,7 +893,7 @@ function adoptSigningKeyRotation({
   }
   emitLog(
     log,
-    `tokentimer-agent: adopted signing key rotation to ${pendingSigningKeyId}`,
+    `adopted signing key rotation to ${pendingSigningKeyId}`,
   );
   return { adopted: true };
 }
@@ -1329,7 +1329,7 @@ async function persistAndTransmitOutcome({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: failed to transmit outbox entry for job ${result.jobId}; ` +
+      `failed to transmit outbox entry for job ${result.jobId}; ` +
         "persisted outcome retained for retry (execution result unchanged)",
       err,
     );
@@ -1367,7 +1367,7 @@ async function reportJobRejection({
 }) {
   emitLog(
     log,
-    `tokentimer-agent: job ${jobId} rejected: ${verdict.rejectionReason}`,
+    `job ${jobId} rejected: ${verdict.rejectionReason}`,
   );
   const evidenceBody = buildPolicyRejectionEvidence({
     rejectionReason: verdict.rejectionReason,
@@ -1793,7 +1793,7 @@ async function handleSignedJob({
     if (verifyResult.rejectionReason === AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH) {
       emitLog(
         log,
-        "tokentimer-agent: agent-id binding gate rejected a claimed job for " +
+        "agent-id binding gate rejected a claimed job for " +
           "an agentId mismatch; submitting no result and letting the lease " +
           "expire. The job's signature verified but it was signed for a " +
           "different agent than this one -- investigate if this recurs.",
@@ -1802,7 +1802,7 @@ async function handleSignedJob({
     } else {
       emitLog(
         log,
-        "tokentimer-agent: claimed job failed signature verification; " +
+        "claimed job failed signature verification; " +
           "submitting no result and letting the lease expire " +
           `(${verifyResult.rejectionReason})`,
       );
@@ -1827,7 +1827,7 @@ async function handleSignedJob({
     // is nothing safe to report with; fail locally like a verdict failure.
     emitLog(
       log,
-      "tokentimer-agent: verified job carries no reportable jobId; " +
+      "verified job carries no reportable jobId; " +
         "submitting no result and letting the lease expire",
     );
     return { status: "failed", rejectionReason: "job_integrity_failed" };
@@ -2048,7 +2048,7 @@ async function handleSignedJob({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not clear job journal for ${jobId}: ${err.message}`,
+        `could not clear job journal for ${jobId}: ${err.message}`,
       );
     }
   }
@@ -2988,7 +2988,7 @@ async function runWindowsIisDeployTail({
           if (cleanup.ok !== true) {
             emitLog(
               log,
-              `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `job ${jobId}: failed to delete abandoned CNG key container ` +
                 `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
                 `it will remain orphaned in the CNG key store until manually removed.`,
             );
@@ -2998,7 +2998,7 @@ async function runWindowsIisDeployTail({
         } catch (err) {
           emitLog(
             log,
-            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `job ${jobId}: failed to delete abandoned CNG key container ` +
               `${containerName} after certreq -accept failure: ${err.message}`,
           );
         }
@@ -3043,7 +3043,7 @@ async function runWindowsIisDeployTail({
       } catch (err) {
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+          `job ${jobId}: failed to record CNG container ${containerName} ` +
             `acceptance provenance (non-fatal, continuing): ${err.message}`,
         );
       }
@@ -3180,7 +3180,7 @@ async function runWindowsIisDeployTail({
         // notices; this is logged, not swallowed silently.
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to record retention-ledger row for ` +
+          `job ${jobId}: failed to record retention-ledger row for ` +
             `superseded thumbprint ${deployResult.outgoingThumbprint}; predecessor material ` +
             `remains in the store (safe failure mode): ${err.message}`,
         );
@@ -3265,7 +3265,7 @@ async function recordSupersededWindowsCertificate({
   if (existing !== null) {
     emitLog(
       log,
-      `tokentimer-agent: job ${jobId}: retention-ledger row for ${normalizedOld} already exists, skipping (idempotent)`,
+      `job ${jobId}: retention-ledger row for ${normalizedOld} already exists, skipping (idempotent)`,
     );
     return;
   }
@@ -3533,7 +3533,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
   const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
   emitLog(
     log,
-    `tokentimer-agent: windows-retention sweep: removed=${summary.removed.length} ` +
+    `windows-retention sweep: removed=${summary.removed.length} ` +
       `deferred=${summary.deferred.length}`,
   );
   return summary;
@@ -3655,7 +3655,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: windows-cng-container reconciliation: journal scan failed: ${err.message}`,
+      `windows-cng-container reconciliation: journal scan failed: ${err.message}`,
     );
     return { freed, skipped };
   }
@@ -3763,7 +3763,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   if (freed.length > 0 || skipped.length > 0) {
     emitLog(
       log,
-      `tokentimer-agent: windows-cng-container reconciliation: freed=${freed.length} ` +
+      `windows-cng-container reconciliation: freed=${freed.length} ` +
         `skipped=${skipped.length}${skipped.length > 0 ? ` (${skipped.map((s) => s.reason).join("; ")})` : ""}`,
     );
   }
@@ -3980,7 +3980,7 @@ async function executeWindowsIisRenewJob({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+        `job ${jobId}: failed to record CNG container ${containerName} ` +
           `in the job journal (non-fatal, continuing): ${err.message}`,
       );
     }
@@ -4002,7 +4002,7 @@ async function executeWindowsIisRenewJob({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+      `job ${jobId}: failed to record CNG container ${containerName} ` +
         `issuance (non-fatal, continuing): ${err.message}`,
     );
   }
@@ -4132,7 +4132,7 @@ async function executeWindowsIisRenewJob({
         if (cleanup.ok !== true) {
           emitLog(
             log,
-            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `job ${jobId}: failed to delete abandoned CNG key container ` +
               `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
               `orphaned in the CNG key store until manually removed.`,
           );
@@ -4142,7 +4142,7 @@ async function executeWindowsIisRenewJob({
       } catch (err) {
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+          `job ${jobId}: failed to delete abandoned CNG key container ` +
             `${containerName} after ACME failure: ${err.message}`,
         );
       }
@@ -4724,7 +4724,7 @@ async function runDeployReloadVerifyForTargets({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not discard deploy backups for job ${jobId} target ${entry.index}: ${err.message}`,
+        `could not discard deploy backups for job ${jobId} target ${entry.index}: ${err.message}`,
       );
     }
   }
@@ -5208,7 +5208,7 @@ async function runDeployReloadVerify({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not discard deploy backups for job ${jobId}: ${err.message}`,
+        `could not discard deploy backups for job ${jobId}: ${err.message}`,
       );
     }
   }

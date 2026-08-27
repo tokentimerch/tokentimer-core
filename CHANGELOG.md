@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Agent error-log lines no longer double the `tokentimer-agent:` prefix (e.g. the outbox-transmission-failure and lease-renew-failure lines previously read `tokentimer-agent: tokentimer-agent: ...`). The prefix is added once, by the shared logger, at every call site.
+
 ## [0.14.0] - 2026-08-24
 
 ### Added
