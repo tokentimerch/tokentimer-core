@@ -554,10 +554,9 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  // Trust-anchor CRUD and trust-job creation (ADR-0012 decisions 6/20),
-  // delegated to services/certops/trustAnchors.js. err.message already
-  // names the specific field/reason (see that file's normalize* helpers),
-  // so it is surfaced verbatim rather than replaced with a generic string.
+  // Trust-anchor CRUD/job creation errors (services/certops/trustAnchors.js).
+  // err.message already names the specific field/reason, so it's surfaced
+  // verbatim rather than replaced with a generic string.
   if (err?.code === CERTOPS_TRUST_ANCHOR_NOT_FOUND) {
     return res.status(404).json({
       error: err.message || "Trust anchor not found",
@@ -581,18 +580,16 @@ function handleCertOpsError(res, err) {
       code: err.code,
     });
   }
-  // 409, not 400: the request is well-formed, but a distribute-trust job
-  // was requested against an anchor that is not currently active (retired,
-  // or retired between approval and dispatch -- see revalidateTrustJobForDispatch).
+  // 409, not 400: well-formed request, but distribute-trust was requested
+  // against an anchor that isn't currently active.
   if (err?.code === CERTOPS_TRUST_ANCHOR_NOT_ACTIVE) {
     return res.status(409).json({
       error: err.message || "Trust anchor is not active",
       code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
     });
   }
-  // Result-ingestion codes (agentDispatch.js's ingestResult, not this route)
-  // are mapped here too so any future route/tool that surfaces the same
-  // service errors gets a consistent response shape.
+  // Result-ingestion codes (agentDispatch.ingestResult) mapped here too for
+  // a consistent response shape across callers.
   if (err?.code === CERTOPS_TRUST_RESULT_INVALID) {
     return res.status(400).json({
       error: err.message || "Trust job result is invalid",
@@ -619,9 +616,8 @@ function handleCertOpsError(res, err) {
     });
   }
 
-  // The message names exactly which field was rejected (and, for reason,
-  // why), so it is surfaced verbatim rather than replaced with a generic
-  // one -- see validateRenewalManualOverrides (renewalProfile.js).
+  // Names exactly which field was rejected and why, so it's surfaced
+  // verbatim (see validateRenewalManualOverrides in renewalProfile.js).
   if (err?.code === CERTOPS_RENEWAL_OVERRIDE_INVALID) {
     return res.status(400).json({
       error: err.message || "Renewal override is invalid",
@@ -836,25 +832,17 @@ function createManualCertificateJobHandler({
         });
       }
 
-      // An issue job has to create the certificate identity before the job
-      // that references it, so it swaps in a different creator. A renew job
-      // swaps in one too: it materializes the payload from the certificate's
-      // stored renewal profile (the same call the scheduler makes for the
-      // same certificate) instead of trusting whatever payload the request
-      // supplied, so a manual renew can never diverge from what an
-      // automatic renewal of the same certificate would execute. See
-      // manualRenewalJobCreator (jobs.js) for the override allowlist this
-      // enforces on req.body.payload. A trust-anchor operation (distribute-
-      // trust/revoke-trust) swaps in a third creator for the same reason:
-      // trustAnchors.createTrustJob -- not this route, not
-      // createCertificateJob directly -- is the only path allowed to create
-      // that job, because its installation-row state machine (ADR-0012
-      // decision 20) has to advance in the same transaction as the job
-      // insert. subjectId is the trust anchor's id (subjectType is already
-      // forced to "trust_anchor" by jobs.js's own validation for these two
-      // operations); agentId/store/owner are trust-specific fields the
-      // generic body does not otherwise carry. Everything else (workspace
-      // lock, kill switch, audit row) is shared with every other operation.
+      // An issue job creates the certificate identity before the job that
+      // references it, so it swaps in a different creator. A renew job
+      // swaps in one too: it materializes the payload from the
+      // certificate's stored renewal profile instead of trusting the
+      // request payload, so a manual renew can't diverge from an automatic
+      // one (see manualRenewalJobCreator in jobs.js for the override
+      // allowlist). A trust-anchor operation swaps in a third creator for
+      // the same reason: trustAnchors.createTrustJob is the only path
+      // allowed to create that job, since its installation-row state
+      // machine must advance in the same transaction as the job insert.
+      // Everything else (workspace lock, kill switch, audit row) is shared.
       const jobCreator =
         req.body?.operation === "issue"
           ? createCertificateIssuanceJob
@@ -875,9 +863,8 @@ function createManualCertificateJobHandler({
         subjectUserId: req.user?.id || null,
       });
       // revoke-trust for an owner whose reference isn't the last live one
-      // creates no job at all (trustAnchors.js's runCreateTrustJob): the OS
-      // store must not be touched while another owner still references the
-      // same fingerprint, so there is nothing job-shaped to hand back.
+      // creates no job (the OS store must not be touched while another
+      // owner still references the same fingerprint).
       if (skippedOsMutation) {
         return res.status(200).json({ ownershipReleased: true, installation });
       }
@@ -1038,10 +1025,8 @@ function bulkRenewCertificatesHandler({
       });
     }
 
-    // The payload is a whole-request field: every item shares it as an
-    // override on top of that certificate's own stored renewal profile
-    // (manualRenewalJobCreator, jobs.js), so validate it once up front
-    // against the same override allowlist a real per-item run would apply,
+    // The payload is a whole-request field shared as an override on top of
+    // each certificate's stored renewal profile; validate it once up front
     // rather than surfacing N identical item errors.
     try {
       validateRenewalManualOverrides(parsed.payload);
@@ -2329,15 +2314,11 @@ router.post(
   bulkRenewCertificatesHandler(),
 );
 
-// Trust-anchor CRUD (ADR-0012 decisions 6/20). Every route here is gated
-// by certops.trust_anchor.manage (admin), one level above the
-// workspace_manager bar the rest of this file's write routes use, because
-// a trust anchor changes what every certificate on a host is trusted
-// against, not just one certificate's lifecycle -- see
-// createManualCertificateJobHandler's own comment on the identical
-// distribute-trust/revoke-trust gate above. "retire" (not "revoke") is the
-// anchor-level verb throughout this surface; see trustAnchors.js's
-// top-of-file TERMINOLOGY comment and retireTrustAnchor for why.
+// Trust-anchor CRUD (ADR-0012 decisions 6/20). Every route here is gated by
+// certops.trust_anchor.manage (admin), above the workspace_manager bar the
+// rest of this file's write routes use, since a trust anchor changes what
+// every certificate on a host is trusted against. "retire" (not "revoke")
+// is the anchor-level verb here; see trustAnchors.js's TERMINOLOGY comment.
 function trustAnchorIdFromParams(req, res) {
   const anchorId = String(req.params.anchorId || "");
   if (!UUID_PATTERN.test(anchorId)) {

@@ -143,6 +143,14 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_CONTROLLER_OBSERVATION_ACCEPTED',
   'CERTOPS_SIGNING_KEY_ROTATION_STARTED',
   'CERTOPS_SIGNING_KEY_ROTATION_COMPLETED',
+  // CertOps trust anchors
+  'CERTOPS_TRUST_ANCHOR_APPROVED',
+  'CERTOPS_TRUST_ANCHOR_RETIRED',
+  'CERTOPS_TRUST_DISTRIBUTE_JOB_CREATED',
+  'CERTOPS_TRUST_REVOKE_JOB_CREATED',
+  'CERTOPS_TRUST_ANCHOR_DISTRIBUTED',
+  'CERTOPS_TRUST_ANCHOR_REVOKED',
+  'CERTOPS_TRUST_REFERENCE_RELEASED',
   // Alert operations
   'ALERT_QUEUED',
   'ALERT_SENT',
@@ -691,6 +699,38 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.source) parts.push(`Source: ${md.source}`);
       if (md.trigger) parts.push(`Trigger: ${md.trigger}`);
       parts.push(...formatWindowsTargetParts(md));
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsTrustAnchorMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.anchorName) parts.push(`Anchor: ${md.anchorName}`);
+      if (md.trustAnchorId) parts.push(`Anchor ID: ${md.trustAnchorId}`);
+      if (md.fingerprintSha256)
+        parts.push(`Fingerprint: ${md.fingerprintSha256}`);
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.host) parts.push(`Host: ${md.host}`);
+      if (md.store) parts.push(`Store: ${md.store}`);
+      if (md.owner) parts.push(`Owner: ${md.owner}`);
+      if (md.transitionState) parts.push(`State: ${md.transitionState}`);
+      if (md.provenance) parts.push(`Provenance: ${md.provenance}`);
+      if (md.transitionGeneration != null)
+        parts.push(`Generation: ${md.transitionGeneration}`);
+      // Only present on the terminal DISTRIBUTED/REVOKED events: what the
+      // agent actually observed/did on the OS store, not just where the row
+      // ended up.
+      if (md.outcome) parts.push(`Outcome: ${md.outcome}`);
+      if (md.mutationPerformed != null)
+        parts.push(`Mutated: ${boolLabel(md.mutationPerformed)}`);
+      if (md.failureCategory) parts.push(`Failure: ${md.failureCategory}`);
+      if (md.otherLiveReferences != null)
+        parts.push(`Other live refs: ${md.otherLiveReferences}`);
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -1551,6 +1591,19 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       action === 'CERTOPS_JOB_CREATED_AUTOMATIC'
     ) {
       const formatted = formatCertOpsJobMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_TRUST_ANCHOR_APPROVED' ||
+      action === 'CERTOPS_TRUST_ANCHOR_RETIRED' ||
+      action === 'CERTOPS_TRUST_DISTRIBUTE_JOB_CREATED' ||
+      action === 'CERTOPS_TRUST_REVOKE_JOB_CREATED' ||
+      action === 'CERTOPS_TRUST_ANCHOR_DISTRIBUTED' ||
+      action === 'CERTOPS_TRUST_ANCHOR_REVOKED' ||
+      action === 'CERTOPS_TRUST_REFERENCE_RELEASED'
+    ) {
+      const formatted = formatCertOpsTrustAnchorMetadata(ev);
       if (formatted) return formatted;
     }
 

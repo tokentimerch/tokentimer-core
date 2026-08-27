@@ -1324,21 +1324,16 @@ async function resolveManagedCertificateJobDefaults({
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 
-// A manually or bulk-triggered renewal of an already-profiled certificate
-// still needs a reason on the payload (buildRenewalJobPayload requires
-// one); "manual" distinguishes it in the job log/audit trail from the
-// scheduler's own "expiry-threshold" default without requiring the caller
-// to say anything.
+// buildRenewalJobPayload requires a reason; "manual" distinguishes this
+// path in the job log/audit trail from the scheduler's "expiry-threshold".
 const MANUAL_RENEWAL_DEFAULT_REASON = "manual";
 
 /**
- * Load the managed_certificates + certificate_profiles row shape
- * resolveRenewalProfileSnapshot needs (renewalProfile.js), for exactly one
- * certificate. Selects the identical set of columns
- * renewalScheduler.js's findCertificatesDueForRenewal selects for the
- * automatic path, so a manually or bulk-triggered renewal resolves the
- * profile snapshot from the same inputs the scheduler would use for the
- * same certificate.
+ * Loads the managed_certificates + certificate_profiles row shape
+ * resolveRenewalProfileSnapshot needs, for exactly one certificate. Selects
+ * the same columns renewalScheduler.js's findCertificatesDueForRenewal
+ * selects, so a manual/bulk renewal resolves the profile snapshot the same
+ * way the scheduler would for the same certificate.
  */
 async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId }) {
   if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
@@ -1365,18 +1360,13 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
 
 /**
  * jobCreator swapped in (by routes/certops.js) for a renew job whose
- * subject is an existing managed certificate, for both single manual job
- * creation and bulk renewal. Materializes the payload the exact same way
- * the renewal scheduler does for the same certificate
- * (renewalProfile.js's buildRenewalJobPayload, via its manual-override
- * wrapper buildManualRenewalJobPayload), so a manually or bulk-triggered
- * renewal can never diverge from what an automatic renewal of the same
- * certificate would execute. A caller's own options.payload may only carry
- * the fields renewalProfile.js's RENEWAL_MANUAL_OVERRIDE_FIELDS names;
- * anything else is rejected (CERTOPS_RENEWAL_OVERRIDE_INVALID) rather than
- * silently applied or dropped. A missing or incomplete stored renewal
- * profile fails here too (CERTOPS_RENEWAL_PROFILE_INCOMPLETE/INVALID),
- * before any row is inserted.
+ * subject is an existing managed certificate, for both single manual and
+ * bulk creation. Materializes the payload the same way the scheduler does
+ * (buildManualRenewalJobPayload), so a manual/bulk renewal can never
+ * diverge from an automatic one. options.payload may only carry the fields
+ * RENEWAL_MANUAL_OVERRIDE_FIELDS names; anything else is rejected
+ * (CERTOPS_RENEWAL_OVERRIDE_INVALID). A missing/incomplete stored renewal
+ * profile also fails here, before any row is inserted.
  */
 function manualRenewalJobCreator({
   certificateId,

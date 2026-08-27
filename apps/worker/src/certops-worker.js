@@ -102,9 +102,8 @@ const { resolveRenewalPathsForWorkspace } = require(
 );
 
 // ADR-0012 decision 20b/20f/20h: the reconciliation half of the trust-anchor
-// ownership state machine (the creation/dispatch/result-ingestion half lives
-// in the API service and is exercised by the agent-poll and result-report
-// routes, not this worker).
+// state machine (creation/dispatch/result-ingestion live in the API
+// service, not this worker).
 const {
   sweepOverdueTrustInstallations,
 } = require("../../api/services/certops/trustAnchors.js");
@@ -1651,10 +1650,9 @@ export async function runCertOpsMaintenance({
     safeGaugeSet(gCertopsDiagnosticAgentsRetired, { outcome: "error" }, errors);
   }
 
-  // ADR-0012 decision 20b/20f/20h: this sweep only revalidates/reschedules
-  // or marks stale a certops_trust_anchor_installations row that is already
-  // pending -- it never signs or dispatches a job itself (that is
-  // agentDispatch.claimJobs's job, on the agent's own poll cadence).
+  // ADR-0012 decision 20b/20f/20h: revalidates/reschedules or marks stale a
+  // pending certops_trust_anchor_installations row; never signs or
+  // dispatches a job itself (that's agentDispatch.claimJobs's job).
   results.trustAnchorReconciliation = await runIsolated(
     "trust-anchor-reconciliation",
     log,

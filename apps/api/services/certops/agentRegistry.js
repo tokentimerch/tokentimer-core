@@ -632,20 +632,14 @@ async function fenceAgentInFlightWork(options) {
   for (const group of fencedGroups) {
     for (const row of group.rows) {
       // ADR-0012 decision 20b: a trust-anchor job force-cancelled by agent
-      // retirement is a "cancelled" terminal-negative transition, unwound
-      // exactly like an approval rejection would be. orphaned_unknown_effect
-      // is deliberately excluded (group.status check below only matches
-      // "cancelled"): the real-world effect of a force-retired running job
-      // is genuinely unknown, so decision 20f's own words -- surfaced for
-      // operator reconciliation, not resolved either way -- apply here too.
+      // retirement unwinds like an approval rejection would.
+      // orphaned_unknown_effect is excluded: a force-retired running job's
+      // real-world effect is genuinely unknown, so it's surfaced for
+      // operator reconciliation rather than resolved either way.
       //
-      // Required lazily (not at module top-level): trustAnchors.js pulls in
-      // jobs.js, which pulls in agentJobEligibility.js, which pulls in this
-      // very module for certopsCapabilityFreshnessMs -- a top-level require
-      // here would close that chain into a real circular dependency and
-      // risk agentJobEligibility.js observing an unfinished exports object.
-      // Deferring to call time (long after every module has finished
-      // loading) avoids that without restructuring either module.
+      // Required lazily: trustAnchors.js -> jobs.js -> agentJobEligibility.js
+      // -> this module (for certopsCapabilityFreshnessMs). A top-level
+      // require here would close that into a real circular dependency.
       if (group.status === "cancelled") {
         // eslint-disable-next-line global-require -- see comment above
         const { onTrustJobTerminalTransition } = require("./trustAnchors");

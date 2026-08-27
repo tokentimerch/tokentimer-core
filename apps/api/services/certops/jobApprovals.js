@@ -507,12 +507,10 @@ async function rejectJob(options) {
     );
   }
 
-  // ADR-0012 decision 20b: an approval denial is one of the terminal-
-  // negative transitions the trust-anchor transition table names by name
-  // ("approval denied or expired"). Unwinding here, inside the same
-  // decision transaction rejectJob already runs in, keeps the job's
-  // rejected status and the installation row's unwound state from ever
-  // being observed apart.
+  // ADR-0012 decision 20b: an approval denial is a terminal-negative
+  // transition for a trust-anchor job. Unwinding here, in the same
+  // transaction rejectJob already runs in, keeps the job's rejected status
+  // and the installation row's unwound state from being observed apart.
   await onTrustJobTerminalTransition({
     client: db,
     job: { ...job, status: row.status },

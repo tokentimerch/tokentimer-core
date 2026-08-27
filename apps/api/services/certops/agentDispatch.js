@@ -1055,12 +1055,10 @@ async function claimJobs({
       capability: EVIDENCE_CLAIM_BINDING_CAPABILITY,
       env,
     });
-    // ADR-0012 decisions 17 and 20i: mirrors canBindEvidenceToClaim exactly,
-    // gating trust-anchor job candidacy on a FRESH trust-anchor-deploy-v1
-    // declaration rather than mere presence in the (possibly stale)
-    // declared_capabilities array. This is a lock-efficient SQL prefilter
-    // only; evaluateAgentJobEligibility below is still the authoritative
-    // recheck for the same reason canBindEvidenceToClaim is rechecked there.
+    // ADR-0012 decisions 17/20i: mirrors canBindEvidenceToClaim, gating
+    // trust-anchor job candidacy on a fresh trust-anchor-deploy-v1
+    // declaration. Lock-efficient SQL prefilter only; evaluateAgentJobEligibility
+    // below is still the authoritative recheck.
     const canBindTrustAnchorDeploy = hasFreshCapability({
       declaredCapabilities: caps.declared_capabilities,
       capabilitiesUpdatedAt: caps.capabilities_updated_at,
@@ -1146,12 +1144,10 @@ async function claimJobs({
             ($9::text = 'diagnostic' AND operation = 'protocol_smoke')
             OR ($9::text <> 'diagnostic' AND operation <> 'protocol_smoke')
           )
-          -- ADR-0012 decisions 17/20i: a distribute-trust/revoke-trust
-          -- candidate is excluded from this batch outright unless the
-          -- polling agent's trust-anchor-deploy-v1 declaration is fresh,
-          -- mirroring the evidence-claim-binding prefilter above. This is a
-          -- lock-efficient prefilter only; evaluateAgentJobEligibility below
-          -- is the authoritative recheck.
+          -- ADR-0012 decisions 17/20i: excludes a distribute-trust/revoke-trust
+          -- candidate from this batch unless the polling agent's
+          -- trust-anchor-deploy-v1 declaration is fresh (prefilter only;
+          -- evaluateAgentJobEligibility below is the authoritative recheck).
           AND (
             operation NOT IN ('distribute-trust', 'revoke-trust')
             OR $10::boolean
@@ -1204,18 +1200,14 @@ async function claimJobs({
       });
       if (!eligibility.eligible) continue;
 
-      // ADR-0012 decision 20i: immediately before a trust-anchor job is
-      // claimed/signed, re-verify the anchor's current status and that the
-      // signed intent still matches the anchor row, as defense-in-depth
-      // against a retirement or (unreachable in practice) row mutation that
-      // landed between approval and this claim. A distribute-trust job
-      // whose anchor was retired in that window is unwound here (its
-      // pending_install row is deleted) instead of being claimed; the job
-      // itself is left for the normal terminal-status path to close out
-      // rather than mutated directly from this read-mostly loop. pem is
-      // read back fresh here (never persisted on certificate_jobs.payload,
-      // same discipline as deployPublicCert below) and attached to
-      // basePayload once the job is actually claimed.
+      // ADR-0012 decision 20i: re-verify the anchor's current status and
+      // that the signed intent still matches the anchor row, defense-in-depth
+      // against a retirement landing between approval and this claim. A
+      // distribute-trust job whose anchor was retired in that window is
+      // unwound here (pending_install deleted) instead of claimed; the job
+      // itself is left for the normal terminal-status path to close out.
+      // pem is read back fresh (never persisted on certificate_jobs.payload)
+      // and attached to basePayload once the job is actually claimed.
       let trustAnchorPem;
       let trustTransitionGeneration;
       if (isTrustAnchorOperation(row.operation)) {
@@ -1377,26 +1369,23 @@ async function claimJobs({
       }
 
       if (trustAnchorPem) {
-        // Only distribute-trust ever sets trustAnchorPem (revoke-trust
-        // deliberately gets undefined from revalidateTrustJobForDispatch);
-        // trust-job-payload.schema.json's own allOf forbids "pem" on a
-        // revoke-trust payload, so this assignment can never violate it.
+        // Only distribute-trust sets trustAnchorPem (revoke-trust gets
+        // undefined); trust-job-payload.schema.json's allOf forbids "pem"
+        // on a revoke-trust payload, so this can never violate it.
         basePayload.pem = trustAnchorPem;
       }
 
       if (trustTransitionGeneration !== undefined) {
-        // Resolved from the installation row at dispatch time, not stored on
-        // the job payload (which is hashed for idempotency). The agent echoes
-        // it back so a superseded transition's result is rejected as stale.
+        // Resolved from the installation row at dispatch time, not stored
+        // on the job payload (which is hashed for idempotency).
         basePayload.transitionGeneration = trustTransitionGeneration;
       }
 
       if (!basePayload.requestedAt) {
-        // trust-job-payload.schema.json requires requestedAt, but the stored
-        // payload deliberately omits it: it is fingerprinted into
-        // creation_request_hash, so a per-call timestamp would break
-        // idempotent replay. The job row's own created_at is the request time
-        // and is stable across every re-dispatch of the same job.
+        // trust-job-payload.schema.json requires requestedAt, but the
+        // stored payload omits it (fingerprinted into creation_request_hash,
+        // so a per-call timestamp would break idempotent replay). The job
+        // row's created_at is stable across every re-dispatch.
         basePayload.requestedAt = dateToIso(job.created_at);
       }
 
@@ -2261,17 +2250,14 @@ async function ingestResult({
     // ADR-0012 decision 20b/20e: trust-anchor jobs advance/unwind the
     // certops_trust_anchor_installations row from inside this same
     // transaction, so the job's terminal status and the installation's
-    // transition_state/provenance can never be observed apart. A successful
-    // result is validated against trust-result-contract.schema.json AND
-    // cross-checked against the persisted job/installation row before the
-    // row is ever touched: ingestTrustJobResult throws, rolling back this
-    // whole transaction including the certificate_jobs UPDATE above, on any
-    // mismatch or stale generation. A terminal-negative status unwinds the
-    // row per the transition table instead. dry_run_complete and
-    // orphaned_unknown_effect are deliberately left untouched: a dry run
-    // never really mutated anything to advance, and an unknown-effect
-    // report must be surfaced for operator reconciliation rather than
-    // silently resolved either way.
+    // state can never be observed apart. A successful result is validated
+    // against trust-result-contract.schema.json and cross-checked against
+    // the persisted job/installation row before the row is touched;
+    // ingestTrustJobResult throws (rolling back this whole transaction) on
+    // any mismatch or stale generation. dry_run_complete and
+    // orphaned_unknown_effect are left untouched: a dry run never mutated
+    // anything, and an unknown-effect report must surface for operator
+    // reconciliation rather than being silently resolved either way.
     if (isTrustAnchorOperation(job.operation)) {
       if (jobStatus === "succeeded") {
         // The typed result rides in its own envelope property; the rest of
@@ -2282,9 +2268,8 @@ async function ingestResult({
           result: body?.trustResult,
         });
         // ADR-0012 decision 15: fires only on this action's own terminal
-        // succeeded transition, never for a claim or an in-flight attempt.
-        // A terminal failure reuses the generic CERTOPS_JOB_FAILED event
-        // below instead of a dedicated failure event.
+        // succeeded transition. A terminal failure reuses the generic
+        // CERTOPS_JOB_FAILED event below instead.
         await auditWriter({
           client,
           actorUserId: null,
@@ -2301,9 +2286,22 @@ async function ingestResult({
             trustAnchorId: installation.trustAnchorId,
             installationId: installation.id,
             store: installation.store,
+            host: installation.host,
+            owner: installation.owner,
             transitionState: installation.transitionState,
             provenance: installation.provenance,
             agentId: agent.agentId || null,
+            // Carried from the agent's own reported result (already
+            // schema-validated by ingestTrustJobResult above), not just the
+            // installation row, so the audit trail records what the agent
+            // actually observed/did, not only where the row ended up.
+            outcome: body?.trustResult?.outcome ?? null,
+            mutationPerformed: body?.trustResult?.mutationPerformed ?? null,
+            failureCategory: body?.trustResult?.failureCategory ?? null,
+            observedFingerprintBefore:
+              body?.trustResult?.observedFingerprintBefore ?? null,
+            observedFingerprintAfter:
+              body?.trustResult?.observedFingerprintAfter ?? null,
           },
         });
       } else if (TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus)) {

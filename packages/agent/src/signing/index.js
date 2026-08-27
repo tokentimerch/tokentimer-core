@@ -957,22 +957,12 @@ function checkJobTimeWindow({
  *     signature did not verify".
  *
  *     SUNSET (absence tolerance only, never mismatch tolerance, which does
- *     not exist): CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID's compiled-in
- *     default has now flipped to `true` (ADR-0012 decision 3, step 4), so
- *     this whole ABSENCE branch is only reachable when an operator has
- *     explicitly overridden the flag back to `false` (env var or
- *     config.json) as a temporary rollback for a control plane that has
- *     not yet finished emitting agentId on every dispatch. The branch
- *     itself is still scoped to disappear once no fleet still needs that
- *     rollback path. Do not remove it on a calendar date; remove it once at
- *     least one full release has shipped with the `true` default and no
- *     fleet has reported needing the override back to `false`. Expected no
- *     earlier than the release after the one that flipped the default (the
- *     default flip itself targets 0.14.0, so this removal targets 0.15.0
- *     or later -- not this release). Removing it deletes the
- *     `if (requireSignedAgentId) { ... } return { allowed: true }`
- *     absence-tolerant branch entirely, so a missing agentId fails closed
- *     unconditionally with no configuration path back to tolerating it.
+ *     not exist): CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID now defaults to
+ *     `true` (ADR-0012 decision 3, step 4), so this ABSENCE branch is only
+ *     reachable via an explicit operator override back to `false` for a
+ *     control plane still not emitting agentId on every dispatch. Remove
+ *     the branch once no fleet needs that rollback anymore, not on a
+ *     calendar date.
  *
  * @param {object} params
  * @param {object} params.job the VERIFIED job (post signature verdict)

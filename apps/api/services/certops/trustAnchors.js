@@ -5,20 +5,17 @@
  * docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
  *
  * This is the ONLY module that may create a distribute-trust or revoke-trust
- * certificate_jobs row: every other write path (routes, automation, bulk
- * operations) must call createTrustJob below rather than
- * jobs.createCertificateJob directly, because a trust job's job row and its
- * certops_trust_anchor_installations ownership-reference row must always
- * advance together, in one transaction, or not at all.
+ * certificate_jobs row: every other write path must call createTrustJob
+ * below rather than jobs.createCertificateJob directly, because a trust
+ * job's job row and its certops_trust_anchor_installations ownership-
+ * reference row must always advance together, in one transaction.
  *
- * TERMINOLOGY (read before touching anchor-level "revoke"): the
- * certops_trust_anchors.status column is CHECK (status IN ('active',
- * 'revoked')) and is deliberately NOT renamed -- no migration exists for it
- * and none should be added. "revoke-trust" means ONLY the wire-level
- * per-installation dispatch operation. The anchor-level lifecycle action
- * ("this anchor accepts no new distributions") is called "retire" throughout
- * this file's public surface -- function names, error messages, audit
- * actions, route paths -- even though it still writes status = 'revoked'.
+ * TERMINOLOGY: the certops_trust_anchors.status column is CHECK (status IN
+ * ('active', 'revoked')) and is deliberately not renamed. "revoke-trust"
+ * means only the wire-level per-installation dispatch operation. The
+ * anchor-level lifecycle action is called "retire" throughout this file's
+ * public surface (function names, error messages, audit actions, routes)
+ * even though it still writes status = 'revoked'.
  */
 
 const { X509Certificate, createHash } = require("node:crypto");
@@ -64,11 +61,9 @@ const STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 const OWNER_MAX_LENGTH = 128;
 const NAME_MAX_LENGTH = 255;
 
-// How far in the future a freshly pending row is scheduled for its first
-// reconciliation pass. A pending transition dispatched
-// to an agent that never reports back must surface as alertable, not be
-// retried forever; the sweep worker (certops-worker.js) is what actually
-// acts on next_reconcile_at once it is due.
+// Delay before a freshly pending row's first reconciliation pass. A pending
+// transition an agent never reports back on must surface as alertable, not
+// retry forever; certops-worker.js acts on next_reconcile_at once due.
 const DEFAULT_RECONCILE_DELAY_MS = 15 * 60 * 1000;
 
 function trustAnchorError(message, code) {
@@ -182,18 +177,10 @@ function normalizeIdempotencyKey(value) {
   return key;
 }
 
-// trust-job-payload.schema.json's "metadata" property is an ARRAY of
-// {name, value} entries (mirroring job-payload.schema.json's own metadata
-// field), not a free-form object -- unlike createCertificateJob's own
-// "payload" option, which normalizePublicObject accepts as a plain object.
-// A caller's publicMetadata is taken here in that same plain-object shape
-// for this file's own call convention, then converted to the array shape
-// the signed payload actually requires. Entries that would not pass the
-// schema's own name pattern or value union are dropped rather than thrown,
-// matching this schema family's "sanitized, never fatal" metadata
-// discipline elsewhere (see trust-result-contract.schema.json's
-// failureCategory comment for the same principle applied to a different
-// field).
+// trust-job-payload.schema.json's "metadata" is an array of {name, value}
+// entries, not a free-form object. A caller's publicMetadata is taken here
+// as a plain object and converted to that array shape; entries failing the
+// schema's name pattern or value union are dropped rather than thrown.
 const METADATA_NAME_PATTERN =
   /^(?!.*(?:private[-_]?key|encrypted[-_]?private[-_]?key|key[-_]?material|pfx[-_]?blob|jks[-_]?blob|tls[-_]?key|ca[-_]?private[-_]?key|keystore[-_]?password|private[-_]?key[-_]?password|key[-_]?password|key[-_]?pem|password|secret|credential))[A-Za-z0-9_.:-]{1,64}$/i;
 
@@ -221,16 +208,11 @@ function buildTrustJobPublicMetadataEntries(publicMetadata) {
 // --- PEM parsing / validation ---
 
 /**
- * Parses and validates a caller-supplied CA certificate PEM:
- * exactly one certificate block (a bundle/multi-cert PEM is rejected), and
- * Basic Constraints CA=true (a leaf certificate is rejected). The
- * fingerprint is always computed server-side over the parsed DER, never
- * trusted from client input. anchorType ("root" vs "intermediate") is an
- * explicit caller decision, not inferred from the certificate's own
- * self-signedness: the "never infer the destination store from
- * untrusted material" principle applies at creation time too, not only at
- * dispatch time.
- *
+ * Parses and validates a caller-supplied CA certificate PEM: exactly one
+ * certificate block, Basic Constraints CA=true. The fingerprint is always
+ * computed server-side over the parsed DER, never trusted from client
+ * input. anchorType is an explicit caller decision, never inferred from the
+ * certificate itself.
  * @returns {{ pem: string, fingerprintSha256: string, subjectCommonName: string|null }}
  */
 function parseAndValidateAnchorPem(pemInput) {
@@ -320,11 +302,8 @@ const ANCHOR_SELECT_FIELDS = `
 
 /**
  * Creates (or re-approves, if the same fingerprint already exists) a trust
- * anchor row. Re-approving the same fingerprint updates the existing row
- * rather than creating a duplicate "same CA, second row" record (decision
- * 6's own unique-index comment), and reactivates a previously retired
- * anchor rather than leaving a stale 'revoked' row shadowing the new
- * approval.
+ * anchor row. Re-approving updates the existing row rather than creating a
+ * duplicate, and reactivates a previously retired anchor.
  */
 async function createTrustAnchor(options = {}) {
   const db = options.client || pool;
@@ -349,10 +328,8 @@ async function createTrustAnchor(options = {}) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
      ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE SET
        name = EXCLUDED.name,
-       -- Re-approving reactivates: an operator who re-submits a retired
-       -- anchor's PEM is explicitly deciding it should accept new
-       -- distributions again (decision 20g's "retire" is reversible by a
-       -- fresh approval, not a one-way anchor deletion).
+       -- Re-approving reactivates: re-submitting a retired anchor's PEM
+       -- means it should accept new distributions again.
        status = 'active',
        revoked_at = NULL,
        source = EXCLUDED.source,
@@ -424,18 +401,13 @@ async function getTrustAnchorById(db, workspaceId, anchorId) {
 }
 
 /**
- * Anchor-level "retire". Sets the underlying
- * status column to 'revoked' -- the DB enum is unchanged and no
- * migration renames it -- but every user/audit-facing surface here calls
- * this "retire", never "revoke", so it is never confused with the
- * wire-level revoke-trust job operation (certificate_jobs.operation =
- * 'revoke-trust', a completely different, per-installation action).
- * Retiring never fans out removal jobs against existing installations
- *: an installation needs its own, separately authorized
- * revoke-trust job via createTrustJob. Idempotent: retiring an
- * already-retired anchor is a no-op success (retiredNow: false) rather
- * than an error, matching this codebase's other idempotent lifecycle
- * actions (see agentRegistry.retireAgent).
+ * Anchor-level "retire": sets status to 'revoked' (the DB column name is
+ * unchanged) but every user/audit-facing surface calls this "retire", never
+ * "revoke", so it isn't confused with the wire-level revoke-trust job
+ * operation (a separate, per-installation action). Retiring never fans out
+ * removal jobs against existing installations; those need their own
+ * revoke-trust job via createTrustJob. Idempotent: no-op success on an
+ * already-retired anchor.
  */
 async function retireTrustAnchor(options = {}) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
@@ -536,10 +508,9 @@ function installationFromRow(row) {
 /**
  * Locks (or creates, if absent) the ownership-reference row for
  * (workspace, agent, store, fingerprint, owner) inside the caller's
- * transaction. SELECT ... FOR UPDATE, never an in-process mutex, is what
- * serializes concurrent same-fingerprint requests on this exact row --
- * the same idiom agentDispatch.js's claimJobs/renewJobLease/ingestResult
- * already use (lock the row, always inside one DB transaction).
+ * transaction. SELECT ... FOR UPDATE serializes concurrent requests on this
+ * row, the same idiom agentDispatch.js's claimJobs/renewJobLease/
+ * ingestResult already use.
  */
 async function lockOrCreateInstallation({
   client,
@@ -564,11 +535,9 @@ async function lockOrCreateInstallation({
   );
   if (locked.rows[0]) return { row: locked.rows[0], created: false };
 
-  // A fresh row starts pending_install/tokentimer_installed at generation 1
-  // (the column default); createTrustJob below immediately advances it to
-  // the correct transition_state/provenance/generation for the requested
-  // operation inside the same transaction, so this insert alone is never
-  // observable as a terminal state.
+  // A fresh row starts pending_install/tokentimer_installed at generation 1;
+  // createTrustJob below immediately advances it to the correct state for
+  // the requested operation in the same transaction.
   const inserted = await client.query(
     `INSERT INTO certops_trust_anchor_installations (
        workspace_id, trust_anchor_id, host, store, fingerprint_sha256,
@@ -598,14 +567,11 @@ async function lockOrCreateInstallation({
 }
 
 /**
- * Counts other owners' ownership-reference rows for the same
- * (workspace, agent, store, fingerprint) that have not reached `removed`
- * yet. Called only from inside runCreateTrustJob, under the anchor's
- * FOR UPDATE lock taken at the top of that function -- every createTrustJob
- * call for this anchor is already serialized on that lock, so this plain
- * COUNT (no row lock of its own) cannot race with a sibling owner's
- * concurrent release of the same fingerprint. Decision 6 (ADR-0012): "the
- * store is only physically touched when the last reference is released".
+ * Counts other owners' live (not `removed`) reference rows for the same
+ * (workspace, agent, store, fingerprint). Only called from inside
+ * runCreateTrustJob under the anchor's FOR UPDATE lock, so this plain COUNT
+ * can't race with a sibling owner's concurrent release. ADR-0012 decision 6:
+ * the store is only physically touched when the last reference is released.
  */
 async function countOtherLiveReferences({
   client,
@@ -630,17 +596,11 @@ async function countOtherLiveReferences({
 }
 
 // --- Terminal-state unwinding ---
-//
-// event                                    pending_install row      pending_remove row
-// approval denied or expired               deleted (never a real    reverted to installed
-// cancelled                                 reference; nothing to    (the anchor was never
-// permanently failed                        revert to)               actually removed)
-// capability-freshness rejection
-//
-// A superseded-by-newer-generation row is handled implicitly: the newer
-// transition's own row/generation is authoritative, and the superseded
-// generation's own eventual result is rejected outright by the
-// stale-generation check in ingestTrustJobResult below, never applied here.
+// pending_install rows are deleted on a terminal-negative status (never a
+// real reference); pending_remove rows revert to installed (the anchor was
+// never actually removed). A superseded-by-newer-generation row needs no
+// special handling here: the stale-generation check in
+// ingestTrustJobResult rejects that job's eventual result outright.
 
 const TRUST_JOB_TERMINAL_NEGATIVE_STATUSES = new Set([
   "rejected",
@@ -651,16 +611,13 @@ const TRUST_JOB_TERMINAL_NEGATIVE_STATUSES = new Set([
 
 /**
  * Applies the terminal-state transition table above to the installation row
- * `last_job_id` points at, for a trust job that just reached one of the
- * terminal-negative statuses. Called from the generic job-terminal-state
- * hook (see wireTrustAnchorTerminalHook) rather than a bespoke trust-only
- * polling loop, so a denied approval, an operator cancellation, or a
- * permanently failed dispatch all unwind the same way regardless of which
- * code path drove the job to that status.
+ * `last_job_id` points at, for a trust job that just reached a terminal-
+ * negative status. Called from the generic job-terminal-state hook (see
+ * wireTrustAnchorTerminalHook), so denied/cancelled/failed jobs all unwind
+ * the same way regardless of code path.
  *
- * Only unwinds the CURRENT generation: if a newer transition has already
- * advanced transition_generation past what this job was dispatched for,
- * this job's terminal outcome is stale and must not touch the row.
+ * Only unwinds the current generation: a job whose transition_generation
+ * has already been superseded is stale and must not touch the row.
  */
 async function unwindTerminalTrustJob({ client, job }) {
   if (!isTrustAnchorOperation(job.operation)) return null;
@@ -677,7 +634,7 @@ async function unwindTerminalTrustJob({ client, job }) {
   if (!row) return null;
 
   if (row.transition_state === "pending_install") {
-    // Never a real reference existed; delete outright.
+    // Never a real reference; delete outright.
     const deleted = await client.query(
       `DELETE FROM certops_trust_anchor_installations
         WHERE id = $1
@@ -687,8 +644,7 @@ async function unwindTerminalTrustJob({ client, job }) {
     return deleted.rows[0] ? { action: "deleted", installationId: row.id } : null;
   }
   if (row.transition_state === "pending_remove") {
-    // The anchor was never actually removed; the reference the row
-    // represents is still real.
+    // The anchor was never actually removed; the reference is still real.
     const reverted = await client.query(
       `UPDATE certops_trust_anchor_installations
           SET transition_state = 'installed',
@@ -707,15 +663,12 @@ async function unwindTerminalTrustJob({ client, job }) {
 }
 
 /**
- * Wired into the existing job-terminal-state code path: call this
- * alongside (or from) whatever already marks a certificate_jobs row
- * rejected/cancelled/failed/blocked. This file does not itself listen for
- * job-status changes -- there is no separate polling loop for trust jobs
- * -- the caller (jobApprovals.rejectJob/invalidateApproval,
- * agentDispatch.ingestResult's failure branch, or an explicit
- * cancellation route) is responsible for invoking this once the job row
- * is locked and its terminal status is about to be persisted, passing the
- * already-locked job row and the same transaction client.
+ * Wired into the existing job-terminal-state code path: call this alongside
+ * whatever already marks a certificate_jobs row rejected/cancelled/failed/
+ * blocked. This file has no separate polling loop for trust jobs; the
+ * caller (jobApprovals, agentDispatch.ingestResult, or a cancellation
+ * route) invokes this once the job row is locked and its terminal status
+ * is about to be persisted.
  */
 async function onTrustJobTerminalTransition({ client, job }) {
   return unwindTerminalTrustJob({ client, job });
@@ -724,14 +677,12 @@ async function onTrustJobTerminalTransition({ client, job }) {
 // --- Idempotent trust-job creation ---
 
 /**
- * The ONLY path that creates a distribute-trust or revoke-trust
+ * The only path that creates a distribute-trust or revoke-trust
  * certificate_jobs row. Advances the installation row's transition_state
- * and transition_generation in the SAME transaction as the job insert, so
- * the two can never be observed apart. idempotencyKey is required (decision
- * 20c): a replay with the same key returns the same job and the same
- * transitionGeneration it originally created (both are read back from the
- * persisted job payload, which is immutable after insert, so a replay never
- * needs to re-derive or re-lock the installation row at all).
+ * and transition_generation in the same transaction as the job insert.
+ * idempotencyKey is required: a replay with the same key returns the same
+ * job/transitionGeneration read back from the persisted (immutable) job
+ * payload, so a replay never needs to re-lock the installation row.
  */
 async function createTrustJob(options = {}) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
@@ -809,10 +760,10 @@ async function runCreateTrustJob(client, params) {
 
   await lockWorkspaceForCertOpsSideEffect({ client, workspaceId, env });
 
-  // The anchor is locked first so its status and immutable routing columns
-  // cannot change under us while the installation row and job are written.
+  // The anchor is locked first so its status and routing columns can't
+  // change under us while the installation row and job are written.
   const anchorLock = await client.query(
-    `SELECT id, workspace_id, anchor_type, fingerprint_sha256, status
+    `SELECT id, workspace_id, name, anchor_type, fingerprint_sha256, status
        FROM certops_trust_anchors
       WHERE workspace_id = $1 AND id = $2
       FOR UPDATE`,
@@ -826,8 +777,7 @@ async function runCreateTrustJob(client, params) {
     );
   }
   if (operation === "distribute-trust" && anchor.status !== "active") {
-    // Decision 20f invariant: a retired anchor acquires no new
-    // pending_install rows.
+    // A retired anchor acquires no new pending_install rows.
     throw trustAnchorError(
       "Trust anchor is retired and cannot be distributed; retire is not " +
         "reversible without a fresh approval",
@@ -848,9 +798,8 @@ async function runCreateTrustJob(client, params) {
     });
 
   if (operation === "revoke-trust" && installationCreated) {
-    // Nothing was ever tracked for this tuple; there is no reference to
-    // release. Roll back the just-inserted placeholder row rather than
-    // leaving a phantom pending_remove behind.
+    // Nothing was ever tracked for this tuple; roll back the just-inserted
+    // placeholder row rather than leaving a phantom pending_remove behind.
     await client.query(
       `DELETE FROM certops_trust_anchor_installations WHERE id = $1`,
       [installationRow.id],
@@ -872,13 +821,10 @@ async function runCreateTrustJob(client, params) {
       owner,
     });
     if (otherLiveReferences > 0) {
-      // Decision 6: "the store is only physically touched when the last
-      // reference is released". Another owner still references this exact
-      // (agent, store, fingerprint) tuple, so this owner's release must not
-      // reach the OS at all -- go straight to removed with no job, no
-      // pending_remove, and no agent dispatch. Creating a real revoke-trust
-      // job here would have the agent run its OS-level removal unconditionally
-      // and delete the other owner's still-live certificate out from under it.
+      // ADR-0012 decision 6: the store is only physically touched when the
+      // last reference is released. Another owner still references this
+      // tuple, so go straight to removed with no job/dispatch - a real
+      // revoke-trust job would delete that owner's still-live certificate.
       const releasedRow = await client.query(
         `UPDATE certops_trust_anchor_installations
             SET transition_state = 'removed',
@@ -903,8 +849,11 @@ async function runCreateTrustJob(client, params) {
         workspaceId,
         metadata: {
           trustAnchorId: anchor.id,
+          anchorName: anchor.name,
+          fingerprintSha256: anchor.fingerprint_sha256,
           agentId,
           store,
+          host: releasedInstallation.host,
           owner,
           transitionGeneration: releasedInstallation.transitionGeneration,
           otherLiveReferences,
@@ -925,10 +874,8 @@ async function runCreateTrustJob(client, params) {
     operation === "distribute-trust" ? "pending_install" : "pending_remove";
   const nextReconcileAt = new Date(Date.now() + DEFAULT_RECONCILE_DELAY_MS);
 
-  // Safe under the FOR UPDATE lock already held above. provenance is
-  // deliberately left untouched: neither removing an anchor nor
-  // re-distributing one changes the record of who originally installed the
-  // material.
+  // provenance is deliberately left untouched here: neither removing nor
+  // re-distributing an anchor changes who originally installed the material.
   const advanced = await client.query(
     `UPDATE certops_trust_anchor_installations
         SET transition_state = $2,
@@ -943,11 +890,10 @@ async function runCreateTrustJob(client, params) {
   );
   const installation = installationFromRow(advanced.rows[0]);
 
-  // Volatile values must stay out of the stored payload: createCertificateJob
+  // Volatile values stay out of the stored payload: createCertificateJob
   // fingerprints it into creation_request_hash, so anything that varies per
-  // call (a fresh requestedAt, the transition generation) would make an
-  // idempotent replay hash differently and be rejected as a conflict. Both
-  // are resolved at dispatch time instead (see agentDispatch.js).
+  // call would make an idempotent replay hash differently. Both are
+  // resolved at dispatch time instead (see agentDispatch.js).
   const payload = {
     trustAnchorId: anchor.id,
     anchorType: anchor.anchor_type,
@@ -1000,19 +946,20 @@ async function runCreateTrustJob(client, params) {
       metadata: {
         jobId: String(job.id),
         trustAnchorId: anchor.id,
+        anchorName: anchor.name,
+        fingerprintSha256: anchor.fingerprint_sha256,
         agentId,
         store,
+        host: installation.host,
         owner,
         transitionGeneration: installation.transitionGeneration,
       },
     });
   } else {
     // Idempotent replay: undo the speculative generation bump above so a
-    // replayed request is indistinguishable from the original having run
-    // exactly once. createCertificateJob's own replay path already
-    // detected the duplicate before any of the SQL above could have been
-    // observed by another transaction (this transaction still holds the
-    // installation row's lock), so reverting here is safe.
+    // replayed request is indistinguishable from running exactly once.
+    // createCertificateJob's replay path already detected the duplicate
+    // before this SQL could be observed by another transaction.
     await client.query(
       `UPDATE certops_trust_anchor_installations
           SET transition_state = $2,
@@ -1027,8 +974,8 @@ async function runCreateTrustJob(client, params) {
         installationRow.next_reconcile_at,
       ],
     );
-    // The row was restored to the generation the original request created,
-    // and this transaction still holds its lock, so it is authoritative.
+    // The row was restored to the original generation, and this
+    // transaction still holds its lock, so it's authoritative.
     installation.transitionGeneration = installationRow.transition_generation;
     installation.transitionState = installationRow.transition_state;
     installation.lastJobId = installationRow.last_job_id
@@ -1047,15 +994,11 @@ async function runCreateTrustJob(client, params) {
 /**
  * jobCreator swapped in by routes/certops.js for the generic manual-job
  * route's trust-anchor branch, mirroring manualRenewalJobCreator's (jobs.js)
- * calling convention exactly: a factory closed over the caller-supplied
- * fields the generic route body doesn't otherwise carry (trustAnchorId,
- * agentId, store, owner), returning a function createManualCertificateJob
- * (workspaceKillSwitch.js) can call with { client, workspaceId, ... } the
- * same way it calls createCertificateJob for every other operation. This
- * function -- not createCertificateJob -- is therefore the only thing the
- * generic route ever calls for distribute-trust/revoke-trust, which is what
- * makes createTrustJob the by-construction only path into a trust job even
- * from that shared entry point (see this file's top-of-file doc comment).
+ * calling convention: a factory closed over trustAnchorId/agentId/store/
+ * owner, returning a function createManualCertificateJob
+ * (workspaceKillSwitch.js) can call the same way it calls
+ * createCertificateJob for every other operation. This keeps createTrustJob
+ * the only path into a trust job even from the shared manual-job route.
  */
 function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
   return async function manualTrustJobCreator(options) {
@@ -1076,14 +1019,10 @@ function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
       env: options.env || process.env,
     });
     // createManualCertificateJob (workspaceKillSwitch.js) reads
-    // outcome.job/outcome.created off whatever jobCreator returns, exactly
-    // the shape createCertificateJob's own returnOutcome:true already
-    // produces -- this wrapper is transparent to that caller.
-    // skippedOsMutation/installation pass through too: a revoke-trust call
-    // that released one owner's reference while another owner's is still
-    // live returns job: null here (see runCreateTrustJob), and the route
-    // handler needs both fields to respond correctly instead of crashing on
-    // a null job.
+    // outcome.job/outcome.created off whatever jobCreator returns; this
+    // wrapper is transparent to that caller. skippedOsMutation/installation
+    // pass through too, since a revoke-trust call that released one owner's
+    // reference while another's is still live returns job: null here.
     return {
       job: outcome.job,
       created: outcome.created,
@@ -1097,25 +1036,20 @@ function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
 
 /**
  * Must be called immediately before a distribute-trust/revoke-trust job is
- * signed for dispatch (see jobSigning.signJobForDispatch's caller in
- * agentDispatch.claimJobs), inside the same transaction that holds the job
- * row lock. Re-checks the anchor's CURRENT status and re-verifies that the
- * job's signed pem/anchorType/fingerprintSha256 still match the anchor row,
- * as defense-in-depth even though those anchor columns are immutable after
- * creation.
+ * signed for dispatch (see agentDispatch.claimJobs), inside the same
+ * transaction that holds the job row lock. Re-checks the anchor's current
+ * status and re-verifies the job's signed pem/anchorType/fingerprintSha256
+ * still match the anchor row, as defense-in-depth even though those columns
+ * are immutable after creation.
  *
- * - distribute-trust: the anchor must still be 'active'. If it was retired
- *   after approval but before dispatch, the pending install is unwound
- *   (deleted) instead of being dispatched, and this
- *   function returns { allow: false, reason }.
- * - revoke-trust: always permitted regardless of anchor status. Removing
- *   distribution of retired material is exactly what retirement must still
- *   allow.
+ * - distribute-trust: anchor must still be 'active'; if retired after
+ *   approval but before dispatch, the pending install is unwound (deleted)
+ *   instead of dispatched.
+ * - revoke-trust: always permitted regardless of anchor status.
  *
- * Returns { allow: true, anchor, pem, transitionGeneration } when dispatch
- * may proceed (pem only for distribute-trust, read back fresh here rather
- * than trusting a stale copy on the job payload) or { allow: false, reason }
- * when the caller must skip this job instead of signing it.
+ * Returns { allow: true, anchor, pem, transitionGeneration } (pem only for
+ * distribute-trust, read fresh here rather than trusting a stale job-payload
+ * copy) or { allow: false, reason }.
  */
 async function revalidateTrustJobForDispatch({ client, job }) {
   if (!isTrustAnchorOperation(job.operation)) {
@@ -1135,9 +1069,8 @@ async function revalidateTrustJobForDispatch({ client, job }) {
   );
   const anchor = anchorResult.rows[0];
   if (!anchor) {
-    // The anchor row itself is gone (should be unreachable: anchor rows are
-    // additive-only, decision 6). Fail closed rather than dispatch against
-    // nothing.
+    // Anchor rows are additive-only, so this should be unreachable. Fail
+    // closed rather than dispatch against nothing.
     return { allow: false, reason: "trust_anchor_not_found" };
   }
 
@@ -1145,11 +1078,8 @@ async function revalidateTrustJobForDispatch({ client, job }) {
     anchor.anchor_type !== payload.anchorType ||
     anchor.fingerprint_sha256 !== payload.fingerprintSha256
   ) {
-    // A routing disagreement between the signed intent and the anchor's
-    // current row is a detectable inconsistency, never a silent reroute
-    //. Both columns are immutable after insert, so reaching
-    // this branch indicates a programmer error elsewhere, not a normal
-    // runtime condition -- fail closed all the same.
+    // Both columns are immutable after insert, so reaching this branch
+    // indicates a programmer error elsewhere - fail closed all the same.
     return { allow: false, reason: "trust_anchor_payload_mismatch" };
   }
 
@@ -1170,7 +1100,7 @@ async function revalidateTrustJobForDispatch({ client, job }) {
   );
   const installationRow = installation.rows[0];
   if (!installationRow) {
-    // Every trust job is created alongside its installation row in one
+    // Every trust job is created with its installation row in one
     // transaction, so a job with no row is a broken invariant, not a race.
     return { allow: false, reason: "trust_installation_not_found" };
   }
@@ -1179,11 +1109,10 @@ async function revalidateTrustJobForDispatch({ client, job }) {
     allow: true,
     anchor: anchorFromRow(anchor),
     pem: job.operation === "distribute-trust" ? anchor.pem : undefined,
-    // The agent must echo this back on its result so a superseded
-    // transition's late result is rejected as stale. It is
-    // resolved here rather than read off the job payload because the stored
-    // payload is fingerprinted for idempotency and cannot carry a value that
-    // changes per transition.
+    // The agent must echo this back so a superseded transition's late
+    // result is rejected as stale. Resolved here rather than read off the
+    // job payload, since that payload is fingerprinted for idempotency and
+    // can't carry a value that changes per transition.
     transitionGeneration: installationRow.transition_generation,
   };
 }
@@ -1192,23 +1121,18 @@ async function revalidateTrustJobForDispatch({ client, job }) {
 
 /**
  * Validates an agent-reported trust-job result against
- * trust-result-contract.schema.json (shape) and against the persisted
- * job/installation row: agentId, store, fingerprintSha256, and
+ * trust-result-contract.schema.json and against the persisted job/
+ * installation row: agentId, store, fingerprintSha256, and
  * transitionGeneration must all match what was signed. Rejects a
- * stale-generation result outright and never advances the row from an
- * unvalidated result.
+ * stale-generation result outright.
  *
- * Called by (or from) the same result-ingestion transaction
- * agentDispatch.ingestResult already opens for every job family, once that
- * caller has identified the job as a trust-anchor operation, so the
- * installation row and the job row's terminal status advance together.
+ * Called from the same result-ingestion transaction agentDispatch.ingestResult
+ * opens for every job family, once it has identified the job as trust-anchor.
  *
- * On a validated, matching result: advances the installation row per the
- * outcome enum -- preexisting/installed both settle at transition_state
- * 'installed' (provenance is left as whatever lockOrCreateInstallation/
- * runCreateTrustJob already recorded, since a result cannot retroactively
- * change history about who originally installed the material);
- * already_absent/removed both settle at 'removed'.
+ * On a validated match: advances the installation row per the outcome
+ * enum - preexisting/installed both settle at 'installed' (provenance is
+ * left as-is, since a result can't retroactively rewrite who originally
+ * installed the material); already_absent/removed both settle at 'removed'.
  */
 async function ingestTrustJobResult({ client, job, result }) {
   if (!isTrustAnchorOperation(job.operation)) {
@@ -1245,24 +1169,13 @@ async function ingestTrustJobResult({ client, job, result }) {
     );
   }
 
-  // A result whose store, fingerprint, or transitionGeneration differs from
-  // the signed job it claims to answer is rejected, not merely logged. This
-  // is a service-layer check against persisted state: schema validation
-  // alone cannot express "matches what was signed".
+  // A result whose store/fingerprint/transitionGeneration differs from the
+  // signed job it claims to answer is rejected, not merely logged.
   //
-  // The agent-identity leg of that check compares job.assigned_agent_id
-  // (certops_agents.id, a UUID, set at job creation from the same agentId
-  // runCreateTrustJob used for the installation row) against
-  // installationRow.agent_id (the same UUID space, per
-  // fk_certops_trust_anchor_installations_agent). result.agentId is not a
-  // candidate for this comparison: it is the agent's wire-format identity
-  // string (certops_agents.agent_id, echoed back verbatim from the signed
-  // dispatch payload), a different identifier for the same agent that is
-  // never persisted on the installation row. Ownership of the *claim* itself
-  // (that the caller reporting this result is the agent that actually holds
-  // the job) is re-proven by agentDispatch.ingestResult before this function
-  // is ever called; this check instead guards that the installation row
-  // found via last_job_id really is the one this job was created for.
+  // Compares job.assigned_agent_id vs installationRow.agent_id (both UUIDs
+  // in the same certops_agents.id space). Not result.agentId - that's the
+  // agent's wire-format string identity, a different id space, already
+  // re-proven separately by agentDispatch.ingestResult before this runs.
   if (String(job.assigned_agent_id) !== String(installationRow.agent_id)) {
     throw trustAnchorError(
       "Job's assigned agent does not match the installation this job was signed for",
@@ -1281,11 +1194,9 @@ async function ingestTrustJobResult({ client, job, result }) {
       CERTOPS_TRUST_RESULT_MISMATCH,
     );
   }
-  // Whichever fingerprint the agent actually observed (before or after the
-  // mutation; at least one is non-null for every outcome) must be the
-  // fingerprint this installation row was created to track. Decoupled from
-  // any payload field so this check still runs even if the stored payload
-  // shape ever changes.
+  // Whichever fingerprint the agent observed (before or after mutation; at
+  // least one is non-null for every outcome) must match this row's tracked
+  // fingerprint.
   const observedFingerprint =
     result.observedFingerprintAfter || result.observedFingerprintBefore;
   if (
@@ -1298,9 +1209,9 @@ async function ingestTrustJobResult({ client, job, result }) {
     );
   }
 
-  // Decision 20f: a stale-generation result (one whose transitionGeneration
-  // no longer matches the row's current generation) is rejected outright,
-  // never applied to the row -- it is evidence of a superseded transition.
+  // A stale-generation result (transitionGeneration no longer matches the
+  // row's current generation) is rejected outright as evidence of a
+  // superseded transition.
   if (result.transitionGeneration !== installationRow.transition_generation) {
     throw trustAnchorError(
       "Result transitionGeneration is stale; a newer transition has " +
@@ -1313,11 +1224,10 @@ async function ingestTrustJobResult({ client, job, result }) {
     result.outcome === "preexisting" || result.outcome === "installed"
       ? "installed"
       : "removed";
-  // A result whose outcome implies the material is now installed but whose
-  // provenance-relevant flag says the agent performed no mutation (i.e.
-  // 'preexisting') must not overwrite an existing 'tokentimer_installed'
-  // provenance with 'preexisting' -- provenance only ever tightens toward
-  // "we know we put this here", never loosens.
+  // A result claiming the material is now installed but performed no
+  // mutation ('preexisting') must not overwrite an existing
+  // 'tokentimer_installed' provenance - provenance only ever tightens
+  // toward "we know we put this here", never loosens.
   const nextProvenance =
     result.outcome === "installed"
       ? "tokentimer_installed"
@@ -1347,8 +1257,7 @@ async function ingestTrustJobResult({ client, job, result }) {
 /**
  * Finds pending_* installation rows past their next_reconcile_at, locking
  * each with SELECT ... FOR UPDATE SKIP LOCKED so multiple worker replicas
- * never both act on the same row. Identifies and locks candidates only;
- * sweepOverdueTrustInstallations below decides what happens to each.
+ * never both act on the same row.
  */
 async function findOverdueTrustInstallations({ client, limit = 50 }) {
   const result = await client.query(
@@ -1380,10 +1289,7 @@ async function findOverdueTrustInstallations({ client, limit = 50 }) {
 
 /**
  * Marks an overdue row as reported/alerted rather than silently retried:
- * clearing next_reconcile_at is how a row is marked not currently eligible
- * for automatic revalidation. Records a sanitized failure category. Called
- * by the sweep worker once it has classified a row as stale rather than
- * redispatchable.
+ * clearing next_reconcile_at removes it from automatic revalidation.
  */
 async function markTrustInstallationStale({ client, installationId, reason }) {
   const sanitized = typeof reason === "string" ? reason.slice(0, 128) : "reconciliation_stale";
@@ -1421,34 +1327,27 @@ async function rescheduleTrustInstallation({
   return installationFromRow(updated.rows[0]);
 }
 
-// How long a pending_install/pending_remove row may keep being rescheduled
-// before the sweep gives up and reports it as stale rather than looking
-// again (decision 20f: "reported, not silently retried forever"). Measured
-// from last_attempt_at (set when the transition now stuck was created/
-// advanced -- see runCreateTrustJob), not from an attempt counter: this row
-// shape (migration 48) has no per-row attempt count, only a timestamp.
+// How long a pending row may keep being rescheduled before the sweep gives
+// up and reports it stale. Measured from last_attempt_at, not an attempt
+// counter (this row shape has no per-row attempt count).
 const DEFAULT_MAX_RECONCILE_AGE_MS = 6 * DEFAULT_RECONCILE_DELAY_MS;
 
 /**
- * The reconciliation sweep, called by apps/worker/src/certops-worker.js on
- * the same tick-based schedule as this codebase's other certops sweeps. Owns
- * one transaction for the whole batch: findOverdueTrustInstallations's
- * SELECT ... FOR UPDATE SKIP LOCKED holds each candidate locked for the rest
- * of this function, so a concurrent worker replica never double-acts on a
- * row this instance already claimed.
+ * The reconciliation sweep, called by certops-worker.js on the same
+ * tick-based schedule as this codebase's other certops sweeps. Owns one
+ * transaction for the whole batch; findOverdueTrustInstallations's
+ * SELECT ... FOR UPDATE SKIP LOCKED holds each candidate locked for the
+ * rest of this function.
  *
- * This sweep never signs or assigns a job itself (it has no agent-facing
- * signing/nonce context); agentDispatch.claimJobs is what redispatches.
+ * This sweep never signs or assigns a job itself; agentDispatch.claimJobs
+ * is what redispatches.
  *
  * Per-row disposition:
- *  - job already terminal-negative: unwind now and count it in `unwound`.
- *    onTrustJobTerminalTransition should have done this already, so a row
- *    found here is itself the alertable anomaly.
- *  - job still in flight, within maxAgeMs: reschedule for another look.
- *  - job still in flight, past maxAgeMs: mark stale, so an operator sees an
- *    unresolved transition instead of it cycling forever.
- *  - no job row at all (unreachable: every installation row is created with
- *    a job in the same transaction): treated as past its age budget.
+ *  - job already terminal-negative: unwind now (onTrustJobTerminalTransition
+ *    should have done this already, so finding one here is itself alertable).
+ *  - job in flight, within maxAgeMs: reschedule.
+ *  - job in flight, past maxAgeMs: mark stale.
+ *  - no job row at all (unreachable): treated as past its age budget.
  */
 async function sweepOverdueTrustInstallations({
   dbPool = pool,
@@ -1475,10 +1374,8 @@ async function sweepOverdueTrustInstallations({
         lastJobStatus &&
         TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(lastJobStatus)
       ) {
-        // Should already have been unwound by onTrustJobTerminalTransition
-        // when that terminal status was first written; finding one here
-        // means that hook was missed somewhere upstream. Unwind it now
-        // (closing the gap) rather than leaving a dead transition behind.
+        // Should already have been unwound by onTrustJobTerminalTransition;
+        // finding one here means that hook was missed upstream. Unwind now.
         await unwindTerminalTrustJob({
           client,
           job: {

@@ -1,29 +1,20 @@
 "use strict";
 
 /**
- * Cross-platform trust-anchor store executor: the agent-side implementation
- * of `distribute-trust` and `revoke-trust` signed jobs
- * (packages/contracts/certops/trust-job-payload.schema.json) across Windows
+ * Cross-platform trust-anchor store executor: agent-side implementation of
+ * `distribute-trust` and `revoke-trust` signed jobs across Windows
  * (LocalMachine\Root / LocalMachine\CA), Debian-family
  * (/usr/local/share/ca-certificates + update-ca-certificates), and
  * RHEL-family (/etc/pki/ca-trust/source/anchors + update-ca-trust extract)
- * machine trust stores. Implements the trust-anchor execution surface
- * described in
- * docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
+ * machine trust stores. See docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
  *
- * Module style follows ../windows-cert-store and ../windows-discovery:
- * CommonJS, node builtins only, injectable exec/fs seams, exec via
- * child_process.execFile WITHOUT a shell, every dynamic argv element
- * re-validated against a shell-metacharacter pattern as defense in depth.
+ * CommonJS, node builtins only, exec via child_process.execFile without a
+ * shell, argv re-validated against a shell-metacharacter pattern.
  *
- * Cross-signed-root independence: each fingerprintSha256 is an independent
- * anchor with its own ownership receipt (./receipt.js keys receipts by
- * (store, fingerprintSha256)). A CA cross-signing under two roots is just two
- * unrelated pairs; installing or revoking one implies nothing about the other.
- *
- * No desired-state pruning: every function acts on exactly the one (store,
- * fingerprintSha256) pair named by its caller. Enumeration only ever ANSWERS
- * "is this exact fingerprint present", never decides what else to touch.
+ * Each fingerprintSha256 is an independent anchor with its own ownership
+ * receipt (./receipt.js keys by (store, fingerprintSha256)) - a cross-signed
+ * CA under two roots is two unrelated pairs. No desired-state pruning: every
+ * function acts on exactly the one (store, fingerprint) pair its caller named.
  */
 
 const childProcess = require("node:child_process");
@@ -41,8 +32,8 @@ const {
 const { isWindows } = require("../platform/index.js");
 const { fsyncDirectorySync } = require("../platform/durability.js");
 
-/** Every exec runs without a shell; this pattern is defense in depth against
- * a malformed caller-supplied value ending up in argv. */
+/** Defense in depth: every exec runs without a shell, but argv is still
+ * checked against this pattern. */
 const SHELL_METACHARACTER_PATTERN = /[;|&$`><\r\n]/;
 
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -50,52 +41,44 @@ const OUTPUT_EXCERPT_MAX_CHARS = 1024;
 const REDACTED_EXCERPT_PLACEHOLDER = "[redacted]";
 const PRIVATE_KEY_MARKER = "PRIVATE KEY";
 
-/** Mirrors trust-job-payload.schema.json's fingerprintSha256 pattern
- * (lowercase, 64 hex chars). */
+/** Mirrors trust-job-payload.schema.json's fingerprintSha256 pattern. */
 const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 
-/** Mirrors trust-result-contract.schema.json's `store` field pattern: the
- * concrete store this module resolved anchorType/family into. */
+/** Mirrors trust-result-contract.schema.json's `store` field pattern. */
 const STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 
 /** Mirrors trust-job-payload.schema.json's trustAnchorId/jobId pattern. */
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /**
- * A root anchor targets LocalMachine\Root, an intermediate targets
- * LocalMachine\CA. The ONLY place anchorType turns into a concrete Windows
- * store name: the signed job's anchorType is the routing decision, never
- * re-derived from the certificate's basicConstraints/issuer at run time.
+ * Root anchors target LocalMachine\Root, intermediates target LocalMachine\CA.
+ * The signed job's anchorType is the routing decision, never re-derived from
+ * the certificate's basicConstraints/issuer at run time.
  */
 const WINDOWS_STORE_BY_ANCHOR_TYPE = Object.freeze({
   root: "Root",
   intermediate: "CA",
 });
 
-/** Debian-family anchor directory + update command: every PEM installed on a
- * Debian-family host lives here, named from its own fingerprint. */
 const DEBIAN_ANCHORS_DIR = "/usr/local/share/ca-certificates";
 const DEBIAN_UPDATE_COMMAND = "update-ca-certificates";
 const DEBIAN_STORE_NAME = "debian-ca-certificates";
 
-/** RHEL-family anchor directory + update command. `update-ca-trust extract`
- * (not bare `update-ca-trust`) is the invocation that actually regenerates
- * the consolidated bundle after a source anchor file changes. */
+/** `update-ca-trust extract`, not bare `update-ca-trust`, is what actually
+ * regenerates the consolidated bundle after a source anchor file changes. */
 const RHEL_ANCHORS_DIR = "/etc/pki/ca-trust/source/anchors";
 const RHEL_UPDATE_COMMAND = "update-ca-trust";
 const RHEL_UPDATE_ARGS = Object.freeze(["extract"]);
 const RHEL_STORE_NAME = "rhel-ca-trust";
 
-/** Every file this module creates starts with this literal prefix: a
- * grep-able marker of agent-owned artifacts on a shared filesystem. */
+/** Grep-able marker of agent-owned artifacts on a shared filesystem. */
 const ANCHOR_FILENAME_PREFIX = "tokentimer-";
 
 /**
- * Command-reference names the agent-local policy allowlist (../policy) must
- * carry, one per platform-native update command. ../index.js resolves these
- * via `policyEngine.checkCommandRef(...)` into
- * distributeTrust/revokeTrust's `seams.updateCommandArgv`, so a renew-only
- * agent's policy grants no trust-store command execution, and vice versa.
+ * Policy allowlist (../policy) command-ref names, one per platform-native
+ * update command. ../index.js resolves these via `policyEngine.checkCommandRef`
+ * into `seams.updateCommandArgv`, so a renew-only agent's policy grants no
+ * trust-store command execution.
  */
 const TRUST_STORE_COMMAND_REFS = Object.freeze({
   DEBIAN_UPDATE_CA_CERTIFICATES: "trust-store:update-ca-certificates",
@@ -103,9 +86,8 @@ const TRUST_STORE_COMMAND_REFS = Object.freeze({
 });
 
 /**
- * Resolves the command-ref name for a given family. Windows has no
- * command-ref-mediated step (certutil is invoked directly, with argv built
- * from validated agent-local inputs), so this is Linux-only.
+ * Command-ref name for a family. Windows has no command-ref-mediated step
+ * (certutil argv is built directly from validated agent-local inputs).
  * @param {"debian"|"rhel"} family
  * @returns {string}
  */
@@ -144,9 +126,8 @@ function boundAndRedactExcerpt(output) {
 }
 
 /**
- * Promise wrapper around an execFile-shaped implementation, mirroring
- * ../windows-cert-store's execWithoutShell: never rejects on a nonzero
- * exit/timeout (an operational outcome), only surfaces a genuine
+ * Promise wrapper around an execFile-shaped implementation. Never rejects on
+ * a nonzero exit/timeout (an operational outcome), only surfaces a genuine
  * spawn/programmer error via the resolved execError field.
  * @param {Function} execFileImpl
  * @param {string[]} argv argv[0] is the executable
@@ -173,11 +154,10 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
 }
 
 /**
- * Whether a PEM string contains exactly one certificate block.
- * trust-job-payload.schema.json's `pem` pattern only requires the text to
- * START with a certificate header, so it does not rule out a concatenated
- * bundle. A bundle is never installed as a single anchor: each anchor is one
- * certificate with its own fingerprint and receipt.
+ * Whether a PEM string contains exactly one certificate block. The schema's
+ * `pem` pattern only requires the text to START with a cert header, so a
+ * concatenated bundle isn't ruled out; a bundle is never installed as a
+ * single anchor.
  * @param {string} pem
  * @returns {boolean}
  */
@@ -188,13 +168,9 @@ function isSingleCertificatePem(pem) {
 
 /**
  * Re-validates a signed distribute-trust job's PEM against its claimed
- * fingerprintSha256 and re-checks the Basic Constraints CA flag. The payload
- * is signed, but both values are recomputed here rather than trusted, via
- * node:crypto's X509Certificate.
- *
- * Never throws: a malformed or mismatched PEM must refuse and report a
- * failure category, not crash the executor, so this returns a tagged result.
- *
+ * fingerprintSha256 and re-checks the Basic Constraints CA flag, rather than
+ * trusting the (already-signed) payload. Never throws; a malformed or
+ * mismatched PEM returns a tagged failure instead.
  * @param {string} pem
  * @param {string} expectedFingerprintSha256 lowercase 64-hex-char SHA-256.
  * @returns {
@@ -227,8 +203,7 @@ function verifyAnchorPem(pem, expectedFingerprintSha256) {
   if (actualFingerprintSha256 !== expectedFingerprintSha256) {
     return { ok: false, failureCategory: "fingerprint_mismatch" };
   }
-  // Refused agent-side even though the control plane is expected to have
-  // checked already: defense in depth against a buggy control plane.
+  // Refused agent-side too: defense in depth against a buggy control plane.
   if (cert.ca !== true) {
     return { ok: false, failureCategory: "not_a_ca_certificate" };
   }
@@ -237,11 +212,11 @@ function verifyAnchorPem(pem, expectedFingerprintSha256) {
 }
 
 /**
- * Deterministic anchor filename derived purely from the anchor's fingerprint,
- * never from control-plane-supplied names or subjects (which are not
- * validated against a filesystem-safe alphabet). Used for both the permanent
- * Linux anchor file and the transient Windows `certutil -addstore` staging
- * file, so a leftover staging file after a crash stays attributable.
+ * Deterministic anchor filename derived purely from the fingerprint, never
+ * from control-plane-supplied names (not validated against a filesystem-safe
+ * alphabet). Used for both the permanent Linux anchor file and the transient
+ * Windows staging file, so a leftover staging file after a crash stays
+ * attributable.
  * @param {string} fingerprintSha256 lowercase 64-hex-char SHA-256.
  * @param {string} extension without a leading dot, e.g. "crt", "pem", "cer".
  * @returns {string}
@@ -257,8 +232,7 @@ function deterministicAnchorFilename(fingerprintSha256, extension) {
 }
 
 /**
- * Whether an executable name resolves somewhere on PATH, without spawning it,
- * so capability detection never forks a process.
+ * Whether an executable resolves on PATH, without spawning it.
  * @param {string} command
  * @param {object} [options]
  * @param {(p: string) => boolean} [options.existsSyncImpl]
@@ -281,8 +255,7 @@ function commandExistsOnPath(command, { existsSyncImpl = fs.existsSync, pathEnv 
 
 /**
  * Debian-family detection: requires BOTH the anchor directory and the update
- * command, rather than sniffing `/etc/os-release`. A host missing either
- * cannot run the Debian-family path whatever its os-release ID claims.
+ * command, rather than sniffing `/etc/os-release`.
  * @param {object} [options]
  * @param {(p: string) => boolean} [options.existsSyncImpl]
  * @param {string} [options.pathEnv]
@@ -321,10 +294,8 @@ function detectRhelFamily({
 
 /**
  * Resolves whether this executor can run on the current host and under which
- * family, WITHOUT executing anything. ../index.js's
- * AGENT_CANDIDATE_CAPABILITIES calls this to decide whether
- * `trust-anchor-deploy-v1` is a candidate capability, rather than duplicating
- * platform-sniffing inline.
+ * family, without executing anything. ../index.js's AGENT_CANDIDATE_CAPABILITIES
+ * uses this to decide whether `trust-anchor-deploy-v1` is a candidate capability.
  * @param {object} [options]
  * @param {string} [options.platform] defaults to process.platform.
  * @param {(p: string) => boolean} [options.existsSyncImpl]
@@ -349,13 +320,10 @@ function resolveTrustStorePrerequisites({
 }
 
 /**
- * Enumerates a Windows machine store and resolves which entry (if any) matches
- * a target SHA-256 fingerprint. certutil's `-store` listing only reports SHA-1
- * thumbprints, so no single-shot "delete by SHA-256" selector exists. This
- * closes the gap by reusing ../discovery/windows.js's
- * `fetchRawCertificateDerByThumbprint` plus `computeFingerprintSha256` to
- * compute the real SHA-256 for every entry and match against the target.
- *
+ * Enumerates a Windows machine store and resolves which entry (if any)
+ * matches a target SHA-256 fingerprint. certutil's `-store` listing only
+ * reports SHA-1 thumbprints, so this recomputes the SHA-256 for every entry
+ * via ../discovery/windows.js and matches against the target.
  * @param {object} input
  * @param {string} input.store Windows machine store name (e.g. "Root", "CA").
  * @param {string} input.fingerprintSha256 lowercase 64-hex-char SHA-256.
@@ -382,8 +350,8 @@ function findWindowsStoreEntryByFingerprint({ store, fingerprintSha256, spawnImp
 
 /**
  * `certutil -addstore <store> <file>` against a deterministically-named
- * staging file, best-effort-deleted in a `finally`: it carries only public
- * certificate bytes, so a failed unlink is litter, not a security issue.
+ * staging file, best-effort-deleted in a `finally` (public cert bytes only,
+ * so a failed unlink is litter, not a security issue).
  * @param {object} input
  * @param {string} input.store
  * @param {string} input.pem
@@ -429,9 +397,9 @@ async function addWindowsStoreEntry({
 }
 
 /**
- * `certutil -delstore <store> <thumbprint>`. certutil's delete path is
- * thumbprint-keyed, never fingerprint-keyed, so the caller must have already
- * resolved the thumbprint via findWindowsStoreEntryByFingerprint.
+ * `certutil -delstore <store> <thumbprint>`. Delete is thumbprint-keyed, not
+ * fingerprint-keyed, so the caller must resolve the thumbprint first via
+ * findWindowsStoreEntryByFingerprint.
  * @param {object} input
  * @param {string} input.store
  * @param {string} input.thumbprint SHA-1, 40 hex chars.
@@ -462,9 +430,9 @@ async function removeWindowsStoreEntry({
 }
 
 /**
- * Linux anchor file path for one fingerprint, under the family's canonical
- * source directory. Debian-family uses `.crt` because `update-ca-certificates`
- * only scans `*.crt`; RHEL-family uses `.pem` by convention.
+ * Linux anchor file path for one fingerprint. Debian-family uses `.crt`
+ * because `update-ca-certificates` only scans `*.crt`; RHEL-family uses
+ * `.pem` by convention.
  * @param {"debian"|"rhel"} family
  * @param {string} fingerprintSha256
  * @param {string} [anchorsDir] override for tests.
@@ -484,9 +452,8 @@ function linuxAnchorFilePath(family, fingerprintSha256, anchorsDir) {
 
 /**
  * Whether the anchor file for (family, fingerprintSha256) is present AND its
- * content actually hashes to that fingerprint. Re-hashing before reporting
- * `preexisting`/`already_absent` catches a file at this deterministic path
- * whose content does not match its own name.
+ * content actually hashes to that fingerprint (catches a file at this
+ * deterministic path whose content doesn't match its own name).
  * @param {object} input
  * @param {"debian"|"rhel"} input.family
  * @param {string} input.fingerprintSha256
@@ -517,12 +484,11 @@ function probeLinuxAnchorFile({ family, fingerprintSha256, anchorsDir, fsImpl = 
 }
 
 /**
- * Writes the anchor PEM to its deterministic path and runs the family's update
- * command, so the new source file takes effect in the consolidated bundle.
- * Uses plain fs, not receipt.js's writeFileAtomically: a partially-written
- * anchor file is simply re-written identically next attempt, since filename
- * and content are both pure functions of the fingerprint. A receipt row, by
- * contrast, must never be torn.
+ * Writes the anchor PEM to its deterministic path and runs the family's
+ * update command. Uses plain fs, not receipt.js's writeFileAtomically: a
+ * partial write here just gets re-written identically next attempt, since
+ * filename and content are both pure functions of the fingerprint (a receipt
+ * row, by contrast, must never be torn).
  * @param {object} input
  * @param {"debian"|"rhel"} input.family
  * @param {string} input.pem
@@ -530,9 +496,8 @@ function probeLinuxAnchorFile({ family, fingerprintSha256, anchorsDir, fsImpl = 
  * @param {string} [input.anchorsDir]
  * @param {typeof fs} [input.fsImpl]
  * @param {Function} [input.execFileImpl]
- * @param {string[]} [input.updateCommandArgv] policy-resolved argv override
- *   (see ../policy's checkCommandRef); falls back to the hardcoded command
- *   literals only for tests and callers that bypass the policy engine.
+ * @param {string[]} [input.updateCommandArgv] policy-resolved argv override;
+ *   falls back to the hardcoded command literals for tests/bypass callers.
  * @param {number} [input.timeoutMs]
  * @returns {Promise<{ ok: true }|{ ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }>}
  */
@@ -566,18 +531,17 @@ async function installLinuxAnchorFile({
 }
 
 /**
- * Deletes the deterministic anchor file and re-runs the family's own update
- * command: leaving the source file deleted but the derived bundle stale would
- * mean the anchor is still effectively trusted.
+ * Deletes the deterministic anchor file and re-runs the family's update
+ * command: leaving the source file deleted but the derived bundle stale
+ * would mean the anchor is still effectively trusted.
  * @param {object} input
  * @param {"debian"|"rhel"} input.family
  * @param {string} input.fingerprintSha256
  * @param {string} [input.anchorsDir]
  * @param {typeof fs} [input.fsImpl]
  * @param {Function} [input.execFileImpl]
- * @param {string[]} [input.updateCommandArgv] policy-resolved argv override
- *   (see ../policy's checkCommandRef); falls back to the hardcoded command
- *   literals only for tests and callers that bypass the policy engine.
+ * @param {string[]} [input.updateCommandArgv] policy-resolved argv override;
+ *   falls back to the hardcoded command literals for tests/bypass callers.
  * @param {number} [input.timeoutMs]
  * @returns {Promise<{ ok: true }|{ ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }>}
  */
@@ -616,9 +580,9 @@ async function removeLinuxAnchorFile({
 }
 
 /**
- * Resolves the concrete store name reported back in a result's `store` field.
- * Reported back rather than only signed forward, so a routing disagreement
- * between control plane and agent is detectable.
+ * Resolves the concrete store name reported in a result's `store` field
+ * (reported back rather than only signed forward, so a routing disagreement
+ * between control plane and agent is detectable).
  * @param {"windows"|"debian"|"rhel"} family
  * @param {"root"|"intermediate"} anchorType
  * @returns {string}
@@ -636,9 +600,8 @@ function resolveConcreteStore(family, anchorType) {
 
 /**
  * The generation the control plane resolved for this dispatch. The server
- * rejects any result that does not echo the row's current generation, so
- * refusing here rather than defaulting keeps a malformed dispatch from
- * producing work whose result can only be discarded as stale.
+ * rejects any result that doesn't echo the row's current generation, so
+ * refusing here (rather than defaulting) avoids producing unsyncable work.
  */
 function requireTransitionGeneration(job) {
   if (!Number.isInteger(job.transitionGeneration) || job.transitionGeneration < 1) {
@@ -650,10 +613,10 @@ function requireTransitionGeneration(job) {
 }
 
 /**
- * Maps internal result shapes to the wire `receipt.state` enum. Deliberately a
- * DIFFERENT vocabulary from receipt.js's on-disk `RECEIPT_STATES`: the wire
- * states describe how far THIS result's own operation got, while the on-disk
- * states describe what the persisted row currently says.
+ * Maps internal result shapes to the wire `receipt.state` enum. Deliberately
+ * a different vocabulary from receipt.js's on-disk `RECEIPT_STATES`: wire
+ * states describe how far THIS result's operation got, on-disk states
+ * describe what the persisted row currently says.
  * @param {"intent_written"|"finalized"|"missing"|"corrupt"} state
  * @returns {string}
  */
@@ -709,7 +672,7 @@ function buildResult({
 
 /**
  * Executes a signed `distribute-trust` job. Never throws for an operational
- * outcome: every refusal is reported via `outcome`/`failureCategory`, and the
+ * outcome; every refusal is reported via `outcome`/`failureCategory`, and the
  * store is never touched on a mismatch.
  *
  * Sequencing: fingerprint/CA re-validation and the preexisting-in-store probe
@@ -736,10 +699,8 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
 
   const verification = verifyAnchorPem(pem, fingerprintSha256);
   if (!verification.ok) {
-    // The wire `outcome` enum has no value for "refused before ever probing
-    // the store", so this reports `already_absent` plus the specific
-    // `failureCategory` carrying the real reason. mutationAttempted and
-    // mutationPerformed both stay false, so this can never read as a removal.
+    // No wire `outcome` value exists for "refused before probing the store",
+    // so this reports `already_absent` with the real reason in failureCategory.
     return buildResult({
       jobId,
       workspaceId,
@@ -777,9 +738,8 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
   const isPresent = family === "windows" ? presence.found : presence.present === true;
 
   if (isPresent) {
-    // Install idempotency: success, no mutation, outcome `preexisting`. No
-    // receipt write, because an already-present anchor this agent did not
-    // install has no ownership event to record.
+    // Idempotent install: no mutation, outcome `preexisting`, no receipt
+    // write (an anchor this agent didn't install has no ownership to record).
     return buildResult({
       jobId,
       workspaceId,
@@ -806,14 +766,11 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     jobId,
     transitionGeneration,
     intentState: "pending_install",
-    // The isPresent probe just above proved the fingerprint is NOT in the
-    // OS store right now. If a stale pending_install receipt from a
-    // DIFFERENT, now-dead job is sitting on this exact (store, fingerprint),
-    // that same probe result proves ITS intent never reached the OS either
-    // -- there is nothing for this fresh attempt to race against. Without
-    // this, an agent crash between intent-write and OS mutation permanently
-    // blocks every later distribute-trust job for that fingerprint, with no
-    // automatic recovery (found on real-host QA: TRU-10 retry).
+    // isPresent just proved this fingerprint is NOT in the OS store, so any
+    // stale pending_install receipt from a different, dead job on this exact
+    // (store, fingerprint) never reached the OS either - safe to reclaim.
+    // Without this, a crash between intent-write and OS mutation would
+    // permanently block later distribute-trust jobs for that fingerprint.
     reclaimStalePending: true,
     now,
   });
@@ -884,12 +841,10 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
 
 /**
  * Executes a signed `revoke-trust` job. Removal is ownership-proof-gated: a
- * missing or corrupt receipt refuses removal and reports a failure category,
- * and is never treated as `already_absent`. Only once a receipt PROVES this
- * agent installed the material does this re-probe the ACTUAL store state
- * immediately before deleting; if it is already gone by then, that is
- * `already_absent` (success, no error), the same idempotent-delete posture as
- * ../windows-cert-store's NTE_BAD_KEYSET handling.
+ * missing or corrupt receipt refuses removal (never treated as
+ * `already_absent`). Only once a receipt proves this agent installed the
+ * material does this re-probe the actual store state immediately before
+ * deleting; if already gone, that's `already_absent` (success, no error).
  *
  * @param {object} input
  * @param {object} input.job the verified trust-job-payload.schema.json
@@ -930,7 +885,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const existingReceipt = receipt.readReceipt(receiptDir, store, fingerprintSha256);
 
   if (existingReceipt === null) {
-    // Fail-safe: no ownership proof at all. Refuse.
+    // No ownership proof at all: fail-safe refusal.
     return buildResult({
       jobId,
       workspaceId,
@@ -1059,12 +1014,10 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const isPresent = family === "windows" ? presence.found : presence.present === true;
 
   if (!isPresent) {
-    // Ownership proven, but the material is already gone: success, no
-    // mutation. The receipt must still be driven through its own
-    // pending_remove -> removed transition rather than finalized directly
-    // from `installed`. A row already `pending_remove` for THIS job (a
-    // resumed attempt) reuses that intent; otherwise a fresh intent is
-    // written first, so finalizeReceipt always has the pending row it needs.
+    // Ownership proven but material already gone: success, no mutation. The
+    // receipt still transitions pending_remove -> removed rather than
+    // finalizing directly from `installed`; reuses an existing pending_remove
+    // row for this job (resumed attempt) or writes a fresh intent first.
     const intentRow =
       existingReceipt.row.state === "pending_remove"
         ? existingReceipt.row
@@ -1134,11 +1087,10 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
         });
 
   if (!mutationResult.ok) {
-    // Mirrors distributeTrust's own OS-mutation-failure report: the outcome
-    // names the store's TRUE post-attempt state (material is still present,
-    // since the removal did not complete), not the action that was
-    // attempted. Reporting `removed` here would be a false positive for any
-    // consumer that checks `outcome` before `mutationPerformed`.
+    // `outcome` names the store's TRUE post-attempt state (still installed,
+    // since removal didn't complete), not the attempted action - reporting
+    // `removed` here would false-positive any consumer checking `outcome`
+    // before `mutationPerformed`.
     return buildResult({
       jobId,
       workspaceId,

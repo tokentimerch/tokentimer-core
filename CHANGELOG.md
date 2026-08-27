@@ -33,6 +33,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New evidence event types `trust.distributed` and `trust.revoked`, and new audit events `CERTOPS_TRUST_ANCHOR_DISTRIBUTED`/`CERTOPS_TRUST_ANCHOR_REVOKED`, fired only on a trust-anchor job's own successful terminal transition (a terminal failure still reuses the existing generic `CERTOPS_JOB_FAILED` event).
 - New worker sweep, disableable independently of every other sweep: `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED` (default on) and `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_TIMEOUT_MS` reschedule or mark stale any trust-anchor installation still pending past its `next_reconcile_at`. Reported on the new `certops_trust_anchor_reconciliation_installations` Prometheus gauge, labeled by outcome.
 
+### Fixed
+
+- `CERTOPS_TRUST_ANCHOR_DISTRIBUTED`/`CERTOPS_TRUST_ANCHOR_REVOKED` and `CERTOPS_TRUST_DISTRIBUTE_JOB_CREATED`/`CERTOPS_TRUST_REVOKE_JOB_CREATED` audit events carried almost no metadata (no anchor name, fingerprint, host, or agent-reported outcome), and the dashboard Audit page had no formatter for any trust-anchor action at all, so every one of these events rendered blank in the UI. Both events now carry the anchor's name/fingerprint/host alongside the existing IDs, the terminal DISTRIBUTED/REVOKED event also carries the agent's reported `outcome`/`mutationPerformed`/`failureCategory`, and the dashboard has a dedicated formatter and filter entries for all seven trust-anchor audit actions.
+
 ## [0.13.3] - 2026-08-26
 
 ### Added

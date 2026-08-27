@@ -3412,25 +3412,18 @@ const migrations = [
     version: 48,
     name: "certops_trust_anchor_installation_agent_linkage",
     sql: `
-      -- ADR-0012 decision 20: certops_trust_anchor_installations (migration
-      -- 43) identified an installation row by free-text (host, store,
-      -- fingerprint, owner) alone, with no link to the certops_agents row
-      -- that actually holds it and no link to the certops job that last
-      -- dispatched a transition against it. Free-text host/owner cannot
-      -- distinguish a legitimate concurrent transition from a crashed one,
-      -- and with no agent linkage a reconciliation sweep has no fleet row
-      -- to dispatch a revalidation job against.
+      -- ADR-0012 decision 20: migration 43's installation row identified
+      -- itself by free-text (host, store, fingerprint, owner) alone, with
+      -- no link to the certops_agents row that holds it or the job that
+      -- last dispatched a transition against it. That can't distinguish a
+      -- legitimate concurrent transition from a crashed one, and gives a
+      -- reconciliation sweep no fleet row to dispatch against.
       --
       -- Precondition: this table has no write path anywhere in the
-      -- codebase yet (distribute-trust/revoke-trust dispatch and result
-      -- handling are separate, later work), so it must be empty in any
-      -- real deployment. Asserted rather than assumed, matching migration
-      -- 47's precondition-guard style: a NOT NULL FK added straight onto a
-      -- populated table would either fail outright with no default, or
-      -- silently backfill every existing row under a fabricated default,
-      -- and a fabricated agent_id/provenance value is exactly the kind of
-      -- silently-wrong ownership fact migration 43's own design already
-      -- treats as unacceptable.
+      -- codebase yet, so it must be empty in any real deployment. Asserted
+      -- rather than assumed (matching migration 47's guard style): a NOT
+      -- NULL FK added onto a populated table would otherwise silently
+      -- backfill every row under a fabricated agent_id/provenance value.
       DO $$
       BEGIN
         IF EXISTS (SELECT 1 FROM certops_trust_anchor_installations) THEN
@@ -3440,13 +3433,10 @@ const migrations = [
       END
       $$;
 
-      -- agent_id replaces host as the installation's join key (decision 20).
-      -- host stays on the row as a display/audit snapshot only -- useful
-      -- for a human reading an installation's history even after an agent
-      -- is renamed or re-provisioned -- and is no longer part of the
-      -- uniqueness tuple below. Added nullable, then tightened to NOT NULL
-      -- in the same migration, so the ALTER itself is the emptiness-gated
-      -- step rather than a separate backfill migration.
+      -- agent_id replaces host as the installation's join key. host stays
+      -- as a display/audit snapshot only, and drops out of the uniqueness
+      -- tuple below. Added nullable, then tightened to NOT NULL in the
+      -- same migration (gated by the emptiness check above).
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS agent_id UUID NULL;
       ALTER TABLE certops_trust_anchor_installations
@@ -3458,21 +3448,18 @@ const migrations = [
         FOREIGN KEY (workspace_id, agent_id)
         REFERENCES certops_agents(workspace_id, id)
         ON DELETE CASCADE;
-      -- Immutable after insert: enforced in services (matching migration
-      -- 27's executor_kind precedent), not by a DB trigger. A transition
-      -- row's agent is fixed at creation; reassigning ownership to a
-      -- different agent is a new row, never an UPDATE of this column.
+      -- Immutable after insert: enforced in services (migration 27's
+      -- executor_kind precedent), not by a DB trigger. Reassigning
+      -- ownership to a different agent is a new row, never an UPDATE here.
 
       -- One unique row per (agent, store, fingerprint, owner), replacing
-      -- migration 43's (host, store, fingerprint, owner) tuple now that
-      -- agent_id, not host, is the join key.
+      -- migration 43's (host, store, fingerprint, owner) tuple.
       DROP INDEX IF EXISTS uq_certops_trust_anchor_installations_identity;
       CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchor_installations_identity
         ON certops_trust_anchor_installations(workspace_id, agent_id, store, fingerprint_sha256, owner);
 
-      -- Linkage to the certops job that last touched this row (dispatched
-      -- the pending transition, or reported its terminal result). Nullable:
-      -- a row can exist before any job has ever been dispatched against it.
+      -- Linkage to the certops job that last touched this row. Nullable: a
+      -- row can exist before any job has ever been dispatched against it.
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS last_job_id UUID NULL;
       ALTER TABLE certops_trust_anchor_installations
@@ -3484,13 +3471,11 @@ const migrations = [
         ON DELETE SET NULL (last_job_id);
 
       -- Idempotency and stale-result rejection (decision 20c/20e): each
-      -- transition dispatched against this row is stamped with the
-      -- generation it was created for, and a job result may only advance
-      -- the generation it was created for. DEFAULT 1 means "row created,
-      -- nothing dispatched yet"; runCreateTrustJob unconditionally bumps
-      -- this column when it creates a job, so a row's first dispatched
-      -- transition actually carries generation 2, not 1. CHECK (>= 1) only
-      -- rules out 0/negative, it does not claim 1 is ever dispatched.
+      -- dispatched transition is stamped with the generation it was
+      -- created for; a job result may only advance that same generation.
+      -- DEFAULT 1 means "row created, nothing dispatched yet";
+      -- runCreateTrustJob bumps this on every job it creates, so a row's
+      -- first dispatched transition actually carries generation 2.
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS transition_generation INTEGER NOT NULL DEFAULT 1
           CHECK (transition_generation >= 1);
@@ -3498,18 +3483,14 @@ const migrations = [
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ NULL;
 
-      -- Sanitized failure category only -- never raw exception text, a
-      -- stack trace, or any string that could carry secret material. This
-      -- column is diagnostic metadata, not an error log; the same
-      -- discipline this record already requires for credential and key
-      -- handling elsewhere applies here too.
+      -- Sanitized failure category only, never raw exception text or a
+      -- stack trace: diagnostic metadata, not an error log.
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS last_error TEXT NULL
           CHECK (last_error IS NULL OR char_length(last_error) <= 128);
 
       -- Reconciliation-sweep scheduling (decision 20f/20h): when a pending
-      -- row is next due for revalidation against the fleet/store. NULL
-      -- means not currently scheduled.
+      -- row is next due for revalidation. NULL means not currently scheduled.
       ALTER TABLE certops_trust_anchor_installations
         ADD COLUMN IF NOT EXISTS next_reconcile_at TIMESTAMPTZ NULL;
 

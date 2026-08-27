@@ -285,15 +285,12 @@ function isNonEmptyStringValue(value) {
 
 /**
  * Actions this agent build can actually execute (executeJob): "revoke" is
- * deliberately absent (always blocked in this build). Sent as the claim's
- * supportedActions when execution is enabled so the control plane's claim
- * query only leases jobs this agent can run. distribute-trust/revoke-trust
- * are always included here (unlike the manifest-gated capability strings
- * above): the trust-store executor module itself resolves per-host
+ * deliberately absent (always blocked in this build). distribute-trust/
+ * revoke-trust are always included here (unlike the manifest-gated
+ * capability strings above): the trust-store executor resolves per-host
  * prerequisites and rejects with already_absent/failureCategory at execute
- * time on hosts that can't support it, so gating the claim itself is not
- * needed for correctness, and would otherwise leave every real host
- * permanently unable to claim distribute-trust/revoke-trust jobs.
+ * time on unsupported hosts, so gating the claim itself would otherwise
+ * leave every real host permanently unable to claim these jobs.
  */
 const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "noop",
@@ -332,13 +329,10 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
  */
 /**
  * Whether this host's trust-store executor prerequisites resolve (see
- * ./trust-store's own resolveTrustStorePrerequisites doc comment):
- * Windows always; Debian/RHEL-family Linux only if the concrete
- * trust-store directory/update-command actually resolve. Evaluated once
- * at module load, same timing rationale as isWindows() above (the
- * running host's own filesystem/PATH does not change mid-process).
- * `index.js` calls this exported function rather than duplicating
- * platform-sniffing inline (this module's own spec).
+ * ./trust-store's resolveTrustStorePrerequisites): Windows always;
+ * Debian/RHEL-family Linux only if the trust-store directory/update-command
+ * actually resolve. Evaluated once at module load (the host's filesystem/
+ * PATH doesn't change mid-process).
  */
 const AGENT_TRUST_STORE_PREREQUISITES = resolveTrustStorePrerequisites();
 
@@ -354,7 +348,6 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
       ? ["evidence-claim-binding-v1", "trust-anchor-deploy-v1"]
       : ["evidence-claim-binding-v1"],
 );
-
 
 /**
  * Capabilities this build actually advertises, after the build-time
@@ -372,17 +365,14 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
 
 /**
  * ADR-0012 decision 3, step 4: agent-id-binding-v1 is advertised only from
- * the EFFECTIVE runtime value of requireSignedAgentId (config.requireSignedAgentId,
- * itself already resolved from env/config.json against the compiled-in
- * default inside packages/agent/src/config/index.js), never from that
- * compiled-in default directly. This matters because the same build binary
- * ships with the flag defaulting to true but must correctly stop
- * advertising the capability the moment an operator overrides it back to
- * false for a temporary rollback, and must resume advertising it once that
- * override is removed, with no rebuild in either direction. When effective
- * value is false, absence of agentId is still tolerated by the
- * compatibility decoder (see checkAgentIdBinding), so advertising the
- * capability then would overclaim.
+ * the effective runtime value of requireSignedAgentId (already resolved
+ * from env/config.json against the compiled-in default), never from the
+ * compiled-in default directly. The flag now defaults to true but an
+ * operator can override it back to false for a temporary rollback and must
+ * see advertising stop/resume accordingly, with no rebuild either way. When
+ * effective value is false, absence of agentId is still tolerated by the
+ * compatibility decoder (see checkAgentIdBinding), so advertising then
+ * would overclaim.
  */
 function resolveDeclaredCapabilities(requireSignedAgentId) {
   return requireSignedAgentId
@@ -2029,9 +2019,8 @@ async function handleSignedJob({
       keyRotated: outcome.keyRotated ?? null,
       errorMessage: outcome.errorMessage ?? null,
       clockOffsetMs: clockEstimator.getOffsetMs(),
-      // Only trust-anchor jobs produce this. Omitted entirely (not sent as
-      // null) for every other job family so their result bodies are
-      // byte-identical to before.
+      // Only trust-anchor jobs produce this; omitted (not null) for every
+      // other job family so their result bodies stay byte-identical.
       ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
     },
     evidence: evidenceBodies,
@@ -2163,13 +2152,10 @@ async function handleObserveOnlyJob({
  * @param {object} [params.leaseClient] protocol client for B6 lease renew
  * @param {object} params.executionContext from buildExecutionContext
  * @param {(msg: string) => void} [params.log]
- * @param {object|null} [params.trustStoreSeams] TEST-ONLY: forwarded verbatim to
- *   executeTrustJob's own trustStoreSeams parameter when action is
- *   distribute-trust/revoke-trust, so tests can inject fake exec/fs/spawn
- *   implementations into ../trust-store without ever touching a real
- *   certutil.exe/update-ca-certificates/update-ca-trust process or the
- *   real machine trust store. Always null/omitted in production call
- *   sites.
+ * @param {object|null} [params.trustStoreSeams] TEST-ONLY: forwarded to
+ *   executeTrustJob's trustStoreSeams param when action is distribute-trust/
+ *   revoke-trust, letting tests inject fake exec/fs/spawn implementations
+ *   into ../trust-store. Always null/omitted in production.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
  */
 async function executeJob({
@@ -2248,14 +2234,10 @@ async function executeJob({
   }
 
   if (action === "distribute-trust" || action === "revoke-trust") {
-    // Mirrors the renew/deploy/reload ordering below: signed job.mode
-    // wins; local execution.dryRun only ever refuses a REAL job outright.
+    // Mirrors the renew/deploy/reload ordering below: signed job.mode wins;
+    // local execution.dryRun only refuses a real job outright.
     // executeTrustJob's own jobMode==="dry_run" branch already returns
-    // dry_run_complete with no mutation attempted, so it is always safe to
-    // call directly for a dry_run job; a real job is still gated on the
-    // same local safety refusal executeDryRunPlan's sibling check applies
-    // to renew/deploy/reload, since executeDryRunPlan itself has no
-    // trust-action branch to route through instead.
+    // dry_run_complete with no mutation attempted.
     if (jobMode !== "dry_run" && execution.dryRun === true) {
       return {
         status: "blocked",
@@ -5454,26 +5436,20 @@ async function executeReloadJob({
 }
 
 /**
- * Executes a signed `distribute-trust`/`revoke-trust` job, dispatching to the
- * cross-platform ./trust-store executor. Mirrors the other execute*Job
- * functions' shape (job/jobId/policyEngine/client/log/leaseOpts/
- * onBeforeMutation in, {status, rejectionReason, keyRotated, errorMessage}
- * out) so handleClaimedJob's generic result-reporting path needs no
- * trust-specific branch.
+ * Executes a signed `distribute-trust`/`revoke-trust` job, dispatching to
+ * the cross-platform ./trust-store executor. Mirrors the other
+ * execute*Job functions' shape so handleClaimedJob needs no trust-specific
+ * branch for result reporting.
  *
- * Policy gate: on Debian/RHEL-family, the family's update command
- * (update-ca-certificates/update-ca-trust) is resolved through
- * policyEngine.checkCommandRef against a trust-specific command-ref name
- * (./trust-store's TRUST_STORE_COMMAND_REFS), structurally distinct from every
- * ACME/reload commandRef a renew job carries. A policy config missing that
- * entry rejects the job with command_not_allowlisted before any mutation.
- * Windows certutil is not commandRef-gated, matching ./windows-cert-store's
- * established posture for the same tool.
+ * Policy gate: on Debian/RHEL-family, the update command is resolved
+ * through policyEngine.checkCommandRef against a trust-specific command-ref
+ * name (./trust-store's TRUST_STORE_COMMAND_REFS), distinct from any
+ * ACME/reload commandRef a renew job carries. Windows certutil is not
+ * commandRef-gated, matching ./windows-cert-store's posture for the same tool.
  *
  * The typed trust-result-contract.schema.json object is returned as
  * `trustResult` and carried on the wire by agent-protocol.schema.json's
- * resultBody.trustResult; the full result is also reported as evidence
- * metadata.
+ * resultBody.trustResult; also reported as evidence metadata.
  *
  * Exported for direct unit testing.
  *
@@ -5489,12 +5465,9 @@ async function executeReloadJob({
  * @param {object} [params.executionContext] from buildExecutionContext, for resolveAgentStateDir.
  * @param {((stage: string) => void)|null} [params.onBeforeMutation]
  * @param {object|null} [params.trustStoreSeams] TEST-ONLY: merged into the
- *   seams object passed to ../trust-store's distributeTrust/revokeTrust
- *   (execFileImpl/spawnImpl/fsImpl/etc.), letting tests substitute fake
- *   implementations so no real certutil.exe/update-ca-certificates/
- *   update-ca-trust process or real machine trust store is ever touched
- *   by a wiring test. No production call site in this module ever sets
- *   this parameter.
+ *   seams object passed to ../trust-store's distributeTrust/revokeTrust, so
+ *   no real certutil.exe/update-ca-certificates/update-ca-trust process or
+ *   trust store is touched by a wiring test. No production call site sets this.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated: null, errorMessage: string|null, trustResult?: object }>}
  */
 async function executeTrustJob({
@@ -5579,15 +5552,10 @@ async function executeTrustJob({
   }
   const receiptDir = path.join(stateDir, "trust-receipts");
   const workDir = path.join(stateDir, "trust-work");
-  // trustStoreSeams is a TEST-ONLY extension point (never populated by any
-  // real production call site in this module): it lets tests inject fake
-  // exec/fs/spawn implementations into ../trust-store's distributeTrust/
-  // revokeTrust the same way ../trust-store/trust-store.test.js already
-  // does directly, without ever letting a wiring test through executeJob/
-  // executeTrustJob reach a REAL certutil.exe, update-ca-certificates, or
-  // update-ca-trust invocation against this host's actual machine trust
-  // store. Merged after updateCommandArgv so a test can still override it
-  // too if needed, but production code never sets this parameter.
+  // TEST-ONLY extension point (never populated by production code): lets
+  // tests inject fake exec/fs/spawn implementations into ../trust-store's
+  // distributeTrust/revokeTrust without hitting a real certutil.exe/
+  // update-ca-certificates/update-ca-trust or the real machine trust store.
   const seams = { updateCommandArgv, ...(trustStoreSeams || {}) };
 
   const trustResult =

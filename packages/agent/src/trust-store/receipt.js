@@ -2,12 +2,10 @@
 
 /**
  * Agent-local trust-anchor ownership receipt: a restart-safe, ACL-protected,
- * atomic-write ledger recording which (store, fingerprintSha256) pairs THIS
+ * atomic-write ledger recording which (store, fingerprintSha256) pairs this
  * agent installed into a machine trust store, so a later revoke-trust can
- * prove ownership before deleting anything. One JSON file per row, following
- * ../windows-retention's ledger pattern. Implements the ownership receipt
- * described in
- * docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
+ * prove ownership before deleting anything. One JSON file per row.
+ * See docs/adr/0012-certops-windows-execution-surface-and-trust-anchors.md.
  *
  * A row has no field capable of holding private key material (store name,
  * fingerprint, job id, generation, state, timestamps only), and is still
@@ -24,9 +22,7 @@ const {
   assertNoPrivateKeyMaterial,
 } = require("../../vendor/log-scrub/secret-material.js");
 
-/** Mirrors trust-result-contract.schema.json's `store` pattern, so a row's
- * store value is wire-safe whether it names a Windows store or a Linux
- * trust-store family. */
+/** Mirrors trust-result-contract.schema.json's `store` pattern. */
 const STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 /** SHA-256 hex, lowercase, matching trust-job-payload.schema.json's
  * fingerprintSha256 pattern. */
@@ -35,17 +31,12 @@ const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /**
- * Receipt lifecycle states. Deliberately the SAME four names the server-side
- * installation row's `transition_state` column uses, since this receipt is the
- * agent-local mirror of that transition and must not drift into a parallel
- * vocabulary:
- *   - pending_install: an install mutation was attempted (intent written
+ * Receipt lifecycle states, deliberately matching the server-side
+ * installation row's `transition_state` column so this agent-local mirror
+ * doesn't drift into a parallel vocabulary:
+ *   - pending_install / pending_remove: mutation attempted (intent written
  *     and fsynced) but not yet confirmed complete.
- *   - installed: the install completed and was confirmed; this is the
- *     ownership proof a later revoke-trust requires.
- *   - pending_remove: a remove mutation was attempted (intent written and
- *     fsynced, against a row that was previously `installed`) but not yet
- *     confirmed complete.
+ *   - installed: the ownership proof a later revoke-trust requires.
  *   - removed: the remove mutation completed and was confirmed.
  */
 const RECEIPT_STATES = Object.freeze([
@@ -181,13 +172,10 @@ function fsyncParentDirectory(filePath) {
 }
 
 /**
- * Atomic sibling-temp-file-plus-rename write. Order matters: open the temp
- * file with `wx` (exclusive create, never overwrites a concurrent write),
- * write, fsync the fd, close, rename onto the final path, re-apply the
- * platform-appropriate restrictive permission (POSIX mode / Windows ACL),
- * then fsync the containing directory so the rename itself is durable. A
- * failure at any step unlinks the temp file and rethrows, so a torn receipt
- * can never be mistaken for a valid one.
+ * Atomic sibling-temp-file-plus-rename write: open with `wx` (exclusive
+ * create), write, fsync fd, close, rename, re-apply the restrictive
+ * permission, fsync the containing directory. Any failure unlinks the temp
+ * file and rethrows, so a torn receipt can never be mistaken for valid.
  * @param {string} filePath
  * @param {string} contents
  * @param {number} mode
@@ -235,12 +223,11 @@ function ensureReceiptDir(receiptDir) {
 }
 
 /**
- * Reads one receipt row, returning null when it does not exist and
- * `{ corrupt: true, error }` when a row exists but cannot be parsed or fails
- * shape validation. Both are refuse-to-remove outcomes for revoke-trust, but
- * the trust-result contract reports them under different `receipt.state`
- * values (`missing` vs `corrupt`), so they must stay distinct. Corruption is a
- * reportable outcome here, not a program bug, so this never throws.
+ * Reads one receipt row: null if it doesn't exist, `{ corrupt: true, error }`
+ * if it exists but fails to parse or validate. Both refuse removal for
+ * revoke-trust but map to different `receipt.state` wire values (`missing`
+ * vs `corrupt`), so they stay distinct. Never throws; corruption is a
+ * reportable outcome, not a program bug.
  * @param {string} receiptDir
  * @param {string} store
  * @param {string} fingerprintSha256
@@ -279,23 +266,17 @@ function readReceipt(receiptDir, store, fingerprintSha256) {
 }
 
 /**
- * Writes the pre-mutation INTENT record, in state `pending_install` or
- * `pending_remove`, written and fsynced before the OS-level mutation is
- * attempted. Refuses to overwrite an existing row for a DIFFERENT
- * jobId/transitionGeneration still in a pending state, which would mean two
- * concurrent attempts racing on the same (store, fingerprint). The executor
- * (./index.js) serializes that in the normal case; this check is the
- * last-resort guard against a caller that does not.
+ * Writes the pre-mutation intent record (`pending_install` or
+ * `pending_remove`), written and fsynced before the OS-level mutation is
+ * attempted. Refuses to overwrite an existing row for a different
+ * jobId/transitionGeneration still in a pending state (two concurrent
+ * attempts racing the same (store, fingerprint)); the executor (./index.js)
+ * normally serializes this, so this is a last-resort guard.
  *
- * `reclaimStalePending` lifts that refusal for a row already classified
- * `crash_before_mutation` (see classifyRecoveryOutcome): the caller must
- * only pass this after re-probing the live OS store itself and confirming
- * the fingerprint is not there, which is the only way to know the row's
- * intent never reached the OS. Without this escape hatch, a receipt
- * orphaned by a crash (the owning job's control-plane row left stuck with
- * an expired lease, never reaching a terminal state) permanently blocks
- * every future job for that (store, fingerprint), with no automatic path
- * back to health -- see the real-host QA that found this.
+ * `reclaimStalePending` lifts that refusal for a row the caller has already
+ * confirmed (via a live re-probe) never reached the OS - otherwise a receipt
+ * orphaned by a crash would permanently block every future job for that
+ * (store, fingerprint).
  * @param {object} input
  * @param {string} input.receiptDir
  * @param {string} input.store
@@ -464,17 +445,9 @@ function readReceiptById(receiptDir, id) {
 }
 
 /**
- * Classifies one receipt row's recovery outcome. A PURE function over the
- * row's persisted state, never a live "is it present in the store" check: bare
- * presence would let a later revoke-trust delete material a different,
- * unrelated owner legitimately depends on.
- *
- *   - `pending_install` or `pending_remove`: crash before the mutation
- *     completed. Safe to retry, or to report the attempt as not performed.
- *   - `installed`: the row's own recorded intent is what proves "I put this
- *     here", rather than a presence query inferring `preexisting`.
- *   - `removed`: symmetric case for revoke-trust.
- *
+ * Classifies one receipt row's recovery outcome. A pure function over the
+ * row's persisted state, never a live store-presence check (bare presence
+ * would let revoke-trust delete material an unrelated owner depends on).
  * @param {object} row a validated receipt row.
  * @returns {"crash_before_mutation"|"confirmed_installed"|"confirmed_removed"}
  */
@@ -489,9 +462,8 @@ function classifyRecoveryOutcome(row) {
 
 /**
  * Startup sweep entry point: iterates every persisted receipt and reports its
- * recovery classification, WITHOUT mutating any store. The OS-level retry
- * decision belongs to the executor (./index.js), which consumes this output. A
- * corrupt row is reported, never thrown, so one bad row cannot abort the sweep.
+ * recovery classification, without mutating any store (the retry decision
+ * belongs to ./index.js). A corrupt row is reported, never thrown.
  * @param {object} input
  * @param {string} input.receiptDir
  * @returns {{

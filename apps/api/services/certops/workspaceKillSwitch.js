@@ -367,11 +367,10 @@ async function createManualCertificateJob({
     });
     const job = outcome?.job || outcome;
     const created = outcome?.created === true;
-    // A trust-anchor revoke-trust call can legitimately create no job at
-    // all (see trustAnchors.js's runCreateTrustJob): releasing one owner's
-    // reference while another owner's reference to the same fingerprint is
-    // still live must not touch the OS, so job stays null. Callers need
-    // skippedOsMutation/installation to tell that apart from a real failure.
+    // A revoke-trust call can legitimately create no job (see
+    // trustAnchors.js's runCreateTrustJob): releasing one owner's reference
+    // while another's is still live must not touch the OS. Callers need
+    // skippedOsMutation/installation to tell that apart from a failure.
     const skippedOsMutation = outcome?.skippedOsMutation === true;
     const installation = outcome?.installation;
 
