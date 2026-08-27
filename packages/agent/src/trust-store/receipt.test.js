@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, afterEach } = require("node:test");
+const { describe, it, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -543,5 +543,47 @@ describe("trust-store/receipt: platform-specific protection", () => {
     receipt.writeFileAtomically(rowPath, "{}\n", 0o600);
     const entries = fs.readdirSync(receiptDir);
     assert.deepEqual(entries, ["test-row.json"]);
+  });
+
+  it("writeFileAtomically closes and unlinks the sibling temp file, then rethrows, when the write fails after the fd was opened", () => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+    const rowPath = path.join(receiptDir, "test-row.json");
+
+    const writeFileSyncMock = mock.method(fs, "writeFileSync", () => {
+      throw new Error("simulated write failure");
+    });
+    try {
+      assert.throws(
+        () => receipt.writeFileAtomically(rowPath, "{}\n", 0o600),
+        /simulated write failure/,
+      );
+    } finally {
+      writeFileSyncMock.mock.restore();
+    }
+
+    // No sibling .tmp file (or the real target) survives a failed write.
+    assert.deepEqual(fs.readdirSync(receiptDir), []);
+  });
+
+  it("writeFileAtomically never leaves a torn file behind: a failed write is never mistaken for a valid receipt", () => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+    const rowPath = path.join(receiptDir, "test-row.json");
+
+    const fsyncSyncMock = mock.method(fs, "fsyncSync", () => {
+      throw new Error("simulated fsync failure");
+    });
+    try {
+      assert.throws(
+        () => receipt.writeFileAtomically(rowPath, "{}\n", 0o600),
+        /simulated fsync failure/,
+      );
+    } finally {
+      fsyncSyncMock.mock.restore();
+    }
+
+    assert.equal(fs.existsSync(rowPath), false);
+    assert.deepEqual(fs.readdirSync(receiptDir), []);
   });
 });

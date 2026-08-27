@@ -116,6 +116,59 @@ test("buildEvidenceItem rejects private key material in summary", () => {
   );
 });
 
+test("buildEvidenceItem builds a valid trust.distributed item (trust-anchor distribute-trust outcome)", () => {
+  const observedAt = new Date("2026-02-01T00:00:00.000Z");
+  const item = evidence.buildEvidenceItem({
+    eventType: "trust.distributed",
+    observedAt,
+    fingerprintSha256: VALID_FINGERPRINT,
+    summary: "Trust job job-1 (distribute-trust) resolved store=Root outcome=installed.",
+    metadata: [
+      { name: "trustAnchorId", value: "anchor-1" },
+      { name: "outcome", value: "installed" },
+    ],
+  });
+
+  assert.equal(item.eventType, "trust.distributed");
+  assert.equal(item.observedAt, observedAt.toISOString());
+  assert.deepEqual(item.metadata, [
+    { name: "trustAnchorId", value: "anchor-1" },
+    { name: "outcome", value: "installed" },
+  ]);
+});
+
+test("buildEvidenceItem builds a valid trust.revoked item (trust-anchor revoke-trust outcome)", () => {
+  const item = evidence.buildEvidenceItem({
+    eventType: "trust.revoked",
+    observedAt: new Date().toISOString(),
+    fingerprintSha256: VALID_FINGERPRINT,
+    summary: "Trust job job-2 (revoke-trust) resolved store=Root outcome=removed.",
+    metadata: [{ name: "trustAnchorId", value: "anchor-2" }],
+  });
+
+  assert.equal(item.eventType, "trust.revoked");
+  assert.deepEqual(item.metadata, [{ name: "trustAnchorId", value: "anchor-2" }]);
+});
+
+test("buildEvidenceBody accepts a trust.distributed item end to end (evidence-claim-binding-v1 shape)", () => {
+  const body = evidence.buildEvidenceBody({
+    jobId: "job-1",
+    claimId: "claim-1",
+    evidenceItems: [
+      {
+        eventType: "trust.distributed",
+        observedAt: new Date().toISOString(),
+        fingerprintSha256: VALID_FINGERPRINT,
+        summary: "installed",
+      },
+    ],
+  });
+
+  assert.equal(body.claimId, "claim-1");
+  assert.equal(body.evidenceItems[0].eventType, "trust.distributed");
+  assert.doesNotThrow(() => evidence.assertEvidencePayloadSafe(body));
+});
+
 test("buildEvidenceBody enforces the 1-16 item bounds", () => {
   assert.throws(() => evidence.buildEvidenceBody({ evidenceItems: [] }));
 
