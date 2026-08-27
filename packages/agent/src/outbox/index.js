@@ -30,6 +30,26 @@ const OUTBOX_DIR_NAME = "outbox";
 const ENTRY_FILE_SUFFIX = ".json";
 const MAX_ENTRY_BYTES = 512 * 1024;
 
+// A transmission failure's real cause (transient network blip vs a
+// permanent server-side rejection of this exact payload) is not reliably
+// determinable from the HTTP status alone -- e.g. 409 covers both "retry
+// the lease, it just changed owner" and "this result can never match,
+// stop asking." Rather than guess, every failure backs off the same way:
+// retries never stop (nothing is ever silently discarded), but a
+// repeatedly-failing entry is retried less and less often instead of
+// spamming a log line every single poll tick forever.
+const RETRY_BACKOFF_BASE_MS = 15_000;
+const RETRY_BACKOFF_MAX_MS = 30 * 60_000;
+
+/**
+ * @param {number} attempts number of prior failed transmission attempts
+ * @returns {number} milliseconds to wait before the next attempt
+ */
+function computeRetryBackoffMs(attempts) {
+  const exponent = Math.max(0, Number.isFinite(attempts) ? attempts : 0);
+  return Math.min(RETRY_BACKOFF_BASE_MS * 2 ** exponent, RETRY_BACKOFF_MAX_MS);
+}
+
 function fsyncParentDirectory(filePath) {
   // fsync on a directory is the durable part of an atomic rename on POSIX.
   // Windows cannot open a directory this way at all, so the fsync is
@@ -225,29 +245,86 @@ async function transmitOutboxEntry(entry, client) {
 }
 
 /**
- * Attempts to deliver every pending outbox entry. On transmission failure
- * the entry is left on disk for a later retry; later entries are still
- * attempted so one stuck job does not block unrelated acknowledgements.
+ * True once an entry's backoff window has elapsed (or it has never
+ * failed before, i.e. no nextRetryAt yet) and it is due for another
+ * transmission attempt.
+ * @param {object} entry
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function isDueForRetry(entry, nowMs) {
+  if (typeof entry.nextRetryAt !== "string") return true;
+  const dueAtMs = Date.parse(entry.nextRetryAt);
+  return !Number.isFinite(dueAtMs) || dueAtMs <= nowMs;
+}
+
+/**
+ * Persists updated backoff bookkeeping (attempts/nextRetryAt/last error)
+ * on a failed entry in place, so the next drain -- on this process or
+ * after a restart -- knows to wait rather than retry immediately.
+ * Best-effort: if the rewrite itself fails, the entry is simply retried
+ * every tick again (as it always was), never lost.
+ * @param {string} outboxDir
+ * @param {object} entry
+ * @param {Error} err
+ * @param {number} nowMs
+ */
+function recordTransmissionFailure(outboxDir, entry, err, nowMs) {
+  const priorAttempts = Number.isFinite(entry.attempts) && entry.attempts >= 0 ? entry.attempts : 0;
+  const attempts = priorAttempts + 1;
+  const updated = {
+    ...entry,
+    attempts,
+    lastAttemptAt: new Date(nowMs).toISOString(),
+    lastErrorMessage: err && typeof err.message === "string" ? err.message.slice(0, 500) : "unknown error",
+    nextRetryAt: new Date(nowMs + computeRetryBackoffMs(priorAttempts)).toISOString(),
+  };
+  const serialized = `${JSON.stringify(updated)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > MAX_ENTRY_BYTES) return;
+  try {
+    writeFileAtomically(entryPath(outboxDir, entry.id), serialized, 0o600);
+  } catch (_err) {
+    // Best effort; see doc comment above.
+  }
+}
+
+/**
+ * Attempts to deliver every pending outbox entry that is currently due
+ * for retry. On transmission failure the entry is left on disk with its
+ * backoff bumped (never discarded); later entries are still attempted so
+ * one stuck job does not block unrelated acknowledgements. A repeatedly
+ * failing entry -- permanent rejection or a long-lived outage, the two
+ * are not reliably distinguishable from an HTTP status alone -- is
+ * retried less and less often instead of every single poll tick forever,
+ * so one poisoned entry cannot spam the log indefinitely.
  *
  * @param {string} outboxDir
  * @param {{ reportEvidence: Function, reportResult: Function }} client
- * @param {{ onError?: (err: Error, entry: object) => void }} [options]
- * @returns {Promise<{ transmitted: number, remaining: number }>}
+ * @param {{ onError?: (err: Error, entry: object) => void, now?: () => number }} [options]
+ * @returns {Promise<{ transmitted: number, deferred: number, remaining: number }>}
  */
-async function drainOutbox(outboxDir, client, { onError } = {}) {
+async function drainOutbox(outboxDir, client, { onError, now = () => Date.now() } = {}) {
   const pending = listOutboxEntries(outboxDir);
+  const nowMs = now();
   let transmitted = 0;
+  let deferred = 0;
   for (const entry of pending) {
+    if (!isDueForRetry(entry, nowMs)) {
+      deferred += 1;
+      continue;
+    }
     try {
       await transmitOutboxEntry(entry, client);
       acknowledgeOutboxEntry(outboxDir, entry.id);
       transmitted += 1;
     } catch (err) {
+      recordTransmissionFailure(outboxDir, entry, err, nowMs);
       if (typeof onError === "function") onError(err, entry);
     }
   }
   return {
     transmitted,
+    deferred,
     remaining: listOutboxEntries(outboxDir).length,
   };
 }
@@ -285,4 +362,6 @@ module.exports = {
   transmitOutboxEntry,
   drainOutbox,
   createEvidenceBuffer,
+  computeRetryBackoffMs,
+  isDueForRetry,
 };

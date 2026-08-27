@@ -97,6 +97,7 @@ describe("outbox", () => {
       evidence: [],
     });
 
+    let nowMs = Date.parse("2026-08-27T00:00:00.000Z");
     const client = {
       reportEvidence: async () => {},
       reportResult: async () => {
@@ -104,11 +105,13 @@ describe("outbox", () => {
       },
     };
 
-    const drain = await drainOutbox(outboxDir, client);
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
     assert.equal(drain.transmitted, 0);
     assert.equal(drain.remaining, 1);
     assert.equal(listOutboxEntries(outboxDir)[0].result.status, "succeeded");
+    assert.equal(listOutboxEntries(outboxDir)[0].attempts, 1);
 
+    // Retrying before the backoff window elapses is deferred, not attempted.
     let calls = 0;
     const okClient = {
       reportEvidence: async () => {},
@@ -116,10 +119,25 @@ describe("outbox", () => {
         calls += 1;
       },
     };
-    const retry = await drainOutbox(outboxDir, okClient);
+    const tooSoon = await drainOutbox(outboxDir, okClient, { now: () => nowMs + 1000 });
+    assert.equal(calls, 0);
+    assert.equal(tooSoon.deferred, 1);
+    assert.equal(tooSoon.remaining, 1);
+
+    // Once the backoff window has elapsed, the entry is retried again.
+    nowMs += 20_000;
+    const retry = await drainOutbox(outboxDir, okClient, { now: () => nowMs });
     assert.equal(calls, 1);
     assert.equal(retry.transmitted, 1);
     assert.equal(retry.remaining, 0);
+  });
+
+  it("backs off exponentially and caps at a maximum retry interval", () => {
+    const { computeRetryBackoffMs } = require("./index.js");
+    assert.equal(computeRetryBackoffMs(0), 15_000);
+    assert.equal(computeRetryBackoffMs(1), 30_000);
+    assert.equal(computeRetryBackoffMs(2), 60_000);
+    assert.equal(computeRetryBackoffMs(20), 30 * 60_000);
   });
 
   it("createEvidenceBuffer collects reportEvidence without networking", async () => {
