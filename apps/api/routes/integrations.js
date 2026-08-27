@@ -73,6 +73,27 @@ function summarizeImportErrors(errors) {
   }));
 }
 
+// importCleanup.validateCleanupRequest requires `cleanup.scanId` (camelCase).
+// Callers have echoed the scan id under other names -- a top-level
+// `scan_id` on the request body, or a `scan_id` nested inside the `cleanup`
+// object itself -- so this normalizes every accepted shape into
+// `cleanup.scanId` in exactly one place, shared by both import routes,
+// rather than trusting each call site to get the casing right.
+function resolveEffectiveCleanup(cleanup, topLevelScanId) {
+  if (!cleanup || cleanup.enabled !== true) return cleanup;
+  if (typeof cleanup.scanId === "string" && cleanup.scanId.trim() !== "") {
+    return cleanup;
+  }
+  const nestedScanId =
+    typeof cleanup.scan_id === "string" && cleanup.scan_id.trim() !== ""
+      ? cleanup.scan_id
+      : null;
+  const scanId = nestedScanId || topLevelScanId;
+  if (!scanId) return cleanup;
+  const { scan_id: _unused, ...rest } = cleanup;
+  return { ...rest, scanId };
+}
+
 // --- Vault integration: scan mounts for inventory/expirations ---
 router.post(
   "/api/v1/integrations/vault/scan",
@@ -432,21 +453,19 @@ router.post(
         cleanup,
         scan_id: scanId,
       } = req.body || {};
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "items array required" });
-      }
-      const cleanupError = validateCleanupRequest(
-        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
-          ? { ...cleanup, scanId }
-          : cleanup,
-      );
+      const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
+      const cleanupError = validateCleanupRequest(effectiveCleanup);
       if (cleanupError) {
         return res.status(400).json({ error: cleanupError });
       }
-      const effectiveCleanup =
-        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
-          ? { ...cleanup, scanId }
-          : cleanup;
+      // A complete scan that legitimately finds zero items is still a real
+      // cleanup-driving result (see importCleanup.js), so an empty items
+      // array is only rejected when cleanup isn't the reason for the call.
+      const cleanupWillRun =
+        effectiveCleanup && effectiveCleanup.enabled === true;
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
+        return res.status(400).json({ error: "items array required" });
+      }
 
       // Bind each submitted item to the scan that actually discovered it
       // (metadata-only integration_scan_items rows), so provenance comes
@@ -2095,25 +2114,23 @@ router.post(
         cleanup,
         scan_id: scanId,
       } = req.body || {};
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "items array required" });
+      const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
+      const cleanupError = validateCleanupRequest(effectiveCleanup);
+      if (cleanupError) {
+        return res.status(400).json({ error: cleanupError });
       }
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError) {
         return res.status(400).json({ error: filterRulesError });
       }
-      const cleanupError = validateCleanupRequest(
-        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
-          ? { ...cleanup, scanId }
-          : cleanup,
-      );
-      if (cleanupError) {
-        return res.status(400).json({ error: cleanupError });
+      // A complete scan that legitimately finds zero items is still a real
+      // cleanup-driving result (see importCleanup.js), so an empty items
+      // array is only rejected when cleanup isn't the reason for the call.
+      const cleanupWillRun =
+        effectiveCleanup && effectiveCleanup.enabled === true;
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
+        return res.status(400).json({ error: "items array required" });
       }
-      const effectiveCleanup =
-        cleanup && cleanup.enabled === true && !cleanup.scanId && scanId
-          ? { ...cleanup, scanId }
-          : cleanup;
       // Issue #69: apply include/exclude rules at import time too, so
       // auto-sync (which posts scan items here) honors the same rules.
       const { items: itemsToImport, excludedCount: filteredOutCount } =

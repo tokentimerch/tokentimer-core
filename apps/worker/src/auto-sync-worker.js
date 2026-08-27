@@ -353,7 +353,7 @@ async function runAutoSync() {
               cleanup = {
                 enabled: true,
                 provider,
-                scan_id: scanId,
+                scanId,
                 reason: "auto_sync_cleanup",
               };
             } else if (cleanupObsolete && !scanId) {
