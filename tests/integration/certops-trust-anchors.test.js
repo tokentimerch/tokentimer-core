@@ -784,6 +784,86 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(installation.transition_state).to.equal("pending_remove");
   });
 
+  it("revoke-trust for one owner never touches the OS while another owner's reference is still live", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+
+    // Two independent owners install the same anchor to the same
+    // (agent, store, fingerprint) tuple.
+    const ownerAOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a",
+        idempotencyKey: `ref-count-dist-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerBOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b",
+        idempotencyKey: `ref-count-dist-b-${crypto.randomUUID()}`,
+      }),
+    );
+    for (const outcome of [ownerAOutcome, ownerBOutcome]) {
+      const job = await getJobRow(outcome.job.id);
+      const installationRow = await getInstallationById(outcome.installation.id);
+      await withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job,
+          result: buildResult({ job, installationRow, outcome: "installed" }),
+        }),
+      );
+    }
+
+    // Releasing owner A's reference must not create a real revoke-trust job
+    // (no OS mutation) while owner B's reference is still installed.
+    const releaseOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a",
+        idempotencyKey: `ref-count-revoke-a-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseOutcome.job).to.equal(null);
+    expect(releaseOutcome.skippedOsMutation).to.equal(true);
+
+    const ownerARow = await getInstallationById(ownerAOutcome.installation.id);
+    expect(ownerARow.transition_state).to.equal("removed");
+
+    // Owner B's reference must be completely untouched.
+    const ownerBRow = await getInstallationById(ownerBOutcome.installation.id);
+    expect(ownerBRow.transition_state).to.equal("installed");
+    expect(ownerBRow.transition_generation).to.equal(
+      ownerBOutcome.transitionGeneration,
+    );
+
+    // Once B also releases, that IS the last reference, so it goes through
+    // the normal pending_remove -> real job path.
+    const finalReleaseOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b",
+        idempotencyKey: `ref-count-revoke-b-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(finalReleaseOutcome.job).to.not.equal(null);
+    expect(finalReleaseOutcome.skippedOsMutation).to.not.equal(true);
+    const finalOwnerBRow = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    expect(finalOwnerBRow.transition_state).to.equal("pending_remove");
+  });
+
   it("fails closed on a signed pem/anchorType/fingerprint mismatch (defense-in-depth)", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();

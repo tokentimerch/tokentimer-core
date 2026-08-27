@@ -186,6 +186,64 @@ describe("trust-store/receipt: install lifecycle (real temp directory, atomic wr
     assert.equal(stillPending.row.transitionGeneration, 1);
   });
 
+  it("writeIntentReceipt with reclaimStalePending:true overwrites a stale pending row owned by a DIFFERENT jobId/transitionGeneration", () => {
+    const receiptDir = makeTempReceiptDir();
+
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-crashed",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+
+    // Simulates the caller having re-probed the live OS store and confirmed
+    // the crashed job's intent never reached it, so there is nothing left
+    // to race against (see writeIntentReceipt's reclaimStalePending doc).
+    const reclaimed = receipt.writeIntentReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-retry",
+      transitionGeneration: 3,
+      intentState: "pending_install",
+      reclaimStalePending: true,
+    });
+
+    assert.equal(reclaimed.jobId, "job-retry");
+    assert.equal(reclaimed.transitionGeneration, 3);
+    const onDisk = receipt.readReceipt(receiptDir, STORE, FP_A);
+    assert.equal(onDisk.row.jobId, "job-retry");
+    assert.equal(onDisk.row.transitionGeneration, 3);
+  });
+
+  it("writeIntentReceipt with reclaimStalePending:true does not need to reclaim its OWN pending row (no-op passthrough)", () => {
+    const receiptDir = makeTempReceiptDir();
+
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-resumed",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+
+    const resumed = receipt.writeIntentReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-resumed",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+      reclaimStalePending: true,
+    });
+
+    assert.equal(resumed.jobId, "job-resumed");
+    assert.equal(resumed.transitionGeneration, 1);
+  });
+
   it("writeIntentReceipt -> finalizeReceipt round-trips through pending_remove -> removed", () => {
     const receiptDir = makeTempReceiptDir();
     receipt.writeIntentReceipt({

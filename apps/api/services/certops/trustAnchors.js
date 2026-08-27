@@ -597,6 +597,38 @@ async function lockOrCreateInstallation({
   return { row: retried.rows[0], created: false };
 }
 
+/**
+ * Counts other owners' ownership-reference rows for the same
+ * (workspace, agent, store, fingerprint) that have not reached `removed`
+ * yet. Called only from inside runCreateTrustJob, under the anchor's
+ * FOR UPDATE lock taken at the top of that function -- every createTrustJob
+ * call for this anchor is already serialized on that lock, so this plain
+ * COUNT (no row lock of its own) cannot race with a sibling owner's
+ * concurrent release of the same fingerprint. Decision 6 (ADR-0012): "the
+ * store is only physically touched when the last reference is released".
+ */
+async function countOtherLiveReferences({
+  client,
+  workspaceId,
+  agentId,
+  store,
+  fingerprintSha256,
+  owner,
+}) {
+  const result = await client.query(
+    `SELECT COUNT(*)::int AS count
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1
+        AND agent_id = $2
+        AND store = $3
+        AND fingerprint_sha256 = $4
+        AND owner != $5
+        AND transition_state != 'removed'`,
+    [workspaceId, agentId, store, fingerprintSha256, owner],
+  );
+  return result.rows[0]?.count ?? 0;
+}
+
 // --- Terminal-state unwinding ---
 //
 // event                                    pending_install row      pending_remove row
@@ -830,6 +862,65 @@ async function runCreateTrustJob(client, params) {
     );
   }
 
+  if (operation === "revoke-trust") {
+    const otherLiveReferences = await countOtherLiveReferences({
+      client,
+      workspaceId,
+      agentId,
+      store,
+      fingerprintSha256: anchor.fingerprint_sha256,
+      owner,
+    });
+    if (otherLiveReferences > 0) {
+      // Decision 6: "the store is only physically touched when the last
+      // reference is released". Another owner still references this exact
+      // (agent, store, fingerprint) tuple, so this owner's release must not
+      // reach the OS at all -- go straight to removed with no job, no
+      // pending_remove, and no agent dispatch. Creating a real revoke-trust
+      // job here would have the agent run its OS-level removal unconditionally
+      // and delete the other owner's still-live certificate out from under it.
+      const releasedRow = await client.query(
+        `UPDATE certops_trust_anchor_installations
+            SET transition_state = 'removed',
+                transition_generation = transition_generation + 1,
+                last_attempt_at = NOW(),
+                last_error = NULL,
+                next_reconcile_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+        [installationRow.id],
+      );
+      const releasedInstallation = installationFromRow(releasedRow.rows[0]);
+
+      await writeAudit({
+        client,
+        actorUserId: requestedByUserId,
+        subjectUserId: requestedByUserId,
+        action: "CERTOPS_TRUST_REFERENCE_RELEASED",
+        targetType: "certops_trust_anchor_installation",
+        targetId: releasedInstallation.id,
+        workspaceId,
+        metadata: {
+          trustAnchorId: anchor.id,
+          agentId,
+          store,
+          owner,
+          transitionGeneration: releasedInstallation.transitionGeneration,
+          otherLiveReferences,
+        },
+      });
+
+      return {
+        job: null,
+        created: false,
+        skippedOsMutation: true,
+        transitionGeneration: releasedInstallation.transitionGeneration,
+        installation: releasedInstallation,
+      };
+    }
+  }
+
   const nextTransitionState =
     operation === "distribute-trust" ? "pending_install" : "pending_remove";
   const nextReconcileAt = new Date(Date.now() + DEFAULT_RECONCILE_DELAY_MS);
@@ -988,7 +1079,17 @@ function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
     // outcome.job/outcome.created off whatever jobCreator returns, exactly
     // the shape createCertificateJob's own returnOutcome:true already
     // produces -- this wrapper is transparent to that caller.
-    return { job: outcome.job, created: outcome.created };
+    // skippedOsMutation/installation pass through too: a revoke-trust call
+    // that released one owner's reference while another owner's is still
+    // live returns job: null here (see runCreateTrustJob), and the route
+    // handler needs both fields to respond correctly instead of crashing on
+    // a null job.
+    return {
+      job: outcome.job,
+      created: outcome.created,
+      skippedOsMutation: outcome.skippedOsMutation === true,
+      installation: outcome.installation,
+    };
   };
 }
 

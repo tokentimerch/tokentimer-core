@@ -868,12 +868,19 @@ function createManualCertificateJobHandler({
                   owner: req.body?.owner,
                 })
               : undefined;
-      const { job } = await manualJobCreator({
+      const { job, skippedOsMutation, installation } = await manualJobCreator({
         ...jobCreateOptionsFromRequest(req),
         ...(jobCreator ? { jobCreator } : {}),
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
       });
+      // revoke-trust for an owner whose reference isn't the last live one
+      // creates no job at all (trustAnchors.js's runCreateTrustJob): the OS
+      // store must not be touched while another owner still references the
+      // same fingerprint, so there is nothing job-shaped to hand back.
+      if (skippedOsMutation) {
+        return res.status(200).json({ ownershipReleased: true, installation });
+      }
       return res
         .status(201)
         .json({ job: redactClaimIdForNonAdmins(req, jobDetail(job)) });

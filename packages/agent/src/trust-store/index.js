@@ -806,6 +806,15 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     jobId,
     transitionGeneration,
     intentState: "pending_install",
+    // The isPresent probe just above proved the fingerprint is NOT in the
+    // OS store right now. If a stale pending_install receipt from a
+    // DIFFERENT, now-dead job is sitting on this exact (store, fingerprint),
+    // that same probe result proves ITS intent never reached the OS either
+    // -- there is nothing for this fresh attempt to race against. Without
+    // this, an agent crash between intent-write and OS mutation permanently
+    // blocks every later distribute-trust job for that fingerprint, with no
+    // automatic recovery (found on real-host QA: TRU-10 retry).
+    reclaimStalePending: true,
     now,
   });
 

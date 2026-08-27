@@ -286,6 +286,16 @@ function readReceipt(receiptDir, store, fingerprintSha256) {
  * concurrent attempts racing on the same (store, fingerprint). The executor
  * (./index.js) serializes that in the normal case; this check is the
  * last-resort guard against a caller that does not.
+ *
+ * `reclaimStalePending` lifts that refusal for a row already classified
+ * `crash_before_mutation` (see classifyRecoveryOutcome): the caller must
+ * only pass this after re-probing the live OS store itself and confirming
+ * the fingerprint is not there, which is the only way to know the row's
+ * intent never reached the OS. Without this escape hatch, a receipt
+ * orphaned by a crash (the owning job's control-plane row left stuck with
+ * an expired lease, never reaching a terminal state) permanently blocks
+ * every future job for that (store, fingerprint), with no automatic path
+ * back to health -- see the real-host QA that found this.
  * @param {object} input
  * @param {string} input.receiptDir
  * @param {string} input.store
@@ -293,6 +303,7 @@ function readReceipt(receiptDir, store, fingerprintSha256) {
  * @param {string} input.jobId
  * @param {number} input.transitionGeneration
  * @param {"pending_install"|"pending_remove"} input.intentState
+ * @param {boolean} [input.reclaimStalePending]
  * @param {() => Date} [input.now]
  * @returns {object} the persisted row
  */
@@ -303,6 +314,7 @@ function writeIntentReceipt({
   jobId,
   transitionGeneration,
   intentState,
+  reclaimStalePending = false,
   now = () => new Date(),
 }) {
   if (intentState !== "pending_install" && intentState !== "pending_remove") {
@@ -313,7 +325,8 @@ function writeIntentReceipt({
     existing !== null &&
     !("corrupt" in existing) &&
     (existing.row.state === "pending_install" || existing.row.state === "pending_remove") &&
-    (existing.row.jobId !== jobId || existing.row.transitionGeneration !== transitionGeneration)
+    (existing.row.jobId !== jobId || existing.row.transitionGeneration !== transitionGeneration) &&
+    !reclaimStalePending
   ) {
     throw buildError(
       `refusing to overwrite an existing ${existing.row.state} receipt for ` +
