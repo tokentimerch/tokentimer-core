@@ -6142,7 +6142,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     await drainOutbox(executionContext.outboxDir, client, {
       onError: (err, entry) =>
         defaultAgentLogger.error(
-          `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+          `outbox drain failed for ${entry.id}; will retry`,
           err,
         ),
     });
