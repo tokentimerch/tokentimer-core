@@ -2216,11 +2216,44 @@ async function ingestResult({
       );
     }
 
+    // Every real agent-reported outcome used to leave result_metadata at its
+    // insert-time default ({}): this UPDATE set status/error columns but
+    // never result_metadata, so 100% of distribute-trust/revoke-trust/deploy
+    // jobs carried no result evidence at all. body?.trustResult is already
+    // schema-validated (trust-result-contract.schema.json) for every trust-
+    // anchor job by the time this runs; rejectionReason/keyRotated are
+    // schema-validated generic resultBody fields (agent-protocol.schema.json)
+    // available for every job family. null-only entries below are always
+    // legitimate: e.g. a very early failure before the agent even attempted
+    // the OS mutation may not have an observedFingerprintBefore.
+    const trustResult = body?.trustResult || null;
+    const resultMetadata = {
+      ...(body.rejectionReason != null
+        ? { rejectionReason: body.rejectionReason }
+        : {}),
+      ...(body.keyRotated != null ? { keyRotated: body.keyRotated } : {}),
+      ...(trustResult
+        ? {
+            outcome: trustResult.outcome ?? null,
+            mutationAttempted: trustResult.mutationAttempted ?? null,
+            mutationPerformed: trustResult.mutationPerformed ?? null,
+            failureCategory: trustResult.failureCategory ?? null,
+            observedFingerprintBefore:
+              trustResult.observedFingerprintBefore ?? null,
+            observedFingerprintAfter:
+              trustResult.observedFingerprintAfter ?? null,
+            store: trustResult.store ?? null,
+            transitionGeneration: trustResult.transitionGeneration ?? null,
+          }
+        : {}),
+    };
+
     const updated = await client.query(
       `UPDATE certificate_jobs
           SET status = $2,
               error_code = $3,
               error_message = $4,
+              result_metadata = $7::jsonb,
               completed_at = COALESCE(completed_at, NOW()),
               lease_expires_at = NULL,
               needs_operator_reconciliation = CASE
@@ -2242,10 +2275,40 @@ async function ingestResult({
         errorMessage,
         setNeedsReconciliation,
         reconciliationReason,
+        JSON.stringify(resultMetadata),
       ],
     );
 
     const row = updated.rows[0];
+
+    // certificate_job_log's schema is designed to record job.completed/
+    // job.failed/job.progress lifecycle events, but until now only the
+    // lease-reaper sweep's synthetic terminalizations ever wrote there --
+    // never this path, which is where every *real* agent-reported outcome
+    // lands. Mirrors insertJobLog's plain-INSERT shape in
+    // apps/worker/src/certops-worker.js so the two writers stay consistent;
+    // this transaction already holds job.id row-locked, so no existence
+    // recheck is needed here either.
+    await client.query(
+      `INSERT INTO certificate_job_log (
+         workspace_id, job_id, event_type, status, message, metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        agent.workspaceId,
+        job.id,
+        isFailure ? "job.failed" : "job.completed",
+        jobStatus,
+        isFailure
+          ? errorMessage || `Agent reported result: ${jobStatus}`
+          : `Agent reported result: ${jobStatus}`,
+        JSON.stringify({
+          agentId: agent.agentId || null,
+          errorCode: errorCode || null,
+          ...resultMetadata,
+        }),
+      ],
+    );
 
     // ADR-0012 decision 20b/20e: trust-anchor jobs advance/unwind the
     // certops_trust_anchor_installations row from inside this same
@@ -2348,6 +2411,37 @@ async function ingestResult({
     // then retried loses its own history, and orphaned_unknown_effect is the one
     // outcome where the real-world state is unknown and someone must intervene.
     if (isFailure) {
+      // Symmetric with the success-path audit above: CERTOPS_JOB_FAILED used
+      // to carry only the generic error code/message, dropping the same
+      // trust-result fields (outcome/observedFingerprintBefore/After/
+      // mutationPerformed/failureCategory/provenance) the success path
+      // already includes. outcome/mutationPerformed/failureCategory/
+      // fingerprints come from body.trustResult, already schema-validated
+      // for every trust-anchor job; provenance is not part of that contract
+      // (it is a server-derived installation-row field, same as on the
+      // success path), so it is read from the installation row directly.
+      // Fields the agent genuinely never reported (e.g. a failure before it
+      // attempted the OS mutation) stay null rather than being invented.
+      let trustResultAuditFields = {};
+      if (isTrustAnchorOperation(job.operation)) {
+        const installationLookup = await client.query(
+          `SELECT provenance
+             FROM certops_trust_anchor_installations
+            WHERE workspace_id = $1 AND last_job_id = $2
+            LIMIT 1`,
+          [agent.workspaceId, job.id],
+        );
+        trustResultAuditFields = {
+          outcome: body?.trustResult?.outcome ?? null,
+          mutationPerformed: body?.trustResult?.mutationPerformed ?? null,
+          failureCategory: body?.trustResult?.failureCategory ?? null,
+          observedFingerprintBefore:
+            body?.trustResult?.observedFingerprintBefore ?? null,
+          observedFingerprintAfter:
+            body?.trustResult?.observedFingerprintAfter ?? null,
+          provenance: installationLookup.rows[0]?.provenance ?? null,
+        };
+      }
       await auditWriter({
         client,
         actorUserId: null,
@@ -2373,6 +2467,7 @@ async function ingestResult({
             row.needs_operator_reconciliation,
           ),
           reconciliationReason: row.reconciliation_reason || null,
+          ...trustResultAuditFields,
           ...windowsIisAuditFields(job.payload),
         },
       });
@@ -2387,7 +2482,8 @@ async function ingestResult({
       operation: job.operation,
       status: jobStatus,
       origin: TRANSITION_ORIGINS.AGENT_RESULT,
-    });    if (classification.alertWorthy) {
+    });
+    if (classification.alertWorthy) {
       await recordOutboxEvent({
         client,
         workspaceId: agent.workspaceId,

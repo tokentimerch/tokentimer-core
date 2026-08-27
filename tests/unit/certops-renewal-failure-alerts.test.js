@@ -249,7 +249,7 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
 // --- Emission point 1: agentDispatch.ingestResult ---
 
 function createMockPool(handler) {
-  const state = { queries: [], released: false, transaction: [], audits: [] };
+  const state = { queries: [], released: false, transaction: [], audits: [], jobLogs: [] };
   const client = {
     query: async (text, params) => {
       const sql = typeof text === "string" ? text : text?.text || "";
@@ -269,6 +269,20 @@ function createMockPool(handler) {
       // the job transition share one transaction).
       if (sql.includes("INSERT INTO audit_events")) {
         state.audits.push({ action: params[2], metadata: params[6] });
+        return { rows: [] };
+      }
+      // Bug 2: absorbed the same way for the same reason, so these
+      // alert-outbox tests don't each need their own certificate_job_log
+      // branch.
+      if (sql.includes("INSERT INTO certificate_job_log")) {
+        state.jobLogs.push({
+          workspaceId: params[0],
+          jobId: params[1],
+          eventType: params[2],
+          status: params[3],
+          message: params[4],
+          metadata: params[5] ? JSON.parse(params[5]) : null,
+        });
         return { rows: [] };
       }
       if (

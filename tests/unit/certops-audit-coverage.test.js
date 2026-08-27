@@ -671,6 +671,7 @@ describe("CERTOPS_JOB_CREATED_AUTOMATIC", () => {
 
 function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
   const audits = [];
+  const jobLogs = [];
   const transaction = [];
   const client = {
     async query(text, params) {
@@ -687,6 +688,20 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
           targetType: params[3],
           metadata: params[6],
           workspaceId: params[7],
+        });
+        return { rows: [] };
+      }
+      // Bug 2 regression coverage: agent-result ingestion now writes a
+      // certificate_job_log row for every terminal outcome, mirroring the
+      // audit_events absorption above.
+      if (sql.includes("INSERT INTO certificate_job_log")) {
+        jobLogs.push({
+          workspaceId: params[0],
+          jobId: params[1],
+          eventType: params[2],
+          status: params[3],
+          message: params[4],
+          metadata: params[5] ? JSON.parse(params[5]) : null,
         });
         return { rows: [] };
       }
@@ -735,6 +750,7 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
   };
   return {
     audits,
+    jobLogs,
     transaction,
     client,
     connect: async () => client,
