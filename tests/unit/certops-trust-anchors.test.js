@@ -8,12 +8,15 @@ const {
   CERTOPS_TRUST_ANCHOR_INVALID,
   CERTOPS_TRUST_ANCHOR_PEM_INVALID,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+  CERTOPS_TARGET_AGENT_INVALID,
+  CERTOPS_TARGET_AGENT_NOT_FOUND,
   ANCHOR_TYPES,
   parseAndValidateAnchorPem,
   normalizeStore,
   normalizeOwner,
   normalizeAgentId,
   normalizeIdempotencyKey,
+  assertTargetAgentRegistered,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/trustAnchors.js"),
 );
@@ -153,6 +156,103 @@ describe("trust job field normalization (ADR-0012 decision 20a/20c)", () => {
     assertCode(() => normalizeOwner(""), CERTOPS_TRUST_ANCHOR_INVALID);
     assertCode(() => normalizeOwner("   "), CERTOPS_TRUST_ANCHOR_INVALID);
     assert.equal(normalizeOwner(" workspace-policy "), "workspace-policy");
+  });
+});
+
+describe("assertTargetAgentRegistered (dispatching a trust job to a nonexistent/unregistered agent)", () => {
+  const WORKSPACE_ID = "11111111-1111-1111-1111-111111111111";
+  const AGENT_ROW_ID = "22222222-2222-2222-2222-222222222222";
+
+  function agentRow(overrides = {}) {
+    return {
+      id: AGENT_ROW_ID,
+      workspace_id: WORKSPACE_ID,
+      agent_id: "agent-1",
+      name: null,
+      hostname: null,
+      platform: null,
+      agent_version: "1.0.0",
+      protocol_version: "1.0.0",
+      status: "active",
+      agent_kind: "normal",
+      last_seen_at: null,
+      clock_offset_ms: null,
+      ntp_synced: null,
+      pinned_signing_key_id: null,
+      created_at: new Date(),
+      retired_at: null,
+      retire_reason: null,
+      downtime_alerts_enabled: true,
+      contact_group_id: null,
+      ...overrides,
+    };
+  }
+
+  it("rejects a malformed agentId with CERTOPS_TARGET_AGENT_INVALID without querying the database", async () => {
+    let queried = false;
+    const client = {
+      query: async () => {
+        queried = true;
+        throw new Error("must not query the database for a malformed agentId");
+      },
+    };
+    await assert.rejects(
+      () =>
+        assertTargetAgentRegistered({
+          client,
+          workspaceId: WORKSPACE_ID,
+          agentId: "not-a-uuid",
+        }),
+      (error) => error?.code === CERTOPS_TARGET_AGENT_INVALID,
+    );
+    assert.equal(queried, false);
+  });
+
+  it("rejects an empty agentId with CERTOPS_TARGET_AGENT_INVALID", async () => {
+    const client = { query: async () => ({ rows: [] }) };
+    await assert.rejects(
+      () =>
+        assertTargetAgentRegistered({ client, workspaceId: WORKSPACE_ID, agentId: "" }),
+      (error) => error?.code === CERTOPS_TARGET_AGENT_INVALID,
+    );
+  });
+
+  it("rejects a well-formed but unregistered agentId with CERTOPS_TARGET_AGENT_NOT_FOUND", async () => {
+    const client = { query: async () => ({ rows: [] }) };
+    await assert.rejects(
+      () =>
+        assertTargetAgentRegistered({
+          client,
+          workspaceId: WORKSPACE_ID,
+          agentId: AGENT_ROW_ID,
+        }),
+      (error) => error?.code === CERTOPS_TARGET_AGENT_NOT_FOUND,
+    );
+  });
+
+  it("resolves with the agent when it is registered in this workspace", async () => {
+    const client = { query: async () => ({ rows: [agentRow()] }) };
+    const agent = await assertTargetAgentRegistered({
+      client,
+      workspaceId: WORKSPACE_ID,
+      agentId: AGENT_ROW_ID,
+    });
+    assert.equal(agent.id, AGENT_ROW_ID);
+  });
+
+  it("scopes the lookup to the given workspace (an agent registered to another workspace is treated as not found)", async () => {
+    // getAgentById's own query already filters on workspace_id; simulating
+    // the empty-rows result a cross-workspace agentId would produce.
+    const client = { query: async () => ({ rows: [] }) };
+    await assert.rejects(
+      () =>
+        assertTargetAgentRegistered({
+          client,
+          workspaceId: WORKSPACE_ID,
+          agentId: AGENT_ROW_ID,
+        }),
+      (error) => error?.code === CERTOPS_TARGET_AGENT_NOT_FOUND,
+    );
   });
 });
 

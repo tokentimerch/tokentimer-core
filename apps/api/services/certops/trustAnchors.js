@@ -36,6 +36,7 @@ const {
 const {
   validateTrustResult,
 } = require("../../../../packages/contracts/certops/validate-trust-result.cjs");
+const { getAgentById } = require("./agentRegistry");
 
 // --- Error codes ---
 const CERTOPS_TRUST_ANCHOR_INVALID = "CERTOPS_TRUST_ANCHOR_INVALID";
@@ -52,6 +53,18 @@ const CERTOPS_TRUST_RESULT_INVALID = "CERTOPS_TRUST_RESULT_INVALID";
 const CERTOPS_TRUST_RESULT_MISMATCH = "CERTOPS_TRUST_RESULT_MISMATCH";
 const CERTOPS_TRUST_RESULT_STALE_GENERATION =
   "CERTOPS_TRUST_RESULT_STALE_GENERATION";
+// dispatching distribute-trust/revoke-trust against an agentId that isn't a
+// well-formed UUID, or one that is well-formed but not registered in this
+// workspace, used to skip application-level validation entirely and fall
+// through to lockOrCreateInstallation's INSERT: a malformed id raised a raw
+// "invalid input syntax for type uuid" and an unregistered-but-well-formed
+// id raised a raw FK violation on fk_certops_trust_anchor_installations_agent.
+// Neither mapped to a CERTOPS_* code, so both surfaced as a bare 500.
+// assertTargetAgentRegistered (below) distinguishes the two the same way
+// this file already distinguishes CERTOPS_TRUST_ANCHOR_INVALID (malformed)
+// from CERTOPS_TRUST_ANCHOR_NOT_FOUND (well-formed but absent) for anchors.
+const CERTOPS_TARGET_AGENT_INVALID = "CERTOPS_TARGET_AGENT_INVALID";
+const CERTOPS_TARGET_AGENT_NOT_FOUND = "CERTOPS_TARGET_AGENT_NOT_FOUND";
 const ANCHOR_TYPES = Object.freeze(["root", "intermediate"]);
 const ANCHOR_TYPE_SET = new Set(ANCHOR_TYPES);
 const ANCHOR_STATUSES = Object.freeze(["active", "revoked"]);
@@ -60,6 +73,11 @@ const ANCHOR_SOURCES = Object.freeze(["api", "system"]);
 const STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
 const OWNER_MAX_LENGTH = 128;
 const NAME_MAX_LENGTH = 255;
+// certops_agents.id is UUID PRIMARY KEY (gen_random_uuid()); this mirrors
+// the shape jobs.js's SUBJECT_ID_UUID_PATTERN already uses for the same
+// "is this even shaped like a UUID before we ask Postgres" purpose.
+const AGENT_ID_UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 // Delay before a freshly pending row's first reconciliation pass. A pending
 // transition an agent never reports back on must surface as alertable, not
@@ -188,6 +206,35 @@ function normalizeAgentId(value) {
     );
   }
   return agentId;
+}
+
+/**
+ * Distinguishes "the agentId isn't even shaped like a UUID" (400,
+ * CERTOPS_TARGET_AGENT_INVALID) from "well-formed but no such agent in this
+ * workspace" (404, CERTOPS_TARGET_AGENT_NOT_FOUND), mirroring how this file
+ * already splits CERTOPS_TRUST_ANCHOR_INVALID from
+ * CERTOPS_TRUST_ANCHOR_NOT_FOUND for anchor lookups above. Must run before
+ * lockOrCreateInstallation's INSERT: certops_trust_anchor_installations'
+ * agent_id column has no CHECK of its own, and its FK
+ * (fk_certops_trust_anchor_installations_agent) only fires at INSERT time,
+ * by which point the raw Postgres error (invalid UUID syntax, or an FK
+ * violation) has no CERTOPS_* code for handleCertOpsError to recognize.
+ */
+async function assertTargetAgentRegistered({ client, workspaceId, agentId }) {
+  if (!AGENT_ID_UUID_PATTERN.test(agentId)) {
+    throw trustAnchorError(
+      "agentId must be a well-formed UUID identifying a registered agent",
+      CERTOPS_TARGET_AGENT_INVALID,
+    );
+  }
+  const agent = await getAgentById({ client, workspaceId, agentId });
+  if (!agent) {
+    throw trustAnchorError(
+      "Target agent not found in this workspace",
+      CERTOPS_TARGET_AGENT_NOT_FOUND,
+    );
+  }
+  return agent;
 }
 
 function normalizeIdempotencyKey(value) {
@@ -831,6 +878,13 @@ async function runCreateTrustJob(client, params) {
   // job's store is decided, so the value persisted here and the value an
   // agent echoes back can never disagree.
   const store = normalizeStore(resolveTrustAnchorStoreLabel(anchor.anchor_type));
+
+  // Without this check, a nonexistent/unregistered agentId skipped straight
+  // to lockOrCreateInstallation's INSERT and surfaced as a raw Postgres
+  // error (invalid UUID syntax or an FK violation on
+  // fk_certops_trust_anchor_installations_agent) that handleCertOpsError
+  // could not recognize, so both cases fell through to a bare 500.
+  await assertTargetAgentRegistered({ client, workspaceId, agentId });
 
   const { row: installationRow, created: installationCreated } =
     await lockOrCreateInstallation({
@@ -1505,6 +1559,8 @@ module.exports = {
   CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  CERTOPS_TARGET_AGENT_INVALID,
+  CERTOPS_TARGET_AGENT_NOT_FOUND,
   ANCHOR_TYPES,
   DEFAULT_RECONCILE_DELAY_MS,
   parseAndValidateAnchorPem,
@@ -1517,6 +1573,7 @@ module.exports = {
   normalizeStore,
   normalizeOwner,
   normalizeAgentId,
+  assertTargetAgentRegistered,
   normalizeIdempotencyKey,
   createTrustJob,
   manualTrustJobCreator,

@@ -148,6 +148,8 @@ const {
   CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  CERTOPS_TARGET_AGENT_INVALID,
+  CERTOPS_TARGET_AGENT_NOT_FOUND,
   createTrustAnchor,
   listTrustAnchors,
   manualTrustJobCreator,
@@ -586,6 +588,22 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message || "Trust anchor is not active",
       code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+    });
+  }
+  // Target-agent validation for distribute-trust/revoke-trust
+  // (trustAnchors.js's assertTargetAgentRegistered): malformed id is a 400,
+  // well-formed-but-unregistered is a 404, mirroring the anchor-lookup
+  // split just above.
+  if (err?.code === CERTOPS_TARGET_AGENT_INVALID) {
+    return res.status(400).json({
+      error: err.message || "agentId is invalid",
+      code: CERTOPS_TARGET_AGENT_INVALID,
+    });
+  }
+  if (err?.code === CERTOPS_TARGET_AGENT_NOT_FOUND) {
+    return res.status(404).json({
+      error: err.message || "Target agent not found",
+      code: CERTOPS_TARGET_AGENT_NOT_FOUND,
     });
   }
   // Result-ingestion codes (agentDispatch.ingestResult) mapped here too for
