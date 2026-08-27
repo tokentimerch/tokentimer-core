@@ -274,9 +274,17 @@ function readReceipt(receiptDir, store, fingerprintSha256) {
  * normally serializes this, so this is a last-resort guard.
  *
  * `reclaimStalePending` lifts that refusal for a row the caller has already
- * confirmed (via a live re-probe) never reached the OS - otherwise a receipt
- * orphaned by a crash would permanently block every future job for that
- * (store, fingerprint).
+ * confirmed (via a live re-probe of the OS store, immediately before this
+ * call) never reached, or already left, the OS as claimed - otherwise a
+ * receipt orphaned by a crash would permanently block every future job for
+ * that (store, fingerprint). Both of ./index.js's callers only ever pass
+ * `true` here (never conditionally), so this guard cannot actually prevent
+ * a genuine two-process race on a shared `receiptDir` - it can only end up
+ * overwritten silently. That residual failure mode is caught, not silent:
+ * the process that had the row taken out from under it discovers this at
+ * its own `finalizeReceipt` call, which throws `RECEIPT_GENERATION_MISMATCH`
+ * against the new owner's row; ./index.js's callers catch that and report a
+ * tagged failure result instead of throwing.
  * @param {object} input
  * @param {string} input.receiptDir
  * @param {string} input.store
@@ -314,6 +322,7 @@ function writeIntentReceipt({
         `(store=${store}, fingerprint=${fingerprintSha256}) owned by a different ` +
         `jobId/transitionGeneration (existing: ${existing.row.jobId}/${existing.row.transitionGeneration}, ` +
         `incoming: ${jobId}/${transitionGeneration})`,
+      "RECEIPT_PENDING_CONFLICT",
     );
   }
   const row = validateReceiptRow({

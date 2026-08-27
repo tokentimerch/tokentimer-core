@@ -695,7 +695,7 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(secondExecFileImpl.calls.length, 0);
   });
 
-  it("refuses when a DIFFERENT jobId's remove attempt is still pending on the same receipt", async () => {
+  it("reclaims a DIFFERENT jobId's stale pending_remove receipt rather than permanently refusing (TRU-10 symmetric fix)", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});
     await installFirst(receiptDir, fsImpl);
@@ -703,22 +703,62 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
       receiptDir,
       store: trustStore.DEBIAN_STORE_NAME,
       fingerprintSha256: CA_FINGERPRINT,
-      jobId: "other-job-in-flight",
+      jobId: "crashed-job",
       transitionGeneration: 2,
       intentState: "pending_remove",
     });
 
     const execFileImpl = makeFakeExecFile({ succeed: true });
     const result = await trustStore.revokeTrust({
-      job: revokeJob({ jobId: "this-job", transitionGeneration: 2 }),
+      job: revokeJob({ jobId: "this-job", transitionGeneration: 3 }),
       family: "debian",
       receiptDir,
       seams: { fsImpl, execFileImpl },
     });
 
-    assert.equal(result.mutationAttempted, false);
-    assert.equal(result.failureCategory, "receipt_remove_in_progress");
+    // The material is still physically present (the crashed job never
+    // completed its removal), so this job proceeds to remove it for real,
+    // exactly as if no stale receipt had existed.
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(execFileImpl.calls.length, 1);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.jobId, "this-job");
+    assert.equal(finalReceipt.row.state, "removed");
+  });
+
+  it("reclaims a DIFFERENT jobId's stale pending_remove receipt when the material is already gone too", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+    // Simulate the crashed job's removal having actually completed on the
+    // OS side (file deleted) before it crashed, without ever finalizing.
+    fsImpl.unlinkSync(trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT));
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "crashed-job",
+      transitionGeneration: 2,
+      intentState: "pending_remove",
+    });
+
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob({ jobId: "this-job", transitionGeneration: 3 }),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "already_absent");
+    assert.equal(result.mutationPerformed, false);
     assert.equal(execFileImpl.calls.length, 0);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.jobId, "this-job");
+    assert.equal(finalReceipt.row.state, "removed");
   });
 
   it("resumes a crashed remove attempt for the SAME jobId (pending_remove for this job is valid ownership proof)", async () => {
@@ -998,3 +1038,48 @@ describe("trust-store: distributeTrust / revokeTrust on Windows", () => {
     assert.equal(removeExecFileImpl.calls.length, 0);
   });
 });
+
+describe("trust-store: receipt races never throw (defense in depth against a shared receiptDir)", () => {
+  it("distributeTrust reports a tagged failure, never throws, if the intent receipt is stolen out from under it before finalize", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    // Simulate a second process racing on the identical (store, fingerprint):
+    // once this call's own writeIntentReceipt has run (inside distributeTrust,
+    // synchronously before the awaited mutation), a sibling process reclaims
+    // the same row for a different jobId before this call's finalizeReceipt
+    // runs. distributeTrust's own execFileImpl is where we splice in that
+    // interloper write, since it fires between intent-write and finalize.
+    const interloperExecFileImpl = (file, args, options, callback) => {
+      receipt.writeIntentReceipt({
+        receiptDir,
+        store: trustStore.DEBIAN_STORE_NAME,
+        fingerprintSha256: CA_FINGERPRINT,
+        jobId: "interloper-job",
+        transitionGeneration: 99,
+        intentState: "pending_install",
+        reclaimStalePending: true,
+      });
+      execFileImpl(file, args, options, callback);
+    };
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob({ jobId: "victim-job" }),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: interloperExecFileImpl },
+    });
+
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(result.failureCategory, "receipt_finalize_conflict");
+    assert.equal(result.receipt.state, "intent_written");
+
+    // The interloper's row is what's actually on disk, untouched by the
+    // victim's rejected finalize attempt.
+    const onDisk = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(onDisk.row.jobId, "interloper-job");
+  });
+});
+

@@ -27,6 +27,7 @@ const {
   CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
 } = require("../../apps/api/services/certops/trustAnchors");
@@ -344,6 +345,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     generationOverride,
     trustAnchorIdOverride,
     fingerprintOverride,
+    failureCategoryOverride,
   }) {
     const mutationAttempted = outcome === "installed" || outcome === "removed";
     const isRemovalOutcome =
@@ -370,6 +372,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         : (fingerprintOverride ?? installationRow.fingerprint_sha256),
       receipt: { id: "receipt-1", state: "finalized" },
       observedAt: new Date().toISOString(),
+      ...(failureCategoryOverride ? { failureCategory: failureCategoryOverride } : {}),
     };
   }
 
@@ -864,6 +867,102 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(finalOwnerBRow.transition_state).to.equal("pending_remove");
   });
 
+  it("does not short-circuit (and does not orphan a certificate) when the only other reference is still pending_install (D1 fix)", async () => {
+    // Regression for the orphaned-certificate leak found in the 0.14.0
+    // consistency-check pass: countOtherLiveReferences must not credit an
+    // unconfirmed pending_install row as a live reference, because that row
+    // can still be deleted outright (never a real reference) by
+    // onTrustJobTerminalTransition if its own job later fails. Crediting it
+    // let owner A's revoke skip the real OS removal on the strength of a
+    // reference that could vanish without a trace, permanently orphaning the
+    // certificate on the host.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+
+    const ownerAOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a",
+        idempotencyKey: `d1-dist-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerAJob = await getJobRow(ownerAOutcome.job.id);
+    const ownerAInstallationRow = await getInstallationById(ownerAOutcome.installation.id);
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: ownerAJob,
+        result: buildResult({ job: ownerAJob, installationRow: ownerAInstallationRow, outcome: "installed" }),
+      }),
+    );
+
+    // Owner B's install is dispatched but never resolved - it stays
+    // pending_install, exactly the state a crashed/still-in-flight job would
+    // be in when owner A's revoke request runs.
+    const ownerBOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b",
+        idempotencyKey: `d1-dist-b-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerBPendingRow = await getInstallationById(ownerBOutcome.installation.id);
+    expect(ownerBPendingRow.transition_state).to.equal("pending_install");
+
+    // Owner A revokes while B is still pending_install: this must proceed
+    // as a REAL job (not short-circuit), since B's reference is unconfirmed.
+    const releaseOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a",
+        idempotencyKey: `d1-revoke-a-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseOutcome.skippedOsMutation).to.not.equal(true);
+    expect(releaseOutcome.job).to.not.equal(null);
+
+    const ownerARow = await getInstallationById(ownerAOutcome.installation.id);
+    expect(ownerARow.transition_state).to.equal("pending_remove");
+
+    // Now B's install job fails - the exact interleaving that used to leak.
+    // Even though B's row is deleted outright, nothing was ever skipped on
+    // A's side, so there is no dangling OS material left unaccounted for.
+    await withTx((client) =>
+      onTrustJobTerminalTransition({
+        client,
+        job: {
+          id: ownerBOutcome.job.id,
+          operation: "distribute-trust",
+          status: "failed",
+          workspace_id: workspaceId,
+        },
+      }),
+    );
+    const ownerBRowAfterFailure = await getInstallationById(ownerBOutcome.installation.id);
+    expect(ownerBRowAfterFailure).to.equal(undefined, "B's pending_install row must be deleted");
+
+    // A's own revoke job still completes normally against the real job it
+    // was given, proving the certificate was never orphaned.
+    const releaseJob = await getJobRow(releaseOutcome.job.id);
+    const releaseInstallationRow = await getInstallationById(ownerAOutcome.installation.id);
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: releaseJob,
+        result: buildResult({ job: releaseJob, installationRow: releaseInstallationRow, outcome: "removed" }),
+      }),
+    );
+    const finalOwnerARow = await getInstallationById(ownerAOutcome.installation.id);
+    expect(finalOwnerARow.transition_state).to.equal("removed");
+  });
+
   it("fails closed on a signed pem/anchorType/fingerprint mismatch (defense-in-depth)", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
@@ -1088,6 +1187,49 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(installation.transition_state).to.equal(
       "pending_install",
       "a rejected stale-generation result must not advance the row",
+    );
+  });
+
+  it("rejects a result that reports a non-null failureCategory (self-contradictory: only ingested via the succeeded-job path)", async () => {
+    // Hardens the outcome/mutationPerformed schema tie (installed/removed
+    // now require mutationPerformed: true) with a service-layer check for
+    // the one combination the schema alone cannot express: this function is
+    // only ever called for a job the caller has already classified as
+    // succeeded, and the reference agent never reports status "succeeded"
+    // with a non-null failureCategory - so a result that does is rejected
+    // outright rather than silently accepted as a shape-valid success.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-contradictory-failure-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    await expectServiceError(
+      withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job,
+          result: buildResult({
+            job,
+            installationRow,
+            outcome: "installed",
+            failureCategoryOverride: "os_mutation_failed",
+          }),
+        }),
+      ),
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+
+    const installation = await getInstallationById(outcome.installation.id);
+    expect(installation.transition_state).to.equal(
+      "pending_install",
+      "a rejected self-contradictory result must not advance the row",
     );
   });
 

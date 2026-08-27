@@ -628,6 +628,32 @@ function receiptWireState(state) {
 }
 
 /**
+ * failureCategory values for a receipt bookkeeping conflict, distinct from
+ * an OS-mutation failure: the OS-level state described by `outcome` is
+ * accurate, but the on-disk receipt itself could not be written/finalized to
+ * match it. Only reachable if this executor's single-job-at-a-time
+ * sequencing assumption is violated (see receipt.js's reclaimStalePending).
+ */
+const RECEIPT_WRITE_CONFLICT = "receipt_write_conflict";
+const RECEIPT_FINALIZE_CONFLICT = "receipt_finalize_conflict";
+
+/**
+ * Runs a receipt.js write step (writeIntentReceipt/finalizeReceipt) that is
+ * documented to throw on a guard violation, and converts that into a tagged
+ * failure instead of propagating - distributeTrust/revokeTrust must never
+ * throw for an operational outcome.
+ * @param {() => object} fn
+ * @returns {{ ok: true, value: object }|{ ok: false, error: Error }}
+ */
+function tryReceiptStep(fn) {
+  try {
+    return { ok: true, value: fn() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+/**
  * Builds one trust-result-contract.schema.json-shaped result object.
  * @param {object} input see call sites for the exact fields threaded through.
  * @returns {object}
@@ -759,21 +785,46 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     });
   }
 
-  const intentRow = receipt.writeIntentReceipt({
-    receiptDir,
-    store,
-    fingerprintSha256,
-    jobId,
-    transitionGeneration,
-    intentState: "pending_install",
-    // isPresent just proved this fingerprint is NOT in the OS store, so any
-    // stale pending_install receipt from a different, dead job on this exact
-    // (store, fingerprint) never reached the OS either - safe to reclaim.
-    // Without this, a crash between intent-write and OS mutation would
-    // permanently block later distribute-trust jobs for that fingerprint.
-    reclaimStalePending: true,
-    now,
-  });
+  const intentAttempt = tryReceiptStep(() =>
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store,
+      fingerprintSha256,
+      jobId,
+      transitionGeneration,
+      intentState: "pending_install",
+      // isPresent just proved this fingerprint is NOT in the OS store, so any
+      // stale pending_install receipt from a different, dead job on this exact
+      // (store, fingerprint) never reached the OS either - safe to reclaim.
+      // Without this, a crash between intent-write and OS mutation would
+      // permanently block later distribute-trust jobs for that fingerprint.
+      reclaimStalePending: true,
+      now,
+    }),
+  );
+  if (!intentAttempt.ok) {
+    // No OS mutation was attempted. Only reachable if another process is
+    // genuinely still working this same (store, fingerprint) right now.
+    return buildResult({
+      jobId,
+      workspaceId,
+      agentId,
+      trustAnchorId,
+      action: "distribute-trust",
+      transitionGeneration,
+      store,
+      observedFingerprintBefore: null,
+      observedFingerprintAfter: null,
+      outcome: "already_absent",
+      mutationAttempted: false,
+      mutationPerformed: false,
+      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptState: "missing",
+      failureCategory: RECEIPT_WRITE_CONFLICT,
+      now,
+    });
+  }
+  const intentRow = intentAttempt.value;
 
   const mutationResult =
     family === "windows"
@@ -818,7 +869,33 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     });
   }
 
-  receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now });
+  const finalizeAttempt = tryReceiptStep(() =>
+    receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now }),
+  );
+  if (!finalizeAttempt.ok) {
+    // The OS mutation genuinely completed - outcome/mutationPerformed report
+    // that truthfully - but the local receipt bookkeeping itself didn't
+    // reach "finalized". Surface it via failureCategory rather than either
+    // throwing or silently claiming a clean finalize.
+    return buildResult({
+      jobId,
+      workspaceId,
+      agentId,
+      trustAnchorId,
+      action: "distribute-trust",
+      transitionGeneration,
+      store,
+      observedFingerprintBefore: null,
+      observedFingerprintAfter: fingerprintSha256,
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+      receiptId: intentRow.id,
+      receiptState: "intent_written",
+      failureCategory: RECEIPT_FINALIZE_CONFLICT,
+      now,
+    });
+  }
 
   return buildResult({
     jobId,
@@ -969,31 +1046,15 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       now,
     });
   }
-  if (existingReceipt.row.state === "pending_remove" && existingReceipt.row.jobId !== jobId) {
-    // A DIFFERENT, still-pending remove attempt owns this row; refuse
-    // rather than racing a second mutation against the same material.
-    return buildResult({
-      jobId,
-      workspaceId,
-      agentId,
-      trustAnchorId,
-      action: "revoke-trust",
-      transitionGeneration,
-      store,
-      observedFingerprintBefore: null,
-      observedFingerprintAfter: null,
-      outcome: "already_absent",
-      mutationAttempted: false,
-      mutationPerformed: false,
-      receiptId: existingReceipt.row.id,
-      receiptState: "intent_written",
-      failureCategory: "receipt_remove_in_progress",
-      now,
-    });
-  }
-  // else: state is "installed" (the normal case), or "pending_remove" for THIS
-  // SAME jobId (a resumed attempt after a crash between intent and finalize)
-  // -- both are valid ownership proof to proceed past here.
+  // else: state is "installed" (the normal case), a DIFFERENT job's stale
+  // pending_remove (a crashed prior revoke attempt - reclaimed below exactly
+  // like distributeTrust reclaims a stale pending_install, since the control
+  // plane serializes revoke-trust per (agent, store, fingerprint, owner) and
+  // a genuinely still-running sibling job is not something this agent can
+  // observe any other way), or THIS SAME job's pending_remove (a resumed
+  // attempt after a crash between intent and finalize).
+  const resumingSameJob =
+    existingReceipt.row.state === "pending_remove" && existingReceipt.row.jobId === jobId;
 
   // Re-probe the ACTUAL store state immediately before deleting: if already
   // gone, report already_absent rather than mutating against nothing.
@@ -1016,10 +1077,12 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   if (!isPresent) {
     // Ownership proven but material already gone: success, no mutation. The
     // receipt still transitions pending_remove -> removed rather than
-    // finalizing directly from `installed`; reuses an existing pending_remove
-    // row for this job (resumed attempt) or writes a fresh intent first.
-    const intentRow =
-      existingReceipt.row.state === "pending_remove"
+    // finalizing directly from `installed`; reuses the existing pending_remove
+    // row only when resuming this exact job, otherwise writes a fresh intent
+    // (reclaiming a different job's stale row, same as the isPresent branch
+    // below).
+    const intentAttempt = tryReceiptStep(() =>
+      resumingSameJob
         ? existingReceipt.row
         : receipt.writeIntentReceipt({
             receiptDir,
@@ -1028,16 +1091,62 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
             jobId,
             transitionGeneration,
             intentState: "pending_remove",
+            reclaimStalePending: true,
             now,
-          });
-    const finalized = receipt.finalizeReceipt({
-      receiptDir,
-      store,
-      fingerprintSha256,
-      jobId: intentRow.jobId,
-      transitionGeneration: intentRow.transitionGeneration,
-      now,
-    });
+          }),
+    );
+    if (!intentAttempt.ok) {
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "revoke-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        outcome: "already_absent",
+        mutationAttempted: false,
+        mutationPerformed: false,
+        receiptId: existingReceipt.row.id,
+        receiptState: "intent_written",
+        failureCategory: RECEIPT_WRITE_CONFLICT,
+        now,
+      });
+    }
+    const intentRow = intentAttempt.value;
+    const finalizeAttempt = tryReceiptStep(() =>
+      receipt.finalizeReceipt({
+        receiptDir,
+        store,
+        fingerprintSha256,
+        jobId: intentRow.jobId,
+        transitionGeneration: intentRow.transitionGeneration,
+        now,
+      }),
+    );
+    if (!finalizeAttempt.ok) {
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "revoke-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        outcome: "already_absent",
+        mutationAttempted: false,
+        mutationPerformed: false,
+        receiptId: intentRow.id,
+        receiptState: "intent_written",
+        failureCategory: RECEIPT_FINALIZE_CONFLICT,
+        now,
+      });
+    }
+    const finalized = finalizeAttempt.value;
     return buildResult({
       jobId,
       workspaceId,
@@ -1057,15 +1166,44 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     });
   }
 
-  const intentRow = receipt.writeIntentReceipt({
-    receiptDir,
-    store,
-    fingerprintSha256,
-    jobId,
-    transitionGeneration,
-    intentState: "pending_remove",
-    now,
-  });
+  const intentAttempt = tryReceiptStep(() =>
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store,
+      fingerprintSha256,
+      jobId,
+      transitionGeneration,
+      intentState: "pending_remove",
+      // Symmetric to distributeTrust's reclaim: the isPresent probe just ran
+      // above, and a different job's pending_remove row here can only be a
+      // crashed prior attempt (per the comment on resumingSameJob above), so
+      // reclaiming it here rather than refusing the job matches TRU-10's fix
+      // on the distribute side.
+      reclaimStalePending: true,
+      now,
+    }),
+  );
+  if (!intentAttempt.ok) {
+    return buildResult({
+      jobId,
+      workspaceId,
+      agentId,
+      trustAnchorId,
+      action: "revoke-trust",
+      transitionGeneration,
+      store,
+      observedFingerprintBefore: fingerprintSha256,
+      observedFingerprintAfter: fingerprintSha256,
+      outcome: "installed",
+      mutationAttempted: false,
+      mutationPerformed: false,
+      receiptId: existingReceipt.row.id,
+      receiptState: "intent_written",
+      failureCategory: RECEIPT_WRITE_CONFLICT,
+      now,
+    });
+  }
+  const intentRow = intentAttempt.value;
 
   const mutationResult =
     family === "windows"
@@ -1111,7 +1249,32 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     });
   }
 
-  receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now });
+  const finalizeAttempt = tryReceiptStep(() =>
+    receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now }),
+  );
+  if (!finalizeAttempt.ok) {
+    // The OS mutation genuinely completed - report it truthfully - but the
+    // local receipt didn't reach "finalized"; see distributeTrust's mirror
+    // of this same handling.
+    return buildResult({
+      jobId,
+      workspaceId,
+      agentId,
+      trustAnchorId,
+      action: "revoke-trust",
+      transitionGeneration,
+      store,
+      observedFingerprintBefore: fingerprintSha256,
+      observedFingerprintAfter: null,
+      outcome: "removed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+      receiptId: intentRow.id,
+      receiptState: "intent_written",
+      failureCategory: RECEIPT_FINALIZE_CONFLICT,
+      now,
+    });
+  }
 
   return buildResult({
     jobId,

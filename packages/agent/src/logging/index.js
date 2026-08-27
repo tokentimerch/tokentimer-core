@@ -84,9 +84,10 @@ function sanitizeLogValue(value, depth = 0, seen = new WeakSet()) {
 }
 
 function formatAgentLogMessage(message, details) {
+  const timestamp = new Date().toISOString();
   const safeMessage = scrubString(message);
-  if (details === undefined) return `tokentimer-agent: ${safeMessage}`;
-  return `tokentimer-agent: ${safeMessage} ${JSON.stringify(sanitizeLogValue(details))}`;
+  if (details === undefined) return `${timestamp} tokentimer-agent: ${safeMessage}`;
+  return `${timestamp} tokentimer-agent: ${safeMessage} ${JSON.stringify(sanitizeLogValue(details))}`;
 }
 
 function createAgentLogger({

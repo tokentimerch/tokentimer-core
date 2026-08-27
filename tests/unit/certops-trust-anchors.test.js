@@ -209,4 +209,72 @@ describe("trust result wire carriage", () => {
     // being treated as a valid empty result.
     assert.equal(validateTrustResult(undefined).valid, false);
   });
+
+  function baseResult(overrides = {}) {
+    return {
+      schemaVersion: 1,
+      jobId: "job-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: "22222222-2222-4222-8222-222222222222",
+      trustAnchorId: "anchor-1",
+      action: "distribute-trust",
+      transitionGeneration: 2,
+      store: "Root",
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+      receipt: { id: "receipt-1", state: "finalized" },
+      observedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  // Closes the gap the 0.14.0 consistency-check pass flagged: without this
+  // allOf rule, outcome "removed" is just an agent-asserted label with no
+  // schema-level tie back to mutationPerformed, so a buggy or malicious
+  // agent could claim a removal succeeded while performing no mutation.
+  //
+  // outcome "installed" has no such rule: it is also the fail-safe outcome
+  // reported when a revoke-trust's OS-level removal attempt fails (the
+  // material is still installed, but nothing was mutated on that attempt),
+  // so installed + mutationPerformed:false is a legitimate combination.
+  it("accepts outcome 'installed' with mutationPerformed false (revoke-trust's OS mutation failed, material remains installed)", () => {
+    const result = baseResult({ outcome: "installed", mutationPerformed: false, mutationAttempted: true, failureCategory: "os_mutation_failed" });
+    assert.equal(validateTrustResult(result).valid, true);
+  });
+
+  it("rejects outcome 'removed' unless mutationPerformed is also true", () => {
+    const result = baseResult({
+      action: "revoke-trust",
+      outcome: "removed",
+      mutationPerformed: false,
+      mutationAttempted: true,
+      failureCategory: "os_mutation_failed",
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  it("still accepts outcome 'installed' with mutationPerformed true (the normal case)", () => {
+    assert.equal(validateTrustResult(baseResult()).valid, true);
+  });
+
+  it("still accepts outcome 'preexisting'/'already_absent' with mutationPerformed false", () => {
+    assert.equal(
+      validateTrustResult(
+        baseResult({ outcome: "preexisting", mutationAttempted: false, mutationPerformed: false }),
+      ).valid,
+      true,
+    );
+    assert.equal(
+      validateTrustResult(
+        baseResult({
+          action: "revoke-trust",
+          outcome: "already_absent",
+          mutationAttempted: false,
+          mutationPerformed: false,
+        }),
+      ).valid,
+      true,
+    );
+  });
 });

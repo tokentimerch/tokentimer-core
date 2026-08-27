@@ -36,6 +36,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `CERTOPS_TRUST_ANCHOR_DISTRIBUTED`/`CERTOPS_TRUST_ANCHOR_REVOKED` and `CERTOPS_TRUST_DISTRIBUTE_JOB_CREATED`/`CERTOPS_TRUST_REVOKE_JOB_CREATED` audit events carried almost no metadata (no anchor name, fingerprint, host, or agent-reported outcome), and the dashboard Audit page had no formatter for any trust-anchor action at all, so every one of these events rendered blank in the UI. Both events now carry the anchor's name/fingerprint/host alongside the existing IDs, the terminal DISTRIBUTED/REVOKED event also carries the agent's reported `outcome`/`mutationPerformed`/`failureCategory`, and the dashboard has a dedicated formatter and filter entries for all seven trust-anchor audit actions.
+- Agent stdout/stderr log lines had no timestamp and several carried a stray double `tokentimer-agent:` prefix baked into the message text on top of the logger's own prefix. Every line now starts with an ISO-8601 UTC timestamp, the duplicated prefixes are removed, and the job-finished line now includes `errorMessage`/`failureCategory` when the job failed instead of only the bare status word.
 
 ## [0.13.3] - 2026-08-26
 

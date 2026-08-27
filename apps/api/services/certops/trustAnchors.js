@@ -567,11 +567,22 @@ async function lockOrCreateInstallation({
 }
 
 /**
- * Counts other owners' live (not `removed`) reference rows for the same
- * (workspace, agent, store, fingerprint). Only called from inside
- * runCreateTrustJob under the anchor's FOR UPDATE lock, so this plain COUNT
- * can't race with a sibling owner's concurrent release. ADR-0012 decision 6:
- * the store is only physically touched when the last reference is released.
+ * Counts other owners' confirmed-live reference rows for the same
+ * (workspace, agent, store, fingerprint). ADR-0012 decision 6: the store is
+ * only physically touched when the last reference is released.
+ *
+ * Deliberately excludes `pending_install`: that state means the other
+ * owner's material isn't confirmed present yet, and its row can still be
+ * deleted outright by unwindTerminalTrustJob if that job fails. Crediting it
+ * here would let this owner's revoke short-circuit to `removed` with no OS
+ * mutation, and if the sibling row is later deleted, the certificate is
+ * orphaned on the host with nothing left tracking it. Only `installed` and
+ * `pending_remove` are states where the material is confirmed physically
+ * present right now, so only those count. The narrow cost: if this owner's
+ * revoke is requested while a sibling install is still in flight, the revoke
+ * proceeds instead of short-circuiting; the agent's own idempotent install
+ * check corrects that once the sibling's job completes, so it self-heals
+ * instead of leaking permanently.
  */
 async function countOtherLiveReferences({
   client,
@@ -589,7 +600,7 @@ async function countOtherLiveReferences({
         AND store = $3
         AND fingerprint_sha256 = $4
         AND owner != $5
-        AND transition_state != 'removed'`,
+        AND transition_state IN ('installed', 'pending_remove')`,
     [workspaceId, agentId, store, fingerprintSha256, owner],
   );
   return result.rows[0]?.count ?? 0;
@@ -1152,6 +1163,24 @@ async function ingestTrustJobResult({ client, job, result }) {
     throw error;
   }
 
+  // This function only ever runs from agentDispatch.ingestResult's
+  // jobStatus === "succeeded" branch, and the agent itself never reports
+  // status "succeeded" alongside a non-null trustResult.failureCategory
+  // (packages/agent/src/index.js's executeTrustJob always maps a non-null
+  // failureCategory to status "failed"). A result claiming both is
+  // self-contradictory - shape-valid per the schema (failureCategory has no
+  // cross-field tie to the envelope status, which lives one level up) but
+  // never something a well-behaved agent would send - so it is rejected
+  // rather than silently trusted.
+  if (typeof result.failureCategory === "string" && result.failureCategory.length > 0) {
+    throw trustAnchorError(
+      "Result reports a non-null failureCategory but was ingested as a " +
+        "succeeded job; a successful trust job result must never carry a " +
+        "failure category",
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+  }
+
   const workspaceId = job.workspace_id || job.workspaceId;
 
   const installationLock = await client.query(
@@ -1232,21 +1261,20 @@ async function ingestTrustJobResult({ client, job, result }) {
     result.outcome === "installed"
       ? "tokentimer_installed"
       : installationRow.provenance;
-  const sanitizedFailure =
-    typeof result.failureCategory === "string"
-      ? result.failureCategory.slice(0, 128)
-      : null;
+  // failureCategory is always null here: the guard above already rejected
+  // any succeeded-status result carrying one. A real success always clears
+  // whatever last_error a prior failed attempt left behind.
 
   const updated = await client.query(
     `UPDATE certops_trust_anchor_installations
         SET transition_state = $2,
             provenance = $3,
-            last_error = $4,
+            last_error = NULL,
             next_reconcile_at = NULL,
             updated_at = NOW()
       WHERE id = $1
       RETURNING ${INSTALLATION_SELECT_FIELDS}`,
-    [installationRow.id, nextState, nextProvenance, sanitizedFailure],
+    [installationRow.id, nextState, nextProvenance],
   );
 
   return installationFromRow(updated.rows[0]);

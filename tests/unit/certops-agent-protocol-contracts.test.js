@@ -443,16 +443,18 @@ describe("CertOps agent protocol contracts", () => {
     );
   });
 
-  it("keeps claim supportedActions aligned with the job-payload action enum, plus protocol_smoke for diagnostic-kind agents", () => {
+  it("keeps claim supportedActions aligned with the job-payload action enum, plus protocol_smoke and trust-anchor actions for their own payload schemas", () => {
     // supportedActions is a superset of job-payload's action enum, not an
     // exact match: protocol_smoke jobs are validated against
-    // protocol-smoke-payload.schema.json, never job-payload.schema.json (see
-    // "never validates a certificate job against the trust schema"-style
-    // isolation elsewhere in this suite), but a diagnostic agent's claim
-    // query (agentDispatch.js) joins supportedActions against
-    // certificate_jobs.operation directly, so a diagnostic agent MUST be
-    // able to declare "protocol_smoke" here or it can never match a smoke
-    // job (ADR-0012 decision 7). Regression coverage for the real bug this
+    // protocol-smoke-payload.schema.json, and distribute-trust/revoke-trust
+    // jobs are validated against trust-job-payload.schema.json - never
+    // against job-payload.schema.json (see "never validates a certificate
+    // job against the trust schema"-style isolation elsewhere in this
+    // suite) - but a diagnostic/trust-capable agent's claim query
+    // (agentDispatch.js) joins supportedActions against
+    // certificate_jobs.operation directly, so an agent MUST be able to
+    // declare these here or it can never match that family's job (ADR-0012
+    // decisions 7 and 20a). Regression coverage for the real bug this
     // caught: claimBody's enum previously omitted protocol_smoke entirely,
     // so every diagnostic reference-client claim call (which must declare
     // supportedActions: ["protocol_smoke"]) failed AJV schema validation
@@ -460,14 +462,21 @@ describe("CertOps agent protocol contracts", () => {
     const supportedActionsEnum =
       agentProtocolSchema.definitions.claimBody.properties.supportedActions
         .items.enum;
+    const ownSchemaActions = ["protocol_smoke", "distribute-trust", "revoke-trust"];
     assert.deepEqual(
-      supportedActionsEnum.filter((action) => action !== "protocol_smoke"),
+      supportedActionsEnum.filter((action) => !ownSchemaActions.includes(action)),
       jobPayloadSchema.properties.action.enum,
     );
     assert.ok(
       supportedActionsEnum.includes("protocol_smoke"),
       "supportedActions must allow protocol_smoke so diagnostic agents can claim smoke jobs",
     );
+    for (const action of ["distribute-trust", "revoke-trust"]) {
+      assert.ok(
+        supportedActionsEnum.includes(action),
+        `supportedActions must allow ${action} so trust-capable agents can claim trust-anchor jobs`,
+      );
+    }
   });
 
   it("keeps the protocol client ROUTES aligned with route-compat and OpenAPI", () => {

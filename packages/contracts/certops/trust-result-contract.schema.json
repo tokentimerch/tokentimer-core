@@ -77,7 +77,7 @@
         "already_absent",
         "removed"
       ],
-      "description": "Closed outcome vocabulary (ADR-0012 decision 20e). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: distribute-trust performed the mutation and observedFingerprintAfter now matches. already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. This enum names the same four provenance/mutation combinations decision 6's provenance column and this decision's mutationPerformed flag jointly imply, so the server never has to infer an outcome from a boolean pair."
+      "description": "Closed outcome vocabulary (ADR-0012 decision 20e). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: distribute-trust performed the mutation and observedFingerprintAfter now matches, OR revoke-trust's removal attempt failed and the material is still installed (mutationPerformed false in that failure case; see failureCategory). already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. The allOf rule below requires mutationPerformed true whenever outcome is removed, since removed can only be reached via a successful mutation; installed has no such requirement because it is also the fail-safe outcome for a failed revoke."
     },
     "mutationAttempted": {
       "type": "boolean",
@@ -196,6 +196,22 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "removed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mutationPerformed": {
+            "const": true
           }
         }
       }

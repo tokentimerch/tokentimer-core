@@ -787,7 +787,7 @@ function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INT
       .catch((err) => {
         emitLog(
           leaseOpts.log || console.error,
-          `tokentimer-agent: periodic lease renew error: ${err.message}`,
+          `periodic lease renew error: ${err.message}`,
         );
       })
       .finally(() => {
@@ -1899,7 +1899,7 @@ async function handleSignedJob({
     const msg =
       `unresolved local side-effect journal exists for job ${jobId}; ` +
       `refusing automatic re-execution pending operator reconciliation`;
-    emitLog(log, `tokentimer-agent: ${msg}`);
+    emitLog(log, msg);
     return persistAndTransmitOutcome({
       outboxDir: resolvedOutboxDir,
       client,
@@ -1991,7 +1991,10 @@ async function handleSignedJob({
       outcome = heartbeatAbort;
     }
   } catch (err) {
-    emitLog(log, `tokentimer-agent: job ${jobId} execution error: ${err.message}`);
+    emitLog(log, `job ${jobId} execution error: ${err.message}`, {
+      name: err?.name,
+      code: err?.code,
+    });
     outcome = {
       status: "failed",
       errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
@@ -1999,7 +2002,14 @@ async function handleSignedJob({
   } finally {
     stopPeriodicLeaseRenewal(leaseHeartbeat);
   }
-  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`);
+  const finishDetails =
+    outcome?.status === "failed"
+      ? {
+          errorMessage: outcome?.errorMessage,
+          failureCategory: outcome?.trustResult?.failureCategory,
+        }
+      : undefined;
+  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`, finishDetails);
 
   const evidenceBodies = evidenceBuffer.takeEvidence();
   for (const body of evidenceBodies) {
@@ -4234,7 +4244,7 @@ async function rollbackAfterFailedTail({
   try {
     previousPem = fs.readFileSync(certBackup, "utf8");
   } catch (err) {
-    emitLog(log, `tokentimer-agent: rollback for job ${jobId} could not read the backup: ${err.message}`);
+    emitLog(log, `rollback for job ${jobId} could not read the backup: ${err.message}`);
     return { rolledBack: false, reason: "backup file could not be read" };
   }
 
@@ -4278,7 +4288,7 @@ async function rollbackAfterFailedTail({
   }
   const restored = restore.deployed === true || restore.skipped === true;
   if (!restored) {
-    emitLog(log, `tokentimer-agent: rollback restore failed for job ${jobId} at stage ${restore.stage}`);
+    emitLog(log, `rollback restore failed for job ${jobId} at stage ${restore.stage}`);
   }
 
   // Best-effort re-reload so the service serves the restored content again.
@@ -5262,7 +5272,7 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseO
     },
   });
   if (outcome.reloaded !== true) {
-    emitLog(log, `tokentimer-agent: reload step failed for job ${jobId}`);
+    emitLog(log, `reload step failed for job ${jobId}`);
     await reportStepEvidence(client, jobId, [
       buildEvidenceItem({
         eventType: "validation.failed",
@@ -6196,7 +6206,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           rotation: response.signingKeyRotation,
           configDir,
           executionContext,
-          log: (msg) => defaultAgentLogger.error(msg),
+          log: (msg, details) => defaultAgentLogger.error(msg, details),
         });
       }
     },
@@ -6221,7 +6231,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           await drainOutbox(executionContext.outboxDir, client, {
             onError: (err, entry) =>
               defaultAgentLogger.error(
-                `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+                `outbox drain failed for ${entry.id}; will retry`,
                 err,
               ),
           });
@@ -6242,7 +6252,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               executionContext,
               boundAgentId: registeredAgentId,
               requireSignedAgentId: config.requireSignedAgentId,
-              log: (msg) => defaultAgentLogger.error(msg),
+              log: (msg, details) => defaultAgentLogger.error(msg, details),
             });
             if (outcome && outcome.retired === true) {
               process.exitCode = AGENT_RETIRED_EXIT_CODE;
@@ -6297,7 +6307,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
                 : {}),
             }).catch((err) => {
               defaultAgentLogger.error(
-                `tokentimer-agent: windows-retention sweep failed: ${err.message}`,
+                `windows-retention sweep failed: ${err.message}`,
               );
             }),
         }),
