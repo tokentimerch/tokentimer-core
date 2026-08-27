@@ -165,6 +165,8 @@ inside it:
 | `keys/` | Agent-generated private keys, `<certificateId>.key.pem` (default location) | dir 0700, keys 0600 |
 | `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims | dir 0700, files 0600 |
 | `job-journal/` | Side-effect journal, `<jobId>-<attemptId>.json`, written before the first external mutation; an unresolved entry blocks automatic re-execution (see section 5) | dir 0700, files 0600 |
+| `trust-receipts/` | Agent-local ownership receipt for `distribute-trust`/`revoke-trust`, one file per `(store, fingerprintSha256)`; proves this agent installed a given anchor before a later `revoke-trust` is allowed to remove it (see ADR-0012 decision (d)) | dir 0700, files 0600 |
+| `trust-work/` | Scratch working directory for the trust-store executor (e.g. staging a PEM before `certutil`/`update-ca-certificates`/`update-ca-trust`); not durable state, safe to clear when the agent is stopped | dir 0700 |
 | `registration-id.json` | Client-generated `registrationId` for encrypted registration recovery; cleared once the credential is durably stored | 0600 |
 | `bootstrap.env` | Bootstrap token, written by the installer and **deleted by the agent** after its first successful registration (best-effort; delete it yourself if it survives) | 0600 |
 | `acme/` | certbot (`config`/`work`/`logs`) and acme.sh (`home`/`config-home`, incl. the `dnsapi/dns_certops.sh` symlink) working state, kept here so both stay writable under `ProtectSystem=strict` | dir 0700 |
@@ -833,6 +835,56 @@ reports one `policy.checked` evidence item per step the action would run
 keys/acme/deploy/reload/verify modules are never called. Local
 `execution.dryRun` (default true) remains a safety refusal for
 `mode:"real"` jobs only — it reports `blocked`, never a silent success.
+
+### Trust-anchor distribution and revocation
+
+`distribute-trust`/`revoke-trust` (`executeTrustJob` in `src/index.js`,
+executor in `src/trust-store/index.js`) install or remove one CA certificate
+in the host's machine trust store on behalf of the control plane. Each job
+carries `trustAnchorId`, `anchorType` (`root` or `intermediate`),
+`fingerprintSha256`, and (for `distribute-trust` only) the anchor's `pem`.
+Unlike `renew`/`deploy`, there is no per-target policy path check: the target
+is the platform's own trust store, resolved from `anchorType` and the
+detected OS family, never re-derived from the certificate's own
+basicConstraints/issuer at run time.
+
+Platform resolution is a hard gate before anything else runs: Windows targets
+`LocalMachine\Root` (root anchors) or `LocalMachine\CA` (intermediates) via
+`certutil`; Debian-family hosts write to
+`/usr/local/share/ca-certificates` and run `update-ca-certificates`;
+RHEL-family hosts write to `/etc/pki/ca-trust/source/anchors` and run
+`update-ca-trust extract`. A host that is neither Windows nor a detected
+Debian/RHEL-family trust store reports `blocked`, never a silent no-op. On
+Debian/RHEL the update command itself is gated through the same
+`policyEngine.checkCommandRef` allowlist as ACME/reload commands, under the
+`trust-store:update-ca-certificates` / `trust-store:update-ca-trust` profile
+names (see the config reference above); Windows has no command-ref-mediated
+step because the `certutil` argv is built directly from validated
+agent-local inputs, not a configurable command.
+
+Ownership is proven locally, not just server-side: before mutating the store,
+the agent writes an intent record to `<configDir>/trust-receipts/`, keyed by
+`(store, fingerprintSha256)` (see the file table above), and fsyncs it
+**before** attempting the OS-level mutation; the receipt is finalized only
+after the mutation completes. `revoke-trust` refuses to remove anything for a
+`(store, fingerprintSha256)` pair with no readable, `installed` receipt:
+a missing or corrupt receipt fails closed, never treated as license to
+proceed. Every result reports one of four outcomes (`preexisting`,
+`installed`, `already_absent`, `removed`) plus the observed pre/post
+fingerprint at the store; the control plane rejects any result whose
+`agentId`, `store`, `fingerprintSha256`, or `transitionGeneration` does not
+match the signed job it claims to answer (`CERTOPS_TRUST_RESULT_MISMATCH`).
+A crashed `pending_install` receipt from an earlier attempt is reclaimed
+automatically by a later `distribute-trust` job for the same key once the
+agent has confirmed the fingerprint is genuinely absent from the OS store,
+rather than permanently blocking that key until an operator deletes the
+receipt file by hand. See ADR-0012 decisions 6 and (d) (twelfth amendment)
+for the full ownership-reference and crash-recovery contract.
+
+Dry-run mode behaves identically to the renewal chain above: `mode: "dry_run"`
+reports the platform/command gates as `policy.checked` evidence and returns
+`dry_run_complete` with no filesystem or exec side effects, including no
+receipt write.
 
 ### DNS-01 providers
 

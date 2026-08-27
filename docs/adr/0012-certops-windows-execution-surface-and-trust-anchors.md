@@ -150,6 +150,22 @@ scope at the moment it landed, not the state of the code after this
 eleventh amendment; both are amendments to the same ADR and are read
 together, not the second superseding the first's wording in place.
 
+**A twelfth amendment (2026-08-27, post-acceptance) corrects two defects found
+during real-host verification of the eleventh amendment's implementation**,
+both in decision 6 and decision (d) below: (1) releasing one owner's reference
+to a shared `(agent, store, fingerprint)` tuple was mutating the OS store even
+while another owner's reference was still live, instead of only removing the
+material once the last reference is released as decision 6 already requires;
+the fix short-circuits the OS mutation and the `certificate_jobs` row entirely
+whenever another live reference still exists, transitioning the releasing
+row straight to `removed`. (2) An agent-local receipt left in `pending_install`
+by a crash permanently blocked every future `distribute-trust` job for that
+same `(store, fingerprintSha256)` key, with no automatic path back to health;
+the fix lets a new job reclaim a stale pending receipt from a different job id
+or generation once the agent has independently confirmed the fingerprint is
+absent from the OS store, rather than requiring an operator to delete the
+receipt file by hand.
+
 ## Context
 
 This phase of work adds four things the agent protocol and job model did not
@@ -709,6 +725,20 @@ and the reference count is derived by `COUNT(*)`, rather than a mutable counter
 column that can drift from the rows it summarizes. If two jobs depend on the
 same anchor, releasing the first must not remove a root the second still holds,
 so the store is only physically touched when the last reference is released.
+
+**Enforced by the twelfth amendment's short-circuit in `trustAnchors.js`
+(`countOtherLiveReferences`).** The eleventh amendment's initial
+`revoke-trust` path created a `certificate_jobs` row (and thus attempted an
+OS-level mutation) for every reference release, trusting the reconciliation
+sweep to eventually notice a still-live sibling reference rather than
+checking for one up front. Real-host testing found this actually removed
+the certificate from the OS store while a second owner's own
+`installed` row was untouched, a live gap in this decision's own guarantee
+above. `runCreateTrustJob` now counts other live references for the same
+`(agent, store, fingerprintSha256)` tuple before creating any job; when one
+exists, the releasing row transitions straight to `removed` (with a
+`CERTOPS_TRUST_REFERENCE_RELEASED` audit event) and no `certificate_jobs`
+row, or OS mutation, is created at all.
 
 Because the OS certificate store and the database cannot be updated atomically,
 the locking and reconciliation model is explicit rather than assumed:
@@ -2174,6 +2204,24 @@ This was a design contract only at the time the tenth amendment introduced
 it; the eleventh amendment above implements it in full at
 `packages/agent/src/trust-store/receipt.js`, with the reconciliation sweep
 scheduled from `apps/worker/src/certops-worker.js`.
+
+**Crash-recovery gap closed by the twelfth amendment.** The eleventh
+amendment's implementation of "crash before the mutation" above was safe to
+retry only in principle: `writeIntentReceipt` refused to overwrite an
+existing `pending_install`/`pending_remove` row for the same `(store,
+fingerprintSha256)` key from any other `jobId`/`transitionGeneration`,
+including one left by a crashed prior attempt, so a crash between the intent
+write and the mutation permanently poisoned that key for every subsequent
+job, not just the one that crashed, with no automatic path back to health.
+`writeIntentReceipt` now accepts a `reclaimStalePending` option: when the
+caller has independently confirmed the fingerprint is absent from the live
+OS store (i.e. the prior attempt never completed its mutation, matching the
+"crash before the mutation" case above, not the "mutation succeeded, result
+lost" case), a stale pending receipt from a different job id or generation
+is overwritten rather than treated as still-live. `distributeTrust` passes
+`reclaimStalePending: true` only after that confirmation; `revoke-trust` and
+the "mutation succeeded, result lost" case are unaffected, preserving the
+fail-safe-never-remove rule above.
 
 **(e) Typed trust result/evidence contract.** A new sibling schema file,
 `packages/contracts/certops/trust-result-contract.schema.json`, defines the
