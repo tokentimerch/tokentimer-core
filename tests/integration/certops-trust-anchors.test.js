@@ -1258,25 +1258,73 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(updated.provenance).to.equal("tokentimer_installed");
   });
 
-  it("advances preexisting->installed without overwriting provenance", async () => {
+  it("a fresh installation's first-ever result starts provenance at preexisting, not tokentimer_installed", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
     const outcome = await createTrustJob(
       distributeOptions({
         anchor,
         agent,
-        idempotencyKey: `result-preexisting-${crypto.randomUUID()}`,
+        idempotencyKey: `result-fresh-provenance-${crypto.randomUUID()}`,
       }),
     );
-    const job = await getJobRow(outcome.job.id);
     const installationRow = await getInstallationById(outcome.installation.id);
-    expect(installationRow.provenance).to.equal("tokentimer_installed");
+    // Before any result is ingested, nothing has actually been installed by
+    // TokenTimer yet - defaulting to tokentimer_installed here would let an
+    // outcome:"preexisting" result (agent found the cert already there, no
+    // mutation performed) keep a provenance TokenTimer never earned.
+    expect(installationRow.provenance).to.equal("preexisting");
+  });
+
+  it("preexisting never loosens an already-tokentimer_installed provenance", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const firstOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-preexisting-first-${crypto.randomUUID()}`,
+      }),
+    );
+    const firstJob = await getJobRow(firstOutcome.job.id);
+    const firstInstallationRow = await getInstallationById(
+      firstOutcome.installation.id,
+    );
+    const afterInstall = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: firstJob,
+        result: buildResult({
+          job: firstJob,
+          installationRow: firstInstallationRow,
+          outcome: "installed",
+        }),
+      }),
+    );
+    expect(afterInstall.provenance).to.equal("tokentimer_installed");
+
+    const secondOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-preexisting-second-${crypto.randomUUID()}`,
+      }),
+    );
+    const secondJob = await getJobRow(secondOutcome.job.id);
+    const secondInstallationRow = await getInstallationById(
+      secondOutcome.installation.id,
+    );
 
     const updated = await withTx((client) =>
       ingestTrustJobResult({
         client,
-        job,
-        result: buildResult({ job, installationRow, outcome: "preexisting" }),
+        job: secondJob,
+        result: buildResult({
+          job: secondJob,
+          installationRow: secondInstallationRow,
+          outcome: "preexisting",
+        }),
       }),
     );
 

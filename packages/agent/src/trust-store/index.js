@@ -580,9 +580,12 @@ async function removeLinuxAnchorFile({
 }
 
 /**
- * Resolves the concrete store name reported in a result's `store` field
- * (reported back rather than only signed forward, so a routing disagreement
- * between control plane and agent is detectable).
+ * Resolves the concrete, family-specific store destination for the real OS
+ * mutation and this agent's local receipt key. NOT reported on the wire -
+ * see resolveWireStore for the platform-neutral label a result actually
+ * carries in its `store` field. Kept distinct so a Debian/RHEL family value
+ * (e.g. "debian-ca-certificates") never leaks into the wire contract, where
+ * only Windows-shaped names ("Root"/"CA") are meaningful across platforms.
  * @param {"windows"|"debian"|"rhel"} family
  * @param {"root"|"intermediate"} anchorType
  * @returns {string}
@@ -596,6 +599,25 @@ function resolveConcreteStore(family, anchorType) {
   if (family === "debian") return DEBIAN_STORE_NAME;
   if (family === "rhel") return RHEL_STORE_NAME;
   throw buildError(`unsupported family: ${JSON.stringify(family)}`);
+}
+
+/**
+ * The wire-visible `store` label reported on every result (trust-result-
+ * contract.schema.json). Unlike resolveConcreteStore's family-specific
+ * value (used only locally, for the real OS mutation and receipt keys),
+ * this is anchorType-only and therefore identical across every platform:
+ * ADR-0012 decision 4 keeps anchorType platform-neutral in the contract
+ * and confines platform-specific naming to the executor. The control
+ * plane derives this exact same label from anchor_type alone when it
+ * creates the job, with no need to know this agent's platform/family, so
+ * a correct result can never be rejected as a store mismatch.
+ * @param {"root"|"intermediate"} anchorType
+ * @returns {string}
+ */
+function resolveWireStore(anchorType) {
+  const store = WINDOWS_STORE_BY_ANCHOR_TYPE[anchorType];
+  if (!store) throw buildError(`unsupported anchorType: ${JSON.stringify(anchorType)}`);
+  return store;
 }
 
 /**
@@ -720,7 +742,10 @@ function buildResult({
  */
 async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, now = () => new Date() }) {
   const { jobId, workspaceId, agentId, trustAnchorId, anchorType, fingerprintSha256, pem } = job;
-  const store = resolveConcreteStore(family, anchorType);
+  // osStore: the real OS-level destination (mutation + receipt key). store:
+  // the wire-visible label echoed on the result (see resolveWireStore).
+  const osStore = resolveConcreteStore(family, anchorType);
+  const store = resolveWireStore(anchorType);
   const transitionGeneration = requireTransitionGeneration(job);
 
   const verification = verifyAnchorPem(pem, fingerprintSha256);
@@ -740,7 +765,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
       outcome: "already_absent",
       mutationAttempted: false,
       mutationPerformed: false,
-      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptId: receipt.receiptId(osStore, fingerprintSha256),
       receiptState: "missing",
       failureCategory: verification.failureCategory,
       now,
@@ -750,7 +775,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
   const presence =
     family === "windows"
       ? findWindowsStoreEntryByFingerprint({
-          store,
+          store: osStore,
           fingerprintSha256,
           spawnImpl: seams.spawnImpl,
           onWarning: seams.onWarning,
@@ -779,7 +804,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
       outcome: "preexisting",
       mutationAttempted: false,
       mutationPerformed: false,
-      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptId: receipt.receiptId(osStore, fingerprintSha256),
       receiptState: "missing",
       now,
     });
@@ -788,7 +813,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
   const intentAttempt = tryReceiptStep(() =>
     receipt.writeIntentReceipt({
       receiptDir,
-      store,
+      store: osStore,
       fingerprintSha256,
       jobId,
       transitionGeneration,
@@ -818,7 +843,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
       outcome: "already_absent",
       mutationAttempted: false,
       mutationPerformed: false,
-      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptId: receipt.receiptId(osStore, fingerprintSha256),
       receiptState: "missing",
       failureCategory: RECEIPT_WRITE_CONFLICT,
       now,
@@ -829,7 +854,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
   const mutationResult =
     family === "windows"
       ? await addWindowsStoreEntry({
-          store,
+          store: osStore,
           pem,
           fingerprintSha256,
           workDir,
@@ -870,7 +895,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
   }
 
   const finalizeAttempt = tryReceiptStep(() =>
-    receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now }),
+    receipt.finalizeReceipt({ receiptDir, store: osStore, fingerprintSha256, jobId, transitionGeneration, now }),
   );
   if (!finalizeAttempt.ok) {
     // The OS mutation genuinely completed - outcome/mutationPerformed report
@@ -935,7 +960,10 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
  */
 async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => new Date() }) {
   const { jobId, workspaceId, agentId, trustAnchorId, anchorType, fingerprintSha256 } = job;
-  const store = resolveConcreteStore(family, anchorType);
+  // osStore: the real OS-level destination (mutation + receipt key). store:
+  // the wire-visible label echoed on the result (see resolveWireStore).
+  const osStore = resolveConcreteStore(family, anchorType);
+  const store = resolveWireStore(anchorType);
   const transitionGeneration = requireTransitionGeneration(job);
 
   if (!isNonEmptyString(fingerprintSha256) || !FINGERPRINT_PATTERN.test(fingerprintSha256)) {
@@ -959,7 +987,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     });
   }
 
-  const existingReceipt = receipt.readReceipt(receiptDir, store, fingerprintSha256);
+  const existingReceipt = receipt.readReceipt(receiptDir, osStore, fingerprintSha256);
 
   if (existingReceipt === null) {
     // No ownership proof at all: fail-safe refusal.
@@ -976,7 +1004,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       outcome: "already_absent",
       mutationAttempted: false,
       mutationPerformed: false,
-      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptId: receipt.receiptId(osStore, fingerprintSha256),
       receiptState: "missing",
       failureCategory: "receipt_missing",
       now,
@@ -996,7 +1024,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       outcome: "already_absent",
       mutationAttempted: false,
       mutationPerformed: false,
-      receiptId: receipt.receiptId(store, fingerprintSha256),
+      receiptId: receipt.receiptId(osStore, fingerprintSha256),
       receiptState: "corrupt",
       failureCategory: "receipt_corrupt",
       now,
@@ -1061,7 +1089,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const presence =
     family === "windows"
       ? findWindowsStoreEntryByFingerprint({
-          store,
+          store: osStore,
           fingerprintSha256,
           spawnImpl: seams.spawnImpl,
           onWarning: seams.onWarning,
@@ -1086,7 +1114,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
         ? existingReceipt.row
         : receipt.writeIntentReceipt({
             receiptDir,
-            store,
+            store: osStore,
             fingerprintSha256,
             jobId,
             transitionGeneration,
@@ -1119,7 +1147,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     const finalizeAttempt = tryReceiptStep(() =>
       receipt.finalizeReceipt({
         receiptDir,
-        store,
+        store: osStore,
         fingerprintSha256,
         jobId: intentRow.jobId,
         transitionGeneration: intentRow.transitionGeneration,
@@ -1169,7 +1197,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const intentAttempt = tryReceiptStep(() =>
     receipt.writeIntentReceipt({
       receiptDir,
-      store,
+      store: osStore,
       fingerprintSha256,
       jobId,
       transitionGeneration,
@@ -1208,7 +1236,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const mutationResult =
     family === "windows"
       ? await removeWindowsStoreEntry({
-          store,
+          store: osStore,
           thumbprint: presence.thumbprint,
           execFileImpl: seams.execFileImpl,
           certutilPath: seams.certutilPath,
@@ -1250,7 +1278,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   }
 
   const finalizeAttempt = tryReceiptStep(() =>
-    receipt.finalizeReceipt({ receiptDir, store, fingerprintSha256, jobId, transitionGeneration, now }),
+    receipt.finalizeReceipt({ receiptDir, store: osStore, fingerprintSha256, jobId, transitionGeneration, now }),
   );
   if (!finalizeAttempt.ok) {
     // The OS mutation genuinely completed - report it truthfully - but the
@@ -1328,6 +1356,7 @@ module.exports = {
   installLinuxAnchorFile,
   removeLinuxAnchorFile,
   resolveConcreteStore,
+  resolveWireStore,
   buildResult,
   distributeTrust,
   revokeTrust,

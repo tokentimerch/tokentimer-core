@@ -23,20 +23,21 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     );
   });
 
-  it("ships with windows-cert-store-v1 and iis-binding-v1 qualified after real-host verification, trust-anchor-deploy-v1 still empty", () => {
+  it("ships with all three gated capabilities qualified after real-host verification (Windows, Debian/Ubuntu, RHEL/AlmaLinux)", () => {
     // windows-cert-store-v1 and iis-binding-v1 passed real-host verification
     // against a real Windows Server host (CNG key custody, IIS binding,
-    // retention, and discovery). trust-anchor-deploy-v1's executor exists but
-    // is not real-host verified on every supported platform, so it stays
-    // unqualified.
+    // retention, and discovery). trust-anchor-deploy-v1 passed real-host
+    // verification for distribute-trust/revoke-trust against a real Windows
+    // Server host, a Debian/Ubuntu host, and a RHEL/AlmaLinux host.
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.deepEqual([...manifest.qualified].sort(), [
       "iis-binding-v1",
+      "trust-anchor-deploy-v1",
       "windows-cert-store-v1",
     ]);
   });
 
-  it("advertises only the real-host-verified gated capabilities, never trust-anchor-deploy-v1", () => {
+  it("advertises all three real-host-verified gated capabilities plus any ungated candidate", () => {
     const candidateCapabilities = [
       "evidence-claim-binding-v1",
       "windows-cert-store-v1",
@@ -46,11 +47,12 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
     const declared = filterQualifiedCapabilities(candidateCapabilities);
     assert.deepEqual(
       [...declared].sort(),
-      ["evidence-claim-binding-v1", "iis-binding-v1", "windows-cert-store-v1"],
-    );
-    assert.ok(
-      !declared.includes("trust-anchor-deploy-v1"),
-      "trust-anchor-deploy-v1 must not be advertised: not real-host verified yet",
+      [
+        "evidence-claim-binding-v1",
+        "iis-binding-v1",
+        "trust-anchor-deploy-v1",
+        "windows-cert-store-v1",
+      ],
     );
   });
 
@@ -164,6 +166,7 @@ describe("qualified-capabilities loader startup rejection (defense in depth agai
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.deepEqual([...manifest.qualified].sort(), [
       "iis-binding-v1",
+      "trust-anchor-deploy-v1",
       "windows-cert-store-v1",
     ]);
   });

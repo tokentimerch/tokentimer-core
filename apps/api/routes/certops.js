@@ -852,7 +852,6 @@ function createManualCertificateJobHandler({
               ? manualTrustJobCreator({
                   trustAnchorId: req.body?.subjectId,
                   agentId: req.body?.agentId,
-                  store: req.body?.store,
                   owner: req.body?.owner,
                 })
               : undefined;

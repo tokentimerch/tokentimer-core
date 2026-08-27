@@ -11,7 +11,7 @@
  * file needs no openssl/child-process cert generation of its own.
  */
 
-const { describe, it, afterEach } = require("node:test");
+const { describe, it, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -366,7 +366,10 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.equal(result.outcome, "installed");
     assert.equal(result.mutationAttempted, true);
     assert.equal(result.mutationPerformed, true);
-    assert.equal(result.store, trustStore.DEBIAN_STORE_NAME);
+    // result.store is the wire-visible label (anchorType-derived, "Root" for
+    // a root anchor), distinct from the Debian-specific osStore
+    // (trustStore.DEBIAN_STORE_NAME) the receipt is actually keyed by below.
+    assert.equal(result.store, "Root");
     assert.equal(result.observedFingerprintAfter, CA_FINGERPRINT);
     assert.equal(result.receipt.state, "finalized");
     assert.equal(execFileImpl.calls.length, 1);
@@ -486,6 +489,41 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
     assert.equal(persisted.row.state, "pending_install");
   });
+
+  it("reports RECEIPT_WRITE_CONFLICT when the intent write itself fails, with no mutation ever attempted (real mkdirSync fault, not a stubbed return)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    // Forces receipt.js's own ensureReceiptDir (called from inside
+    // writeIntentReceipt) to throw for real, exercising tryReceiptStep's
+    // catch path exactly as a genuine disk fault would - not a stand-in
+    // that fakes distributeTrust's return value.
+    const mkdirMock = mock.method(fs, "mkdirSync", () => {
+      throw Object.assign(new Error("simulated mkdir failure"), { code: "EACCES" });
+    });
+    let result;
+    try {
+      result = await trustStore.distributeTrust({
+        job: distributeJob(),
+        family: "debian",
+        receiptDir,
+        seams: { fsImpl, execFileImpl },
+      });
+    } finally {
+      mkdirMock.mock.restore();
+    }
+
+    assert.equal(result.outcome, "already_absent");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "receipt_write_conflict");
+    assert.equal(result.receipt.state, "missing");
+    assert.equal(execFileImpl.calls.length, 0);
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
 });
 
 describe("trust-store: distributeTrust on RHEL-family", () => {
@@ -502,7 +540,10 @@ describe("trust-store: distributeTrust on RHEL-family", () => {
     });
 
     assert.equal(result.outcome, "installed");
-    assert.equal(result.store, trustStore.RHEL_STORE_NAME);
+    // result.store is the wire-visible label (anchorType-derived), distinct
+    // from the RHEL-specific osStore (trustStore.RHEL_STORE_NAME) used for
+    // the real OS mutation just below.
+    assert.equal(result.store, "Root");
     assert.deepEqual(execFileImpl.calls[0], [trustStore.RHEL_UPDATE_COMMAND, ...trustStore.RHEL_UPDATE_ARGS]);
 
     const filePath = trustStore.linuxAnchorFilePath("rhel", CA_FINGERPRINT);
@@ -593,6 +634,79 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(validation.valid, true, JSON.stringify(validation.errors));
   });
 
+  it("(main removal flow) reports RECEIPT_WRITE_CONFLICT when the intent write itself fails, before any OS mutation is attempted (real mkdirSync fault, not a stubbed return)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl); // anchor file stays present
+
+    const removeExecFileImpl = makeFakeExecFile({ succeed: true });
+    const mkdirMock = mock.method(fs, "mkdirSync", () => {
+      throw Object.assign(new Error("simulated mkdir failure"), { code: "EACCES" });
+    });
+    let result;
+    try {
+      result = await trustStore.revokeTrust({
+        job: revokeJob(),
+        family: "debian",
+        receiptDir,
+        seams: { fsImpl, execFileImpl: removeExecFileImpl },
+      });
+    } finally {
+      mkdirMock.mock.restore();
+    }
+
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "receipt_write_conflict");
+    assert.equal(result.receipt.state, "intent_written");
+    assert.equal(removeExecFileImpl.calls.length, 0);
+  });
+
+  it("(main removal flow) reports a tagged RECEIPT_FINALIZE_CONFLICT failure, never throwing, if the intent receipt is stolen out from under it between the OS mutation and finalize", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl); // anchor file stays present
+
+    // Mirrors the distributeTrust race in the "receipt races never throw"
+    // describe block below: a second process reclaims the same (store,
+    // fingerprint) row for a different jobId between this call's own
+    // writeIntentReceipt and finalizeReceipt, firing inside the
+    // execFileImpl seam since that fires between those two writes on this
+    // (isPresent) removal path (unlike the already-absent path, which has
+    // no async gap to splice a genuine interloper write into).
+    const interloperExecFileImpl = (file, args, options, callback) => {
+      receipt.writeIntentReceipt({
+        receiptDir,
+        store: trustStore.DEBIAN_STORE_NAME,
+        fingerprintSha256: CA_FINGERPRINT,
+        jobId: "interloper-job",
+        transitionGeneration: 99,
+        intentState: "pending_remove",
+        reclaimStalePending: true,
+      });
+      callback(null, "", "");
+    };
+
+    const result = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: interloperExecFileImpl },
+    });
+
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(result.failureCategory, "receipt_finalize_conflict");
+    assert.equal(result.receipt.state, "intent_written");
+
+    // The interloper's row is what's actually on disk, untouched by this
+    // call's own rejected finalize attempt.
+    const onDisk = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(onDisk.row.jobId, "interloper-job");
+  });
+
   it("idempotent removal: reports already_absent (success) when the file is already gone despite an owning receipt", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});
@@ -617,6 +731,86 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
 
     const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
     assert.equal(persisted.row.state, "removed");
+  });
+
+  it("(already-absent path) reports RECEIPT_WRITE_CONFLICT when re-writing the pending_remove intent itself fails, with no mutation attempted (real mkdirSync fault, not a stubbed return)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    // Delete the anchor file out from under the receipt (same setup as the
+    // idempotent-removal test above) so revokeTrust takes the
+    // already-absent branch, then force writeIntentReceipt's own
+    // ensureReceiptDir to throw for real inside that branch.
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    fsImpl._files.delete(filePath);
+
+    const removeExecFileImpl = makeFakeExecFile({ succeed: true });
+    const mkdirMock = mock.method(fs, "mkdirSync", () => {
+      throw Object.assign(new Error("simulated mkdir failure"), { code: "EACCES" });
+    });
+    let result;
+    try {
+      result = await trustStore.revokeTrust({
+        job: revokeJob(),
+        family: "debian",
+        receiptDir,
+        seams: { fsImpl, execFileImpl: removeExecFileImpl },
+      });
+    } finally {
+      mkdirMock.mock.restore();
+    }
+
+    assert.equal(result.outcome, "already_absent");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "receipt_write_conflict");
+    assert.equal(result.receipt.state, "intent_written");
+    assert.equal(removeExecFileImpl.calls.length, 0);
+  });
+
+  it("(already-absent path) reports RECEIPT_FINALIZE_CONFLICT, never throwing, when finalizing the pending_remove -> removed transition fails after the intent write succeeded", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    fsImpl._files.delete(filePath);
+
+    // Let the already-absent branch's own writeIntentReceipt call succeed
+    // (mkdirSync unmocked for it), then fail only the finalizeReceipt call
+    // right after: both funnel through receipt.js's ensureReceiptDir, so
+    // counting calls distinguishes the intent write from the finalize.
+    let mkdirCalls = 0;
+    const mkdirMock = mock.method(fs, "mkdirSync", (...args) => {
+      mkdirCalls += 1;
+      if (mkdirCalls === 1) return undefined;
+      throw Object.assign(new Error("simulated mkdir failure on finalize"), { code: "EACCES" });
+    });
+    const removeExecFileImpl = makeFakeExecFile({ succeed: true });
+    let result;
+    try {
+      result = await trustStore.revokeTrust({
+        job: revokeJob(),
+        family: "debian",
+        receiptDir,
+        seams: { fsImpl, execFileImpl: removeExecFileImpl },
+      });
+    } finally {
+      mkdirMock.mock.restore();
+    }
+
+    assert.equal(result.outcome, "already_absent");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "receipt_finalize_conflict");
+    assert.equal(result.receipt.state, "intent_written");
+    assert.equal(removeExecFileImpl.calls.length, 0);
+
+    // The intent write from before the forced finalize failure did land on
+    // disk, still in pending_remove (never reached removed).
+    const onDisk = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(onDisk.row.state, "pending_remove");
   });
 
   it("reports outcome 'installed' (not 'removed') when the OS-level removal command fails, so a caller checking outcome alone never sees a false completion", async () => {

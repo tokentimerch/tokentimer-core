@@ -330,6 +330,25 @@ describe("trust-store/receipt: finalizeReceipt guards", () => {
     );
   });
 
+  it("throws RECEIPT_CORRUPT when the existing row on disk fails to parse/validate, distinct from RECEIPT_MISSING", () => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+    const rowPath = receipt.receiptRowPath(receiptDir, STORE, FP_A);
+    fs.writeFileSync(rowPath, "{ not valid json", "utf8");
+
+    assert.throws(
+      () =>
+        receipt.finalizeReceipt({
+          receiptDir,
+          store: STORE,
+          fingerprintSha256: FP_A,
+          jobId: "job-1",
+          transitionGeneration: 1,
+        }),
+      (err) => err.code === "RECEIPT_CORRUPT" && /is corrupt/.test(err.message),
+    );
+  });
+
   it("throws RECEIPT_GENERATION_MISMATCH when jobId/transitionGeneration differ from the intent row", () => {
     const receiptDir = makeTempReceiptDir();
     receipt.writeIntentReceipt({
@@ -521,6 +540,85 @@ describe("trust-store/receipt: sweepReceipts startup sweep", () => {
     const sweep = receipt.sweepReceipts({ receiptDir });
     assert.deepEqual(sweep.rows, []);
     assert.deepEqual(sweep.corrupt, []);
+  });
+});
+
+describe("trust-store/receipt: readReceiptById guards (startup-sweep hardening against a tampered receiptDir)", () => {
+  it("reports {corrupt: true} for a symlink at the receipt path, never following it", (t) => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+    const targetPath = path.join(receiptDir, "real-target.json");
+    fs.writeFileSync(targetPath, "not a receipt, just a symlink target", "utf8");
+    const id = "deadbeef00000000000000000000000000000000000000000000000000beef";
+    const linkPath = path.join(receiptDir, `${id}.json`);
+    try {
+      fs.symlinkSync(targetPath, linkPath, "file");
+    } catch (err) {
+      // skip-reason: no-host - symlink creation is unavailable on this host
+      // (commonly Windows without Developer Mode / elevated privileges).
+      t.skip(`symlink creation is unavailable: ${err.code || err.message}`);
+      return;
+    }
+
+    const result = receipt.readReceiptById(receiptDir, id);
+    assert.notEqual(result, null);
+    assert.equal(result.corrupt, true);
+    assert.match(result.error.message, /not a regular file/);
+  });
+
+  it("reports {corrupt: true} for a receipt file exceeding MAX_RECEIPT_ROW_BYTES, without reading its contents into memory", () => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+    const id = "cafebabe00000000000000000000000000000000000000000000000000face";
+    const rowPath = path.join(receiptDir, `${id}.json`);
+    fs.writeFileSync(rowPath, Buffer.alloc(receipt.MAX_RECEIPT_ROW_BYTES + 1));
+
+    const result = receipt.readReceiptById(receiptDir, id);
+    assert.notEqual(result, null);
+    assert.equal(result.corrupt, true);
+    assert.match(result.error.message, new RegExp(`exceeds ${receipt.MAX_RECEIPT_ROW_BYTES} bytes`));
+  });
+
+  it("a same-shaped tampered receipt is caught by sweepReceipts as corrupt, not silently skipped or trusted", (t) => {
+    const receiptDir = makeTempReceiptDir();
+    fs.mkdirSync(receiptDir, { recursive: true });
+
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-a",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+    receipt.finalizeReceipt({
+      receiptDir,
+      store: STORE,
+      fingerprintSha256: FP_A,
+      jobId: "job-a",
+      transitionGeneration: 1,
+    });
+
+    const oversizedId = "cafebabe00000000000000000000000000000000000000000000000000face";
+    fs.writeFileSync(path.join(receiptDir, `${oversizedId}.json`), Buffer.alloc(receipt.MAX_RECEIPT_ROW_BYTES + 1));
+
+    const symlinkId = "deadbeef00000000000000000000000000000000000000000000000000beef";
+    const targetPath = path.join(receiptDir, "real-target.json");
+    fs.writeFileSync(targetPath, "not a receipt", "utf8");
+    let symlinkCreated = true;
+    try {
+      fs.symlinkSync(targetPath, path.join(receiptDir, `${symlinkId}.json`), "file");
+    } catch (err) {
+      symlinkCreated = false;
+    }
+
+    const sweep = receipt.sweepReceipts({ receiptDir });
+    assert.equal(sweep.rows.length, 1);
+    assert.equal(sweep.rows[0].fingerprintSha256, FP_A);
+    // real-target.json itself is also listed (any *.json file qualifies),
+    // so the corrupt count is 2 (oversized + real-target) plus the symlink
+    // only when this host actually supports creating one.
+    assert.equal(sweep.corrupt.length, symlinkCreated ? 3 : 2);
   });
 });
 

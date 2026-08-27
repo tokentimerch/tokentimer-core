@@ -11,8 +11,10 @@
  * real-host verified (Windows Server 2019/2022/2025; see
  * docs/certops/agent.md and the real-host verification runbook), so
  * ./qualified-capabilities.json now names both. trust-anchor-deploy-v1's
- * executor exists (../trust-store) but isn't real-host verified on every
- * platform yet, so it stays unqualified until the manifest names it.
+ * executor (../trust-store) has since passed real-host verification too,
+ * against a real Windows Server host, a Debian/Ubuntu host, and a
+ * RHEL/AlmaLinux host (docs/certops/agent.md), so it is now also named in
+ * ./qualified-capabilities.json.
  * This list itself never changes based on evidence -- it is the fixed set
  * of strings the build-time manifest is allowed to name at all; whether a
  * given build's manifest actually qualifies one is a release decision made

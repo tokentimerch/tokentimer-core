@@ -744,20 +744,21 @@ describe("registerIfNeeded", () => {
     // reconciliation gates on; otherwise every issue job would sit at
     // 'pending' forever against a freshly registered agent. requireSignedAgentId
     // now defaults to true (no override in this test's config.json), so
-    // agent-id-binding-v1 is declared too. On win32, windows-cert-store-v1/
-    // iis-binding-v1 are also candidate capabilities
-    // (AGENT_CANDIDATE_CAPABILITIES) and, since real-host verification on
-    // tokentimer-winverify-vm qualified them in qualified-capabilities.json,
-    // they now pass the manifest gate too.
-    const expectedDeclaredCapabilities =
-      process.platform === "win32"
-        ? [
-            "evidence-claim-binding-v1",
-            "windows-cert-store-v1",
-            "iis-binding-v1",
-            "agent-id-binding-v1",
-          ]
-        : ["evidence-claim-binding-v1", "agent-id-binding-v1"];
+    // agent-id-binding-v1 is declared too. windows-cert-store-v1/
+    // iis-binding-v1/trust-anchor-deploy-v1 are qualified in
+    // qualified-capabilities.json after real-host verification, so whichever
+    // of them are also candidates on THIS host (win32: all three always;
+    // Debian/RHEL: trust-anchor-deploy-v1 only if its prerequisites resolve)
+    // pass the manifest gate and get declared.
+    const expectedDeclaredCapabilities = [
+      "evidence-claim-binding-v1",
+      ...(process.platform === "win32"
+        ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
+        : AGENT_TRUST_STORE_PREREQUISITES.candidate
+          ? ["trust-anchor-deploy-v1"]
+          : []),
+      "agent-id-binding-v1",
+    ];
     assert.deepEqual(registerCall.declaredCapabilities, expectedDeclaredCapabilities);
     // H1: registrationId must be sent and must match the pre-persisted key.
     assert.match(registerCall.registrationId, /^[0-9a-f-]{36}$/i);

@@ -140,6 +140,33 @@ function normalizeStore(value) {
   return value;
 }
 
+/**
+ * The store bookkeeping/wire label for a trust job, derived purely from
+ * anchor_type - never accepted from a caller. Mirrors the agent's own
+ * resolveWireStore (packages/agent/src/trust-store/index.js): both sides
+ * compute the identical "Root"/"CA" label from the same signed anchorType,
+ * so a correct result can never be rejected as a store mismatch, and a
+ * caller can never name an arbitrary store (ADR-0012 decision 4 - a
+ * payload-supplied store name would be a second, disagreeable source of
+ * truth). Deliberately platform-neutral: which real OS mechanism an anchor
+ * type maps to is the executor's concern, not the control plane's.
+ */
+const TRUST_ANCHOR_STORE_LABEL_BY_TYPE = Object.freeze({
+  root: "Root",
+  intermediate: "CA",
+});
+
+function resolveTrustAnchorStoreLabel(anchorType) {
+  const label = TRUST_ANCHOR_STORE_LABEL_BY_TYPE[anchorType];
+  if (!label) {
+    throw trustAnchorError(
+      `Cannot resolve a store label for anchorType ${JSON.stringify(anchorType)}`,
+      CERTOPS_TRUST_ANCHOR_INVALID,
+    );
+  }
+  return label;
+}
+
 function normalizeOwner(value) {
   const owner = typeof value === "string" ? value.trim() : "";
   if (!owner || owner.length > OWNER_MAX_LENGTH) {
@@ -535,15 +562,21 @@ async function lockOrCreateInstallation({
   );
   if (locked.rows[0]) return { row: locked.rows[0], created: false };
 
-  // A fresh row starts pending_install/tokentimer_installed at generation 1;
+  // A fresh row starts pending_install/preexisting at generation 1;
   // createTrustJob below immediately advances it to the correct state for
-  // the requested operation in the same transaction.
+  // the requested operation in the same transaction. provenance starts
+  // 'preexisting' (not 'tokentimer_installed') because at insert time we
+  // haven't run the job yet - ingestResult's nextProvenance below is the
+  // only place that promotes it to 'tokentimer_installed', and only on a
+  // genuine outcome:"installed" mutation. Starting optimistic here would
+  // let an outcome:"preexisting" result (agent found the cert already
+  // there, no mutation performed) keep a provenance TokenTimer never earned.
   const inserted = await client.query(
     `INSERT INTO certops_trust_anchor_installations (
        workspace_id, trust_anchor_id, host, store, fingerprint_sha256,
        owner, agent_id, provenance
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'tokentimer_installed')
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'preexisting')
      ON CONFLICT (workspace_id, agent_id, store, fingerprint_sha256, owner)
        DO NOTHING
      RETURNING ${INSTALLATION_SELECT_FIELDS}`,
@@ -709,7 +742,6 @@ async function createTrustJob(options = {}) {
     CERTOPS_TRUST_ANCHOR_INVALID,
   );
   const agentId = normalizeAgentId(options.agentId);
-  const store = normalizeStore(options.store);
   const owner = normalizeOwner(options.owner);
   const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
   const publicMetadata = normalizePublicObject(
@@ -723,7 +755,6 @@ async function createTrustJob(options = {}) {
         operation,
         trustAnchorId,
         agentId,
-        store,
         owner,
         idempotencyKey,
         publicMetadata,
@@ -739,7 +770,6 @@ async function createTrustJob(options = {}) {
           operation,
           trustAnchorId,
           agentId,
-          store,
           owner,
           idempotencyKey,
           publicMetadata,
@@ -758,7 +788,6 @@ async function runCreateTrustJob(client, params) {
     operation,
     trustAnchorId,
     agentId,
-    store,
     owner,
     idempotencyKey,
     publicMetadata,
@@ -795,6 +824,13 @@ async function runCreateTrustJob(client, params) {
       CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
     );
   }
+
+  // Derived from the anchor's own anchor_type, the same signed value the
+  // agent routes on - never accepted from a caller. See
+  // resolveTrustAnchorStoreLabel's header: this is the only place a trust
+  // job's store is decided, so the value persisted here and the value an
+  // agent echoes back can never disagree.
+  const store = normalizeStore(resolveTrustAnchorStoreLabel(anchor.anchor_type));
 
   const { row: installationRow, created: installationCreated } =
     await lockOrCreateInstallation({
@@ -1011,7 +1047,7 @@ async function runCreateTrustJob(client, params) {
  * createCertificateJob for every other operation. This keeps createTrustJob
  * the only path into a trust job even from the shared manual-job route.
  */
-function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
+function manualTrustJobCreator({ trustAnchorId, agentId, owner } = {}) {
   return async function manualTrustJobCreator(options) {
     const outcome = await createTrustJob({
       client: options.client,
@@ -1019,7 +1055,6 @@ function manualTrustJobCreator({ trustAnchorId, agentId, store, owner } = {}) {
       operation: options.operation,
       trustAnchorId,
       agentId,
-      store,
       owner,
       idempotencyKey: options.idempotencyKey,
       publicMetadata: options.payload,
