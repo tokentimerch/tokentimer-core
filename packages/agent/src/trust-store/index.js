@@ -18,7 +18,6 @@
  */
 
 const childProcess = require("node:child_process");
-const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { X509Certificate } = require("node:crypto");
 const fs = require("node:fs");
@@ -30,7 +29,6 @@ const {
   computeFingerprintSha256: computeFingerprintSha256FromDerBase64,
 } = require("../discovery/windows.js");
 const { isWindows } = require("../platform/index.js");
-const { fsyncDirectorySync } = require("../platform/durability.js");
 
 /** Defense in depth: every exec runs without a shell, but argv is still
  * checked against this pattern. */

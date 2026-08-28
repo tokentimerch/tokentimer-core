@@ -89,7 +89,7 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
-const { TRUST_STORE_COMMAND_REFS, trustStoreCommandRefForFamily } = require("./trust-store");
+const { trustStoreCommandRefForFamily } = require("./trust-store");
 const { readReceipt } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {

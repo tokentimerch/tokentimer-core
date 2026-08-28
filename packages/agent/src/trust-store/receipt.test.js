@@ -579,7 +579,7 @@ describe("trust-store/receipt: readReceiptById guards (startup-sweep hardening a
     assert.match(result.error.message, new RegExp(`exceeds ${receipt.MAX_RECEIPT_ROW_BYTES} bytes`));
   });
 
-  it("a same-shaped tampered receipt is caught by sweepReceipts as corrupt, not silently skipped or trusted", (t) => {
+  it("a same-shaped tampered receipt is caught by sweepReceipts as corrupt, not silently skipped or trusted", () => {
     const receiptDir = makeTempReceiptDir();
     fs.mkdirSync(receiptDir, { recursive: true });
 
@@ -608,7 +608,7 @@ describe("trust-store/receipt: readReceiptById guards (startup-sweep hardening a
     let symlinkCreated = true;
     try {
       fs.symlinkSync(targetPath, path.join(receiptDir, `${symlinkId}.json`), "file");
-    } catch (err) {
+    } catch (_err) {
       symlinkCreated = false;
     }
 

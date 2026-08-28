@@ -782,7 +782,7 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     // right after: both funnel through receipt.js's ensureReceiptDir, so
     // counting calls distinguishes the intent write from the finalize.
     let mkdirCalls = 0;
-    const mkdirMock = mock.method(fs, "mkdirSync", (...args) => {
+    const mkdirMock = mock.method(fs, "mkdirSync", () => {
       mkdirCalls += 1;
       if (mkdirCalls === 1) return undefined;
       throw Object.assign(new Error("simulated mkdir failure on finalize"), { code: "EACCES" });

@@ -5488,7 +5488,7 @@ async function executeTrustJob({
   jobMode,
   policyEngine,
   client,
-  log,
+  log: _log,
   leaseOpts = null,
   executionContext = null,
   onBeforeMutation = null,
