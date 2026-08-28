@@ -22,7 +22,13 @@ const { runMigrations } = requireMigrateModule();
 
 const { pool } = require("../../apps/api/db/database");
 const Token = require("../../apps/api/db/models/Token");
-const { persistScan, getScan } = require("../../apps/api/services/integrationScans");
+const {
+  persistScan,
+  getScan,
+  createScan,
+  recordScanItems,
+  finalizeScan,
+} = require("../../apps/api/services/integrationScans");
 const { cleanupObsoleteTokens } = require("../../apps/api/services/importCleanup");
 
 describe("Import cleanup scan lifecycle (real database)", function () {
@@ -207,8 +213,7 @@ describe("Import cleanup scan lifecycle (real database)", function () {
     expect(await tokenStillExists(tokenB.id)).to.equal(true);
   });
 
-  it("never deletes anything from a sub-scope the scan reported incomplete", async () => {
-    const instance = `aws-${crypto.randomUUID()}`;
+  it("never deletes anything from a sub-scope the scan reported incomplete", async () => {    const instance = `aws-${crypto.randomUUID()}`;
     const obsolete = await createProvenanceToken({
       name: "aws-secret-truncated-region",
       provider: "aws",
@@ -491,5 +496,101 @@ describe("Import cleanup scan lifecycle (real database)", function () {
 
     expect(deleted.map((d) => d.id)).to.not.include(kvSecretAtCertLikePath.id);
     expect(await tokenStillExists(kvSecretAtCertLikePath.id)).to.equal(true);
+  });
+
+  it("survives a rediscovery race: an older scan's cleanup must not delete a token a newer, concurrent scan just rediscovered", async () => {
+    // Regression test for the observation-fence race: recordScanItems() must
+    // bump source_observed_at on rediscovery immediately (at scan time), not
+    // only later via a separate import step, or an older/slower scan's
+    // cleanup could win the race and delete a token a newer scan just saw.
+    const instance = `vault-race-${crypto.randomUUID()}.example.com`;
+    const objectId = "secret/data/racy";
+    const token = await createProvenanceToken({
+      name: "racy-secret",
+      provider: "vault",
+      instance,
+      ownerKey: instance,
+      kind: "vault-kv",
+      objectId,
+      dimensions: { mount: "secret/", path: "racy", category: "generic" },
+      // Simulate a token whose last observation predates both scans below.
+      observedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    // Control: a second, genuinely obsolete token in the same scope that no
+    // scan ever rediscovers. It must still be deleted by scan A's cleanup,
+    // proving the assertions below aren't a vacuous "cleanup did nothing".
+    const genuinelyObsolete = await createProvenanceToken({
+      name: "genuinely-obsolete-secret",
+      provider: "vault",
+      instance,
+      ownerKey: instance,
+      kind: "vault-kv",
+      objectId: "secret/data/actually-gone",
+      dimensions: { mount: "secret/", path: "actually-gone", category: "generic" },
+      observedAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+
+    // Scan A starts first (older / slower) and discovers nothing -- it will
+    // want to delete the token as obsolete.
+    const scanA = await createScan({
+      workspaceId,
+      provider: "vault",
+      instance,
+      ownerKey: instance,
+    });
+
+    // Scan B starts after A, rediscovers the token (item recorded ->
+    // source_observed_at bumped immediately), and finishes before A's
+    // cleanup runs -- even though B's own import step hasn't run yet.
+    const scanB = await createScan({
+      workspaceId,
+      provider: "vault",
+      instance,
+      ownerKey: instance,
+    });
+    await recordScanItems(
+      scanB.id,
+      [
+        {
+          sourceKind: "vault-kv",
+          sourceObjectId: objectId,
+          dimensions: { mount: "secret/", path: "racy", category: "generic" },
+        },
+      ],
+      {
+        workspaceId,
+        provider: "vault",
+        instance,
+        ownerKey: instance,
+        observedAt: scanB.startedAt,
+      },
+    );
+    await finalizeScan(scanB.id, [
+      { sourceKind: "vault-kv", dimensions: { mount: "secret/" }, complete: true },
+    ]);
+
+    // Scan A finalizes (still having recorded zero items) and its cleanup
+    // runs after B's rediscovery was already persisted.
+    await recordScanItems(scanA.id, [], {
+      workspaceId,
+      provider: "vault",
+      instance,
+      ownerKey: instance,
+      observedAt: scanA.startedAt,
+    });
+    await finalizeScan(scanA.id, [
+      { sourceKind: "vault-kv", dimensions: { mount: "secret/" }, complete: true },
+    ]);
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "vault", scanId: scanA.id },
+    });
+
+    expect(deleted.map((d) => d.id)).to.not.include(token.id);
+    expect(await tokenStillExists(token.id)).to.equal(true);
+    expect(deleted.map((d) => d.id)).to.include(genuinelyObsolete.id);
+    expect(await tokenStillExists(genuinelyObsolete.id)).to.equal(false);
   });
 });

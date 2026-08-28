@@ -117,7 +117,7 @@ describe("GitLab integration helper coverage", () => {
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    const projects = await gitlab._test.listProjects({
+    const { projects } = await gitlab._test.listProjects({
       baseUrl: "https://gitlab.example.com",
       token: "token",
       maxItems: 3,

@@ -838,10 +838,15 @@ async function scanVault({
           truncated,
           hasErrors,
           complete: !truncated && !hasErrors,
+          // Sub-scope dimensions use different key semantics than a token's
+          // own recorded dimensions: `pathPrefix` triggers a LIKE-prefix
+          // match against the token's exact `path`, and `categories` is a
+          // membership check against the token's single `category` --
+          // neither can be exact-matched against, unlike `mount`.
           dimensions: {
             mount: m.path,
-            path: pathPrefix || null,
-            category: categorySet ? [...categorySet].sort().join(",") : null,
+            pathPrefix: pathPrefix || null,
+            categories: categorySet ? [...categorySet].sort() : null,
           },
         });
         logger.info("Vault KV mount scan completed", {
@@ -889,7 +894,7 @@ async function scanVault({
           complete: !truncated && !hasErrors,
           dimensions: {
             mount: m.path,
-            category: categorySet ? [...categorySet].sort().join(",") : null,
+            categories: categorySet ? [...categorySet].sort() : null,
           },
         });
         logger.info("Vault PKI mount scan completed", {

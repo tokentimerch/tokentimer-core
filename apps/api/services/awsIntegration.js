@@ -277,10 +277,15 @@ async function scanAWSSingleRegion({
         secrets.push(...(listResponse.SecretList || []));
         secretsNextToken = listResponse.NextToken;
       } while (secretsNextToken && secrets.length < maxItems);
+      // If a NextToken is still present when we stop, the account has more
+      // secrets than maxItems allowed us to enumerate -- this sub-scope did
+      // not see the whole region and must not be reported complete.
+      const secretsListTruncated = Boolean(secretsNextToken);
       logger.info("AWS Secrets Manager list response", {
         region,
         totalSecretsFound: secrets.length,
         maxItems,
+        truncated: secretsListTruncated,
       });
 
       let describedCount = 0;
@@ -336,6 +341,11 @@ async function scanAWSSingleRegion({
       const secretsCount = items.filter(
         (item) => item.source === "aws-secrets-manager",
       ).length;
+      // Truncated if: (a) NextToken remained (more secrets exist upstream
+      // than we listed), or (b) we found more secrets than maxItems allowed
+      // us to describe/import.
+      const secretsTruncated =
+        secretsListTruncated || secrets.length > maxItems;
       // A DescribeSecret failure means that secret's continued existence is
       // unconfirmed, not confirmed-deleted -- this region+service sub-scope
       // must be reported incomplete so cleanup never treats a describe
@@ -347,7 +357,8 @@ async function scanAWSSingleRegion({
         service: "secrets_manager",
         found: secretsCount,
         failedCount,
-        complete: failedCount === 0,
+        truncated: secretsTruncated,
+        complete: failedCount === 0 && !secretsTruncated,
       });
       logger.info("AWS Secrets Manager scan completed", {
         found: secretsCount,
@@ -414,9 +425,14 @@ async function scanAWSSingleRegion({
         certificates.push(...(listResponse.CertificateSummaryList || []));
         acmNextToken = listResponse.NextToken;
       } while (acmNextToken && certificates.length < acmMaxItems);
+      // If a NextToken remains, the account has more certificates than
+      // acmMaxItems allowed us to enumerate -- this sub-scope did not see
+      // the whole region.
+      const certsListTruncated = Boolean(acmNextToken);
       logger.info("AWS ACM list response", {
         region,
         totalCertificatesFound: certificates.length,
+        truncated: certsListTruncated,
       });
 
       let describedCount = 0;
@@ -495,6 +511,8 @@ async function scanAWSSingleRegion({
       const certsCount = items.filter(
         (item) => item.source === "aws-acm",
       ).length;
+      const certsTruncated =
+        certsListTruncated || certificates.length > maxItems;
       summary.push({
         type: "acm_certificates",
         sourceKind: "aws-acm",
@@ -502,7 +520,8 @@ async function scanAWSSingleRegion({
         service: "acm_certificates",
         found: certsCount,
         failedCount,
-        complete: failedCount === 0,
+        truncated: certsTruncated,
+        complete: failedCount === 0 && !certsTruncated,
       });
       logger.info("AWS ACM scan completed", {
         found: certsCount,
@@ -556,14 +575,21 @@ async function scanAWSSingleRegion({
           ? usersResponse.Marker
           : undefined;
       } while (usersMarker && users.length < maxItems);
+      // If a Marker remains, IAM has more users than maxItems allowed us to
+      // enumerate -- some users' keys were never even attempted.
+      const usersListTruncated = Boolean(usersMarker);
       let iamKeysCount = 0;
       let iamListFailedCount = 0;
+      let usersSkippedByCap = 0;
       const BATCH_SIZE = 10;
 
       // Scan IAM keys independently of items from other services
       // Apply maxItems limit per-service to ensure each service gets fair representation
       for (let i = 0; i < users.length; i += BATCH_SIZE) {
-        if (iamKeysCount >= maxItems) break;
+        if (iamKeysCount >= maxItems) {
+          usersSkippedByCap += users.length - i;
+          break;
+        }
         const batch = users.slice(i, i + BATCH_SIZE);
 
         await Promise.all(
@@ -633,13 +659,16 @@ async function scanAWSSingleRegion({
       // IAM keys are global, not per-region, so this sub-scope's dimensions
       // omit `region` entirely -- a token here is never partitioned by
       // which region happened to be selected for the rest of the scan.
+      const iamTruncated =
+        usersListTruncated || usersSkippedByCap > 0 || iamKeysCount >= maxItems;
       summary.push({
         type: "iam_keys",
         sourceKind: "aws-iam-key",
         service: "iam_keys",
         found: iamKeysCount,
         failedCount: iamListFailedCount,
-        complete: iamListFailedCount === 0,
+        truncated: iamTruncated,
+        complete: iamListFailedCount === 0 && !iamTruncated,
       });
       logger.info("AWS IAM scan completed", { found: iamKeysCount });
     } catch (e) {

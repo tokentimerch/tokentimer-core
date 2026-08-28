@@ -313,7 +313,7 @@ describe("Vault KV scan behavior", () => {
           complete: true,
           hasErrors: false,
           sourceKind: "vault-kv",
-          dimensions: { mount: "secret/", path: null, category: null },
+          dimensions: { mount: "secret/", pathPrefix: null, categories: null },
         },
       ]);
     });
@@ -511,7 +511,7 @@ describe("Vault KV scan behavior", () => {
           complete: true,
           hasErrors: false,
           sourceKind: "vault-kv",
-          dimensions: { mount: "secret/", path: null, category: "cert" },
+          dimensions: { mount: "secret/", pathPrefix: null, categories: ["cert"] },
         },
       ]);
     });

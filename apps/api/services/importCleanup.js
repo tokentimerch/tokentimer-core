@@ -83,10 +83,12 @@ function validateCleanupRequest(cleanup) {
 // A sub-scope's dimension filter narrows which candidate tokens fall inside
 // it. Only keys the scan actually recorded are compared; a key absent from
 // the sub-scope's dimensions means "not narrowed on this axis" for that
-// provider (e.g. an AWS sub-scope with no `service` means "this region,
-// every service checked in it"). `pathPrefix` (Vault) is a prefix match
-// against the token's own recorded `path` dimension; everything else is
-// exact-match.
+// provider (e.g. an AWS sub-scope with no `region` means "global, every
+// region-independent resource"). `pathPrefix` (Vault) is a prefix match
+// against the token's own recorded `path` dimension. `categories` (Vault)
+// is a membership check against the token's own recorded `category`
+// dimension, since a scan can narrow to more than one category at once.
+// Everything else is exact-match.
 function buildDimensionFilterSql(dimensions, paramOffset) {
   const clauses = [];
   const params = [];
@@ -97,6 +99,12 @@ function buildDimensionFilterSql(dimensions, paramOffset) {
     if (key === "pathPrefix") {
       clauses.push(`(t.source_dimensions->>'path') LIKE $${p}`);
       params.push(`${String(value)}%`);
+      p++;
+    } else if (key === "categories") {
+      const list = Array.isArray(value) ? value : [value];
+      if (list.length === 0) continue;
+      clauses.push(`(t.source_dimensions->>'category') = ANY($${p}::text[])`);
+      params.push(list.map((v) => String(v)));
       p++;
     } else {
       clauses.push(`(t.source_dimensions->>'${key.replace(/[^a-zA-Z0-9_]/g, "")}') = $${p}`);

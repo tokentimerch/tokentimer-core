@@ -275,9 +275,17 @@ async function scanAzureAD({
           await listApplications({ token: cleanToken, maxItems });
         let secretsCount = 0;
         let certsCount = 0;
+        let appsBudgetExhausted = false;
 
         for (const app of apps) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            // The shared cross-type item budget ran out before every listed
+            // application's credentials were inspected -- some apps here
+            // were never even attempted, so this cannot be "complete" even
+            // though listApplications() itself paginated fine.
+            appsBudgetExhausted = true;
+            break;
+          }
 
           logger.debug("Azure AD app credentials", {
             appId: app.appId,
@@ -353,8 +361,8 @@ async function scanAzureAD({
           found: apps.length,
           secrets: secretsCount,
           certificates: certsCount,
-          truncated: appsTruncated,
-          complete: !appsTruncated,
+          truncated: appsTruncated || appsBudgetExhausted,
+          complete: !appsTruncated && !appsBudgetExhausted,
         });
         summary.push({
           type: "applications",
@@ -362,8 +370,8 @@ async function scanAzureAD({
           found: apps.length,
           secrets: secretsCount,
           certificates: certsCount,
-          truncated: appsTruncated,
-          complete: !appsTruncated,
+          truncated: appsTruncated || appsBudgetExhausted,
+          complete: !appsTruncated && !appsBudgetExhausted,
         });
         logger.info("Azure AD applications scan completed", {
           apps: apps.length,
@@ -398,9 +406,13 @@ async function scanAzureAD({
           });
         let secretsCount = 0;
         let certsCount = 0;
+        let spsBudgetExhausted = false;
 
         for (const sp of sps) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            spsBudgetExhausted = true;
+            break;
+          }
 
           // Process passwordCredentials (client secrets)
           for (const cred of sp.passwordCredentials || []) {
@@ -469,8 +481,8 @@ async function scanAzureAD({
           found: sps.length,
           secrets: secretsCount,
           certificates: certsCount,
-          truncated: spsTruncated,
-          complete: !spsTruncated,
+          truncated: spsTruncated || spsBudgetExhausted,
+          complete: !spsTruncated && !spsBudgetExhausted,
         });
         summary.push({
           type: "service_principals",
@@ -478,8 +490,8 @@ async function scanAzureAD({
           found: sps.length,
           secrets: secretsCount,
           certificates: certsCount,
-          truncated: spsTruncated,
-          complete: !spsTruncated,
+          truncated: spsTruncated || spsBudgetExhausted,
+          complete: !spsTruncated && !spsBudgetExhausted,
         });
         logger.info("Azure AD service principals scan completed", {
           sps: sps.length,

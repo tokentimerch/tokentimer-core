@@ -299,9 +299,18 @@ async function scanAzure({
         const seenSecrets = new Set();
         const BATCH_SIZE = 10;
         let describeFailedCount = 0;
+        let secretsBudgetExhausted = false;
 
         for (let i = 0; i < secretList.length; i += BATCH_SIZE) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            // The shared cross-type item budget ran out before this
+            // sub-scope finished processing its own listed secrets --
+            // report incomplete even though listSecrets() itself paginated
+            // fine, since some listed secrets here were never even
+            // attempted.
+            secretsBudgetExhausted = true;
+            break;
+          }
           const batch = secretList.slice(i, i + BATCH_SIZE);
 
           await Promise.all(
@@ -403,8 +412,11 @@ async function scanAzure({
           sourceKind: "azure-key-vault-secret",
           found: secretsFound,
           failedCount: describeFailedCount,
-          truncated: secretsTruncated,
-          complete: describeFailedCount === 0 && !secretsTruncated,
+          truncated: secretsTruncated || secretsBudgetExhausted,
+          complete:
+            describeFailedCount === 0 &&
+            !secretsTruncated &&
+            !secretsBudgetExhausted,
         });
         logger.info("Azure secrets scan completed", {
           found: secretsFound,
@@ -437,9 +449,13 @@ async function scanAzure({
         const seenCertificates = new Set();
         const BATCH_SIZE = 10;
         let describeFailedCount = 0;
+        let certsBudgetExhausted = false;
 
         for (let i = 0; i < certificateList.length; i += BATCH_SIZE) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            certsBudgetExhausted = true;
+            break;
+          }
           const batch = certificateList.slice(i, i + BATCH_SIZE);
 
           await Promise.all(
@@ -560,8 +576,11 @@ async function scanAzure({
           sourceKind: "azure-key-vault-certificate",
           found: certsFound,
           failedCount: describeFailedCount,
-          truncated: certsTruncated,
-          complete: describeFailedCount === 0 && !certsTruncated,
+          truncated: certsTruncated || certsBudgetExhausted,
+          complete:
+            describeFailedCount === 0 &&
+            !certsTruncated &&
+            !certsBudgetExhausted,
         });
         logger.info("Azure certificates scan completed", {
           found: certsFound,
@@ -589,9 +608,13 @@ async function scanAzure({
 
         // Deduplicate - keep only latest version of each key
         const seenKeys = new Set();
+        let keysBudgetExhausted = false;
 
         for (const key of keyList) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            keysBudgetExhausted = true;
+            break;
+          }
 
           // Extract key name from identifier URL (remove version if present)
           // The keys list API returns the identifier in `kid` (not `id`):
@@ -655,8 +678,8 @@ async function scanAzure({
           type: "keys",
           sourceKind: "azure-key-vault-key",
           found: keysFound,
-          truncated: keysTruncated,
-          complete: !keysTruncated,
+          truncated: keysTruncated || keysBudgetExhausted,
+          complete: !keysTruncated && !keysBudgetExhausted,
         });
         logger.info("Azure keys scan completed", {
           found: keysFound,

@@ -160,4 +160,22 @@ describe("importCleanup.buildDimensionFilterSql", () => {
     assert.doesNotMatch(sql, /'; --/);
     assert.match(sql, /badkey/);
   });
+
+  it("builds a membership-match clause against the token's own 'category' for categories", () => {
+    const { sql, params } = buildDimensionFilterSql(
+      { categories: ["cert", "generic"] },
+      4,
+    );
+    assert.match(
+      sql,
+      /\(t\.source_dimensions->>'category'\) = ANY\(\$4::text\[\]\)/,
+    );
+    assert.deepStrictEqual(params, [["cert", "generic"]]);
+  });
+
+  it("skips categories when the array is empty", () => {
+    const { sql, params } = buildDimensionFilterSql({ categories: [] }, 1);
+    assert.strictEqual(sql, "");
+    assert.deepStrictEqual(params, []);
+  });
 });

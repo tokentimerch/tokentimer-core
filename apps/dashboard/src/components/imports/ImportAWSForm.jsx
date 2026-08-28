@@ -405,6 +405,10 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
         cleanup:
           cleanupObsolete && lastScanId
             ? {

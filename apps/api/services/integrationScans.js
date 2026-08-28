@@ -10,7 +10,12 @@
  *   2. recordScanItems() as items are discovered (metadata only, never
  *      secret material) -- gives import something to bind client-submitted
  *      items against instead of trusting arbitrary client-supplied
- *      provenance.
+ *      provenance. Also bumps source_observed_at on any already-imported
+ *      token this scan just rediscovered, so the rediscovery is visible to
+ *      the cleanup observation fence immediately, not only after a later
+ *      import step runs. Without this, an older/slower concurrent scan's
+ *      cleanup could still delete a token that a newer scan just saw but
+ *      had not yet re-imported (see importCleanup.js's observation fence).
  *   3. finalizeScan() once the scan is done, with the authoritative
  *      cleanup_scope (per source-kind/dimension completeness).
  *   4. claimScanForCleanup() at cleanup time: a single-use, transactional
@@ -43,8 +48,21 @@ async function createScan({
  * client-submitted items to a real row here by (scanId, sourceKind,
  * sourceObjectId), rather than trusting whatever provenance the client
  * claims for an arbitrary item object.
+ *
+ * Also immediately bumps `source_observed_at` on any already-imported token
+ * matching this scan's (workspace, provider, instance, owner) scope and one
+ * of the discovered (sourceKind, sourceObjectId) pairs. This closes the
+ * concurrency gap where rediscovery would otherwise only become visible to
+ * the cleanup observation fence once a later, separate import step ran --
+ * by then an older/slower concurrent scan's cleanup could already have
+ * deleted the token. GREATEST(...) keeps the timestamp monotonic even if
+ * an older scan's items are recorded after a newer one's.
  */
-async function recordScanItems(scanId, items, { client = null } = {}) {
+async function recordScanItems(
+  scanId,
+  items,
+  { client = null, workspaceId = null, provider = null, instance = null, ownerKey = null, observedAt = null } = {},
+) {
   if (!Array.isArray(items) || items.length === 0) return;
   const db = client || pool;
   const CHUNK = 500;
@@ -68,6 +86,23 @@ async function recordScanItems(scanId, items, { client = null } = {}) {
        ON CONFLICT (scan_id, source_kind, source_object_id) DO NOTHING`,
       params,
     );
+
+    if (workspaceId && provider && instance && ownerKey && observedAt) {
+      const kinds = chunk.map((item) => String(item.sourceKind));
+      const objectIds = chunk.map((item) => String(item.sourceObjectId));
+      await db.query(
+        `UPDATE tokens t
+         SET source_observed_at = GREATEST(COALESCE(t.source_observed_at, $7), $7)
+         FROM UNNEST($4::text[], $5::text[]) AS pair(kind, object_id)
+         WHERE t.workspace_id = $1
+           AND t.source_provider = $2
+           AND t.source_instance = $3
+           AND t.source_owner_key = $6
+           AND t.source_kind = pair.kind
+           AND t.source_object_id = pair.object_id`,
+        [workspaceId, provider, instance, kinds, objectIds, ownerKey, observedAt],
+      );
+    }
   }
 }
 
@@ -184,7 +219,13 @@ async function persistScan({
     ownerKey: identity.ownerKey,
     createdBy,
   });
-  await recordScanItems(scan.id, items);
+  await recordScanItems(scan.id, items, {
+    workspaceId,
+    provider,
+    instance: identity.instance,
+    ownerKey: identity.ownerKey,
+    observedAt: scan.startedAt,
+  });
   await finalizeScan(scan.id, subScopes);
   return {
     scanId: scan.id,

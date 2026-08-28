@@ -479,12 +479,13 @@ router.post(
           it?.sourceObjectId ||
           String(it?.location || "").replace(/^vault:/, ""),
       }));
-      // The client sends the scan id nested as `cleanup.scanId` (the shape
-      // `effectiveCleanup` normalizes into), not as a bare top-level
-      // `scan_id`/`scanId` -- so binding must use the resolved value, or
-      // every import silently fails to bind and every token stays
-      // unattributed (permanently cleanup-ineligible) regardless of the
-      // cleanup checkbox.
+      // Provenance binding must not depend on the cleanup checkbox: the
+      // dashboard sends a bare top-level `scan_id` on every scan-backed
+      // import, and additionally nests `cleanup.scanId` when cleanup is
+      // enabled. Prefer the cleanup-nested id (covers older/other callers
+      // that only set it there) and fall back to the top-level id, so an
+      // import with cleanup off still gets attributed instead of staying
+      // permanently ambiguous once cleanup is turned on later.
       const { resolveForItem } = await bindImportItemsToScan({
         scanId: effectiveCleanup?.scanId || scanId || null,
         workspaceId,
@@ -910,7 +911,7 @@ router.post(
               sourceKind: s.sourceKind,
               dimensions: {},
               complete: s.complete === true,
-              reason: s.error ? "error" : null,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
             })),
           });
           result.scan_id = scan.scanId;
@@ -1127,7 +1128,7 @@ router.post(
               sourceKind: s.sourceKind,
               dimensions: {},
               complete: s.complete === true,
-              reason: s.error ? "error" : null,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
             })),
           });
           result.scan_id = scan.scanId;
@@ -1411,13 +1412,22 @@ router.post(
             items: result.items.map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: { region: region || "us-east-1", service: item.sourceKind },
+              // `service` intentionally omitted: sourceKind already
+              // distinguishes aws-secrets-manager / aws-acm / aws-iam-key,
+              // and the summary's `service` field below uses different
+              // string values (e.g. "secrets_manager") than sourceKind
+              // (e.g. "aws-secrets-manager") -- keeping both would make
+              // cleanup's exact-match dimension filter never match.
+              dimensions:
+                item.sourceKind === "aws-iam-key"
+                  ? {}
+                  : { region: region || "us-east-1" },
             })),
             subScopes: (result.summary || []).map((s) => ({
               sourceKind: s.sourceKind,
-              dimensions: s.region ? { region: s.region, service: s.service } : { service: s.service },
+              dimensions: s.region ? { region: s.region } : {},
               complete: s.complete === true,
-              reason: s.error ? "error" : s.failedCount > 0 ? "describe_failures" : null,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
             })),
           });
           result.scan_id = scan.scanId;
@@ -2174,9 +2184,12 @@ router.post(
           });
         });
         try {
-          // See the vault/import route above: the client sends the scan id
-          // nested as `cleanup.scanId`, so binding must use the resolved
-          // `effectiveCleanup.scanId`, not the always-empty top-level field.
+          // Provenance binding must not depend on the cleanup checkbox: the
+          // dashboard sends a bare top-level `scan_id` on every scan-backed
+          // import, and additionally nests `cleanup.scanId` when cleanup is
+          // enabled. Prefer the cleanup-nested id and fall back to the
+          // top-level id (see the vault/import route above for the same
+          // pattern).
           const { resolveForItem } = await bindImportItemsToScan({
             scanId: effectiveCleanup?.scanId || scanId || null,
             workspaceId,

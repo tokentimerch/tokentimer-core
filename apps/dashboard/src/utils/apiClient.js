@@ -1203,13 +1203,19 @@ export const vaultAPI = {
       throw new Error(handleApiError(e, 'Failed to load mounts'));
     }
   },
-  import: async ({ workspaceId, items, defaults = {}, cleanup }) => {
+  import: async ({ workspaceId, items, defaults = {}, cleanup, scanId }) => {
     try {
       const payload = {
         items,
         default_category: defaults.category,
         default_type: defaults.type,
         contact_group_id: defaults.contact_group_id || null,
+        // scan_id is sent independently of cleanup so every scan-backed
+        // import gets provenance attribution, whether or not the user opted
+        // into deletion this time -- otherwise a later cleanup-enabled
+        // import can never adopt this row (see importCleanup.js's "ambiguous
+        // legacy rows" policy) and ends up creating a duplicate instead.
+        ...(scanId ? { scan_id: scanId } : {}),
         ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(
@@ -1528,6 +1534,7 @@ export const integrationAPI = {
     defaults = {},
     filterRules,
     cleanup,
+    scanId,
   }) => {
     try {
       const payload = {
@@ -1538,6 +1545,12 @@ export const integrationAPI = {
         ...(Array.isArray(filterRules) && filterRules.length > 0
           ? { filterRules }
           : {}),
+        // scan_id is sent independently of cleanup so every scan-backed
+        // import gets provenance attribution, whether or not the user opted
+        // into deletion this time -- otherwise a later cleanup-enabled
+        // import can never adopt this row (see importCleanup.js's "ambiguous
+        // legacy rows" policy) and ends up creating a duplicate instead.
+        ...(scanId ? { scan_id: scanId } : {}),
         ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(

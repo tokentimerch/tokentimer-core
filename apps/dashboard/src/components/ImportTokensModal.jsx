@@ -1983,6 +1983,10 @@ export default function ImportTokensModal({
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: azureADLastScanId || undefined,
         cleanup:
           azureADCleanupObsolete && azureADLastScanId
             ? {
