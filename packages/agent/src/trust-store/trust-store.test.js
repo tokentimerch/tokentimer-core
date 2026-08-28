@@ -80,10 +80,10 @@ function revokeJob(overrides = {}) {
   };
 }
 
-/** In-memory fs stand-in for the Linux install/remove/probe seams, so
+/** In-memory fs stand-in for the Linux install/remove/probe/scan seams, so
  * these tests never touch the real filesystem outside a temp receipt
- * directory. Shape matches only what trust-store/index.js actually
- * calls (mkdirSync/writeFileSync/readFileSync/unlinkSync). */
+ * directory. Shape matches only what trust-store/index.js actually calls
+ * (mkdirSync/writeFileSync/readFileSync/readdirSync/unlinkSync). */
 function makeFakeFs(initialFiles = {}) {
   const files = new Map(Object.entries(initialFiles));
   return {
@@ -98,6 +98,16 @@ function makeFakeFs(initialFiles = {}) {
         throw err;
       }
       return files.get(filePath);
+    },
+    readdirSync(dirPath) {
+      const prefix = path.join(dirPath, path.sep);
+      const names = [];
+      for (const filePath of files.keys()) {
+        if (filePath.startsWith(prefix) && !filePath.slice(prefix.length).includes(path.sep)) {
+          names.push(filePath.slice(prefix.length));
+        }
+      }
+      return names;
     },
     unlinkSync(filePath) {
       if (!files.has(filePath)) {
@@ -350,6 +360,76 @@ describe("trust-store: linuxAnchorFilePath / probeLinuxAnchorFile", () => {
   });
 });
 
+describe("trust-store: scanLinuxAnchorsDirectoryForFingerprint", () => {
+  it("reports absent when the anchors directory has no matching entry", () => {
+    const fsImpl = makeFakeFs({
+      [path.join(trustStore.DEBIAN_ANCHORS_DIR, "unrelated.crt")]: INTERMEDIATE_PEM,
+    });
+    const result = trustStore.scanLinuxAnchorsDirectoryForFingerprint({
+      family: "debian",
+      fingerprintSha256: CA_FINGERPRINT,
+      fsImpl,
+    });
+    assert.equal(result.present, false);
+  });
+
+  it("finds a match at TokenTimer's own deterministic path", () => {
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    const fsImpl = makeFakeFs({ [filePath]: CA_PEM });
+    const result = trustStore.scanLinuxAnchorsDirectoryForFingerprint({
+      family: "debian",
+      fingerprintSha256: CA_FINGERPRINT,
+      fsImpl,
+    });
+    assert.equal(result.present, true);
+    assert.equal(result.matchedPath, filePath);
+  });
+
+  it("finds a match under an arbitrary, externally-installed filename", () => {
+    const externalPath = path.join(trustStore.RHEL_ANCHORS_DIR, "arbitrary-name.pem");
+    const fsImpl = makeFakeFs({ [externalPath]: CA_PEM });
+    const result = trustStore.scanLinuxAnchorsDirectoryForFingerprint({
+      family: "rhel",
+      fingerprintSha256: CA_FINGERPRINT,
+      fsImpl,
+    });
+    assert.equal(result.present, true);
+    assert.equal(result.matchedPath, externalPath);
+  });
+
+  it("skips unparseable entries without throwing and keeps scanning for a real match", () => {
+    const garbagePath = path.join(trustStore.DEBIAN_ANCHORS_DIR, "not-a-cert.crt");
+    const matchPath = path.join(trustStore.DEBIAN_ANCHORS_DIR, "real-ca.crt");
+    const fsImpl = makeFakeFs({
+      [garbagePath]: "not a certificate at all",
+      [matchPath]: CA_PEM,
+    });
+    const result = trustStore.scanLinuxAnchorsDirectoryForFingerprint({
+      family: "debian",
+      fingerprintSha256: CA_FINGERPRINT,
+      fsImpl,
+    });
+    assert.equal(result.present, true);
+    assert.equal(result.matchedPath, matchPath);
+  });
+
+  it("reports absent, not a throw, when the anchors directory does not exist yet", () => {
+    const fsImpl = {
+      readdirSync() {
+        const err = new Error("ENOENT: no such directory");
+        err.code = "ENOENT";
+        throw err;
+      },
+    };
+    const result = trustStore.scanLinuxAnchorsDirectoryForFingerprint({
+      family: "debian",
+      fingerprintSha256: CA_FINGERPRINT,
+      fsImpl,
+    });
+    assert.equal(result.present, false);
+  });
+});
+
 describe("trust-store: distributeTrust on Debian-family (install idempotency, fingerprint/CA re-validation)", () => {
   it("installs an absent root anchor: writes the deterministic file, runs update-ca-certificates, finalizes the receipt, reports outcome installed", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
@@ -402,6 +482,75 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
 
     const validation = validateTrustResult(result);
     assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("reports preexisting when the CA is already trusted under an unrelated filename (installed outside TokenTimer)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const externalPath = path.join(trustStore.DEBIAN_ANCHORS_DIR, "some-other-vendor-ca.crt");
+    const fsImpl = makeFakeFs({ [externalPath]: CA_PEM });
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "preexisting");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(execFileImpl.calls.length, 0);
+
+    // No duplicate of TokenTimer's own deterministic file was written.
+    const ownPath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    assert.equal(fsImpl._files.has(ownPath), false);
+    assert.equal(fsImpl._files.size, 1);
+
+    // No ownership receipt for a CA this agent didn't install.
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted, null);
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("proceeds to install normally when the fingerprint is truly absent everywhere in the anchors directory", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const unrelatedPath = path.join(trustStore.DEBIAN_ANCHORS_DIR, "unrelated-ca.crt");
+    const fsImpl = makeFakeFs({ [unrelatedPath]: INTERMEDIATE_PEM });
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(execFileImpl.calls.length, 1);
+
+    const ownPath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    assert.equal(fsImpl._files.has(ownPath), true);
+  });
+
+  it("treats a not-yet-existing anchors directory as not-present rather than throwing", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.mutationPerformed, true);
   });
 
   it("refuses to touch the store on fingerprint mismatch, performs no mutation", async () => {
