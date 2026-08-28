@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `@tokentimer/contracts` now declares `ajv`/`ajv-formats` as its own runtime dependencies instead of relying on a sibling workspace package's copy. A production, workspace-filtered install (`pnpm install --prod --filter @tokentimer/api...`, as the release Docker images use) does not carry a dependency's own transitive `require`s into that dependency's resolution scope unless the dependency declares them itself; without this, `packages/contracts/certops/validate-trust-result.cjs`'s `require("ajv")` failed with `MODULE_NOT_FOUND` in a real production image, and every trust-anchor job's result report failed closed with a bare `500` after the agent had already performed the real OS mutation.
+
 ## [0.14.0] - 2026-08-24
 
 ### Added
