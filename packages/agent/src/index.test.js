@@ -5239,9 +5239,14 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
 
   function trustPolicyEngine(family) {
     const commands = {};
-    if (family === "debian" || family === "rhel") {
+    if (family === "debian" || family === "rhel" || family === "windows") {
       commands[trustStoreCommandRefForFamily(family)] = {
-        argv: [family === "debian" ? "update-ca-certificates" : "update-ca-trust"],
+        argv:
+          family === "debian"
+            ? ["update-ca-certificates"]
+            : family === "rhel"
+              ? ["update-ca-trust", "extract"]
+              : ["certutil.exe"],
       };
     }
     return createPolicyEngine(loadPolicyConfig({ allowedCommands: commands }));
@@ -5265,12 +5270,11 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
     };
   }
 
-  it("executeTrustJob rejects a Debian/RHEL job when the family's update command is not policy-allowlisted (no mutation attempted)", async () => {
-    if (AGENT_TRUST_STORE_PREREQUISITES.family !== "debian" && AGENT_TRUST_STORE_PREREQUISITES.family !== "rhel") {
-      return; // this policy gate only applies to the Debian/RHEL branch
-    }
+  it("executeTrustJob rejects a job on every platform family when the family's trust-store command-ref is not policy-allowlisted (no mutation attempted, executor never invoked)", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return; // no platform branch to exercise on this host
     const client = createRecordingClient();
     const policyEngine = createPolicyEngine(loadPolicyConfig({})); // no trust-store command ref configured
+    const seams = fakeSeamsForCurrentFamily();
 
     const outcome = await executeTrustJob({
       job: distributeTrustJob(),
@@ -5281,12 +5285,17 @@ describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revo
       client,
       log: silentLog,
       executionContext: makeExecutionContext(),
-      trustStoreSeams: fakeSeamsForCurrentFamily(),
+      trustStoreSeams: seams,
     });
 
     assert.equal(outcome.status, "rejected");
     assert.equal(outcome.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
     assert.equal(client.calls.reportEvidence.length, 0);
+    assert.equal(
+      seams.execFileImpl.calls.length,
+      0,
+      "the OS-level trust-store executor must never run when the command-ref is policy-denied",
+    );
   });
 
   it("executeTrustJob refuses a job missing a valid trustAnchorId/anchorType/fingerprintSha256 before any policy/prerequisite check", async () => {

@@ -532,7 +532,7 @@ test("checkVerifyHost rejects empty, non-string, and oversized hosts", () => {
 
 const { TRUST_STORE_COMMAND_REFS, trustStoreCommandRefForFamily } = require("../trust-store/index.js");
 
-test("a renew-only agent's policy (no trust-store command refs configured) refuses both trust-store command refs", () => {
+test("a renew-only agent's policy (no trust-store command refs configured) refuses all three trust-store command refs", () => {
   const config = loadPolicyConfig({
     allowedCommands: {
       "acme:certbot-renew": { argv: ["certbot", "renew"] },
@@ -549,6 +549,10 @@ test("a renew-only agent's policy (no trust-store command refs configured) refus
   assert.equal(rhelVerdict.allowed, false);
   assert.equal(rhelVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
 
+  const windowsVerdict = engine.checkCommandRef(TRUST_STORE_COMMAND_REFS.WINDOWS_CERTUTIL);
+  assert.equal(windowsVerdict.allowed, false);
+  assert.equal(windowsVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
   // The renewal refs this same config DOES grant are unaffected -- this
   // is isolation, not a broken allowlist.
   assert.equal(engine.checkCommandRef("acme:certbot-renew").allowed, true);
@@ -560,6 +564,7 @@ test("a trust-only agent's policy (only trust-store command refs configured) ref
     allowedCommands: {
       [TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES]: { argv: ["update-ca-certificates"] },
       [TRUST_STORE_COMMAND_REFS.RHEL_UPDATE_CA_TRUST]: { argv: ["update-ca-trust", "extract"] },
+      [TRUST_STORE_COMMAND_REFS.WINDOWS_CERTUTIL]: { argv: ["certutil.exe"] },
     },
   });
   const engine = createPolicyEngine(config);
@@ -574,6 +579,7 @@ test("a trust-only agent's policy (only trust-store command refs configured) ref
 
   assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("debian")).allowed, true);
   assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("rhel")).allowed, true);
+  assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("windows")).allowed, true);
 });
 
 test("an agent configured with BOTH profiles grants each independently, with its own argv", () => {

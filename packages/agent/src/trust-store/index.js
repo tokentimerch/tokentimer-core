@@ -76,24 +76,31 @@ const ANCHOR_FILENAME_PREFIX = "tokentimer-";
 
 /**
  * Policy allowlist (../policy) command-ref names, one per platform-native
- * update command. ../index.js resolves these via `policyEngine.checkCommandRef`
- * into `seams.updateCommandArgv`, so a renew-only agent's policy grants no
- * trust-store command execution.
+ * trust-store executable. ../index.js resolves these via
+ * `policyEngine.checkCommandRef` before any store mutation on every
+ * platform, so a renew-only agent's policy (no trust-store refs configured)
+ * grants no trust-store command execution anywhere, Windows included. The
+ * Debian/RHEL refs gate a full update-command argv (executable plus fixed
+ * args); the Windows ref gates the `certutil` executable itself, since the
+ * rest of that platform's argv (`-addstore`/`-delstore`, store name, staging
+ * path) is built from validated agent-local inputs rather than an
+ * operator-supplied template.
  */
 const TRUST_STORE_COMMAND_REFS = Object.freeze({
   DEBIAN_UPDATE_CA_CERTIFICATES: "trust-store:update-ca-certificates",
   RHEL_UPDATE_CA_TRUST: "trust-store:update-ca-trust",
+  WINDOWS_CERTUTIL: "trust-store:certutil",
 });
 
 /**
- * Command-ref name for a family. Windows has no command-ref-mediated step
- * (certutil argv is built directly from validated agent-local inputs).
- * @param {"debian"|"rhel"} family
+ * Command-ref name for a family.
+ * @param {"debian"|"rhel"|"windows"} family
  * @returns {string}
  */
 function trustStoreCommandRefForFamily(family) {
   if (family === "debian") return TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES;
   if (family === "rhel") return TRUST_STORE_COMMAND_REFS.RHEL_UPDATE_CA_TRUST;
+  if (family === "windows") return TRUST_STORE_COMMAND_REFS.WINDOWS_CERTUTIL;
   throw buildError(`trustStoreCommandRefForFamily: unsupported family ${JSON.stringify(family)}`);
 }
 

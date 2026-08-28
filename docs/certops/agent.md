@@ -247,38 +247,22 @@ Top level:
 | `allowedDnsProviders` | string[] | Exact match. |
 
 Trust-anchor distribution (`trust-anchor-deploy-v1`) resolves its platform-native
-update command through this same `allowedCommands` map, under two dedicated
+update command through this same `allowedCommands` map, under three dedicated
 profile names that no other job family uses:
 
 | Profile name | Platform | Typical `argv` |
 |--------------|----------|----------------|
 | `trust-store:update-ca-certificates` | Debian/Ubuntu | `["/usr/sbin/update-ca-certificates"]` |
 | `trust-store:update-ca-trust` | RHEL/Fedora | `["/usr/bin/update-ca-trust", "extract"]` |
+| `trust-store:certutil` | Windows | `["certutil.exe"]` |
 
 Because these names are distinct from every ACME/reload profile, a renewal-only
 agent grants no trust-store command execution, and a trust-only agent grants no
 renewal command execution. An agent whose policy omits the profile for its own
 platform rejects a trust job with `command_not_allowlisted` before attempting
-any mutation. On Windows the store is mutated via `certutil`, which is not
-`commandRef`-gated (the same posture as the Windows certificate-store deploy
-target).
-
-> **Windows has no `allowedCommands` gate for trust jobs, by design.** The
-> `trust-store:update-ca-certificates` / `trust-store:update-ca-trust`
-> allowlist entries above only apply on Debian/RHEL; on Windows the agent
-> calls `certutil`/CNG directly with an argv built from validated inputs
-> (anchor id, store name, staging path) rather than from an operator-supplied
-> command template, so there is no shell command to allowlist in the first
-> place. If you deliberately restrict an agent to a narrow policy (for
-> example a "renew-only" agent with no `allowedCommands` profiles at all) to
-> keep it from running arbitrary commands, that restriction does not carry
-> over to trust-anchor distribution/revocation on a Windows host: such an
-> agent can still execute `distribute-trust`/`revoke-trust` jobs if it
-> advertises `trust-anchor-deploy-v1`. To keep a Windows agent renew-only in
-> practice, operators must avoid targeting it with trust-anchor jobs (it is
-> always the caller who names a specific `agentId` when creating one, per
-> the OpenAPI contract) rather than relying on `allowedCommands` to block
-> them.
+any mutation, on every platform including Windows: a "renew-only" agent (no
+`allowedCommands` profiles configured at all) refuses `distribute-trust`/
+`revoke-trust` the same way regardless of which platform it runs on.
 
 `discovery` block:
 
@@ -872,22 +856,18 @@ Platform resolution is a hard gate before anything else runs: Windows targets
 RHEL-family hosts write to `/etc/pki/ca-trust/source/anchors` and run
 `update-ca-trust extract`. A host that is neither Windows nor a detected
 Debian/RHEL-family trust store reports `blocked`, never a silent no-op. On
-Debian/RHEL the update command itself is gated through the same
+every platform the update command/executable is gated through the same
 `policyEngine.checkCommandRef` allowlist as ACME/reload commands, under the
-`trust-store:update-ca-certificates` / `trust-store:update-ca-trust` profile
-names (see the config reference above); Windows has no command-ref-mediated
-step because the `certutil` argv is built directly from validated
-agent-local inputs, not a configurable command.
-
-This asymmetry is deliberate, not an oversight: the `allowedCommands`
-allowlist exists to constrain a configurable, operator-supplied command
-template (executable path plus fixed flags) before it is ever run. The
-Windows trust-store path has no such template to constrain: the agent
-builds the `certutil`/CNG call itself from the anchor id, store name, and
-staging path it already validated, so there is nothing for an allowlist to
-gate. See the policy-profile note under "Config reference" above for what
-this means for an agent an operator has deliberately restricted (e.g. a
-renew-only agent with no `allowedCommands` profiles configured at all).
+`trust-store:update-ca-certificates` / `trust-store:update-ca-trust` /
+`trust-store:certutil` profile names (see the config reference above): on
+Debian/RHEL this gates the full update-command argv (executable plus fixed
+args); on Windows it gates the `certutil` executable itself, since the rest
+of that platform's argv (`-addstore`/`-delstore`, store name, staging path)
+is built from validated agent-local inputs rather than an operator-supplied
+template. Either way, an agent whose policy omits the profile for its own
+platform refuses the job with `command_not_allowlisted` before attempting
+any mutation, so a renew-only agent (no `allowedCommands` profiles at all)
+cannot be made to run `distribute-trust`/`revoke-trust` on any platform.
 
 Ownership is proven locally, not just server-side: before mutating the store,
 the agent writes an intent record to `<configDir>/trust-receipts/`, keyed by

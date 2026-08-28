@@ -5451,11 +5451,12 @@ async function executeReloadJob({
  * execute*Job functions' shape so handleClaimedJob needs no trust-specific
  * branch for result reporting.
  *
- * Policy gate: on Debian/RHEL-family, the update command is resolved
- * through policyEngine.checkCommandRef against a trust-specific command-ref
- * name (./trust-store's TRUST_STORE_COMMAND_REFS), distinct from any
- * ACME/reload commandRef a renew job carries. Windows certutil is not
- * commandRef-gated, matching ./windows-cert-store's posture for the same tool.
+ * Policy gate: every family's update command is resolved through
+ * policyEngine.checkCommandRef against a trust-specific command-ref name
+ * (./trust-store's TRUST_STORE_COMMAND_REFS), distinct from any ACME/reload
+ * commandRef a renew job carries, so a renew-only policy (no trust-store
+ * refs configured) refuses distribute-trust/revoke-trust before any OS-level
+ * mutation, on every platform including Windows.
  *
  * The typed trust-result-contract.schema.json object is returned as
  * `trustResult` and carried on the wire by agent-protocol.schema.json's
@@ -5524,8 +5525,13 @@ async function executeTrustJob({
   }
   const family = AGENT_TRUST_STORE_PREREQUISITES.family;
 
+  // Every family gates through the same agent-local command-ref allowlist
+  // before any store mutation (ADR-0002: agent-local policy always wins
+  // over control-plane intent), so a renew-only agent's policy refuses
+  // distribute-trust/revoke-trust on every platform, not just Debian/RHEL.
   let updateCommandArgv;
-  if (family === "debian" || family === "rhel") {
+  let certutilPath;
+  if (family === "debian" || family === "rhel" || family === "windows") {
     const commandRefName = trustStoreCommandRefForFamily(family);
     const commandVerdict = policyEngine.checkCommandRef(commandRefName);
     if (!commandVerdict.allowed) {
@@ -5536,7 +5542,11 @@ async function executeTrustJob({
         errorMessage: boundErrorMessage(commandVerdict.detail),
       };
     }
-    updateCommandArgv = commandVerdict.argv;
+    if (family === "windows") {
+      certutilPath = commandVerdict.argv[0];
+    } else {
+      updateCommandArgv = commandVerdict.argv;
+    }
   }
 
   if (jobMode === "dry_run") {
@@ -5566,7 +5576,7 @@ async function executeTrustJob({
   // tests inject fake exec/fs/spawn implementations into ../trust-store's
   // distributeTrust/revokeTrust without hitting a real certutil.exe/
   // update-ca-certificates/update-ca-trust or the real machine trust store.
-  const seams = { updateCommandArgv, ...(trustStoreSeams || {}) };
+  const seams = { updateCommandArgv, certutilPath, ...(trustStoreSeams || {}) };
 
   const trustResult =
     action === "distribute-trust"
