@@ -301,9 +301,27 @@ async function listKvV2KeysRecursive({
   prefix = "",
   limit = 1000,
 }) {
-  // LIST metadata to enumerate keys; recurse into folders
+  // LIST metadata to enumerate keys; recurse into folders.
+  //
+  // `limit` here caps *key enumeration*, a separate and earlier truncation
+  // point than the later per-secret read loop in scanKvV2. If a mount has
+  // more keys than `limit`, this walk stops early and returns fewer keys
+  // than actually exist -- silently, from the caller's point of view, since
+  // a short-but-real key list and a short-because-truncated key list look
+  // identical unless this function also reports which one happened. Without
+  // `truncated` here, scanKvV2's own truncation check (which only fires when
+  // the *read* loop hits `maxItems`) never fires either, because it never
+  // sees more keys than the enumeration cap already trimmed away -- so a
+  // mount with more secrets than maxItemsPerMount was scanned as `complete:
+  // true`, and cleanup could (and in manual testing, did) delete secrets
+  // that were never actually looked at.
   const results = [];
+  let truncated = false;
   async function walk(pathPrefix) {
+    if (results.length >= limit) {
+      truncated = true;
+      return;
+    }
     const listPath = `/v1/${mountPath}metadata/${pathPrefix}`;
     let data;
     try {
@@ -321,7 +339,10 @@ async function listKvV2KeysRecursive({
     const keys =
       data && data.data && Array.isArray(data.data.keys) ? data.data.keys : [];
     for (const key of keys) {
-      if (results.length >= limit) return;
+      if (results.length >= limit) {
+        truncated = true;
+        return;
+      }
       if (key.endsWith("/")) {
         await walk(`${pathPrefix}${key}`);
       } else {
@@ -330,7 +351,7 @@ async function listKvV2KeysRecursive({
     }
   }
   await walk(prefix);
-  return results;
+  return { keys: results, truncated };
 }
 
 async function readKvV2Secret({ address, token, mountPath, secretPath }) {
@@ -524,7 +545,7 @@ async function scanKvV2({
     }
   }
   const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
-  const keys = await listKvV2KeysRecursive({
+  const { keys, truncated: keyListTruncated } = await listKvV2KeysRecursive({
     address,
     token,
     mountPath,
@@ -548,7 +569,10 @@ async function scanKvV2({
     }
   }
   const items = [];
-  let truncated = false;
+  // Key enumeration can itself be truncated (see listKvV2KeysRecursive)
+  // before the read loop below ever runs; that must carry through even if
+  // every enumerated key happens to be readable and under maxItems.
+  let truncated = keyListTruncated;
   let hasReadErrors = false;
   const BATCH_SIZE = 10;
 
