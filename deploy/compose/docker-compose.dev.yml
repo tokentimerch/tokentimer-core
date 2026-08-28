@@ -96,6 +96,13 @@ services:
     volumes:
       - ../../apps/api:/app/apps/api
       - ../../packages/contracts/openapi:/contracts/openapi:ro
+      # Everything apps/api requires by relative path from packages/contracts
+      # (CertOps agent-protocol schema, canonical-json signing module, etc)
+      # is baked into the image at build time only; without this bind mount
+      # a contracts change never reaches a running dev container until the
+      # image is rebuilt, so requests silently validate against a stale
+      # schema instead of failing loudly.
+      - ../../packages/contracts:/app/packages/contracts:ro
       - /app/node_modules
       - /app/apps/api/node_modules
     working_dir: /app/apps/api
