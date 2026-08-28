@@ -405,8 +405,8 @@ describe("CertOps manual job creation API", function () {
     const idempotencyKey = `manual-job-${Date.now()}`;
     const subjectId = `idempotency-${crypto.randomUUID()}`;
     const requestBody = {
-      operation: "renew",
-      subjectType: "domain",
+      operation: "deploy",
+      subjectType: "managed_certificate",
       subjectId,
       idempotencyKey,
       payload: { request: { source: "manual" } },
@@ -450,8 +450,8 @@ describe("CertOps manual job creation API", function () {
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
       .set("Cookie", fixture.managerSession.cookie)
       .send({
-        operation: "revoke",
-        subjectType: "domain",
+        operation: "reload",
+        subjectType: "managed_certificate",
         subjectId,
         idempotencyKey,
         payload: { request: { source: "manual" } },
