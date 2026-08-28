@@ -70,7 +70,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full environment variables reference |
 | [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
-| [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, and verification |
+| [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, verification, and trust-anchor (CA) distribution/revocation |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |

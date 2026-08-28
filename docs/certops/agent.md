@@ -263,6 +263,23 @@ any mutation. On Windows the store is mutated via `certutil`, which is not
 `commandRef`-gated (the same posture as the Windows certificate-store deploy
 target).
 
+> **Windows has no `allowedCommands` gate for trust jobs, by design.** The
+> `trust-store:update-ca-certificates` / `trust-store:update-ca-trust`
+> allowlist entries above only apply on Debian/RHEL; on Windows the agent
+> calls `certutil`/CNG directly with an argv built from validated inputs
+> (anchor id, store name, staging path) rather than from an operator-supplied
+> command template, so there is no shell command to allowlist in the first
+> place. If you deliberately restrict an agent to a narrow policy (for
+> example a "renew-only" agent with no `allowedCommands` profiles at all) to
+> keep it from running arbitrary commands, that restriction does not carry
+> over to trust-anchor distribution/revocation on a Windows host: such an
+> agent can still execute `distribute-trust`/`revoke-trust` jobs if it
+> advertises `trust-anchor-deploy-v1`. To keep a Windows agent renew-only in
+> practice, operators must avoid targeting it with trust-anchor jobs (it is
+> always the caller who names a specific `agentId` when creating one, per
+> the OpenAPI contract) rather than relying on `allowedCommands` to block
+> them.
+
 `discovery` block:
 
 | Field | Type | Default | Notes |
@@ -861,6 +878,16 @@ Debian/RHEL the update command itself is gated through the same
 names (see the config reference above); Windows has no command-ref-mediated
 step because the `certutil` argv is built directly from validated
 agent-local inputs, not a configurable command.
+
+This asymmetry is deliberate, not an oversight: the `allowedCommands`
+allowlist exists to constrain a configurable, operator-supplied command
+template (executable path plus fixed flags) before it is ever run. The
+Windows trust-store path has no such template to constrain: the agent
+builds the `certutil`/CNG call itself from the anchor id, store name, and
+staging path it already validated, so there is nothing for an allowlist to
+gate. See the policy-profile note under "Config reference" above for what
+this means for an agent an operator has deliberately restricted (e.g. a
+renew-only agent with no `allowedCommands` profiles configured at all).
 
 Ownership is proven locally, not just server-side: before mutating the store,
 the agent writes an intent record to `<configDir>/trust-receipts/`, keyed by

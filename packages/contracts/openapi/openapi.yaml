@@ -4258,7 +4258,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop, issue]
+            enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         - in: query
           name: source
           schema:
@@ -4268,7 +4268,7 @@ paths:
           name: subjectType
           schema:
             type: string
-            enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+            enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         - in: query
           name: subjectId
           schema:
@@ -4328,18 +4328,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsJobDetailResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Malformed request body, or (for "distribute-trust"/"revoke-trust")
+            an agentId that is not a well-formed UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                targetAgentInvalid:
+                  value:
+                    error: agentId must be a well-formed UUID identifying a registered agent
+                    code: CERTOPS_TARGET_AGENT_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: >-
+            Not found, or (for "distribute-trust"/"revoke-trust") a
+            well-formed agentId that does not match a registered agent in
+            this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value:
+                    error: Not found
+                    code: NOT_FOUND
+                targetAgentNotFound:
+                  value:
+                    error: Target agent not found in this workspace
+                    code: CERTOPS_TARGET_AGENT_NOT_FOUND
         "409":
           description: >-
             idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
-            capacity exceeded, or the subject certificate has no agent-manageable
-            key custody.
+            capacity exceeded, the subject certificate has no agent-manageable
+            key custody, or (for "distribute-trust" only) the trust anchor is
+            not currently active.
           content:
             application/json:
               schema:
@@ -4364,6 +4392,10 @@ paths:
                       was only observed, e.g. via an endpoint or domain monitor)
                       and cannot be assigned an agent-executed renew job
                     code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
+                trustAnchorNotActive:
+                  value:
+                    error: Trust anchor is not active
+                    code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -7660,7 +7692,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -7682,7 +7714,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
@@ -7740,29 +7772,66 @@ components:
         creates the managed certificate upfront in the same transaction with
         status "provisioning" and source "agent_issuance", then creates the job
         against that new row and reconciles the certificate to "active" from
-        the job's own validation evidence when the job succeeds.
+        the job's own validation evidence when the job succeeds. Operations
+        "distribute-trust" and "revoke-trust" install or remove a trust anchor
+        (an approved root/intermediate CA) in one specific agent's machine
+        trust store rather than acting on a certificate's lifecycle: for these
+        two operations subjectType must be omitted (the server sets
+        trust_anchor), subjectId identifies the trust anchor to act on, and
+        agentId and owner are additionally required (and are ignored for
+        every other operation). Creating either operation requires the
+        certops.trust_anchor.manage permission rather than the workspace
+        manager role that every other operation accepts.
       properties:
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: >-
             Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing
-            action values are unchanged.
+            action values are unchanged. "distribute-trust"/"revoke-trust"
+            install or remove a trust anchor in one agent's machine trust
+            store; see subjectId/agentId/owner below.
         subjectType:
           type: string
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
           description: >-
             Subject kind of an already existing subject. Must be omitted for
-            operation "issue"; the server sets managed_certificate on the row
-            it creates.
+            operation "issue" (the server sets managed_certificate on the row
+            it creates); for "distribute-trust"/"revoke-trust" the only
+            accepted value is trust_anchor and the server sets it
+            automatically even when omitted.
         subjectId:
           type: string
           maxLength: 128
           description: >-
             Id of an already existing subject. Must be omitted for operation
             "issue"; the server assigns the id of the managed certificate it
-            creates.
+            creates. For "distribute-trust"/"revoke-trust", this is the id of
+            the trust anchor to act on.
+        agentId:
+          type: string
+          format: uuid
+          description: >-
+            Required for operations "distribute-trust" and "revoke-trust"
+            only (ignored otherwise): the UUID of the specific agent in this
+            workspace whose machine trust store the job targets. A value that
+            is not a well-formed UUID fails with CERTOPS_TARGET_AGENT_INVALID
+            (400); a well-formed UUID that does not match a registered agent
+            in this workspace fails with CERTOPS_TARGET_AGENT_NOT_FOUND (404).
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Required for operations "distribute-trust" and "revoke-trust"
+            only (ignored otherwise): a caller-supplied 1-128 character label
+            identifying who holds this trust-anchor reference on this agent.
+            Installations are reference-counted per (agent, trust anchor,
+            owner): revoking one owner's reference only marks that owner's
+            reference removed, and the certificate is only actually removed
+            from the agent's OS trust store once no other owner's live
+            reference to the same anchor on the same agent remains.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
@@ -7782,8 +7851,11 @@ components:
           description: >-
             Required for operation "issue", where it makes a retry safe
             instead of creating a duplicate certificate row and is stored as
-            the created certificate's source reference. Optional for all other
-            operations.
+            the created certificate's source reference. Also required for
+            "distribute-trust"/"revoke-trust", where it makes the trust
+            mutation itself retry-safe: a replay with the same key returns
+            the same job rather than re-applying the transition. Optional for
+            every other operation.
         requiresApproval:
           type: boolean
           default: false
@@ -8006,7 +8078,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -8028,7 +8100,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
@@ -8191,7 +8263,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
