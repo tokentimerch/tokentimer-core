@@ -225,6 +225,62 @@ describe("Import cleanup contract at the HTTP route layer", function () {
     expect(await tokenStillExists(obsolete.id)).to.equal(false);
   });
 
+  it("Vault import route: attributes a newly imported item to the scan that discovered it", async () => {
+    // Regression for a route-layer bug found during live UI verification:
+    // both import routes destructured a bare top-level `scan_id` for
+    // item-scan binding instead of the resolved `effectiveCleanup.scanId`,
+    // so a request shaped exactly like the real dashboard form (which only
+    // ever nests the id as `cleanup.scanId`) silently bound zero items.
+    // Every freshly imported token stayed unattributed ("legacy") and was
+    // therefore permanently excluded from cleanup, regardless of the
+    // checkbox -- this is the one test in this file that actually imports
+    // a non-empty item and checks its resulting provenance, rather than
+    // only exercising cleanup's empty-items branch.
+    const objectId = `secret/data/route-bound-${crypto.randomUUID()}`;
+    const scan = await persistScan({
+      workspaceId,
+      provider: "vault",
+      identityContext: { address: "https://vault.route-bound.example.com" },
+      items: [{ sourceKind: "vault-kv", sourceObjectId: objectId, dimensions: {} }],
+      subScopes: [{ sourceKind: "vault-kv", dimensions: {}, complete: true }],
+    });
+    const name = `route-bound-item-${crypto.randomUUID()}`;
+
+    const res = await request(BASE)
+      .post(`/api/v1/integrations/vault/import?workspace_id=${workspaceId}`)
+      .set("Cookie", adminSession.cookie)
+      .send({
+        items: [
+          {
+            name,
+            location: `vault:${objectId}`,
+            category: "key_secret",
+            type: "secret",
+            sourceKind: "vault-kv",
+          },
+        ],
+        cleanup: {
+          enabled: true,
+          provider: "vault",
+          scanId: scan.scanId,
+        },
+      });
+
+    expect(res.status).to.equal(201);
+    expect(res.body.created_count).to.equal(1);
+
+    const row = await TestUtils.execQuery(
+      `SELECT source_provider, source_instance, source_owner_key, source_kind, source_object_id
+       FROM tokens WHERE workspace_id = $1 AND name = $2`,
+      [workspaceId, name],
+    );
+    expect(row.rows.length).to.equal(1);
+    expect(row.rows[0].source_provider).to.equal("vault");
+    expect(row.rows[0].source_instance).to.equal(scan.instance);
+    expect(row.rows[0].source_kind).to.equal("vault-kv");
+    expect(row.rows[0].source_object_id).to.equal(objectId);
+  });
+
   it("Vault import route: rejects empty items with no cleanup requested (no regression)", async () => {
     const res = await request(BASE)
       .post(`/api/v1/integrations/vault/import?workspace_id=${workspaceId}`)

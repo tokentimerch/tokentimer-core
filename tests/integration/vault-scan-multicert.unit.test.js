@@ -305,7 +305,16 @@ describe("Vault KV scan behavior", () => {
       expect(res.items).to.have.length(3);
       expect(res.items.filter((i) => i.category === "cert")).to.have.length(2);
       expect(res.summary).to.deep.equal([
-        { mount: "secret/", type: "kv", found: 3, truncated: false },
+        {
+          mount: "secret/",
+          type: "kv",
+          found: 3,
+          truncated: false,
+          complete: true,
+          hasErrors: false,
+          sourceKind: "vault-kv",
+          dimensions: { mount: "secret/", path: null, category: null },
+        },
       ]);
     });
 
@@ -407,7 +416,16 @@ describe("Vault KV scan behavior", () => {
       expect(res.items).to.have.length(1);
       expect(res.items[0].category).to.equal("cert");
       expect(res.summary).to.deep.equal([
-        { mount: "secret/", type: "kv", found: 1, truncated: false },
+        {
+          mount: "secret/",
+          type: "kv",
+          found: 1,
+          truncated: false,
+          complete: true,
+          hasErrors: false,
+          sourceKind: "vault-kv",
+          dimensions: { mount: "secret/", path: null, category: "cert" },
+        },
       ]);
     });
 

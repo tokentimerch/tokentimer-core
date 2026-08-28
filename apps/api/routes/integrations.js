@@ -479,8 +479,14 @@ router.post(
           it?.sourceObjectId ||
           String(it?.location || "").replace(/^vault:/, ""),
       }));
+      // The client sends the scan id nested as `cleanup.scanId` (the shape
+      // `effectiveCleanup` normalizes into), not as a bare top-level
+      // `scan_id`/`scanId` -- so binding must use the resolved value, or
+      // every import silently fails to bind and every token stays
+      // unattributed (permanently cleanup-ineligible) regardless of the
+      // cleanup checkbox.
       const { resolveForItem } = await bindImportItemsToScan({
-        scanId: scanId || null,
+        scanId: effectiveCleanup?.scanId || scanId || null,
         workspaceId,
         provider: "vault",
         pairs: bindingPairs,
@@ -2168,8 +2174,11 @@ router.post(
           });
         });
         try {
+          // See the vault/import route above: the client sends the scan id
+          // nested as `cleanup.scanId`, so binding must use the resolved
+          // `effectiveCleanup.scanId`, not the always-empty top-level field.
           const { resolveForItem } = await bindImportItemsToScan({
-            scanId: scanId || null,
+            scanId: effectiveCleanup?.scanId || scanId || null,
             workspaceId,
             provider,
             pairs,
