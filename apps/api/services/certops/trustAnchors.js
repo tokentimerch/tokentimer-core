@@ -82,6 +82,13 @@ const CERTOPS_TARGET_AGENT_NOT_FOUND = "CERTOPS_TARGET_AGENT_NOT_FOUND";
 // the real-dispatch path.
 const CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT =
   "CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT";
+// Mirrors packages/agent/src/trust-store/index.js's RECEIPT_FINALIZE_CONFLICT
+// value (not imported from there: this server never runs agent code, only
+// re-validates the sanitized string the agent reports on the wire). The one
+// failureCategory ingestTrustJobResult ever accepts on a result it settles
+// as installed/removed rather than rejecting outright -- see the guard in
+// that function for why this is the sole exception.
+const RECEIPT_FINALIZE_CONFLICT_CATEGORY = "receipt_finalize_conflict";
 const ANCHOR_TYPES = Object.freeze(["root", "intermediate"]);
 const ANCHOR_TYPE_SET = new Set(ANCHOR_TYPES);
 const ANCHOR_STATUSES = Object.freeze(["active", "revoked"]);
@@ -1580,20 +1587,36 @@ async function ingestTrustJobResult({ client, job, result }) {
     throw error;
   }
 
-  // This function only ever runs from agentDispatch.ingestResult's
-  // jobStatus === "succeeded" branch, and the agent itself never reports
-  // status "succeeded" alongside a non-null trustResult.failureCategory
-  // (packages/agent/src/index.js's executeTrustJob always maps a non-null
-  // failureCategory to status "failed"). A result claiming both is
-  // self-contradictory - shape-valid per the schema (failureCategory has no
-  // cross-field tie to the envelope status, which lives one level up) but
-  // never something a well-behaved agent would send - so it is rejected
-  // rather than silently trusted.
-  if (typeof result.failureCategory === "string" && result.failureCategory.length > 0) {
+  // This function runs from two agentDispatch.ingestResult branches: the
+  // ordinary jobStatus === "succeeded" path, where the agent itself never
+  // reports a non-null trustResult.failureCategory (packages/agent/src/
+  // index.js's executeTrustJob always maps a non-null failureCategory to
+  // envelope status "failed"); and a terminal-negative-status path (most
+  // commonly "failed") for the one case where the OS-level mutation
+  // genuinely completed despite that envelope status: the agent's own
+  // local receipt-finalize write afterward hit a conflict or filesystem
+  // error (packages/agent/src/trust-store/index.js's RECEIPT_FINALIZE_CONFLICT).
+  // That result still needs this row settled on the outcome the agent
+  // actually observed, not rejected or unwound as if nothing happened -
+  // see agentDispatch.js's own routing comment for why. Every OTHER
+  // non-null failureCategory is still self-contradictory here - shape-valid
+  // per the schema (failureCategory has no cross-field tie to mutationPerformed
+  // beyond the one this exception carves out) but never something a
+  // well-behaved agent would pair with an outcome this function is asked to
+  // settle as installed/removed - so it is rejected rather than silently
+  // trusted.
+  const isReceiptFinalizeConflictOnATrueMutation =
+    result.failureCategory === RECEIPT_FINALIZE_CONFLICT_CATEGORY &&
+    result.mutationPerformed === true;
+  if (
+    typeof result.failureCategory === "string" &&
+    result.failureCategory.length > 0 &&
+    !isReceiptFinalizeConflictOnATrueMutation
+  ) {
     throw trustAnchorError(
-      "Result reports a non-null failureCategory but was ingested as a " +
-        "succeeded job; a successful trust job result must never carry a " +
-        "failure category",
+      "Result reports a non-null failureCategory that is not a " +
+        "receipt-finalize conflict on a genuinely completed mutation; " +
+        "such a result must never be ingested as installed/removed",
       CERTOPS_TRUST_RESULT_INVALID,
     );
   }
@@ -1740,20 +1763,29 @@ async function ingestTrustJobResult({ client, job, result }) {
     result.mutationPerformed === true
       ? "tokentimer_installed"
       : installationRow.provenance;
-  // failureCategory is always null here: the guard above already rejected
-  // any succeeded-status result carrying one. A real success always clears
-  // whatever last_error a prior failed attempt left behind.
+  // failureCategory is non-null only in the receipt-finalize-conflict case
+  // the guard above carves out: the OS mutation genuinely completed (this
+  // row is about to settle on that truthful outcome below) but the agent's
+  // own local bookkeeping did not, which is a real operational fact worth
+  // surfacing rather than silently discarding - so it's persisted as
+  // last_error instead of always clearing to NULL. An ordinary succeeded-
+  // status result never carries a failureCategory (rejected above if it
+  // did) and clears whatever last_error a prior failed attempt left behind,
+  // exactly as before.
+  const nextLastError = isReceiptFinalizeConflictOnATrueMutation
+    ? result.failureCategory
+    : null;
 
   const updated = await client.query(
     `UPDATE certops_trust_anchor_installations
         SET transition_state = $2,
             provenance = $3,
-            last_error = NULL,
+            last_error = $4,
             next_reconcile_at = NULL,
             updated_at = NOW()
       WHERE id = $1
       RETURNING ${INSTALLATION_SELECT_FIELDS}`,
-    [installationRow.id, nextState, nextProvenance],
+    [installationRow.id, nextState, nextProvenance, nextLastError],
   );
 
   return installationFromRow(updated.rows[0]);
@@ -1951,6 +1983,7 @@ module.exports = {
   CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
+  RECEIPT_FINALIZE_CONFLICT_CATEGORY,
   CERTOPS_TARGET_AGENT_INVALID,
   CERTOPS_TARGET_AGENT_NOT_FOUND,
   ANCHOR_TYPES,

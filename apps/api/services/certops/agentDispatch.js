@@ -2321,18 +2321,47 @@ async function ingestResult({
     // orphaned_unknown_effect are left untouched: a dry run never mutated
     // anything, and an unknown-effect report must surface for operator
     // reconciliation rather than being silently resolved either way.
+    //
+    // A terminal-negative envelope status (most commonly "failed") does NOT
+    // always mean the OS-level mutation itself failed: the agent faithfully
+    // reports mutationPerformed true whenever the install/remove genuinely
+    // completed, even if its own local receipt-finalize write afterward hit
+    // a conflict or filesystem error (packages/agent/src/trust-store/index.js's
+    // RECEIPT_FINALIZE_CONFLICT case) -- and packages/agent/src/index.js
+    // correctly maps that non-null failureCategory to envelope status
+    // "failed" regardless. Routing a mutationPerformed:true result to
+    // onTrustJobTerminalTransition's unwind (deleting a pending_install row
+    // outright, or reverting a pending_remove row back to "installed")
+    // would silently lose track of trust material that is actually sitting
+    // in the machine store: a distribute that truly installed becomes
+    // untracked (and un-revocable, since no installation row references
+    // it), and a revoke that truly removed gets recorded as still
+    // installed. Such a result is instead routed to ingestTrustJobResult
+    // just like a real success, so the row settles on the outcome the
+    // agent actually observed; ingestTrustJobResult itself still rejects
+    // any other failureCategory paired with mutationPerformed true as
+    // self-contradictory (e.g. os_mutation_failed can never legitimately
+    // accompany mutationPerformed:true).
     if (isTrustAnchorOperation(job.operation)) {
-      if (jobStatus === "succeeded") {
+      const trustMutationGenuinelyPerformed = trustResult?.mutationPerformed === true;
+      if (
+        jobStatus === "succeeded" ||
+        (TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus) && trustMutationGenuinelyPerformed)
+      ) {
         // The typed result rides in its own envelope property; the rest of
         // `body` is the generic result shape every job family shares.
         const installation = await ingestTrustJobResult({
           client,
           job: { ...job, workspace_id: agent.workspaceId },
-          result: body?.trustResult,
+          result: trustResult,
         });
-        // ADR-0012 decision 15: fires only on this action's own terminal
-        // succeeded transition. A terminal failure reuses the generic
-        // CERTOPS_JOB_FAILED event below instead.
+        // ADR-0012 decision 15: fires whenever the trust-store mutation
+        // itself genuinely completed, whether the job envelope's own status
+        // is "succeeded" or a terminal-negative status carrying a
+        // RECEIPT_FINALIZE_CONFLICT failureCategory. The generic
+        // CERTOPS_JOB_FAILED event below still fires too in the latter
+        // case, recording the envelope-level failure alongside this
+        // installation-level fact.
         await auditWriter({
           client,
           actorUserId: null,
@@ -2358,16 +2387,23 @@ async function ingestResult({
             // schema-validated by ingestTrustJobResult above), not just the
             // installation row, so the audit trail records what the agent
             // actually observed/did, not only where the row ended up.
-            outcome: body?.trustResult?.outcome ?? null,
-            mutationPerformed: body?.trustResult?.mutationPerformed ?? null,
-            failureCategory: body?.trustResult?.failureCategory ?? null,
+            outcome: trustResult?.outcome ?? null,
+            mutationPerformed: trustResult?.mutationPerformed ?? null,
+            failureCategory: trustResult?.failureCategory ?? null,
             observedFingerprintBefore:
-              body?.trustResult?.observedFingerprintBefore ?? null,
+              trustResult?.observedFingerprintBefore ?? null,
             observedFingerprintAfter:
-              body?.trustResult?.observedFingerprintAfter ?? null,
+              trustResult?.observedFingerprintAfter ?? null,
           },
         });
-      } else if (TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus)) {
+      } else if (
+        TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus) &&
+        !trustMutationGenuinelyPerformed
+      ) {
+        // Only unwinds here when the mutation truly never completed (or
+        // this isn't a trust job carrying a typed result at all); the
+        // mutationPerformed:true case above already settled the row via
+        // ingestTrustJobResult and must not also be unwound.
         await onTrustJobTerminalTransition({
           client,
           job: { ...job, status: jobStatus, workspace_id: agent.workspaceId },
@@ -2432,13 +2468,13 @@ async function ingestResult({
           [agent.workspaceId, job.id],
         );
         trustResultAuditFields = {
-          outcome: body?.trustResult?.outcome ?? null,
-          mutationPerformed: body?.trustResult?.mutationPerformed ?? null,
-          failureCategory: body?.trustResult?.failureCategory ?? null,
+          outcome: trustResult?.outcome ?? null,
+          mutationPerformed: trustResult?.mutationPerformed ?? null,
+          failureCategory: trustResult?.failureCategory ?? null,
           observedFingerprintBefore:
-            body?.trustResult?.observedFingerprintBefore ?? null,
+            trustResult?.observedFingerprintBefore ?? null,
           observedFingerprintAfter:
-            body?.trustResult?.observedFingerprintAfter ?? null,
+            trustResult?.observedFingerprintAfter ?? null,
           provenance: installationLookup.rows[0]?.provenance ?? null,
         };
       }

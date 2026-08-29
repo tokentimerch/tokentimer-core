@@ -1628,6 +1628,119 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(updated.provenance).to.equal("tokentimer_installed");
   });
 
+  it("settles a pending_install row as installed (not rejected/unwound) when the OS mutation genuinely completed but the agent's local receipt-finalize write failed", async () => {
+    // Reproduces the H6 bug: the agent faithfully reports outcome:
+    // "installed", mutationPerformed: true, plus a non-null failureCategory
+    // (receipt_finalize_conflict) because its own local receipt bookkeeping
+    // hit a conflict AFTER the OS-level mutation genuinely completed.
+    // agentDispatch.js routes this to ingestTrustJobResult (not the
+    // terminal-negative unwind path) precisely because mutationPerformed is
+    // true, and this guard must accept it rather than throwing
+    // CERTOPS_TRUST_RESULT_INVALID as it would for any other
+    // failureCategory.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-receipt-finalize-conflict-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    const updated = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job,
+        result: buildResult({
+          agent,
+          job,
+          installationRow,
+          outcome: "installed",
+          failureCategoryOverride: "receipt_finalize_conflict",
+        }),
+      }),
+    );
+
+    expect(updated.transitionState).to.equal(
+      "installed",
+      "the row must settle on the truthful outcome, not be left pending_install",
+    );
+    expect(updated.provenance).to.equal("tokentimer_installed");
+    // The bookkeeping failure is real and worth surfacing on the row, unlike
+    // an ordinary success which always clears last_error to null.
+    expect(updated.lastError).to.equal("receipt_finalize_conflict");
+  });
+
+  it("settles a pending_remove row as removed (not reverted to installed) when the OS mutation genuinely completed but the agent's local receipt-finalize write failed", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+    const owner = "workspace-policy";
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-receipt-finalize-conflict-revoke-setup-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallationRow,
+          outcome: "installed",
+        }),
+      }),
+    );
+
+    const revokeOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-receipt-finalize-conflict-revoke-${crypto.randomUUID()}`,
+      }),
+    );
+    const revokeJob = await getJobRow(revokeOutcome.job.id);
+    const revokeInstallationRow = await getInstallationById(
+      revokeOutcome.installation.id,
+    );
+
+    const updated = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: revokeJob,
+        result: buildResult({
+          agent,
+          job: revokeJob,
+          installationRow: revokeInstallationRow,
+          outcome: "removed",
+          failureCategoryOverride: "receipt_finalize_conflict",
+        }),
+      }),
+    );
+
+    expect(updated.transitionState).to.equal(
+      "removed",
+      "a genuinely completed revoke must not be reverted back to installed",
+    );
+    expect(updated.lastError).to.equal("receipt_finalize_conflict");
+  });
+
   it("a fresh installation's first-ever result starts provenance at preexisting, not tokentimer_installed", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
