@@ -47,7 +47,7 @@
         "distribute-trust",
         "revoke-trust"
       ],
-      "description": "Echoes the job's own action (trust-job-payload.schema.json#/properties/action), so a result naming the wrong action for its jobId is a detectable shape violation, not merely a downstream logic error."
+      "description": "Echoes the job's own action (trust-job-payload.schema.json#/properties/action), so a result naming the wrong action for its jobId is a detectable shape violation, not merely a downstream logic error. The allOf rules below additionally restrict which outcome values are even reachable per action (distribute-trust: preexisting/installed only; revoke-trust: already_absent/removed/installed only), since the two actions do not share a symmetric outcome space."
     },
     "transitionGeneration": {
       "type": "integer",
@@ -67,7 +67,7 @@
     "observedFingerprintAfter": {
       "type": ["string", "null"],
       "pattern": "^[a-f0-9]{64}$",
-      "description": "SHA-256 (hex) of the material present at (store, fingerprint) immediately after this operation, or null if nothing is present. For a successful distribute-trust this equals the job's signed fingerprintSha256; for a successful revoke-trust this is null."
+      "description": "SHA-256 (hex) of the material present at (store, fingerprint) immediately after this operation, or null if nothing is present. For a successful distribute-trust this equals the job's signed fingerprintSha256; for a successful revoke-trust this is null. The allOf rule below requires this to be non-null (when present, narrowed to the string branch of the type union) whenever action is distribute-trust and outcome is installed, since that is the one outcome/action combination that claims material was actually put in place and must therefore prove it."
     },
     "outcome": {
       "type": "string",
@@ -77,7 +77,7 @@
         "already_absent",
         "removed"
       ],
-      "description": "Closed outcome vocabulary (ADR-0012 decision 20e). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: distribute-trust performed the mutation and observedFingerprintAfter now matches, OR revoke-trust's removal attempt failed and the material is still installed (mutationPerformed false in that failure case; see failureCategory). already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. The allOf rule below requires mutationPerformed true whenever outcome is removed, since removed can only be reached via a successful mutation; installed has no such requirement because it is also the fail-safe outcome for a failed revoke."
+      "description": "Closed outcome vocabulary (ADR-0012 decision 20e), further restricted per action by the allOf rules below: distribute-trust may only ever report preexisting or installed (never already_absent/removed, which are revoke-only outcomes); revoke-trust may only ever report already_absent, removed, or installed (installed is revoke's failure-fallback case, see below). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: EITHER distribute-trust performed the mutation and observedFingerprintAfter now matches (in which case mutationAttempted/mutationPerformed must both be true and observedFingerprintAfter must be non-null, enforced below), OR revoke-trust's removal attempt failed and the material is still installed (in which case mutationPerformed must be false, enforced below; see failureCategory). already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. The allOf rules below require mutationPerformed true whenever outcome is removed, since removed can only be reached via a successful mutation, and split installed's requirements by action since it is simultaneously distribute-trust's success outcome and revoke-trust's fail-safe outcome."
     },
     "mutationAttempted": {
       "type": "boolean",
@@ -212,6 +212,109 @@
         "properties": {
           "mutationPerformed": {
             "const": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "const": "distribute-trust"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": ["preexisting", "installed"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "const": "revoke-trust"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": ["already_absent", "removed", "installed"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action", "outcome"],
+        "properties": {
+          "action": {
+            "const": "distribute-trust"
+          },
+          "outcome": {
+            "const": "installed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mutationAttempted": {
+            "const": true
+          },
+          "mutationPerformed": {
+            "const": true
+          },
+          "observedFingerprintAfter": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action", "outcome"],
+        "properties": {
+          "action": {
+            "const": "revoke-trust"
+          },
+          "outcome": {
+            "const": "installed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mutationPerformed": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action", "outcome"],
+        "properties": {
+          "action": {
+            "const": "distribute-trust"
+          },
+          "outcome": {
+            "const": "preexisting"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mutationAttempted": {
+            "const": false
+          },
+          "mutationPerformed": {
+            "const": false
           }
         }
       }

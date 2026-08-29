@@ -335,8 +335,11 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   // Builds a trust-result-contract.schema.json-shaped result for the given
   // job/installation pair. installationRow must be the CURRENT row (i.e.
   // read back after the job that will be answered), since transitionGeneration
-  // must match decision 20f's stale-generation check.
+  // must match decision 20f's stale-generation check. agent must be the same
+  // agent createTrustJob dispatched this job to (its wire-format agentId is
+  // now cross-checked by ingestTrustJobResult against job.assigned_agent_id).
   function buildResult({
+    agent,
     job,
     installationRow,
     outcome,
@@ -354,7 +357,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       schemaVersion: 1,
       jobId: String(job.id),
       workspaceId: String(job.workspace_id),
-      agentId: agentIdOverride ?? String(installationRow.agent_id),
+      agentId: agentIdOverride ?? agent.agentId,
       trustAnchorId:
         trustAnchorIdOverride ?? String(job.payload.trustAnchorId),
       action: job.operation,
@@ -668,7 +671,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job: distributeJob,
-          result: buildResult({
+          result: buildResult({ agent,
             job: distributeJob,
             installationRow: distributeInstallationRow,
             outcome: "installed",
@@ -811,7 +814,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: distributeJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: distributeJob,
           installationRow: distributeInstallationRow,
           outcome: "installed",
@@ -875,7 +878,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({ job, installationRow, outcome: "installed" }),
+          result: buildResult({ agent, job, installationRow, outcome: "installed" }),
         }),
       );
     }
@@ -942,7 +945,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: distributeJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: distributeJob,
           installationRow: distributeInstallation,
           outcome: "preexisting",
@@ -997,7 +1000,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: ownerAJob,
-        result: buildResult({ job: ownerAJob, installationRow: ownerAInstallationRow, outcome: "installed" }),
+        result: buildResult({ agent, job: ownerAJob, installationRow: ownerAInstallationRow, outcome: "installed" }),
       }),
     );
 
@@ -1058,7 +1061,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: releaseJob,
-        result: buildResult({ job: releaseJob, installationRow: releaseInstallationRow, outcome: "removed" }),
+        result: buildResult({ agent, job: releaseJob, installationRow: releaseInstallationRow, outcome: "removed" }),
       }),
     );
     const finalOwnerARow = await getInstallationById(ownerAOutcome.installation.id);
@@ -1135,7 +1138,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: jobRow,
-        result: buildResult({
+        result: buildResult({ agent,
           job: jobRow,
           installationRow,
           outcome: "installed",
@@ -1176,7 +1179,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({
+          result: buildResult({ agent,
             job,
             installationRow,
             outcome: "installed",
@@ -1206,7 +1209,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({
+          result: buildResult({ agent,
             job,
             installationRow,
             outcome: "installed",
@@ -1236,7 +1239,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({
+          result: buildResult({ agent,
             job,
             installationRow,
             outcome: "installed",
@@ -1248,6 +1251,239 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         }),
       ),
       CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  });
+
+  it("rejects a result whose action disagrees with the job's own operation", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-action-mismatch-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    // Schema-valid on its own (a revoke-trust result reporting
+    // already_absent is a perfectly legitimate shape), but this job's own
+    // operation is distribute-trust -- exercising the service-layer
+    // action-vs-job.operation cross-check rather than the schema's
+    // per-action outcome matrix (which this result does not violate).
+    const result = buildResult({ agent, job, installationRow, outcome: "already_absent" });
+    result.action = "revoke-trust";
+
+    await expectServiceError(
+      withTx((client) => ingestTrustJobResult({ client, job, result })),
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  });
+
+  it("rejects a result whose jobId does not match the job it was ingested against", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-jobid-mismatch-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    const result = buildResult({ agent, job, installationRow, outcome: "installed" });
+    result.jobId = crypto.randomUUID();
+
+    await expectServiceError(
+      withTx((client) => ingestTrustJobResult({ client, job, result })),
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  });
+
+  it("rejects a result whose workspaceId does not match the job's own workspace", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-workspaceid-mismatch-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    const result = buildResult({ agent, job, installationRow, outcome: "installed" });
+    result.workspaceId = crypto.randomUUID();
+
+    await expectServiceError(
+      withTx((client) => ingestTrustJobResult({ client, job, result })),
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  });
+
+  it("rejects a result whose wire-format agentId does not match the agent this job was signed for", async () => {
+    // Distinct from the existing "assigned agent" test above: that one
+    // corrupts job.assigned_agent_id (the DB-id leg of the identity check).
+    // This one corrupts result.agentId (the wire-format string leg,
+    // resolved via getAgentById), so both independent legs of the
+    // agent-identity re-proof are exercised.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const otherAgent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-agentid-wire-mismatch-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    await expectServiceError(
+      withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job,
+          result: buildResult({
+            agent,
+            job,
+            installationRow,
+            outcome: "installed",
+            agentIdOverride: otherAgent.agentId,
+          }),
+        }),
+      ),
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  });
+
+  it("rejects a distribute-trust result reporting outcome installed with observedFingerprintAfter null (defense in depth against a stale/permissive schema)", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-fingerprint-null-${crypto.randomUUID()}`,
+      }),
+    );
+    const job = await getJobRow(outcome.job.id);
+    const installationRow = await getInstallationById(outcome.installation.id);
+
+    const result = buildResult({ agent, job, installationRow, outcome: "installed" });
+    result.observedFingerprintAfter = null;
+    result.observedFingerprintBefore = null;
+
+    // This is caught by trust-result-contract.schema.json's own
+    // distribute-trust+installed allOf rule first (CERTOPS_TRUST_RESULT_
+    // INVALID), before ever reaching the service-layer mandatory-fingerprint
+    // cross-check below it. Asserted at the integration level too, since
+    // ingestTrustJobResult -- not the schema alone -- is the real
+    // enforcement boundary a production deployment relies on.
+    await expectServiceError(
+      withTx((client) => ingestTrustJobResult({ client, job, result })),
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+  });
+
+  it("does not promote provenance to tokentimer_installed unless action is distribute-trust with mutationPerformed true", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+    const owner = "workspace-policy";
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-no-promote-setup-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    const afterDistribute = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallationRow,
+          outcome: "installed",
+        }),
+      }),
+    );
+    expect(afterDistribute.provenance).to.equal("tokentimer_installed");
+
+    // Provenance must be tokentimer_installed (not preexisting) at dispatch
+    // time for createTrustJob to actually dispatch a revoke-trust job at
+    // all -- a preexisting-provenance installation is released without an
+    // agent job (see "revoke-trust for a preexisting installation..."
+    // above), so that shortcut is deliberately not exercised here.
+    const revokeOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-no-promote-revoke-${crypto.randomUUID()}`,
+      }),
+    );
+    const revokeJob = await getJobRow(revokeOutcome.job.id);
+    const revokeInstallationRow = await getInstallationById(
+      revokeOutcome.installation.id,
+    );
+
+    // Directly downgrade provenance to "preexisting" on the row this
+    // in-flight revoke job answers, isolating ingestTrustJobResult's own
+    // promotion logic from createTrustJob's dispatch-time shortcut above:
+    // whatever the row's provenance is at ingest time, a revoke-trust
+    // result reporting its failure-fallback outcome "installed" must never
+    // promote it to tokentimer_installed. Under the pre-fix code
+    // (`result.outcome === "installed" ? "tokentimer_installed" : ...`),
+    // this exact sequence would have silently re-promoted provenance.
+    await TestUtils.execQuery(
+      `UPDATE certops_trust_anchor_installations SET provenance = 'preexisting' WHERE id = $1`,
+      [revokeInstallationRow.id],
+    );
+
+    // ingestTrustJobResult is reached only via the succeeded-job path, which
+    // never carries a failureCategory (see the guard just above the
+    // per-result identity checks); mutationAttempted:false here means "the
+    // agent determined removal should not proceed and never attempted the
+    // OS mutation," a status-succeeded-compatible way to reach revoke's
+    // installed failure-fallback outcome without triggering the schema's
+    // separate mutationAttempted:true+mutationPerformed:false->
+    // failureCategory-required rule.
+    const revokeResult = buildResult({
+      agent,
+      job: revokeJob,
+      installationRow: revokeInstallationRow,
+      outcome: "installed",
+    });
+    revokeResult.mutationAttempted = false;
+    revokeResult.mutationPerformed = false;
+
+    const updated = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: revokeJob,
+        result: revokeResult,
+      }),
+    );
+    expect(updated.transitionState).to.equal("installed");
+    expect(updated.provenance).to.equal(
+      "preexisting",
+      "a revoke-trust result reporting installed (its failure-fallback case) must never promote provenance",
     );
   });
 
@@ -1274,7 +1510,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({
+          result: buildResult({ agent,
             job,
             installationRow,
             outcome: "installed",
@@ -1317,7 +1553,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({
+          result: buildResult({ agent,
             job,
             installationRow,
             outcome: "installed",
@@ -1352,7 +1588,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job,
-        result: buildResult({ job, installationRow, outcome: "installed" }),
+        result: buildResult({ agent, job, installationRow, outcome: "installed" }),
       }),
     );
 
@@ -1397,7 +1633,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: firstJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: firstJob,
           installationRow: firstInstallationRow,
           outcome: "installed",
@@ -1422,7 +1658,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: secondJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: secondJob,
           installationRow: secondInstallationRow,
           outcome: "preexisting",
@@ -1460,7 +1696,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: distributeJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: distributeJob,
           installationRow: distributeInstallationRow,
           outcome: "installed",
@@ -1486,7 +1722,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: revokeJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: revokeJob,
           installationRow: revokeInstallationRow,
           outcome: "removed",
@@ -1623,7 +1859,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ingestTrustJobResult({
         client,
         job: distributeJob,
-        result: buildResult({
+        result: buildResult({ agent,
           job: distributeJob,
           installationRow: distributeInstallationRow,
           outcome: "installed",
