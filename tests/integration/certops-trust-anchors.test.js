@@ -1479,23 +1479,102 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     // in-flight revoke job answers, isolating ingestTrustJobResult's own
     // promotion logic from createTrustJob's dispatch-time shortcut above:
     // whatever the row's provenance is at ingest time, a revoke-trust
-    // result reporting its failure-fallback outcome "installed" must never
-    // promote it to tokentimer_installed. Under the pre-fix code
+    // result must never promote it to tokentimer_installed, regardless of
+    // reported outcome (nextProvenance only ever fires for action
+    // distribute-trust). Under the pre-fix code
     // (`result.outcome === "installed" ? "tokentimer_installed" : ...`),
-    // this exact sequence would have silently re-promoted provenance.
+    // a revoke-trust result claiming its failure-fallback outcome
+    // "installed" would have silently re-promoted provenance; that
+    // specific contradictory shape is now rejected outright before ever
+    // reaching this computation (see "rejects a revoke-trust result
+    // reporting outcome 'installed'..." below), so this test instead
+    // exercises the same "revoke-trust never promotes" invariant via
+    // revoke-trust's genuine, non-contradictory success outcome
+    // ("removed").
     await TestUtils.execQuery(
       `UPDATE certops_trust_anchor_installations SET provenance = 'preexisting' WHERE id = $1`,
       [revokeInstallationRow.id],
     );
 
-    // ingestTrustJobResult is reached only via the succeeded-job path, which
-    // never carries a failureCategory (see the guard just above the
-    // per-result identity checks); mutationAttempted:false here means "the
-    // agent determined removal should not proceed and never attempted the
-    // OS mutation," a status-succeeded-compatible way to reach revoke's
-    // installed failure-fallback outcome without triggering the schema's
-    // separate mutationAttempted:true+mutationPerformed:false->
-    // failureCategory-required rule.
+    const revokeResult = buildResult({
+      agent,
+      job: revokeJob,
+      installationRow: revokeInstallationRow,
+      outcome: "removed",
+    });
+
+    const updated = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: revokeJob,
+        result: revokeResult,
+      }),
+    );
+    expect(updated.transitionState).to.equal("removed");
+    expect(updated.provenance).to.equal(
+      "preexisting",
+      "a revoke-trust result must never promote provenance, regardless of outcome",
+    );
+  });
+
+  it("rejects a revoke-trust result reporting outcome 'installed' (revoke's own failure-fallback shape can never be a completed transition)", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+    const owner = "workspace-policy";
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-reject-revoke-installed-setup-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallationRow,
+          outcome: "installed",
+        }),
+      }),
+    );
+
+    const revokeOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `result-reject-revoke-installed-${crypto.randomUUID()}`,
+      }),
+    );
+    const revokeJob = await getJobRow(revokeOutcome.job.id);
+    const revokeInstallationRow = await getInstallationById(
+      revokeOutcome.installation.id,
+    );
+
+    // The exact shape the schema itself permits (ADR-0012 decision 20e) for
+    // revoke-trust's own documented failure-fallback outcome: removal was
+    // never even attempted, so mutationAttempted/mutationPerformed are both
+    // false and failureCategory stays null/absent -- schema-valid, and not
+    // caught by ingestTrustJobResult's separate non-null-failureCategory
+    // guard either. But ingestTrustJobResult is only ever reached via the
+    // succeeded-job path (agentDispatch.ingestResult's jobStatus ===
+    // "succeeded" branch), and a revoke-trust job cannot simultaneously
+    // succeed and report that the material it was revoking is still
+    // installed -- that is a contradiction the schema alone cannot express,
+    // so the service layer must reject it explicitly rather than silently
+    // settling the row as if the transition completed.
     const revokeResult = buildResult({
       agent,
       job: revokeJob,
@@ -1505,17 +1584,21 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     revokeResult.mutationAttempted = false;
     revokeResult.mutationPerformed = false;
 
-    const updated = await withTx((client) =>
-      ingestTrustJobResult({
-        client,
-        job: revokeJob,
-        result: revokeResult,
-      }),
+    await expectServiceError(
+      withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job: revokeJob,
+          result: revokeResult,
+        }),
+      ),
+      CERTOPS_TRUST_RESULT_INVALID,
     );
-    expect(updated.transitionState).to.equal("installed");
-    expect(updated.provenance).to.equal(
-      "preexisting",
-      "a revoke-trust result reporting installed (its failure-fallback case) must never promote provenance",
+
+    const installation = await getInstallationById(revokeOutcome.installation.id);
+    expect(installation.transition_state).to.equal(
+      "pending_remove",
+      "a rejected result must not advance the installation row",
     );
   });
 
