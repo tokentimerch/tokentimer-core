@@ -1734,10 +1734,36 @@ async function ingestTrustJobResult({ client, job, result }) {
   // claiming outcome installed + mutationPerformed true schema-invalid;
   // checked explicitly here too so intent is not left solely to a schema a
   // future reader might not think to re-check).
+  //
+  // Second promotion path: a distribute-trust result reporting outcome
+  // 'preexisting' with receipt.state 'finalized' (rather than the ordinary
+  // 'missing') is also trustworthy evidence of a genuine prior TokenTimer
+  // install, not merely "someone else's material happened to be there".
+  // That combination is only ever produced by one agent code path
+  // (packages/agent/src/trust-store/index.js's distributeTrust): the agent
+  // read back its own on-disk receipt for this exact (store, fingerprint)
+  // and found it already in state "installed" - a completed mutation from
+  // an earlier call, not this one. This is the retry case where the agent
+  // installed the CA, finalized its receipt, then crashed or lost network
+  // before this result was ever ingested; the control plane re-dispatched
+  // the same job, the agent found the material already present, and
+  // (correctly) performed no new mutation - but the on-disk receipt still
+  // proves TokenTimer put it there. Without this path, that installation
+  // would be stuck at 'preexisting' forever, and a later revoke would take
+  // the no-agent-job "provenance was preexisting" release path (this file's
+  // runCreateTrustJob), flipping the row to 'removed' while the CA stays
+  // installed on the actual machine - a silent, unrecoverable trust-store
+  // leak. mutationPerformed is deliberately NOT part of this second
+  // condition: the schema requires it to be false for outcome
+  // 'preexisting' (see trust-result-contract.schema.json's allOf rule), so
+  // requiring it true here would make this branch unreachable.
   const nextProvenance =
-    result.action === "distribute-trust" &&
-    result.outcome === "installed" &&
-    result.mutationPerformed === true
+    (result.action === "distribute-trust" &&
+      result.outcome === "installed" &&
+      result.mutationPerformed === true) ||
+    (result.action === "distribute-trust" &&
+      result.outcome === "preexisting" &&
+      result.receipt?.state === "finalized")
       ? "tokentimer_installed"
       : installationRow.provenance;
   // failureCategory is always null here: the guard above already rejected

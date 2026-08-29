@@ -1,6 +1,9 @@
 "use strict";
 
 const crypto = require("crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
 
@@ -32,6 +35,7 @@ const {
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
 } = require("../../apps/api/services/certops/trustAnchors");
+const agentTrustStore = require("../../packages/agent/src/trust-store");
 
 // Ten distinct self-signed CA certificates (Basic Constraints CA:TRUE),
 // generated once via openssl so each test that needs its own independent
@@ -379,10 +383,21 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     trustAnchorIdOverride,
     fingerprintOverride,
     failureCategoryOverride,
+    receiptStateOverride,
   }) {
     const mutationAttempted = outcome === "installed" || outcome === "removed";
     const isRemovalOutcome =
       outcome === "removed" || outcome === "already_absent";
+    // Realistic default receipt.state per outcome, matching what the real
+    // agent (packages/agent/src/trust-store/index.js) actually reports:
+    // distribute-trust's outcome "preexisting" defaults to "missing" (a
+    // genuine anchor this agent never installed, the ordinary case), not
+    // "finalized" -- "finalized" is reserved for the specific retry
+    // scenario (this agent's own receipt already shows a completed prior
+    // install) that ingestTrustJobResult's second promotion path exists
+    // for, and tests exercising that scenario pass receiptStateOverride
+    // explicitly. Every other outcome keeps "finalized" as before.
+    const defaultReceiptState = outcome === "preexisting" ? "missing" : "finalized";
     return {
       schemaVersion: 1,
       jobId: String(job.id),
@@ -403,7 +418,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       observedFingerprintAfter: isRemovalOutcome
         ? null
         : (fingerprintOverride ?? installationRow.fingerprint_sha256),
-      receipt: { id: "receipt-1", state: "finalized" },
+      receipt: { id: "receipt-1", state: receiptStateOverride ?? defaultReceiptState },
       observedAt: new Date().toISOString(),
       ...(failureCategoryOverride ? { failureCategory: failureCategoryOverride } : {}),
     };
@@ -1519,6 +1534,184 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     );
   });
 
+  it("promotes provenance to tokentimer_installed when a distribute-trust result reports outcome preexisting with receipt.state finalized", async () => {
+    // This is the B2 retry scenario: an agent installs a CA, finalizes its
+    // on-disk receipt to "installed", then crashes or loses network before
+    // reporting the result. The control plane re-dispatches the same
+    // distribute-trust job; the agent (packages/agent/src/trust-store/
+    // index.js's distributeTrust) finds the material already present, reads
+    // back its own finalized receipt, and reports outcome "preexisting"
+    // with receipt.state "finalized" rather than "missing" - proof this
+    // agent's own prior mutation put the material there. ingestTrustJobResult
+    // must treat that combination as trustworthy and promote provenance,
+    // otherwise the row would be stuck at "preexisting" forever even though
+    // this agent genuinely installed it (and a later revoke would silently
+    // leak the trust anchor - see the "revoke-trust for a preexisting
+    // installation..." test above for that release path).
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-promote-finalized-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+
+    const ingested = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallationRow,
+          outcome: "preexisting",
+          receiptStateOverride: "finalized",
+        }),
+      }),
+    );
+
+    expect(ingested.transitionState).to.equal("installed");
+    expect(ingested.provenance).to.equal("tokentimer_installed");
+  });
+
+  it("does not promote provenance to tokentimer_installed when a distribute-trust result reports outcome preexisting with receipt.state missing (negative guard against over-promotion)", async () => {
+    // The ordinary preexisting case: this agent never installed the
+    // material (someone/something else's CA happened to already be in the
+    // store), so its on-disk receipt genuinely has nothing recorded for
+    // this (store, fingerprint) and receipt.state is "missing". That must
+    // never be conflated with the finalized-receipt retry case above -
+    // promoting provenance here would let ingestTrustJobResult claim
+    // tokentimer_installed for material this agent has no actual proof of
+    // having put there.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `result-no-promote-missing-receipt-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+
+    const ingested = await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallationRow,
+          outcome: "preexisting",
+          receiptStateOverride: "missing",
+        }),
+      }),
+    );
+
+    expect(ingested.transitionState).to.equal("installed");
+    expect(ingested.provenance).to.equal("preexisting");
+  });
+
+  it("end-to-end: a real agent distributeTrust retry after a lost result lands the installation on tokentimer_installed, not stuck at preexisting (B2 regression)", async () => {
+    // Full B2 sequence, using the actual agent executor
+    // (packages/agent/src/trust-store/index.js), not a hand-built result:
+    // 1. The agent runs distributeTrust and genuinely installs + finalizes.
+    // 2. That first result is simulated as "lost" (crash/network loss
+    //    before the control plane ever sees it) - it is deliberately never
+    //    fed into ingestTrustJobResult.
+    // 3. The control plane re-dispatches; the agent's distributeTrust runs
+    //    again against the SAME receiptDir/anchorsDir, finds the material
+    //    already present, and reports outcome "preexisting" with
+    //    receipt.state "finalized" per the fix in distributeTrust.
+    // 4. Only that second result is ingested. The installation row must
+    //    end up tokentimer_installed, not permanently stuck at preexisting.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `e2e-b2-retry-${crypto.randomUUID()}`,
+      }),
+    );
+    const jobRow = await getJobRow(distributeOutcome.job.id);
+    const installationRow = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    expect(installationRow.provenance).to.equal("preexisting");
+
+    const revalidation = await withTx((client) =>
+      revalidateTrustJobForDispatch({ client, job: jobRow }),
+    );
+    expect(revalidation.allow).to.equal(true);
+
+    const agentDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tt-b2-e2e-agent-"),
+    );
+    const anchorsDir = path.join(agentDir, "anchors");
+    const receiptDir = path.join(agentDir, "receipts");
+    const succeedingExecFileImpl = (_file, _args, _options, callback) =>
+      callback(null, "", "");
+
+    const agentJob = {
+      jobId: String(jobRow.id),
+      workspaceId,
+      agentId: agent.agentId,
+      trustAnchorId: String(jobRow.payload.trustAnchorId),
+      anchorType: jobRow.payload.anchorType,
+      fingerprintSha256: jobRow.payload.fingerprintSha256,
+      pem: revalidation.pem,
+      transitionGeneration: revalidation.transitionGeneration,
+    };
+
+    // Step 1: the agent genuinely installs and finalizes.
+    const firstResult = await agentTrustStore.distributeTrust({
+      job: agentJob,
+      family: "debian",
+      receiptDir,
+      seams: { anchorsDir, execFileImpl: succeedingExecFileImpl },
+    });
+    expect(firstResult.outcome).to.equal("installed");
+    expect(firstResult.mutationPerformed).to.equal(true);
+    expect(firstResult.receipt.state).to.equal("finalized");
+    // firstResult is deliberately never ingested - it represents the
+    // result the control plane never received.
+
+    // Step 2: control plane re-dispatches; the agent retries against the
+    // same on-disk state and finds its own finalized receipt.
+    const secondResult = await agentTrustStore.distributeTrust({
+      job: agentJob,
+      family: "debian",
+      receiptDir,
+      seams: { anchorsDir, execFileImpl: succeedingExecFileImpl },
+    });
+    expect(secondResult.outcome).to.equal("preexisting");
+    expect(secondResult.mutationPerformed).to.equal(false);
+    expect(secondResult.receipt.state).to.equal("finalized");
+
+    // Step 3: only the retry's result ever reaches the server.
+    const ingested = await withTx((client) =>
+      ingestTrustJobResult({ client, job: jobRow, result: secondResult }),
+    );
+    expect(ingested.transitionState).to.equal("installed");
+    expect(ingested.provenance).to.equal(
+      "tokentimer_installed",
+      "the installation must not be stuck at preexisting after this agent's own finalized install is reported back",
+    );
+  });
+
   it("rejects a result whose transitionGeneration is stale", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
@@ -2011,6 +2204,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
           client,
           job: distributeJob,
           result: buildResult({
+            agent,
             job: distributeJob,
             installationRow: distributeInstallationRow,
             outcome: "installed",
@@ -2171,6 +2365,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         client,
         job: distributeJob,
         result: buildResult({
+          agent,
           job: distributeJob,
           installationRow: distributeInstallation,
           outcome: "preexisting",
@@ -2250,7 +2445,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         ingestTrustJobResult({
           client,
           job,
-          result: buildResult({ job, installationRow, outcome: "installed" }),
+          result: buildResult({ agent, job, installationRow, outcome: "installed" }),
         }),
       );
     }
@@ -2317,6 +2512,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         client,
         job: distributeJob,
         result: buildResult({
+          agent,
           job: distributeJob,
           installationRow: distributeInstallation,
           outcome: "preexisting",
