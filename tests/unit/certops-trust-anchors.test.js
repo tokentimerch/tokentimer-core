@@ -339,8 +339,8 @@ describe("trust result wire carriage", () => {
   // material is still installed, but nothing was mutated on that attempt),
   // so installed + mutationPerformed:false is a legitimate combination.
   it("accepts outcome 'installed' with mutationPerformed false (revoke-trust's OS mutation failed, material remains installed)", () => {
-    const result = baseResult({ outcome: "installed", mutationPerformed: false, mutationAttempted: true, failureCategory: "os_mutation_failed" });
-    assert.equal(validateTrustResult(result).valid, true);
+    const result = baseResult({ action: "revoke-trust", outcome: "installed", mutationPerformed: false, mutationAttempted: true, failureCategory: "os_mutation_failed" });
+    assert.equal(validateTrustResult(result).valid, true, JSON.stringify(validateTrustResult(result).errors));
   });
 
   it("rejects outcome 'removed' unless mutationPerformed is also true", () => {
@@ -376,5 +376,79 @@ describe("trust result wire carriage", () => {
       ).valid,
       true,
     );
+  });
+
+  // Per-action outcome matrix (0.14.0 consistency-check follow-up): an
+  // agent-reported result naming an outcome its own action can never reach
+  // is internally impossible and must be rejected at the shape layer, not
+  // merely trusted and mapped through to installation state.
+  it("rejects distribute-trust reporting already_absent (a revoke-only outcome)", () => {
+    const result = baseResult({
+      action: "distribute-trust",
+      outcome: "already_absent",
+      mutationAttempted: false,
+      mutationPerformed: false,
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  it("rejects distribute-trust reporting removed (a revoke-only outcome)", () => {
+    const result = baseResult({
+      action: "distribute-trust",
+      outcome: "removed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  it("rejects revoke-trust reporting preexisting (a distribute-only outcome)", () => {
+    const result = baseResult({
+      action: "revoke-trust",
+      outcome: "preexisting",
+      mutationAttempted: false,
+      mutationPerformed: false,
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  // distribute-trust's own success outcome ("installed") must prove itself:
+  // a distribute that claims installed but did not actually perform the
+  // mutation is internally impossible, distinct from revoke-trust's
+  // legitimate installed+mutationPerformed:false failure-fallback case.
+  it("rejects distribute-trust reporting installed with mutationPerformed false", () => {
+    const result = baseResult({
+      action: "distribute-trust",
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: false,
+      failureCategory: "os_mutation_failed",
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  it("rejects distribute-trust reporting installed with observedFingerprintAfter null", () => {
+    const result = baseResult({
+      action: "distribute-trust",
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+      observedFingerprintAfter: null,
+    });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  // revoke-trust's "installed" is ONLY the failure-fallback case (removal
+  // attempt failed, material still there); it must never simultaneously
+  // claim the mutation succeeded, which would make it indistinguishable
+  // from a "removed" result that was mislabeled.
+  it("rejects revoke-trust reporting installed with mutationPerformed true", () => {
+    const result = baseResult({
+      action: "revoke-trust",
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+    });
+    assert.equal(validateTrustResult(result).valid, false);
   });
 });

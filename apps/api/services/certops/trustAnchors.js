@@ -1547,17 +1547,20 @@ async function revalidateTrustJobForDispatch({ client, job }) {
 /**
  * Validates an agent-reported trust-job result against
  * trust-result-contract.schema.json and against the persisted job/
- * installation row: agentId, store, fingerprintSha256, and
- * transitionGeneration must all match what was signed. Rejects a
- * stale-generation result outright.
+ * installation row: action, jobId, workspaceId, agentId, store,
+ * fingerprintSha256, and transitionGeneration must all match what was
+ * signed. Rejects a stale-generation result outright.
  *
  * Called from the same result-ingestion transaction agentDispatch.ingestResult
  * opens for every job family, once it has identified the job as trust-anchor.
  *
  * On a validated match: advances the installation row per the outcome
  * enum - preexisting/installed both settle at 'installed' (provenance is
- * left as-is, since a result can't retroactively rewrite who originally
- * installed the material); already_absent/removed both settle at 'removed'.
+ * promoted to tokentimer_installed only for a genuine distribute-trust
+ * success, i.e. action distribute-trust, outcome installed, and
+ * mutationPerformed true; a revoke-trust's own "installed" is its
+ * failure-fallback case and never promotes provenance); already_absent/
+ * removed both settle at 'removed'.
  */
 async function ingestTrustJobResult({ client, job, result }) {
   if (!isTrustAnchorOperation(job.operation)) {
@@ -1612,13 +1615,59 @@ async function ingestTrustJobResult({ client, job, result }) {
     );
   }
 
+  // The result's own identity fields (action/jobId/workspaceId/agentId) echo
+  // the signed job it claims to answer (trust-result-contract.schema.json's
+  // own description: "a result's identity fields are held to the same
+  // shape as a job's"), but nothing before this point actually re-proves
+  // that echo against the persisted job/installation row: a shape-valid
+  // result naming a different action, job, workspace, or agent than the one
+  // it was dispatched for is a forgery, not merely a downstream logic
+  // error. All four are checked up front, before the store/fingerprint/
+  // generation cross-checks below.
+  if (result.action !== job.operation) {
+    throw trustAnchorError(
+      "Result action does not match the job's own operation",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  if (result.jobId !== String(job.id)) {
+    throw trustAnchorError(
+      "Result jobId does not match the job it was ingested against",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  if (result.workspaceId !== String(workspaceId)) {
+    throw trustAnchorError(
+      "Result workspaceId does not match the job's own workspace",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+  // result.agentId is the agent's wire-format string identity (ADR-0012
+  // decision 3: the id a job is signed for), a different id space from
+  // job.assigned_agent_id/installationRow.agent_id (both certops_agents.id
+  // UUIDs, cross-checked separately below). getAgentById resolves the DB
+  // agent id to that agent's row so its wire-format agentId can be re-
+  // proven here - the same DB-id-to-agent-record mapping
+  // assertTargetAgentRegistered above already uses, reused rather than
+  // duplicated.
+  const assignedAgent = await getAgentById({
+    client,
+    workspaceId,
+    agentId: job.assigned_agent_id,
+  });
+  if (!assignedAgent || result.agentId !== assignedAgent.agentId) {
+    throw trustAnchorError(
+      "Result agentId does not match the agent this job was signed for",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
+
   // A result whose store/fingerprint/transitionGeneration differs from the
   // signed job it claims to answer is rejected, not merely logged.
   //
   // Compares job.assigned_agent_id vs installationRow.agent_id (both UUIDs
-  // in the same certops_agents.id space). Not result.agentId - that's the
-  // agent's wire-format string identity, a different id space, already
-  // re-proven separately by agentDispatch.ingestResult before this runs.
+  // in the same certops_agents.id space) as a second, independent check on
+  // top of the wire-format agentId re-proof above.
   if (String(job.assigned_agent_id) !== String(installationRow.agent_id)) {
     throw trustAnchorError(
       "Job's assigned agent does not match the installation this job was signed for",
@@ -1637,11 +1686,18 @@ async function ingestTrustJobResult({ client, job, result }) {
       CERTOPS_TRUST_RESULT_MISMATCH,
     );
   }
-  // Whichever fingerprint the agent observed (before or after mutation; at
-  // least one is non-null for every outcome) must match this row's tracked
-  // fingerprint.
+  // Whichever fingerprint the agent observed (before or after mutation) must
+  // match this row's tracked fingerprint. Mandatory for every outcome
+  // except already_absent, the only outcome where nothing was ever observed
+  // and both before/after can legitimately be null.
   const observedFingerprint =
     result.observedFingerprintAfter || result.observedFingerprintBefore;
+  if (result.outcome !== "already_absent" && !observedFingerprint) {
+    throw trustAnchorError(
+      "Result did not observe any fingerprint, but its outcome requires one",
+      CERTOPS_TRUST_RESULT_MISMATCH,
+    );
+  }
   if (
     observedFingerprint &&
     observedFingerprint !== installationRow.fingerprint_sha256
@@ -1670,9 +1726,18 @@ async function ingestTrustJobResult({ client, job, result }) {
   // A result claiming the material is now installed but performed no
   // mutation ('preexisting') must not overwrite an existing
   // 'tokentimer_installed' provenance - provenance only ever tightens
-  // toward "we know we put this here", never loosens.
+  // toward "we know we put this here", never loosens. Promotion requires
+  // all three of: action distribute-trust (revoke-trust's own "installed"
+  // is its failure-fallback case, never a successful install),
+  // outcome installed, and mutationPerformed true (defense in depth on top
+  // of the schema's allOf rules, which already make a revoke-trust result
+  // claiming outcome installed + mutationPerformed true schema-invalid;
+  // checked explicitly here too so intent is not left solely to a schema a
+  // future reader might not think to re-check).
   const nextProvenance =
-    result.outcome === "installed"
+    result.action === "distribute-trust" &&
+    result.outcome === "installed" &&
+    result.mutationPerformed === true
       ? "tokentimer_installed"
       : installationRow.provenance;
   // failureCategory is always null here: the guard above already rejected
