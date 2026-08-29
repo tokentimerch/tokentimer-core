@@ -47,7 +47,7 @@
         "distribute-trust",
         "revoke-trust"
       ],
-      "description": "Echoes the job's own action (trust-job-payload.schema.json#/properties/action), so a result naming the wrong action for its jobId is a detectable shape violation, not merely a downstream logic error. The allOf rules below additionally restrict which outcome values are even reachable per action (distribute-trust: preexisting/installed only; revoke-trust: already_absent/removed/installed only), since the two actions do not share a symmetric outcome space."
+      "description": "Echoes the job's own action (trust-job-payload.schema.json#/properties/action), so a result naming the wrong action for its jobId is a detectable shape violation, not merely a downstream logic error. The allOf rules below additionally restrict which outcome values are even reachable per action (distribute-trust: preexisting/installed/already_absent; revoke-trust: already_absent/removed/installed), since the two actions do not share a symmetric outcome space."
     },
     "transitionGeneration": {
       "type": "integer",
@@ -77,7 +77,7 @@
         "already_absent",
         "removed"
       ],
-      "description": "Closed outcome vocabulary (ADR-0012 decision 20e), further restricted per action by the allOf rules below: distribute-trust may only ever report preexisting or installed (never already_absent/removed, which are revoke-only outcomes); revoke-trust may only ever report already_absent, removed, or installed (installed is revoke's failure-fallback case, see below). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: EITHER distribute-trust performed the mutation and observedFingerprintAfter now matches (in which case mutationAttempted/mutationPerformed must both be true and observedFingerprintAfter must be non-null, enforced below), OR revoke-trust's removal attempt failed and the material is still installed (in which case mutationPerformed must be false, enforced below; see failureCategory). already_absent: revoke-trust found nothing to remove and performed no mutation. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. The allOf rules below require mutationPerformed true whenever outcome is removed, since removed can only be reached via a successful mutation, and split installed's requirements by action since it is simultaneously distribute-trust's success outcome and revoke-trust's fail-safe outcome."
+      "description": "Closed outcome vocabulary (ADR-0012 decision 20e), further restricted per action by the allOf rules below: distribute-trust may only ever report preexisting, installed, or already_absent (never removed, which is a revoke-only outcome); revoke-trust may only ever report already_absent, removed, or installed (installed is revoke's failure-fallback case, see below). preexisting: distribute-trust found the material already present, provenance is not tokentimer_installed, and the agent performed no mutation. installed: EITHER distribute-trust performed the mutation and observedFingerprintAfter now matches (in which case mutationAttempted/mutationPerformed must both be true and observedFingerprintAfter must be non-null, enforced below), OR revoke-trust's removal attempt failed and the material is still installed (in which case mutationPerformed must be false, enforced below; see failureCategory). already_absent: EITHER revoke-trust found nothing to remove and performed no mutation, OR distribute-trust refused before ever mutating the store (input re-validation failure, a receipt write conflict) or attempted the install mutation and it failed - in the distribute-trust case this is always a failure-fallback, never a normal outcome, so failureCategory is required non-null there (enforced below), symmetric with installed being revoke-trust's own failure-fallback. removed: revoke-trust performed the mutation and observedFingerprintAfter is now null. The allOf rules below require mutationPerformed true whenever outcome is removed, since removed can only be reached via a successful mutation, and split installed's requirements by action since it is simultaneously distribute-trust's success outcome and revoke-trust's fail-safe outcome."
     },
     "mutationAttempted": {
       "type": "boolean",
@@ -228,7 +228,7 @@
       "then": {
         "properties": {
           "outcome": {
-            "enum": ["preexisting", "installed"]
+            "enum": ["preexisting", "installed", "already_absent"]
           }
         }
       }
@@ -246,6 +246,27 @@
         "properties": {
           "outcome": {
             "enum": ["already_absent", "removed", "installed"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["action", "outcome"],
+        "properties": {
+          "action": {
+            "const": "distribute-trust"
+          },
+          "outcome": {
+            "const": "already_absent"
+          }
+        }
+      },
+      "then": {
+        "required": ["failureCategory"],
+        "properties": {
+          "failureCategory": {
+            "type": "string"
           }
         }
       }

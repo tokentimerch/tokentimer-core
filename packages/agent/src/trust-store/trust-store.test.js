@@ -1187,12 +1187,20 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(finalReceipt.row.state, "removed");
   });
 
-  it("reclaims a DIFFERENT jobId's stale pending_remove receipt when the material is already gone too", async () => {
+  it("reclaims a DIFFERENT jobId's stale pending_remove receipt when the material is already gone too, re-running the refresh rather than trusting the stale record", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});
     await installFirst(receiptDir, fsImpl);
-    // Simulate the crashed job's removal having actually completed on the
-    // OS side (file deleted) before it crashed, without ever finalizing.
+    // Simulate the crashed job's removal having actually completed the
+    // unlink on the OS side (file deleted) before it crashed WITHOUT ever
+    // running the trust-refresh command - the exact ambiguous state this
+    // fix exists to resolve. "Already gone" alone must never be trusted as
+    // proof the derived trust bundle is clean when a prior pending_remove
+    // (this job's own resumed attempt, or a since-abandoned different job's
+    // stale receipt - the server frees a stuck installation row for a fresh
+    // job/generation to redispatch on, see runCreateTrustJob/
+    // unwindTerminalTrustJob in trustAnchors.js) proves an unlink was
+    // already attempted here.
     fsImpl.unlinkSync(trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT));
     receipt.writeIntentReceipt({
       receiptDir,
@@ -1211,13 +1219,60 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
       seams: { fsImpl, execFileImpl },
     });
 
-    assert.equal(result.outcome, "already_absent");
-    assert.equal(result.mutationPerformed, false);
-    assert.equal(execFileImpl.calls.length, 0);
+    // The refresh command re-runs (and succeeds here) instead of being
+    // skipped just because the incoming job's id differs from the stale
+    // receipt's - a false already_absent with zero exec calls would be
+    // exactly the stale-trust-bundle false positive this fix closes.
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0][0], trustStore.DEBIAN_UPDATE_COMMAND);
 
     const finalReceipt = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
     assert.equal(finalReceipt.row.jobId, "this-job");
+    assert.equal(finalReceipt.row.transitionGeneration, 3);
     assert.equal(finalReceipt.row.state, "removed");
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("keeps reporting os_mutation_failed (not a false already_absent) when a DIFFERENT job's reclaimed refresh-retry itself fails, leaving the receipt pending_remove under the new job", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+    fsImpl.unlinkSync(trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT));
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "crashed-job",
+      transitionGeneration: 2,
+      intentState: "pending_remove",
+    });
+
+    const failingExecFileImpl = makeFakeExecFile({ succeed: false });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob({ jobId: "this-job", transitionGeneration: 3 }),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: failingExecFileImpl },
+    });
+
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "os_mutation_failed");
+    assert.equal(failingExecFileImpl.calls.length, 1);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "pending_remove");
+    assert.equal(persisted.row.jobId, "this-job");
+    assert.equal(persisted.row.transitionGeneration, 3);
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
   });
 
   it("resumes a crashed remove attempt for the SAME jobId (pending_remove for this job is valid ownership proof)", async () => {
@@ -1351,6 +1406,43 @@ describe("trust-store: revokeTrust refresh-retry on RHEL-family (same fix as Deb
     assert.equal(persisted.row.state, "pending_remove");
 
     const validation = validateTrustResult(second);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("reclaims a DIFFERENT jobId's stale pending_remove receipt on RHEL too, re-running update-ca-trust extract rather than trusting the stale record", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+    fsImpl.unlinkSync(trustStore.linuxAnchorFilePath("rhel", CA_FINGERPRINT));
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.RHEL_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "crashed-job",
+      transitionGeneration: 2,
+      intentState: "pending_remove",
+    });
+
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob({ jobId: "this-job", transitionGeneration: 3 }),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.deepEqual(execFileImpl.calls[0], [trustStore.RHEL_UPDATE_COMMAND, ...trustStore.RHEL_UPDATE_ARGS]);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.jobId, "this-job");
+    assert.equal(finalReceipt.row.transitionGeneration, 3);
+    assert.equal(finalReceipt.row.state, "removed");
+
+    const validation = validateTrustResult(result);
     assert.equal(validation.valid, true, JSON.stringify(validation.errors));
   });
 });

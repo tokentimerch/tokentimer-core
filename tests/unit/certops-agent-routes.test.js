@@ -417,6 +417,110 @@ describe("Results handler", () => {
     assert.equal(res.body.code, "CERTOPS_AGENT_RESULT_NONCE_REJECTED");
   });
 
+  it("maps a trust-anchor result shape violation to 400 CERTOPS_TRUST_RESULT_INVALID, not the generic 500 fallback", async () => {
+    const res = createResponse();
+    await _test.resultsHandler(
+      {
+        certopsAgent: agentFixture(),
+        body: envelope("result", {
+          jobId: "42",
+          attemptId: "claim-1",
+          claimId: "claim-1",
+          nonce: "nonce-dispatch-01",
+          status: "succeeded",
+        }),
+      },
+      res,
+      {
+        ingestResult: async () => {
+          const error = new Error("Trust job result does not match trust-result-contract.schema.json");
+          error.code = "CERTOPS_TRUST_RESULT_INVALID";
+          throw error;
+        },
+      },
+    );
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.code, "CERTOPS_TRUST_RESULT_INVALID");
+  });
+
+  it("maps a trust-anchor result/job mismatch to 409 CERTOPS_TRUST_RESULT_MISMATCH", async () => {
+    const res = createResponse();
+    await _test.resultsHandler(
+      {
+        certopsAgent: agentFixture(),
+        body: envelope("result", {
+          jobId: "42",
+          attemptId: "claim-1",
+          claimId: "claim-1",
+          nonce: "nonce-dispatch-01",
+          status: "succeeded",
+        }),
+      },
+      res,
+      {
+        ingestResult: async () => {
+          const error = new Error("Result jobId does not match the job it was ingested against");
+          error.code = "CERTOPS_TRUST_RESULT_MISMATCH";
+          throw error;
+        },
+      },
+    );
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, "CERTOPS_TRUST_RESULT_MISMATCH");
+  });
+
+  it("maps a stale trust-anchor transition generation to 409 CERTOPS_TRUST_RESULT_STALE_GENERATION", async () => {
+    const res = createResponse();
+    await _test.resultsHandler(
+      {
+        certopsAgent: agentFixture(),
+        body: envelope("result", {
+          jobId: "42",
+          attemptId: "claim-1",
+          claimId: "claim-1",
+          nonce: "nonce-dispatch-01",
+          status: "succeeded",
+        }),
+      },
+      res,
+      {
+        ingestResult: async () => {
+          const error = new Error("Result transitionGeneration is stale");
+          error.code = "CERTOPS_TRUST_RESULT_STALE_GENERATION";
+          throw error;
+        },
+      },
+    );
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, "CERTOPS_TRUST_RESULT_STALE_GENERATION");
+  });
+
+  it("maps a missing trust-anchor installation row to 404 CERTOPS_TRUST_INSTALLATION_NOT_FOUND", async () => {
+    const res = createResponse();
+    await _test.resultsHandler(
+      {
+        certopsAgent: agentFixture(),
+        body: envelope("result", {
+          jobId: "42",
+          attemptId: "claim-1",
+          claimId: "claim-1",
+          nonce: "nonce-dispatch-01",
+          status: "succeeded",
+        }),
+      },
+      res,
+      {
+        ingestResult: async () => {
+          const error = new Error("No installation row references this trust job");
+          error.code = "CERTOPS_TRUST_INSTALLATION_NOT_FOUND";
+          throw error;
+        },
+      },
+    );
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.code, "CERTOPS_TRUST_INSTALLATION_NOT_FOUND");
+  });
+
   it("falls back to attemptId when the schema-only result body omits claimId", async () => {
     const res = createResponse();
     let seenClaimId = null;

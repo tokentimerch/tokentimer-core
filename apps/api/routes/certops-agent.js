@@ -60,6 +60,12 @@ const {
   renewJobLease,
 } = require("../services/certops/agentDispatch");
 const {
+  CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+  CERTOPS_TRUST_RESULT_INVALID,
+  CERTOPS_TRUST_RESULT_MISMATCH,
+  CERTOPS_TRUST_RESULT_STALE_GENERATION,
+} = require("../services/certops/trustAnchors");
+const {
   createCertificateEvidence,
 } = require("../services/certops/evidence");
 const {
@@ -332,6 +338,27 @@ function handleAgentRouteError(res, error) {
       return res.status(422).json({
         error: "Private key material is not accepted on CertOps agent routes",
         code: PRIVATE_KEY_MATERIAL_REJECTED,
+      });
+    // Trust-anchor result-ingestion codes (trustAnchors.js's
+    // ingestTrustJobResult, reached via agentDispatch.ingestResult),
+    // mapped the same way as the equivalent operator-route handler in
+    // apps/api/routes/certops.js so an agent gets an actionable 4xx instead
+    // of falling through to the generic 500 below.
+    case CERTOPS_TRUST_INSTALLATION_NOT_FOUND:
+      return res.status(404).json({
+        error: error.message || "Trust anchor installation not found",
+        code: CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+      });
+    case CERTOPS_TRUST_RESULT_INVALID:
+      return res.status(400).json({
+        error: error.message || "Trust job result is invalid",
+        code: CERTOPS_TRUST_RESULT_INVALID,
+      });
+    case CERTOPS_TRUST_RESULT_MISMATCH:
+    case CERTOPS_TRUST_RESULT_STALE_GENERATION:
+      return res.status(409).json({
+        error: error.message || "Trust job result does not match the job",
+        code: error.code,
       });
     default:
       logger.error("CertOps agent route failed", {

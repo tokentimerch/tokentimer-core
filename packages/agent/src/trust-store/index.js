@@ -1172,11 +1172,26 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   // attempt after a crash between intent and finalize).
   const resumingSameJob =
     existingReceipt.row.state === "pending_remove" && existingReceipt.row.jobId === jobId;
+  // A prior incomplete remove attempt exists locally on this exact (store,
+  // fingerprint), whether it's this same job resumed after a crash or a
+  // now-abandoned different job's stale receipt being reclaimed (the server
+  // reverts an unwound job's installation row back to "installed" and a
+  // fresh job/transitionGeneration is free to dispatch again - see
+  // trustAnchors.js's unwindTerminalTrustJob/runCreateTrustJob - so a
+  // different jobId here is the *expected* shape of "this got retried",
+  // not evidence the prior attempt was someone else's work). Either way,
+  // the file-unlink-then-refresh ordering below is identical, so both
+  // must get the same refresh-retry protection: gating only on
+  // resumingSameJob would silently drop that protection every time the
+  // control plane's retry carries a new jobId, reintroducing the exact
+  // stale-trust-bundle risk this fix exists to close.
+  const hasIncompleteRemoveAttempt = existingReceipt.row.state === "pending_remove";
 
   // Re-probe the ACTUAL store state immediately before deleting: if already
   // gone, report already_absent rather than mutating against nothing (see
-  // the `!isPresent` branch below for the Debian/RHEL resumingSameJob
-  // exception, where "gone" alone isn't proof the trust bundle is clean).
+  // the `!isPresent` branch below for the Debian/RHEL
+  // hasIncompleteRemoveAttempt exception, where "gone" alone isn't proof
+  // the trust bundle is clean).
   const presence =
     family === "windows"
       ? findWindowsStoreEntryByFingerprint({
@@ -1200,20 +1215,19 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     // no-op) already fully happened - always already_absent, no mutation,
     // no retry, exactly as before.
     //
-    // On Debian/RHEL, "gone" is unambiguous ONLY when this agent never
-    // observed the file present under this exact job: removeLinuxAnchorFile
-    // (below, and in the isPresent branch further down) unlinks the source
-    // anchor file FIRST and only runs the platform trust-refresh command
+    // On Debian/RHEL, "gone" is unambiguous ONLY when a prior removal
+    // attempt on this exact (store, fingerprint) was already under way (see
+    // hasIncompleteRemoveAttempt above): removeLinuxAnchorFile (below, and
+    // in the isPresent branch further down) unlinks the source anchor file
+    // FIRST and only runs the platform trust-refresh command
     // (update-ca-certificates / update-ca-trust extract) afterward. A crash,
     // or a failed refresh, between those two steps leaves the file gone on
     // disk while the derived trust bundle can still list the certificate as
     // trusted - reporting already_absent there would be a false positive.
-    // resumingSameJob is exactly the signal that this could be THAT prior,
-    // incomplete attempt of this same job: a different job's stale
-    // pending_remove, or a fresh job whose target was already gone before
-    // it ever started, was never this agent's own mutation, so those keep
-    // the original already_absent behavior with no refresh re-run (falling
-    // through to the shared logic below).
+    // If the receipt instead shows "installed" (no removal ever attempted
+    // here) and the file is nonetheless already gone, there is no unlink to
+    // retry - that keeps the original already_absent behavior with no
+    // refresh re-run (falling through to the shared logic below).
     //
     // Re-running the refresh resolves the ambiguity directly: calling
     // removeLinuxAnchorFile again re-attempts the unlink too, but its own
@@ -1224,7 +1238,48 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     // the same os_mutation_failed failure the isPresent branch further down
     // reports for a failed removal - never a false already_absent - and
     // leaves the receipt at pending_remove for a later retry.
-    if ((family === "debian" || family === "rhel") && resumingSameJob) {
+    if ((family === "debian" || family === "rhel") && hasIncompleteRemoveAttempt) {
+      // Reclaim onto the current job's identity first when this is a
+      // different job's stale receipt, exactly like the no-retry-needed
+      // path below does - the refresh-retry outcome must be reported (and
+      // finalized) under the job that is actually dispatched right now,
+      // never a since-abandoned one.
+      const reclaimAttempt = tryReceiptStep(() =>
+        resumingSameJob
+          ? existingReceipt.row
+          : receipt.writeIntentReceipt({
+              receiptDir,
+              store: osStore,
+              fingerprintSha256,
+              jobId,
+              transitionGeneration,
+              intentState: "pending_remove",
+              reclaimStalePending: true,
+              now,
+            }),
+      );
+      if (!reclaimAttempt.ok) {
+        return buildResult({
+          jobId,
+          workspaceId,
+          agentId,
+          trustAnchorId,
+          action: "revoke-trust",
+          transitionGeneration,
+          store,
+          observedFingerprintBefore: null,
+          observedFingerprintAfter: null,
+          outcome: "already_absent",
+          mutationAttempted: false,
+          mutationPerformed: false,
+          receiptId: existingReceipt.row.id,
+          receiptState: "intent_written",
+          failureCategory: RECEIPT_WRITE_CONFLICT,
+          now,
+        });
+      }
+      const reclaimedIntent = reclaimAttempt.value;
+
       const refreshRetryResult = await removeLinuxAnchorFile({
         family,
         fingerprintSha256,
@@ -1248,7 +1303,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           outcome: "installed",
           mutationAttempted: true,
           mutationPerformed: false,
-          receiptId: existingReceipt.row.id,
+          receiptId: reclaimedIntent.id,
           receiptState: "intent_written",
           failureCategory: "os_mutation_failed",
           now,
@@ -1260,8 +1315,8 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           receiptDir,
           store: osStore,
           fingerprintSha256,
-          jobId: existingReceipt.row.jobId,
-          transitionGeneration: existingReceipt.row.transitionGeneration,
+          jobId: reclaimedIntent.jobId,
+          transitionGeneration: reclaimedIntent.transitionGeneration,
           now,
         }),
       );
@@ -1283,7 +1338,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           outcome: "removed",
           mutationAttempted: true,
           mutationPerformed: true,
-          receiptId: existingReceipt.row.id,
+          receiptId: reclaimedIntent.id,
           receiptState: "intent_written",
           failureCategory: RECEIPT_FINALIZE_CONFLICT,
           now,
@@ -1314,7 +1369,10 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     // rather than finalizing directly from `installed`; reuses the existing
     // pending_remove row only when resuming this exact job, otherwise
     // writes a fresh intent (reclaiming a different job's stale row, same
-    // as the isPresent branch below).
+    // as the isPresent branch below). hasIncompleteRemoveAttempt is false
+    // here, so resumingSameJob is always false too - this always writes a
+    // fresh intent, but the ternary is kept for symmetry with the retry
+    // branch above.
     const intentAttempt = tryReceiptStep(() =>
       resumingSameJob
         ? existingReceipt.row
