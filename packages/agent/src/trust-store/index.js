@@ -458,7 +458,11 @@ function linuxAnchorFilePath(family, fingerprintSha256, anchorsDir) {
 /**
  * Whether the anchor file for (family, fingerprintSha256) is present AND its
  * content actually hashes to that fingerprint (catches a file at this
- * deterministic path whose content doesn't match its own name).
+ * deterministic path whose content doesn't match its own name). Only checks
+ * this agent's own deterministic path, not the store as a whole; used by
+ * revokeTrust's pre-delete re-probe, where that's the correct check (see
+ * scanLinuxAnchorsDirectoryForFingerprint for the whole-directory version
+ * distributeTrust needs).
  * @param {object} input
  * @param {"debian"|"rhel"} input.family
  * @param {string} input.fingerprintSha256
@@ -486,6 +490,60 @@ function probeLinuxAnchorFile({ family, fingerprintSha256, anchorsDir, fsImpl = 
     return { present: "conflict", actualFingerprintSha256 };
   }
   return { present: true };
+}
+
+/**
+ * Real "is this CA trusted, by any means" check for a Linux anchors
+ * directory: unlike probeLinuxAnchorFile (which only checks this agent's own
+ * deterministic path), this enumerates every entry in the directory and
+ * computes each one's fingerprint, so a CA installed under an unrelated
+ * filename (e.g. a native `cp` + `update-ca-trust extract`, bypassing this
+ * agent entirely) is still detected. Mirrors
+ * findWindowsStoreEntryByFingerprint's enumerate-and-match semantics for the
+ * real Windows store. Used only by distributeTrust's preexisting check.
+ *
+ * Any per-entry failure (a subdirectory, a dangling symlink, an unreadable
+ * or unparseable file) is skipped rather than aborting the scan; a
+ * directory-level failure (most commonly ENOENT, the directory doesn't exist
+ * yet) is reported as not-found rather than thrown, matching this module's
+ * never-throw-for-an-operational-outcome contract.
+ * @param {object} input
+ * @param {"debian"|"rhel"} input.family
+ * @param {string} input.fingerprintSha256
+ * @param {string} [input.anchorsDir] override for tests.
+ * @param {typeof fs} [input.fsImpl]
+ * @returns {{ present: true, matchedPath: string }|{ present: false }}
+ */
+function scanLinuxAnchorsDirectoryForFingerprint({ family, fingerprintSha256, anchorsDir, fsImpl = fs }) {
+  const dir = anchorsDir || (family === "debian" ? DEBIAN_ANCHORS_DIR : RHEL_ANCHORS_DIR);
+
+  let entries;
+  try {
+    entries = fsImpl.readdirSync(dir);
+  } catch {
+    return { present: false };
+  }
+
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry);
+    let pem;
+    try {
+      pem = fsImpl.readFileSync(entryPath, "utf8");
+    } catch {
+      continue;
+    }
+    let cert;
+    try {
+      cert = new X509Certificate(pem);
+    } catch {
+      continue;
+    }
+    const actualFingerprintSha256 = String(cert.fingerprint256 || "").replace(/:/g, "").toLowerCase();
+    if (actualFingerprintSha256 === fingerprintSha256) {
+      return { present: true, matchedPath: entryPath };
+    }
+  }
+  return { present: false };
 }
 
 /**
@@ -785,7 +843,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
           spawnImpl: seams.spawnImpl,
           onWarning: seams.onWarning,
         })
-      : probeLinuxAnchorFile({
+      : scanLinuxAnchorsDirectoryForFingerprint({
           family,
           fingerprintSha256,
           anchorsDir: seams.anchorsDir,
@@ -1358,6 +1416,7 @@ module.exports = {
   removeWindowsStoreEntry,
   linuxAnchorFilePath,
   probeLinuxAnchorFile,
+  scanLinuxAnchorsDirectoryForFingerprint,
   installLinuxAnchorFile,
   removeLinuxAnchorFile,
   resolveConcreteStore,
