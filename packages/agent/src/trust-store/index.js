@@ -596,7 +596,12 @@ async function installLinuxAnchorFile({
 /**
  * Deletes the deterministic anchor file and re-runs the family's update
  * command: leaving the source file deleted but the derived bundle stale
- * would mean the anchor is still effectively trusted.
+ * would mean the anchor is still effectively trusted. The unlink step
+ * tolerates ENOENT (treated as already-gone, not a failure) rather than
+ * requiring the file to still exist, so revokeTrust's Debian/RHEL
+ * refresh-retry path (see the `!isPresent` branch's comment there) can call
+ * this again purely to re-run the update command when the file is already
+ * gone, without needing a separate "refresh only" entry point.
  * @param {object} input
  * @param {"debian"|"rhel"} input.family
  * @param {string} input.fingerprintSha256
@@ -1022,7 +1027,15 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
  * missing or corrupt receipt refuses removal (never treated as
  * `already_absent`). Only once a receipt proves this agent installed the
  * material does this re-probe the actual store state immediately before
- * deleting; if already gone, that's `already_absent` (success, no error).
+ * deleting; if already gone, that's normally `already_absent` (success, no
+ * error) - EXCEPT on Debian/RHEL when resuming this exact job's own
+ * `pending_remove` receipt, where "gone" is ambiguous: removeLinuxAnchorFile
+ * unlinks the source file BEFORE running the platform trust-refresh command,
+ * so a crash or a failed refresh between those two steps leaves the file
+ * gone while the derived trust bundle can still list the certificate. That
+ * one case re-runs the refresh command before reporting success; see the
+ * comment on the `!isPresent` branch below for the full reasoning and why
+ * Windows (certutil -delstore, a single atomic step) needs none of this.
  *
  * @param {object} input
  * @param {object} input.job the verified trust-job-payload.schema.json
@@ -1161,7 +1174,9 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     existingReceipt.row.state === "pending_remove" && existingReceipt.row.jobId === jobId;
 
   // Re-probe the ACTUAL store state immediately before deleting: if already
-  // gone, report already_absent rather than mutating against nothing.
+  // gone, report already_absent rather than mutating against nothing (see
+  // the `!isPresent` branch below for the Debian/RHEL resumingSameJob
+  // exception, where "gone" alone isn't proof the trust bundle is clean).
   const presence =
     family === "windows"
       ? findWindowsStoreEntryByFingerprint({
@@ -1179,12 +1194,127 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   const isPresent = family === "windows" ? presence.found : presence.present === true;
 
   if (!isPresent) {
-    // Ownership proven but material already gone: success, no mutation. The
-    // receipt still transitions pending_remove -> removed rather than
-    // finalizing directly from `installed`; reuses the existing pending_remove
-    // row only when resuming this exact job, otherwise writes a fresh intent
-    // (reclaiming a different job's stale row, same as the isPresent branch
-    // below).
+    // Ownership proven but material already gone. On Windows this is
+    // unambiguous success: certutil -delstore is a single atomic step, so
+    // the store no longer enumerating the thumbprint means removal (or a
+    // no-op) already fully happened - always already_absent, no mutation,
+    // no retry, exactly as before.
+    //
+    // On Debian/RHEL, "gone" is unambiguous ONLY when this agent never
+    // observed the file present under this exact job: removeLinuxAnchorFile
+    // (below, and in the isPresent branch further down) unlinks the source
+    // anchor file FIRST and only runs the platform trust-refresh command
+    // (update-ca-certificates / update-ca-trust extract) afterward. A crash,
+    // or a failed refresh, between those two steps leaves the file gone on
+    // disk while the derived trust bundle can still list the certificate as
+    // trusted - reporting already_absent there would be a false positive.
+    // resumingSameJob is exactly the signal that this could be THAT prior,
+    // incomplete attempt of this same job: a different job's stale
+    // pending_remove, or a fresh job whose target was already gone before
+    // it ever started, was never this agent's own mutation, so those keep
+    // the original already_absent behavior with no refresh re-run (falling
+    // through to the shared logic below).
+    //
+    // Re-running the refresh resolves the ambiguity directly: calling
+    // removeLinuxAnchorFile again re-attempts the unlink too, but its own
+    // ENOENT catch already tolerates the file being gone, so in practice
+    // this is just "retry the refresh command". If it now succeeds, the
+    // mutation has genuinely completed and this reports removed exactly
+    // like a normal successful removal. If it fails again, this reports
+    // the same os_mutation_failed failure the isPresent branch further down
+    // reports for a failed removal - never a false already_absent - and
+    // leaves the receipt at pending_remove for a later retry.
+    if ((family === "debian" || family === "rhel") && resumingSameJob) {
+      const refreshRetryResult = await removeLinuxAnchorFile({
+        family,
+        fingerprintSha256,
+        anchorsDir: seams.anchorsDir,
+        fsImpl: seams.fsImpl,
+        execFileImpl: seams.execFileImpl,
+        updateCommandArgv: seams.updateCommandArgv,
+        timeoutMs: seams.timeoutMs,
+      });
+      if (!refreshRetryResult.ok) {
+        return buildResult({
+          jobId,
+          workspaceId,
+          agentId,
+          trustAnchorId,
+          action: "revoke-trust",
+          transitionGeneration,
+          store,
+          observedFingerprintBefore: null,
+          observedFingerprintAfter: null,
+          outcome: "installed",
+          mutationAttempted: true,
+          mutationPerformed: false,
+          receiptId: existingReceipt.row.id,
+          receiptState: "intent_written",
+          failureCategory: "os_mutation_failed",
+          now,
+        });
+      }
+
+      const finalizeRetryAttempt = tryReceiptStep(() =>
+        receipt.finalizeReceipt({
+          receiptDir,
+          store: osStore,
+          fingerprintSha256,
+          jobId: existingReceipt.row.jobId,
+          transitionGeneration: existingReceipt.row.transitionGeneration,
+          now,
+        }),
+      );
+      if (!finalizeRetryAttempt.ok) {
+        // The refresh genuinely completed this time - report that
+        // truthfully - but the local receipt didn't reach "removed";
+        // mirrors the isPresent branch's own RECEIPT_FINALIZE_CONFLICT
+        // handling further down.
+        return buildResult({
+          jobId,
+          workspaceId,
+          agentId,
+          trustAnchorId,
+          action: "revoke-trust",
+          transitionGeneration,
+          store,
+          observedFingerprintBefore: null,
+          observedFingerprintAfter: null,
+          outcome: "removed",
+          mutationAttempted: true,
+          mutationPerformed: true,
+          receiptId: existingReceipt.row.id,
+          receiptState: "intent_written",
+          failureCategory: RECEIPT_FINALIZE_CONFLICT,
+          now,
+        });
+      }
+      const finalizedAfterRetry = finalizeRetryAttempt.value;
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "revoke-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        outcome: "removed",
+        mutationAttempted: true,
+        mutationPerformed: true,
+        receiptId: finalizedAfterRetry.id,
+        receiptState: "finalized",
+        now,
+      });
+    }
+
+    // Not a case that needs the Debian/RHEL refresh retry above: success,
+    // no mutation. The receipt still transitions pending_remove -> removed
+    // rather than finalizing directly from `installed`; reuses the existing
+    // pending_remove row only when resuming this exact job, otherwise
+    // writes a fresh intent (reclaiming a different job's stale row, same
+    // as the isPresent branch below).
     const intentAttempt = tryReceiptStep(() =>
       resumingSameJob
         ? existingReceipt.row
