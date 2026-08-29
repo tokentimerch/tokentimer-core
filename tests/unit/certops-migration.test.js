@@ -1646,7 +1646,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 48);
+    assert.equal(sorted[sorted.length - 1], 49);
   });
 });
 

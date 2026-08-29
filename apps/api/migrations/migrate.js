@@ -3504,6 +3504,55 @@ const migrations = [
         WHERE next_reconcile_at IS NOT NULL;
     `,
   },
+  {
+    version: 49,
+    name: "certops_trust_reference_release_idempotency",
+    sql: `
+      -- runCreateTrustJob's two "no real job" revoke-trust branches
+      -- (otherLiveReferences > 0, and provenance = 'preexisting') mutate the
+      -- installation row and write an audit event, then return before
+      -- createCertificateJob ever runs - so the idempotency machinery on
+      -- certificate_jobs (idempotency_key + creation_request_hash, migration
+      -- 20/37) never sees these calls at all. Without a durable record of
+      -- our own, a caller retrying the exact same idempotencyKey re-bumps
+      -- transition_generation and re-writes the audit event on every retry,
+      -- and a late-enough retry can even fall through into a different
+      -- branch entirely once the state it originally observed has changed.
+      --
+      -- This table is a small, purpose-built idempotency ledger for those
+      -- two branches only: one row per (workspace, idempotencyKey), storing
+      -- the installation snapshot the ORIGINAL call returned so a replay can
+      -- return the identical response without touching the installation row
+      -- or writing another audit event. See
+      -- recordTrustReferenceReleaseIdempotency /
+      -- findTrustReferenceReleaseIdempotencyRecord in trustAnchors.js.
+      CREATE TABLE IF NOT EXISTS certops_trust_reference_release_idempotency (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        trust_anchor_id UUID NOT NULL,
+        agent_id UUID NOT NULL,
+        store TEXT NOT NULL
+          CHECK (store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        owner TEXT NOT NULL
+          CHECK (char_length(btrim(owner)) BETWEEN 1 AND 128),
+        -- Reserved for future no-job branches; only 'revoke-trust' is
+        -- written today.
+        operation TEXT NOT NULL
+          CHECK (operation IN ('distribute-trust', 'revoke-trust')),
+        idempotency_key TEXT NOT NULL
+          CHECK (char_length(idempotency_key) BETWEEN 1 AND 255),
+        installation_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      -- One outcome per (workspace, idempotencyKey): a replay looks itself
+      -- up by key alone, then verifies the tuple below still matches before
+      -- trusting the cached snapshot.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_reference_release_idempotency_key
+        ON certops_trust_reference_release_idempotency(workspace_id, idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_reference_release_idempotency_tuple
+        ON certops_trust_reference_release_idempotency(workspace_id, trust_anchor_id, agent_id, store, owner);
+    `,
+  },
 ];
 
 async function runMigrations() {

@@ -49,6 +49,16 @@ const CERTOPS_TRUST_JOB_OPERATION_INVALID =
   "CERTOPS_TRUST_JOB_OPERATION_INVALID";
 const CERTOPS_TRUST_INSTALLATION_NOT_FOUND =
   "CERTOPS_TRUST_INSTALLATION_NOT_FOUND";
+// anchor_type determines which OS store (Root/CA) a fingerprint's
+// installations live in (resolveTrustAnchorStoreLabel below). It is
+// immutable once ANY non-removed certops_trust_anchor_installations row
+// exists for the anchor: flipping it out from under a live installation
+// would make a future revoke-trust job derive the wrong store and never
+// find the row it needs to unwind (see createTrustAnchor's own comment).
+// Re-approving with a different anchorType is only allowed while no live
+// installation exists anywhere for the fingerprint.
+const CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE =
+  "CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE";
 const CERTOPS_TRUST_RESULT_INVALID = "CERTOPS_TRUST_RESULT_INVALID";
 const CERTOPS_TRUST_RESULT_MISMATCH = "CERTOPS_TRUST_RESULT_MISMATCH";
 const CERTOPS_TRUST_RESULT_STALE_GENERATION =
@@ -65,6 +75,13 @@ const CERTOPS_TRUST_RESULT_STALE_GENERATION =
 // from CERTOPS_TRUST_ANCHOR_NOT_FOUND (well-formed but absent) for anchors.
 const CERTOPS_TARGET_AGENT_INVALID = "CERTOPS_TARGET_AGENT_INVALID";
 const CERTOPS_TARGET_AGENT_NOT_FOUND = "CERTOPS_TARGET_AGENT_NOT_FOUND";
+// A no-job reference-release replay (see certops_trust_reference_release_
+// idempotency / recordTrustReferenceReleaseIdempotency below) whose
+// idempotencyKey was already used for a different trustAnchorId/agentId/
+// store/owner tuple. Mirrors jobs.js's CERTOPS_JOB_IDEMPOTENCY_CONFLICT for
+// the real-dispatch path.
+const CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT =
+  "CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT";
 const ANCHOR_TYPES = Object.freeze(["root", "intermediate"]);
 const ANCHOR_TYPE_SET = new Set(ANCHOR_TYPES);
 const ANCHOR_STATUSES = Object.freeze(["active", "revoked"]);
@@ -378,9 +395,19 @@ const ANCHOR_SELECT_FIELDS = `
  * Creates (or re-approves, if the same fingerprint already exists) a trust
  * anchor row. Re-approving updates the existing row rather than creating a
  * duplicate, and reactivates a previously retired anchor.
+ *
+ * name/pem/metadata always refresh on re-approval. anchor_type is the one
+ * exception: it is immutable while ANY non-removed
+ * certops_trust_anchor_installations row exists for this fingerprint,
+ * because anchor_type is what a revoke-trust job derives the OS store from
+ * (resolveTrustAnchorStoreLabel). Flipping it out from under a live
+ * installation would make a future revoke-trust job compute the wrong
+ * store and never find the row it needs to unwind, permanently orphaning
+ * whatever is actually installed. Re-approving with a different anchorType
+ * is only allowed once no live installation remains anywhere for the
+ * fingerprint (e.g. every reference has already been released).
  */
 async function createTrustAnchor(options = {}) {
-  const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const name = normalizeName(options.name);
   const anchorType = normalizeAnchorType(options.anchorType);
@@ -394,7 +421,72 @@ async function createTrustAnchor(options = {}) {
   const { pem, fingerprintSha256, subjectCommonName } =
     parseAndValidateAnchorPem(options.pem);
 
-  const result = await db.query(
+  const run = (client) =>
+    runCreateTrustAnchor(client, {
+      workspaceId,
+      name,
+      pem,
+      anchorType,
+      fingerprintSha256,
+      subjectCommonName,
+      source,
+      publicMetadata,
+      createdByUserId,
+    });
+
+  return options.client
+    ? run(options.client)
+    : withTransaction(options.dbPool || pool, run);
+}
+
+async function runCreateTrustAnchor(client, params) {
+  const {
+    workspaceId,
+    name,
+    pem,
+    anchorType,
+    fingerprintSha256,
+    subjectCommonName,
+    source,
+    publicMetadata,
+    createdByUserId,
+  } = params;
+
+  // Lock any existing anchor row for this fingerprint first, so the
+  // anchor_type-immutability check below and the upsert that follows are
+  // atomic against a concurrent dispatch (e.g. revalidateTrustJobForDispatch
+  // or another createTrustAnchor call) racing on the same fingerprint.
+  const existingLock = await client.query(
+    `SELECT id, anchor_type
+       FROM certops_trust_anchors
+      WHERE workspace_id = $1 AND fingerprint_sha256 = $2
+      FOR UPDATE`,
+    [workspaceId, fingerprintSha256],
+  );
+  const existingAnchor = existingLock.rows[0];
+
+  if (existingAnchor && existingAnchor.anchor_type !== anchorType) {
+    const liveInstallation = await client.query(
+      `SELECT 1
+         FROM certops_trust_anchor_installations
+        WHERE workspace_id = $1
+          AND trust_anchor_id = $2
+          AND transition_state != 'removed'
+        LIMIT 1`,
+      [workspaceId, existingAnchor.id],
+    );
+    if (liveInstallation.rows[0]) {
+      throw trustAnchorError(
+        "Cannot change anchorType: a live (non-removed) installation " +
+          "already exists for this fingerprint under the current " +
+          "anchorType. Release every installation first, or re-approve " +
+          "with the existing anchorType.",
+        CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
+      );
+    }
+  }
+
+  const result = await client.query(
     `INSERT INTO certops_trust_anchors (
        workspace_id, name, pem, anchor_type, fingerprint_sha256,
        subject_common_name, source, public_metadata, created_by
@@ -403,6 +495,8 @@ async function createTrustAnchor(options = {}) {
      ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE SET
        name = EXCLUDED.name,
        pem = EXCLUDED.pem,
+       -- Only reached with a changed anchor_type when the immutability
+       -- check above has already confirmed no live installation exists.
        anchor_type = EXCLUDED.anchor_type,
        -- Re-approving reactivates: re-submitting a retired anchor's PEM
        -- means it should accept new distributions again.
@@ -429,7 +523,7 @@ async function createTrustAnchor(options = {}) {
   const anchor = anchorFromRow(result.rows[0]);
 
   await writeAudit({
-    client: db,
+    client,
     actorUserId: createdByUserId,
     subjectUserId: createdByUserId,
     action: "CERTOPS_TRUST_ANCHOR_APPROVED",
@@ -688,6 +782,76 @@ async function countOtherLiveReferences({
   return result.rows[0]?.count ?? 0;
 }
 
+// --- No-job reference-release idempotency ---
+//
+// runCreateTrustJob's two "no real job" revoke-trust branches (see below:
+// otherLiveReferences > 0, and provenance === "preexisting") mutate the
+// installation row and return before createCertificateJob ever runs, so
+// the idempotency machinery on certificate_jobs (idempotency_key +
+// creation_request_hash) never sees these calls. This dedicated ledger
+// (migration certops_trust_reference_release_idempotency) is the pragmatic
+// fix: one row per (workspace, idempotencyKey), storing the installation
+// snapshot the ORIGINAL call produced so a replay can be a true no-op.
+//
+// Tradeoff, documented per the task's own escape hatch: this is a second,
+// narrower idempotency mechanism living alongside certificate_jobs' own,
+// rather than a unification of the two. Unifying them would mean giving
+// these two branches a real (if never-dispatched) certificate_jobs row
+// purely to hang an idempotency key off of, which would need its own new
+// terminal status semantics (a job that is "done" but never ran) and touch
+// every other job-status consumer in this codebase (reconciliation sweep,
+// dispatch claim queries, job-list projections). A small dedicated table
+// scoped to exactly the two call sites that need it is far less invasive
+// for the size of this fix, at the cost of the two idempotency records
+// living in different tables.
+
+async function findTrustReferenceReleaseIdempotencyRecord({
+  client,
+  workspaceId,
+  idempotencyKey,
+}) {
+  const result = await client.query(
+    `SELECT trust_anchor_id, agent_id, store, owner, operation,
+            installation_snapshot
+       FROM certops_trust_reference_release_idempotency
+      WHERE workspace_id = $1 AND idempotency_key = $2
+      LIMIT 1`,
+    [workspaceId, idempotencyKey],
+  );
+  return result.rows[0] || null;
+}
+
+async function recordTrustReferenceReleaseIdempotency({
+  client,
+  workspaceId,
+  trustAnchorId,
+  agentId,
+  store,
+  owner,
+  operation,
+  idempotencyKey,
+  installation,
+}) {
+  await client.query(
+    `INSERT INTO certops_trust_reference_release_idempotency (
+       workspace_id, trust_anchor_id, agent_id, store, owner, operation,
+       idempotency_key, installation_snapshot
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+     ON CONFLICT (workspace_id, idempotency_key) DO NOTHING`,
+    [
+      workspaceId,
+      trustAnchorId,
+      agentId,
+      store,
+      owner,
+      operation,
+      idempotencyKey,
+      JSON.stringify(installation),
+    ],
+  );
+}
+
 // --- Terminal-state unwinding ---
 // pending_install rows are deleted on a terminal-negative status (never a
 // real reference); pending_remove rows revert to installed (the anchor was
@@ -915,6 +1079,67 @@ async function runCreateTrustJob(client, params) {
   }
 
   if (operation === "revoke-trust") {
+    // Idempotent replay for the two "no real job" release branches below
+    // (see the certops_trust_reference_release_idempotency migration and
+    // its header comment). Checked by idempotencyKey alone, then verified
+    // against the tuple this call is targeting, mirroring
+    // createCertificateJob's own idempotency-key-then-hash-match shape.
+    const existingRelease = await findTrustReferenceReleaseIdempotencyRecord({
+      client,
+      workspaceId,
+      idempotencyKey,
+    });
+    if (existingRelease) {
+      const matchesTuple =
+        String(existingRelease.trust_anchor_id) === String(trustAnchorId) &&
+        String(existingRelease.agent_id) === String(agentId) &&
+        existingRelease.store === store &&
+        existingRelease.owner === owner &&
+        existingRelease.operation === operation;
+      if (!matchesTuple) {
+        throw trustAnchorError(
+          "Idempotency key was already used with a different CertOps " +
+            "trust-reference-release request",
+          CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT,
+        );
+      }
+      const snapshot = existingRelease.installation_snapshot;
+      return {
+        job: null,
+        created: false,
+        skippedOsMutation: true,
+        transitionGeneration: snapshot.transitionGeneration,
+        installation: snapshot,
+      };
+    }
+
+    // Closes the late-replay-after-siblings-vanish gap: without a matching
+    // idempotency record above, a fresh revoke-trust request against an
+    // installation that has already been fully released has nothing left
+    // to remove and must not re-enter pending_remove or re-run a "removed"
+    // update. Exception: if this idempotencyKey already belongs to a real
+    // dispatched job (e.g. the very job whose result set this row to
+    // 'removed'), let it fall through to the real-dispatch path below,
+    // whose own idempotent-replay handling (via createCertificateJob) reads
+    // back that same job and undoes its speculative generation bump - the
+    // existing, already-correct behavior for replaying a real job.
+    if (installationRow.transition_state === "removed") {
+      const dispatchedJobForKey = await client.query(
+        `SELECT 1 FROM certificate_jobs
+          WHERE workspace_id = $1 AND idempotency_key = $2
+          LIMIT 1`,
+        [workspaceId, idempotencyKey],
+      );
+      if (!dispatchedJobForKey.rows[0]) {
+        throw trustAnchorError(
+          "This installation has already been removed; nothing to revoke",
+          CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+        );
+      }
+    }
+  }
+
+  if (operation === "revoke-trust") {
     const otherLiveReferences = await countOtherLiveReferences({
       client,
       workspaceId,
@@ -961,6 +1186,18 @@ async function runCreateTrustJob(client, params) {
           transitionGeneration: releasedInstallation.transitionGeneration,
           otherLiveReferences,
         },
+      });
+
+      await recordTrustReferenceReleaseIdempotency({
+        client,
+        workspaceId,
+        trustAnchorId: anchor.id,
+        agentId,
+        store,
+        owner,
+        operation,
+        idempotencyKey,
+        installation: releasedInstallation,
       });
 
       return {
@@ -1011,6 +1248,18 @@ async function runCreateTrustJob(client, params) {
         transitionGeneration: releasedInstallation.transitionGeneration,
         provenance: "preexisting",
       },
+    });
+
+    await recordTrustReferenceReleaseIdempotency({
+      client,
+      workspaceId,
+      trustAnchorId: anchor.id,
+      agentId,
+      store,
+      owner,
+      operation,
+      idempotencyKey,
+      installation: releasedInstallation,
     });
 
     return {
@@ -1195,12 +1444,28 @@ function manualTrustJobCreator({ trustAnchorId, agentId, owner } = {}) {
  * transaction that holds the job row lock. Re-checks the anchor's current
  * status and re-verifies the job's signed pem/anchorType/fingerprintSha256
  * still match the anchor row, as defense-in-depth even though those columns
- * are immutable after creation.
+ * are immutable after creation UNLESS no live installation exists for the
+ * anchor's fingerprint (see createTrustAnchor's anchor_type-immutability
+ * check) - a mismatch here therefore is not purely a programmer-error
+ * signal, since a pending job's anchor_type snapshot can legitimately go
+ * stale if the anchor is re-approved with a new anchorType while this job
+ * is in flight (only possible once every installation for the OLD
+ * anchor_type has already been released, so nothing this job could still
+ * point at survives the swap either way).
  *
  * - distribute-trust: anchor must still be 'active'; if retired after
  *   approval but before dispatch, the pending install is unwound (deleted)
  *   instead of dispatched.
  * - revoke-trust: always permitted regardless of anchor status.
+ *
+ * Every {allow: false} branch unwinds the job's installation row (via
+ * unwindTerminalTrustJob, treating the job as if it had just reached
+ * 'rejected') before returning, so a failed revalidation never leaves the
+ * installation row stuck pending regardless of which reason triggered the
+ * rejection. unwindTerminalTrustJob itself no-ops safely when it can't find
+ * a matching row (see its own doc comment), which covers the
+ * trust_anchor_not_found/trust_installation_not_found cases below where no
+ * valid installation row is expected to exist.
  *
  * Returns { allow: true, anchor, pem, transitionGeneration } (pem only for
  * distribute-trust, read fresh here rather than trusting a stale job-payload
@@ -1215,6 +1480,14 @@ async function revalidateTrustJobForDispatch({ client, job }) {
     job.payload && typeof job.payload === "object" ? job.payload : {};
   const trustAnchorId = payload.trustAnchorId || job.subject_id;
 
+  const denyAndUnwind = async (reason) => {
+    await unwindTerminalTrustJob({
+      client,
+      job: { ...job, status: "rejected", workspace_id: workspaceId },
+    });
+    return { allow: false, reason };
+  };
+
   const anchorResult = await client.query(
     `SELECT id, pem, anchor_type, fingerprint_sha256, status
        FROM certops_trust_anchors
@@ -1226,24 +1499,21 @@ async function revalidateTrustJobForDispatch({ client, job }) {
   if (!anchor) {
     // Anchor rows are additive-only, so this should be unreachable. Fail
     // closed rather than dispatch against nothing.
-    return { allow: false, reason: "trust_anchor_not_found" };
+    return denyAndUnwind("trust_anchor_not_found");
   }
 
   if (
     anchor.anchor_type !== payload.anchorType ||
     anchor.fingerprint_sha256 !== payload.fingerprintSha256
   ) {
-    // Both columns are immutable after insert, so reaching this branch
-    // indicates a programmer error elsewhere - fail closed all the same.
-    return { allow: false, reason: "trust_anchor_payload_mismatch" };
+    // fingerprint_sha256 is always immutable; anchor_type can legitimately
+    // change mid-flight per the header comment above. Either way this job's
+    // signed snapshot no longer matches the anchor, so fail closed.
+    return denyAndUnwind("trust_anchor_payload_mismatch");
   }
 
   if (job.operation === "distribute-trust" && anchor.status !== "active") {
-    await unwindTerminalTrustJob({
-      client,
-      job: { ...job, status: "rejected", workspace_id: workspaceId },
-    });
-    return { allow: false, reason: "trust_anchor_retired" };
+    return denyAndUnwind("trust_anchor_retired");
   }
 
   const installation = await client.query(
@@ -1257,7 +1527,7 @@ async function revalidateTrustJobForDispatch({ client, job }) {
   if (!installationRow) {
     // Every trust job is created with its installation row in one
     // transaction, so a job with no row is a broken invariant, not a race.
-    return { allow: false, reason: "trust_installation_not_found" };
+    return denyAndUnwind("trust_installation_not_found");
   }
 
   return {
@@ -1608,7 +1878,9 @@ module.exports = {
   CERTOPS_TRUST_ANCHOR_NOT_FOUND,
   CERTOPS_TRUST_ANCHOR_PEM_INVALID,
   CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+  CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+  CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_TRUST_JOB_OPERATION_INVALID,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
   CERTOPS_TRUST_RESULT_INVALID,
