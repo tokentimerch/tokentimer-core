@@ -1115,6 +1115,251 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(finalOwnerARow.transition_state).to.equal("removed");
   });
 
+  it("dispatches a real revoke-trust job for the last reference even when ITS OWN provenance is preexisting, because a different (already-released) owner's row is the one that genuinely mutated the OS (B3 fix)", async () => {
+    // Reproduces the cross-owner provenance bug: a fresh installation row
+    // always starts 'preexisting' and is only promoted to
+    // 'tokentimer_installed' on a genuine mutating distribute. Since the
+    // agent's on-disk ownership receipt is keyed by (store, fingerprint)
+    // with no owner component, the SECOND owner to distribute to an
+    // already-materially-present tuple always gets outcome:"preexisting"
+    // (no mutation) and its own row can never be promoted - by
+    // construction, not by chance. Revoking owner A first (while B is
+    // still live) correctly server-only-releases A's row. Revoking B last
+    // (now the genuinely last live reference) must NOT also take the
+    // server-only path just because B's OWN provenance reads
+    // "preexisting": owner A's row (now already 'removed') is still the
+    // historical record that TokenTimer really put this material on the
+    // OS, and that OS-level removal has never actually happened yet.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+
+    const ownerAOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a-b3",
+        idempotencyKey: `b3-dist-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerAJob = await getJobRow(ownerAOutcome.job.id);
+    const ownerAInstallationRow = await getInstallationById(
+      ownerAOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: ownerAJob,
+        result: buildResult({
+          agent,
+          job: ownerAJob,
+          installationRow: ownerAInstallationRow,
+          outcome: "installed",
+        }),
+      }),
+    );
+    const ownerARowAfterInstall = await getInstallationById(
+      ownerAOutcome.installation.id,
+    );
+    expect(ownerARowAfterInstall.provenance).to.equal("tokentimer_installed");
+
+    // Owner B distributes to the SAME already-materially-present tuple:
+    // the agent reports outcome:"preexisting" (no mutation), so B's row
+    // can never be promoted - guaranteed by construction, not by chance.
+    const ownerBOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b-b3",
+        idempotencyKey: `b3-dist-b-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerBJob = await getJobRow(ownerBOutcome.job.id);
+    const ownerBInstallationRow = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: ownerBJob,
+        result: buildResult({
+          agent,
+          job: ownerBJob,
+          installationRow: ownerBInstallationRow,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+    const ownerBRowAfterInstall = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    expect(ownerBRowAfterInstall.provenance).to.equal("preexisting");
+
+    // Revoke A first, while B is still live: correctly server-only
+    // released (B still needs the material physically present).
+    const releaseAOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a-b3",
+        idempotencyKey: `b3-revoke-a-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseAOutcome.job).to.equal(null);
+    expect(releaseAOutcome.skippedOsMutation).to.equal(true);
+    const ownerARowAfterRelease = await getInstallationById(
+      ownerAOutcome.installation.id,
+    );
+    expect(ownerARowAfterRelease.transition_state).to.equal("removed");
+    // The released row's provenance must remain readable/trustworthy:
+    // server-only release never mutates provenance.
+    expect(ownerARowAfterRelease.provenance).to.equal("tokentimer_installed");
+
+    // Now revoke B: this IS the genuinely last live reference. B's own
+    // provenance is "preexisting", but owner A's (already-removed) row
+    // proves the OS material was genuinely installed by TokenTimer and
+    // never actually removed. This must dispatch a REAL revoke-trust job,
+    // not silently skip the OS mutation a second time.
+    const releaseBOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b-b3",
+        idempotencyKey: `b3-revoke-b-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseBOutcome.job).to.not.equal(
+      null,
+      "a real revoke-trust job must be dispatched: the tuple's history " +
+        "includes a genuine tokentimer_installed row, even though it " +
+        "belongs to a different (already-released) owner",
+    );
+    expect(releaseBOutcome.skippedOsMutation).to.not.equal(true);
+    const ownerBRowAfterRevoke = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    expect(ownerBRowAfterRevoke.transition_state).to.equal("pending_remove");
+
+    // The dispatched job completes normally, exactly like any other real
+    // revoke-trust job.
+    const releaseBJob = await getJobRow(releaseBOutcome.job.id);
+    const releaseBInstallationRow = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: releaseBJob,
+        result: buildResult({
+          agent,
+          job: releaseBJob,
+          installationRow: releaseBInstallationRow,
+          outcome: "removed",
+        }),
+      }),
+    );
+    const finalOwnerBRow = await getInstallationById(ownerBOutcome.installation.id);
+    expect(finalOwnerBRow.transition_state).to.equal("removed");
+  });
+
+  it("still releases without dispatching a job when NO row in the tuple's history was ever tokentimer_installed, even across multiple owners", async () => {
+    // Contrast case for the B3 fix: when the material is genuinely
+    // foreign (every owner's distribute reported outcome:"preexisting",
+    // e.g. an operator-installed CA that TokenTimer never touched), the
+    // last reference must still be released without a real revoke-trust
+    // job - the fix must not turn every multi-owner revoke into a real
+    // dispatch, only the ones where some row really did mutate the OS.
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+
+    const ownerAOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a-foreign",
+        idempotencyKey: `b3-foreign-dist-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerAJob = await getJobRow(ownerAOutcome.job.id);
+    const ownerAInstallationRow = await getInstallationById(
+      ownerAOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: ownerAJob,
+        result: buildResult({
+          agent,
+          job: ownerAJob,
+          installationRow: ownerAInstallationRow,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+
+    const ownerBOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b-foreign",
+        idempotencyKey: `b3-foreign-dist-b-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerBJob = await getJobRow(ownerBOutcome.job.id);
+    const ownerBInstallationRow = await getInstallationById(
+      ownerBOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: ownerBJob,
+        result: buildResult({
+          agent,
+          job: ownerBJob,
+          installationRow: ownerBInstallationRow,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+
+    const releaseAOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a-foreign",
+        idempotencyKey: `b3-foreign-revoke-a-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseAOutcome.job).to.equal(null);
+    expect(releaseAOutcome.skippedOsMutation).to.equal(true);
+
+    const releaseBOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b-foreign",
+        idempotencyKey: `b3-foreign-revoke-b-${crypto.randomUUID()}`,
+      }),
+    );
+    expect(releaseBOutcome.job).to.equal(
+      null,
+      "no row in this tuple's history was ever tokentimer_installed, so " +
+        "the last reference must still release without a real job",
+    );
+    expect(releaseBOutcome.skippedOsMutation).to.equal(true);
+    const finalOwnerBRow = await getInstallationById(ownerBOutcome.installation.id);
+    expect(finalOwnerBRow.transition_state).to.equal("removed");
+  });
+
   it("fails closed on a signed pem/anchorType/fingerprint mismatch (defense-in-depth)", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();

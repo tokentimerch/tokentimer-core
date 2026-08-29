@@ -782,10 +782,61 @@ async function countOtherLiveReferences({
   return result.rows[0]?.count ?? 0;
 }
 
+/**
+ * Answers "did ANY installation row that has ever existed for this exact
+ * (workspace, agent, store, fingerprint) tuple correspond to a distribute
+ * call that actually mutated the OS" -- across every owner, including rows
+ * already released (transition_state = 'removed'), and including the
+ * current row itself. This is deliberately NOT scoped the same way
+ * countOtherLiveReferences is: that function only cares about references
+ * still live (to decide whether the OS may be touched at all right now);
+ * this one cares about the tuple's entire history (to decide whether the
+ * OS was ever genuinely put there by TokenTimer in the first place), so it
+ * neither filters by transition_state nor excludes the caller's own owner.
+ *
+ * Why this can't be answered from installationRow.provenance alone: a
+ * fresh installation row always starts 'preexisting' and is only ever
+ * promoted to 'tokentimer_installed' on a genuine mutating distribute (see
+ * lockOrCreateInstallation's INSERT and ingestTrustJobResult's
+ * nextProvenance). The agent's on-disk ownership receipt is keyed by
+ * (store, fingerprint) with no owner component, so the SECOND owner to
+ * distribute to an already-materially-present tuple always gets outcome
+ * "preexisting" (no mutation) and its own row can never be promoted --
+ * by construction, not by chance. Checking only THIS row's own provenance
+ * at the point it becomes the last live reference would then wrongly
+ * treat genuinely-TokenTimer-installed material as foreign and skip the
+ * real OS removal, merely because a DIFFERENT owner's row (possibly
+ * already released via the server-only path above) was the one that
+ * actually performed the mutation. Server-only release never mutates
+ * provenance on the row it releases (see the two branches above), so a
+ * released row's provenance remains a trustworthy historical record.
+ */
+async function tupleHasTokenTimerInstalledRow({
+  client,
+  workspaceId,
+  agentId,
+  store,
+  fingerprintSha256,
+}) {
+  const result = await client.query(
+    `SELECT 1
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1
+        AND agent_id = $2
+        AND store = $3
+        AND fingerprint_sha256 = $4
+        AND provenance = 'tokentimer_installed'
+      LIMIT 1`,
+    [workspaceId, agentId, store, fingerprintSha256],
+  );
+  return !!result.rows[0];
+}
+
 // --- No-job reference-release idempotency ---
 //
 // runCreateTrustJob's two "no real job" revoke-trust branches (see below:
-// otherLiveReferences > 0, and provenance === "preexisting") mutate the
+// otherLiveReferences > 0, and no tuple row was ever tokentimer_installed)
+// mutate the
 // installation row and return before createCertificateJob ever runs, so
 // the idempotency machinery on certificate_jobs (idempotency_key +
 // creation_request_hash) never sees these calls. This dedicated ledger
@@ -1210,65 +1261,98 @@ async function runCreateTrustJob(client, params) {
     }
   }
 
-  if (operation === "revoke-trust" && installationRow.provenance === "preexisting") {
-    // TokenTimer never installed this material (distribute reported
-    // outcome:"preexisting"), so the agent has no ownership receipt.
-    // Release the bookkeeping reference without dispatching a revoke job
-    // that would fail with receipt_missing while leaving the OS cert alone.
-    const releasedRow = await client.query(
-      `UPDATE certops_trust_anchor_installations
-          SET transition_state = 'removed',
-              transition_generation = transition_generation + 1,
-              last_attempt_at = NOW(),
-              last_error = NULL,
-              next_reconcile_at = NULL,
-              updated_at = NOW()
-        WHERE id = $1
-        RETURNING ${INSTALLATION_SELECT_FIELDS}`,
-      [installationRow.id],
-    );
-    const releasedInstallation = installationFromRow(releasedRow.rows[0]);
-
-    await writeAudit({
-      client,
-      actorUserId: requestedByUserId,
-      subjectUserId: requestedByUserId,
-      action: "CERTOPS_TRUST_REFERENCE_RELEASED",
-      targetType: "certops_trust_anchor_installation",
-      targetId: releasedInstallation.id,
-      workspaceId,
-      metadata: {
-        trustAnchorId: anchor.id,
-        anchorName: anchor.name,
-        fingerprintSha256: anchor.fingerprint_sha256,
-        agentId,
-        store,
-        host: releasedInstallation.host,
-        owner,
-        transitionGeneration: releasedInstallation.transitionGeneration,
-        provenance: "preexisting",
-      },
-    });
-
-    await recordTrustReferenceReleaseIdempotency({
+  if (operation === "revoke-trust") {
+    // This row is now the last live reference for the tuple (the
+    // otherLiveReferences check above already returned early otherwise).
+    // Whether the OS may be left untouched is NOT decided by this row's
+    // own provenance alone: a two-owner share guarantees exactly one
+    // owner's row is ever promoted to tokentimer_installed (see
+    // tupleHasTokenTimerInstalledRow's own doc comment), so the row that
+    // happens to be last is not necessarily the row that performed the
+    // mutation - and that mutating row may itself already read 'removed'
+    // if it was released earlier, out of order, via the otherLiveReferences
+    // branch above. The real question is whether ANY row anywhere in the
+    // tuple's history ever represented a genuine TokenTimer-performed OS
+    // mutation; only then does the material genuinely need a real
+    // revoke-trust job dispatched now.
+    const tupleHasGenuineInstall = await tupleHasTokenTimerInstalledRow({
       client,
       workspaceId,
-      trustAnchorId: anchor.id,
       agentId,
       store,
-      owner,
-      operation,
-      idempotencyKey,
-      installation: releasedInstallation,
+      fingerprintSha256: anchor.fingerprint_sha256,
     });
 
-    return {
-      job: null,
-      created: false,
-      skippedOsMutation: true,
-      transitionGeneration: releasedInstallation.transitionGeneration,
-      installation: releasedInstallation,
-    };
+    if (!tupleHasGenuineInstall) {
+      // TokenTimer never installed this material anywhere in this tuple's
+      // history (every distribute reported outcome:"preexisting"), so no
+      // agent ever holds an ownership receipt for it. Release the
+      // bookkeeping reference without dispatching a revoke job that would
+      // fail with receipt_missing while leaving the OS cert alone.
+      const releasedRow = await client.query(
+        `UPDATE certops_trust_anchor_installations
+            SET transition_state = 'removed',
+                transition_generation = transition_generation + 1,
+                last_attempt_at = NOW(),
+                last_error = NULL,
+                next_reconcile_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+        [installationRow.id],
+      );
+      const releasedInstallation = installationFromRow(releasedRow.rows[0]);
+
+      await writeAudit({
+        client,
+        actorUserId: requestedByUserId,
+        subjectUserId: requestedByUserId,
+        action: "CERTOPS_TRUST_REFERENCE_RELEASED",
+        targetType: "certops_trust_anchor_installation",
+        targetId: releasedInstallation.id,
+        workspaceId,
+        metadata: {
+          trustAnchorId: anchor.id,
+          anchorName: anchor.name,
+          fingerprintSha256: anchor.fingerprint_sha256,
+          agentId,
+          store,
+          host: releasedInstallation.host,
+          owner,
+          transitionGeneration: releasedInstallation.transitionGeneration,
+          provenance: "preexisting",
+        },
+      });
+
+      await recordTrustReferenceReleaseIdempotency({
+        client,
+        workspaceId,
+        trustAnchorId: anchor.id,
+        agentId,
+        store,
+        owner,
+        operation,
+        idempotencyKey,
+        installation: releasedInstallation,
+      });
+
+      return {
+        job: null,
+        created: false,
+        skippedOsMutation: true,
+        transitionGeneration: releasedInstallation.transitionGeneration,
+        installation: releasedInstallation,
+      };
+    }
+    // Otherwise: some row in this tuple's history genuinely performed a
+    // TokenTimer OS mutation, so the material must be really removed now
+    // even if THIS row's own provenance is "preexisting" (e.g. this is the
+    // second owner, or the mutating owner's own row was already released
+    // out of order via the otherLiveReferences branch above and never
+    // actually touched the OS). Fall through to the normal pending_remove
+    // -> real dispatched revoke-trust job path below, exactly as already
+    // happens today when the last-reference row is itself
+    // tokentimer_installed.
   }
 
   const nextTransitionState =
