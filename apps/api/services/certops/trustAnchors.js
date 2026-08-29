@@ -1636,6 +1636,23 @@ async function revalidateTrustJobForDispatch({ client, job }) {
 // --- Result ingestion ---
 
 /**
+ * The outcome values that represent a genuine success for each action, as
+ * opposed to that action's own failure-fallback outcome (distribute-trust:
+ * already_absent when the install attempt failed before ever mutating the
+ * store; revoke-trust: installed when the removal attempt failed and the
+ * material is still there). trust-result-contract.schema.json's allOf rules
+ * restrict outcome to a per-action enum but do not themselves distinguish a
+ * failure-fallback outcome from a genuine success within that enum - that
+ * distinction is enforced below, in ingestTrustJobResult, since this
+ * function is only ever reached for a job already classified succeeded and
+ * a failure-fallback outcome reported there is self-contradictory.
+ */
+const GENUINE_SUCCESS_OUTCOMES_BY_ACTION = Object.freeze({
+  "distribute-trust": Object.freeze(new Set(["preexisting", "installed"])),
+  "revoke-trust": Object.freeze(new Set(["already_absent", "removed"])),
+});
+
+/**
  * Validates an agent-reported trust-job result against
  * trust-result-contract.schema.json and against the persisted job/
  * installation row: action, jobId, workspaceId, agentId, store,
@@ -1645,13 +1662,19 @@ async function revalidateTrustJobForDispatch({ client, job }) {
  * Called from the same result-ingestion transaction agentDispatch.ingestResult
  * opens for every job family, once it has identified the job as trust-anchor.
  *
+ * Also rejects a result naming its own action's failure-fallback outcome
+ * (revoke-trust's "installed", distribute-trust's "already_absent"): both
+ * are schema-valid shapes an agent reports on a real failed attempt, but
+ * this function is only ever reached for a job already classified
+ * succeeded, so reporting one here is self-contradictory
+ * (GENUINE_SUCCESS_OUTCOMES_BY_ACTION above).
+ *
  * On a validated match: advances the installation row per the outcome
  * enum - preexisting/installed both settle at 'installed' (provenance is
  * promoted to tokentimer_installed only for a genuine distribute-trust
  * success, i.e. action distribute-trust, outcome installed, and
- * mutationPerformed true; a revoke-trust's own "installed" is its
- * failure-fallback case and never promotes provenance); already_absent/
- * removed both settle at 'removed'.
+ * mutationPerformed true); already_absent/removed both settle at
+ * 'removed'.
  */
 async function ingestTrustJobResult({ client, job, result }) {
   if (!isTrustAnchorOperation(job.operation)) {
@@ -1701,6 +1724,28 @@ async function ingestTrustJobResult({ client, job, result }) {
       "Result reports a non-null failureCategory that is not a " +
         "receipt-finalize conflict on a genuinely completed mutation; " +
         "such a result must never be ingested as installed/removed",
+      CERTOPS_TRUST_RESULT_INVALID,
+    );
+  }
+
+  // A failure-fallback outcome (revoke-trust's "installed": removal
+  // attempted and failed, material still there; distribute-trust's
+  // "already_absent": install attempted and failed before ever mutating
+  // the store) is schema-valid and can carry a null failureCategory (e.g.
+  // mutationAttempted:false, "the agent determined the mutation should not
+  // proceed and never attempted it"), so the guard above does not catch it.
+  // But this function is only ever reached for a job the caller has already
+  // classified succeeded, and a well-behaved agent never reports success
+  // while naming its own action's failure-fallback outcome - that
+  // combination is self-contradictory (you cannot succeed at revoking while
+  // the certificate remains installed) and must be rejected explicitly, not
+  // silently trusted into settling the installation row as a real success.
+  const genuineSuccessOutcomes = GENUINE_SUCCESS_OUTCOMES_BY_ACTION[result.action];
+  if (!genuineSuccessOutcomes || !genuineSuccessOutcomes.has(result.outcome)) {
+    throw trustAnchorError(
+      `${result.action} result reporting outcome ${JSON.stringify(result.outcome)} is ` +
+        `${result.action}'s failure-fallback shape and must never be ingested as a ` +
+        "completed transition",
       CERTOPS_TRUST_RESULT_INVALID,
     );
   }
@@ -1837,10 +1882,11 @@ async function ingestTrustJobResult({ client, job, result }) {
   // all three of: action distribute-trust (revoke-trust's own "installed"
   // is its failure-fallback case, never a successful install),
   // outcome installed, and mutationPerformed true (defense in depth on top
-  // of the schema's allOf rules, which already make a revoke-trust result
-  // claiming outcome installed + mutationPerformed true schema-invalid;
-  // checked explicitly here too so intent is not left solely to a schema a
-  // future reader might not think to re-check).
+  // of both the schema's allOf rules and the GENUINE_SUCCESS_OUTCOMES_BY_ACTION
+  // guard above, either of which already makes a revoke-trust result
+  // claiming outcome installed + mutationPerformed true impossible to reach
+  // this point; checked explicitly here too so intent is not left solely to
+  // guards a future reader might not think to re-check).
   //
   // Second promotion path: a distribute-trust result reporting outcome
   // 'preexisting' with receipt.state 'finalized' (rather than the ordinary

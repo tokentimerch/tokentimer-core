@@ -297,6 +297,7 @@ describe("trust result wire carriage", () => {
       outcome: "installed",
       mutationAttempted: true,
       mutationPerformed: true,
+      observedFingerprintAfter: "ab".repeat(32),
       receipt: { id: "receipt-1", state: "finalized" },
       observedAt: "2026-01-01T00:00:00.000Z",
     };
@@ -323,6 +324,7 @@ describe("trust result wire carriage", () => {
       outcome: "installed",
       mutationAttempted: true,
       mutationPerformed: true,
+      observedFingerprintAfter: "ab".repeat(32),
       receipt: { id: "receipt-1", state: "finalized" },
       observedAt: "2026-01-01T00:00:00.000Z",
       ...overrides,
@@ -435,6 +437,21 @@ describe("trust result wire carriage", () => {
       mutationPerformed: true,
       observedFingerprintAfter: null,
     });
+    assert.equal(validateTrustResult(result).valid, false);
+  });
+
+  // A result can omit observedFingerprintAfter entirely (as opposed to
+  // sending it explicitly as null, covered above) and still claim
+  // distribute-trust succeeded; the property must be required, not merely
+  // type-narrowed, for the branch below to actually prove the mutation.
+  it("rejects distribute-trust reporting installed with observedFingerprintAfter missing entirely", () => {
+    const result = baseResult({
+      action: "distribute-trust",
+      outcome: "installed",
+      mutationAttempted: true,
+      mutationPerformed: true,
+    });
+    delete result.observedFingerprintAfter;
     assert.equal(validateTrustResult(result).valid, false);
   });
 
