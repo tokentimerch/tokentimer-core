@@ -34,6 +34,7 @@ const {
   CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+  deriveTrustJobIdempotencyKey,
 } = require("../../apps/api/services/certops/trustAnchors");
 const agentTrustStore = require("../../packages/agent/src/trust-store");
 
@@ -581,6 +582,247 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(rows.rows[0].n).to.equal(0);
   });
 
+  // --- Idempotency-key namespace collisions (raw caller-supplied key reused
+  // across logically different requests) ------------------------------------
+  //
+  // Both createCertificateJob's own (workspace_id, idempotency_key) lookup
+  // and the certops_trust_reference_release_idempotency ledger's lookup key
+  // off whatever value runCreateTrustJob passes them, and neither one ever
+  // queries the other table. Before deriveTrustJobIdempotencyKey, that value
+  // was the raw caller-supplied idempotencyKey, so a client reusing the same
+  // raw key for two unrelated requests could either (Bug A) have it "belong"
+  // to two unrelated records at once with nobody noticing, or (Bug B) have a
+  // legitimate replay of the first request wrongly rejected once the second
+  // request's mutation lands. Both are exercised here by reaching in and
+  // reusing the internal helpers directly with the SAME raw key across two
+  // requests that a real caller could issue back to back.
+
+  it("Bug A: the same raw idempotencyKey for a no-job revoke-trust release and an unrelated distribute-trust never collide", async () => {
+    const releaseAnchor = await createFreshAnchor();
+    const releaseAgent = await createAgent();
+    const distributeAnchor = await createFreshAnchor();
+    const distributeAgent = await createAgent();
+    const key = `bug-a-${crypto.randomUUID()}`;
+
+    // First: a revoke-trust against a preexisting-provenance installation,
+    // which never dispatches a real job and is recorded only in the no-job
+    // ledger under this raw key.
+    const setupOutcome = await createTrustJob(
+      distributeOptions({
+        anchor: releaseAnchor,
+        agent: releaseAgent,
+        idempotencyKey: `bug-a-setup-${crypto.randomUUID()}`,
+      }),
+    );
+    const setupJob = await getJobRow(setupOutcome.job.id);
+    const setupInstallation = await getInstallationById(
+      setupOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: setupJob,
+        result: buildResult({
+          agent: releaseAgent,
+          job: setupJob,
+          installationRow: setupInstallation,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+    const releaseOutcome = await createTrustJob(
+      revokeOptions({ anchor: releaseAnchor, agent: releaseAgent, idempotencyKey: key }),
+    );
+    expect(releaseOutcome.job).to.equal(null);
+    expect(releaseOutcome.skippedOsMutation).to.equal(true);
+
+    // Second: an entirely unrelated distribute-trust request (different
+    // anchor, different agent) that happens to reuse the exact same raw
+    // key. Pre-fix this landed in certificate_jobs under the same raw key
+    // the ledger already "owned"; it must succeed as its own independent
+    // real job, not be silently conflated with the release above.
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor: distributeAnchor,
+        agent: distributeAgent,
+        idempotencyKey: key,
+      }),
+    );
+    expect(distributeOutcome.job).to.not.equal(null);
+    expect(distributeOutcome.created).to.equal(true);
+    expect(distributeOutcome.skippedOsMutation).to.not.equal(true);
+
+    // Replaying the ORIGINAL revoke-trust release with the same raw key
+    // must still find its own ledger record, not the distribute-trust job
+    // that now also carries this raw key.
+    const releaseReplay = await createTrustJob(
+      revokeOptions({ anchor: releaseAnchor, agent: releaseAgent, idempotencyKey: key }),
+    );
+    expect(releaseReplay.job).to.equal(null);
+    expect(releaseReplay.skippedOsMutation).to.equal(true);
+    expect(releaseReplay.transitionGeneration).to.equal(
+      releaseOutcome.transitionGeneration,
+    );
+
+    // And replaying the distribute-trust with the same raw key must still
+    // find its own real job, not the release's ledger record.
+    const distributeReplay = await createTrustJob(
+      distributeOptions({
+        anchor: distributeAnchor,
+        agent: distributeAgent,
+        idempotencyKey: key,
+      }),
+    );
+    expect(String(distributeReplay.job.id)).to.equal(
+      String(distributeOutcome.job.id),
+    );
+    expect(distributeReplay.created).to.equal(false);
+  });
+
+  it("Bug B: the same raw idempotencyKey for two different revoke-trust tuples never collide", async () => {
+    const anchorA = await createFreshAnchor();
+    const anchorB = await createFreshAnchor();
+    const agent = await createAgent();
+    const key = `bug-b-${crypto.randomUUID()}`;
+
+    // Tuple A: a preexisting-provenance installation, released with no
+    // real job (recorded only in the ledger under the raw key).
+    const setupA = await createTrustJob(
+      distributeOptions({
+        anchor: anchorA,
+        agent,
+        idempotencyKey: `bug-b-setup-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const setupAJob = await getJobRow(setupA.job.id);
+    const setupAInstallation = await getInstallationById(setupA.installation.id);
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: setupAJob,
+        result: buildResult({
+          agent,
+          job: setupAJob,
+          installationRow: setupAInstallation,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+    const releaseA = await createTrustJob(
+      revokeOptions({ anchor: anchorA, agent, idempotencyKey: key }),
+    );
+    expect(releaseA.job).to.equal(null);
+    expect(releaseA.skippedOsMutation).to.equal(true);
+
+    // Tuple B: a genuinely installed (not preexisting) installation on a
+    // DIFFERENT trust anchor, revoked with the SAME raw key. This is a
+    // real dispatched job, not a no-job release, so pre-fix it would have
+    // been wrongly rejected as CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT by
+    // the ledger lookup finding tuple A's unrelated record first.
+    const setupB = await createTrustJob(
+      distributeOptions({
+        anchor: anchorB,
+        agent,
+        idempotencyKey: `bug-b-setup-b-${crypto.randomUUID()}`,
+      }),
+    );
+    const setupBJob = await getJobRow(setupB.job.id);
+    const setupBInstallation = await getInstallationById(setupB.installation.id);
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: setupBJob,
+        result: buildResult({
+          agent,
+          job: setupBJob,
+          installationRow: setupBInstallation,
+          outcome: "installed",
+        }),
+      }),
+    );
+    const releaseB = await createTrustJob(
+      revokeOptions({ anchor: anchorB, agent, idempotencyKey: key }),
+    );
+    expect(releaseB.job).to.not.equal(null);
+    expect(releaseB.created).to.equal(true);
+    expect(releaseB.skippedOsMutation).to.not.equal(true);
+
+    // Replaying tuple A's release with the shared raw key must still be a
+    // true no-op against tuple A, unaffected by tuple B's real job now
+    // also carrying this raw key.
+    const releaseAReplay = await createTrustJob(
+      revokeOptions({ anchor: anchorA, agent, idempotencyKey: key }),
+    );
+    expect(releaseAReplay.job).to.equal(null);
+    expect(releaseAReplay.skippedOsMutation).to.equal(true);
+    expect(releaseAReplay.transitionGeneration).to.equal(
+      releaseA.transitionGeneration,
+    );
+
+    const anchorARow = await getInstallationById(setupA.installation.id);
+    expect(anchorARow.transition_state).to.equal("removed");
+    const anchorBRow = await getInstallationById(setupB.installation.id);
+    expect(anchorBRow.transition_state).to.equal("pending_remove");
+  });
+
+  it("a genuine same-tuple revoke-trust replay still succeeds after deriveTrustJobIdempotencyKey namespacing", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const key = `same-tuple-replay-${crypto.randomUUID()}`;
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `same-tuple-replay-dist-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallation = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          agent,
+          job: distributeJob,
+          installationRow: distributeInstallation,
+          outcome: "installed",
+        }),
+      }),
+    );
+
+    const first = await createTrustJob(
+      revokeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    expect(first.job).to.not.equal(null);
+    expect(first.created).to.equal(true);
+
+    const second = await createTrustJob(
+      revokeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    expect(String(second.job.id)).to.equal(String(first.job.id));
+    expect(second.created).to.equal(false);
+    expect(second.transitionGeneration).to.equal(first.transitionGeneration);
+
+    const scopedKey = deriveTrustJobIdempotencyKey({
+      operation: "revoke-trust",
+      trustAnchorId: anchor.id,
+      agentId: agent.id,
+      store: "Root",
+      owner: "workspace-policy",
+      idempotencyKey: key,
+    });
+    const jobs = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS n FROM certificate_jobs
+        WHERE workspace_id = $1 AND idempotency_key = $2`,
+      [workspaceId, scopedKey],
+    );
+    expect(jobs.rows[0].n).to.equal(1);
+  });
+
   // --- Concurrency / row-level locking (decision 20h) -----------------------
   //
   // Each createTrustJob call opens and commits its own transaction (via
@@ -657,7 +899,17 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     const jobs = await TestUtils.execQuery(
       `SELECT COUNT(*)::int AS n FROM certificate_jobs
         WHERE workspace_id = $1 AND idempotency_key = $2`,
-      [workspaceId, key],
+      [
+        workspaceId,
+        deriveTrustJobIdempotencyKey({
+          operation: "distribute-trust",
+          trustAnchorId: anchor.id,
+          agentId: agent.id,
+          store: "Root",
+          owner: "workspace-policy",
+          idempotencyKey: key,
+        }),
+      ],
     );
     expect(jobs.rows[0].n).to.equal(1);
   });
