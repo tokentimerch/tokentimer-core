@@ -39,8 +39,8 @@ const MAX_ENTRY_BYTES = 512 * 1024;
 // HTTP status surfaced on the thrown error, see defaultIsPermanentFailure
 // below) it is used to quarantine immediately; otherwise a repeatedly-failing
 // entry still backs off exponentially and, as a last resort, is
-// quarantined once it has been retried MAX_ATTEMPTS_BEFORE_QUARANTINE
-// times without ever getting a clear permanent/transient signal, so one
+// quarantined once it has been retrying for MAX_TRANSIENT_RETRY_AGE_MS
+// without ever getting a clear permanent/transient signal, so one
 // poisoned entry cannot grow the outbox directory forever.
 const RETRY_BACKOFF_BASE_MS = 15_000;
 const RETRY_BACKOFF_MAX_MS = 30 * 60_000;
@@ -49,15 +49,25 @@ const RETRY_BACKOFF_MAX_MS = 30 * 60_000;
 // does not synchronize into thundering-herd retry waves every interval.
 const RETRY_JITTER_RATIO = 0.2;
 
-// An entry that has failed this many times without being classified
-// permanent by the isPermanent classifier (default
-// defaultIsPermanentFailure) is quarantined anyway: at 30 minutes of
-// backoff between the later attempts, 10 attempts is several hours of
-// genuine retry effort, well past what a transient blip or even a
-// multi-hour outage needs, while still bounding how long a truly-stuck
-// entry can keep growing the outbox directory. Tune here if that
-// trade-off needs to shift.
-const MAX_ATTEMPTS_BEFORE_QUARANTINE = 10;
+// A transient (never classified permanent) failure keeps retrying with
+// backoff for this long, measured from entry.createdAt, before it is
+// quarantined as a last resort. A fixed attempt count is the wrong knob
+// for this: with the backoff schedule above, 10 attempts elapses in
+// roughly 74-110 minutes (nine waits of 15s/30s/60s/120s/240s/480s/960s/
+// 30min/30min, jittered +/-20%), not "several hours" -- well within a
+// normal extended control-plane/network outage, which would silently
+// dead-letter terminal job evidence with no automatic replay path. 48
+// hours is enough to ride out a multi-day outage while still bounding
+// how long a truly-stuck entry can keep growing the outbox directory.
+const MAX_TRANSIENT_RETRY_AGE_MS = 48 * 60 * 60_000;
+
+// Fallback quarantine ceiling for a transient failure whose age cannot
+// be determined (entry.createdAt fails to parse -- a corrupted or
+// hand-edited entry file, never produced by enqueueOutboxEntry itself).
+// Set far above the ~100 attempts that MAX_TRANSIENT_RETRY_AGE_MS worth
+// of capped 30-minute backoff intervals would produce, so it only fires
+// when the age check genuinely cannot run, never as a shortcut around it.
+const FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE = 500;
 
 // Retention limits so a permanently-stuck outbox cannot grow the
 // directory (and therefore the cost of every future listOutboxEntries
@@ -416,6 +426,26 @@ function recordTransmissionFailure(outboxDir, entry, err, nowMs) {
 }
 
 /**
+ * True once a transient (never classified permanent) failure has been
+ * retrying for at least MAX_TRANSIENT_RETRY_AGE_MS since the entry was
+ * first enqueued (entry.createdAt), i.e. since the underlying job
+ * outcome was persisted, before any network attempt. Falls back to
+ * FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE attempts when createdAt cannot
+ * be parsed, so a corrupted timestamp can never make an entry
+ * un-quarantinable forever.
+ * @param {object} entry
+ * @param {number} nowMs
+ * @returns {boolean}
+ */
+function hasExceededTransientRetryWindow(entry, nowMs) {
+  const createdAtMs = Date.parse(entry.createdAt);
+  if (!Number.isFinite(createdAtMs)) {
+    return entry.attempts >= FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE;
+  }
+  return nowMs - createdAtMs >= MAX_TRANSIENT_RETRY_AGE_MS;
+}
+
+/**
  * Default permanent-vs-transient classifier for a transmission failure.
  *
  * Heuristic: looks for a numeric HTTP-style status on the thrown error
@@ -472,12 +502,13 @@ function defaultIsPermanentFailure(err) {
  * On transmission failure the entry is left on disk with its backoff
  * bumped (never silently discarded) UNLESS the failure is classified
  * permanent (via `isPermanent`, default defaultIsPermanentFailure) or the
- * entry has now failed MAX_ATTEMPTS_BEFORE_QUARANTINE times, in which
- * case it is moved to outbox/dead-letter/ instead: a payload the server
- * will never accept, or that has already had hours of genuine retry
- * effort, gains nothing from being rescanned on every future poll tick
- * forever. Later entries are still attempted so one stuck job never
- * blocks unrelated acknowledgements.
+ * entry has been retrying, still unclassified, for at least
+ * MAX_TRANSIENT_RETRY_AGE_MS since it was first enqueued, in which case
+ * it is moved to outbox/dead-letter/ instead: a payload the server will
+ * never accept, or that has already ridden out a multi-day outage,
+ * gains nothing from being rescanned on every future poll tick forever.
+ * Later entries are still attempted so one stuck job never blocks
+ * unrelated acknowledgements.
  *
  * @param {string} outboxDir
  * @param {{ reportEvidence: Function, reportResult: Function }} client
@@ -525,7 +556,7 @@ async function drainOutbox(
         // the normal backoff-and-retry path for this entry.
         permanent = false;
       }
-      if (permanent || updated.attempts >= MAX_ATTEMPTS_BEFORE_QUARANTINE) {
+      if (permanent || hasExceededTransientRetryWindow(updated, nowMs)) {
         if (quarantineOutboxEntry(outboxDir, entry.id)) {
           quarantined += 1;
           remaining -= 1;
@@ -630,7 +661,8 @@ function createEvidenceBuffer() {
 module.exports = {
   OUTBOX_DIR_NAME,
   DEAD_LETTER_DIR_NAME,
-  MAX_ATTEMPTS_BEFORE_QUARANTINE,
+  MAX_TRANSIENT_RETRY_AGE_MS,
+  FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
   MAX_OUTBOX_ENTRIES,
   MAX_OUTBOX_AGE_MS,
   resolveOutboxDir,

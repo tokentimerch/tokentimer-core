@@ -18,7 +18,8 @@ const {
   drainOutbox,
   createEvidenceBuffer,
   OUTBOX_DIR_NAME,
-  MAX_ATTEMPTS_BEFORE_QUARANTINE,
+  MAX_TRANSIENT_RETRY_AGE_MS,
+  FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
 } = require("./index.js");
 
 function makeTempDir() {
@@ -214,44 +215,82 @@ describe("outbox", () => {
     }
   });
 
-  it("quarantines an entry once it reaches MAX_ATTEMPTS_BEFORE_QUARANTINE, even without a permanent-error signal", async () => {
+  it("quarantines a transient failure once it has been retrying for MAX_TRANSIENT_RETRY_AGE_MS, even without a permanent-error signal", async () => {
+    const createdAtMs = Date.parse("2026-08-28T00:00:00.000Z");
     enqueueOutboxEntry(outboxDir, {
       id: "outbox-exhausted-1",
+      createdAt: new Date(createdAtMs).toISOString(),
       result: { jobId: "job-exhaust", attemptId: "a1", status: "succeeded" },
       evidence: [],
     });
 
-    let nowMs = Date.parse("2026-08-28T00:00:00.000Z");
     const client = {
       reportEvidence: async () => {},
       reportResult: async () => {
         // No status at all: never classified permanent by the default
-        // heuristic, so only attempt exhaustion can quarantine this one.
+        // heuristic, so only the transient-retry-age ceiling can
+        // quarantine this one.
         throw new Error("connection reset");
       },
     };
 
-    let lastDrain;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS_BEFORE_QUARANTINE; attempt += 1) {
-      lastDrain = await drainOutbox(outboxDir, client, { now: () => nowMs });
-      if (attempt < MAX_ATTEMPTS_BEFORE_QUARANTINE) {
-        assert.equal(lastDrain.quarantined, 0, `attempt ${attempt} should not quarantine yet`);
-        assert.equal(listOutboxEntries(outboxDir).length, 1);
-        // Push nowMs past whatever backoff (with jitter) was just set so
-        // the next drain call actually attempts a retry.
-        const [pending] = listOutboxEntries(outboxDir);
-        nowMs = Date.parse(pending.nextRetryAt) + 1;
-      }
-    }
+    // First attempt, right when the entry becomes due: fails, starts backoff.
+    const firstAttempt = await drainOutbox(outboxDir, client, { now: () => createdAtMs });
+    assert.equal(firstAttempt.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
 
-    assert.equal(lastDrain.quarantined, 1);
-    assert.equal(lastDrain.remaining, 0);
+    // Well past the first attempt's short backoff, but still short of the
+    // ceiling: still retryable.
+    const beforeCeiling = await drainOutbox(outboxDir, client, {
+      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS - 1000,
+    });
+    assert.equal(beforeCeiling.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+
+    // Past the ceiling (and past the short backoff set by the previous
+    // attempt): quarantined as a last resort.
+    const atCeiling = await drainOutbox(outboxDir, client, {
+      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + 60_000,
+    });
+    assert.equal(atCeiling.quarantined, 1);
+    assert.equal(atCeiling.remaining, 0);
     assert.equal(listOutboxEntries(outboxDir).length, 0);
 
     const deadLetter = listDeadLetterEntries(outboxDir);
     assert.equal(deadLetter.length, 1);
-    assert.equal(deadLetter[0].attempts, MAX_ATTEMPTS_BEFORE_QUARANTINE);
     assert.equal(deadLetter[0].lastErrorMessage, "connection reset");
+  });
+
+  it("quarantines a transient failure via the attempt-count fallback when createdAt cannot be parsed", async () => {
+    ensureOutboxDir(outboxDir);
+    // Written directly (bypassing enqueueOutboxEntry's createdAt
+    // validation) to simulate a corrupted/hand-edited entry file with an
+    // unparseable createdAt -- the only case where the fallback ceiling
+    // (rather than the age-based one) governs quarantine.
+    fs.writeFileSync(
+      path.join(outboxDir, "outbox-corrupt-createdat.json"),
+      `${JSON.stringify({
+        id: "outbox-corrupt-createdat",
+        createdAt: "not-a-real-date",
+        result: { jobId: "job-corrupt", attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE - 1,
+      })}\n`,
+      "utf8",
+    );
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw new Error("connection reset");
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.quarantined, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
   });
 
   it("does NOT quarantine a transient failure (5xx or no status) -- it stays retryable with backoff", async () => {
