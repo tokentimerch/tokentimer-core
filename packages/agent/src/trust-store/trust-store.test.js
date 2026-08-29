@@ -1018,6 +1018,92 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(validation.valid, true, JSON.stringify(validation.errors));
   });
 
+  it("retries update-ca-certificates on a same-job resume when the prior attempt already unlinked the file but the refresh failed, and now succeeds", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    // First attempt: removeLinuxAnchorFile unlinks the source file, then the
+    // refresh command fails - the file is now gone but the receipt stays at
+    // pending_remove, exactly the crash-then-retry scenario this fix covers.
+    const failingExecFileImpl = makeFakeExecFile({ succeed: false });
+    const first = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: failingExecFileImpl },
+    });
+    assert.equal(first.outcome, "installed");
+    assert.equal(first.mutationPerformed, false);
+    assert.equal(first.failureCategory, "os_mutation_failed");
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    assert.equal(fsImpl._files.has(filePath), false);
+    const afterFirst = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(afterFirst.row.state, "pending_remove");
+
+    // Retry: same jobId resumes the same pending_remove receipt, the probe
+    // finds the file already absent, but because this is resumingSameJob on
+    // Debian the refresh command is re-run rather than immediately reporting
+    // already_absent. This time it succeeds.
+    const succeedingExecFileImpl = makeFakeExecFile({ succeed: true });
+    const second = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: succeedingExecFileImpl },
+    });
+
+    assert.equal(second.outcome, "removed");
+    assert.equal(second.mutationAttempted, true);
+    assert.equal(second.mutationPerformed, true);
+    assert.equal(second.receipt.state, "finalized");
+    assert.equal(succeedingExecFileImpl.calls.length, 1);
+    assert.equal(succeedingExecFileImpl.calls[0][0], trustStore.DEBIAN_UPDATE_COMMAND);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.state, "removed");
+
+    const validation = validateTrustResult(second);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("keeps reporting os_mutation_failed (not already_absent) on a same-job resume when update-ca-certificates keeps failing, and leaves the receipt pending_remove", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    const firstFailingExecFileImpl = makeFakeExecFile({ succeed: false });
+    await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: firstFailingExecFileImpl },
+    });
+
+    const secondFailingExecFileImpl = makeFakeExecFile({ succeed: false });
+    const second = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: secondFailingExecFileImpl },
+    });
+
+    assert.equal(second.outcome, "installed");
+    assert.equal(second.mutationAttempted, true);
+    assert.equal(second.mutationPerformed, false);
+    assert.equal(second.failureCategory, "os_mutation_failed");
+    assert.equal(second.receipt.state, "intent_written");
+    // The refresh command was actually re-invoked on this retry, not skipped.
+    assert.equal(secondFailingExecFileImpl.calls.length, 1);
+    assert.equal(secondFailingExecFileImpl.calls[0][0], trustStore.DEBIAN_UPDATE_COMMAND);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "pending_remove");
+
+    const validation = validateTrustResult(second);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
   it("refuses removal for a receipt still in pending_install (crash before install mutation ever completed)", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     receipt.writeIntentReceipt({
@@ -1173,6 +1259,99 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
 
     assert.equal(result.mutationAttempted, false);
     assert.equal(result.failureCategory, "invalid_payload");
+  });
+});
+
+describe("trust-store: revokeTrust refresh-retry on RHEL-family (same fix as Debian, update-ca-trust extract)", () => {
+  async function installFirst(receiptDir, fsImpl) {
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+  }
+
+  it("retries update-ca-trust extract on a same-job resume when the prior attempt already unlinked the file but the refresh failed, and now succeeds", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    const failingExecFileImpl = makeFakeExecFile({ succeed: false });
+    const first = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: failingExecFileImpl },
+    });
+    assert.equal(first.outcome, "installed");
+    assert.equal(first.mutationPerformed, false);
+    assert.equal(first.failureCategory, "os_mutation_failed");
+    const filePath = trustStore.linuxAnchorFilePath("rhel", CA_FINGERPRINT);
+    assert.equal(fsImpl._files.has(filePath), false);
+
+    const succeedingExecFileImpl = makeFakeExecFile({ succeed: true });
+    const second = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: succeedingExecFileImpl },
+    });
+
+    assert.equal(second.outcome, "removed");
+    assert.equal(second.mutationAttempted, true);
+    assert.equal(second.mutationPerformed, true);
+    assert.equal(second.receipt.state, "finalized");
+    assert.equal(succeedingExecFileImpl.calls.length, 1);
+    assert.deepEqual(succeedingExecFileImpl.calls[0], [
+      trustStore.RHEL_UPDATE_COMMAND,
+      ...trustStore.RHEL_UPDATE_ARGS,
+    ]);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.state, "removed");
+
+    const validation = validateTrustResult(second);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("keeps reporting os_mutation_failed (not already_absent) on a same-job resume when update-ca-trust extract keeps failing, and leaves the receipt pending_remove", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+
+    await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: makeFakeExecFile({ succeed: false }) },
+    });
+
+    const secondFailingExecFileImpl = makeFakeExecFile({ succeed: false });
+    const second = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: secondFailingExecFileImpl },
+    });
+
+    assert.equal(second.outcome, "installed");
+    assert.equal(second.mutationAttempted, true);
+    assert.equal(second.mutationPerformed, false);
+    assert.equal(second.failureCategory, "os_mutation_failed");
+    assert.equal(second.receipt.state, "intent_written");
+    assert.equal(secondFailingExecFileImpl.calls.length, 1);
+    assert.deepEqual(secondFailingExecFileImpl.calls[0], [
+      trustStore.RHEL_UPDATE_COMMAND,
+      ...trustStore.RHEL_UPDATE_ARGS,
+    ]);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "pending_remove");
+
+    const validation = validateTrustResult(second);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
   });
 });
 
@@ -1409,6 +1588,43 @@ describe("trust-store: distributeTrust / revokeTrust on Windows", () => {
     assert.equal(result.outcome, "already_absent");
     assert.equal(result.mutationAttempted, false);
     assert.equal(removeExecFileImpl.calls.length, 0);
+  });
+
+  it("revokeTrust on a same-job resumed pending_remove still reports already_absent with no retry when the store entry is gone (Debian/RHEL refresh-retry fix does not apply to Windows)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const workDir = makeTempDir("winwork");
+
+    await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "windows",
+      receiptDir,
+      workDir,
+      seams: { spawnImpl: makeFakeSpawn([]), execFileImpl: makeFakeExecFile({ succeed: true }) },
+    });
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: "Root",
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-revoke-1",
+      transitionGeneration: 2,
+      intentState: "pending_remove",
+    });
+
+    const removeExecFileImpl = makeFakeExecFile({ succeed: true });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob({ jobId: "job-revoke-1", transitionGeneration: 2 }),
+      family: "windows",
+      receiptDir,
+      seams: { spawnImpl: makeFakeSpawn([]), execFileImpl: removeExecFileImpl },
+    });
+
+    assert.equal(result.outcome, "already_absent");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(removeExecFileImpl.calls.length, 0);
+
+    const finalReceipt = receipt.readReceipt(receiptDir, "Root", CA_FINGERPRINT);
+    assert.equal(finalReceipt.row.state, "removed");
   });
 });
 
