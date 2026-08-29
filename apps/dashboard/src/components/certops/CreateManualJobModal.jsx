@@ -111,9 +111,11 @@ const CONTROLLER_ISSUER_KINDS = ['ClusterIssuer', 'Issuer'];
 const DEFAULT_CONTROLLER_ISSUER_GROUP = 'cert-manager.io';
 
 // Shown as the JSON textarea's placeholder for both "issue" (where these
-// keys are required) and every other operation (where they're optional but
-// this is still the shape a renew/deploy/reload job reads), so switching
-// to JSON mode never loses the example that guided the structured fields.
+// keys are required) and deploy/reload/revoke/noop (where they're optional
+// but this is still the shape a deploy/reload job reads), so switching to
+// JSON mode never loses the example that guided the structured fields.
+// renew gets its own, much smaller placeholder below: its payload only
+// accepts `reason`.
 const PAYLOAD_JSON_EXAMPLE = `{
   "target": { "type": "domain", "reference": "example.com" },
   "sans": ["example.com"],
@@ -122,6 +124,10 @@ const PAYLOAD_JSON_EXAMPLE = `{
   "dnsZone": "example.com",
   "dnsProvider": "cloudflare",
   "certPath": "/etc/ssl/example/example.com.pem"
+}`;
+
+const RENEW_PAYLOAD_JSON_EXAMPLE = `{
+  "reason": "manual renewal requested by ops"
 }`;
 
 // Only subject types backed by an existing, workspace-scoped list endpoint
@@ -244,6 +250,7 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const [fieldDnsZone, setFieldDnsZone] = useState('');
   const [fieldDnsProvider, setFieldDnsProvider] = useState('');
   const [fieldCertPath, setFieldCertPath] = useState('');
+  const [fieldReason, setFieldReason] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
@@ -264,6 +271,15 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // mandatory on issue because the request has a side effect beyond the
   // job (the new inventory row) and must not be duplicated by a retry.
   const isIssue = operation === 'issue';
+
+  // A manual/bulk renew job's payload is validated against
+  // RENEWAL_MANUAL_OVERRIDE_FIELDS in
+  // apps/api/services/certops/renewalProfile.js, which today only allows
+  // `reason`: every other execution field (target, sans, commandRef,
+  // caEndpoint, dnsZone, dnsProvider, certPath) is resolved server-side
+  // from the certificate's stored renewal profile, so offering them here
+  // would just produce a 400 CERTOPS_RENEWAL_OVERRIDE_INVALID.
+  const isRenew = operation === 'renew';
 
   // The controller executor is only offered for "issue": renew/deploy/
   // reload/revoke against a controller-provisioned certificate are not
@@ -320,6 +336,7 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     setFieldDnsZone('');
     setFieldDnsProvider('');
     setFieldCertPath('');
+    setFieldReason('');
     setRequiresApproval(false);
     setControllerClusterId('');
     setControllerNamespace('');
@@ -435,8 +452,17 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // SANs, ACME command/CA, DNS-01 zone/provider, deploy path) so an operator
   // does not have to hand-write JSON for the everyday case; the JSON
   // textarea stays available for anything the fields do not cover (custom
-  // metadata, less common execution keys, etc).
+  // metadata, less common execution keys, etc). renew is the one operation
+  // whose payload only accepts `reason` (RENEWAL_MANUAL_OVERRIDE_FIELDS in
+  // renewalProfile.js): every other execution field always comes from the
+  // certificate's stored renewal profile, so the fields below are hidden
+  // for it and this returns the reason-only shape instead.
   const buildFieldsPayload = () => {
+    if (isRenew) {
+      const payload = {};
+      if (fieldReason.trim()) payload.reason = fieldReason.trim();
+      return payload;
+    }
     const payload = {};
     if (fieldTarget.trim()) {
       payload.target = { type: 'domain', reference: fieldTarget.trim() };
@@ -863,111 +889,134 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </ButtonGroup>
                 </HStack>
                 {payloadMode === 'fields' ? (
-                  <VStack align='stretch' spacing={2}>
-                    <FormControl isRequired={isIssue}>
-                      <FormLabel fontSize='xs' mb={0.5}>
-                        Target domain
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={fieldTarget}
-                        onChange={event => setFieldTarget(event.target.value)}
-                        placeholder='e.g. example.com'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                    <FormControl>
-                      <FormLabel fontSize='xs' mb={0.5}>
-                        SANs
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={fieldSans}
-                        onChange={event => setFieldSans(event.target.value)}
-                        placeholder='Comma or newline separated (defaults to target)'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                    <SimpleGrid columns={2} spacing={2}>
-                      <FormControl isRequired={isIssue}>
+                  isRenew ? (
+                    <VStack align='stretch' spacing={2}>
+                      <FormControl>
                         <FormLabel fontSize='xs' mb={0.5}>
-                          Command ref
+                          Reason
                         </FormLabel>
                         <Input
                           size='sm'
-                          value={fieldCommandRef}
-                          onChange={event =>
-                            setFieldCommandRef(event.target.value)
-                          }
-                          placeholder='e.g. certbot-csr'
+                          value={fieldReason}
+                          onChange={event => setFieldReason(event.target.value)}
+                          placeholder='e.g. manual renewal requested by ops'
                           autoComplete='off'
                         />
                       </FormControl>
+                      <FormHelperText>
+                        Optional. The only overridable field for a renew job:
+                        target, SANs, ACME command, CA, DNS-01 zone/provider,
+                        and deploy path always come from the certificate&apos;s
+                        stored renewal profile and cannot be set here.
+                      </FormHelperText>
+                    </VStack>
+                  ) : (
+                    <VStack align='stretch' spacing={2}>
                       <FormControl isRequired={isIssue}>
                         <FormLabel fontSize='xs' mb={0.5}>
-                          DNS provider
+                          Target domain
                         </FormLabel>
                         <Input
                           size='sm'
-                          value={fieldDnsProvider}
-                          onChange={event =>
-                            setFieldDnsProvider(event.target.value)
-                          }
-                          placeholder='e.g. cloudflare'
-                          autoComplete='off'
-                        />
-                      </FormControl>
-                    </SimpleGrid>
-                    <FormControl isRequired={isIssue}>
-                      <FormLabel fontSize='xs' mb={0.5}>
-                        CA endpoint
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={fieldCaEndpoint}
-                        onChange={event =>
-                          setFieldCaEndpoint(event.target.value)
-                        }
-                        placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                    <SimpleGrid columns={2} spacing={2}>
-                      <FormControl isRequired={isIssue}>
-                        <FormLabel fontSize='xs' mb={0.5}>
-                          DNS zone
-                        </FormLabel>
-                        <Input
-                          size='sm'
-                          value={fieldDnsZone}
-                          onChange={event =>
-                            setFieldDnsZone(event.target.value)
-                          }
+                          value={fieldTarget}
+                          onChange={event => setFieldTarget(event.target.value)}
                           placeholder='e.g. example.com'
                           autoComplete='off'
                         />
                       </FormControl>
-                      <FormControl isRequired={isIssue}>
+                      <FormControl>
                         <FormLabel fontSize='xs' mb={0.5}>
-                          Cert file path
+                          SANs
                         </FormLabel>
                         <Input
                           size='sm'
-                          value={fieldCertPath}
-                          onChange={event =>
-                            setFieldCertPath(event.target.value)
-                          }
-                          placeholder='e.g. /etc/ssl/example.com.pem'
+                          value={fieldSans}
+                          onChange={event => setFieldSans(event.target.value)}
+                          placeholder='Comma or newline separated (defaults to target)'
                           autoComplete='off'
                         />
                       </FormControl>
-                    </SimpleGrid>
-                    <FormHelperText>
-                      {isIssue
-                        ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
-                        : 'Optional. Fills the same execution payload keys a renew/deploy job reads. Switch to JSON for anything not listed here.'}
-                    </FormHelperText>
-                  </VStack>
+                      <SimpleGrid columns={2} spacing={2}>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            Command ref
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldCommandRef}
+                            onChange={event =>
+                              setFieldCommandRef(event.target.value)
+                            }
+                            placeholder='e.g. certbot-csr'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            DNS provider
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldDnsProvider}
+                            onChange={event =>
+                              setFieldDnsProvider(event.target.value)
+                            }
+                            placeholder='e.g. cloudflare'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+                      <FormControl isRequired={isIssue}>
+                        <FormLabel fontSize='xs' mb={0.5}>
+                          CA endpoint
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          value={fieldCaEndpoint}
+                          onChange={event =>
+                            setFieldCaEndpoint(event.target.value)
+                          }
+                          placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
+                          autoComplete='off'
+                        />
+                      </FormControl>
+                      <SimpleGrid columns={2} spacing={2}>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            DNS zone
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldDnsZone}
+                            onChange={event =>
+                              setFieldDnsZone(event.target.value)
+                            }
+                            placeholder='e.g. example.com'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            Cert file path
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldCertPath}
+                            onChange={event =>
+                              setFieldCertPath(event.target.value)
+                            }
+                            placeholder='e.g. /etc/ssl/example.com.pem'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+                      <FormHelperText>
+                        {isIssue
+                          ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
+                          : 'Optional. Fills the same execution payload keys a deploy/reload job reads. Switch to JSON for anything not listed here.'}
+                      </FormHelperText>
+                    </VStack>
+                  )
                 ) : (
                   <>
                     <Textarea
@@ -977,13 +1026,17 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                       rows={6}
                       value={payloadText}
                       onChange={handlePayloadChange}
-                      placeholder={PAYLOAD_JSON_EXAMPLE}
+                      placeholder={
+                        isRenew ? RENEW_PAYLOAD_JSON_EXAMPLE : PAYLOAD_JSON_EXAMPLE
+                      }
                     />
                     <FormHelperText>
                       {payloadError ||
                         (isIssue
                           ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
-                          : 'Optional. Free-form JSON merged into the job payload.')}
+                          : isRenew
+                            ? "Optional. Only 'reason' is accepted here; every other execution field comes from the certificate's stored renewal profile."
+                            : 'Optional. Free-form JSON merged into the job payload.')}
                     </FormHelperText>
                   </>
                 )}

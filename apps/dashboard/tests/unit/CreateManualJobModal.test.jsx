@@ -265,6 +265,7 @@ describe('CreateManualJobModal controller provisioning submission', () => {
   });
 
   it('surfaces the terminal-identity error with a friendly message', async () => {
+
     createControllerProvisionIntentMock.mockRejectedValue({
       response: {
         status: 409,
@@ -286,6 +287,72 @@ describe('CreateManualJobModal controller provisioning submission', () => {
 
     await waitFor(() => {
       expect(createControllerProvisionIntentMock).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('CreateManualJobModal renew payload fields', () => {
+  it('shows only a Reason field for renew, not the execution fields renew jobs reject', () => {
+    renderModal();
+    selectOperation('renew');
+
+    expect(screen.getByLabelText(/^Reason/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Target domain/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^SANs/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Command ref/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^CA endpoint/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^DNS zone/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^DNS provider/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Cert file path/)).not.toBeInTheDocument();
+  });
+
+  it('submits only { reason } as the payload for a renew job, never the execution fields', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: 'cert-1' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'manual renewal requested by ops' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledWith('ws-1', {
+        operation: 'renew',
+        subjectType: 'managed_certificate',
+        subjectId: 'cert-1',
+        payload: { reason: 'manual renewal requested by ops' },
+      });
+    });
+  });
+
+  it('omits payload entirely for a renew job when reason is left blank', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: 'cert-1' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledWith('ws-1', {
+        operation: 'renew',
+        subjectType: 'managed_certificate',
+        subjectId: 'cert-1',
+      });
     });
   });
 });
