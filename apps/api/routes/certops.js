@@ -142,8 +142,10 @@ const {
   CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
   CERTOPS_TRUST_ANCHOR_NOT_FOUND,
   CERTOPS_TRUST_ANCHOR_PEM_INVALID,
+  CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
+  CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_TRUST_JOB_OPERATION_INVALID,
   CERTOPS_TRUST_RESULT_INVALID,
   CERTOPS_TRUST_RESULT_MISMATCH,
@@ -588,6 +590,25 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message || "Trust anchor is not active",
       code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+    });
+  }
+  // 409: well-formed request, but the caller tried to change anchor_type
+  // while a live (non-removed) installation still depends on the current
+  // value (see createTrustAnchor's anchor_type-immutability check).
+  if (err?.code === CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE) {
+    return res.status(409).json({
+      error: err.message || "Trust anchor type cannot be changed while installations are live",
+      code: CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
+    });
+  }
+  // 409: mirrors CERTOPS_JOB_IDEMPOTENCY_CONFLICT below, for the
+  // no-job reference-release idempotency ledger (see
+  // certops_trust_reference_release_idempotency in trustAnchors.js).
+  if (err?.code === CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT) {
+    return res.status(409).json({
+      error:
+        "Idempotency key was already used with a different CertOps trust-reference-release request",
+      code: CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT,
     });
   }
   // Target-agent validation for distribute-trust/revoke-trust

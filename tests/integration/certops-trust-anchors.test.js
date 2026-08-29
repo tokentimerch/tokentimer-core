@@ -25,6 +25,7 @@ const {
   sweepOverdueTrustInstallations,
   TRUST_JOB_TERMINAL_NEGATIVE_STATUSES,
   CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+  CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
   CERTOPS_TRUST_RESULT_INVALID,
@@ -211,6 +212,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   // --- Helpers -------------------------------------------------------------
 
   async function createAgent(overrides = {}) {
+    const agentWorkspaceId = overrides.workspaceIdOverride || workspaceId;
     const agentId = `agent-${crypto.randomUUID()}`;
     const capabilities = overrides.capabilities || ["trust-anchor-deploy-v1"];
     const capabilitiesUpdatedAt =
@@ -227,7 +229,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
                $5::jsonb, $6, NOW())
        RETURNING id`,
       [
-        workspaceId,
+        agentWorkspaceId,
         agentId,
         `ttagent_${crypto.randomBytes(8).toString("hex")}`,
         crypto.randomBytes(32).toString("hex"),
@@ -235,7 +237,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         capabilitiesUpdatedAt,
       ],
     );
-    return { id: inserted.rows[0].id, agentId, workspaceId };
+    return { id: inserted.rows[0].id, agentId, workspaceId: agentWorkspaceId };
   }
 
   // A fresh trust anchor identity per call (own CA fingerprint), always
@@ -274,6 +276,34 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       [jobId],
     );
     return result.rows[0];
+  }
+
+  // CA_CERTS only has a handful of distinct fingerprints, and
+  // createFreshAnchor's anchorCounter wraps back over them (see
+  // trustAnchorPemFor's `% CA_CERTS.length`), so many tests in this suite
+  // deliberately or incidentally end up reusing the same underlying
+  // fingerprint (in the SAME shared workspaceId) as an earlier test whose
+  // installation row was never cleaned up. That is harmless for tests that
+  // never change anchor_type, but a test that specifically needs "this
+  // fingerprint has no live installation anywhere in this workspace" (to
+  // exercise createTrustAnchor's anchor_type-immutability check) cannot
+  // rely on drawing a fresh CA_CERTS slot. Running it in its own
+  // just-created workspace sidesteps the wraparound entirely, since the
+  // immutability check is scoped by (workspace_id, fingerprint_sha256).
+  async function withFreshWorkspace(fn) {
+    const freshWorkspaceId = crypto.randomUUID();
+    await TestUtils.execQuery(
+      `INSERT INTO workspaces (id, name, created_by, plan)
+       VALUES ($1, 'Trust Anchor Test WS (isolated)', $2, 'oss')`,
+      [freshWorkspaceId, ownerId],
+    );
+    try {
+      return await fn(freshWorkspaceId);
+    } finally {
+      await TestUtils.execQuery("DELETE FROM workspaces WHERE id = $1", [
+        freshWorkspaceId,
+      ]);
+    }
   }
 
   async function withTx(fn) {
@@ -461,24 +491,26 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   });
 
   it("re-approving the same fingerprint updates anchor_type when the caller submits a different type", async () => {
-    const pem = trustAnchorPemFor(0);
-    const first = await createTrustAnchor({
-      workspaceId,
-      name: "Root CA",
-      anchorType: "root",
-      pem,
-      createdByUserId: ownerId,
-    });
-    const second = await createTrustAnchor({
-      workspaceId,
-      name: "Same cert, intermediate type",
-      anchorType: "intermediate",
-      pem,
-      createdByUserId: ownerId,
-    });
+    await withFreshWorkspace(async (freshWorkspaceId) => {
+      const pem = trustAnchorPemFor(0);
+      const first = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Root CA",
+        anchorType: "root",
+        pem,
+        createdByUserId: ownerId,
+      });
+      const second = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Same cert, intermediate type",
+        anchorType: "intermediate",
+        pem,
+        createdByUserId: ownerId,
+      });
 
-    expect(second.id).to.equal(first.id);
-    expect(second.anchorType).to.equal("intermediate");
+      expect(second.id).to.equal(first.id);
+      expect(second.anchorType).to.equal("intermediate");
+    });
   });
 
   it("requires idempotencyKey (rejects, does not merely accept omission)", async () => {
@@ -1677,6 +1709,416 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     const revokedOnly = await listTrustAnchors({ workspaceId, status: "revoked" });
     expect(revokedOnly.find((entry) => entry.id === anchor.id)?.status).to.equal(
       "revoked",
+    );
+  });
+
+  // --- anchor_type immutability while installations are live ---------------
+
+  it("re-approving with the SAME anchorType still refreshes name/pem/metadata and reactivates from retired", async () => {
+    await withFreshWorkspace(async (freshWorkspaceId) => {
+      const pem = trustAnchorPemFor(anchorCounter++);
+      const first = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Same-type Root CA",
+        anchorType: "root",
+        pem,
+        publicMetadata: { note: "original" },
+        createdByUserId: ownerId,
+      });
+      await retireTrustAnchor({ workspaceId: freshWorkspaceId, anchorId: first.id });
+
+      const second = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Same-type Root CA (renamed)",
+        anchorType: "root",
+        pem,
+        publicMetadata: { note: "refreshed" },
+        createdByUserId: ownerId,
+      });
+
+      expect(second.id).to.equal(first.id);
+      expect(second.anchorType).to.equal("root");
+      expect(second.name).to.equal("Same-type Root CA (renamed)");
+      expect(second.publicMetadata).to.deep.equal({ note: "refreshed" });
+      expect(second.status).to.equal(
+        "active",
+        "re-approving a retired anchor must reactivate it",
+      );
+    });
+  });
+
+  it("rejects an anchorType change while a live (non-removed) installation exists for the fingerprint", async () => {
+    await withFreshWorkspace(async (freshWorkspaceId) => {
+      const pem = trustAnchorPemFor(anchorCounter++);
+      const anchor = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Root CA with a live install",
+        anchorType: "root",
+        pem,
+        createdByUserId: ownerId,
+      });
+      const agent = await createAgent({ workspaceIdOverride: freshWorkspaceId });
+      const distributeOutcome = await createTrustJob({
+        ...distributeOptions({
+          anchor,
+          agent,
+          idempotencyKey: `immutable-type-dist-${crypto.randomUUID()}`,
+        }),
+        workspaceId: freshWorkspaceId,
+      });
+      const distributeJob = await getJobRow(distributeOutcome.job.id);
+      const distributeInstallationRow = await getInstallationById(
+        distributeOutcome.installation.id,
+      );
+      await withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job: distributeJob,
+          result: buildResult({
+            job: distributeJob,
+            installationRow: distributeInstallationRow,
+            outcome: "installed",
+          }),
+        }),
+      );
+      const installedRow = await getInstallationById(distributeOutcome.installation.id);
+      expect(installedRow.transition_state).to.equal("installed");
+
+      await expectServiceError(
+        createTrustAnchor({
+          workspaceId: freshWorkspaceId,
+          name: "Trying to flip the type",
+          anchorType: "intermediate",
+          pem,
+          createdByUserId: ownerId,
+        }),
+        CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
+      );
+
+      // Neither the anchor row nor the live installation must have moved.
+      const anchorAfter = await TestUtils.execQuery(
+        `SELECT anchor_type, name FROM certops_trust_anchors WHERE id = $1`,
+        [anchor.id],
+      );
+      expect(anchorAfter.rows[0].anchor_type).to.equal("root");
+      expect(anchorAfter.rows[0].name).to.equal("Root CA with a live install");
+
+      const installationAfter = await getInstallationById(distributeOutcome.installation.id);
+      expect(installationAfter.transition_state).to.equal("installed");
+      expect(installationAfter.transition_generation).to.equal(
+        installedRow.transition_generation,
+      );
+    });
+  });
+
+  it("allows an anchorType change once no live installation remains anywhere for the fingerprint", async () => {
+    await withFreshWorkspace(async (freshWorkspaceId) => {
+      const pem = trustAnchorPemFor(anchorCounter++);
+      const anchor = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Root CA, no installs yet",
+        anchorType: "root",
+        pem,
+        createdByUserId: ownerId,
+      });
+
+      // Never distributed anywhere, so there is nothing to orphan.
+      const changed = await createTrustAnchor({
+        workspaceId: freshWorkspaceId,
+        name: "Now an intermediate CA",
+        anchorType: "intermediate",
+        pem,
+        createdByUserId: ownerId,
+      });
+
+      expect(changed.id).to.equal(anchor.id);
+      expect(changed.anchorType).to.equal("intermediate");
+    });
+  });
+
+  // --- Bug B: every failed dispatch revalidation unwinds synchronously ------
+
+  it("unwinds the installation row when dispatch revalidation fails with trust_anchor_payload_mismatch", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `unwind-mismatch-${crypto.randomUUID()}`,
+      }),
+    );
+
+    const jobRow = await getJobRow(outcome.job.id);
+    jobRow.payload = { ...jobRow.payload, fingerprintSha256: "0".repeat(64) };
+
+    const revalidation = await withTx((client) =>
+      revalidateTrustJobForDispatch({ client, job: jobRow }),
+    );
+    expect(revalidation.allow).to.equal(false);
+    expect(revalidation.reason).to.equal("trust_anchor_payload_mismatch");
+
+    const installation = await getInstallationById(outcome.installation.id);
+    expect(installation).to.equal(
+      undefined,
+      "the pending_install row must be unwound (deleted), not left stuck",
+    );
+  });
+
+  it("unwinds the installation row when dispatch revalidation fails with trust_installation_not_found", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+    const owner = "workspace-policy";
+
+    const firstOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `unwind-not-found-a-${crypto.randomUUID()}`,
+      }),
+    );
+    // A second distribute-trust request for the same tuple supersedes the
+    // first job's claim on the installation row (new generation, new
+    // last_job_id), so revalidating the FIRST job now finds no installation
+    // row pointing back at it.
+    const secondOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner,
+        idempotencyKey: `unwind-not-found-b-${crypto.randomUUID()}`,
+      }),
+    );
+
+    const firstJobRow = await getJobRow(firstOutcome.job.id);
+    const revalidation = await withTx((client) =>
+      revalidateTrustJobForDispatch({ client, job: firstJobRow }),
+    );
+    expect(revalidation.allow).to.equal(false);
+    expect(revalidation.reason).to.equal("trust_installation_not_found");
+
+    // unwindTerminalTrustJob safely no-ops for the superseded job (nothing
+    // to unwind for it specifically) and, critically, does not touch the
+    // CURRENT row, which still belongs to the second job.
+    const currentInstallation = await getInstallationById(
+      secondOutcome.installation.id,
+    );
+    expect(currentInstallation.transition_state).to.equal("pending_install");
+    expect(currentInstallation.transition_generation).to.equal(
+      secondOutcome.transitionGeneration,
+    );
+  });
+
+  // --- Bug C: no-job reference releases are idempotent ----------------------
+
+  it("replaying the same idempotencyKey for a preexisting-provenance revoke is a true no-op", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `idem-preexisting-dist-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallation = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          job: distributeJob,
+          installationRow: distributeInstallation,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+
+    const key = `idem-preexisting-revoke-${crypto.randomUUID()}`;
+    const first = await createTrustJob(
+      revokeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    expect(first.job).to.equal(null);
+    expect(first.skippedOsMutation).to.equal(true);
+
+    const afterFirst = await getInstallationById(distributeOutcome.installation.id);
+    expect(afterFirst.transition_state).to.equal("removed");
+
+    const second = await createTrustJob(
+      revokeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    expect(second.job).to.equal(null);
+    expect(second.skippedOsMutation).to.equal(true);
+    expect(second.transitionGeneration).to.equal(first.transitionGeneration);
+    expect(second.installation.transitionState).to.equal("removed");
+
+    const afterSecond = await getInstallationById(distributeOutcome.installation.id);
+    expect(afterSecond.transition_generation).to.equal(
+      afterFirst.transition_generation,
+      "the replay must not bump transition_generation a second time",
+    );
+    expect(afterSecond.last_attempt_at.toISOString()).to.equal(
+      afterFirst.last_attempt_at.toISOString(),
+      "the replay must not touch last_attempt_at again",
+    );
+
+    const auditRows = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS n FROM audit_events
+        WHERE workspace_id = $1 AND action = 'CERTOPS_TRUST_REFERENCE_RELEASED'
+          AND metadata->>'trustAnchorId' = $2
+          AND metadata->>'agentId' = $3
+          AND metadata->>'owner' = $4`,
+      [workspaceId, String(anchor.id), String(agent.id), "workspace-policy"],
+    );
+    expect(auditRows.rows[0].n).to.equal(
+      1,
+      "the replay must not write a second audit event",
+    );
+  });
+
+  it("replaying the same idempotencyKey for an other-live-reference revoke is a true no-op", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const store = "Root";
+
+    const ownerAOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-a-idem",
+        idempotencyKey: `idem-other-ref-dist-a-${crypto.randomUUID()}`,
+      }),
+    );
+    const ownerBOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        store,
+        owner: "owner-b-idem",
+        idempotencyKey: `idem-other-ref-dist-b-${crypto.randomUUID()}`,
+      }),
+    );
+    for (const outcome of [ownerAOutcome, ownerBOutcome]) {
+      const job = await getJobRow(outcome.job.id);
+      const installationRow = await getInstallationById(outcome.installation.id);
+      await withTx((client) =>
+        ingestTrustJobResult({
+          client,
+          job,
+          result: buildResult({ job, installationRow, outcome: "installed" }),
+        }),
+      );
+    }
+
+    const key = `idem-other-ref-revoke-a-${crypto.randomUUID()}`;
+    const first = await createTrustJob(
+      revokeOptions({ anchor, agent, store, owner: "owner-a-idem", idempotencyKey: key }),
+    );
+    expect(first.job).to.equal(null);
+    expect(first.skippedOsMutation).to.equal(true);
+
+    const afterFirst = await getInstallationById(ownerAOutcome.installation.id);
+    expect(afterFirst.transition_state).to.equal("removed");
+
+    const second = await createTrustJob(
+      revokeOptions({ anchor, agent, store, owner: "owner-a-idem", idempotencyKey: key }),
+    );
+    expect(second.job).to.equal(null);
+    expect(second.skippedOsMutation).to.equal(true);
+    expect(second.transitionGeneration).to.equal(first.transitionGeneration);
+
+    const afterSecond = await getInstallationById(ownerAOutcome.installation.id);
+    expect(afterSecond.transition_generation).to.equal(
+      afterFirst.transition_generation,
+      "the replay must not bump transition_generation a second time",
+    );
+
+    // Owner B's still-live reference must remain completely untouched by
+    // either call.
+    const ownerBRow = await getInstallationById(ownerBOutcome.installation.id);
+    expect(ownerBRow.transition_state).to.equal("installed");
+
+    const auditRows = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS n FROM audit_events
+        WHERE workspace_id = $1 AND action = 'CERTOPS_TRUST_REFERENCE_RELEASED'
+          AND metadata->>'trustAnchorId' = $2
+          AND metadata->>'agentId' = $3
+          AND metadata->>'owner' = $4`,
+      [workspaceId, String(anchor.id), String(agent.id), "owner-a-idem"],
+    );
+    expect(auditRows.rows[0].n).to.equal(
+      1,
+      "the replay must not write a second audit event",
+    );
+  });
+
+  it("rejects a fresh revoke-trust attempt against an installation already in transition_state 'removed'", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `removed-guard-dist-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallation = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          job: distributeJob,
+          installationRow: distributeInstallation,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+
+    // First revoke fully releases the installation (no-job path).
+    await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `removed-guard-revoke-1-${crypto.randomUUID()}`,
+      }),
+    );
+    const removedRow = await getInstallationById(distributeOutcome.installation.id);
+    expect(removedRow.transition_state).to.equal("removed");
+
+    // A genuinely NEW revoke request (different idempotencyKey, no
+    // matching no-job idempotency record) against the already-removed
+    // installation must be rejected outright, not re-enter pending_remove
+    // or re-run a "removed" update.
+    await expectServiceError(
+      createTrustJob(
+        revokeOptions({
+          anchor,
+          agent,
+          idempotencyKey: `removed-guard-revoke-2-${crypto.randomUUID()}`,
+        }),
+      ),
+      CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
+    );
+
+    const stillRemovedRow = await getInstallationById(distributeOutcome.installation.id);
+    expect(stillRemovedRow.transition_state).to.equal("removed");
+    expect(stillRemovedRow.transition_generation).to.equal(
+      removedRow.transition_generation,
+      "the rejected attempt must not mutate the row at all",
     );
   });
 });
