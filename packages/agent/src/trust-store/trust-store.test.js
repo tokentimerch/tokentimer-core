@@ -478,6 +478,59 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.equal(result.outcome, "preexisting");
     assert.equal(result.mutationAttempted, false);
     assert.equal(result.mutationPerformed, false);
+    // No receipt exists at all for this (store, fingerprint) - a genuine
+    // preexisting case this agent never installed - so receiptState stays
+    // `missing`, not `finalized`.
+    assert.equal(result.receipt.state, "missing");
+    assert.equal(execFileImpl.calls.length, 0);
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("reports preexisting with receiptState finalized (not missing) when this agent's own receipt shows a completed prior install - retry after crash/lost-network post-finalize", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    const fsImpl = makeFakeFs({ [filePath]: CA_PEM });
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    // Seed a FINALIZED "installed" receipt for this exact (store,
+    // fingerprint) directly via receipt.js - the same on-disk bookkeeping a
+    // real prior distributeTrust call by this same agent would have left
+    // behind after installing the CA and finalizing successfully, before
+    // this agent crashed or lost network and never reported that result.
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-dist-prior-attempt",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+    receipt.finalizeReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-dist-prior-attempt",
+      transitionGeneration: 1,
+    });
+
+    // The control plane re-dispatches (possibly a fresh jobId/generation);
+    // the material is still present, so this lands in the same
+    // preexisting-check branch as the "genuinely never installed" test
+    // above, but this time the on-disk receipt proves THIS agent finalized
+    // an install here.
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "preexisting");
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.receipt.state, "finalized");
     assert.equal(execFileImpl.calls.length, 0);
 
     const validation = validateTrustResult(result);

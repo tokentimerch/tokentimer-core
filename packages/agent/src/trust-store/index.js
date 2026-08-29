@@ -867,6 +867,28 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     if (!hasIncompleteOwnInstall) {
       // Idempotent install: no mutation, outcome `preexisting`, no receipt
       // write (an anchor this agent didn't install has no ownership to record).
+      //
+      // receiptState is `finalized`, not `missing`, when the receipt we just
+      // read back is a completed prior install BY THIS AGENT for this exact
+      // (store, fingerprint) - i.e. row.state === "installed". That happens
+      // on a retry after: this agent installed the CA, finalized its
+      // receipt, then crashed or lost network before reporting the result;
+      // the control plane re-dispatches the same job, finds the material
+      // already present, and lands here. Reporting `missing` in that case
+      // would be false - a valid, finalized, on-disk receipt was just read
+      // successfully - and would permanently deny the server the one signal
+      // (trustAnchors.js's ingestTrustJobResult) that lets it promote
+      // provenance to tokentimer_installed instead of leaving the
+      // installation stuck at `preexisting` forever. Every other read
+      // (truly absent, corrupt, or a receipt in some other terminal/pending
+      // state such as `removed` or `pending_remove` - neither of which is
+      // proof that THIS install put the currently-present material there)
+      // still reports `missing`, unchanged from before.
+      const hasFinalizedOwnInstall =
+        existingReceiptBeforeMutation !== null &&
+        !("corrupt" in existingReceiptBeforeMutation) &&
+        existingReceiptBeforeMutation.row.state === "installed";
+
       return buildResult({
         jobId,
         workspaceId,
@@ -881,7 +903,7 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
         mutationAttempted: false,
         mutationPerformed: false,
         receiptId: receipt.receiptId(osStore, fingerprintSha256),
-        receiptState: "missing",
+        receiptState: hasFinalizedOwnInstall ? "finalized" : "missing",
         now,
       });
     }
