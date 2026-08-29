@@ -639,6 +639,36 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.equal(persisted.row.state, "pending_install");
   });
 
+  it("retries the trust-refresh command when a prior attempt left pending_install and the anchor file is already on disk", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    const failExec = makeFakeExecFile({ succeed: false });
+    const succeedExec = makeFakeExecFile({ succeed: true });
+
+    const first = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: failExec },
+    });
+    assert.equal(first.failureCategory, "os_mutation_failed");
+    assert.equal(failExec.calls.length, 1);
+
+    const second = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl: succeedExec },
+    });
+    assert.equal(second.outcome, "installed");
+    assert.equal(second.mutationPerformed, true);
+    assert.equal(succeedExec.calls.length, 1);
+    assert.equal(succeedExec.calls[0][0], trustStore.DEBIAN_UPDATE_COMMAND);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "installed");
+  });
+
   it("reports RECEIPT_WRITE_CONFLICT when the intent write itself fails, with no mutation ever attempted (real mkdirSync fault, not a stubbed return)", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});

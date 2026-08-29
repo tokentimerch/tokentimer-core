@@ -851,26 +851,39 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
         });
   const isPresent = family === "windows" ? presence.found : presence.present === true;
 
+  const existingReceiptBeforeMutation = receipt.readReceipt(receiptDir, osStore, fingerprintSha256);
+
   if (isPresent) {
-    // Idempotent install: no mutation, outcome `preexisting`, no receipt
-    // write (an anchor this agent didn't install has no ownership to record).
-    return buildResult({
-      jobId,
-      workspaceId,
-      agentId,
-      trustAnchorId,
-      action: "distribute-trust",
-      transitionGeneration,
-      store,
-      observedFingerprintBefore: fingerprintSha256,
-      observedFingerprintAfter: fingerprintSha256,
-      outcome: "preexisting",
-      mutationAttempted: false,
-      mutationPerformed: false,
-      receiptId: receipt.receiptId(osStore, fingerprintSha256),
-      receiptState: "missing",
-      now,
-    });
+    const hasIncompleteOwnInstall =
+      existingReceiptBeforeMutation !== null &&
+      !("corrupt" in existingReceiptBeforeMutation) &&
+      existingReceiptBeforeMutation.row.state === "pending_install";
+
+    if (!hasIncompleteOwnInstall) {
+      // Idempotent install: no mutation, outcome `preexisting`, no receipt
+      // write (an anchor this agent didn't install has no ownership to record).
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "distribute-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: fingerprintSha256,
+        observedFingerprintAfter: fingerprintSha256,
+        outcome: "preexisting",
+        mutationAttempted: false,
+        mutationPerformed: false,
+        receiptId: receipt.receiptId(osStore, fingerprintSha256),
+        receiptState: "missing",
+        now,
+      });
+    }
+    // Fall through: our own prior attempt wrote the anchor file but the
+    // trust-refresh command failed, so the fingerprint is visible while the
+    // bundle may still be stale. Retry write + refresh instead of reporting
+    // preexisting.
   }
 
   const intentAttempt = tryReceiptStep(() =>
@@ -881,11 +894,11 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
       jobId,
       transitionGeneration,
       intentState: "pending_install",
-      // isPresent just proved this fingerprint is NOT in the OS store, so any
-      // stale pending_install receipt from a different, dead job on this exact
-      // (store, fingerprint) never reached the OS either - safe to reclaim.
-      // Without this, a crash between intent-write and OS mutation would
-      // permanently block later distribute-trust jobs for that fingerprint.
+      // When the fingerprint is absent, any stale pending_install receipt from
+      // a different, dead job on this exact (store, fingerprint) never reached
+      // the OS either - safe to reclaim. When we fell through because our own
+      // prior attempt wrote the file but the trust-refresh command failed,
+      // reclaimStalePending allows the same job to retry the intent write.
       reclaimStalePending: true,
       now,
     }),

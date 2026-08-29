@@ -425,6 +425,62 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     );
   });
 
+  it("replaying the same idempotencyKey does not touch last_attempt_at or last_error", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const key = `replay-side-effects-${crypto.randomUUID()}`;
+
+    const first = await createTrustJob(
+      distributeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    const staleAttemptAt = new Date("2020-01-01T00:00:00.000Z");
+    await TestUtils.execQuery(
+      `UPDATE certops_trust_anchor_installations
+          SET last_attempt_at = $2,
+              last_error = $3
+        WHERE id = $1`,
+      [first.installation.id, staleAttemptAt, "prior failure"],
+    );
+
+    const beforeReplay = await getInstallationById(first.installation.id);
+    expect(beforeReplay.last_attempt_at.toISOString()).to.equal(
+      staleAttemptAt.toISOString(),
+    );
+    expect(beforeReplay.last_error).to.equal("prior failure");
+
+    const second = await createTrustJob(
+      distributeOptions({ anchor, agent, idempotencyKey: key }),
+    );
+    expect(second.created).to.equal(false);
+
+    const afterReplay = await getInstallationById(first.installation.id);
+    expect(afterReplay.last_attempt_at.toISOString()).to.equal(
+      staleAttemptAt.toISOString(),
+    );
+    expect(afterReplay.last_error).to.equal("prior failure");
+  });
+
+  it("re-approving the same fingerprint updates anchor_type when the caller submits a different type", async () => {
+    const pem = trustAnchorPemFor(0);
+    const first = await createTrustAnchor({
+      workspaceId,
+      name: "Root CA",
+      anchorType: "root",
+      pem,
+      createdByUserId: ownerId,
+    });
+    const second = await createTrustAnchor({
+      workspaceId,
+      name: "Same cert, intermediate type",
+      anchorType: "intermediate",
+      pem,
+      createdByUserId: ownerId,
+    });
+
+    expect(second.id).to.equal(first.id);
+    expect(second.anchorType).to.equal("intermediate");
+  });
+
   it("requires idempotencyKey (rejects, does not merely accept omission)", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
@@ -865,6 +921,52 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       ownerBOutcome.installation.id,
     );
     expect(finalOwnerBRow.transition_state).to.equal("pending_remove");
+  });
+
+  it("revoke-trust for a preexisting installation releases the reference without dispatching an agent job", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+
+    const distributeOutcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `preexisting-revoke-dist-${crypto.randomUUID()}`,
+      }),
+    );
+    const distributeJob = await getJobRow(distributeOutcome.job.id);
+    const distributeInstallation = await getInstallationById(
+      distributeOutcome.installation.id,
+    );
+    await withTx((client) =>
+      ingestTrustJobResult({
+        client,
+        job: distributeJob,
+        result: buildResult({
+          job: distributeJob,
+          installationRow: distributeInstallation,
+          outcome: "preexisting",
+        }),
+      }),
+    );
+
+    const installedRow = await getInstallationById(distributeOutcome.installation.id);
+    expect(installedRow.transition_state).to.equal("installed");
+    expect(installedRow.provenance).to.equal("preexisting");
+
+    const revokeOutcome = await createTrustJob(
+      revokeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `preexisting-revoke-${crypto.randomUUID()}`,
+      }),
+    );
+
+    expect(revokeOutcome.skippedOsMutation).to.equal(true);
+    expect(revokeOutcome.job).to.equal(null);
+
+    const removedRow = await getInstallationById(distributeOutcome.installation.id);
+    expect(removedRow.transition_state).to.equal("removed");
   });
 
   it("does not short-circuit (and does not orphan a certificate) when the only other reference is still pending_install (D1 fix)", async () => {

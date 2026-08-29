@@ -402,6 +402,8 @@ async function createTrustAnchor(options = {}) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
      ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE SET
        name = EXCLUDED.name,
+       pem = EXCLUDED.pem,
+       anchor_type = EXCLUDED.anchor_type,
        -- Re-approving reactivates: re-submitting a retired anchor's PEM
        -- means it should accept new distributions again.
        status = 'active',
@@ -971,6 +973,55 @@ async function runCreateTrustJob(client, params) {
     }
   }
 
+  if (operation === "revoke-trust" && installationRow.provenance === "preexisting") {
+    // TokenTimer never installed this material (distribute reported
+    // outcome:"preexisting"), so the agent has no ownership receipt.
+    // Release the bookkeeping reference without dispatching a revoke job
+    // that would fail with receipt_missing while leaving the OS cert alone.
+    const releasedRow = await client.query(
+      `UPDATE certops_trust_anchor_installations
+          SET transition_state = 'removed',
+              transition_generation = transition_generation + 1,
+              last_attempt_at = NOW(),
+              last_error = NULL,
+              next_reconcile_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING ${INSTALLATION_SELECT_FIELDS}`,
+      [installationRow.id],
+    );
+    const releasedInstallation = installationFromRow(releasedRow.rows[0]);
+
+    await writeAudit({
+      client,
+      actorUserId: requestedByUserId,
+      subjectUserId: requestedByUserId,
+      action: "CERTOPS_TRUST_REFERENCE_RELEASED",
+      targetType: "certops_trust_anchor_installation",
+      targetId: releasedInstallation.id,
+      workspaceId,
+      metadata: {
+        trustAnchorId: anchor.id,
+        anchorName: anchor.name,
+        fingerprintSha256: anchor.fingerprint_sha256,
+        agentId,
+        store,
+        host: releasedInstallation.host,
+        owner,
+        transitionGeneration: releasedInstallation.transitionGeneration,
+        provenance: "preexisting",
+      },
+    });
+
+    return {
+      job: null,
+      created: false,
+      skippedOsMutation: true,
+      transitionGeneration: releasedInstallation.transitionGeneration,
+      installation: releasedInstallation,
+    };
+  }
+
   const nextTransitionState =
     operation === "distribute-trust" ? "pending_install" : "pending_remove";
   const nextReconcileAt = new Date(Date.now() + DEFAULT_RECONCILE_DELAY_MS);
@@ -1066,6 +1117,8 @@ async function runCreateTrustJob(client, params) {
           SET transition_state = $2,
               transition_generation = $3,
               next_reconcile_at = $4,
+              last_attempt_at = $5,
+              last_error = $6,
               updated_at = NOW()
         WHERE id = $1`,
       [
@@ -1073,6 +1126,8 @@ async function runCreateTrustJob(client, params) {
         installationRow.transition_state,
         installationRow.transition_generation,
         installationRow.next_reconcile_at,
+        installationRow.last_attempt_at,
+        installationRow.last_error,
       ],
     );
     // The row was restored to the original generation, and this
