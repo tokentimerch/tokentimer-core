@@ -804,6 +804,61 @@ async function countOtherLiveReferences({
 // scoped to exactly the two call sites that need it is far less invasive
 // for the size of this fix, at the cost of the two idempotency records
 // living in different tables.
+//
+// Two independent tables sharing one raw caller-supplied idempotencyKey
+// namespace is exactly the collision this file must not allow: neither
+// createCertificateJob's own (workspace_id, idempotency_key) lookup nor
+// this ledger's lookup ever consults the other table, so a caller who
+// (accidentally or not) reuses the same raw key for two DIFFERENT logical
+// requests could otherwise have it "belong" to two unrelated rows at once
+// - e.g. a revoke-trust no-job release for one (trustAnchorId, agentId,
+// store, owner) tuple recorded here under key K, and a distribute-trust
+// (or a revoke-trust for a completely different tuple) creating a real
+// certificate_jobs row under the very same key K, since distribute-trust
+// never even queries this ledger and a different tuple never matches the
+// tuple-check below. Depending on call order this either goes undetected
+// (two unrelated records silently both "own" K) or actively breaks a
+// legitimate replay of the FIRST call (a later, unrelated write into
+// whichever table wasn't touched first now answers with the wrong
+// record, or throws CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT for a request
+// that already succeeded).
+//
+// deriveTrustJobIdempotencyKey closes this by deriving the actual storage/
+// lookup key from the caller-supplied idempotencyKey PLUS the operation
+// and the full target tuple, the same "namespace the raw key so unrelated
+// requests can never collide" idiom routes/certops.js's own
+// bulkRenewItemIdempotencyKey already uses for bulk-renew items. The
+// caller-supplied key remains authoritative for retries of the EXACT SAME
+// call (same operation, same trustAnchorId/agentId/store/owner, same raw
+// key always derives the same storage key, so a true replay still hits
+// the same ledger row or the same certificate_jobs row), while two
+// requests that only share the raw key - but differ in operation or in
+// any part of the target tuple - always derive two different storage
+// keys and can never collide, in either table, regardless of call order.
+// Hashed (rather than a readable composed string like bulk-renew's)
+// because owner alone may be up to 128 characters and the caller-supplied
+// idempotencyKey is unbounded by this file's own normalizeIdempotencyKey,
+// so a readable concatenation could not be kept under certificate_jobs'
+// 128-character idempotency_key column.
+function deriveTrustJobIdempotencyKey({
+  operation,
+  trustAnchorId,
+  agentId,
+  store,
+  owner,
+  idempotencyKey,
+}) {
+  const canonical = JSON.stringify([
+    operation,
+    String(trustAnchorId),
+    String(agentId),
+    store,
+    owner,
+    idempotencyKey,
+  ]);
+  const digest = createHash("sha256").update(canonical, "utf8").digest("hex");
+  return `trust:${digest}`;
+}
 
 async function findTrustReferenceReleaseIdempotencyRecord({
   client,
@@ -1045,6 +1100,19 @@ async function runCreateTrustJob(client, params) {
   // agent echoes back can never disagree.
   const store = normalizeStore(resolveTrustAnchorStoreLabel(anchor.anchor_type));
 
+  // The actual storage/lookup key for every idempotency check below (both
+  // the no-job ledger and certificate_jobs itself): see
+  // deriveTrustJobIdempotencyKey's own header comment for why the raw
+  // caller-supplied idempotencyKey alone is never used directly.
+  const scopedIdempotencyKey = deriveTrustJobIdempotencyKey({
+    operation,
+    trustAnchorId,
+    agentId,
+    store,
+    owner,
+    idempotencyKey,
+  });
+
   // Without this check, a nonexistent/unregistered agentId skipped straight
   // to lockOrCreateInstallation's INSERT and surfaced as a raw Postgres
   // error (invalid UUID syntax or an FK violation on
@@ -1081,13 +1149,15 @@ async function runCreateTrustJob(client, params) {
   if (operation === "revoke-trust") {
     // Idempotent replay for the two "no real job" release branches below
     // (see the certops_trust_reference_release_idempotency migration and
-    // its header comment). Checked by idempotencyKey alone, then verified
-    // against the tuple this call is targeting, mirroring
+    // its header comment). Checked by the scoped idempotency key (which
+    // already binds the operation and the full target tuple, so it can
+    // only ever match a record this exact call could have written), then
+    // re-verified against the tuple as defense-in-depth, mirroring
     // createCertificateJob's own idempotency-key-then-hash-match shape.
     const existingRelease = await findTrustReferenceReleaseIdempotencyRecord({
       client,
       workspaceId,
-      idempotencyKey,
+      idempotencyKey: scopedIdempotencyKey,
     });
     if (existingRelease) {
       const matchesTuple =
@@ -1128,7 +1198,7 @@ async function runCreateTrustJob(client, params) {
         `SELECT 1 FROM certificate_jobs
           WHERE workspace_id = $1 AND idempotency_key = $2
           LIMIT 1`,
-        [workspaceId, idempotencyKey],
+        [workspaceId, scopedIdempotencyKey],
       );
       if (!dispatchedJobForKey.rows[0]) {
         throw trustAnchorError(
@@ -1196,7 +1266,7 @@ async function runCreateTrustJob(client, params) {
         store,
         owner,
         operation,
-        idempotencyKey,
+        idempotencyKey: scopedIdempotencyKey,
         installation: releasedInstallation,
       });
 
@@ -1258,7 +1328,7 @@ async function runCreateTrustJob(client, params) {
       store,
       owner,
       operation,
-      idempotencyKey,
+      idempotencyKey: scopedIdempotencyKey,
       installation: releasedInstallation,
     });
 
@@ -1310,7 +1380,16 @@ async function runCreateTrustJob(client, params) {
     subjectType: "trust_anchor",
     subjectId: anchor.id,
     payload,
-    idempotencyKey,
+    // Scoped, not the raw caller-supplied idempotencyKey: see
+    // deriveTrustJobIdempotencyKey's header comment. certificate_jobs'
+    // (workspace_id, idempotency_key) unique index and creation_request_
+    // hash replay check both operate on this scoped value, so a caller
+    // reusing the same raw key for a distribute-trust and a revoke-trust
+    // (or for two different revoke-trust tuples) can never collide here,
+    // while a genuine retry of this exact call (same operation + same
+    // tuple + same raw key) still derives the identical scoped key and
+    // replays correctly.
+    idempotencyKey: scopedIdempotencyKey,
 
     assignedAgentId: agentId,
     executorKind: "agent",
@@ -1967,6 +2046,7 @@ module.exports = {
   normalizeAgentId,
   assertTargetAgentRegistered,
   normalizeIdempotencyKey,
+  deriveTrustJobIdempotencyKey,
   createTrustJob,
   manualTrustJobCreator,
   onTrustJobTerminalTransition,
