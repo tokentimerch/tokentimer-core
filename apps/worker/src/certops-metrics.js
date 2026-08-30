@@ -73,3 +73,14 @@ export const gCertopsTrustAnchorReconciliation = new client.Gauge({
   labelNames: ["outcome"],
   registers: [metricsRegister],
 });
+
+/**
+ * Which sweeps in a runIsolated results object ended "failed". "skipped" means
+ * an operator disabled the sweep, so it must never turn a CronJob run red.
+ * Kept here, dependency-free, so it is testable without the worker's I/O.
+ */
+export function identifyFailedSweeps(results) {
+  return Object.entries(results || {})
+    .filter(([, sweepResult]) => sweepResult?.status === "failed")
+    .map(([key]) => key);
+}
