@@ -631,6 +631,23 @@ async function fenceAgentInFlightWork(options) {
   ];
   for (const group of fencedGroups) {
     for (const row of group.rows) {
+      // ADR-0012 decision 20b: a trust-anchor job force-cancelled by agent
+      // retirement unwinds like an approval rejection would.
+      // orphaned_unknown_effect is excluded: a force-retired running job's
+      // real-world effect is genuinely unknown, so it's surfaced for
+      // operator reconciliation rather than resolved either way.
+      //
+      // Required lazily: trustAnchors.js -> jobs.js -> agentJobEligibility.js
+      // -> this module (for certopsCapabilityFreshnessMs). A top-level
+      // require here would close that into a real circular dependency.
+      if (group.status === "cancelled") {
+        // eslint-disable-next-line global-require -- see comment above
+        const { onTrustJobTerminalTransition } = require("./trustAnchors");
+        await onTrustJobTerminalTransition({
+          client: db,
+          job: { ...row, status: group.status },
+        });
+      }
       const classification = classifyTerminalTransition({
         operation: row.operation,
         status: group.status,

@@ -518,6 +518,46 @@ test("reportResult: omits claimId and nonce entirely when null or absent (schema
   }
 });
 
+test("reportResult: forwards trustResult in the body when provided, omits it entirely otherwise", async () => {
+  const calls = stubFetch([
+    { status: 202, json: { accepted: true } },
+    { status: 202, json: { accepted: true } },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-1_secret",
+  });
+
+  const trustResult = {
+    jobId: "job-1",
+    workspaceId: "ws-1",
+    agentId: "agent-1",
+    trustAnchorId: "anchor-1",
+    action: "distribute-trust",
+    transitionGeneration: 2,
+    store: "root",
+    outcome: "installed",
+  };
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "succeeded",
+    trustResult,
+  });
+  await client.reportResult({
+    jobId: "job-2",
+    attemptId: "attempt-2",
+    status: "succeeded",
+  });
+
+  assert.deepEqual(calls[0].parsedBody.body.trustResult, trustResult);
+  assert.equal("trustResult" in calls[1].parsedBody.body, false);
+});
+
 test("reportEvidence: sends correct envelope shape (messageType + evidenceBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 

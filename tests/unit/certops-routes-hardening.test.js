@@ -162,6 +162,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/tokens",
       "GET /api/v1/workspaces/:id/certops/settings",
       "GET /api/v1/workspaces/:id/certops/targets",
+      "GET /api/v1/workspaces/:id/certops/trust-anchors",
       "PATCH /api/v1/workspaces/:id/certops/agents/:agentId/alert-settings",
       "PATCH /api/v1/workspaces/:id/certops/profiles/:profileId",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
@@ -180,6 +181,8 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
+      "POST /api/v1/workspaces/:id/certops/trust-anchors",
+      "POST /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/retire",
       "PUT /api/v1/workspaces/:id/certops/settings",
     ].sort());
 

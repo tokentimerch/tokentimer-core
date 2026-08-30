@@ -3408,6 +3408,151 @@ const migrations = [
       ON CONFLICT (agent_id) DO NOTHING;
     `,
   },
+  {
+    version: 48,
+    name: "certops_trust_anchor_installation_agent_linkage",
+    sql: `
+      -- ADR-0012 decision 20: migration 43's installation row identified
+      -- itself by free-text (host, store, fingerprint, owner) alone, with
+      -- no link to the certops_agents row that holds it or the job that
+      -- last dispatched a transition against it. That can't distinguish a
+      -- legitimate concurrent transition from a crashed one, and gives a
+      -- reconciliation sweep no fleet row to dispatch against.
+      --
+      -- Precondition: this table has no write path anywhere in the
+      -- codebase yet, so it must be empty in any real deployment. Asserted
+      -- rather than assumed (matching migration 47's guard style): a NOT
+      -- NULL FK added onto a populated table would otherwise silently
+      -- backfill every row under a fabricated agent_id/provenance value.
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM certops_trust_anchor_installations) THEN
+          RAISE EXCEPTION
+            'certops_trust_anchor_installations must be empty before agent_id can be added NOT NULL: found existing rows';
+        END IF;
+      END
+      $$;
+
+      -- agent_id replaces host as the installation's join key. host stays
+      -- as a display/audit snapshot only, and drops out of the uniqueness
+      -- tuple below. Added nullable, then tightened to NOT NULL in the
+      -- same migration (gated by the emptiness check above).
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS agent_id UUID NULL;
+      ALTER TABLE certops_trust_anchor_installations
+        ALTER COLUMN agent_id SET NOT NULL;
+      ALTER TABLE certops_trust_anchor_installations
+        DROP CONSTRAINT IF EXISTS fk_certops_trust_anchor_installations_agent;
+      ALTER TABLE certops_trust_anchor_installations
+        ADD CONSTRAINT fk_certops_trust_anchor_installations_agent
+        FOREIGN KEY (workspace_id, agent_id)
+        REFERENCES certops_agents(workspace_id, id)
+        ON DELETE CASCADE;
+      -- Immutable after insert: enforced in services (migration 27's
+      -- executor_kind precedent), not by a DB trigger. Reassigning
+      -- ownership to a different agent is a new row, never an UPDATE here.
+
+      -- One unique row per (agent, store, fingerprint, owner), replacing
+      -- migration 43's (host, store, fingerprint, owner) tuple.
+      DROP INDEX IF EXISTS uq_certops_trust_anchor_installations_identity;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchor_installations_identity
+        ON certops_trust_anchor_installations(workspace_id, agent_id, store, fingerprint_sha256, owner);
+
+      -- Linkage to the certops job that last touched this row. Nullable: a
+      -- row can exist before any job has ever been dispatched against it.
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS last_job_id UUID NULL;
+      ALTER TABLE certops_trust_anchor_installations
+        DROP CONSTRAINT IF EXISTS fk_certops_trust_anchor_installations_last_job;
+      ALTER TABLE certops_trust_anchor_installations
+        ADD CONSTRAINT fk_certops_trust_anchor_installations_last_job
+        FOREIGN KEY (workspace_id, last_job_id)
+        REFERENCES certificate_jobs(workspace_id, id)
+        ON DELETE SET NULL (last_job_id);
+
+      -- Idempotency and stale-result rejection (decision 20c/20e): each
+      -- dispatched transition is stamped with the generation it was
+      -- created for; a job result may only advance that same generation.
+      -- DEFAULT 1 means "row created, nothing dispatched yet";
+      -- runCreateTrustJob bumps this on every job it creates, so a row's
+      -- first dispatched transition actually carries generation 2.
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS transition_generation INTEGER NOT NULL DEFAULT 1
+          CHECK (transition_generation >= 1);
+
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ NULL;
+
+      -- Sanitized failure category only, never raw exception text or a
+      -- stack trace: diagnostic metadata, not an error log.
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS last_error TEXT NULL
+          CHECK (last_error IS NULL OR char_length(last_error) <= 128);
+
+      -- Reconciliation-sweep scheduling (decision 20f/20h): when a pending
+      -- row is next due for revalidation. NULL means not currently scheduled.
+      ALTER TABLE certops_trust_anchor_installations
+        ADD COLUMN IF NOT EXISTS next_reconcile_at TIMESTAMPTZ NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_agent
+        ON certops_trust_anchor_installations(workspace_id, agent_id);
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_last_job
+        ON certops_trust_anchor_installations(workspace_id, last_job_id)
+        WHERE last_job_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_next_reconcile
+        ON certops_trust_anchor_installations(next_reconcile_at)
+        WHERE next_reconcile_at IS NOT NULL;
+    `,
+  },
+  {
+    version: 49,
+    name: "certops_trust_reference_release_idempotency",
+    sql: `
+      -- runCreateTrustJob's two "no real job" revoke-trust branches
+      -- (otherLiveReferences > 0, and provenance = 'preexisting') mutate the
+      -- installation row and write an audit event, then return before
+      -- createCertificateJob ever runs - so the idempotency machinery on
+      -- certificate_jobs (idempotency_key + creation_request_hash, migration
+      -- 20/37) never sees these calls at all. Without a durable record of
+      -- our own, a caller retrying the exact same idempotencyKey re-bumps
+      -- transition_generation and re-writes the audit event on every retry,
+      -- and a late-enough retry can even fall through into a different
+      -- branch entirely once the state it originally observed has changed.
+      --
+      -- This table is a small, purpose-built idempotency ledger for those
+      -- two branches only: one row per (workspace, idempotencyKey), storing
+      -- the installation snapshot the ORIGINAL call returned so a replay can
+      -- return the identical response without touching the installation row
+      -- or writing another audit event. See
+      -- recordTrustReferenceReleaseIdempotency /
+      -- findTrustReferenceReleaseIdempotencyRecord in trustAnchors.js.
+      CREATE TABLE IF NOT EXISTS certops_trust_reference_release_idempotency (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        trust_anchor_id UUID NOT NULL,
+        agent_id UUID NOT NULL,
+        store TEXT NOT NULL
+          CHECK (store ~ '^[A-Za-z0-9 _.-]{1,64}$'),
+        owner TEXT NOT NULL
+          CHECK (char_length(btrim(owner)) BETWEEN 1 AND 128),
+        -- Reserved for future no-job branches; only 'revoke-trust' is
+        -- written today.
+        operation TEXT NOT NULL
+          CHECK (operation IN ('distribute-trust', 'revoke-trust')),
+        idempotency_key TEXT NOT NULL
+          CHECK (char_length(idempotency_key) BETWEEN 1 AND 255),
+        installation_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      -- One outcome per (workspace, idempotencyKey): a replay looks itself
+      -- up by key alone, then verifies the tuple below still matches before
+      -- trusting the cached snapshot.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_reference_release_idempotency_key
+        ON certops_trust_reference_release_idempotency(workspace_id, idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_certops_trust_reference_release_idempotency_tuple
+        ON certops_trust_reference_release_idempotency(workspace_id, trust_anchor_id, agent_id, store, owner);
+    `,
+  },
 ];
 
 async function runMigrations() {

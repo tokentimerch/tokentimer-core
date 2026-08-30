@@ -107,22 +107,18 @@ const DEFAULT_WINDOWS_DISCOVERY_STORES = Object.freeze(["My"]);
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
 const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
-// ADR-0012 decision 3, step 3/4 of the agentId rollout. Governs ONLY the
-// compatibility decoder's tolerance for a signed job missing agentId
-// entirely; it has zero effect on a present-but-mismatched agentId (always
-// fails closed) and zero effect on the control-plane producer schema
-// (already unconditionally required). See docs/CONFIGURATION.md for the
-// operator guidance on when it is safe to flip this to true.
+// ADR-0012 decision 3, step 4 of the agentId rollout: fails closed by
+// default now. Governs ONLY the compatibility decoder's tolerance for a
+// signed job missing agentId entirely (a present-but-mismatched agentId
+// always fails closed regardless). Operators can still override to `false`
+// as a temporary rollback for a control plane not yet emitting agentId on
+// every dispatch; see docs/CONFIGURATION.md.
 //
-// SUNSET: this flag (and the absence-tolerant decoder branch it gates, see
-// packages/agent/src/signing/index.js's checkAgentIdBinding) exists only to
-// bridge a control plane that has not yet completed step 1 of the rollout
-// above. Flip the compiled-in default here to `true` once step 1 has been
-// deployed and confirmed fleet-wide (targets 0.12.0); remove the flag and
-// the absence-tolerant branch entirely one release after that (0.14.0 or
-// later), once no fleet still needs the override back to `false`. Do not
-// remove on a calendar date alone -- only once both conditions hold.
-const DEFAULT_REQUIRE_SIGNED_AGENT_ID = false;
+// SUNSET: this flag, and the absence-tolerant decoder branch it gates
+// (packages/agent/src/signing/index.js's checkAgentIdBinding), are slated
+// for removal once no fleet needs the `false` rollback anymore. Do not
+// remove on a calendar date alone.
+const DEFAULT_REQUIRE_SIGNED_AGENT_ID = true;
 const KEYS_DIR_NAME = "keys";
 const REPLAY_STORE_FILE_NAME = "replay-store.json";
 const OUTBOX_DIR_NAME = "outbox";

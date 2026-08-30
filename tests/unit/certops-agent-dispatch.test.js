@@ -43,6 +43,7 @@ function createMockPool(handler) {
     released: false,
     transaction: [],
     audits: [],
+    jobLogs: [],
   };
   const client = {
     query: async (text, params) => {
@@ -70,6 +71,21 @@ function createMockPool(handler) {
           targetId: params[4],
           metadata: params[6],
           workspaceId: params[7],
+        });
+        return { rows: [] };
+      }
+      // Same rationale as audit_events above: absorbed centrally so every
+      // existing ingestResult test doesn't need its own branch, while still
+      // proving the job-log row is written on the same ingesting
+      // transaction's client (Bug 2 regression coverage below reads this).
+      if (sql.includes("INSERT INTO certificate_job_log")) {
+        state.jobLogs.push({
+          workspaceId: params[0],
+          jobId: params[1],
+          eventType: params[2],
+          status: params[3],
+          message: params[4],
+          metadata: params[5] ? JSON.parse(params[5]) : null,
         });
         return { rows: [] };
       }
@@ -2590,5 +2606,285 @@ describe("agentDispatch.ingestResult", () => {
 
     assert.equal(result.status, "succeeded");
     assert.deepEqual(queryOrder, ["agent-lock", "job-lock"]);
+  });
+
+  describe("result_metadata / certificate_job_log population (Bug 2: every real agent result used to leave both at their insert-time defaults)", () => {
+    it("populates result_metadata from the generic resultBody fields and writes a certificate_job_log row on failure", async () => {
+      let updateParams = null;
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FOR UPDATE")) {
+          return {
+            rows: [lockedJobRow({ status: "running", mode: "real", operation: "deploy" })],
+          };
+        }
+        if (sql.includes("UPDATE certificate_jobs")) {
+          updateParams = params;
+          return {
+            rows: [
+              {
+                id: 42,
+                status: "failed",
+                error_code: params[2],
+                completed_at: new Date("2026-07-22T10:20:00.000Z"),
+                needs_operator_reconciliation: false,
+                reconciliation_reason: null,
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      const result = await ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({
+          status: "failed",
+          errorMessage: "deploy step failed",
+          rejectionReason: "TARGET_UNREACHABLE",
+          keyRotated: false,
+        }),
+        deps: { consumeNonce: async () => ({ consumed: true }) },
+      });
+
+      assert.equal(result.status, "failed");
+      // $7 is result_metadata in the UPDATE certificate_jobs SET list above.
+      const persistedMetadata = JSON.parse(updateParams[6]);
+      assert.equal(persistedMetadata.rejectionReason, "TARGET_UNREACHABLE");
+      assert.equal(persistedMetadata.keyRotated, false);
+      // No trustResult on a deploy job: no trust-anchor fields invented.
+      assert.equal("outcome" in persistedMetadata, false);
+
+      assert.equal(dbPool.state.jobLogs.length, 1);
+      const [jobLog] = dbPool.state.jobLogs;
+      assert.equal(jobLog.workspaceId, WORKSPACE_A);
+      assert.equal(jobLog.jobId, 42);
+      assert.equal(jobLog.eventType, "job.failed");
+      assert.equal(jobLog.status, "failed");
+      assert.match(jobLog.message, /deploy step failed/);
+      assert.equal(jobLog.metadata.agentId, "agent-01");
+      assert.equal(jobLog.metadata.errorCode, "TARGET_UNREACHABLE");
+      assert.equal(jobLog.metadata.rejectionReason, "TARGET_UNREACHABLE");
+      assert.equal(jobLog.metadata.keyRotated, false);
+    });
+
+    it("populates result_metadata with trust-result fields and writes a certificate_job_log row for a failed distribute-trust result", async () => {
+      // A terminal-negative status is used here (rather than "succeeded") so
+      // this test does not depend on ingestTrustJobResult, which is not an
+      // injectable dependency of ingestResult; result_metadata/job_log
+      // population happens from body.trustResult before that branch runs,
+      // so it applies identically regardless of the terminal outcome.
+      let updateParams = null;
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FROM certops_agents") && sql.includes("FOR UPDATE")) {
+          return { rows: [{ id: "agent-row-1" }] };
+        }
+        if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) {
+          return {
+            rows: [
+              lockedJobRow({
+                status: "running",
+                mode: "real",
+                operation: "distribute-trust",
+              }),
+            ],
+          };
+        }
+        if (sql.includes("UPDATE certificate_jobs")) {
+          updateParams = params;
+          return {
+            rows: [
+              {
+                id: 42,
+                status: "failed",
+                error_code: params[2],
+                completed_at: new Date("2026-07-22T10:20:00.000Z"),
+                needs_operator_reconciliation: false,
+                reconciliation_reason: null,
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes("FROM certops_trust_anchor_installations") &&
+          sql.includes("FOR UPDATE")
+        ) {
+          // unwindTerminalTrustJob's own lock query, reached via
+          // onTrustJobTerminalTransition for the terminal-negative status
+          // used here; no installation row for this test's synthetic job.
+          return { rows: [] };
+        }
+        if (
+          sql.includes("SELECT provenance") &&
+          sql.includes("certops_trust_anchor_installations")
+        ) {
+          return { rows: [{ provenance: "api" }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      const trustResult = {
+        outcome: "install_failed",
+        mutationAttempted: true,
+        mutationPerformed: false,
+        failureCategory: "permission_denied",
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        store: "root",
+        transitionGeneration: 3,
+      };
+
+      const result = await ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({
+          status: "failed",
+          errorMessage: "agent could not write to the trust store",
+          trustResult,
+        }),
+        deps: {
+          consumeNonce: async () => ({ consumed: true }),
+          enforceAgentSequence: async () => {},
+        },
+      });
+
+      assert.equal(result.status, "failed");
+      const persistedMetadata = JSON.parse(updateParams[6]);
+      assert.equal(persistedMetadata.outcome, "install_failed");
+      assert.equal(persistedMetadata.mutationPerformed, false);
+      assert.equal(persistedMetadata.failureCategory, "permission_denied");
+      assert.equal(persistedMetadata.store, "root");
+      assert.equal(persistedMetadata.transitionGeneration, 3);
+
+      assert.equal(dbPool.state.jobLogs.length, 1);
+      const [jobLog] = dbPool.state.jobLogs;
+      assert.equal(jobLog.eventType, "job.failed");
+      assert.equal(jobLog.status, "failed");
+      assert.equal(jobLog.metadata.outcome, "install_failed");
+      assert.equal(jobLog.metadata.failureCategory, "permission_denied");
+    });
+  });
+
+  describe("CERTOPS_JOB_FAILED audit symmetry with the success path (Bug 3)", () => {
+    it("includes the same trust-result fields the success-path audit already carries, plus provenance read from the installation row", async () => {
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FROM certops_agents") && sql.includes("FOR UPDATE")) {
+          return { rows: [{ id: "agent-row-1" }] };
+        }
+        if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) {
+          return {
+            rows: [
+              lockedJobRow({
+                status: "running",
+                mode: "real",
+                operation: "distribute-trust",
+              }),
+            ],
+          };
+        }
+        if (sql.includes("UPDATE certificate_jobs")) {
+          return {
+            rows: [
+              {
+                id: 42,
+                status: "failed",
+                error_code: params[2],
+                completed_at: new Date("2026-07-22T10:20:00.000Z"),
+                needs_operator_reconciliation: false,
+                reconciliation_reason: null,
+              },
+            ],
+          };
+        }
+        if (
+          sql.includes("FROM certops_trust_anchor_installations") &&
+          sql.includes("FOR UPDATE")
+        ) {
+          return { rows: [] };
+        }
+        if (
+          sql.includes("SELECT provenance") &&
+          sql.includes("certops_trust_anchor_installations")
+        ) {
+          return { rows: [{ provenance: "system" }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      const trustResult = {
+        outcome: "install_failed",
+        mutationAttempted: true,
+        mutationPerformed: false,
+        failureCategory: "permission_denied",
+        observedFingerprintBefore: "11:22:33",
+        observedFingerprintAfter: null,
+      };
+
+      await ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({
+          status: "failed",
+          errorMessage: "agent could not write to the trust store",
+          trustResult,
+        }),
+        deps: {
+          consumeNonce: async () => ({ consumed: true }),
+          enforceAgentSequence: async () => {},
+        },
+      });
+
+      assert.equal(dbPool.state.audits.length, 1);
+      const [audit] = dbPool.state.audits;
+      assert.equal(audit.action, "CERTOPS_JOB_FAILED");
+      // Same fields the success-path CERTOPS_TRUST_ANCHOR_DISTRIBUTED/REVOKED
+      // audit above already carries, so the two paths are symmetric.
+      assert.equal(audit.metadata.outcome, "install_failed");
+      assert.equal(audit.metadata.mutationPerformed, false);
+      assert.equal(audit.metadata.failureCategory, "permission_denied");
+      assert.equal(audit.metadata.observedFingerprintBefore, "11:22:33");
+      assert.equal(audit.metadata.observedFingerprintAfter, null);
+      assert.equal(audit.metadata.provenance, "system");
+    });
+
+    it("falls back to null (never invents a value) for trust-result fields a non-trust-anchor job's body never reports", async () => {
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FOR UPDATE")) {
+          return {
+            rows: [lockedJobRow({ status: "running", mode: "real", operation: "deploy" })],
+          };
+        }
+        if (sql.includes("UPDATE certificate_jobs")) {
+          return {
+            rows: [
+              {
+                id: 42,
+                status: "failed",
+                error_code: params[2],
+                completed_at: new Date(),
+                needs_operator_reconciliation: false,
+                reconciliation_reason: null,
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      await ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({ status: "failed", errorMessage: "deploy step failed" }),
+        deps: { consumeNonce: async () => ({ consumed: true }) },
+      });
+
+      assert.equal(dbPool.state.audits.length, 1);
+      const [audit] = dbPool.state.audits;
+      assert.equal(audit.action, "CERTOPS_JOB_FAILED");
+      // deploy is not a trust-anchor operation: no trustResultAuditFields at
+      // all should be merged in, matching pre-fix behavior for non-trust jobs.
+      assert.equal("outcome" in audit.metadata, false);
+      assert.equal("provenance" in audit.metadata, false);
+    });
   });
 });

@@ -149,6 +149,10 @@ const {
   transmitOutboxEntry,
   acknowledgeOutboxEntry,
   drainOutbox,
+  pruneStaleOutboxEntries,
+  pruneDeadLetterEntries,
+  shouldRunPrunePass,
+  notePrunePassFailed,
   createEvidenceBuffer,
 } = require("./outbox");
 const {
@@ -172,6 +176,12 @@ const {
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
 const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
+const {
+  resolveTrustStorePrerequisites,
+  distributeTrust,
+  revokeTrust,
+  trustStoreCommandRefForFamily,
+} = require("./trust-store");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -279,11 +289,21 @@ function isNonEmptyStringValue(value) {
 
 /**
  * Actions this agent build can actually execute (executeJob): "revoke" is
- * deliberately absent (always blocked in this build). Sent as the claim's
- * supportedActions when execution is enabled so the control plane's claim
- * query only leases jobs this agent can run.
+ * deliberately absent (always blocked in this build). distribute-trust/
+ * revoke-trust are always included here (unlike the manifest-gated
+ * capability strings above): the trust-store executor resolves per-host
+ * prerequisites and rejects with already_absent/failureCategory at execute
+ * time on unsupported hosts, so gating the claim itself would otherwise
+ * leave every real host permanently unable to claim these jobs.
  */
-const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
+const EXECUTABLE_JOB_ACTIONS = Object.freeze([
+  "noop",
+  "renew",
+  "deploy",
+  "reload",
+  "distribute-trust",
+  "revoke-trust",
+]);
 
 /**
  * Named behaviours this agent build supports, declared at registration and
@@ -311,10 +331,26 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload
  * requires real-host evidence per build before either string reaches
  * AGENT_DECLARED_CAPABILITIES even on a Windows host.
  */
+/**
+ * Whether this host's trust-store executor prerequisites resolve (see
+ * ./trust-store's resolveTrustStorePrerequisites): Windows always;
+ * Debian/RHEL-family Linux only if the trust-store directory/update-command
+ * actually resolve. Evaluated once at module load (the host's filesystem/
+ * PATH doesn't change mid-process).
+ */
+const AGENT_TRUST_STORE_PREREQUISITES = resolveTrustStorePrerequisites();
+
 const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
-    ? ["evidence-claim-binding-v1", "windows-cert-store-v1", "iis-binding-v1"]
-    : ["evidence-claim-binding-v1"],
+    ? [
+        "evidence-claim-binding-v1",
+        "windows-cert-store-v1",
+        "iis-binding-v1",
+        "trust-anchor-deploy-v1",
+      ]
+    : AGENT_TRUST_STORE_PREREQUISITES.candidate
+      ? ["evidence-claim-binding-v1", "trust-anchor-deploy-v1"]
+      : ["evidence-claim-binding-v1"],
 );
 
 /**
@@ -333,16 +369,14 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
 
 /**
  * ADR-0012 decision 3, step 4: agent-id-binding-v1 is advertised only from
- * the EFFECTIVE runtime value of requireSignedAgentId (config.requireSignedAgentId,
- * itself already resolved from env/config.json against the compiled-in
- * default inside packages/agent/src/config/index.js), never from that
- * compiled-in default directly. This matters because the same build binary
- * ships with the flag defaulting to false but must correctly advertise the
- * capability the moment an operator flips it to true at runtime, and must
- * stop advertising it if a config override brings it back to false, with no
- * rebuild in either direction. When effective value is false, absence of
- * agentId is still tolerated by the compatibility decoder (see
- * checkAgentIdBinding), so advertising the capability then would overclaim.
+ * the effective runtime value of requireSignedAgentId (already resolved
+ * from env/config.json against the compiled-in default), never from the
+ * compiled-in default directly. The flag now defaults to true but an
+ * operator can override it back to false for a temporary rollback and must
+ * see advertising stop/resume accordingly, with no rebuild either way. When
+ * effective value is false, absence of agentId is still tolerated by the
+ * compatibility decoder (see checkAgentIdBinding), so advertising then
+ * would overclaim.
  */
 function resolveDeclaredCapabilities(requireSignedAgentId) {
   return requireSignedAgentId
@@ -601,7 +635,7 @@ async function renewJobLeaseOrAbort({
       if (required) {
         emitLog(
           log,
-          `tokentimer-agent: mandatory lease confirmation for job ${jobId} failed: ${err.message}`,
+          `mandatory lease confirmation for job ${jobId} failed: ${err.message}`,
         );
         const abort = {
           status: "blocked",
@@ -621,7 +655,7 @@ async function renewJobLeaseOrAbort({
       if (graceDeadline === null || nowMs >= graceDeadline) {
         emitLog(
           log,
-          `tokentimer-agent: lease renew for job ${jobId} failed at/after confirmed expiry: ${err.message}`,
+          `lease renew for job ${jobId} failed at/after confirmed expiry: ${err.message}`,
         );
         const abort = {
           status: "blocked",
@@ -664,7 +698,7 @@ async function renewJobLeaseOrAbort({
 
       emitLog(
         log,
-        `tokentimer-agent: lease renew for job ${jobId} transient failure ` +
+        `lease renew for job ${jobId} transient failure ` +
           `${failures}/${MAX_LEASE_TRANSIENT_RETRIES} (retrying before expiry): ${err.message}`,
       );
       const beforeSleep = now();
@@ -757,7 +791,7 @@ function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INT
       .catch((err) => {
         emitLog(
           leaseOpts.log || console.error,
-          `tokentimer-agent: periodic lease renew error: ${err.message}`,
+          `periodic lease renew error: ${err.message}`,
         );
       })
       .finally(() => {
@@ -851,7 +885,7 @@ function adoptSigningKeyRotation({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: refusing signing-key rotation adoption: ${err.message}`,
+      `refusing signing-key rotation adoption: ${err.message}`,
     );
     return { adopted: false, reason: "invalid_pem" };
   }
@@ -863,7 +897,7 @@ function adoptSigningKeyRotation({
   }
   emitLog(
     log,
-    `tokentimer-agent: adopted signing key rotation to ${pendingSigningKeyId}`,
+    `adopted signing key rotation to ${pendingSigningKeyId}`,
   );
   return { adopted: true };
 }
@@ -1299,7 +1333,7 @@ async function persistAndTransmitOutcome({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: failed to transmit outbox entry for job ${result.jobId}; ` +
+      `failed to transmit outbox entry for job ${result.jobId}; ` +
         "persisted outcome retained for retry (execution result unchanged)",
       err,
     );
@@ -1337,7 +1371,7 @@ async function reportJobRejection({
 }) {
   emitLog(
     log,
-    `tokentimer-agent: job ${jobId} rejected: ${verdict.rejectionReason}`,
+    `job ${jobId} rejected: ${verdict.rejectionReason}`,
   );
   const evidenceBody = buildPolicyRejectionEvidence({
     rejectionReason: verdict.rejectionReason,
@@ -1763,7 +1797,7 @@ async function handleSignedJob({
     if (verifyResult.rejectionReason === AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH) {
       emitLog(
         log,
-        "tokentimer-agent: agent-id binding gate rejected a claimed job for " +
+        "agent-id binding gate rejected a claimed job for " +
           "an agentId mismatch; submitting no result and letting the lease " +
           "expire. The job's signature verified but it was signed for a " +
           "different agent than this one -- investigate if this recurs.",
@@ -1772,7 +1806,7 @@ async function handleSignedJob({
     } else {
       emitLog(
         log,
-        "tokentimer-agent: claimed job failed signature verification; " +
+        "claimed job failed signature verification; " +
           "submitting no result and letting the lease expire " +
           `(${verifyResult.rejectionReason})`,
       );
@@ -1797,7 +1831,7 @@ async function handleSignedJob({
     // is nothing safe to report with; fail locally like a verdict failure.
     emitLog(
       log,
-      "tokentimer-agent: verified job carries no reportable jobId; " +
+      "verified job carries no reportable jobId; " +
         "submitting no result and letting the lease expire",
     );
     return { status: "failed", rejectionReason: "job_integrity_failed" };
@@ -1869,7 +1903,7 @@ async function handleSignedJob({
     const msg =
       `unresolved local side-effect journal exists for job ${jobId}; ` +
       `refusing automatic re-execution pending operator reconciliation`;
-    emitLog(log, `tokentimer-agent: ${msg}`);
+    emitLog(log, msg);
     return persistAndTransmitOutcome({
       outboxDir: resolvedOutboxDir,
       client,
@@ -1961,7 +1995,10 @@ async function handleSignedJob({
       outcome = heartbeatAbort;
     }
   } catch (err) {
-    emitLog(log, `tokentimer-agent: job ${jobId} execution error: ${err.message}`);
+    emitLog(log, `job ${jobId} execution error: ${err.message}`, {
+      name: err?.name,
+      code: err?.code,
+    });
     outcome = {
       status: "failed",
       errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
@@ -1969,7 +2006,14 @@ async function handleSignedJob({
   } finally {
     stopPeriodicLeaseRenewal(leaseHeartbeat);
   }
-  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`);
+  const finishDetails =
+    outcome?.status === "failed"
+      ? {
+          errorMessage: outcome?.errorMessage,
+          failureCategory: outcome?.trustResult?.failureCategory,
+        }
+      : undefined;
+  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`, finishDetails);
 
   const evidenceBodies = evidenceBuffer.takeEvidence();
   for (const body of evidenceBodies) {
@@ -1989,6 +2033,9 @@ async function handleSignedJob({
       keyRotated: outcome.keyRotated ?? null,
       errorMessage: outcome.errorMessage ?? null,
       clockOffsetMs: clockEstimator.getOffsetMs(),
+      // Only trust-anchor jobs produce this; omitted (not null) for every
+      // other job family so their result bodies stay byte-identical.
+      ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
     },
     evidence: evidenceBodies,
     log,
@@ -2005,7 +2052,7 @@ async function handleSignedJob({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not clear job journal for ${jobId}: ${err.message}`,
+        `could not clear job journal for ${jobId}: ${err.message}`,
       );
     }
   }
@@ -2119,6 +2166,10 @@ async function handleObserveOnlyJob({
  * @param {object} [params.leaseClient] protocol client for B6 lease renew
  * @param {object} params.executionContext from buildExecutionContext
  * @param {(msg: string) => void} [params.log]
+ * @param {object|null} [params.trustStoreSeams] TEST-ONLY: forwarded to
+ *   executeTrustJob's trustStoreSeams param when action is distribute-trust/
+ *   revoke-trust, letting tests inject fake exec/fs/spawn implementations
+ *   into ../trust-store. Always null/omitted in production.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
  */
 async function executeJob({
@@ -2132,6 +2183,7 @@ async function executeJob({
   leaseState = null,
   executionContext,
   log = console.error,
+  trustStoreSeams = null,
 }) {
   const { execution } = executionContext;
   const action = job.action;
@@ -2193,6 +2245,35 @@ async function executeJob({
         "does not define one yet (awaiting the deploy job contract), so " +
         "there is nothing to deploy",
     };
+  }
+
+  if (action === "distribute-trust" || action === "revoke-trust") {
+    // Mirrors the renew/deploy/reload ordering below: signed job.mode wins;
+    // local execution.dryRun only refuses a real job outright.
+    // executeTrustJob's own jobMode==="dry_run" branch already returns
+    // dry_run_complete with no mutation attempted.
+    if (jobMode !== "dry_run" && execution.dryRun === true) {
+      return {
+        status: "blocked",
+        errorMessage:
+          "refusing mode:\"real\" job because local execution.dryRun is true; " +
+          "set execution.dryRun to false to perform real side effects, or ask " +
+          "the control plane for a mode:\"dry_run\" job",
+      };
+    }
+    return executeTrustJob({
+      job,
+      jobId,
+      action,
+      jobMode,
+      policyEngine,
+      client: claimBoundClient,
+      log,
+      leaseOpts,
+      executionContext,
+      onBeforeMutation: markMutation,
+      trustStoreSeams,
+    });
   }
 
   if (action !== "renew" && action !== "deploy" && action !== "reload") {
@@ -2911,7 +2992,7 @@ async function runWindowsIisDeployTail({
           if (cleanup.ok !== true) {
             emitLog(
               log,
-              `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+              `job ${jobId}: failed to delete abandoned CNG key container ` +
                 `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
                 `it will remain orphaned in the CNG key store until manually removed.`,
             );
@@ -2921,7 +3002,7 @@ async function runWindowsIisDeployTail({
         } catch (err) {
           emitLog(
             log,
-            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `job ${jobId}: failed to delete abandoned CNG key container ` +
               `${containerName} after certreq -accept failure: ${err.message}`,
           );
         }
@@ -2966,7 +3047,7 @@ async function runWindowsIisDeployTail({
       } catch (err) {
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+          `job ${jobId}: failed to record CNG container ${containerName} ` +
             `acceptance provenance (non-fatal, continuing): ${err.message}`,
         );
       }
@@ -3103,7 +3184,7 @@ async function runWindowsIisDeployTail({
         // notices; this is logged, not swallowed silently.
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to record retention-ledger row for ` +
+          `job ${jobId}: failed to record retention-ledger row for ` +
             `superseded thumbprint ${deployResult.outgoingThumbprint}; predecessor material ` +
             `remains in the store (safe failure mode): ${err.message}`,
         );
@@ -3188,7 +3269,7 @@ async function recordSupersededWindowsCertificate({
   if (existing !== null) {
     emitLog(
       log,
-      `tokentimer-agent: job ${jobId}: retention-ledger row for ${normalizedOld} already exists, skipping (idempotent)`,
+      `job ${jobId}: retention-ledger row for ${normalizedOld} already exists, skipping (idempotent)`,
     );
     return;
   }
@@ -3456,7 +3537,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
   const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
   emitLog(
     log,
-    `tokentimer-agent: windows-retention sweep: removed=${summary.removed.length} ` +
+    `windows-retention sweep: removed=${summary.removed.length} ` +
       `deferred=${summary.deferred.length}`,
   );
   return summary;
@@ -3578,7 +3659,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: windows-cng-container reconciliation: journal scan failed: ${err.message}`,
+      `windows-cng-container reconciliation: journal scan failed: ${err.message}`,
     );
     return { freed, skipped };
   }
@@ -3686,7 +3767,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
   if (freed.length > 0 || skipped.length > 0) {
     emitLog(
       log,
-      `tokentimer-agent: windows-cng-container reconciliation: freed=${freed.length} ` +
+      `windows-cng-container reconciliation: freed=${freed.length} ` +
         `skipped=${skipped.length}${skipped.length > 0 ? ` (${skipped.map((s) => s.reason).join("; ")})` : ""}`,
     );
   }
@@ -3903,7 +3984,7 @@ async function executeWindowsIisRenewJob({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+        `job ${jobId}: failed to record CNG container ${containerName} ` +
           `in the job journal (non-fatal, continuing): ${err.message}`,
       );
     }
@@ -3925,7 +4006,7 @@ async function executeWindowsIisRenewJob({
   } catch (err) {
     emitLog(
       log,
-      `tokentimer-agent: job ${jobId}: failed to record CNG container ${containerName} ` +
+      `job ${jobId}: failed to record CNG container ${containerName} ` +
         `issuance (non-fatal, continuing): ${err.message}`,
     );
   }
@@ -4055,7 +4136,7 @@ async function executeWindowsIisRenewJob({
         if (cleanup.ok !== true) {
           emitLog(
             log,
-            `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+            `job ${jobId}: failed to delete abandoned CNG key container ` +
               `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
               `orphaned in the CNG key store until manually removed.`,
           );
@@ -4065,7 +4146,7 @@ async function executeWindowsIisRenewJob({
       } catch (err) {
         emitLog(
           log,
-          `tokentimer-agent: job ${jobId}: failed to delete abandoned CNG key container ` +
+          `job ${jobId}: failed to delete abandoned CNG key container ` +
             `${containerName} after ACME failure: ${err.message}`,
         );
       }
@@ -4167,7 +4248,7 @@ async function rollbackAfterFailedTail({
   try {
     previousPem = fs.readFileSync(certBackup, "utf8");
   } catch (err) {
-    emitLog(log, `tokentimer-agent: rollback for job ${jobId} could not read the backup: ${err.message}`);
+    emitLog(log, `rollback for job ${jobId} could not read the backup: ${err.message}`);
     return { rolledBack: false, reason: "backup file could not be read" };
   }
 
@@ -4211,7 +4292,7 @@ async function rollbackAfterFailedTail({
   }
   const restored = restore.deployed === true || restore.skipped === true;
   if (!restored) {
-    emitLog(log, `tokentimer-agent: rollback restore failed for job ${jobId} at stage ${restore.stage}`);
+    emitLog(log, `rollback restore failed for job ${jobId} at stage ${restore.stage}`);
   }
 
   // Best-effort re-reload so the service serves the restored content again.
@@ -4647,7 +4728,7 @@ async function runDeployReloadVerifyForTargets({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not discard deploy backups for job ${jobId} target ${entry.index}: ${err.message}`,
+        `could not discard deploy backups for job ${jobId} target ${entry.index}: ${err.message}`,
       );
     }
   }
@@ -5131,7 +5212,7 @@ async function runDeployReloadVerify({
     } catch (err) {
       emitLog(
         log,
-        `tokentimer-agent: could not discard deploy backups for job ${jobId}: ${err.message}`,
+        `could not discard deploy backups for job ${jobId}: ${err.message}`,
       );
     }
   }
@@ -5195,7 +5276,7 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseO
     },
   });
   if (outcome.reloaded !== true) {
-    emitLog(log, `tokentimer-agent: reload step failed for job ${jobId}`);
+    emitLog(log, `reload step failed for job ${jobId}`);
     await reportStepEvidence(client, jobId, [
       buildEvidenceItem({
         eventType: "validation.failed",
@@ -5366,6 +5447,175 @@ async function executeReloadJob({
     };
   }
   return outcome;
+}
+
+/**
+ * Executes a signed `distribute-trust`/`revoke-trust` job, dispatching to
+ * the cross-platform ./trust-store executor. Mirrors the other
+ * execute*Job functions' shape so handleClaimedJob needs no trust-specific
+ * branch for result reporting.
+ *
+ * Policy gate: every family's update command is resolved through
+ * policyEngine.checkCommandRef against a trust-specific command-ref name
+ * (./trust-store's TRUST_STORE_COMMAND_REFS), distinct from any ACME/reload
+ * commandRef a renew job carries, so a renew-only policy (no trust-store
+ * refs configured) refuses distribute-trust/revoke-trust before any OS-level
+ * mutation, on every platform including Windows.
+ *
+ * The typed trust-result-contract.schema.json object is returned as
+ * `trustResult` and carried on the wire by agent-protocol.schema.json's
+ * resultBody.trustResult; also reported as evidence metadata.
+ *
+ * Exported for direct unit testing.
+ *
+ * @param {object} params
+ * @param {object} params.job the verified trust-job-payload.schema.json payload.
+ * @param {string} params.jobId
+ * @param {"distribute-trust"|"revoke-trust"} params.action
+ * @param {"real"|"dry_run"} params.jobMode
+ * @param {object} params.policyEngine
+ * @param {object} params.client evidence-reporting client
+ * @param {(msg: string) => void} [params.log]
+ * @param {object} [params.leaseOpts]
+ * @param {object} [params.executionContext] from buildExecutionContext, for resolveAgentStateDir.
+ * @param {((stage: string) => void)|null} [params.onBeforeMutation]
+ * @param {object|null} [params.trustStoreSeams] TEST-ONLY: merged into the
+ *   seams object passed to ../trust-store's distributeTrust/revokeTrust, so
+ *   no real certutil.exe/update-ca-certificates/update-ca-trust process or
+ *   trust store is touched by a wiring test. No production call site sets this.
+ * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated: null, errorMessage: string|null, trustResult?: object }>}
+ */
+async function executeTrustJob({
+  job,
+  jobId,
+  action,
+  jobMode,
+  policyEngine,
+  client,
+  log: _log,
+  leaseOpts = null,
+  executionContext = null,
+  onBeforeMutation = null,
+  trustStoreSeams = null,
+}) {
+  if (
+    !isNonEmptyStringValue(job.trustAnchorId) ||
+    (job.anchorType !== "root" && job.anchorType !== "intermediate") ||
+    !isNonEmptyStringValue(job.fingerprintSha256)
+  ) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage:
+        "trust job is missing a valid trustAnchorId/anchorType/fingerprintSha256",
+    };
+  }
+  if (action === "distribute-trust" && typeof job.pem !== "string") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: "distribute-trust job carries no pem field",
+    };
+  }
+
+  if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage:
+        "trust-store executor prerequisites do not resolve on this host " +
+        "(neither Windows nor a detected Debian/RHEL-family trust store)",
+    };
+  }
+  const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+
+  // Every family gates through the same agent-local command-ref allowlist
+  // before any store mutation (ADR-0002: agent-local policy always wins
+  // over control-plane intent), so a renew-only agent's policy refuses
+  // distribute-trust/revoke-trust on every platform, not just Debian/RHEL.
+  let updateCommandArgv;
+  let certutilPath;
+  if (family === "debian" || family === "rhel" || family === "windows") {
+    const commandRefName = trustStoreCommandRefForFamily(family);
+    const commandVerdict = policyEngine.checkCommandRef(commandRefName);
+    if (!commandVerdict.allowed) {
+      return {
+        status: "rejected",
+        rejectionReason: commandVerdict.rejectionReason,
+        keyRotated: null,
+        errorMessage: boundErrorMessage(commandVerdict.detail),
+      };
+    }
+    if (family === "windows") {
+      certutilPath = commandVerdict.argv[0];
+    } else {
+      updateCommandArgv = commandVerdict.argv;
+    }
+  }
+
+  if (jobMode === "dry_run") {
+    return { status: "dry_run_complete", keyRotated: null, errorMessage: null };
+  }
+
+  const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+  if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+
+  if (typeof onBeforeMutation === "function") {
+    onBeforeMutation(action === "distribute-trust" ? "trust-install" : "trust-remove");
+  }
+
+  const stateDir = resolveAgentStateDir(executionContext);
+  if (!stateDir) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage:
+        "trust job cannot run: no agent state directory is configured to " +
+        "hold the local ownership-receipt store",
+    };
+  }
+  const receiptDir = path.join(stateDir, "trust-receipts");
+  const workDir = path.join(stateDir, "trust-work");
+  // TEST-ONLY extension point (never populated by production code): lets
+  // tests inject fake exec/fs/spawn implementations into ../trust-store's
+  // distributeTrust/revokeTrust without hitting a real certutil.exe/
+  // update-ca-certificates/update-ca-trust or the real machine trust store.
+  const seams = { updateCommandArgv, certutilPath, ...(trustStoreSeams || {}) };
+
+  const trustResult =
+    action === "distribute-trust"
+      ? await distributeTrust({ job, family, receiptDir, workDir, seams })
+      : await revokeTrust({ job, family, receiptDir, seams });
+
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: action === "distribute-trust" ? "trust.distributed" : "trust.revoked",
+      observedAt: trustResult.observedAt,
+      summary:
+        `Trust job ${jobId} (${action}) resolved store=${trustResult.store} ` +
+        `outcome=${trustResult.outcome}.`,
+      metadata: [
+        { name: "trustAnchorId", value: trustResult.trustAnchorId },
+        { name: "store", value: trustResult.store },
+        { name: "outcome", value: trustResult.outcome },
+        { name: "mutationPerformed", value: trustResult.mutationPerformed },
+        { name: "receiptState", value: trustResult.receipt.state },
+        { name: "failureCategory", value: trustResult.failureCategory },
+      ],
+    }),
+  ]);
+
+  if (trustResult.failureCategory) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `trust job ${trustResult.action} did not complete: ${trustResult.failureCategory}`,
+      ),
+      trustResult,
+    };
+  }
+  return { status: "succeeded", keyRotated: null, errorMessage: null, trustResult };
 }
 
 /**
@@ -5906,7 +6156,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     await drainOutbox(executionContext.outboxDir, client, {
       onError: (err, entry) =>
         defaultAgentLogger.error(
-          `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+          `outbox drain failed for ${entry.id}; will retry`,
           err,
         ),
     });
@@ -5970,7 +6220,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           rotation: response.signingKeyRotation,
           configDir,
           executionContext,
-          log: (msg) => defaultAgentLogger.error(msg),
+          log: (msg, details) => defaultAgentLogger.error(msg, details),
         });
       }
     },
@@ -5995,10 +6245,26 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           await drainOutbox(executionContext.outboxDir, client, {
             onError: (err, entry) =>
               defaultAgentLogger.error(
-                `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+                `outbox drain failed for ${entry.id}; will retry`,
                 err,
               ),
           });
+          // Rate-limited retention pass so a permanently-stuck outbox
+          // (dead-letter included) cannot grow the directory without
+          // bound. Guarded because a quarantine/delete can throw on a
+          // transiently locked file (routine EBUSY on Windows), and an
+          // unguarded throw here would abort the tick before client.claim
+          // and skip the whole claim cycle.
+          const pruneAtMs = Date.now();
+          if (shouldRunPrunePass(pruneAtMs)) {
+            try {
+              pruneStaleOutboxEntries(executionContext.outboxDir, pruneAtMs);
+              pruneDeadLetterEntries(executionContext.outboxDir, pruneAtMs);
+            } catch (err) {
+              notePrunePassFailed(pruneAtMs);
+              defaultAgentLogger.error("outbox retention pass failed; will retry", err);
+            }
+          }
           const jobs = await client.claim({
             maxJobs: 1,
             supportedActions: resolveClaimSupportedActions(executionContext),
@@ -6016,7 +6282,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               executionContext,
               boundAgentId: registeredAgentId,
               requireSignedAgentId: config.requireSignedAgentId,
-              log: (msg) => defaultAgentLogger.error(msg),
+              log: (msg, details) => defaultAgentLogger.error(msg, details),
             });
             if (outcome && outcome.retired === true) {
               process.exitCode = AGENT_RETIRED_EXIT_CODE;
@@ -6071,7 +6337,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
                 : {}),
             }).catch((err) => {
               defaultAgentLogger.error(
-                `tokentimer-agent: windows-retention sweep failed: ${err.message}`,
+                `windows-retention sweep failed: ${err.message}`,
               );
             }),
         }),
@@ -6117,6 +6383,7 @@ module.exports = {
   executeDeployJob,
   executeRenewJob,
   executeWindowsIisRenewJob,
+  executeTrustJob,
   runWindowsIisDeployTail,
   recordSupersededWindowsCertificate,
   runDeployReloadVerify,
@@ -6156,5 +6423,6 @@ module.exports = {
   VERIFY_TRANSIENT_RETRY_DELAYS_MS,
   AGENT_CANDIDATE_CAPABILITIES,
   AGENT_DECLARED_CAPABILITIES,
+  AGENT_TRUST_STORE_PREREQUISITES,
   resolveDeclaredCapabilities,
 };

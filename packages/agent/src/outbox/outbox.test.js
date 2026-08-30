@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, beforeEach, afterEach } = require("node:test");
+const { describe, it, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -8,14 +8,23 @@ const path = require("node:path");
 
 const {
   resolveOutboxDir,
+  resolveDeadLetterDir,
   ensureOutboxDir,
   enqueueOutboxEntry,
   listOutboxEntries,
+  listDeadLetterEntries,
   acknowledgeOutboxEntry,
   transmitOutboxEntry,
   drainOutbox,
+  pruneStaleOutboxEntries,
+  pruneDeadLetterEntries,
   createEvidenceBuffer,
   OUTBOX_DIR_NAME,
+  MAX_TRANSIENT_RETRY_AGE_MS,
+  MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE,
+  FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
+  MAX_OUTBOX_AGE_MS,
+  MAX_DEAD_LETTER_AGE_MS,
 } = require("./index.js");
 
 function makeTempDir() {
@@ -97,6 +106,7 @@ describe("outbox", () => {
       evidence: [],
     });
 
+    let nowMs = Date.parse("2026-08-27T00:00:00.000Z");
     const client = {
       reportEvidence: async () => {},
       reportResult: async () => {
@@ -104,11 +114,13 @@ describe("outbox", () => {
       },
     };
 
-    const drain = await drainOutbox(outboxDir, client);
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
     assert.equal(drain.transmitted, 0);
     assert.equal(drain.remaining, 1);
     assert.equal(listOutboxEntries(outboxDir)[0].result.status, "succeeded");
+    assert.equal(listOutboxEntries(outboxDir)[0].attempts, 1);
 
+    // Retrying before the backoff window elapses is deferred, not attempted.
     let calls = 0;
     const okClient = {
       reportEvidence: async () => {},
@@ -116,10 +128,47 @@ describe("outbox", () => {
         calls += 1;
       },
     };
-    const retry = await drainOutbox(outboxDir, okClient);
+    const tooSoon = await drainOutbox(outboxDir, okClient, { now: () => nowMs + 1000 });
+    assert.equal(calls, 0);
+    assert.equal(tooSoon.deferred, 1);
+    assert.equal(tooSoon.remaining, 1);
+
+    // Once the backoff window has elapsed, the entry is retried again.
+    nowMs += 20_000;
+    const retry = await drainOutbox(outboxDir, okClient, { now: () => nowMs });
     assert.equal(calls, 1);
     assert.equal(retry.transmitted, 1);
     assert.equal(retry.remaining, 0);
+  });
+
+  it("backs off exponentially (within jitter tolerance) and caps at a maximum retry interval", () => {
+    const { computeRetryBackoffMs } = require("./index.js");
+    const assertWithinJitter = (actual, base) => {
+      assert.ok(
+        actual >= Math.floor(base * 0.8) && actual <= Math.ceil(base * 1.2),
+        `expected ${actual} to be within +/-20% of ${base}`,
+      );
+    };
+    for (let i = 0; i < 25; i += 1) {
+      assertWithinJitter(computeRetryBackoffMs(0), 15_000);
+      assertWithinJitter(computeRetryBackoffMs(1), 30_000);
+      assertWithinJitter(computeRetryBackoffMs(2), 60_000);
+      assertWithinJitter(computeRetryBackoffMs(20), 30 * 60_000);
+    }
+  });
+
+  it("computeRetryBackoffMs returns a positive integer and varies across calls (jitter is actually applied)", () => {
+    const { computeRetryBackoffMs } = require("./index.js");
+    const samples = new Set();
+    for (let i = 0; i < 50; i += 1) {
+      const value = computeRetryBackoffMs(3);
+      assert.equal(Number.isInteger(value), true);
+      assert.ok(value > 0);
+      samples.add(value);
+    }
+    // Statistically near-impossible for 50 jittered samples to collapse
+    // to a single value unless jitter was accidentally removed.
+    assert.ok(samples.size > 1);
   });
 
   it("createEvidenceBuffer collects reportEvidence without networking", async () => {
@@ -129,5 +178,589 @@ describe("outbox", () => {
     const taken = buffer.takeEvidence();
     assert.equal(taken.length, 2);
     assert.deepEqual(buffer.takeEvidence(), []);
+  });
+
+  it("quarantines a permanently-failing entry (4xx-style error) into dead-letter/, keeping its diagnostic fields", async () => {
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-permanent-1",
+      result: { jobId: "job-perm", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw Object.assign(new Error("reportResult failed with HTTP 409"), { status: 409, code: "http_error" });
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.transmitted, 0);
+    assert.equal(drain.quarantined, 1);
+    assert.equal(drain.remaining, 0);
+
+    // Gone from the main outbox on the very next listing.
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+
+    const deadLetter = listDeadLetterEntries(outboxDir);
+    assert.equal(deadLetter.length, 1);
+    assert.equal(deadLetter[0].id, "outbox-permanent-1");
+    assert.equal(deadLetter[0].attempts, 1);
+    assert.equal(deadLetter[0].lastErrorMessage, "reportResult failed with HTTP 409");
+    assert.equal(typeof deadLetter[0].lastAttemptAt, "string");
+    assert.equal(deadLetter[0].result.status, "succeeded");
+
+    if (process.platform !== "win32") {
+      const deadLetterDir = resolveDeadLetterDir(outboxDir);
+      const dirMode = fs.statSync(deadLetterDir).mode & 0o777;
+      const fileMode = fs.statSync(path.join(deadLetterDir, "outbox-permanent-1.json")).mode & 0o777;
+      assert.equal(dirMode, 0o700);
+      assert.equal(fileMode, 0o600);
+    }
+  });
+
+  it("quarantines a transient failure once it has been retrying for MAX_TRANSIENT_RETRY_AGE_MS, even without a permanent-error signal", async () => {
+    const createdAtMs = Date.parse("2026-08-28T00:00:00.000Z");
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-exhausted-1",
+      createdAt: new Date(createdAtMs).toISOString(),
+      result: { jobId: "job-exhaust", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        // No status at all: never classified permanent by the default
+        // heuristic, so only the transient-retry-age ceiling can
+        // quarantine this one.
+        throw new Error("connection reset");
+      },
+    };
+
+    // First attempt, right when the entry becomes due: fails, starts backoff
+    // and stamps firstAttemptAt, which is what the ceiling ages from.
+    const firstAttempt = await drainOutbox(outboxDir, client, { now: () => createdAtMs });
+    assert.equal(firstAttempt.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+
+    // Accumulate the attempt floor, one attempt per hour so each is well
+    // past the capped backoff, all still short of the age ceiling.
+    for (let attempt = 2; attempt <= MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE; attempt += 1) {
+      const pass = await drainOutbox(outboxDir, client, {
+        now: () => createdAtMs + (attempt - 1) * 60 * 60_000,
+      });
+      assert.equal(pass.quarantined, 0);
+    }
+    assert.equal(listOutboxEntries(outboxDir)[0].attempts, MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE);
+
+    // Attempt floor reached but still short of the ceiling: retryable.
+    const beforeCeiling = await drainOutbox(outboxDir, client, {
+      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS - 1000,
+    });
+    assert.equal(beforeCeiling.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+
+    // Past the ceiling, and past the now-capped 30-minute backoff the
+    // previous attempt set: quarantined as a last resort.
+    const atCeiling = await drainOutbox(outboxDir, client, {
+      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + 2 * 60 * 60_000,
+    });
+    assert.equal(atCeiling.quarantined, 1);
+    assert.equal(atCeiling.remaining, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+
+    const deadLetter = listDeadLetterEntries(outboxDir);
+    assert.equal(deadLetter.length, 1);
+    assert.equal(deadLetter[0].lastErrorMessage, "connection reset");
+  });
+
+  it("does NOT quarantine an entry whose job outcome predates the retry ceiling but which has never actually been retried", async () => {
+    // The agent was offline (host rebooted for patching) far longer than
+    // MAX_TRANSIENT_RETRY_AGE_MS, so createdAt is already ancient by the
+    // time the first delivery is attempted. Aging the ceiling from
+    // createdAt would dead-letter this on its first transient failure,
+    // having never retried once -- and for a trust job the OS mutation
+    // has already happened, so the result must not be discarded.
+    const createdAtMs = Date.parse("2026-08-01T00:00:00.000Z");
+    const firstAttemptMs = createdAtMs + 10 * 24 * 60 * 60_000;
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-offline-restart-1",
+      createdAt: new Date(createdAtMs).toISOString(),
+      result: { jobId: "job-offline", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    let calls = 0;
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("connection reset");
+      },
+    };
+
+    const firstAttempt = await drainOutbox(outboxDir, client, { now: () => firstAttemptMs });
+    assert.equal(firstAttempt.quarantined, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+
+    // The very next retry succeeds, so the result is delivered rather
+    // than lost -- the whole point of the attempt floor.
+    const retry = await drainOutbox(outboxDir, client, { now: () => firstAttemptMs + 60_000 });
+    assert.equal(retry.transmitted, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 0);
+  });
+
+  it("quarantines a transient failure via the attempt-count fallback when the age basis cannot be parsed", async () => {
+    ensureOutboxDir(outboxDir);
+    // Written directly (bypassing enqueueOutboxEntry's validation) to
+    // simulate a corrupted/hand-edited entry whose timestamps are
+    // unparseable -- the only case where the fallback attempt ceiling
+    // (rather than the age-based one) governs quarantine.
+    fs.writeFileSync(
+      path.join(outboxDir, "outbox-corrupt-createdat.json"),
+      `${JSON.stringify({
+        id: "outbox-corrupt-createdat",
+        createdAt: "not-a-real-date",
+        firstAttemptAt: "not-a-real-date",
+        result: { jobId: "job-corrupt", attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE - 1,
+      })}\n`,
+      "utf8",
+    );
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw new Error("connection reset");
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.quarantined, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
+  });
+
+  it("does NOT quarantine a transient failure (5xx or no status) -- it stays retryable with backoff", async () => {
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-transient-1",
+      result: { jobId: "job-transient", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-transient-2",
+      result: { jobId: "job-transient-2", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    let call = 0;
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        call += 1;
+        if (call === 1) {
+          throw Object.assign(new Error("reportResult failed with HTTP 503"), { status: 503, code: "http_error" });
+        }
+        // Plain network failure, no status/code at all.
+        throw new Error("network request to control plane failed");
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.transmitted, 0);
+    assert.equal(drain.quarantined, 0);
+    assert.equal(drain.remaining, 2);
+
+    const stillPending = listOutboxEntries(outboxDir);
+    assert.equal(stillPending.length, 2);
+    for (const entry of stillPending) {
+      assert.equal(entry.attempts, 1);
+      assert.equal(typeof entry.nextRetryAt, "string");
+    }
+    assert.equal(listDeadLetterEntries(outboxDir).length, 0);
+  });
+
+  it("401/403 are treated as transient by the default classifier (recoverable via credential re-read, not this entry's content)", async () => {
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-auth-1",
+      result: { jobId: "job-auth", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw Object.assign(new Error("reportResult failed with HTTP 401"), { status: 401, code: "http_error" });
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.quarantined, 0);
+    assert.equal(drain.remaining, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+  });
+
+  it("a caller-supplied isPermanent classifier overrides the default heuristic", async () => {
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-custom-classifier-1",
+      result: { jobId: "job-custom", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        // No HTTP status at all -- the default classifier would call
+        // this transient, but the custom classifier below overrides it.
+        throw new Error("CERTOPS_TRUST_RESULT_INVALID");
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, {
+      now: () => nowMs,
+      isPermanent: (err) => err.message === "CERTOPS_TRUST_RESULT_INVALID",
+    });
+    assert.equal(drain.quarantined, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
+  });
+
+  it("drainOutbox performs exactly one full directory listing per call, even with many due and deferred entries", async () => {
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    ensureOutboxDir(outboxDir);
+    // Write fixture entries directly (bypassing enqueueOutboxEntry's
+    // full atomic-write + permissions-hardening path, which is
+    // irrelevant to what this test asserts and would dominate its
+    // runtime with icacls calls on win32) so this stays a fast,
+    // focused check of the readdirSync call count.
+    const writeFixtureEntry = (id, extra = {}) => {
+      const entry = {
+        id,
+        createdAt: "2026-08-27T00:00:00.000Z",
+        result: { jobId: id, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        ...extra,
+      };
+      fs.writeFileSync(path.join(outboxDir, `${id}.json`), `${JSON.stringify(entry)}\n`, "utf8");
+      return entry;
+    };
+    for (let i = 0; i < 50; i += 1) {
+      writeFixtureEntry(`outbox-due-${i}`);
+    }
+    for (let i = 0; i < 50; i += 1) {
+      writeFixtureEntry(`outbox-deferred-${i}`, {
+        attempts: 1,
+        nextRetryAt: new Date(nowMs + 60_000).toISOString(),
+      });
+    }
+
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {},
+    };
+
+    let readdirCalls = 0;
+    const original = fs.readdirSync.bind(fs);
+    const spy = mock.method(fs, "readdirSync", (...args) => {
+      readdirCalls += 1;
+      return original(...args);
+    });
+
+    let drain;
+    try {
+      drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    } finally {
+      spy.mock.restore();
+    }
+
+    assert.equal(drain.transmitted, 50);
+    assert.equal(drain.deferred, 50);
+    assert.equal(drain.quarantined, 0);
+    assert.equal(drain.remaining, 50);
+    // Exactly one readdirSync call for the main outbox directory. (No
+    // dead-letter directory was touched since nothing was quarantined.)
+    assert.equal(readdirCalls, 1);
+  });
+
+  it("pruneDeadLetterEntries deletes dead-letter entries older than MAX_DEAD_LETTER_AGE_MS", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    const writeDeadLetterEntry = (id, createdAt, mtime) => {
+      const entry = {
+        id,
+        createdAt,
+        result: { jobId: id, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 5,
+      };
+      const filePath = path.join(deadLetterDir, `${id}.json`);
+      fs.writeFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      // No quarantinedAt/lastAttemptAt on these fixtures (simulating a
+      // legacy pre-fix entry), so age falls back to the file's own
+      // mtime; back-date it to the entry's createdAt to exercise that
+      // fallback rather than "now" (when the fixture happens to be
+      // written).
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
+    };
+
+    writeDeadLetterEntry(
+      "outbox-old",
+      new Date(nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000).toISOString(),
+      nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000,
+    );
+    writeDeadLetterEntry("outbox-recent", new Date(nowMs).toISOString(), nowMs);
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(result.deleted, 1);
+
+    const remaining = listDeadLetterEntries(outboxDir);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0].id, "outbox-recent");
+  });
+
+  it("an entry quarantined now survives an immediate prune pass even though its original createdAt is already past the dead-letter age ceiling", async () => {
+    // Reproduces an agent whose entry finally exhausts the transient-retry
+    // ceiling long after the underlying job outcome was persisted, so its
+    // createdAt is already older than the dead-letter retention window by
+    // the time it is quarantined. The same poll tick's rate-limited prune
+    // pass then runs right away (startImmediately: true on the poll loop).
+    const createdAtMs = Date.parse("2026-08-28T00:00:00.000Z");
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-stale-restart-1",
+      createdAt: new Date(createdAtMs).toISOString(),
+      result: { jobId: "job-stale", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const firstAttemptMs = createdAtMs + MAX_DEAD_LETTER_AGE_MS + 60_000;
+    const nowMs = firstAttemptMs + MAX_TRANSIENT_RETRY_AGE_MS + 60_000;
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw new Error("connection reset");
+      },
+    };
+
+    // Burn through the attempt floor first: the ceiling alone no longer
+    // quarantines an entry that has never genuinely been retried.
+    for (let attempt = 1; attempt <= MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE; attempt += 1) {
+      const pass = await drainOutbox(outboxDir, client, {
+        now: () => firstAttemptMs + (attempt - 1) * 60 * 60_000,
+      });
+      assert.equal(pass.quarantined, 0);
+    }
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.quarantined, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
+
+    // The prune pass that runs immediately afterward must not delete
+    // an entry that was only just quarantined, regardless of how old
+    // its original createdAt is.
+    const prune = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(prune.deleted, 0);
+    const survivors = listDeadLetterEntries(outboxDir);
+    assert.equal(survivors.length, 1);
+    assert.equal(survivors[0].id, "outbox-stale-restart-1");
+    assert.equal(typeof survivors[0].quarantinedAt, "string");
+
+    // It only ages out MAX_DEAD_LETTER_AGE_MS after quarantinedAt, not
+    // after the original createdAt.
+    const stillTooSoon = pruneDeadLetterEntries(outboxDir, nowMs + MAX_DEAD_LETTER_AGE_MS - 60_000);
+    assert.equal(stillTooSoon.deleted, 0);
+
+    const nowAgedOut = pruneDeadLetterEntries(outboxDir, nowMs + MAX_DEAD_LETTER_AGE_MS + 60_000);
+    assert.equal(nowAgedOut.deleted, 1);
+  });
+
+  it("quarantines an unreadable entry file that no age or attempt ceiling can reach, once it is past MAX_OUTBOX_AGE_MS", () => {
+    ensureOutboxDir(outboxDir);
+    // Corrupt enough that readEntriesFromDir skips it, so it is invisible
+    // to every entry-object-based policy. Without an mtime-based sweep it
+    // would sit here being re-read on every drain forever, contradicting
+    // "one poisoned entry cannot grow the outbox directory forever".
+    const corruptPath = path.join(outboxDir, "outbox-unparseable.json");
+    fs.writeFileSync(corruptPath, "{ this is not json", "utf8");
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const staleMs = nowMs - MAX_OUTBOX_AGE_MS - 60_000;
+    fs.utimesSync(corruptPath, new Date(staleMs), new Date(staleMs));
+
+    const prune = pruneStaleOutboxEntries(outboxDir, nowMs);
+    assert.equal(prune.quarantined, 1);
+    assert.equal(fs.existsSync(corruptPath), false);
+    assert.equal(fs.existsSync(path.join(resolveDeadLetterDir(outboxDir), "outbox-unparseable.json")), true);
+  });
+
+  it("leaves a recent unreadable entry file in place for operator inspection", () => {
+    ensureOutboxDir(outboxDir);
+    const corruptPath = path.join(outboxDir, "outbox-unparseable-recent.json");
+    fs.writeFileSync(corruptPath, "{ this is not json", "utf8");
+
+    const prune = pruneStaleOutboxEntries(outboxDir, Date.now());
+    assert.equal(prune.quarantined, 0);
+    assert.equal(fs.existsSync(corruptPath), true);
+  });
+
+  it("leaves a future-dated createdAt to the count-overflow path rather than aging it out", () => {
+    // Documents the actual clock-skew behavior: an entry stamped ahead of the
+    // host clock never satisfies the elapsed-age test, so the age sweep is a
+    // no-op for it. An earlier version of this file carried a Math.min clamp
+    // that claimed to fix this; clamping to now yields elapsed 0, which is
+    // equally never past MAX_OUTBOX_AGE_MS, so the clamp changed nothing.
+    ensureOutboxDir(outboxDir);
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const entry = enqueueOutboxEntry(outboxDir, {
+      id: "outbox-future-createdat",
+      result: { jobId: "job-future", attemptId: "attempt-future", status: "succeeded" },
+    });
+
+    const filePath = path.join(outboxDir, `${entry.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    persisted.createdAt = new Date(nowMs + MAX_OUTBOX_AGE_MS * 3).toISOString();
+    fs.writeFileSync(filePath, JSON.stringify(persisted), "utf8");
+
+    const prune = pruneStaleOutboxEntries(outboxDir, nowMs);
+    assert.equal(prune.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+  });
+
+  it("pruneDeadLetterEntries falls back to lastAttemptAt, then file mtime, then createdAt when quarantinedAt is absent (legacy entries)", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    // Legacy entry written directly (as a pre-fix quarantine would have
+    // left it): no quarantinedAt, but a recent lastAttemptAt should
+    // still protect it from a createdAt that is already past the
+    // retention ceiling.
+    const legacyPath = path.join(deadLetterDir, "outbox-legacy-1.json");
+    fs.writeFileSync(
+      legacyPath,
+      `${JSON.stringify({
+        id: "outbox-legacy-1",
+        createdAt: new Date(nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000).toISOString(),
+        lastAttemptAt: new Date(nowMs).toISOString(),
+        result: { jobId: "job-legacy", attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 5,
+      })}\n`,
+      "utf8",
+    );
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(result.deleted, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
+  });
+
+  it("pruneDeadLetterEntries deletes the oldest entries once past maxEntries, even if none are individually aged out", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const total = 5;
+
+    for (let i = 0; i < total; i += 1) {
+      const mtime = nowMs - (total - i) * 1000;
+      const entry = {
+        id: `outbox-overflow-${String(i).padStart(2, "0")}`,
+        createdAt: new Date(mtime).toISOString(),
+        result: { jobId: `job-${i}`, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+      };
+      const filePath = path.join(deadLetterDir, `${entry.id}.json`);
+      fs.writeFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      // No quarantinedAt/lastAttemptAt on these legacy-style fixtures,
+      // so age falls back to mtime; back-date it to match createdAt so
+      // this test's ordering assumption (oldest createdAt == oldest
+      // age basis) actually holds under the new age-basis-driven
+      // eviction order.
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
+    }
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs, { maxEntries: 3 });
+    assert.equal(result.deleted, 2);
+    const remaining = listDeadLetterEntries(outboxDir);
+    assert.equal(remaining.length, 3);
+    // The two oldest (lowest index, oldest createdAt) were the ones removed.
+    assert.equal(remaining[0].id, "outbox-overflow-02");
+  });
+
+  it("count-overflow eviction selects victims by quarantine-age basis, not by original createdAt order (an old job outcome quarantined just now must not be evicted ahead of entries that have genuinely been in dead-letter longer)", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    const writeEntry = (id, createdAt, quarantinedAt) => {
+      const entry = {
+        id,
+        createdAt,
+        quarantinedAt,
+        result: { jobId: id, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 3,
+      };
+      fs.writeFileSync(
+        path.join(deadLetterDir, `${id}.json`),
+        `${JSON.stringify(entry)}\n`,
+        "utf8",
+      );
+    };
+
+    // Oldest createdAt, but quarantined most recently (an agent that
+    // was offline for a very long time, then just reconnected and
+    // immediately quarantined on its first failed attempt).
+    writeEntry(
+      "outbox-old-job-fresh-quarantine",
+      new Date(nowMs - 400 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs).toISOString(),
+    );
+    // Two entries with newer createdAt than the one above, but
+    // quarantined long before it -- these have genuinely been sitting
+    // in dead-letter the longest and must be evicted first.
+    writeEntry(
+      "outbox-recent-job-old-quarantine-1",
+      new Date(nowMs - 10 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 5 * 24 * 60 * 60_000).toISOString(),
+    );
+    writeEntry(
+      "outbox-recent-job-old-quarantine-2",
+      new Date(nowMs - 9 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 4 * 24 * 60 * 60_000).toISOString(),
+    );
+    // A fourth entry, quarantined between the two above and the fresh
+    // one, so it should survive a cap of 3.
+    writeEntry(
+      "outbox-mid-quarantine",
+      new Date(nowMs - 8 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 3 * 24 * 60 * 60_000).toISOString(),
+    );
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs, { maxEntries: 3 });
+    assert.equal(result.deleted, 1);
+
+    const remainingIds = listDeadLetterEntries(outboxDir).map((e) => e.id);
+    // The two oldest-by-quarantinedAt entries were evicted... only one
+    // eviction needed to get from 4 to 3, so exactly the single oldest
+    // (by quarantinedAt) is gone: outbox-recent-job-old-quarantine-1.
+    assert.ok(!remainingIds.includes("outbox-recent-job-old-quarantine-1"));
+    // The entry with the oldest createdAt but the freshest
+    // quarantinedAt must survive -- proving eviction order follows
+    // quarantine age, not createdAt position.
+    assert.ok(remainingIds.includes("outbox-old-job-fresh-quarantine"));
+    assert.ok(remainingIds.includes("outbox-recent-job-old-quarantine-2"));
+    assert.ok(remainingIds.includes("outbox-mid-quarantine"));
   });
 });

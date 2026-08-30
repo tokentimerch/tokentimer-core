@@ -367,6 +367,12 @@ async function createManualCertificateJob({
     });
     const job = outcome?.job || outcome;
     const created = outcome?.created === true;
+    // A revoke-trust call can legitimately create no job (see
+    // trustAnchors.js's runCreateTrustJob): releasing one owner's reference
+    // while another's is still live must not touch the OS. Callers need
+    // skippedOsMutation/installation to tell that apart from a failure.
+    const skippedOsMutation = outcome?.skippedOsMutation === true;
+    const installation = outcome?.installation;
 
     if (created) {
       await auditWriter({
@@ -390,7 +396,7 @@ async function createManualCertificateJob({
 
     await client.query("COMMIT");
     transactionStarted = false;
-    return { job, created };
+    return { job, created, skippedOsMutation, installation };
   } catch (error) {
     if (transactionStarted) {
       try {

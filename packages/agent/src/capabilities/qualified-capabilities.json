@@ -1,3 +1,3 @@
 {
-  "qualified": ["windows-cert-store-v1", "iis-binding-v1"]
+  "qualified": ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
 }

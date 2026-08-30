@@ -76,10 +76,18 @@ const {
 } = require("./agentRegistry");
 const {
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
+  TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
   hasFreshCapability,
   wireActionForOperation,
 } = require("./agentJobEligibility");
+const { isTrustAnchorOperation } = require("./jobs");
+const {
+  revalidateTrustJobForDispatch,
+  ingestTrustJobResult,
+  onTrustJobTerminalTransition,
+  TRUST_JOB_TERMINAL_NEGATIVE_STATUSES,
+} = require("./trustAnchors");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -1047,6 +1055,16 @@ async function claimJobs({
       capability: EVIDENCE_CLAIM_BINDING_CAPABILITY,
       env,
     });
+    // ADR-0012 decisions 17/20i: mirrors canBindEvidenceToClaim, gating
+    // trust-anchor job candidacy on a fresh trust-anchor-deploy-v1
+    // declaration. Lock-efficient SQL prefilter only; evaluateAgentJobEligibility
+    // below is still the authoritative recheck.
+    const canBindTrustAnchorDeploy = hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: TRUST_ANCHOR_DEPLOY_CAPABILITY,
+      env,
+    });
     const useV2Envelope = hasFreshCapability({
       declaredCapabilities: caps.declared_capabilities,
       capabilitiesUpdatedAt: caps.capabilities_updated_at,
@@ -1126,6 +1144,14 @@ async function claimJobs({
             ($9::text = 'diagnostic' AND operation = 'protocol_smoke')
             OR ($9::text <> 'diagnostic' AND operation <> 'protocol_smoke')
           )
+          -- ADR-0012 decisions 17/20i: excludes a distribute-trust/revoke-trust
+          -- candidate from this batch unless the polling agent's
+          -- trust-anchor-deploy-v1 declaration is fresh (prefilter only;
+          -- evaluateAgentJobEligibility below is the authoritative recheck).
+          AND (
+            operation NOT IN ('distribute-trust', 'revoke-trust')
+            OR $10::boolean
+          )
         ORDER BY created_at
         LIMIT $7
         FOR UPDATE SKIP LOCKED`,
@@ -1139,6 +1165,7 @@ async function claimJobs({
         maxJobs,
         canBindEvidenceToClaim,
         agentKind,
+        canBindTrustAnchorDeploy,
       ],
     );
 
@@ -1172,6 +1199,40 @@ async function claimJobs({
         env,
       });
       if (!eligibility.eligible) continue;
+
+      // ADR-0012 decision 20i: re-verify the anchor's current status and
+      // that the signed intent still matches the anchor row, defense-in-depth
+      // against a retirement landing between approval and this claim. A
+      // distribute-trust job whose anchor was retired in that window is
+      // unwound here (pending_install deleted) instead of claimed; the job
+      // itself is left for the normal terminal-status path to close out.
+      // pem is read back fresh (never persisted on certificate_jobs.payload)
+      // and attached to basePayload once the job is actually claimed.
+      let trustAnchorPem;
+      let trustTransitionGeneration;
+      if (isTrustAnchorOperation(row.operation)) {
+        const revalidation = await revalidateTrustJobForDispatch({
+          client,
+          job: row,
+        });
+        if (!revalidation.allow) {
+          await client.query(
+            `UPDATE certificate_jobs
+                SET status = 'rejected',
+                    error_code = 'CERTOPS_TRUST_ANCHOR_DISPATCH_REVALIDATION_FAILED',
+                    error_message = $2,
+                    completed_at = COALESCE(completed_at, NOW()),
+                    updated_at = NOW()
+              WHERE id = $1
+                AND status = 'pending'`,
+            [row.id, `Trust job dispatch revalidation failed: ${revalidation.reason}`],
+          );
+          continue;
+        }
+        trustAnchorPem = revalidation.pem;
+        trustTransitionGeneration = revalidation.transitionGeneration;
+      }
+
 
       // Approval-gate re-verification: an approval is bound to a SHA256
       // hash of the canonical payload and canonical execution intent at
@@ -1250,7 +1311,7 @@ async function claimJobs({
                 updated_at = NOW()
           WHERE id = $1
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
-                    subject_type, subject_id, payload, mode`,
+                    subject_type, subject_id, payload, mode, created_at`,
         [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
@@ -1305,6 +1366,27 @@ async function claimJobs({
             fingerprintSha256: deployPublicCert.fingerprintSha256,
           };
         }
+      }
+
+      if (trustAnchorPem) {
+        // Only distribute-trust sets trustAnchorPem (revoke-trust gets
+        // undefined); trust-job-payload.schema.json's allOf forbids "pem"
+        // on a revoke-trust payload, so this can never violate it.
+        basePayload.pem = trustAnchorPem;
+      }
+
+      if (trustTransitionGeneration !== undefined) {
+        // Resolved from the installation row at dispatch time, not stored
+        // on the job payload (which is hashed for idempotency).
+        basePayload.transitionGeneration = trustTransitionGeneration;
+      }
+
+      if (!basePayload.requestedAt) {
+        // trust-job-payload.schema.json requires requestedAt, but the
+        // stored payload omits it (fingerprinted into creation_request_hash,
+        // so a per-call timestamp would break idempotent replay). The job
+        // row's created_at is stable across every re-dispatch.
+        basePayload.requestedAt = dateToIso(job.created_at);
       }
 
       const signedJob = await signJob({
@@ -2007,7 +2089,7 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              source, payload
+              source, payload, assigned_agent_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -2134,11 +2216,44 @@ async function ingestResult({
       );
     }
 
+    // Every real agent-reported outcome used to leave result_metadata at its
+    // insert-time default ({}): this UPDATE set status/error columns but
+    // never result_metadata, so 100% of distribute-trust/revoke-trust/deploy
+    // jobs carried no result evidence at all. body?.trustResult is already
+    // schema-validated (trust-result-contract.schema.json) for every trust-
+    // anchor job by the time this runs; rejectionReason/keyRotated are
+    // schema-validated generic resultBody fields (agent-protocol.schema.json)
+    // available for every job family. null-only entries below are always
+    // legitimate: e.g. a very early failure before the agent even attempted
+    // the OS mutation may not have an observedFingerprintBefore.
+    const trustResult = body?.trustResult || null;
+    const resultMetadata = {
+      ...(body.rejectionReason != null
+        ? { rejectionReason: body.rejectionReason }
+        : {}),
+      ...(body.keyRotated != null ? { keyRotated: body.keyRotated } : {}),
+      ...(trustResult
+        ? {
+            outcome: trustResult.outcome ?? null,
+            mutationAttempted: trustResult.mutationAttempted ?? null,
+            mutationPerformed: trustResult.mutationPerformed ?? null,
+            failureCategory: trustResult.failureCategory ?? null,
+            observedFingerprintBefore:
+              trustResult.observedFingerprintBefore ?? null,
+            observedFingerprintAfter:
+              trustResult.observedFingerprintAfter ?? null,
+            store: trustResult.store ?? null,
+            transitionGeneration: trustResult.transitionGeneration ?? null,
+          }
+        : {}),
+    };
+
     const updated = await client.query(
       `UPDATE certificate_jobs
           SET status = $2,
               error_code = $3,
               error_message = $4,
+              result_metadata = $7::jsonb,
               completed_at = COALESCE(completed_at, NOW()),
               lease_expires_at = NULL,
               needs_operator_reconciliation = CASE
@@ -2160,10 +2275,130 @@ async function ingestResult({
         errorMessage,
         setNeedsReconciliation,
         reconciliationReason,
+        JSON.stringify(resultMetadata),
       ],
     );
 
     const row = updated.rows[0];
+
+    // certificate_job_log's schema is designed to record job.completed/
+    // job.failed/job.progress lifecycle events, but until now only the
+    // lease-reaper sweep's synthetic terminalizations ever wrote there --
+    // never this path, which is where every *real* agent-reported outcome
+    // lands. Mirrors insertJobLog's plain-INSERT shape in
+    // apps/worker/src/certops-worker.js so the two writers stay consistent;
+    // this transaction already holds job.id row-locked, so no existence
+    // recheck is needed here either.
+    await client.query(
+      `INSERT INTO certificate_job_log (
+         workspace_id, job_id, event_type, status, message, metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        agent.workspaceId,
+        job.id,
+        isFailure ? "job.failed" : "job.completed",
+        jobStatus,
+        isFailure
+          ? errorMessage || `Agent reported result: ${jobStatus}`
+          : `Agent reported result: ${jobStatus}`,
+        JSON.stringify({
+          agentId: agent.agentId || null,
+          errorCode: errorCode || null,
+          ...resultMetadata,
+        }),
+      ],
+    );
+
+    // ADR-0012 decision 20b/20e: trust-anchor jobs advance/unwind the
+    // certops_trust_anchor_installations row from inside this same
+    // transaction, so the job's terminal status and the installation's
+    // state can never be observed apart. A successful result is validated
+    // against trust-result-contract.schema.json and cross-checked against
+    // the persisted job/installation row before the row is touched;
+    // ingestTrustJobResult throws (rolling back this whole transaction) on
+    // any mismatch or stale generation. dry_run_complete and
+    // orphaned_unknown_effect are left untouched: a dry run never mutated
+    // anything, and an unknown-effect report must surface for operator
+    // reconciliation rather than being silently resolved either way.
+    //
+    // A terminal-negative envelope status (most commonly "failed") does not
+    // always mean the OS-level mutation itself failed: the agent reports
+    // mutationPerformed true whenever the install/remove genuinely
+    // completed, even if its own local receipt-finalize write afterward hit
+    // a conflict (packages/agent/src/trust-store/index.js's
+    // RECEIPT_FINALIZE_CONFLICT case). Routing that result to
+    // onTrustJobTerminalTransition's unwind would silently lose track of
+    // trust material that is actually sitting in the machine store, so it
+    // is instead routed to ingestTrustJobResult just like a real success.
+    if (isTrustAnchorOperation(job.operation)) {
+      const trustMutationGenuinelyPerformed = trustResult?.mutationPerformed === true;
+      if (
+        jobStatus === "succeeded" ||
+        (TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus) && trustMutationGenuinelyPerformed)
+      ) {
+        // The typed result rides in its own envelope property; the rest of
+        // `body` is the generic result shape every job family shares.
+        const installation = await ingestTrustJobResult({
+          client,
+          job: { ...job, workspace_id: agent.workspaceId },
+          result: trustResult,
+        });
+        // ADR-0012 decision 15: fires whenever the trust-store mutation
+        // itself genuinely completed, whether the job envelope's own status
+        // is "succeeded" or a terminal-negative status carrying a
+        // RECEIPT_FINALIZE_CONFLICT failureCategory. The generic
+        // CERTOPS_JOB_FAILED event below still fires too in the latter
+        // case, recording the envelope-level failure alongside this
+        // installation-level fact.
+        await auditWriter({
+          client,
+          actorUserId: null,
+          subjectUserId: null,
+          action:
+            job.operation === "distribute-trust"
+              ? "CERTOPS_TRUST_ANCHOR_DISTRIBUTED"
+              : "CERTOPS_TRUST_ANCHOR_REVOKED",
+          targetType: "trust_anchor",
+          targetId: installation.trustAnchorId,
+          workspaceId: agent.workspaceId,
+          metadata: {
+            jobId: String(job.id),
+            trustAnchorId: installation.trustAnchorId,
+            installationId: installation.id,
+            store: installation.store,
+            host: installation.host,
+            owner: installation.owner,
+            transitionState: installation.transitionState,
+            provenance: installation.provenance,
+            agentId: agent.agentId || null,
+            // Carried from the agent's own reported result (already
+            // schema-validated by ingestTrustJobResult above), not just the
+            // installation row, so the audit trail records what the agent
+            // actually observed/did, not only where the row ended up.
+            outcome: trustResult?.outcome ?? null,
+            mutationPerformed: trustResult?.mutationPerformed ?? null,
+            failureCategory: trustResult?.failureCategory ?? null,
+            observedFingerprintBefore:
+              trustResult?.observedFingerprintBefore ?? null,
+            observedFingerprintAfter:
+              trustResult?.observedFingerprintAfter ?? null,
+          },
+        });
+      } else if (
+        TRUST_JOB_TERMINAL_NEGATIVE_STATUSES.has(jobStatus) &&
+        !trustMutationGenuinelyPerformed
+      ) {
+        // Only unwinds here when the mutation truly never completed (or
+        // this isn't a trust job carrying a typed result at all); the
+        // mutationPerformed:true case above already settled the row via
+        // ingestTrustJobResult and must not also be unwound.
+        await onTrustJobTerminalTransition({
+          client,
+          job: { ...job, status: jobStatus, workspace_id: agent.workspaceId },
+        });
+      }
+    }
 
     // A successful result may be the moment a requested certificate first
     // really exists. Reconcile before the alert stage and inside this
@@ -2201,6 +2436,37 @@ async function ingestResult({
     // then retried loses its own history, and orphaned_unknown_effect is the one
     // outcome where the real-world state is unknown and someone must intervene.
     if (isFailure) {
+      // Symmetric with the success-path audit above: CERTOPS_JOB_FAILED used
+      // to carry only the generic error code/message, dropping the same
+      // trust-result fields (outcome/observedFingerprintBefore/After/
+      // mutationPerformed/failureCategory/provenance) the success path
+      // already includes. outcome/mutationPerformed/failureCategory/
+      // fingerprints come from body.trustResult, already schema-validated
+      // for every trust-anchor job; provenance is not part of that contract
+      // (it is a server-derived installation-row field, same as on the
+      // success path), so it is read from the installation row directly.
+      // Fields the agent genuinely never reported (e.g. a failure before it
+      // attempted the OS mutation) stay null rather than being invented.
+      let trustResultAuditFields = {};
+      if (isTrustAnchorOperation(job.operation)) {
+        const installationLookup = await client.query(
+          `SELECT provenance
+             FROM certops_trust_anchor_installations
+            WHERE workspace_id = $1 AND last_job_id = $2
+            LIMIT 1`,
+          [agent.workspaceId, job.id],
+        );
+        trustResultAuditFields = {
+          outcome: trustResult?.outcome ?? null,
+          mutationPerformed: trustResult?.mutationPerformed ?? null,
+          failureCategory: trustResult?.failureCategory ?? null,
+          observedFingerprintBefore:
+            trustResult?.observedFingerprintBefore ?? null,
+          observedFingerprintAfter:
+            trustResult?.observedFingerprintAfter ?? null,
+          provenance: installationLookup.rows[0]?.provenance ?? null,
+        };
+      }
       await auditWriter({
         client,
         actorUserId: null,
@@ -2226,6 +2492,7 @@ async function ingestResult({
             row.needs_operator_reconciliation,
           ),
           reconciliationReason: row.reconciliation_reason || null,
+          ...trustResultAuditFields,
           ...windowsIisAuditFields(job.payload),
         },
       });
@@ -2240,7 +2507,8 @@ async function ingestResult({
       operation: job.operation,
       status: jobStatus,
       origin: TRANSITION_ORIGINS.AGENT_RESULT,
-    });    if (classification.alertWorthy) {
+    });
+    if (classification.alertWorthy) {
       await recordOutboxEvent({
         client,
         workspaceId: agent.workspaceId,
@@ -2380,6 +2648,7 @@ module.exports = {
     serviceError,
     wireActionForOperation,
     EVIDENCE_CLAIM_BINDING_CAPABILITY,
+    TRUST_ANCHOR_DEPLOY_CAPABILITY,
     SIGNED_PAYLOAD_B64_CAPABILITY,
     hasFreshCapability,
     withTransaction,

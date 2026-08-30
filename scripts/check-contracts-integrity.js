@@ -52,6 +52,16 @@ for (const ns of manifest.namespaces) {
     }
     entryIds.add(qualifiedId);
 
+    // An unrecognized status must fail rather than fall through the verified
+    // branch below: five entries once sat at "new" for three releases and were
+    // silently never digested while this script still reported ok.
+    if (entry.status !== "existing") {
+      fail(
+        `entry "${ns.name}:${entry.id}" has unverifiable status ${JSON.stringify(entry.status)}; ` +
+          'only "existing" is verified, so any other value skips integrity checking',
+      );
+    }
+
     const abs = path.join(repoRoot, entry.path);
     if (entry.status === "existing") {
       if (!fs.existsSync(abs)) {

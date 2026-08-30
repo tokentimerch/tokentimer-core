@@ -698,6 +698,154 @@ describe("loadAgentConfig", () => {
       });
     }
   });
+
+  // ADR-0012 decision 3, step 4: the compiled-in default flipped to `true`
+  // (fail closed on a missing agentId) once step 1 of the rollout shipped
+  // fleet-wide. Both override directions stay supported so an operator can
+  // roll back to the old absence-tolerant behavior for a control plane
+  // that has not finished emitting agentId, without a rebuild.
+  describe("requireSignedAgentId (ADR-0012 decision 3 compatibility flag)", () => {
+    it("defaults to true when neither env var nor config.json overrides it", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+        "utf8",
+      );
+      withEnv(
+        { TOKENTIMER_AGENT_SERVER_URL: undefined, CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: undefined },
+        () => {
+          const config = loadAgentConfig({ configDir: dir });
+          assert.equal(config.requireSignedAgentId, true);
+        },
+      );
+    });
+
+    it("honors an explicit config.json override back to false (temporary rollback)", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({
+          serverUrl: "https://control-plane.example.com",
+          requireSignedAgentId: false,
+        }),
+        "utf8",
+      );
+      withEnv(
+        { TOKENTIMER_AGENT_SERVER_URL: undefined, CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: undefined },
+        () => {
+          const config = loadAgentConfig({ configDir: dir });
+          assert.equal(config.requireSignedAgentId, false);
+        },
+      );
+    });
+
+    it("honors an explicit config.json value of true (same as the default, stated explicitly)", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({
+          serverUrl: "https://control-plane.example.com",
+          requireSignedAgentId: true,
+        }),
+        "utf8",
+      );
+      withEnv(
+        { TOKENTIMER_AGENT_SERVER_URL: undefined, CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: undefined },
+        () => {
+          const config = loadAgentConfig({ configDir: dir });
+          assert.equal(config.requireSignedAgentId, true);
+        },
+      );
+    });
+
+    it("honors an explicit env var override back to false (temporary rollback), even with no config.json field", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+        "utf8",
+      );
+      withEnv(
+        {
+          TOKENTIMER_AGENT_SERVER_URL: undefined,
+          CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: "false",
+        },
+        () => {
+          const config = loadAgentConfig({ configDir: dir });
+          assert.equal(config.requireSignedAgentId, false);
+        },
+      );
+    });
+
+    it("env var override takes precedence over a config.json value in either direction", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      const configPath = path.join(dir, "config.json");
+
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          serverUrl: "https://control-plane.example.com",
+          requireSignedAgentId: true,
+        }),
+        "utf8",
+      );
+      withEnv(
+        {
+          TOKENTIMER_AGENT_SERVER_URL: undefined,
+          CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: "false",
+        },
+        () => {
+          assert.equal(loadAgentConfig({ configDir: dir }).requireSignedAgentId, false);
+        },
+      );
+
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          serverUrl: "https://control-plane.example.com",
+          requireSignedAgentId: false,
+        }),
+        "utf8",
+      );
+      withEnv(
+        {
+          TOKENTIMER_AGENT_SERVER_URL: undefined,
+          CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: "true",
+        },
+        () => {
+          assert.equal(loadAgentConfig({ configDir: dir }).requireSignedAgentId, true);
+        },
+      );
+    });
+
+    it("rejects an env var value that is neither \"true\" nor \"false\"", () => {
+      const dir = makeTempConfigDir();
+      ensureConfigDir(dir);
+      fs.writeFileSync(
+        path.join(dir, "config.json"),
+        JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+        "utf8",
+      );
+      withEnv(
+        {
+          TOKENTIMER_AGENT_SERVER_URL: undefined,
+          CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID: "maybe",
+        },
+        () => {
+          assert.throws(
+            () => loadAgentConfig({ configDir: dir }),
+            /CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID must be "true" or "false"/,
+          );
+        },
+      );
+    });
+  });
 });
 
 describe("signing key pin round trip", () => {

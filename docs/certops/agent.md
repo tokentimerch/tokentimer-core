@@ -128,7 +128,7 @@ matrix may work but are not covered by CI or release sign-off.
 | Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh` itself has no CI dry-run (unlike `install-agent.ps1`'s Windows dry-run above), so a real host run is the only verification path for the Linux installer today. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
 | Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` fails closed below build 14393, the first widely-deployed release with both WDAC and CNG non-exportable key custody generally available (see the "Windows build-number floor" note later in this document). Real end-to-end verified on **Windows Server 2025** (build 26100), **Windows Server 2022** (build 20348), and **Windows Server 2019**: full agent install, CNG-native issue with real IIS binding, unattended auto-renew, and the CNG/IIS/retention/discovery module-level real-host checks all produced identical results on all three, with no code path found to differ between them. Other Windows Server releases from build 14393 onward are expected to work the same way but are not independently verified; Windows 10/11 desktop SKUs are not verified as agent hosts at all. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
-| PostgreSQL (control plane) | `13+`, or `pgcrypto` on an older server | CertOps migrations (including 42-44) use `gen_random_uuid()`, native since PostgreSQL 13. |
+| PostgreSQL (control plane) | `15+` | Several CertOps migrations use `ON DELETE SET NULL (column_list)` on composite foreign keys, native since PostgreSQL 15; `gen_random_uuid()` alone would only require 13+. The bundled local-dev compose (`deploy/compose/docker-compose.postgres.yml`) runs `postgres:17-alpine`. |
 
 ### Wire-contract compatibility (upgrade ordering)
 
@@ -140,7 +140,7 @@ components in still matters:
 | --- | --- | --- | --- |
 | `declaredCapabilities` on heartbeat (not just register) | the release that admits `declaredCapabilities` in `heartbeatBody` | Upgrade the server first. An older server's `heartbeatBody` schema is `additionalProperties: false` with no `declaredCapabilities`, so it rejects the field outright rather than ignoring it. | A heartbeat carrying capabilities fails schema validation against an un-upgraded server. |
 | Envelope v2 (`signed-payload-b64-v1`) | the release that ships dual-format dispatch | Either order; this is dispatch-time, not connection-time. An agent advertising the capability gets v2 once its capability declaration is fresh (`CERTOPS_CAPABILITY_FRESHNESS_MS`); every other agent gets v1. | None: an agent that never advertises the capability, or whose declaration goes stale, simply keeps getting v1. |
-| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* flip `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` (agent-side) to `true`. | Flipping the agent-side flag before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent. |
+| Required `agentId` in the signed payload | the release that starts emitting `agentId` unconditionally | Upgrade the server first, let it run until every agent you operate has re-registered or heartbeated at least once, *then* upgrade the agent (`CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` now defaults to `true`, enforcing this automatically). If any agent still talks to a control plane that has not finished emitting `agentId`, set `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID=false` on that agent first as a temporary rollback. | Upgrading the agent before the server emits `agentId` on every dispatch turns every not-yet-upgraded control plane's dispatch into a hard failure for that agent, unless the rollback override is set. |
 | `agent-id-binding-v1` capability (reference clients) | same release as required `agentId` above | Reference clients advertise this capability only once their local `agentId` enforcement is actually the effective behavior, not merely because the shipped code supports it. | A client advertising the capability while its own enforcement flag is still off would falsely promise a guarantee it is not enforcing. |
 | Enterprise pin | `tokentimer-enterprise` at the matching core version | Bump and pin core and enterprise together; do not let one lag. | Enterprise CI can silently stop skipping edition-gated core tests it must skip if the cross-repo marker it depends on drifts from core. |
 
@@ -163,8 +163,11 @@ inside it:
 | `signing-key-pin.json` | Pinned control-plane job-signing public key (`signingKeyId`, `publicKeyPem`) | 0600 |
 | `replay-store.json` | Consumed-nonce replay cache (default location) | 0600 |
 | `keys/` | Agent-generated private keys, `<certificateId>.key.pem` (default location) | dir 0700, keys 0600 |
-| `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims | dir 0700, files 0600 |
+| `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims. Retention-capped at 5000 entries / 7 days; a transient (unclassified) delivery failure is quarantined into `outbox/dead-letter/` once it has both been retrying for 48 hours **and** made at least 8 delivery attempts, so a long control-plane outage cannot discard an entry the agent has barely tried to deliver | dir 0700, files 0600 |
+| `outbox/dead-letter/` | Quarantined outbox entries that kept failing transiently past the 48-hour age ceiling and the 8-attempt floor, or failed with a permanent error immediately, plus entries whose file became unreadable and stayed that way past the 7-day cap. Pruned on the same cadence as `outbox/`: entries whose quarantine time (not the original job's completion time) is more than 30 days ago, or beyond 5000 entries, are deleted. Not drained automatically; inspect and clear manually if control-plane acknowledgement is truly unrecoverable for an entry | dir 0700, files 0600 |
 | `job-journal/` | Side-effect journal, `<jobId>-<attemptId>.json`, written before the first external mutation; an unresolved entry blocks automatic re-execution (see section 5) | dir 0700, files 0600 |
+| `trust-receipts/` | Agent-local ownership receipt for `distribute-trust`/`revoke-trust`, one file per `(store, fingerprintSha256)`; proves this agent installed a given anchor before a later `revoke-trust` is allowed to remove it (see ADR-0012 decision (d)) | dir 0700, files 0600 |
+| `trust-work/` | Scratch working directory for the trust-store executor (e.g. staging a PEM before `certutil`/`update-ca-certificates`/`update-ca-trust`); not durable state, safe to clear when the agent is stopped | dir 0700 |
 | `registration-id.json` | Client-generated `registrationId` for encrypted registration recovery; cleared once the credential is durably stored | 0600 |
 | `bootstrap.env` | Bootstrap token, written by the installer and **deleted by the agent** after its first successful registration (best-effort; delete it yourself if it survives) | 0600 |
 | `acme/` | certbot (`config`/`work`/`logs`) and acme.sh (`home`/`config-home`, incl. the `dnsapi/dns_certops.sh` symlink) working state, kept here so both stay writable under `ProtectSystem=strict` | dir 0700 |
@@ -244,6 +247,24 @@ Top level:
 | `allowedDnsZones` | string[] | Suffix match with dot boundary (`sub.example.com` covered by `example.com`, `evilexample.com` is not). |
 | `allowedDnsProviders` | string[] | Exact match. |
 
+Trust-anchor distribution (`trust-anchor-deploy-v1`) resolves its platform-native
+update command through this same `allowedCommands` map, under three dedicated
+profile names that no other job family uses:
+
+| Profile name | Platform | Typical `argv` |
+|--------------|----------|----------------|
+| `trust-store:update-ca-certificates` | Debian/Ubuntu | `["/usr/sbin/update-ca-certificates"]` |
+| `trust-store:update-ca-trust` | RHEL/Fedora | `["/usr/bin/update-ca-trust", "extract"]` |
+| `trust-store:certutil` | Windows | `["certutil.exe"]` |
+
+Because these names are distinct from every ACME/reload profile, a renewal-only
+agent grants no trust-store command execution, and a trust-only agent grants no
+renewal command execution. An agent whose policy omits the profile for its own
+platform rejects a trust job with `command_not_allowlisted` before attempting
+any mutation, on every platform including Windows: a "renew-only" agent (no
+`allowedCommands` profiles configured at all) refuses `distribute-trust`/
+`revoke-trust` the same way regardless of which platform it runs on.
+
 `discovery` block:
 
 | Field | Type | Default | Notes |
@@ -259,7 +280,7 @@ Top level:
 | `dryRun` | boolean | true | Plan-only execution with zero side effects (see section 5). |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
-| `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. |
+| `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. Retention-capped (5000 entries / 7 days); see the state-directory table above for the `dead-letter/` quarantine subdirectory and its own retention. |
 | `clockDriftToleranceMs` | positive int | 30000 | Slack applied to the signed-job validity window. |
 
 ## 3. Protocol
@@ -677,9 +698,10 @@ re-execution and reports `orphaned_unknown_effect` with
 `needsOperatorReconciliation=true` so an operator can reconcile host state.
 Terminal outcomes clear the journal entry when reporting completes.
 
-Supported actions: `renew`, `deploy`, `reload`, `noop`. `revoke` is always
-`blocked` (out of scope for this agent build). `deploy` without a `certificatePem` field
-is `blocked` (see section 7).
+Supported actions: `renew`, `deploy`, `reload`, `noop`, `distribute-trust`,
+`revoke-trust`. `revoke` (managed-certificate revocation, distinct from
+`revoke-trust`) is always `blocked` (out of scope for this agent build).
+`deploy` without a `certificatePem` field is `blocked` (see section 7).
 
 The control plane additionally has an `issue` job operation, used for
 first-time issuance of a certificate that has no inventory row yet. It is a
@@ -815,6 +837,80 @@ reports one `policy.checked` evidence item per step the action would run
 keys/acme/deploy/reload/verify modules are never called. Local
 `execution.dryRun` (default true) remains a safety refusal for
 `mode:"real"` jobs only — it reports `blocked`, never a silent success.
+
+### Trust-anchor distribution and revocation
+
+`distribute-trust`/`revoke-trust` (`executeTrustJob` in `src/index.js`,
+executor in `src/trust-store/index.js`) install or remove one CA certificate
+in the host's machine trust store on behalf of the control plane. Each job
+carries `trustAnchorId`, `anchorType` (`root` or `intermediate`),
+`fingerprintSha256`, and (for `distribute-trust` only) the anchor's `pem`.
+Unlike `renew`/`deploy`, there is no per-target policy path check: the target
+is the platform's own trust store, resolved from `anchorType` and the
+detected OS family, never re-derived from the certificate's own
+basicConstraints/issuer at run time.
+
+Platform resolution is a hard gate before anything else runs: Windows targets
+`LocalMachine\Root` (root anchors) or `LocalMachine\CA` (intermediates) via
+`certutil`; Debian-family hosts write to
+`/usr/local/share/ca-certificates` and run `update-ca-certificates`;
+RHEL-family hosts write to `/etc/pki/ca-trust/source/anchors` and run
+`update-ca-trust extract`. A host that is neither Windows nor a detected
+Debian/RHEL-family trust store reports `blocked`, never a silent no-op. On
+every platform the update command/executable is gated through the same
+`policyEngine.checkCommandRef` allowlist as ACME/reload commands, under the
+`trust-store:update-ca-certificates` / `trust-store:update-ca-trust` /
+`trust-store:certutil` profile names (see the config reference above): on
+Debian/RHEL this gates the full update-command argv (executable plus fixed
+args); on Windows it gates the `certutil` executable itself, since the rest
+of that platform's argv (`-addstore`/`-delstore`, store name, staging path)
+is built from validated agent-local inputs rather than an operator-supplied
+template. Either way, an agent whose policy omits the profile for its own
+platform refuses the job with `command_not_allowlisted` before attempting
+any mutation, so a renew-only agent (no `allowedCommands` profiles at all)
+cannot be made to run `distribute-trust`/`revoke-trust` on any platform.
+
+Ownership is proven locally, not just server-side: before mutating the store,
+the agent writes an intent record to `<configDir>/trust-receipts/`, keyed by
+`(store, fingerprintSha256)` (see the file table above), and fsyncs it
+**before** attempting the OS-level mutation; the receipt is finalized only
+after the mutation completes. `revoke-trust` refuses to remove anything for a
+`(store, fingerprintSha256)` pair with no readable, `installed` receipt:
+a missing or corrupt receipt fails closed, never treated as license to
+proceed. Every result reports one of four outcomes (`preexisting`,
+`installed`, `already_absent`, `removed`) plus the observed pre/post
+fingerprint at the store, restricted per action: `distribute-trust` may only
+ever report `preexisting`, `installed`, or `already_absent` (its own
+failure-fallback outcome; `already_absent` on a `distribute-trust` result
+always means the install attempt failed before or during the mutation, never
+that nothing needed doing), and `revoke-trust` may only ever report
+`already_absent`, `removed`, or `installed` (its own failure-fallback
+outcome, meaning the removal attempt failed and the material is still
+there). The control plane rejects any result whose `agentId`, `store`,
+`fingerprintSha256`, or `transitionGeneration` does not match the signed job
+it claims to answer (`CERTOPS_TRUST_RESULT_MISMATCH`), and separately
+rejects a result naming its own action's failure-fallback outcome on a job
+already classified succeeded (`CERTOPS_TRUST_RESULT_INVALID`), since that
+combination is self-contradictory.
+A crashed `pending_install` receipt from an earlier attempt is reclaimed
+automatically by a later `distribute-trust` job for the same key once the
+agent has confirmed the fingerprint is genuinely absent from the OS store,
+rather than permanently blocking that key until an operator deletes the
+receipt file by hand. If instead the OS mutation itself succeeds but the
+agent's own local receipt-finalize write fails, the control plane still
+settles the installation row on the observed outcome (`installed`/`removed`)
+rather than unwinding it, and records `receipt_finalize_conflict` in the
+row's `last_error`; a later `revoke-trust` on that same target can then fail
+with the agent's own `receipt_pending_install`, since its on-disk receipt
+never reached `finalized`. The recovery is to re-run `distribute-trust` for
+that same target, which retries the finalize write and clears the stale
+receipt state. See ADR-0012 decisions 6 and (d) (twelfth amendment)
+for the full ownership-reference and crash-recovery contract.
+
+Dry-run mode behaves identically to the renewal chain above: `mode: "dry_run"`
+reports the platform/command gates as `policy.checked` evidence and returns
+`dry_run_complete` with no filesystem or exec side effects, including no
+receipt write.
 
 ### DNS-01 providers
 
@@ -1301,6 +1397,24 @@ Common terminal states and what to look for:
   allowlist does not cover the job's reference. Fix the agent's `policy`
   block (or `declaredTargetSelectors`); the control plane cannot override
   this.
+- **The agent ran a job to completion but the control plane never shows a
+  result**: the result is most likely still sitting in the local outbox
+  (`<configDir>/outbox/`), retrying delivery with backoff and jitter. Check
+  the agent log for outbox-transmission-failure lines. A transient
+  (unclassified) failure keeps retrying for up to 48 hours from when the
+  entry was created before being quarantined into `outbox/dead-letter/`; a
+  permanent failure (e.g. the job or workspace no longer exists) is
+  quarantined immediately. Once in `outbox/dead-letter/`, an entry is not
+  retried automatically; inspect it and re-submit the underlying work
+  manually if the outcome still needs to reach the control plane.
+- **`distribute-trust`/`revoke-trust` settles, but a later `revoke-trust` on
+  the same target fails with the agent's own `receipt_pending_install`**:
+  the prior job's OS mutation actually succeeded, but the agent's local
+  receipt-finalize write failed afterward (`receipt_finalize_conflict`,
+  recorded in the installation row's `last_error` on the control plane
+  rather than unwinding the row). Re-run `distribute-trust` for that same
+  target; this retries the finalize write and clears the stale receipt
+  state, after which `revoke-trust` will proceed normally.
 - **Startup failure mentioning the replay store**: the store file exists but
   is corrupted or unreadable. This is treated as a tamper signal; inspect
   the file before deleting it manually.

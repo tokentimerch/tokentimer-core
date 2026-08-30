@@ -49,6 +49,9 @@ const {
   runWindowsRetentionSweep,
   reconcileOrphanedWindowsCngContainers,
   acquireWindowsStoreLocks,
+  executeTrustJob,
+  AGENT_TRUST_STORE_PREREQUISITES,
+  AGENT_CANDIDATE_CAPABILITIES,
 } = require("./index.js");
 const {
   markSideEffectReached,
@@ -86,6 +89,8 @@ const {
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
 } = require("./protocol");
+const { trustStoreCommandRefForFamily } = require("./trust-store");
+const { readReceipt } = require("./trust-store/receipt");
 
 function makeTempConfigDir() {
   // .native is required on Windows: os.tmpdir() can resolve through a
@@ -737,15 +742,23 @@ describe("registerIfNeeded", () => {
     // This build's verify step always reports fingerprint + validTo evidence
     // bound to the claim, so it must declare the capability issuance
     // reconciliation gates on; otherwise every issue job would sit at
-    // 'pending' forever against a freshly registered agent. On win32,
-    // windows-cert-store-v1/iis-binding-v1 are also candidate capabilities
-    // (AGENT_CANDIDATE_CAPABILITIES) and, since real-host verification on
-    // tokentimer-winverify-vm qualified them in qualified-capabilities.json,
-    // they now pass the manifest gate too.
-    const expectedDeclaredCapabilities =
-      process.platform === "win32"
-        ? ["evidence-claim-binding-v1", "windows-cert-store-v1", "iis-binding-v1"]
-        : ["evidence-claim-binding-v1"];
+    // 'pending' forever against a freshly registered agent. requireSignedAgentId
+    // now defaults to true (no override in this test's config.json), so
+    // agent-id-binding-v1 is declared too. windows-cert-store-v1/
+    // iis-binding-v1/trust-anchor-deploy-v1 are qualified in
+    // qualified-capabilities.json after real-host verification, so whichever
+    // of them are also candidates on THIS host (win32: all three always;
+    // Debian/RHEL: trust-anchor-deploy-v1 only if its prerequisites resolve)
+    // pass the manifest gate and get declared.
+    const expectedDeclaredCapabilities = [
+      "evidence-claim-binding-v1",
+      ...(process.platform === "win32"
+        ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
+        : AGENT_TRUST_STORE_PREREQUISITES.candidate
+          ? ["trust-anchor-deploy-v1"]
+          : []),
+      "agent-id-binding-v1",
+    ];
     assert.deepEqual(registerCall.declaredCapabilities, expectedDeclaredCapabilities);
     // H1: registrationId must be sent and must match the pre-persisted key.
     assert.match(registerCall.registrationId, /^[0-9a-f-]{36}$/i);
@@ -957,6 +970,12 @@ describe("observe-only claim policy (B3)", () => {
     );
     assert.ok(EXECUTABLE_JOB_ACTIONS.includes("renew"));
     assert.ok(EXECUTABLE_JOB_ACTIONS.includes("deploy"));
+    // Regression guard: without these, distribute-trust/revoke-trust jobs
+    // are never claimed by any real agent (the control plane's claim query
+    // ANY-matches operation against this list) even though the executor
+    // and capability-freshness gate are otherwise fully wired up.
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("distribute-trust"));
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("revoke-trust"));
   });
 
   it("never polls the claim endpoint when observe-only", () => {
@@ -2726,6 +2745,129 @@ describe("agentId mismatch fails closed at the gate (ADR-0012 decision 3, both w
 });
 
 /**
+ * ADR-0012 decision 3 compatibility rollback: a control plane that has not
+ * (yet, or no longer) signed agentId into a dispatch must still be usable
+ * by an agent whose operator has explicitly overridden
+ * CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID back to `false`, even now that the
+ * compiled-in default is `true`. Exercised through the full
+ * handleClaimedJob path (not just checkAgentIdBinding in isolation, already
+ * covered by signing.test.js) so this proves the override reaches every
+ * layer between claim and result: verification and the agentId gate both
+ * let the job through when agentId is absent and the effective flag is
+ * false, and the default-true behavior rejects the identical job when no
+ * override is present.
+ */
+describe("agentId absence-tolerant rollback: control plane omits agentId entirely (ADR-0012 decision 3)", () => {
+  let workDir;
+  let signingKey;
+  const AGENT_B = "agent-B";
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext() {
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun: true,
+        keysDir: path.join(workDir, "keys"),
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
+        clockDriftToleranceMs: 30000,
+      },
+      pinnedSigningKey: {
+        signingKeyId: signingKey.signingKeyId,
+        publicKeyPem: signingKey.publicKeyPem,
+      },
+    };
+    return buildExecutionContext({ config });
+  }
+
+  // Deliberately omits agentId altogether: simulates a control plane that
+  // has not (yet, or no longer) started emitting the field, the exact
+  // compatibility gap CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID's absence-
+  // tolerant branch exists to bridge.
+  function makeSignedJobV1NoAgentId(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: "job-rollback-1",
+      workspaceId: "11111111-2222-3333-4444-555555555555",
+      certificateId: "cert-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs - 1000).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(36).slice(2)}-0123456789abcdef`,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function permissiveEngine() {
+    return engineWith({ allowedPaths: [workDir] }, { declaredTargetSelectors: ["example.com"] });
+  }
+
+  it("requireSignedAgentId explicitly false (temporary rollback): a job with no signed agentId at all still verifies and proceeds", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1NoAgentId();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_B,
+      requireSignedAgentId: false,
+      log: silentLog,
+    });
+
+    // The absence-tolerant decoder lets this job through the agentId gate,
+    // and the "noop" action then completes normally -- proving the
+    // rollback override is usable end to end, not merely "does not reject
+    // at the gate".
+    assert.notEqual(outcome.rejectionReason, AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_MISMATCH);
+    assert.notEqual(
+      outcome.rejectionReason,
+      AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_REQUIRED_BUT_MISSING,
+    );
+  });
+
+  it("requireSignedAgentId defaulted to true (no override): the identical no-agentId job now fails closed at the gate", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1NoAgentId();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_B,
+      requireSignedAgentId: true,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(
+      outcome.rejectionReason,
+      AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_REQUIRED_BUT_MISSING,
+    );
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+});
+
+/**
  * Mismatch observability: an agentId mismatch must be distinguishable, at
  * scale, from every other rejection reason -- both in the log stream (a
  * stable, distinct message, never the generic "failed signature
@@ -2878,33 +3020,23 @@ describe("agentId mismatch observability (log + counter, ADR-0012 decision 3)", 
 /**
  * ADR-0012 decision 3, step 4: agent-id-binding-v1 must be advertised from
  * the EFFECTIVE runtime value of requireSignedAgentId, never from the
- * compiled-in default. The shipped default is currently false, so the
- * "default true" direction is proven by calling resolveDeclaredCapabilities
- * directly with the override value it would receive at runtime (its only
+ * compiled-in default (now `true`, see DEFAULT_REQUIRE_SIGNED_AGENT_ID in
+ * packages/agent/src/config/index.js). resolveDeclaredCapabilities's only
  * argument IS the already-resolved effective value; there is no separate
- * "default" input for it to read), which is exactly the mechanism under
- * test: the function has no way to reach for a compiled-in default even if
- * it wanted to.
+ * "default" input for it to read, so calling it directly with an explicit
+ * override value proves both directions -- the new `true` default
+ * advertising the capability, and an explicit rollback override to `false`
+ * withdrawing it -- without needing to go through loadAgentConfig or mock
+ * an env var.
  */
 describe("resolveDeclaredCapabilities advertises agent-id-binding-v1 from the effective value only", () => {
-  it("effective false (default false, no override) does NOT advertise agent-id-binding-v1", () => {
-    const capabilities = resolveDeclaredCapabilities(false);
-    assert.ok(!capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
-  });
-
-  it("effective true (default false, overridden true) DOES advertise agent-id-binding-v1", () => {
+  it("default true (no override) DOES advertise agent-id-binding-v1", () => {
     const capabilities = resolveDeclaredCapabilities(true);
     assert.ok(capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
   });
 
-  it("effective false (simulated default true, overridden false) does NOT advertise agent-id-binding-v1", () => {
-    // Simulates a future release where the compiled-in default has flipped to
-    // true but this process's effective value was overridden back to false
-    // (env var or config.json). resolveDeclaredCapabilities takes only the
-    // effective value, so this proves the mechanism cannot see the compiled
-    // default at all, today or after that future flip.
-    const simulatedEffectiveValue = false;
-    const capabilities = resolveDeclaredCapabilities(simulatedEffectiveValue);
+  it("default true, explicitly overridden to false (temporary rollback) does NOT advertise agent-id-binding-v1", () => {
+    const capabilities = resolveDeclaredCapabilities(false);
     assert.ok(!capabilities.includes(AGENT_ID_BINDING_CAPABILITY));
   });
 
@@ -5013,3 +5145,384 @@ describe("verifyDeployedCertificateWithRetry", () => {
     assert.deepEqual(delays, [42]);
   });
 });
+
+describe("executeTrustJob / executeJob dispatch wiring for distribute-trust/revoke-trust", () => {
+  const FIXTURES_DIR = path.join(__dirname, "verify", "fixtures");
+  const CA_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "ca.crt.pem"), "utf8");
+  const CA_FINGERPRINT = "21aa0209d087f03bf76703e25befdcdf3ede8f606acab4c43280a32bf517971e";
+
+  let workDir;
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+  });
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext() {
+    const keysDir = path.join(workDir, "keys");
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun: false,
+        keysDir,
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
+        clockDriftToleranceMs: 30000,
+      },
+      pinnedSigningKey: null,
+    };
+    return buildExecutionContext({ config });
+  }
+
+  /** In-memory fs stand-in for the Linux install/remove/probe seams,
+   * mirroring ../trust-store/trust-store.test.js's own makeFakeFs, so
+   * these dispatch-wiring tests never touch the real filesystem outside
+   * a temp receipt directory even on a real Debian/RHEL host. */
+  function makeFakeFs(initialFiles = {}) {
+    const files = new Map(Object.entries(initialFiles));
+    return {
+      mkdirSync() {},
+      writeFileSync(filePath, contents) {
+        files.set(filePath, contents);
+      },
+      readFileSync(filePath) {
+        if (!files.has(filePath)) {
+          const err = new Error(`ENOENT: ${filePath}`);
+          err.code = "ENOENT";
+          throw err;
+        }
+        return files.get(filePath);
+      },
+      unlinkSync(filePath) {
+        if (!files.has(filePath)) {
+          const err = new Error(`ENOENT: ${filePath}`);
+          err.code = "ENOENT";
+          throw err;
+        }
+        files.delete(filePath);
+      },
+      _files: files,
+    };
+  }
+
+  /** execFile/spawn stand-ins matching ../trust-store's own seam shapes,
+   * so no real certutil.exe/update-ca-certificates/update-ca-trust
+   * process is ever spawned by these tests regardless of which real
+   * platform runs this suite. */
+  function makeFakeExecFile({ succeed = true } = {}) {
+    const calls = [];
+    const impl = (file, args, options, callback) => {
+      calls.push([file, ...args]);
+      if (succeed) callback(null, "", "");
+      else callback(new Error("fake command failed"), "", "");
+    };
+    impl.calls = calls;
+    return impl;
+  }
+  function makeFakeSpawnEmptyStore() {
+    return () => ({ status: 0, stdout: JSON.stringify({ items: [] }), stderr: "", error: null });
+  }
+
+  /** Fake seams appropriate for whichever family
+   * AGENT_TRUST_STORE_PREREQUISITES resolved to on the CURRENT test
+   * host, so every test below still runs against a real platform branch
+   * (Windows certutil argv-building vs. Linux file-write-plus-update-
+   * command) but never touches a real process or file. */
+  function fakeSeamsForCurrentFamily() {
+    const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+    if (family === "windows") {
+      return { spawnImpl: makeFakeSpawnEmptyStore(), execFileImpl: makeFakeExecFile({ succeed: true }) };
+    }
+    return { fsImpl: makeFakeFs({}), execFileImpl: makeFakeExecFile({ succeed: true }) };
+  }
+
+  function trustPolicyEngine(family) {
+    const commands = {};
+    if (family === "debian" || family === "rhel" || family === "windows") {
+      commands[trustStoreCommandRefForFamily(family)] = {
+        argv:
+          family === "debian"
+            ? ["update-ca-certificates"]
+            : family === "rhel"
+              ? ["update-ca-trust", "extract"]
+              : ["certutil.exe"],
+      };
+    }
+    return createPolicyEngine(loadPolicyConfig({ allowedCommands: commands }));
+  }
+
+  function distributeTrustJob(overrides = {}) {
+    return {
+      schemaVersion: 1,
+      jobId: "job-trust-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: TEST_BOUND_AGENT_ID,
+      trustAnchorId: "anchor-1",
+      action: "distribute-trust",
+      anchorType: "root",
+      fingerprintSha256: CA_FINGERPRINT,
+      pem: CA_PEM,
+      mode: "real",
+      requestedAt: new Date().toISOString(),
+      transitionGeneration: 1,
+      ...overrides,
+    };
+  }
+
+  it("executeTrustJob rejects a job on every platform family when the family's trust-store command-ref is not policy-allowlisted (no mutation attempted, executor never invoked)", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return; // no platform branch to exercise on this host
+    const client = createRecordingClient();
+    const policyEngine = createPolicyEngine(loadPolicyConfig({})); // no trust-store command ref configured
+    const seams = fakeSeamsForCurrentFamily();
+
+    const outcome = await executeTrustJob({
+      job: distributeTrustJob(),
+      jobId: "job-trust-1",
+      action: "distribute-trust",
+      jobMode: "real",
+      policyEngine,
+      client,
+      log: silentLog,
+      executionContext: makeExecutionContext(),
+      trustStoreSeams: seams,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    assert.equal(
+      seams.execFileImpl.calls.length,
+      0,
+      "the OS-level trust-store executor must never run when the command-ref is policy-denied",
+    );
+  });
+
+  it("executeTrustJob refuses a job missing a valid trustAnchorId/anchorType/fingerprintSha256 before any policy/prerequisite check", async () => {
+    const client = createRecordingClient();
+    const policyEngine = createPolicyEngine(loadPolicyConfig({}));
+    const outcome = await executeTrustJob({
+      job: distributeTrustJob({ anchorType: "not-a-real-type" }),
+      jobId: "job-trust-1",
+      action: "distribute-trust",
+      jobMode: "real",
+      policyEngine,
+      client,
+      log: silentLog,
+      executionContext: makeExecutionContext(),
+    });
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /trustAnchorId.anchorType.fingerprintSha256/);
+  });
+
+  it("executeTrustJob refuses a distribute-trust job with no pem field", async () => {
+    const client = createRecordingClient();
+    const policyEngine = createPolicyEngine(loadPolicyConfig({}));
+    const job = distributeTrustJob();
+    delete job.pem;
+    const outcome = await executeTrustJob({
+      job,
+      jobId: "job-trust-1",
+      action: "distribute-trust",
+      jobMode: "real",
+      policyEngine,
+      client,
+      log: silentLog,
+      executionContext: makeExecutionContext(),
+    });
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /carries no pem field/);
+  });
+
+  it("executeJob completes a real (seam-injected) distribute-trust job end to end when prerequisites/policy resolve, reporting evidence and finalizing a receipt", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) {
+      return; // no platform branch to exercise end to end on this host
+    }
+    const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+    const client = createRecordingClient();
+    const policyEngine = trustPolicyEngine(family);
+    const executionContext = makeExecutionContext();
+
+    const outcome = await executeJob({
+      job: distributeTrustJob(),
+      jobId: "job-trust-1",
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+      trustStoreSeams: fakeSeamsForCurrentFamily(),
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.ok(outcome.trustResult, "expected executeTrustJob to return a trustResult");
+    assert.equal(outcome.trustResult.action, "distribute-trust");
+    assert.equal(outcome.trustResult.outcome, "installed");
+    assert.equal(outcome.trustResult.receipt.state, "finalized");
+    assert.equal(client.calls.reportEvidence.length, 1);
+    const evidenceMetadata = client.calls.reportEvidence[0].evidenceItems[0].metadata;
+    const outcomeMetadata = evidenceMetadata.find((m) => m.name === "outcome");
+    assert.equal(outcomeMetadata.value, "installed");
+
+    // The receipt this run persisted is readable from the SAME stateDir
+    // executeJob itself derived from executionContext, proving the
+    // dispatch path wires receiptDir consistently end to end.
+    const persisted = readReceipt(
+      path.join(workDir, "trust-receipts"),
+      outcome.trustResult.store,
+      CA_FINGERPRINT,
+    );
+    assert.equal(persisted.row.state, "installed");
+  });
+
+  it("executeJob dispatches distribute-trust/revoke-trust actions to executeTrustJob (not the renew/deploy/reload 'unsupported action' branch)", async () => {
+    // Deliberately malformed (missing anchorType), so this proves ROUTING
+    // to executeTrustJob's own field-validation gate rather than ever
+    // reaching a real OS-level mutation on whatever host runs this suite.
+    const client = createRecordingClient();
+    const policyEngine = createPolicyEngine(loadPolicyConfig({}));
+    const executionContext = makeExecutionContext();
+    const job = distributeTrustJob();
+    delete job.anchorType;
+
+    const outcome = await executeJob({
+      job,
+      jobId: "job-trust-1",
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.notEqual(outcome.errorMessage, 'unsupported job action "distribute-trust"');
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /trustAnchorId.anchorType.fingerprintSha256/);
+  });
+
+  it("executeJob refuses a real distribute-trust job when execution.dryRun is true, WITHOUT calling executeTrustJob's own logic", async () => {
+    const client = createRecordingClient();
+    const policyEngine = createPolicyEngine(loadPolicyConfig({}));
+    const keysDir = path.join(workDir, "keys-dryrun");
+    const executionContext = buildExecutionContext({
+      config: {
+        execution: {
+          enabled: true,
+          dryRun: true,
+          keysDir,
+          replayStorePath: path.join(workDir, "replay-store-dryrun.json"),
+          outboxDir: path.join(workDir, "outbox-dryrun"),
+          clockDriftToleranceMs: 30000,
+        },
+        pinnedSigningKey: null,
+      },
+    });
+
+    const outcome = await executeJob({
+      job: distributeTrustJob({ mode: "real" }),
+      jobId: "job-trust-1",
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /execution\.dryRun is true/);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    // No receipt directory should ever have been created for a locally
+    // refused job -- this refusal happens BEFORE executeTrustJob ever runs.
+    assert.equal(fs.existsSync(path.join(workDir, "trust-receipts")), false);
+  });
+
+  it("executeJob allows a mode:dry_run distribute-trust job through even when execution.dryRun is true (signed mode wins for dry runs), performing no mutation", async () => {
+    const client = createRecordingClient();
+    const policyEngine = AGENT_TRUST_STORE_PREREQUISITES.candidate
+      ? trustPolicyEngine(AGENT_TRUST_STORE_PREREQUISITES.family)
+      : createPolicyEngine(loadPolicyConfig({}));
+    const keysDir = path.join(workDir, "keys-dryrun2");
+    const executionContext = buildExecutionContext({
+      config: {
+        execution: {
+          enabled: true,
+          dryRun: true,
+          keysDir,
+          replayStorePath: path.join(workDir, "replay-store-dryrun2.json"),
+          outboxDir: path.join(workDir, "outbox-dryrun2"),
+          clockDriftToleranceMs: 30000,
+        },
+        pinnedSigningKey: null,
+      },
+    });
+
+    const outcome = await executeJob({
+      job: distributeTrustJob({ mode: "dry_run" }),
+      jobId: "job-trust-1",
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+      trustStoreSeams: AGENT_TRUST_STORE_PREREQUISITES.candidate ? fakeSeamsForCurrentFamily() : undefined,
+    });
+
+    if (AGENT_TRUST_STORE_PREREQUISITES.candidate) {
+      assert.equal(outcome.status, "dry_run_complete");
+    } else {
+      assert.equal(outcome.status, "blocked");
+    }
+    // dry_run never writes a receipt, mutates a file, or invokes a
+    // command, regardless of which branch was taken above.
+    assert.equal(fs.existsSync(path.join(workDir, "trust-receipts")), false);
+  });
+
+  it("executeTrustJob refuses when no agent state directory is configured (no keysDir/outboxDir), never attempting a mutation", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+    const client = createRecordingClient();
+    const policyEngine = trustPolicyEngine(family);
+
+    const outcome = await executeTrustJob({
+      job: distributeTrustJob(),
+      jobId: "job-trust-1",
+      action: "distribute-trust",
+      jobMode: "real",
+      policyEngine,
+      client,
+      log: silentLog,
+      executionContext: null,
+      trustStoreSeams: fakeSeamsForCurrentFamily(),
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /no agent state directory/);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("executeJob routes revoke-trust to executeTrustJob and reports a receipt-missing failure for an unowned anchor (seam-injected, no real mutation)", async () => {
+    if (!AGENT_TRUST_STORE_PREREQUISITES.candidate) return;
+    const family = AGENT_TRUST_STORE_PREREQUISITES.family;
+    const client = createRecordingClient();
+    const policyEngine = trustPolicyEngine(family);
+    const executionContext = makeExecutionContext();
+    const job = distributeTrustJob({ action: "revoke-trust" });
+    delete job.pem;
+
+    const outcome = await executeJob({
+      job,
+      jobId: "job-trust-1",
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+      trustStoreSeams: fakeSeamsForCurrentFamily(),
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(outcome.trustResult.failureCategory, "receipt_missing");
+    assert.equal(outcome.trustResult.mutationPerformed, false);
+  });
+
+  it("trust-store capability advertisement: trust-anchor-deploy-v1 is a candidate iff AGENT_TRUST_STORE_PREREQUISITES.candidate", () => {
+    const hasCapability = AGENT_CANDIDATE_CAPABILITIES.includes("trust-anchor-deploy-v1");
+    assert.equal(hasCapability, AGENT_TRUST_STORE_PREREQUISITES.candidate);
+  });
+});
+

@@ -18,6 +18,9 @@
 const CERTOPS_RENEWAL_PROFILE_INVALID = "CERTOPS_RENEWAL_PROFILE_INVALID";
 const CERTOPS_RENEWAL_PROFILE_INCOMPLETE =
   "CERTOPS_RENEWAL_PROFILE_INCOMPLETE";
+// Rejects a manual/bulk renewal whose override payload names a field
+// outside RENEWAL_MANUAL_OVERRIDE_FIELDS, or gives `reason` a bad value.
+const CERTOPS_RENEWAL_OVERRIDE_INVALID = "CERTOPS_RENEWAL_OVERRIDE_INVALID";
 
 // Profile statuses that switch automatic renewal off for every certificate
 // linked to the profile. Single source of truth for both the renewal
@@ -755,22 +758,105 @@ function buildRenewalJobPayload({ certificate, reason = "expiry-threshold" }) {
   };
 }
 
+// Every execution field for a manual/bulk renewal is authoritative from the
+// certificate's stored profile (buildRenewalJobPayload above); `reason` is
+// the one field that function already treats as caller-supplied (the
+// scheduler gets "expiry-threshold", a human-triggered renewal may want to
+// say why), so it's the only field this allowlist grants. Anything else is
+// refused rather than silently dropped or applied.
+const RENEWAL_MANUAL_OVERRIDE_FIELDS = Object.freeze(["reason"]);
+const RENEWAL_MANUAL_OVERRIDE_FIELD_SET = new Set(
+  RENEWAL_MANUAL_OVERRIDE_FIELDS,
+);
+const MAX_RENEWAL_OVERRIDE_REASON_LENGTH = 256;
+
+function overrideError(message) {
+  return profileError(message, CERTOPS_RENEWAL_OVERRIDE_INVALID);
+}
+
+/**
+ * Validates a manual/bulk renewal request's override object against
+ * RENEWAL_MANUAL_OVERRIDE_FIELDS, returning normalized values (today, just
+ * `reason`). Any key outside the allowlist fails the whole request.
+ */
+function validateRenewalManualOverrides(overrides) {
+  if (overrides === undefined || overrides === null) return {};
+  if (typeof overrides !== "object" || Array.isArray(overrides)) {
+    throw overrideError("renewal override payload must be an object");
+  }
+  const unknownField = Object.keys(overrides).find(
+    (key) => !RENEWAL_MANUAL_OVERRIDE_FIELD_SET.has(key),
+  );
+  if (unknownField) {
+    throw overrideError(
+      `'${unknownField}' cannot be overridden on this renew job; only ` +
+        `${RENEWAL_MANUAL_OVERRIDE_FIELDS.join(", ")} may be overridden ` +
+        "here, every other execution field is resolved from the " +
+        "certificate's stored renewal profile",
+    );
+  }
+  const normalized = {};
+  if (
+    Object.prototype.hasOwnProperty.call(overrides, "reason") &&
+    overrides.reason !== undefined &&
+    overrides.reason !== null
+  ) {
+    try {
+      normalized.reason = requireString(
+        overrides.reason,
+        "reason",
+        MAX_RENEWAL_OVERRIDE_REASON_LENGTH,
+      );
+    } catch (error) {
+      throw overrideError(error?.message || "reason is invalid");
+    }
+  }
+  return normalized;
+}
+
+/**
+ * The canonical materializer for a manual/bulk renewal of an already-
+ * profiled certificate. Resolves the full payload from the certificate's
+ * stored profile via buildRenewalJobPayload first, then layers the
+ * caller's allowlisted overrides on top - an override can never reach
+ * resolveRenewalProfileSnapshot or validateRenewalProfile.
+ */
+function buildManualRenewalJobPayload({
+  certificate,
+  defaultReason,
+  overrides,
+} = {}) {
+  const normalizedOverrides = validateRenewalManualOverrides(overrides);
+  const reason =
+    normalizedOverrides.reason !== undefined
+      ? normalizedOverrides.reason
+      : defaultReason;
+  return reason === undefined
+    ? buildRenewalJobPayload({ certificate })
+    : buildRenewalJobPayload({ certificate, reason });
+}
+
 module.exports = {
   ACME_KINDS,
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  CERTOPS_RENEWAL_OVERRIDE_INVALID,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   KEY_ALGORITHMS,
+  MAX_RENEWAL_OVERRIDE_REASON_LENGTH,
+  RENEWAL_MANUAL_OVERRIDE_FIELDS,
   RENEWAL_PROFILE_SCHEMA_VERSION,
   SAN_POLICY_MODES,
   TARGET_TYPES,
   WINDOWS_IIS_SITE_PATTERN,
   WINDOWS_SNI_HOST_PATTERN,
   WINDOWS_STORE_NAME_PATTERN,
+  buildManualRenewalJobPayload,
   buildRenewalJobPayload,
   executionFieldsFromRenewalProfile,
   resolveRenewalProfileSnapshot,
   resolveSans,
+  validateRenewalManualOverrides,
   validateRenewalProfile,
   windowsIisTargetAuditFields,
 };

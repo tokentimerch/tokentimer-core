@@ -29,3 +29,21 @@ test("agent logger never serializes error stacks or raw cyclic objects", () => {
   assert.equal(sanitized.token, "[REDACTED]");
   assert.equal(sanitized.self, "[REDACTED:circular]");
 });
+
+test("agent logger prefixes every line with an ISO-8601 timestamp", () => {
+  const errorLines = [];
+  const infoLines = [];
+  const logger = createAgentLogger({
+    sink: (line) => errorLines.push(line),
+    infoSink: (line) => infoLines.push(line),
+  });
+
+  logger.error("something failed", { errorMessage: "boom" });
+  logger.info("job done");
+
+  const isoPrefix = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z tokentimer-agent: /;
+  assert.match(errorLines[0], isoPrefix);
+  assert.match(errorLines[0], /something failed/);
+  assert.match(infoLines[0], isoPrefix);
+  assert.match(infoLines[0], /job done/);
+});

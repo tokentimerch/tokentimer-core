@@ -137,15 +137,16 @@ const PATTERNS = [
     // manual-acceptance checklist
     // leak-scan-allow-start
     // (e.g. "WCNG-02", "WIIS-04", "WRET-01", "WDISC-03", "WE2E-19",
-    // "WOBS-01", "AHA-01", "RPH-01").
+    // "WOBS-01", "AHA-01", "RPH-01", "TRU-10").
     // leak-scan-allow-end
     // These are meaningless to a public reader and map 1:1 to line
     // items in a document that never ships with this repo, so they must
     // stay out of product source, tests, and the changelog. Extend this
     // prefix list if the checklist's naming convention grows a new
     // module family.
-    re: /\b(?:WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH)-\d{1,3}\b/g,
-    describe: () => "internal verification-batch ID (WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH-<number>)",
+    re: /\b(?:WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH|TRU)-\d{1,3}\b/g,
+    describe: () =>
+      "internal verification-batch ID (WCNG|WIIS|WRET|WDISC|WE2E|WOBS|AHA|RPH|TRU-<number>)",
   },
   {
     id: "internal-finding-id",

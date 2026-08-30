@@ -66,3 +66,10 @@ export const gCertopsAgentHealthAlerts = new client.Gauge({
   labelNames: ["transition"],
   registers: [metricsRegister],
 });
+
+export const gCertopsTrustAnchorReconciliation = new client.Gauge({
+  name: "certops_trust_anchor_reconciliation_installations",
+  help: "Trust-anchor installation rows handled by the last reconciliation sweep, by outcome",
+  labelNames: ["outcome"],
+  registers: [metricsRegister],
+});

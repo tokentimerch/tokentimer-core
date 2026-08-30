@@ -12,6 +12,7 @@ const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  buildManualRenewalJobPayload,
   validateRenewalProfile,
 } = require("./renewalProfile");
 const {
@@ -1321,6 +1322,87 @@ async function resolveManagedCertificateJobDefaults({
   return { autoAssignedAgentId: agentResult.rows[0]?.id || null };
 }
 
+const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
+
+// buildRenewalJobPayload requires a reason; "manual" distinguishes this
+// path in the job log/audit trail from the scheduler's "expiry-threshold".
+const MANUAL_RENEWAL_DEFAULT_REASON = "manual";
+
+/**
+ * Loads the managed_certificates + certificate_profiles row shape
+ * resolveRenewalProfileSnapshot needs, for exactly one certificate. Selects
+ * the same columns renewalScheduler.js's findCertificatesDueForRenewal
+ * selects, so a manual/bulk renewal resolves the profile snapshot the same
+ * way the scheduler would for the same certificate.
+ */
+async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId }) {
+  if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
+  const result = await db.query(
+    `SELECT mc.id,
+            mc.common_name,
+            mc.subject_alt_names,
+            mc.not_after,
+            mc.key_mode,
+            mc.profile_id,
+            cp.name AS profile_name,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = $2::uuid
+      LIMIT 1`,
+    [workspaceId, certificateId],
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * jobCreator swapped in (by routes/certops.js) for a renew job whose
+ * subject is an existing managed certificate, for both single manual and
+ * bulk creation. Materializes the payload the same way the scheduler does
+ * (buildManualRenewalJobPayload), so a manual/bulk renewal can never
+ * diverge from an automatic one. options.payload may only carry the fields
+ * RENEWAL_MANUAL_OVERRIDE_FIELDS names; anything else is rejected
+ * (CERTOPS_RENEWAL_OVERRIDE_INVALID). A missing/incomplete stored renewal
+ * profile also fails here, before any row is inserted.
+ */
+function manualRenewalJobCreator({
+  certificateId,
+  createJob = createCertificateJob,
+  loadCertificate = loadManagedCertificateForRenewal,
+} = {}) {
+  return async function manualRenewalJobCreator(options) {
+    const { client, workspaceId } = options;
+    const certificate = await loadCertificate({
+      db: client,
+      workspaceId,
+      certificateId,
+    });
+    if (!certificate) {
+      throw serviceError(
+        "Certificate not found",
+        CERTOPS_CERTIFICATE_NOT_FOUND,
+      );
+    }
+
+    const payload = buildManualRenewalJobPayload({
+      certificate,
+      defaultReason: MANUAL_RENEWAL_DEFAULT_REASON,
+      overrides: options.payload,
+    });
+
+    return createJob({
+      ...options,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: certificateId,
+      payload,
+    });
+  };
+}
+
 function jobFromRow(row) {
   if (!row) return null;
   return {
@@ -2201,6 +2283,7 @@ async function listCertificateJobLog(options) {
 module.exports = {
   CERTOPS_JOB_INVALID,
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -2219,6 +2302,7 @@ module.exports = {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   DEFAULT_JOB_MODE,
+  MANUAL_RENEWAL_DEFAULT_REASON,
   JOB_LOG_EVENT_TYPES,
   JOB_MODES,
   JOB_OPERATIONS,
@@ -2246,6 +2330,8 @@ module.exports = {
   jobLogFromRow,
   listCertificateJobLog,
   listCertificateJobs,
+  loadManagedCertificateForRenewal,
+  manualRenewalJobCreator,
   normalizeJobMode,
   normalizeLimit,
   normalizeOffset,

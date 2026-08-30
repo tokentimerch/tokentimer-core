@@ -516,3 +516,86 @@ test("checkVerifyHost rejects empty, non-string, and oversized hosts", () => {
     assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Trust-store command allowlist isolation (../trust-store's own spec:
+// "own, independently allowlisted command profile ... a distinct trust
+// allowlist entry so a renew-only agent's policy does not grant
+// trust-store command execution and vice versa"). checkCommandRef itself
+// has no notion of "trust" vs "renewal" commands -- it is a pure map
+// lookup keyed by whatever ref name a caller passes -- so this isolation
+// is entirely a property of WHICH ref names appear in a given agent's
+// own allowedCommands config, never something policy/index.js has to
+// special-case. These tests prove that property against real
+// TRUST_STORE_COMMAND_REFS ref names, not stand-in strings.
+// ---------------------------------------------------------------------------
+
+const { TRUST_STORE_COMMAND_REFS, trustStoreCommandRefForFamily } = require("../trust-store/index.js");
+
+test("a renew-only agent's policy (no trust-store command refs configured) refuses all three trust-store command refs", () => {
+  const config = loadPolicyConfig({
+    allowedCommands: {
+      "acme:certbot-renew": { argv: ["certbot", "renew"] },
+      "nginx:reload": { argv: ["systemctl", "reload", "nginx"] },
+    },
+  });
+  const engine = createPolicyEngine(config);
+
+  const debianVerdict = engine.checkCommandRef(TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES);
+  assert.equal(debianVerdict.allowed, false);
+  assert.equal(debianVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
+  const rhelVerdict = engine.checkCommandRef(TRUST_STORE_COMMAND_REFS.RHEL_UPDATE_CA_TRUST);
+  assert.equal(rhelVerdict.allowed, false);
+  assert.equal(rhelVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
+  const windowsVerdict = engine.checkCommandRef(TRUST_STORE_COMMAND_REFS.WINDOWS_CERTUTIL);
+  assert.equal(windowsVerdict.allowed, false);
+  assert.equal(windowsVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
+  // The renewal refs this same config DOES grant are unaffected -- this
+  // is isolation, not a broken allowlist.
+  assert.equal(engine.checkCommandRef("acme:certbot-renew").allowed, true);
+  assert.equal(engine.checkCommandRef("nginx:reload").allowed, true);
+});
+
+test("a trust-only agent's policy (only trust-store command refs configured) refuses ordinary renewal/reload command refs", () => {
+  const config = loadPolicyConfig({
+    allowedCommands: {
+      [TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES]: { argv: ["update-ca-certificates"] },
+      [TRUST_STORE_COMMAND_REFS.RHEL_UPDATE_CA_TRUST]: { argv: ["update-ca-trust", "extract"] },
+      [TRUST_STORE_COMMAND_REFS.WINDOWS_CERTUTIL]: { argv: ["certutil.exe"] },
+    },
+  });
+  const engine = createPolicyEngine(config);
+
+  const renewVerdict = engine.checkCommandRef("acme:certbot-renew");
+  assert.equal(renewVerdict.allowed, false);
+  assert.equal(renewVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
+  const reloadVerdict = engine.checkCommandRef("nginx:reload");
+  assert.equal(reloadVerdict.allowed, false);
+  assert.equal(reloadVerdict.rejectionReason, REJECTION_REASONS.COMMAND_NOT_ALLOWLISTED);
+
+  assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("debian")).allowed, true);
+  assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("rhel")).allowed, true);
+  assert.equal(engine.checkCommandRef(trustStoreCommandRefForFamily("windows")).allowed, true);
+});
+
+test("an agent configured with BOTH profiles grants each independently, with its own argv", () => {
+  const config = loadPolicyConfig({
+    allowedCommands: {
+      "nginx:reload": { argv: ["systemctl", "reload", "nginx"] },
+      [TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES]: { argv: ["update-ca-certificates"] },
+    },
+  });
+  const engine = createPolicyEngine(config);
+
+  const reloadVerdict = engine.checkCommandRef("nginx:reload");
+  assert.equal(reloadVerdict.allowed, true);
+  assert.deepEqual(reloadVerdict.argv, ["systemctl", "reload", "nginx"]);
+
+  const trustVerdict = engine.checkCommandRef(TRUST_STORE_COMMAND_REFS.DEBIAN_UPDATE_CA_CERTIFICATES);
+  assert.equal(trustVerdict.allowed, true);
+  assert.deepEqual(trustVerdict.argv, ["update-ca-certificates"]);
+});

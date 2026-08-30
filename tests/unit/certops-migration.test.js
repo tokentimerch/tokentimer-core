@@ -1646,7 +1646,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 47);
+    assert.equal(sorted[sorted.length - 1], 49);
   });
 });
 
@@ -1680,5 +1680,111 @@ describe("migration 47 durable agent-health incidents and anchor XOR", () => {
       migration.sql,
       /INSERT INTO certops_agent_health_incidents[\s\S]+WHERE aq\.alert_key = 'agent_health:' \|\| a\.id::text \|\| ':down'[\s\S]+ON CONFLICT \(agent_id\) DO NOTHING/,
     );
+  });
+});
+
+describe("migration 48 trust-anchor installation agent linkage", () => {
+  const migration = migrations.find((entry) => entry.version === 48);
+
+  it("exists at version 48 with the expected name", () => {
+    assert.ok(migration, "migration 48 expected");
+    assert.equal(
+      migration.name,
+      "certops_trust_anchor_installation_agent_linkage",
+    );
+  });
+
+  it("guards the NOT NULL agent_id backfill with a precondition that raises on any existing row", () => {
+    assert.match(
+      migration.sql,
+      /IF EXISTS \(SELECT 1 FROM certops_trust_anchor_installations\) THEN\s+RAISE EXCEPTION\s+'certops_trust_anchor_installations must be empty before agent_id can be added NOT NULL: found existing rows';/,
+    );
+  });
+
+  it("adds agent_id nullable first, then tightens it to NOT NULL, with a workspace-scoped FK to certops_agents", () => {
+    const addColumnIndex = migration.sql.indexOf(
+      "ADD COLUMN IF NOT EXISTS agent_id UUID NULL;",
+    );
+    const setNotNullIndex = migration.sql.indexOf(
+      "ALTER COLUMN agent_id SET NOT NULL;",
+    );
+    assert.notEqual(addColumnIndex, -1, "expected agent_id added nullable");
+    assert.notEqual(setNotNullIndex, -1, "expected agent_id tightened to NOT NULL");
+    assert.ok(
+      addColumnIndex < setNotNullIndex,
+      "agent_id must be added nullable before being tightened to NOT NULL",
+    );
+    assert.match(
+      migration.sql,
+      /ADD CONSTRAINT fk_certops_trust_anchor_installations_agent\s+FOREIGN KEY \(workspace_id, agent_id\)\s+REFERENCES certops_agents\(workspace_id, id\)\s+ON DELETE CASCADE;/,
+    );
+  });
+
+  it("replaces the host-keyed unique identity index with an agent_id-keyed one", () => {
+    assert.match(
+      migration.sql,
+      /DROP INDEX IF EXISTS uq_certops_trust_anchor_installations_identity;/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchor_installations_identity\s+ON certops_trust_anchor_installations\(workspace_id, agent_id, store, fingerprint_sha256, owner\);/,
+    );
+    assert.doesNotMatch(
+      migration.sql,
+      /ON certops_trust_anchor_installations\(workspace_id, host, store,/,
+    );
+  });
+
+  it("adds last_job_id with a workspace-scoped FK to certificate_jobs that clears on delete", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS last_job_id UUID NULL;/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD CONSTRAINT fk_certops_trust_anchor_installations_last_job\s+FOREIGN KEY \(workspace_id, last_job_id\)\s+REFERENCES certificate_jobs\(workspace_id, id\)\s+ON DELETE SET NULL \(last_job_id\);/,
+    );
+  });
+
+  it("adds transition_generation defaulted to 1 with a >= 1 CHECK", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS transition_generation INTEGER NOT NULL DEFAULT 1\s+CHECK \(transition_generation >= 1\);/,
+    );
+  });
+
+  it("adds last_attempt_at, a length-capped sanitized last_error, and next_reconcile_at", () => {
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ NULL;/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS last_error TEXT NULL\s+CHECK \(last_error IS NULL OR char_length\(last_error\) <= 128\);/,
+    );
+    assert.match(
+      migration.sql,
+      /ADD COLUMN IF NOT EXISTS next_reconcile_at TIMESTAMPTZ NULL;/,
+    );
+  });
+
+  it("indexes agent_id, last_job_id, and next_reconcile_at for the dispatch/sweep lookups", () => {
+    assert.match(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_agent\s+ON certops_trust_anchor_installations\(workspace_id, agent_id\);/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_last_job\s+ON certops_trust_anchor_installations\(workspace_id, last_job_id\)\s+WHERE last_job_id IS NOT NULL;/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_certops_trust_anchor_installations_next_reconcile\s+ON certops_trust_anchor_installations\(next_reconcile_at\)\s+WHERE next_reconcile_at IS NOT NULL;/,
+    );
+  });
+
+  it("uses only additive DDL (no DROP TABLE/DROP COLUMN)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+    assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 });

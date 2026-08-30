@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 62
+Total skips found: 63
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -16,18 +16,18 @@ Total skips found: 62
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 148 | re-asserts the ACL when a foreign principal was granted (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 754 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 851 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 948 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1008 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1023 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1036 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1350 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1360 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1371 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1447 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1459 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1472 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 902 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 999 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1096 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1156 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1171 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1184 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1498 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1508 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1519 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1595 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1607 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1620 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 526 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/deploy/deploy.test.js` | 555 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -47,6 +47,7 @@ Total skips found: 62
 | `packages/agent/src/platform/platform.test.js` | 440 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 454 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 424 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 540 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 554 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |

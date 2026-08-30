@@ -46,6 +46,8 @@ const EVENT_TYPES = Object.freeze([
   "validation.passed",
   "validation.failed",
   "policy.checked",
+  "trust.distributed",
+  "trust.revoked",
 ]);
 
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);

@@ -9,6 +9,15 @@
 const { certopsCapabilityFreshnessMs } = require("./agentRegistry");
 
 const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
+// ADR-0012 decisions 17/20i: freshness-gated capability an agent must
+// declare before it can claim a distribute-trust/revoke-trust job - a
+// higher-stakes surface than an ordinary certificate deploy, so it requires
+// the same "declared AND fresh" proof evidence-claim-binding requires.
+const TRUST_ANCHOR_DEPLOY_CAPABILITY = "trust-anchor-deploy-v1";
+// Duplicated locally rather than imported from jobs.js's
+// isTrustAnchorOperation: jobs.js requires this module, so importing back
+// would be circular. Kept in sync by hand.
+const TRUST_ANCHOR_OPERATION_SET = new Set(["distribute-trust", "revoke-trust"]);
 const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
 
 function wireActionForOperation(operation) {
@@ -140,6 +149,25 @@ function evaluateAgentJobEligibility({
     return result(false, "claim_bound_evidence_unavailable");
   }
 
+  // ADR-0012 decision 20i: an agent may only claim a trust-anchor job while
+  // its trust-anchor-deploy-v1 declaration is fresh (mirrors the
+  // evidence-claim-binding gate above). Since a trust job is pinned to one
+  // specific agent, a stale capability makes it unclaimable by anyone until
+  // the next heartbeat; the reconciliation sweep (decision 20b/20f) is what
+  // eventually reports that as stale rather than leaving it silently stuck.
+  if (
+    TRUST_ANCHOR_OPERATION_SET.has(job.operation) &&
+    !hasFreshCapability({
+      declaredCapabilities: agent.declaredCapabilities,
+      capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt,
+      capability: TRUST_ANCHOR_DEPLOY_CAPABILITY,
+      env,
+      now,
+    })
+  ) {
+    return result(false, "trust_anchor_deploy_capability_unavailable");
+  }
+
   if (
     routing.requiredTargetSelector
   ) {
@@ -186,6 +214,7 @@ function evaluateAgentJobEligibility({
 
 module.exports = {
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
+  TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
   hasFreshCapability,
   persistedTextArray,

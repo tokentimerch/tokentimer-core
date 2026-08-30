@@ -14,6 +14,7 @@
     "action",
     "anchorType",
     "fingerprintSha256",
+    "transitionGeneration",
     "mode",
     "requestedAt"
   ],
@@ -57,6 +58,11 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "description": "SHA-256 (hex) of the trust anchor PEM, carried on both the certops_trust_anchors row and every job payload referencing it, so the agent can verify the anchor it is about to install or remove against the fingerprint the control plane signed."
+    },
+    "transitionGeneration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The certops_trust_anchor_installations.transition_generation this dispatch is fulfilling (ADR-0012 decision 20a/20c). Resolved at dispatch time from the installation row rather than stored on the job payload, because the stored payload is fingerprinted into creation_request_hash and must stay stable across idempotent replays. The agent echoes this value back on its result (trust-result-contract.schema.json requires it) and records it in its ownership receipt, which is what lets the server reject a superseded transition's late result as stale (decision 20f)."
     },
     "pem": {
       "type": "string",

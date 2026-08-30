@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.13.3
+  version: 0.14.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -4258,7 +4258,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop, issue]
+            enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         - in: query
           name: source
           schema:
@@ -4268,7 +4268,7 @@ paths:
           name: subjectType
           schema:
             type: string
-            enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+            enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         - in: query
           name: subjectId
           schema:
@@ -4328,18 +4328,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsJobDetailResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Malformed request body, (for "distribute-trust"/"revoke-trust")
+            an agentId that is not a well-formed UUID, or (for "renew") a
+            payload naming an execution field other than "reason", which the
+            server now resolves exclusively from the certificate's stored
+            renewal profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                targetAgentInvalid:
+                  value:
+                    error: agentId must be a well-formed UUID identifying a registered agent
+                    code: CERTOPS_TARGET_AGENT_INVALID
+                renewalOverrideInvalid:
+                  value:
+                    error: >-
+                      Renewal override is invalid: only "reason" may be
+                      overridden on a renew job; every other execution field
+                      is resolved from the certificate's renewal profile
+                    code: CERTOPS_RENEWAL_OVERRIDE_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: >-
+            Not found, or (for "distribute-trust"/"revoke-trust") a
+            well-formed agentId that does not match a registered agent in
+            this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value:
+                    error: Not found
+                    code: NOT_FOUND
+                targetAgentNotFound:
+                  value:
+                    error: Target agent not found in this workspace
+                    code: CERTOPS_TARGET_AGENT_NOT_FOUND
         "409":
           description: >-
             idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
-            capacity exceeded, or the subject certificate has no agent-manageable
-            key custody.
+            capacity exceeded, the subject certificate has no agent-manageable
+            key custody, or (for "distribute-trust"/"revoke-trust") the trust
+            anchor is not currently active or the idempotencyKey (scoped to
+            its full operation/target tuple) was already used with a
+            different distribute-trust/revoke-trust request.
           content:
             application/json:
               schema:
@@ -4349,6 +4389,13 @@ paths:
                   value:
                     error: Idempotency key was already used with a different CertOps job request
                     code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                trustJobIdempotencyConflict:
+                  value:
+                    error: >-
+                      Idempotency key was already used with a different
+                      distribute-trust/revoke-trust request for this
+                      operation/target tuple
+                    code: CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT
                 workspacePaused:
                   value:
                     error: CertOps is paused for this workspace
@@ -4364,6 +4411,10 @@ paths:
                       was only observed, e.g. via an endpoint or domain monitor)
                       and cannot be assigned an agent-executed renew job
                     code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
+                trustAnchorNotActive:
+                  value:
+                    error: Trust anchor is not active
+                    code: CERTOPS_TRUST_ANCHOR_NOT_ACTIVE
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -5147,6 +5198,191 @@ paths:
                 code: CERTOPS_AGENT_RETIRE_BLOCKED
                 dependencies:
                   leasedJobs: 2
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/trust-anchors:
+    get:
+      tags: [CertOps]
+      summary: List CertOps trust anchors
+      operationId: listCertOpsTrustAnchors
+      description: >-
+        Returns the workspace's approved trust-anchor CAs (ADR-0012 decision
+        6/20). Manager-only. The private key never enters this record; only
+        the CA's public certificate, its SHA-256 fingerprint, and approval
+        metadata are stored and returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [active, revoked]
+          description: Filter by anchor status. Omit to return anchors of every status.
+      responses:
+        "200":
+          description: Trust anchor list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsTrustAnchorListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Approve a CertOps trust anchor
+      operationId: createCertOpsTrustAnchor
+      description: >-
+        Approves a CA certificate as a trust anchor that distribute-trust
+        jobs may install into an agent's trust store (ADR-0012 decision 6).
+        `pem` must contain exactly one CA certificate (Basic Constraints
+        CA=true); bundles and leaf certificates are rejected. Re-submitting
+        the same fingerprint updates the existing row in place and
+        reactivates it if it was previously retired, rather than creating a
+        duplicate record. Recorded as a CERTOPS_TRUST_ANCHOR_APPROVED audit
+        event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsCreateTrustAnchorRequest"
+      responses:
+        "201":
+          description: Trust anchor approved (created or reactivated)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsCreateTrustAnchorResponse"
+        "400":
+          description: Trust anchor request is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                anchorInvalid:
+                  value:
+                    error: Trust anchor name is required and must be 1-255 characters
+                    code: CERTOPS_TRUST_ANCHOR_INVALID
+                pemInvalid:
+                  value:
+                    error: Trust anchor PEM must be a CA certificate (Basic Constraints CA=true); leaf certificates are rejected
+                    code: CERTOPS_TRUST_ANCHOR_PEM_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workspace CertOps is paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/trust-anchors/{anchorId}/retire:
+    post:
+      tags: [CertOps]
+      summary: Retire a CertOps trust anchor
+      operationId: retireCertOpsTrustAnchor
+      description: >-
+        Marks a trust anchor as revoked so future distribute-trust jobs can
+        no longer target it (ADR-0012 decision 20g). Retiring an
+        already-retired anchor is idempotent and returns `retiredNow: false`.
+        Retiring an anchor does not remove any trust material an agent has
+        already installed; that requires a separate revoke-trust job.
+        Recorded as a CERTOPS_TRUST_ANCHOR_RETIRED audit event.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: anchorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Trust anchor record id (UUID).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsRetireTrustAnchorRequest"
+      responses:
+        "200":
+          description: Trust anchor retired (or already retired)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRetireTrustAnchorResponse"
+        "400":
+          description: Trust anchor identifier is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Trust anchor identifier is invalid
+                code: CERTOPS_TRUST_ANCHOR_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the trust anchor was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                anchorNotFound:
+                  value:
+                    error: Trust anchor not found
+                    code: CERTOPS_TRUST_ANCHOR_NOT_FOUND
+        "409":
+          description: Workspace CertOps is paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
         "422":
           description: Request rejected because it contained private key material
           content:
@@ -7475,7 +7711,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -7497,7 +7733,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
@@ -7555,29 +7791,66 @@ components:
         creates the managed certificate upfront in the same transaction with
         status "provisioning" and source "agent_issuance", then creates the job
         against that new row and reconciles the certificate to "active" from
-        the job's own validation evidence when the job succeeds.
+        the job's own validation evidence when the job succeeds. Operations
+        "distribute-trust" and "revoke-trust" install or remove a trust anchor
+        (an approved root/intermediate CA) in one specific agent's machine
+        trust store rather than acting on a certificate's lifecycle: for these
+        two operations subjectType must be omitted (the server sets
+        trust_anchor), subjectId identifies the trust anchor to act on, and
+        agentId and owner are additionally required (and are ignored for
+        every other operation). Creating either operation requires the
+        certops.trust_anchor.manage permission rather than the workspace
+        manager role that every other operation accepts.
       properties:
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: >-
             Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing
-            action values are unchanged.
+            action values are unchanged. "distribute-trust"/"revoke-trust"
+            install or remove a trust anchor in one agent's machine trust
+            store; see subjectId/agentId/owner below.
         subjectType:
           type: string
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
           description: >-
             Subject kind of an already existing subject. Must be omitted for
-            operation "issue"; the server sets managed_certificate on the row
-            it creates.
+            operation "issue" (the server sets managed_certificate on the row
+            it creates); for "distribute-trust"/"revoke-trust" the only
+            accepted value is trust_anchor and the server sets it
+            automatically even when omitted.
         subjectId:
           type: string
           maxLength: 128
           description: >-
             Id of an already existing subject. Must be omitted for operation
             "issue"; the server assigns the id of the managed certificate it
-            creates.
+            creates. For "distribute-trust"/"revoke-trust", this is the id of
+            the trust anchor to act on.
+        agentId:
+          type: string
+          format: uuid
+          description: >-
+            Required for operations "distribute-trust" and "revoke-trust"
+            only (ignored otherwise): the UUID of the specific agent in this
+            workspace whose machine trust store the job targets. A value that
+            is not a well-formed UUID fails with CERTOPS_TARGET_AGENT_INVALID
+            (400); a well-formed UUID that does not match a registered agent
+            in this workspace fails with CERTOPS_TARGET_AGENT_NOT_FOUND (404).
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Required for operations "distribute-trust" and "revoke-trust"
+            only (ignored otherwise): a caller-supplied 1-128 character label
+            identifying who holds this trust-anchor reference on this agent.
+            Installations are reference-counted per (agent, trust anchor,
+            owner): revoking one owner's reference only marks that owner's
+            reference removed, and the certificate is only actually removed
+            from the agent's OS trust store once no other owner's live
+            reference to the same anchor on the same agent remains.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
@@ -7597,8 +7870,16 @@ components:
           description: >-
             Required for operation "issue", where it makes a retry safe
             instead of creating a duplicate certificate row and is stored as
-            the created certificate's source reference. Optional for all other
-            operations.
+            the created certificate's source reference. Also required for
+            "distribute-trust"/"revoke-trust", where it makes the trust
+            mutation itself retry-safe: a replay of the same key AND the
+            same operation/trustAnchorId/agentId/store/owner returns the
+            same job (or the same no-op release) rather than re-applying
+            the transition. The same raw key reused for a different
+            operation or a different trust-anchor/agent/store/owner target
+            is treated as an unrelated request, since the key is scoped to
+            its full target tuple rather than shared workspace-wide.
+            Optional for every other operation.
         requiresApproval:
           type: boolean
           default: false
@@ -7650,9 +7931,13 @@ components:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
           description: >-
-            Optional shared public payload merged into every created renew
-            job, accepting the same optional execution fields as a single
-            renew job. The server sets certificateId per item.
+            Optional shared payload merged into every created renew job.
+            The only field accepted is "reason"; every execution field
+            (commandRef, caEndpoint, target, sans, and the rest) is resolved
+            per certificate from its own stored renewal profile, exactly
+            like a single renew job. Naming any other field fails that item
+            with CERTOPS_RENEWAL_OVERRIDE_INVALID rather than the whole
+            request. The server sets certificateId per item.
     CertOpsJobApprovalDecisionResponse:
       type: object
       additionalProperties: false
@@ -7737,7 +8022,8 @@ components:
           description: >-
             Present only when ok is false. Uses the existing CertOps error
             vocabulary (for example CERTOPS_CERTIFICATE_NOT_FOUND,
-            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED).
+            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED,
+            CERTOPS_RENEWAL_OVERRIDE_INVALID).
         message:
           type: string
           description: Present only when ok is false.
@@ -7821,7 +8107,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -7843,7 +8129,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
@@ -8006,7 +8292,7 @@ components:
         subjectType:
           type: string
           nullable: true
-          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external, trust_anchor]
         subjectId:
           type: string
           maxLength: 128
@@ -9378,6 +9664,114 @@ components:
       properties:
         agent:
           $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+    CertOpsTrustAnchor:
+      type: object
+      additionalProperties: false
+      description: Public trust-anchor record. The CA's private key is never accepted or stored; only the public certificate is kept.
+      required:
+        - id
+        - workspaceId
+        - name
+        - anchorType
+        - fingerprintSha256
+        - status
+        - source
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        anchorType:
+          type: string
+          enum: [root, intermediate]
+        fingerprintSha256:
+          type: string
+          description: Lowercase hex SHA-256 fingerprint of the CA certificate. Unique per workspace; re-approving the same fingerprint updates the existing row instead of creating a duplicate.
+        subjectCommonName:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, revoked]
+        source:
+          type: string
+          enum: [api, system]
+        publicMetadata:
+          type: object
+          additionalProperties: true
+        createdBy:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsTrustAnchorListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsTrustAnchor"
+    CertOpsCreateTrustAnchorRequest:
+      type: object
+      additionalProperties: false
+      required: [name, anchorType, pem]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        anchorType:
+          type: string
+          enum: [root, intermediate]
+        pem:
+          type: string
+          description: PEM-encoded CA certificate. Must contain exactly one certificate with Basic Constraints CA=true; bundles and leaf certificates are rejected.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Free-form public metadata attached to the anchor. Never accepts private key or secret material.
+    CertOpsCreateTrustAnchorResponse:
+      type: object
+      additionalProperties: false
+      required: [trustAnchor]
+      properties:
+        trustAnchor:
+          $ref: "#/components/schemas/CertOpsTrustAnchor"
+    CertOpsRetireTrustAnchorRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Attributable justification, recorded on the CERTOPS_TRUST_ANCHOR_RETIRED audit event.
+    CertOpsRetireTrustAnchorResponse:
+      type: object
+      additionalProperties: false
+      required: [trustAnchor, retiredNow]
+      properties:
+        trustAnchor:
+          $ref: "#/components/schemas/CertOpsTrustAnchor"
+        retiredNow:
+          type: boolean
+          description: False when the anchor was already revoked before this request (idempotent no-op).
     CertOpsDiagnosticBootstrapRequest:
       type: object
       additionalProperties: false
@@ -9610,7 +10004,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke]
+                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
