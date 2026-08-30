@@ -163,7 +163,8 @@ inside it:
 | `signing-key-pin.json` | Pinned control-plane job-signing public key (`signingKeyId`, `publicKeyPem`) | 0600 |
 | `replay-store.json` | Consumed-nonce replay cache (default location) | 0600 |
 | `keys/` | Agent-generated private keys, `<certificateId>.key.pem` (default location) | dir 0700, keys 0600 |
-| `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims | dir 0700, files 0600 |
+| `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims. Retention-capped at 5000 entries / 7 days; a transient (unclassified) delivery failure is quarantined into `outbox/dead-letter/` once it has been retrying for 48 hours | dir 0700, files 0600 |
+| `outbox/dead-letter/` | Quarantined outbox entries that kept failing transiently past the 48-hour age ceiling, or failed with a permanent error immediately. Pruned on the same cadence as `outbox/`: entries older than 30 days, or beyond 5000 entries, are deleted. Not drained automatically; inspect and clear manually if control-plane acknowledgement is truly unrecoverable for an entry | dir 0700, files 0600 |
 | `job-journal/` | Side-effect journal, `<jobId>-<attemptId>.json`, written before the first external mutation; an unresolved entry blocks automatic re-execution (see section 5) | dir 0700, files 0600 |
 | `trust-receipts/` | Agent-local ownership receipt for `distribute-trust`/`revoke-trust`, one file per `(store, fingerprintSha256)`; proves this agent installed a given anchor before a later `revoke-trust` is allowed to remove it (see ADR-0012 decision (d)) | dir 0700, files 0600 |
 | `trust-work/` | Scratch working directory for the trust-store executor (e.g. staging a PEM before `certutil`/`update-ca-certificates`/`update-ca-trust`); not durable state, safe to clear when the agent is stopped | dir 0700 |
@@ -279,7 +280,7 @@ any mutation, on every platform including Windows: a "renew-only" agent (no
 | `dryRun` | boolean | true | Plan-only execution with zero side effects (see section 5). |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
-| `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. |
+| `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. Retention-capped (5000 entries / 7 days); see the state-directory table above for the `dead-letter/` quarantine subdirectory and its own retention. |
 | `clockDriftToleranceMs` | positive int | 30000 | Slack applied to the signed-job validity window. |
 
 ## 3. Protocol
@@ -878,14 +879,32 @@ after the mutation completes. `revoke-trust` refuses to remove anything for a
 a missing or corrupt receipt fails closed, never treated as license to
 proceed. Every result reports one of four outcomes (`preexisting`,
 `installed`, `already_absent`, `removed`) plus the observed pre/post
-fingerprint at the store; the control plane rejects any result whose
-`agentId`, `store`, `fingerprintSha256`, or `transitionGeneration` does not
-match the signed job it claims to answer (`CERTOPS_TRUST_RESULT_MISMATCH`).
+fingerprint at the store, restricted per action: `distribute-trust` may only
+ever report `preexisting`, `installed`, or `already_absent` (its own
+failure-fallback outcome; `already_absent` on a `distribute-trust` result
+always means the install attempt failed before or during the mutation, never
+that nothing needed doing), and `revoke-trust` may only ever report
+`already_absent`, `removed`, or `installed` (its own failure-fallback
+outcome, meaning the removal attempt failed and the material is still
+there). The control plane rejects any result whose `agentId`, `store`,
+`fingerprintSha256`, or `transitionGeneration` does not match the signed job
+it claims to answer (`CERTOPS_TRUST_RESULT_MISMATCH`), and separately
+rejects a result naming its own action's failure-fallback outcome on a job
+already classified succeeded (`CERTOPS_TRUST_RESULT_INVALID`), since that
+combination is self-contradictory.
 A crashed `pending_install` receipt from an earlier attempt is reclaimed
 automatically by a later `distribute-trust` job for the same key once the
 agent has confirmed the fingerprint is genuinely absent from the OS store,
 rather than permanently blocking that key until an operator deletes the
-receipt file by hand. See ADR-0012 decisions 6 and (d) (twelfth amendment)
+receipt file by hand. If instead the OS mutation itself succeeds but the
+agent's own local receipt-finalize write fails, the control plane still
+settles the installation row on the observed outcome (`installed`/`removed`)
+rather than unwinding it, and records `receipt_finalize_conflict` in the
+row's `last_error`; a later `revoke-trust` on that same target can then fail
+with the agent's own `receipt_pending_install`, since its on-disk receipt
+never reached `finalized`. The recovery is to re-run `distribute-trust` for
+that same target, which retries the finalize write and clears the stale
+receipt state. See ADR-0012 decisions 6 and (d) (twelfth amendment)
 for the full ownership-reference and crash-recovery contract.
 
 Dry-run mode behaves identically to the renewal chain above: `mode: "dry_run"`
@@ -1378,6 +1397,24 @@ Common terminal states and what to look for:
   allowlist does not cover the job's reference. Fix the agent's `policy`
   block (or `declaredTargetSelectors`); the control plane cannot override
   this.
+- **The agent ran a job to completion but the control plane never shows a
+  result**: the result is most likely still sitting in the local outbox
+  (`<configDir>/outbox/`), retrying delivery with backoff and jitter. Check
+  the agent log for outbox-transmission-failure lines. A transient
+  (unclassified) failure keeps retrying for up to 48 hours from when the
+  entry was created before being quarantined into `outbox/dead-letter/`; a
+  permanent failure (e.g. the job or workspace no longer exists) is
+  quarantined immediately. Once in `outbox/dead-letter/`, an entry is not
+  retried automatically; inspect it and re-submit the underlying work
+  manually if the outcome still needs to reach the control plane.
+- **`distribute-trust`/`revoke-trust` settles, but a later `revoke-trust` on
+  the same target fails with the agent's own `receipt_pending_install`**:
+  the prior job's OS mutation actually succeeded, but the agent's local
+  receipt-finalize write failed afterward (`receipt_finalize_conflict`,
+  recorded in the installation row's `last_error` on the control plane
+  rather than unwinding the row). Re-run `distribute-trust` for that same
+  target; this retries the finalize write and clears the stale receipt
+  state, after which `revoke-trust` will proceed normally.
 - **Startup failure mentioning the replay store**: the store file exists but
   is corrupted or unreadable. This is treated as a tamper signal; inspect
   the file before deleting it manually.

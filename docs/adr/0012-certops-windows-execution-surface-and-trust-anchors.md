@@ -166,6 +166,33 @@ or generation once the agent has independently confirmed the fingerprint is
 absent from the OS store, rather than requiring an operator to delete the
 receipt file by hand.
 
+**A thirteenth amendment (2026-08-30, post-acceptance) closes a stabilization
+pass found during pre-tag manual verification of the eleventh/twelfth
+amendments**, correcting decision 20(c) below and adding migration 49: the
+idempotency key a `distribute-trust`/`revoke-trust` job is actually stored
+under is no longer the caller's raw `idempotencyKey`, but
+`trust:<sha256(operation, trustAnchorId, agentId, store, owner,
+idempotencyKey)>`, so the same raw key reused for a different operation or a
+different target tuple is treated as an unrelated request rather than
+colliding with, or replaying, an unrelated job. This closes a real
+collision: the reference-release no-op path (decision (h)/(i) below) and the
+generic `certificate_jobs` path previously shared one workspace-wide
+idempotency namespace, so a caller's raw key could accidentally replay the
+wrong operation. Migration 49 (`certops_trust_reference_release_idempotency`)
+adds the dedicated ledger the no-op release path checks against under the
+scoped key. Also in this pass: the succeeded-result contract was narrowed so
+a `distribute-trust`/`revoke-trust` result with a genuine, mutation-backed
+success can no longer be conflated with the same action's own
+failure-fallback outcome (`revoke-trust`+`installed`, `distribute-trust`+
+`already_absent` remain valid failure shapes, just no longer ingestible as a
+completed transition), and `distribute-trust`+`installed` now requires a
+non-null `observedFingerprintAfter`; the agent's Linux `revoke-trust` retry
+now re-runs the platform trust-refresh command instead of skipping it on a
+resumed `pending_remove` receipt; and the agent's local outbox quarantines a
+transient delivery failure only after 48 hours (previously a fixed attempt
+count), with capped retention on both the main outbox and its dead-letter
+quarantine.
+
 ## Context
 
 This phase of work adds four things the agent protocol and job model did not
@@ -2152,6 +2179,23 @@ supplies the same `idempotencyKey` must return the same job and the same
 `transitionGeneration` it originally created, not a new one, matching the
 existing `idempotencyKey` replay contract's own guarantee that a matching
 replay is indistinguishable from the original request's result.
+
+**Corrected by the thirteenth amendment.** The stored key diverges from the
+generic `certificate_jobs` idempotency contract described above: rather than
+persisting the caller's raw `idempotencyKey` directly, trust-job creation
+derives `trust:<sha256(operation, trustAnchorId, agentId, store, owner,
+idempotencyKey)>` and stores that instead (`deriveTrustJobIdempotencyKey` in
+`trustAnchors.js`). A replay of the same raw key against the same
+operation/trustAnchorId/agentId/store/owner tuple still returns the same job
+or the same no-op release, matching this decision's original guarantee; the
+same raw key reused for a different operation or a different target tuple is
+now treated as an unrelated request instead of colliding in one
+workspace-wide namespace, which previously let a caller's key accidentally
+replay the wrong operation. Migration 49
+(`certops_trust_reference_release_idempotency`) adds the dedicated ledger
+the no-op reference-release path (decisions (h)/(i) below) checks under this
+same scoped key, so both the real-dispatch and no-op-release halves of trust
+idempotency now agree on one derivation.
 
 **(d) Agent-local ownership receipt (implemented by the eleventh amendment
 at `packages/agent/src/trust-store/receipt.js`).**

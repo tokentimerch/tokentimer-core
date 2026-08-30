@@ -4329,8 +4329,11 @@ paths:
                 $ref: "#/components/schemas/CertOpsJobDetailResponse"
         "400":
           description: >-
-            Malformed request body, or (for "distribute-trust"/"revoke-trust")
-            an agentId that is not a well-formed UUID.
+            Malformed request body, (for "distribute-trust"/"revoke-trust")
+            an agentId that is not a well-formed UUID, or (for "renew") a
+            payload naming an execution field other than "reason", which the
+            server now resolves exclusively from the certificate's stored
+            renewal profile.
           content:
             application/json:
               schema:
@@ -4340,6 +4343,13 @@ paths:
                   value:
                     error: agentId must be a well-formed UUID identifying a registered agent
                     code: CERTOPS_TARGET_AGENT_INVALID
+                renewalOverrideInvalid:
+                  value:
+                    error: >-
+                      Renewal override is invalid: only "reason" may be
+                      overridden on a renew job; every other execution field
+                      is resolved from the certificate's renewal profile
+                    code: CERTOPS_RENEWAL_OVERRIDE_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4366,8 +4376,10 @@ paths:
           description: >-
             idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
             capacity exceeded, the subject certificate has no agent-manageable
-            key custody, or (for "distribute-trust" only) the trust anchor is
-            not currently active.
+            key custody, or (for "distribute-trust"/"revoke-trust") the trust
+            anchor is not currently active or the idempotencyKey (scoped to
+            its full operation/target tuple) was already used with a
+            different distribute-trust/revoke-trust request.
           content:
             application/json:
               schema:
@@ -4377,6 +4389,13 @@ paths:
                   value:
                     error: Idempotency key was already used with a different CertOps job request
                     code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                trustJobIdempotencyConflict:
+                  value:
+                    error: >-
+                      Idempotency key was already used with a different
+                      distribute-trust/revoke-trust request for this
+                      operation/target tuple
+                    code: CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT
                 workspacePaused:
                   value:
                     error: CertOps is paused for this workspace
@@ -7912,9 +7931,13 @@ components:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
           description: >-
-            Optional shared public payload merged into every created renew
-            job, accepting the same optional execution fields as a single
-            renew job. The server sets certificateId per item.
+            Optional shared payload merged into every created renew job.
+            The only field accepted is "reason"; every execution field
+            (commandRef, caEndpoint, target, sans, and the rest) is resolved
+            per certificate from its own stored renewal profile, exactly
+            like a single renew job. Naming any other field fails that item
+            with CERTOPS_RENEWAL_OVERRIDE_INVALID rather than the whole
+            request. The server sets certificateId per item.
     CertOpsJobApprovalDecisionResponse:
       type: object
       additionalProperties: false
@@ -7999,7 +8022,8 @@ components:
           description: >-
             Present only when ok is false. Uses the existing CertOps error
             vocabulary (for example CERTOPS_CERTIFICATE_NOT_FOUND,
-            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED).
+            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED,
+            CERTOPS_RENEWAL_OVERRIDE_INVALID).
         message:
           type: string
           description: Present only when ok is false.
