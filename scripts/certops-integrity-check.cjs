@@ -41,11 +41,15 @@
 //      timestamp per agent, so an agent that changed capabilities twice
 //      only shows its latest state. What IS checked: every certops_agents
 //      row with a non-null capabilities_updated_at has AT LEAST ONE
-//      CERTOPS_AGENT_CAPABILITIES_CHANGED audit_events row for that
-//      agent_id. This proves "some audit trail exists for every agent that
-//      has ever reported capabilities", not "every individual change was
-//      separately audited" (that stronger claim is unverifiable against
-//      the current schema).
+//      CERTOPS_AGENT_CAPABILITIES_CHANGED or CERTOPS_AGENT_REGISTERED
+//      audit_events row for that agent_id. Registration counts because it
+//      always writes a declared_capabilities value and audits it as
+//      REGISTERED, so an agent that registered and never changed its set
+//      legitimately has no CHANGED row; requiring one would fail every
+//      such agent. This proves "some audit trail exists for every agent
+//      that has ever reported capabilities", not "every individual change
+//      was separately audited" (that stronger claim is unverifiable
+//      against the current schema).
 
 const { Pool } = require("pg");
 
@@ -61,6 +65,14 @@ const RECONCILIATION_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 const STALE_PENDING_GRACE_MULTIPLIER = 7;
 
 const CAPABILITIES_CHANGED_AUDIT_ACTION = "CERTOPS_AGENT_CAPABILITIES_CHANGED";
+// Registration is the only other place declared_capabilities is written, and
+// it always writes one (defaulting to an empty array), so an agent that
+// registered and never changed its set has a REGISTERED row and no CHANGED
+// row. Both count as the audit trail assertion 4 looks for.
+const CAPABILITIES_AUDIT_ACTIONS = [
+  CAPABILITIES_CHANGED_AUDIT_ACTION,
+  "CERTOPS_AGENT_REGISTERED",
+];
 
 function buildPool() {
   const sslMode = process.env.DB_SSL;
@@ -315,12 +327,12 @@ async function assertCapabilitiesChangesHaveAuditRows(pool) {
       WHERE a.capabilities_updated_at IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM audit_events e
-           WHERE e.action = $1
+           WHERE e.action = ANY($1::text[])
              AND e.metadata->>'agentId' = a.agent_id
         )
       ORDER BY a.agent_id
       LIMIT 20`,
-    [CAPABILITIES_CHANGED_AUDIT_ACTION],
+    [CAPABILITIES_AUDIT_ACTIONS],
   );
   if (result.rowCount === 0) {
     return {
@@ -328,8 +340,8 @@ async function assertCapabilitiesChangesHaveAuditRows(pool) {
       status: "pass",
       detail:
         "every certops_agents row with a non-null capabilities_updated_at " +
-        `has at least one ${CAPABILITIES_CHANGED_AUDIT_ACTION} audit row ` +
-        "(best-effort: existence, not a 1:1 change-history match; see " +
+        `has at least one ${CAPABILITIES_AUDIT_ACTIONS.join(" or ")} audit ` +
+        "row (best-effort: existence, not a 1:1 change-history match; see " +
         "header comment).",
     };
   }
@@ -339,7 +351,7 @@ async function assertCapabilitiesChangesHaveAuditRows(pool) {
     status: "fail",
     detail:
       `${result.rowCount} agent(s) with capabilities_updated_at set but no ` +
-      `${CAPABILITIES_CHANGED_AUDIT_ACTION} audit row at all: ${sample}`,
+      `${CAPABILITIES_AUDIT_ACTIONS.join(" or ")} audit row at all: ${sample}`,
   };
 }
 
