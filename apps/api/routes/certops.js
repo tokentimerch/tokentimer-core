@@ -155,6 +155,7 @@ const {
   CERTOPS_TARGET_AGENT_NOT_FOUND,
   createTrustAnchor,
   listTrustAnchors,
+  listInstallationsForAnchor,
   manualTrustJobCreator,
   retireTrustAnchor,
 } = require("../services/certops/trustAnchors");
@@ -2485,6 +2486,43 @@ router.post(
       });
       return res.status(500).json({
         error: "Failed to retire trust anchor",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+// Read-only: intentionally omits requireWorkspaceCertOpsActive (unlike the
+// two mutating trust-anchor routes above) so an operator diagnosing a
+// frozen/deactivated workspace can still see where a trust anchor landed.
+router.get(
+  "/api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.trust_anchor.manage"),
+  async (req, res) => {
+    const anchorId = trustAnchorIdFromParams(req, res);
+    if (!anchorId) return null;
+
+    try {
+      const items = await listInstallationsForAnchor({
+        workspaceId: req.workspace.id,
+        trustAnchorId: anchorId,
+      });
+      return res.json({ items });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps trust anchor installations list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        anchorId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list trust anchor installations",
         code: "INTERNAL_ERROR",
       });
     }

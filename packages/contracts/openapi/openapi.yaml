@@ -5394,6 +5394,66 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/trust-anchors/{anchorId}/installations:
+    get:
+      tags: [CertOps]
+      summary: List installations for a CertOps trust anchor
+      operationId: listCertOpsTrustAnchorInstallations
+      description: >-
+        Returns every certops_trust_anchor_installations row for one trust
+        anchor (agent, store, transition state, provenance, last error), so
+        an operator can see where the anchor actually landed before
+        revoking or distributing it further. Manager-only, same as the
+        other trust-anchor routes. Read-only: unlike the mutating
+        trust-anchor routes, this route does not require the workspace's
+        CertOps state to be active, since an operator diagnosing a paused
+        workspace still needs to see current installations.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: anchorId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Trust anchor record id (UUID).
+      responses:
+        "200":
+          description: Installation list for this trust anchor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsTrustAnchorInstallationListResponse"
+        "400":
+          description: Trust anchor identifier is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Trust anchor identifier is invalid
+                code: CERTOPS_TRUST_ANCHOR_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled, or the trust anchor was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                anchorNotFound:
+                  value:
+                    error: Trust anchor not found
+                    code: CERTOPS_TRUST_ANCHOR_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/agents/{agentId}/alert-settings:
     patch:
       tags: [CertOps]
@@ -9776,6 +9836,101 @@ components:
         retiredNow:
           type: boolean
           description: False when the anchor was already revoked before this request (idempotent no-op).
+    CertOpsTrustAnchorInstallation:
+      type: object
+      additionalProperties: false
+      description: >-
+        One certops_trust_anchor_installations reference row: where a trust
+        anchor's CA certificate is (or was) tracked in one agent's OS trust
+        store, for one owner. Reference-counted per (agent, trust anchor,
+        store, owner); see CertOpsJobCreateRequest's owner description.
+      required:
+        - id
+        - workspaceId
+        - trustAnchorId
+        - host
+        - store
+        - fingerprintSha256
+        - owner
+        - transitionState
+        - provenance
+        - agentId
+        - transitionGeneration
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        trustAnchorId:
+          type: string
+          format: uuid
+        host:
+          type: string
+          description: Agent-identifying host label the installation was recorded under.
+        store:
+          type: string
+          description: OS-level trust store label ("Root" or "CA"), derived from the anchor's anchorType.
+        fingerprintSha256:
+          type: string
+          description: Lowercase hex SHA-256 fingerprint of the tracked CA certificate.
+        owner:
+          type: string
+          description: Caller-supplied label identifying who holds this reference on this agent.
+        transitionState:
+          type: string
+          enum: [pending_install, installed, pending_remove, removed]
+        provenance:
+          type: string
+          enum: [preexisting, tokentimer_installed]
+          description: >-
+            Whether TokenTimer itself performed the install (tokentimer_installed)
+            or the material was already present before TokenTimer tracked it
+            (preexisting).
+        agentId:
+          type: string
+          format: uuid
+          description: The certops_agents.id this installation is tracked against.
+        lastJobId:
+          type: string
+          format: uuid
+          nullable: true
+        transitionGeneration:
+          type: integer
+          description: Monotonically increasing per-row generation; a stale generation's late result is rejected.
+        lastAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        nextReconcileAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the reconciliation sweep should next revisit a pending row. Null once settled.
+        publicMetadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CertOpsTrustAnchorInstallationListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsTrustAnchorInstallation"
     CertOpsDiagnosticBootstrapRequest:
       type: object
       additionalProperties: false

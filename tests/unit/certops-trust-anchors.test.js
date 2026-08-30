@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   CERTOPS_TRUST_ANCHOR_INVALID,
+  CERTOPS_TRUST_ANCHOR_NOT_FOUND,
   CERTOPS_TRUST_ANCHOR_PEM_INVALID,
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
   CERTOPS_TARGET_AGENT_INVALID,
@@ -17,6 +18,7 @@ const {
   normalizeAgentId,
   normalizeIdempotencyKey,
   assertTargetAgentRegistered,
+  listInstallationsForAnchor,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/trustAnchors.js"),
 );
@@ -255,6 +257,143 @@ describe("assertTargetAgentRegistered (dispatching a trust job to a nonexistent/
     );
   });
 });
+
+describe("listInstallationsForAnchor (read-only installation listing for a trust anchor)", () => {
+  const WORKSPACE_ID = "11111111-1111-1111-1111-111111111111";
+  const ANCHOR_ID = "22222222-2222-2222-2222-222222222222";
+  const INSTALLATION_ID = "33333333-3333-3333-3333-333333333333";
+  const AGENT_ID = "44444444-4444-4444-4444-444444444444";
+
+  function anchorRow(overrides = {}) {
+    return {
+      id: ANCHOR_ID,
+      workspace_id: WORKSPACE_ID,
+      name: "Test Anchor",
+      anchor_type: "root",
+      fingerprint_sha256: "a".repeat(64),
+      subject_common_name: null,
+      status: "active",
+      source: "api",
+      public_metadata: {},
+      created_by: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      revoked_at: null,
+      ...overrides,
+    };
+  }
+
+  function installationRow(overrides = {}) {
+    return {
+      id: INSTALLATION_ID,
+      workspace_id: WORKSPACE_ID,
+      trust_anchor_id: ANCHOR_ID,
+      host: AGENT_ID,
+      store: "Root",
+      fingerprint_sha256: "a".repeat(64),
+      owner: "workspace-policy",
+      transition_state: "installed",
+      provenance: "tokentimer_installed",
+      agent_id: AGENT_ID,
+      last_job_id: null,
+      transition_generation: 2,
+      last_attempt_at: new Date(),
+      last_error: null,
+      next_reconcile_at: null,
+      public_metadata: {},
+      created_at: new Date(),
+      updated_at: new Date(),
+      ...overrides,
+    };
+  }
+
+  // Distinguishes the two queries by table name substring; the anchor
+  // lookup must be checked with a stricter regex since
+  // "certops_trust_anchors" is a substring of
+  // "certops_trust_anchor_installations".
+  function makeClient({ anchor = null, installationRows = [] } = {}) {
+    const calls = [];
+    return {
+      calls,
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (/certops_trust_anchor_installations/.test(sql)) {
+          return { rows: installationRows };
+        }
+        if (/certops_trust_anchors\b/.test(sql)) {
+          return { rows: anchor ? [anchor] : [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+  }
+
+  it("throws CERTOPS_TRUST_ANCHOR_NOT_FOUND when the anchor does not exist in this workspace, without ever querying installations", async () => {
+    const client = makeClient({ anchor: null });
+    await assert.rejects(
+      () =>
+        listInstallationsForAnchor({
+          client,
+          workspaceId: WORKSPACE_ID,
+          trustAnchorId: ANCHOR_ID,
+        }),
+      (error) => error?.code === CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+    );
+    assert.equal(
+      client.calls.some((call) => /certops_trust_anchor_installations/.test(call.sql)),
+      false,
+    );
+  });
+
+  it("scopes the installation query to both workspace_id AND trust_anchor_id, ordered by updated_at DESC", async () => {
+    const client = makeClient({
+      anchor: anchorRow(),
+      installationRows: [installationRow()],
+    });
+    await listInstallationsForAnchor({
+      client,
+      workspaceId: WORKSPACE_ID,
+      trustAnchorId: ANCHOR_ID,
+    });
+    const installationCall = client.calls.find((call) =>
+      /certops_trust_anchor_installations/.test(call.sql),
+    );
+    assert.ok(installationCall, "expected an installations query");
+    assert.match(installationCall.sql, /workspace_id\s*=\s*\$1/);
+    assert.match(installationCall.sql, /trust_anchor_id\s*=\s*\$2/);
+    assert.match(installationCall.sql, /ORDER BY updated_at DESC/);
+    assert.deepEqual(installationCall.params, [WORKSPACE_ID, ANCHOR_ID]);
+  });
+
+  it("returns an empty array for an anchor with no installations", async () => {
+    const client = makeClient({ anchor: anchorRow(), installationRows: [] });
+    const result = await listInstallationsForAnchor({
+      client,
+      workspaceId: WORKSPACE_ID,
+      trustAnchorId: ANCHOR_ID,
+    });
+    assert.deepEqual(result, []);
+  });
+
+  it("maps installation rows through installationFromRow (agent, store, transition state, provenance, lastError)", async () => {
+    const row = installationRow({ last_error: "boom" });
+    const client = makeClient({ anchor: anchorRow(), installationRows: [row] });
+    const result = await listInstallationsForAnchor({
+      client,
+      workspaceId: WORKSPACE_ID,
+      trustAnchorId: ANCHOR_ID,
+    });
+    assert.equal(result.length, 1);
+    const [installation] = result;
+    assert.equal(installation.id, INSTALLATION_ID);
+    assert.equal(installation.agentId, AGENT_ID);
+    assert.equal(installation.store, "Root");
+    assert.equal(installation.transitionState, "installed");
+    assert.equal(installation.provenance, "tokentimer_installed");
+    assert.equal(installation.lastError, "boom");
+  });
+});
+
 
 describe("trust result wire carriage", () => {
   const agentProtocolSchema = require(

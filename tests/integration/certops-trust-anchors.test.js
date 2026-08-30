@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { createRequire } = require("module");
+const supertest = require("supertest");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
 
@@ -16,10 +18,17 @@ const { pool } = require("../../apps/api/db/database");
 const {
   validateSignedJob,
 } = require("../../packages/contracts/certops/validate-signed-job.cjs");
+const certOpsRouter = require("../../apps/api/routes/certops");
+
+const apiRequire = createRequire(
+  require.resolve("../../apps/api/package.json"),
+);
+const express = apiRequire("express");
 
 const {
   createTrustAnchor,
   listTrustAnchors,
+  listInstallationsForAnchor,
   retireTrustAnchor,
   createTrustJob,
   onTrustJobTerminalTransition,
@@ -28,6 +37,7 @@ const {
   sweepOverdueTrustInstallations,
   TRUST_JOB_TERMINAL_NEGATIVE_STATUSES,
   CERTOPS_TRUST_ANCHOR_NOT_ACTIVE,
+  CERTOPS_TRUST_ANCHOR_NOT_FOUND,
   CERTOPS_TRUST_ANCHOR_TYPE_IMMUTABLE,
   CERTOPS_TRUST_RESULT_MISMATCH,
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
@@ -3233,5 +3243,306 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       removedRow.transition_generation,
       "the rejected attempt must not mutate the row at all",
     );
+  });
+
+  // --- listInstallationsForAnchor (read-only installation listing) ---------
+
+  describe("listInstallationsForAnchor", () => {
+    // Runs in its own fresh workspace: CA_CERTS is a small fixed pool, and by
+    // this point in the suite anchorCounter has wrapped around it many times
+    // over, so a "fresh" anchor drawn from the shared workspaceId can land on
+    // a fingerprint some earlier test already attached installations to (see
+    // withFreshWorkspace's own doc comment above). Isolation here is scoped
+    // by (workspace_id, fingerprint_sha256), so a just-created workspace
+    // sidesteps that collision entirely.
+    it("returns every installation row for the anchor, newest updated_at first, with the full installation shape", async () => {
+      await withFreshWorkspace(async (freshWorkspaceId) => {
+        const anchor = await createTrustAnchor({
+          workspaceId: freshWorkspaceId,
+          name: "List Installations Anchor",
+          anchorType: "root",
+          pem: trustAnchorPemFor(anchorCounter++),
+          createdByUserId: ownerId,
+        });
+        const agentA = await createAgent({ workspaceIdOverride: freshWorkspaceId });
+        const agentB = await createAgent({ workspaceIdOverride: freshWorkspaceId });
+
+        const optionsFor = (agent, idempotencyKey) => ({
+          workspaceId: freshWorkspaceId,
+          operation: "distribute-trust",
+          trustAnchorId: anchor.id,
+          agentId: agent.id,
+          store: "Root",
+          owner: "workspace-policy",
+          idempotencyKey,
+          requestedByUserId: ownerId,
+        });
+
+        // A is created then ingested (installed): its row's updated_at moves
+        // to the ingest time. B is created afterwards, so its updated_at is
+        // the later of the two and must sort first under ORDER BY
+        // updated_at DESC.
+        const outcomeA = await createTrustJob(
+          optionsFor(agentA, `list-installations-a-${crypto.randomUUID()}`),
+        );
+        const jobA = await getJobRow(outcomeA.job.id);
+        const installationA = await getInstallationById(outcomeA.installation.id);
+        await withTx((client) =>
+          ingestTrustJobResult({
+            client,
+            job: jobA,
+            result: buildResult({
+              agent: agentA,
+              job: jobA,
+              installationRow: installationA,
+              outcome: "installed",
+            }),
+          }),
+        );
+
+        const outcomeB = await createTrustJob(
+          optionsFor(agentB, `list-installations-b-${crypto.randomUUID()}`),
+        );
+
+        const items = await listInstallationsForAnchor({
+          workspaceId: freshWorkspaceId,
+          trustAnchorId: anchor.id,
+        });
+
+        expect(items).to.have.lengthOf(2);
+        const ids = items.map((item) => item.id);
+        expect(ids.indexOf(String(outcomeB.installation.id))).to.be.lessThan(
+          ids.indexOf(String(outcomeA.installation.id)),
+        );
+
+        const returnedB = items[ids.indexOf(String(outcomeB.installation.id))];
+        expect(Object.keys(returnedB).sort()).to.deep.equal(
+          [
+            "id",
+            "workspaceId",
+            "trustAnchorId",
+            "host",
+            "store",
+            "fingerprintSha256",
+            "owner",
+            "transitionState",
+            "provenance",
+            "agentId",
+            "lastJobId",
+            "transitionGeneration",
+            "lastAttemptAt",
+            "lastError",
+            "nextReconcileAt",
+            "publicMetadata",
+            "createdAt",
+            "updatedAt",
+          ].sort(),
+        );
+        expect(returnedB).to.include({
+          id: String(outcomeB.installation.id),
+          workspaceId: String(freshWorkspaceId),
+          trustAnchorId: String(anchor.id),
+          agentId: String(agentB.id),
+          store: "Root",
+          transitionState: "pending_install",
+          provenance: "preexisting",
+          lastError: null,
+        });
+      });
+    });
+
+    it("returns an empty array for an anchor with no installations", async () => {
+      await withFreshWorkspace(async (freshWorkspaceId) => {
+        const anchor = await createTrustAnchor({
+          workspaceId: freshWorkspaceId,
+          name: "Empty Installations Anchor",
+          anchorType: "root",
+          pem: trustAnchorPemFor(anchorCounter++),
+          createdByUserId: ownerId,
+        });
+
+        const items = await listInstallationsForAnchor({
+          workspaceId: freshWorkspaceId,
+          trustAnchorId: anchor.id,
+        });
+
+        expect(items).to.deep.equal([]);
+      });
+    });
+
+    it("rejects with CERTOPS_TRUST_ANCHOR_NOT_FOUND for an anchor id that belongs to another workspace", async () => {
+      await withFreshWorkspace(async (otherWorkspaceId) => {
+        const pem = trustAnchorPemFor(anchorCounter++);
+        const anchorInOtherWorkspace = await createTrustAnchor({
+          workspaceId: otherWorkspaceId,
+          name: "Cross-workspace anchor",
+          anchorType: "root",
+          pem,
+          createdByUserId: ownerId,
+        });
+
+        await expectServiceError(
+          listInstallationsForAnchor({
+            workspaceId,
+            trustAnchorId: anchorInOtherWorkspace.id,
+          }),
+          CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+        );
+      });
+    });
+
+    it("rejects with CERTOPS_TRUST_ANCHOR_NOT_FOUND for a well-formed but nonexistent anchor id", async () => {
+      await expectServiceError(
+        listInstallationsForAnchor({
+          workspaceId,
+          trustAnchorId: crypto.randomUUID(),
+        }),
+        CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+      );
+    });
+  });
+});
+
+/**
+ * Route-level coverage for GET .../trust-anchors/:anchorId/installations.
+ * The suite above exercises listInstallationsForAnchor directly; this block
+ * exercises the actual router (rate limiter, requireCertOpsEnabled,
+ * authorize("certops.trust_anchor.manage")) the same way
+ * certops-controller-provisioning.test.js's createHumanProvisioningApp does,
+ * since RBAC and the rollout gate live in the route, not the service.
+ */
+describe("GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations (route)", function () {
+  this.timeout(60000);
+
+  let ownerId;
+  let workspaceId;
+  let previousCertOpsEnabled;
+
+  function buildApp({ workspaceRole = "admin", userId = ownerId } = {}) {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.workspace = { id: workspaceId };
+      if (userId) req.user = { id: userId };
+      req.authz = { workspaceRole };
+      next();
+    });
+    app.use(certOpsRouter);
+    return app;
+  }
+
+  function getInstallations(app, anchorId) {
+    return supertest(app).get(
+      `/api/v1/workspaces/${workspaceId}/certops/trust-anchors/${anchorId}/installations`,
+    );
+  }
+
+  before(async () => {
+    previousCertOpsEnabled = process.env.CERTOPS_ENABLED;
+    process.env.CERTOPS_ENABLED = "true";
+    await runMigrations();
+
+    const email = `trust-anchor-route-${Date.now()}-${crypto.randomUUID()}@example.com`;
+    const owner = await TestUtils.execQuery(
+      `INSERT INTO users (email, email_original, display_name, password_hash, auth_method, email_verified)
+       VALUES ($1, $2, 'Trust Anchor Route Test', 'unused', 'local', TRUE)
+       RETURNING id`,
+      [email.toLowerCase(), email],
+    );
+    ownerId = owner.rows[0].id;
+
+    workspaceId = crypto.randomUUID();
+    await TestUtils.execQuery(
+      `INSERT INTO workspaces (id, name, created_by, plan)
+       VALUES ($1, 'Trust Anchor Route Test WS', $2, 'oss')`,
+      [workspaceId, ownerId],
+    );
+  });
+
+  after(async () => {
+    if (previousCertOpsEnabled === undefined) delete process.env.CERTOPS_ENABLED;
+    else process.env.CERTOPS_ENABLED = previousCertOpsEnabled;
+
+    if (workspaceId) {
+      await TestUtils.execQuery("DELETE FROM workspaces WHERE id = $1", [
+        workspaceId,
+      ]);
+    }
+    if (ownerId) {
+      // Same ordering as the suite above: audit_events is update-immutable,
+      // so the rows this suite wrote must go before the user they reference.
+      await TestUtils.execQuery(
+        `DELETE FROM audit_events
+          WHERE actor_user_id = $1 OR subject_user_id = $1`,
+        [ownerId],
+      );
+      await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
+    }
+  });
+
+  it("returns { items: [] } for an admin on an anchor with no installations", async () => {
+    const pem = trustAnchorPemFor(0);
+    const anchor = await createTrustAnchor({
+      workspaceId,
+      name: "Route Test Anchor (empty)",
+      anchorType: "root",
+      pem,
+      createdByUserId: ownerId,
+    });
+
+    const response = await getInstallations(buildApp(), anchor.id).expect(200);
+    expect(response.body).to.deep.equal({ items: [] });
+  });
+
+  it("returns 404 for an anchor id that does not exist in this workspace", async () => {
+    await getInstallations(buildApp(), crypto.randomUUID()).expect(404);
+  });
+
+  it("rejects a viewer and a workspace_manager with 403, and allows admin", async () => {
+    const pem = trustAnchorPemFor(1);
+    const anchor = await createTrustAnchor({
+      workspaceId,
+      name: "Route Test Anchor (rbac)",
+      anchorType: "root",
+      pem,
+      createdByUserId: ownerId,
+    });
+
+    await getInstallations(
+      buildApp({ workspaceRole: "viewer" }),
+      anchor.id,
+    ).expect(403);
+    await getInstallations(
+      buildApp({ workspaceRole: "workspace_manager" }),
+      anchor.id,
+    ).expect(403);
+    await getInstallations(
+      buildApp({ workspaceRole: "admin" }),
+      anchor.id,
+    ).expect(200);
+  });
+
+  it("omits requireWorkspaceCertOpsActive: a paused workspace can still be read", async () => {
+    const pem = trustAnchorPemFor(2);
+    const anchor = await createTrustAnchor({
+      workspaceId,
+      name: "Route Test Anchor (paused)",
+      anchorType: "root",
+      pem,
+      createdByUserId: ownerId,
+    });
+    await TestUtils.execQuery(
+      `UPDATE workspaces SET certops_paused = TRUE WHERE id = $1`,
+      [workspaceId],
+    );
+
+    try {
+      await getInstallations(buildApp(), anchor.id).expect(200);
+    } finally {
+      await TestUtils.execQuery(
+        `UPDATE workspaces SET certops_paused = FALSE WHERE id = $1`,
+        [workspaceId],
+      );
+    }
   });
 });
