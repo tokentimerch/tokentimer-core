@@ -176,6 +176,12 @@
           "status": "existing"
         },
         {
+          "id": "certops-renewal-profile-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/renewal-profile.schema.json",
+          "status": "existing"
+        },
+        {
           "id": "certops-signed-dispatch-payload-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/signed-dispatch-payload.schema.json",
