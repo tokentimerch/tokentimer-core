@@ -278,10 +278,14 @@ the shared detector scans every outbound envelope.
 - **Bulk renew** - `POST .../certops/jobs/bulk-renew`: many certificates
   through the same creation path as single renew (validation, approval
   gates, kill switch identical) with a per-item partial-failure envelope.
-  Items without an explicit `idempotencyKey` derive a stable one
-  (`bulk-renew:auto:<certificateId>`), which is permanent: re-running after
-  cancelling the created jobs returns the original terminal jobs instead of
-  creating new ones. Pass a fresh key to force a genuine re-run.
+  Retry safety is opt-in: supply an `idempotencyKey` and each item gets
+  `bulk-renew:<key>:<certificateId>`, so a replayed batch returns the
+  already-created jobs. Omit it and items carry no key, so each call
+  enqueues fresh jobs (a certificate must stay renewable more than once,
+  and the jobs table's idempotency uniqueness has no time component).
+  `dryRun` additionally resolves each certificate's stored renewal profile
+  read-only, so an incomplete or invalid profile fails that item in the dry
+  run instead of only at real-run time.
 
 ## Dashboard certificate visibility
 

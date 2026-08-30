@@ -7909,7 +7909,10 @@ components:
           default: false
           description: >-
             True validates each certificate and reports per-item outcomes
-            without creating any jobs.
+            without creating any jobs. Each item's stored renewal profile is
+            resolved read-only, so a certificate whose profile is incomplete
+            or invalid fails the dry run instead of only failing the real
+            run. Per-CA capacity is not checked and not reserved.
         requiresApproval:
           type: boolean
           default: false
@@ -7925,8 +7928,9 @@ components:
             Optional request-level idempotency key. Combined with each
             certificateId to derive a per-item key
             (bulk-renew:<idempotencyKey>:<certificateId>), so retrying the
-            same bulk request is safe. When omitted, the server derives
-            bulk-renew:auto:<certificateId> instead.
+            same bulk request is safe. When omitted, items are created with
+            no idempotency key at all, so a replayed request enqueues fresh
+            renew jobs; pass a key if you need retry safety.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
