@@ -1491,8 +1491,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       // Symmetric to distributeTrust's reclaim: the isPresent probe just ran
       // above, and a different job's pending_remove row here can only be a
       // crashed prior attempt (per the comment on resumingSameJob above), so
-      // reclaiming it here rather than refusing the job matches TRU-10's fix
-      // on the distribute side.
+      // reclaim rather than refuse, matching the distribute side.
       reclaimStalePending: true,
       now,
     }),

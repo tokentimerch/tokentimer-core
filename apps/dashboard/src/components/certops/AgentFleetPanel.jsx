@@ -520,29 +520,33 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     <Stack spacing={4} align='stretch'>
       <HStack justify='space-between' align='start' spacing={4} flexWrap='wrap'>
         <Box minW={0}>
-          <Text fontSize='md' fontWeight='bold' color={titleColor} mb={1}>
+          <Text fontSize='md' fontWeight='bold' color={titleColor}>
             Agent fleet
           </Text>
-          <Alert
-            status='info'
-            variant='subtle'
-            borderRadius='md'
-            bg={infoBg}
-            border='1px solid'
-            borderColor={infoBorder}
-            py={2}
-            px={3}
-          >
-            <AlertIcon boxSize={4} />
-            <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
-              Agents connect outbound-only and lease jobs from this workspace.
-              An agent is marked offline when it stops sending heartbeats;
-              retire it to invalidate its credential permanently.
-            </AlertDescription>
-          </Alert>
         </Box>
         {headerAction ? <Box flexShrink={0}>{headerAction}</Box> : null}
       </HStack>
+
+      {/* Outside the header row so the banner spans the panel instead of
+          shrinking to fit beside the header action. */}
+      <Alert
+        status='info'
+        variant='subtle'
+        borderRadius='md'
+        bg={infoBg}
+        border='1px solid'
+        borderColor={infoBorder}
+        py={2}
+        px={3}
+        w='100%'
+      >
+        <AlertIcon boxSize={4} />
+        <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
+          Agents connect outbound-only and lease jobs from this workspace. An
+          agent is marked offline when it stops sending heartbeats; retire it to
+          invalidate its credential permanently.
+        </AlertDescription>
+      </Alert>
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 

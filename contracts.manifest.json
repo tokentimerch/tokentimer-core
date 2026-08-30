@@ -179,31 +179,31 @@
           "id": "certops-signed-dispatch-payload-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/signed-dispatch-payload.schema.json",
-          "status": "new"
+          "status": "existing"
         },
         {
           "id": "certops-signed-dispatch-wire-v1-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/signed-dispatch-wire-v1.schema.json",
-          "status": "new"
+          "status": "existing"
         },
         {
           "id": "certops-signed-dispatch-wire-v2-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/signed-dispatch-wire-v2.schema.json",
-          "status": "new"
+          "status": "existing"
         },
         {
           "id": "certops-protocol-smoke-payload-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/protocol-smoke-payload.schema.json",
-          "status": "new"
+          "status": "existing"
         },
         {
           "id": "certops-signed-job-validator-module",
           "kind": "module",
           "path": "packages/contracts/certops/validate-signed-job.cjs",
-          "status": "new"
+          "status": "existing"
         },
         {
           "id": "certops-evidence-schema",
@@ -233,6 +233,24 @@
           "id": "certops-agent-protocol-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-trust-job-payload-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/trust-job-payload.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-trust-result-contract-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/trust-result-contract.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-trust-result-validator-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/validate-trust-result.cjs",
           "status": "existing"
         },
         {

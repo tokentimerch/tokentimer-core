@@ -22,6 +22,8 @@ const {
   V2_MAX_ENCODED_PAYLOAD_CHARS,
 } = require("../../packages/agent/src/signing/index.js");
 const protocolSmokePayloadSchema = require("../../packages/contracts/certops/protocol-smoke-payload.schema.json");
+const trustJobPayloadSchema = require("../../packages/contracts/certops/trust-job-payload.schema.json");
+const trustResultContractSchema = require("../../packages/contracts/certops/trust-result-contract.schema.json");
 
 const openApiSource = fs.readFileSync(
   path.join(repoRoot, "packages/contracts/openapi/openapi.yaml"),
@@ -169,6 +171,8 @@ const certopsSchemas = {
   "executor-event.schema.json": executorEventSchema,
   "protocol-smoke-payload.schema.json": protocolSmokePayloadSchema,
   "signed-dispatch-wire-v2.schema.json": signedDispatchWireV2Schema,
+  "trust-job-payload.schema.json": trustJobPayloadSchema,
+  "trust-result-contract.schema.json": trustResultContractSchema,
 };
 
 // Not part of certopsSchemas: these are partial building-block definitions

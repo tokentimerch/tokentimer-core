@@ -1204,7 +1204,7 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(secondExecFileImpl.calls.length, 0);
   });
 
-  it("reclaims a DIFFERENT jobId's stale pending_remove receipt rather than permanently refusing (TRU-10 symmetric fix)", async () => {
+  it("reclaims a DIFFERENT jobId's stale pending_remove receipt rather than permanently refusing (symmetric to the distribute-side reclaim)", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});
     await installFirst(receiptDir, fsImpl);

@@ -152,6 +152,7 @@ const {
   pruneStaleOutboxEntries,
   pruneDeadLetterEntries,
   shouldRunPrunePass,
+  notePrunePassFailed,
   createEvidenceBuffer,
 } = require("./outbox");
 const {
@@ -6250,10 +6251,19 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           });
           // Rate-limited retention pass so a permanently-stuck outbox
           // (dead-letter included) cannot grow the directory without
-          // bound.
-          if (shouldRunPrunePass(Date.now())) {
-            pruneStaleOutboxEntries(executionContext.outboxDir, Date.now());
-            pruneDeadLetterEntries(executionContext.outboxDir, Date.now());
+          // bound. Guarded because a quarantine/delete can throw on a
+          // transiently locked file (routine EBUSY on Windows), and an
+          // unguarded throw here would abort the tick before client.claim
+          // and skip the whole claim cycle.
+          const pruneAtMs = Date.now();
+          if (shouldRunPrunePass(pruneAtMs)) {
+            try {
+              pruneStaleOutboxEntries(executionContext.outboxDir, pruneAtMs);
+              pruneDeadLetterEntries(executionContext.outboxDir, pruneAtMs);
+            } catch (err) {
+              notePrunePassFailed(pruneAtMs);
+              defaultAgentLogger.error("outbox retention pass failed; will retry", err);
+            }
           }
           const jobs = await client.claim({
             maxJobs: 1,

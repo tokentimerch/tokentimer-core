@@ -16,11 +16,14 @@ const {
   acknowledgeOutboxEntry,
   transmitOutboxEntry,
   drainOutbox,
+  pruneStaleOutboxEntries,
   pruneDeadLetterEntries,
   createEvidenceBuffer,
   OUTBOX_DIR_NAME,
   MAX_TRANSIENT_RETRY_AGE_MS,
+  MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE,
   FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
+  MAX_OUTBOX_AGE_MS,
   MAX_DEAD_LETTER_AGE_MS,
 } = require("./index.js");
 
@@ -236,23 +239,33 @@ describe("outbox", () => {
       },
     };
 
-    // First attempt, right when the entry becomes due: fails, starts backoff.
+    // First attempt, right when the entry becomes due: fails, starts backoff
+    // and stamps firstAttemptAt, which is what the ceiling ages from.
     const firstAttempt = await drainOutbox(outboxDir, client, { now: () => createdAtMs });
     assert.equal(firstAttempt.quarantined, 0);
     assert.equal(listOutboxEntries(outboxDir).length, 1);
 
-    // Well past the first attempt's short backoff, but still short of the
-    // ceiling: still retryable.
+    // Accumulate the attempt floor, one attempt per hour so each is well
+    // past the capped backoff, all still short of the age ceiling.
+    for (let attempt = 2; attempt <= MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE; attempt += 1) {
+      const pass = await drainOutbox(outboxDir, client, {
+        now: () => createdAtMs + (attempt - 1) * 60 * 60_000,
+      });
+      assert.equal(pass.quarantined, 0);
+    }
+    assert.equal(listOutboxEntries(outboxDir)[0].attempts, MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE);
+
+    // Attempt floor reached but still short of the ceiling: retryable.
     const beforeCeiling = await drainOutbox(outboxDir, client, {
       now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS - 1000,
     });
     assert.equal(beforeCeiling.quarantined, 0);
     assert.equal(listOutboxEntries(outboxDir).length, 1);
 
-    // Past the ceiling (and past the short backoff set by the previous
-    // attempt): quarantined as a last resort.
+    // Past the ceiling, and past the now-capped 30-minute backoff the
+    // previous attempt set: quarantined as a last resort.
     const atCeiling = await drainOutbox(outboxDir, client, {
-      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + 60_000,
+      now: () => createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + 2 * 60 * 60_000,
     });
     assert.equal(atCeiling.quarantined, 1);
     assert.equal(atCeiling.remaining, 0);
@@ -263,17 +276,56 @@ describe("outbox", () => {
     assert.equal(deadLetter[0].lastErrorMessage, "connection reset");
   });
 
-  it("quarantines a transient failure via the attempt-count fallback when createdAt cannot be parsed", async () => {
+  it("does NOT quarantine an entry whose job outcome predates the retry ceiling but which has never actually been retried", async () => {
+    // The agent was offline (host rebooted for patching) far longer than
+    // MAX_TRANSIENT_RETRY_AGE_MS, so createdAt is already ancient by the
+    // time the first delivery is attempted. Aging the ceiling from
+    // createdAt would dead-letter this on its first transient failure,
+    // having never retried once -- and for a trust job the OS mutation
+    // has already happened, so the result must not be discarded.
+    const createdAtMs = Date.parse("2026-08-01T00:00:00.000Z");
+    const firstAttemptMs = createdAtMs + 10 * 24 * 60 * 60_000;
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-offline-restart-1",
+      createdAt: new Date(createdAtMs).toISOString(),
+      result: { jobId: "job-offline", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    let calls = 0;
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("connection reset");
+      },
+    };
+
+    const firstAttempt = await drainOutbox(outboxDir, client, { now: () => firstAttemptMs });
+    assert.equal(firstAttempt.quarantined, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
+
+    // The very next retry succeeds, so the result is delivered rather
+    // than lost -- the whole point of the attempt floor.
+    const retry = await drainOutbox(outboxDir, client, { now: () => firstAttemptMs + 60_000 });
+    assert.equal(retry.transmitted, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 0);
+  });
+
+  it("quarantines a transient failure via the attempt-count fallback when the age basis cannot be parsed", async () => {
     ensureOutboxDir(outboxDir);
-    // Written directly (bypassing enqueueOutboxEntry's createdAt
-    // validation) to simulate a corrupted/hand-edited entry file with an
-    // unparseable createdAt -- the only case where the fallback ceiling
+    // Written directly (bypassing enqueueOutboxEntry's validation) to
+    // simulate a corrupted/hand-edited entry whose timestamps are
+    // unparseable -- the only case where the fallback attempt ceiling
     // (rather than the age-based one) governs quarantine.
     fs.writeFileSync(
       path.join(outboxDir, "outbox-corrupt-createdat.json"),
       `${JSON.stringify({
         id: "outbox-corrupt-createdat",
         createdAt: "not-a-real-date",
+        firstAttemptAt: "not-a-real-date",
         result: { jobId: "job-corrupt", attemptId: "a1", status: "succeeded" },
         evidence: [],
         attempts: FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE - 1,
@@ -478,11 +530,11 @@ describe("outbox", () => {
   });
 
   it("an entry quarantined now survives an immediate prune pass even though its original createdAt is already past the dead-letter age ceiling", async () => {
-    // Reproduces an agent that was offline for >30 days: the very first
-    // post-restart transmission attempt exceeds the transient-retry
-    // ceiling (measured from createdAt) and is quarantined immediately,
-    // then the same poll tick's rate-limited prune pass runs right away
-    // (startImmediately: true on the poll loop).
+    // Reproduces an agent whose entry finally exhausts the transient-retry
+    // ceiling long after the underlying job outcome was persisted, so its
+    // createdAt is already older than the dead-letter retention window by
+    // the time it is quarantined. The same poll tick's rate-limited prune
+    // pass then runs right away (startImmediately: true on the poll loop).
     const createdAtMs = Date.parse("2026-08-28T00:00:00.000Z");
     enqueueOutboxEntry(outboxDir, {
       id: "outbox-stale-restart-1",
@@ -491,13 +543,23 @@ describe("outbox", () => {
       evidence: [],
     });
 
-    const nowMs = createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + MAX_DEAD_LETTER_AGE_MS + 60_000;
+    const firstAttemptMs = createdAtMs + MAX_DEAD_LETTER_AGE_MS + 60_000;
+    const nowMs = firstAttemptMs + MAX_TRANSIENT_RETRY_AGE_MS + 60_000;
     const client = {
       reportEvidence: async () => {},
       reportResult: async () => {
         throw new Error("connection reset");
       },
     };
+
+    // Burn through the attempt floor first: the ceiling alone no longer
+    // quarantines an entry that has never genuinely been retried.
+    for (let attempt = 1; attempt <= MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE; attempt += 1) {
+      const pass = await drainOutbox(outboxDir, client, {
+        now: () => firstAttemptMs + (attempt - 1) * 60 * 60_000,
+      });
+      assert.equal(pass.quarantined, 0);
+    }
 
     const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
     assert.equal(drain.quarantined, 1);
@@ -521,6 +583,59 @@ describe("outbox", () => {
 
     const nowAgedOut = pruneDeadLetterEntries(outboxDir, nowMs + MAX_DEAD_LETTER_AGE_MS + 60_000);
     assert.equal(nowAgedOut.deleted, 1);
+  });
+
+  it("quarantines an unreadable entry file that no age or attempt ceiling can reach, once it is past MAX_OUTBOX_AGE_MS", () => {
+    ensureOutboxDir(outboxDir);
+    // Corrupt enough that readEntriesFromDir skips it, so it is invisible
+    // to every entry-object-based policy. Without an mtime-based sweep it
+    // would sit here being re-read on every drain forever, contradicting
+    // "one poisoned entry cannot grow the outbox directory forever".
+    const corruptPath = path.join(outboxDir, "outbox-unparseable.json");
+    fs.writeFileSync(corruptPath, "{ this is not json", "utf8");
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const staleMs = nowMs - MAX_OUTBOX_AGE_MS - 60_000;
+    fs.utimesSync(corruptPath, new Date(staleMs), new Date(staleMs));
+
+    const prune = pruneStaleOutboxEntries(outboxDir, nowMs);
+    assert.equal(prune.quarantined, 1);
+    assert.equal(fs.existsSync(corruptPath), false);
+    assert.equal(fs.existsSync(path.join(resolveDeadLetterDir(outboxDir), "outbox-unparseable.json")), true);
+  });
+
+  it("leaves a recent unreadable entry file in place for operator inspection", () => {
+    ensureOutboxDir(outboxDir);
+    const corruptPath = path.join(outboxDir, "outbox-unparseable-recent.json");
+    fs.writeFileSync(corruptPath, "{ this is not json", "utf8");
+
+    const prune = pruneStaleOutboxEntries(outboxDir, Date.now());
+    assert.equal(prune.quarantined, 0);
+    assert.equal(fs.existsSync(corruptPath), true);
+  });
+
+  it("leaves a future-dated createdAt to the count-overflow path rather than aging it out", () => {
+    // Documents the actual clock-skew behavior: an entry stamped ahead of the
+    // host clock never satisfies the elapsed-age test, so the age sweep is a
+    // no-op for it. An earlier version of this file carried a Math.min clamp
+    // that claimed to fix this; clamping to now yields elapsed 0, which is
+    // equally never past MAX_OUTBOX_AGE_MS, so the clamp changed nothing.
+    ensureOutboxDir(outboxDir);
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const entry = enqueueOutboxEntry(outboxDir, {
+      id: "outbox-future-createdat",
+      result: { jobId: "job-future", attemptId: "attempt-future", status: "succeeded" },
+    });
+
+    const filePath = path.join(outboxDir, `${entry.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    persisted.createdAt = new Date(nowMs + MAX_OUTBOX_AGE_MS * 3).toISOString();
+    fs.writeFileSync(filePath, JSON.stringify(persisted), "utf8");
+
+    const prune = pruneStaleOutboxEntries(outboxDir, nowMs);
+    assert.equal(prune.quarantined, 0);
+    assert.equal(listOutboxEntries(outboxDir).length, 1);
   });
 
   it("pruneDeadLetterEntries falls back to lastAttemptAt, then file mtime, then createdAt when quarantinedAt is absent (legacy entries)", async () => {

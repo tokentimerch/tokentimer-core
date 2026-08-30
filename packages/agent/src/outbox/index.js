@@ -50,16 +50,35 @@ const RETRY_BACKOFF_MAX_MS = 30 * 60_000;
 const RETRY_JITTER_RATIO = 0.2;
 
 // A transient (never classified permanent) failure keeps retrying with
-// backoff for this long, measured from entry.createdAt, before it is
-// quarantined as a last resort. 48 hours is enough to ride out a
-// multi-day outage while still bounding how long a truly-stuck entry
-// can keep growing the outbox directory.
+// backoff for this long, measured from the entry's FIRST delivery
+// attempt, before it is quarantined as a last resort. 48 hours is enough
+// to ride out a multi-day outage while still bounding how long a
+// truly-stuck entry can keep growing the outbox directory.
+//
+// The basis is deliberately firstAttemptAt and not createdAt: createdAt
+// is when the job outcome was persisted, which can predate the first
+// network attempt by arbitrarily long (an agent offline over a long
+// weekend, a host powered down mid-maintenance). Aging from createdAt
+// meant such an entry was quarantined on its very first failed attempt,
+// having never actually retried at all -- the opposite of riding out an
+// outage. For a trust job that is worse than losing an acknowledgement:
+// the OS mutation already happened, so the control plane would be left
+// permanently disagreeing with a host that really was changed.
 const MAX_TRANSIENT_RETRY_AGE_MS = 48 * 60 * 60_000;
 
+// Floor on real delivery attempts before the age ceiling above may fire,
+// so no entry is ever quarantined without having genuinely been retried.
+// Eight attempts is ~63 minutes of the backoff series (15s+30s+60s+...),
+// i.e. long enough that the failure is not a single transient blip.
+const MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE = 8;
+
 // Fallback quarantine ceiling for a transient failure whose age cannot
-// be determined (entry.createdAt fails to parse). Set far above what
-// MAX_TRANSIENT_RETRY_AGE_MS worth of capped backoff would produce, so
-// it only fires when the age check genuinely cannot run.
+// be determined (firstAttemptAt fails to parse) or whose age basis sits
+// in the future (host clock stepped backwards after the stamp, common on
+// VMs without NTP at boot, which would otherwise make the elapsed check
+// negative forever). Set far above what MAX_TRANSIENT_RETRY_AGE_MS worth
+// of capped backoff would produce, so it only fires when the age check
+// genuinely cannot run.
 const FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE = 500;
 
 // Retention limits so a permanently-stuck outbox cannot grow the
@@ -438,6 +457,10 @@ function recordTransmissionFailure(outboxDir, entry, err, nowMs) {
   const updated = {
     ...entry,
     attempts,
+    // Stamped once, on the first recorded failure, and never moved
+    // afterwards: this is the basis the transient-retry ceiling ages
+    // from, so it must not slide forward with each retry.
+    firstAttemptAt: entry.firstAttemptAt || new Date(nowMs).toISOString(),
     lastAttemptAt: new Date(nowMs).toISOString(),
     lastErrorMessage: err && typeof err.message === "string" ? err.message.slice(0, 500) : "unknown error",
     nextRetryAt: new Date(nowMs + computeRetryBackoffMs(priorAttempts)).toISOString(),
@@ -453,23 +476,29 @@ function recordTransmissionFailure(outboxDir, entry, err, nowMs) {
 }
 
 /**
- * True once a transient (never classified permanent) failure has been
- * retrying for at least MAX_TRANSIENT_RETRY_AGE_MS since the entry was
- * first enqueued (entry.createdAt), i.e. since the underlying job
- * outcome was persisted, before any network attempt. Falls back to
- * FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE attempts when createdAt cannot
- * be parsed, so a corrupted timestamp can never make an entry
+ * True once a transient (never classified permanent) failure has both
+ * been attempted at least MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE times AND
+ * been retrying for at least MAX_TRANSIENT_RETRY_AGE_MS since its first
+ * recorded attempt (entry.firstAttemptAt). Falls back to
+ * FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE attempts when firstAttemptAt
+ * cannot be parsed or resolves into the future (backwards clock step),
+ * so neither a corrupted nor a skewed timestamp can make an entry
  * un-quarantinable forever.
  * @param {object} entry
  * @param {number} nowMs
  * @returns {boolean}
  */
 function hasExceededTransientRetryWindow(entry, nowMs) {
-  const createdAtMs = Date.parse(entry.createdAt);
-  if (!Number.isFinite(createdAtMs)) {
-    return entry.attempts >= FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE;
-  }
-  return nowMs - createdAtMs >= MAX_TRANSIENT_RETRY_AGE_MS;
+  const attempts = Number.isFinite(entry.attempts) && entry.attempts >= 0 ? entry.attempts : 0;
+  if (attempts >= FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE) return true;
+  if (attempts < MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE) return false;
+  // recordTransmissionFailure always stamps firstAttemptAt before this
+  // runs, so an unparseable value here means a hand-edited or corrupted
+  // entry; fall through to the attempt ceiling above rather than
+  // treating it as instantly aged out.
+  const firstAttemptAtMs = Date.parse(entry.firstAttemptAt);
+  if (!Number.isFinite(firstAttemptAtMs)) return false;
+  return nowMs - firstAttemptAtMs >= MAX_TRANSIENT_RETRY_AGE_MS;
 }
 
 /**
@@ -741,6 +770,9 @@ function pruneStaleOutboxEntries(outboxDir, nowMs) {
   const overflowCount = Math.max(0, entries.length - MAX_OUTBOX_ENTRIES);
   const idsToQuarantine = new Set();
   entries.forEach((entry, index) => {
+    // A createdAt in the future (host clock stepped back after enqueue) never
+    // satisfies the age check, so such an entry is reclaimed only by the
+    // count-overflow path below. Retention stays bounded either way.
     const createdAtMs = Date.parse(entry.createdAt);
     const isAgedOut = Number.isFinite(createdAtMs) && nowMs - createdAtMs > MAX_OUTBOX_AGE_MS;
     const isCountOverflow = index < overflowCount;
@@ -750,7 +782,45 @@ function pruneStaleOutboxEntries(outboxDir, nowMs) {
   for (const id of idsToQuarantine) {
     if (quarantineOutboxEntry(outboxDir, id, nowMs)) quarantined += 1;
   }
+  // Entries too corrupt to parse are invisible to listOutboxEntries, so
+  // the count/age policy above can never reach them; they would sit in
+  // the directory being re-read on every drain forever. Age them off
+  // their own mtime instead, which is the only signal such a file has.
+  quarantined += quarantineUnreadableEntries(outboxDir, nowMs);
   return { quarantined };
+}
+
+/**
+ * Quarantines files in the main outbox that readEntriesFromDir skips
+ * (unparseable JSON, failed schema validation, or a size outside the
+ * accepted range), once they are older than MAX_OUTBOX_AGE_MS by mtime.
+ * Without this, "one poisoned entry cannot grow the outbox directory
+ * forever" would be false for exactly the entries most likely to be
+ * poisoned: the attempt-count and createdAt ceilings both require a
+ * readable entry object to evaluate.
+ * @param {string} outboxDir
+ * @param {number} nowMs
+ * @returns {number} count quarantined
+ */
+function quarantineUnreadableEntries(outboxDir, nowMs) {
+  const readableIds = new Set(listOutboxEntries(outboxDir).map((entry) => entry.id));
+  let quarantined = 0;
+  for (const name of readEntryDirNames(outboxDir)) {
+    if (!name.endsWith(ENTRY_FILE_SUFFIX) || name.endsWith(".tmp")) continue;
+    const id = name.slice(0, -ENTRY_FILE_SUFFIX.length);
+    if (!id || readableIds.has(id)) continue;
+    let stats;
+    try {
+      stats = fs.lstatSync(path.join(outboxDir, name));
+    } catch (_err) {
+      continue;
+    }
+    if (stats.isSymbolicLink() || !stats.isFile()) continue;
+    const basisMs = Math.min(stats.mtimeMs, nowMs);
+    if (nowMs - basisMs <= MAX_OUTBOX_AGE_MS) continue;
+    if (quarantineOutboxEntry(outboxDir, id, nowMs)) quarantined += 1;
+  }
+  return quarantined;
 }
 
 // In-memory-only rate limiter for shouldRunPrunePass. Not persisted
@@ -758,6 +828,11 @@ function pruneStaleOutboxEntries(outboxDir, nowMs) {
 // which is an acceptable one-time cost against the alternative of
 // wiring file-based state into every agent installation for this.
 const PRUNE_MIN_INTERVAL_MS = 60 * 60_000;
+// Shorter interval applied after a pass throws, so a transient failure
+// (a briefly locked entry file) is retried in minutes rather than
+// suppressed for a full hour, without letting a persistently failing
+// pass turn into a full-directory scan on every poll tick.
+const PRUNE_RETRY_AFTER_FAILURE_MS = 5 * 60_000;
 let lastPruneRunAtMs = -Infinity;
 
 /**
@@ -766,6 +841,10 @@ let lastPruneRunAtMs = -Infinity;
  * loop that calls drainOutbox) without paying its full-scan cost on
  * every tick. Returns true (and records `nowMs` as the last run) at
  * most once per PRUNE_MIN_INTERVAL_MS.
+ *
+ * Stamps before the pass runs, not after, so a throwing pass cannot
+ * become a hot scan loop. Callers that catch a failure should call
+ * notePrunePassFailed to shorten the wait before the next attempt.
  * @param {number} nowMs
  * @returns {boolean}
  */
@@ -773,6 +852,16 @@ function shouldRunPrunePass(nowMs) {
   if (nowMs - lastPruneRunAtMs < PRUNE_MIN_INTERVAL_MS) return false;
   lastPruneRunAtMs = nowMs;
   return true;
+}
+
+/**
+ * Rewinds the prune throttle after a failed pass so the next attempt is
+ * allowed after PRUNE_RETRY_AFTER_FAILURE_MS instead of the full
+ * PRUNE_MIN_INTERVAL_MS.
+ * @param {number} nowMs
+ */
+function notePrunePassFailed(nowMs) {
+  lastPruneRunAtMs = nowMs - (PRUNE_MIN_INTERVAL_MS - PRUNE_RETRY_AFTER_FAILURE_MS);
 }
 
 /**
@@ -802,6 +891,7 @@ module.exports = {
   OUTBOX_DIR_NAME,
   DEAD_LETTER_DIR_NAME,
   MAX_TRANSIENT_RETRY_AGE_MS,
+  MIN_ATTEMPTS_BEFORE_AGE_QUARANTINE,
   FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
   MAX_OUTBOX_ENTRIES,
   MAX_OUTBOX_AGE_MS,
@@ -822,6 +912,7 @@ module.exports = {
   pruneStaleOutboxEntries,
   pruneDeadLetterEntries,
   shouldRunPrunePass,
+  notePrunePassFailed,
   createEvidenceBuffer,
   computeRetryBackoffMs,
   isDueForRetry,
