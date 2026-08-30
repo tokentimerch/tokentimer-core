@@ -16,10 +16,12 @@ const {
   acknowledgeOutboxEntry,
   transmitOutboxEntry,
   drainOutbox,
+  pruneDeadLetterEntries,
   createEvidenceBuffer,
   OUTBOX_DIR_NAME,
   MAX_TRANSIENT_RETRY_AGE_MS,
   FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
+  MAX_DEAD_LETTER_AGE_MS,
 } = require("./index.js");
 
 function makeTempDir() {
@@ -435,5 +437,67 @@ describe("outbox", () => {
     // Exactly one readdirSync call for the main outbox directory. (No
     // dead-letter directory was touched since nothing was quarantined.)
     assert.equal(readdirCalls, 1);
+  });
+
+  it("pruneDeadLetterEntries deletes dead-letter entries older than MAX_DEAD_LETTER_AGE_MS", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    const writeDeadLetterEntry = (id, createdAt) => {
+      const entry = {
+        id,
+        createdAt,
+        result: { jobId: id, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 5,
+      };
+      fs.writeFileSync(
+        path.join(deadLetterDir, `${id}.json`),
+        `${JSON.stringify(entry)}\n`,
+        "utf8",
+      );
+    };
+
+    writeDeadLetterEntry(
+      "outbox-old",
+      new Date(nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000).toISOString(),
+    );
+    writeDeadLetterEntry("outbox-recent", new Date(nowMs).toISOString());
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(result.deleted, 1);
+
+    const remaining = listDeadLetterEntries(outboxDir);
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0].id, "outbox-recent");
+  });
+
+  it("pruneDeadLetterEntries deletes the oldest entries once past maxEntries, even if none are individually aged out", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+    const total = 5;
+
+    for (let i = 0; i < total; i += 1) {
+      const entry = {
+        id: `outbox-overflow-${String(i).padStart(2, "0")}`,
+        createdAt: new Date(nowMs - (total - i) * 1000).toISOString(),
+        result: { jobId: `job-${i}`, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+      };
+      fs.writeFileSync(
+        path.join(deadLetterDir, `${entry.id}.json`),
+        `${JSON.stringify(entry)}\n`,
+        "utf8",
+      );
+    }
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs, { maxEntries: 3 });
+    assert.equal(result.deleted, 2);
+    const remaining = listDeadLetterEntries(outboxDir);
+    assert.equal(remaining.length, 3);
+    // The two oldest (lowest index, oldest createdAt) were the ones removed.
+    assert.equal(remaining[0].id, "outbox-overflow-02");
   });
 });

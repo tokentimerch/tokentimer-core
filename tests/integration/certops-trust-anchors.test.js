@@ -1271,15 +1271,14 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(removedRow.transition_state).to.equal("removed");
   });
 
-  it("does not short-circuit (and does not orphan a certificate) when the only other reference is still pending_install (D1 fix)", async () => {
-    // Regression for the orphaned-certificate leak found in the 0.14.0
-    // consistency-check pass: countOtherLiveReferences must not credit an
-    // unconfirmed pending_install row as a live reference, because that row
-    // can still be deleted outright (never a real reference) by
-    // onTrustJobTerminalTransition if its own job later fails. Crediting it
-    // let owner A's revoke skip the real OS removal on the strength of a
-    // reference that could vanish without a trace, permanently orphaning the
-    // certificate on the host.
+  it("does not short-circuit (and does not orphan a certificate) when the only other reference is still pending_install", async () => {
+    // countOtherLiveReferences must not credit an unconfirmed
+    // pending_install row as a live reference, because that row can
+    // still be deleted outright (never a real reference) by
+    // onTrustJobTerminalTransition if its own job later fails. Crediting
+    // it would let owner A's revoke skip the real OS removal on the
+    // strength of a reference that could vanish without a trace,
+    // permanently orphaning the certificate on the host.
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
     const store = "Root";
@@ -1367,21 +1366,13 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(finalOwnerARow.transition_state).to.equal("removed");
   });
 
-  it("dispatches a real revoke-trust job for the last reference even when ITS OWN provenance is preexisting, because a different (already-released) owner's row is the one that genuinely mutated the OS (B3 fix)", async () => {
-    // Reproduces the cross-owner provenance bug: a fresh installation row
-    // always starts 'preexisting' and is only promoted to
-    // 'tokentimer_installed' on a genuine mutating distribute. Since the
-    // agent's on-disk ownership receipt is keyed by (store, fingerprint)
-    // with no owner component, the SECOND owner to distribute to an
-    // already-materially-present tuple always gets outcome:"preexisting"
-    // (no mutation) and its own row can never be promoted - by
-    // construction, not by chance. Revoking owner A first (while B is
-    // still live) correctly server-only-releases A's row. Revoking B last
-    // (now the genuinely last live reference) must NOT also take the
-    // server-only path just because B's OWN provenance reads
-    // "preexisting": owner A's row (now already 'removed') is still the
-    // historical record that TokenTimer really put this material on the
-    // OS, and that OS-level removal has never actually happened yet.
+  it("dispatches a real revoke-trust job for the last reference even when ITS OWN provenance is preexisting, because a different (already-released) owner's row is the one that genuinely mutated the OS", async () => {
+    // The second owner to distribute to an already-materially-present
+    // tuple always gets outcome:"preexisting" (no mutation), so its own
+    // row can never be promoted to tokentimer_installed. Revoking that
+    // owner last must still dispatch a real job if a different (already
+    // released) owner's row proves the OS material was genuinely
+    // installed and never actually removed.
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
     const store = "Root";
@@ -1391,8 +1382,8 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         anchor,
         agent,
         store,
-        owner: "owner-a-b3",
-        idempotencyKey: `b3-dist-a-${crypto.randomUUID()}`,
+        owner: "owner-a",
+        idempotencyKey: `dist-a-${crypto.randomUUID()}`,
       }),
     );
     const ownerAJob = await getJobRow(ownerAOutcome.job.id);
@@ -1416,16 +1407,15 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     );
     expect(ownerARowAfterInstall.provenance).to.equal("tokentimer_installed");
 
-    // Owner B distributes to the SAME already-materially-present tuple:
-    // the agent reports outcome:"preexisting" (no mutation), so B's row
-    // can never be promoted - guaranteed by construction, not by chance.
+    // Owner B distributes to the same already-present tuple: the agent
+    // reports outcome:"preexisting", so B's row is never promoted.
     const ownerBOutcome = await createTrustJob(
       distributeOptions({
         anchor,
         agent,
         store,
-        owner: "owner-b-b3",
-        idempotencyKey: `b3-dist-b-${crypto.randomUUID()}`,
+        owner: "owner-b",
+        idempotencyKey: `dist-b-${crypto.randomUUID()}`,
       }),
     );
     const ownerBJob = await getJobRow(ownerBOutcome.job.id);
@@ -1450,14 +1440,14 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(ownerBRowAfterInstall.provenance).to.equal("preexisting");
 
     // Revoke A first, while B is still live: correctly server-only
-    // released (B still needs the material physically present).
+    // released.
     const releaseAOutcome = await createTrustJob(
       revokeOptions({
         anchor,
         agent,
         store,
-        owner: "owner-a-b3",
-        idempotencyKey: `b3-revoke-a-${crypto.randomUUID()}`,
+        owner: "owner-a",
+        idempotencyKey: `revoke-a-${crypto.randomUUID()}`,
       }),
     );
     expect(releaseAOutcome.job).to.equal(null);
@@ -1470,18 +1460,17 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     // server-only release never mutates provenance.
     expect(ownerARowAfterRelease.provenance).to.equal("tokentimer_installed");
 
-    // Now revoke B: this IS the genuinely last live reference. B's own
-    // provenance is "preexisting", but owner A's (already-removed) row
-    // proves the OS material was genuinely installed by TokenTimer and
-    // never actually removed. This must dispatch a REAL revoke-trust job,
-    // not silently skip the OS mutation a second time.
+    // Revoke B: the genuinely last live reference. B's own provenance
+    // is "preexisting", but owner A's row proves the OS material was
+    // genuinely installed and never actually removed, so this must
+    // dispatch a real revoke-trust job.
     const releaseBOutcome = await createTrustJob(
       revokeOptions({
         anchor,
         agent,
         store,
-        owner: "owner-b-b3",
-        idempotencyKey: `b3-revoke-b-${crypto.randomUUID()}`,
+        owner: "owner-b",
+        idempotencyKey: `revoke-b-${crypto.randomUUID()}`,
       }),
     );
     expect(releaseBOutcome.job).to.not.equal(
@@ -1519,12 +1508,10 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   });
 
   it("still releases without dispatching a job when NO row in the tuple's history was ever tokentimer_installed, even across multiple owners", async () => {
-    // Contrast case for the B3 fix: when the material is genuinely
-    // foreign (every owner's distribute reported outcome:"preexisting",
-    // e.g. an operator-installed CA that TokenTimer never touched), the
-    // last reference must still be released without a real revoke-trust
-    // job - the fix must not turn every multi-owner revoke into a real
-    // dispatch, only the ones where some row really did mutate the OS.
+    // Contrast case: when the material is genuinely foreign (every
+    // owner's distribute reported outcome:"preexisting", e.g. an
+    // operator-installed CA that TokenTimer never touched), the last
+    // reference must still be released without a real revoke-trust job.
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
     const store = "Root";
@@ -1535,7 +1522,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         agent,
         store,
         owner: "owner-a-foreign",
-        idempotencyKey: `b3-foreign-dist-a-${crypto.randomUUID()}`,
+        idempotencyKey: `foreign-dist-a-${crypto.randomUUID()}`,
       }),
     );
     const ownerAJob = await getJobRow(ownerAOutcome.job.id);
@@ -1561,7 +1548,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         agent,
         store,
         owner: "owner-b-foreign",
-        idempotencyKey: `b3-foreign-dist-b-${crypto.randomUUID()}`,
+        idempotencyKey: `foreign-dist-b-${crypto.randomUUID()}`,
       }),
     );
     const ownerBJob = await getJobRow(ownerBOutcome.job.id);
@@ -1587,7 +1574,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         agent,
         store,
         owner: "owner-a-foreign",
-        idempotencyKey: `b3-foreign-revoke-a-${crypto.randomUUID()}`,
+        idempotencyKey: `foreign-revoke-a-${crypto.randomUUID()}`,
       }),
     );
     expect(releaseAOutcome.job).to.equal(null);
@@ -1599,7 +1586,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
         agent,
         store,
         owner: "owner-b-foreign",
-        idempotencyKey: `b3-foreign-revoke-b-${crypto.randomUUID()}`,
+        idempotencyKey: `foreign-revoke-b-${crypto.randomUUID()}`,
       }),
     );
     expect(releaseBOutcome.job).to.equal(
@@ -2115,19 +2102,20 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   });
 
   it("promotes provenance to tokentimer_installed when a distribute-trust result reports outcome preexisting with receipt.state finalized", async () => {
-    // This is the B2 retry scenario: an agent installs a CA, finalizes its
-    // on-disk receipt to "installed", then crashes or loses network before
-    // reporting the result. The control plane re-dispatches the same
-    // distribute-trust job; the agent (packages/agent/src/trust-store/
-    // index.js's distributeTrust) finds the material already present, reads
-    // back its own finalized receipt, and reports outcome "preexisting"
-    // with receipt.state "finalized" rather than "missing" - proof this
-    // agent's own prior mutation put the material there. ingestTrustJobResult
-    // must treat that combination as trustworthy and promote provenance,
-    // otherwise the row would be stuck at "preexisting" forever even though
-    // this agent genuinely installed it (and a later revoke would silently
-    // leak the trust anchor - see the "revoke-trust for a preexisting
-    // installation..." test above for that release path).
+    // An agent installs a CA, finalizes its on-disk receipt to
+    // "installed", then crashes or loses network before reporting the
+    // result. The control plane re-dispatches the same distribute-trust
+    // job; the agent (packages/agent/src/trust-store/index.js's
+    // distributeTrust) finds the material already present, reads back
+    // its own finalized receipt, and reports outcome "preexisting" with
+    // receipt.state "finalized" rather than "missing" - proof this
+    // agent's own prior mutation put the material there.
+    // ingestTrustJobResult must treat that combination as trustworthy
+    // and promote provenance, otherwise the row would be stuck at
+    // "preexisting" forever even though this agent genuinely installed
+    // it (and a later revoke would silently leak the trust anchor - see
+    // the "revoke-trust for a preexisting installation..." test above
+    // for that release path).
     const anchor = await createFreshAnchor();
     const agent = await createAgent();
 
@@ -2203,8 +2191,8 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(ingested.provenance).to.equal("preexisting");
   });
 
-  it("end-to-end: a real agent distributeTrust retry after a lost result lands the installation on tokentimer_installed, not stuck at preexisting (B2 regression)", async () => {
-    // Full B2 sequence, using the actual agent executor
+  it("end-to-end: a real agent distributeTrust retry after a lost result lands the installation on tokentimer_installed, not stuck at preexisting", async () => {
+    // Uses the actual agent executor
     // (packages/agent/src/trust-store/index.js), not a hand-built result:
     // 1. The agent runs distributeTrust and genuinely installs + finalizes.
     // 2. That first result is simulated as "lost" (crash/network loss
@@ -2213,7 +2201,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     // 3. The control plane re-dispatches; the agent's distributeTrust runs
     //    again against the SAME receiptDir/anchorsDir, finds the material
     //    already present, and reports outcome "preexisting" with
-    //    receipt.state "finalized" per the fix in distributeTrust.
+    //    receipt.state "finalized".
     // 4. Only that second result is ingested. The installation row must
     //    end up tokentimer_installed, not permanently stuck at preexisting.
     const anchor = await createFreshAnchor();
@@ -2223,7 +2211,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
       distributeOptions({
         anchor,
         agent,
-        idempotencyKey: `e2e-b2-retry-${crypto.randomUUID()}`,
+        idempotencyKey: `e2e-retry-${crypto.randomUUID()}`,
       }),
     );
     const jobRow = await getJobRow(distributeOutcome.job.id);
@@ -2238,7 +2226,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(revalidation.allow).to.equal(true);
 
     const agentDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "tt-b2-e2e-agent-"),
+      path.join(os.tmpdir(), "tt-e2e-agent-"),
     );
     const anchorsDir = path.join(agentDir, "anchors");
     const receiptDir = path.join(agentDir, "receipts");
@@ -2402,8 +2390,8 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
   });
 
   it("settles a pending_install row as installed (not rejected/unwound) when the OS mutation genuinely completed but the agent's local receipt-finalize write failed", async () => {
-    // Reproduces the H6 bug: the agent faithfully reports outcome:
-    // "installed", mutationPerformed: true, plus a non-null failureCategory
+    // The agent faithfully reports outcome: "installed",
+    // mutationPerformed: true, plus a non-null failureCategory
     // (receipt_finalize_conflict) because its own local receipt bookkeeping
     // hit a conflict AFTER the OS-level mutation genuinely completed.
     // agentDispatch.js routes this to ingestTrustJobResult (not the

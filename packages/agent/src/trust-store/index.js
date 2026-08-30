@@ -723,6 +723,13 @@ function receiptWireState(state) {
  * accurate, but the on-disk receipt itself could not be written/finalized to
  * match it. Only reachable if this executor's single-job-at-a-time
  * sequencing assumption is violated (see receipt.js's reclaimStalePending).
+ *
+ * Recovery: a receipt stuck at "pending_install" after
+ * RECEIPT_FINALIZE_CONFLICT causes a later revoke-trust on the same
+ * target to refuse with "receipt_pending_install" (see revokeTrust
+ * below), since the agent cannot prove it owns the install. Re-running
+ * distribute-trust for that same target retries the finalize write and
+ * clears the stale receipt state.
  */
 const RECEIPT_WRITE_CONFLICT = "receipt_write_conflict";
 const RECEIPT_FINALIZE_CONFLICT = "receipt_finalize_conflict";
@@ -868,22 +875,15 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
       // Idempotent install: no mutation, outcome `preexisting`, no receipt
       // write (an anchor this agent didn't install has no ownership to record).
       //
-      // receiptState is `finalized`, not `missing`, when the receipt we just
-      // read back is a completed prior install BY THIS AGENT for this exact
-      // (store, fingerprint) - i.e. row.state === "installed". That happens
-      // on a retry after: this agent installed the CA, finalized its
-      // receipt, then crashed or lost network before reporting the result;
-      // the control plane re-dispatches the same job, finds the material
-      // already present, and lands here. Reporting `missing` in that case
-      // would be false - a valid, finalized, on-disk receipt was just read
-      // successfully - and would permanently deny the server the one signal
-      // (trustAnchors.js's ingestTrustJobResult) that lets it promote
-      // provenance to tokentimer_installed instead of leaving the
-      // installation stuck at `preexisting` forever. Every other read
-      // (truly absent, corrupt, or a receipt in some other terminal/pending
-      // state such as `removed` or `pending_remove` - neither of which is
-      // proof that THIS install put the currently-present material there)
-      // still reports `missing`, unchanged from before.
+      // receiptState is `finalized`, not `missing`, when the receipt we
+      // just read back is a completed prior install by this agent for
+      // this exact (store, fingerprint) - i.e. row.state === "installed".
+      // That happens on a retry after this agent installed and finalized,
+      // then crashed or lost network before reporting the result. Without
+      // this, the server would have no signal to promote provenance and
+      // the installation would stay at `preexisting` forever. Every other
+      // read (absent, corrupt, or another terminal/pending state) still
+      // reports `missing`.
       const hasFinalizedOwnInstall =
         existingReceiptBeforeMutation !== null &&
         !("corrupt" in existingReceiptBeforeMutation) &&

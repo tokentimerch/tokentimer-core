@@ -83,11 +83,8 @@ const CERTOPS_TARGET_AGENT_NOT_FOUND = "CERTOPS_TARGET_AGENT_NOT_FOUND";
 const CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT =
   "CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT";
 // Mirrors packages/agent/src/trust-store/index.js's RECEIPT_FINALIZE_CONFLICT
-// value (not imported from there: this server never runs agent code, only
-// re-validates the sanitized string the agent reports on the wire). The one
-// failureCategory ingestTrustJobResult ever accepts on a result it settles
-// as installed/removed rather than rejecting outright -- see the guard in
-// that function for why this is the sole exception.
+// value. The one failureCategory ingestTrustJobResult accepts on a result
+// it still settles as installed/removed instead of rejecting.
 const RECEIPT_FINALIZE_CONFLICT_CATEGORY = "receipt_finalize_conflict";
 const ANCHOR_TYPES = Object.freeze(["root", "intermediate"]);
 const ANCHOR_TYPE_SET = new Set(ANCHOR_TYPES);
@@ -793,30 +790,15 @@ async function countOtherLiveReferences({
  * Answers "did ANY installation row that has ever existed for this exact
  * (workspace, agent, store, fingerprint) tuple correspond to a distribute
  * call that actually mutated the OS" -- across every owner, including rows
- * already released (transition_state = 'removed'), and including the
- * current row itself. This is deliberately NOT scoped the same way
- * countOtherLiveReferences is: that function only cares about references
- * still live (to decide whether the OS may be touched at all right now);
- * this one cares about the tuple's entire history (to decide whether the
- * OS was ever genuinely put there by TokenTimer in the first place), so it
- * neither filters by transition_state nor excludes the caller's own owner.
- *
- * Why this can't be answered from installationRow.provenance alone: a
- * fresh installation row always starts 'preexisting' and is only ever
- * promoted to 'tokentimer_installed' on a genuine mutating distribute (see
- * lockOrCreateInstallation's INSERT and ingestTrustJobResult's
- * nextProvenance). The agent's on-disk ownership receipt is keyed by
- * (store, fingerprint) with no owner component, so the SECOND owner to
- * distribute to an already-materially-present tuple always gets outcome
- * "preexisting" (no mutation) and its own row can never be promoted --
- * by construction, not by chance. Checking only THIS row's own provenance
- * at the point it becomes the last live reference would then wrongly
- * treat genuinely-TokenTimer-installed material as foreign and skip the
- * real OS removal, merely because a DIFFERENT owner's row (possibly
- * already released via the server-only path above) was the one that
- * actually performed the mutation. Server-only release never mutates
- * provenance on the row it releases (see the two branches above), so a
- * released row's provenance remains a trustworthy historical record.
+ * already released, and including the current row itself. Unlike
+ * countOtherLiveReferences (which only cares about references still
+ * live), this looks at the tuple's entire history: a fresh installation
+ * row always starts 'preexisting' and is only promoted to
+ * 'tokentimer_installed' on a genuine mutating distribute, so a second
+ * owner distributing to already-present material never gets promoted
+ * even though the tuple genuinely was installed by TokenTimer. Checking
+ * only the current row's own provenance would wrongly treat that material
+ * as foreign and skip the real OS removal on revoke.
  */
 async function tupleHasTokenTimerInstalledRow({
   client,
@@ -843,60 +825,34 @@ async function tupleHasTokenTimerInstalledRow({
 //
 // runCreateTrustJob's two "no real job" revoke-trust branches (see below:
 // otherLiveReferences > 0, and no tuple row was ever tokentimer_installed)
-// mutate the
-// installation row and return before createCertificateJob ever runs, so
-// the idempotency machinery on certificate_jobs (idempotency_key +
-// creation_request_hash) never sees these calls. This dedicated ledger
+// mutate the installation row and return before createCertificateJob ever
+// runs, so the idempotency machinery on certificate_jobs (idempotency_key
+// + creation_request_hash) never sees these calls. This dedicated ledger
 // (migration certops_trust_reference_release_idempotency) is the pragmatic
 // fix: one row per (workspace, idempotencyKey), storing the installation
 // snapshot the ORIGINAL call produced so a replay can be a true no-op.
 //
-// Tradeoff, documented per the task's own escape hatch: this is a second,
-// narrower idempotency mechanism living alongside certificate_jobs' own,
-// rather than a unification of the two. Unifying them would mean giving
-// these two branches a real (if never-dispatched) certificate_jobs row
-// purely to hang an idempotency key off of, which would need its own new
-// terminal status semantics (a job that is "done" but never ran) and touch
-// every other job-status consumer in this codebase (reconciliation sweep,
-// dispatch claim queries, job-list projections). A small dedicated table
-// scoped to exactly the two call sites that need it is far less invasive
-// for the size of this fix, at the cost of the two idempotency records
-// living in different tables.
+// This is a second, narrower idempotency mechanism living alongside
+// certificate_jobs' own, rather than a unification of the two. Unifying
+// them would mean giving these two branches a real (if never-dispatched)
+// certificate_jobs row purely to hang an idempotency key off of, which
+// would need its own terminal status semantics and touch every other
+// job-status consumer in this codebase. A small dedicated table scoped to
+// exactly the two call sites that need it is less invasive, at the cost of
+// the two idempotency records living in different tables.
 //
-// Two independent tables sharing one raw caller-supplied idempotencyKey
-// namespace is exactly the collision this file must not allow: neither
-// createCertificateJob's own (workspace_id, idempotency_key) lookup nor
-// this ledger's lookup ever consults the other table, so a caller who
-// (accidentally or not) reuses the same raw key for two DIFFERENT logical
-// requests could otherwise have it "belong" to two unrelated rows at once
-// - e.g. a revoke-trust no-job release for one (trustAnchorId, agentId,
-// store, owner) tuple recorded here under key K, and a distribute-trust
-// (or a revoke-trust for a completely different tuple) creating a real
-// certificate_jobs row under the very same key K, since distribute-trust
-// never even queries this ledger and a different tuple never matches the
-// tuple-check below. Depending on call order this either goes undetected
-// (two unrelated records silently both "own" K) or actively breaks a
-// legitimate replay of the FIRST call (a later, unrelated write into
-// whichever table wasn't touched first now answers with the wrong
-// record, or throws CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT for a request
-// that already succeeded).
-//
-// deriveTrustJobIdempotencyKey closes this by deriving the actual storage/
-// lookup key from the caller-supplied idempotencyKey PLUS the operation
-// and the full target tuple, the same "namespace the raw key so unrelated
-// requests can never collide" idiom routes/certops.js's own
-// bulkRenewItemIdempotencyKey already uses for bulk-renew items. The
-// caller-supplied key remains authoritative for retries of the EXACT SAME
-// call (same operation, same trustAnchorId/agentId/store/owner, same raw
-// key always derives the same storage key, so a true replay still hits
-// the same ledger row or the same certificate_jobs row), while two
-// requests that only share the raw key - but differ in operation or in
-// any part of the target tuple - always derive two different storage
-// keys and can never collide, in either table, regardless of call order.
-// Hashed (rather than a readable composed string like bulk-renew's)
-// because owner alone may be up to 128 characters and the caller-supplied
-// idempotencyKey is unbounded by this file's own normalizeIdempotencyKey,
-// so a readable concatenation could not be kept under certificate_jobs'
+// Because the two tables never consult each other, a caller reusing the
+// same raw idempotencyKey for two different logical requests (different
+// operation, or a different target tuple) could otherwise have it "belong"
+// to two unrelated rows at once. deriveTrustJobIdempotencyKey closes this
+// by deriving the actual storage key from the caller-supplied
+// idempotencyKey plus the operation and full target tuple (same idiom as
+// routes/certops.js's bulkRenewItemIdempotencyKey). A true replay (same
+// operation + tuple + raw key) still derives the same storage key; two
+// requests that only share the raw key but differ in operation or tuple
+// always derive different storage keys and can never collide. Hashed
+// rather than a readable composed string because owner alone may be up to
+// 128 characters, and the composed key must fit certificate_jobs'
 // 128-character idempotency_key column.
 function deriveTrustJobIdempotencyKey({
   operation,
@@ -1773,24 +1729,14 @@ async function ingestTrustJobResult({ client, job, result }) {
     throw error;
   }
 
-  // This function runs from two agentDispatch.ingestResult branches: the
-  // ordinary jobStatus === "succeeded" path, where the agent itself never
-  // reports a non-null trustResult.failureCategory (packages/agent/src/
-  // index.js's executeTrustJob always maps a non-null failureCategory to
-  // envelope status "failed"); and a terminal-negative-status path (most
-  // commonly "failed") for the one case where the OS-level mutation
-  // genuinely completed despite that envelope status: the agent's own
-  // local receipt-finalize write afterward hit a conflict or filesystem
-  // error (packages/agent/src/trust-store/index.js's RECEIPT_FINALIZE_CONFLICT).
-  // That result still needs this row settled on the outcome the agent
-  // actually observed, not rejected or unwound as if nothing happened -
-  // see agentDispatch.js's own routing comment for why. Every OTHER
-  // non-null failureCategory is still self-contradictory here - shape-valid
-  // per the schema (failureCategory has no cross-field tie to mutationPerformed
-  // beyond the one this exception carves out) but never something a
-  // well-behaved agent would pair with an outcome this function is asked to
-  // settle as installed/removed - so it is rejected rather than silently
-  // trusted.
+  // The agent never reports a non-null failureCategory alongside envelope
+  // status "succeeded", except one case this function also handles: a
+  // terminal-negative-status result where the OS-level mutation genuinely
+  // completed but the agent's own local receipt-finalize write afterward
+  // hit a conflict (packages/agent/src/trust-store/index.js's
+  // RECEIPT_FINALIZE_CONFLICT; routed here by agentDispatch.js because
+  // mutationPerformed is true). Every other non-null failureCategory is
+  // self-contradictory here and rejected.
   const isReceiptFinalizeConflictOnATrueMutation =
     result.failureCategory === RECEIPT_FINALIZE_CONFLICT_CATEGORY &&
     result.mutationPerformed === true;
@@ -1807,18 +1753,13 @@ async function ingestTrustJobResult({ client, job, result }) {
     );
   }
 
-  // A failure-fallback outcome (revoke-trust's "installed": removal
-  // attempted and failed, material still there; distribute-trust's
-  // "already_absent": install attempted and failed before ever mutating
-  // the store) is schema-valid and can carry a null failureCategory (e.g.
-  // mutationAttempted:false, "the agent determined the mutation should not
-  // proceed and never attempted it"), so the guard above does not catch it.
-  // But this function is only ever reached for a job the caller has already
-  // classified succeeded, and a well-behaved agent never reports success
-  // while naming its own action's failure-fallback outcome - that
-  // combination is self-contradictory (you cannot succeed at revoking while
-  // the certificate remains installed) and must be rejected explicitly, not
-  // silently trusted into settling the installation row as a real success.
+  // A failure-fallback outcome (revoke-trust's "installed", or
+  // distribute-trust's "already_absent") is schema-valid and can carry a
+  // null failureCategory, so the guard above does not catch it. But this
+  // function only runs for a job already classified succeeded, and a
+  // well-behaved agent never reports success while naming its own
+  // action's failure-fallback outcome, so that combination is rejected
+  // explicitly.
   const genuineSuccessOutcomes = GENUINE_SUCCESS_OUTCOMES_BY_ACTION[result.action];
   if (!genuineSuccessOutcomes || !genuineSuccessOutcomes.has(result.outcome)) {
     throw trustAnchorError(
@@ -1958,37 +1899,23 @@ async function ingestTrustJobResult({ client, job, result }) {
   // mutation ('preexisting') must not overwrite an existing
   // 'tokentimer_installed' provenance - provenance only ever tightens
   // toward "we know we put this here", never loosens. Promotion requires
-  // all three of: action distribute-trust (revoke-trust's own "installed"
-  // is its failure-fallback case, never a successful install),
-  // outcome installed, and mutationPerformed true (defense in depth on top
-  // of both the schema's allOf rules and the GENUINE_SUCCESS_OUTCOMES_BY_ACTION
-  // guard above, either of which already makes a revoke-trust result
-  // claiming outcome installed + mutationPerformed true impossible to reach
-  // this point; checked explicitly here too so intent is not left solely to
-  // guards a future reader might not think to re-check).
+  // action distribute-trust, outcome installed, and mutationPerformed
+  // true (checked explicitly here as defense in depth on top of the
+  // schema's allOf rules).
   //
   // Second promotion path: a distribute-trust result reporting outcome
   // 'preexisting' with receipt.state 'finalized' (rather than the ordinary
   // 'missing') is also trustworthy evidence of a genuine prior TokenTimer
-  // install, not merely "someone else's material happened to be there".
-  // That combination is only ever produced by one agent code path
-  // (packages/agent/src/trust-store/index.js's distributeTrust): the agent
-  // read back its own on-disk receipt for this exact (store, fingerprint)
-  // and found it already in state "installed" - a completed mutation from
-  // an earlier call, not this one. This is the retry case where the agent
-  // installed the CA, finalized its receipt, then crashed or lost network
-  // before this result was ever ingested; the control plane re-dispatched
-  // the same job, the agent found the material already present, and
-  // (correctly) performed no new mutation - but the on-disk receipt still
-  // proves TokenTimer put it there. Without this path, that installation
-  // would be stuck at 'preexisting' forever, and a later revoke would take
-  // the no-agent-job "provenance was preexisting" release path (this file's
-  // runCreateTrustJob), flipping the row to 'removed' while the CA stays
-  // installed on the actual machine - a silent, unrecoverable trust-store
-  // leak. mutationPerformed is deliberately NOT part of this second
-  // condition: the schema requires it to be false for outcome
-  // 'preexisting' (see trust-result-contract.schema.json's allOf rule), so
-  // requiring it true here would make this branch unreachable.
+  // install. This combination is only produced by one agent code path
+  // (packages/agent/src/trust-store/index.js's distributeTrust) when it
+  // reads back its own on-disk receipt already in state "installed" - the
+  // retry case where the agent installed and finalized, then crashed or
+  // lost network before this result was ever ingested. Without this path
+  // the row would be stuck at 'preexisting' forever, and a later revoke
+  // would silently leak the trust anchor by taking the no-agent-job
+  // release path instead of a real OS removal. mutationPerformed is not
+  // part of this second condition because the schema requires it false
+  // for outcome 'preexisting'.
   const nextProvenance =
     (result.action === "distribute-trust" &&
       result.outcome === "installed" &&
@@ -1998,15 +1925,16 @@ async function ingestTrustJobResult({ client, job, result }) {
       result.receipt?.state === "finalized")
       ? "tokentimer_installed"
       : installationRow.provenance;
-  // failureCategory is non-null only in the receipt-finalize-conflict case
-  // the guard above carves out: the OS mutation genuinely completed (this
-  // row is about to settle on that truthful outcome below) but the agent's
-  // own local bookkeeping did not, which is a real operational fact worth
-  // surfacing rather than silently discarding - so it's persisted as
-  // last_error instead of always clearing to NULL. An ordinary succeeded-
-  // status result never carries a failureCategory (rejected above if it
-  // did) and clears whatever last_error a prior failed attempt left behind,
-  // exactly as before.
+  // Non-null only for the receipt-finalize-conflict case above: the OS
+  // mutation genuinely completed but the agent's own local bookkeeping
+  // did not, which is worth persisting as last_error rather than always
+  // clearing to NULL as an ordinary success would. next_reconcile_at is
+  // still cleared like an ordinary success: the row is settled, not
+  // pending. If a later revoke-trust on this same target then fails
+  // with the agent's own receipt_pending_install (its on-disk receipt
+  // never reached "finalized"), re-running distribute-trust for that
+  // target retries the finalize write and clears the stale receipt
+  // state, which is the operator recovery path for this case.
   const nextLastError = isReceiptFinalizeConflictOnATrueMutation
     ? result.failureCategory
     : null;

@@ -494,11 +494,9 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     const fsImpl = makeFakeFs({ [filePath]: CA_PEM });
     const execFileImpl = makeFakeExecFile({ succeed: true });
 
-    // Seed a FINALIZED "installed" receipt for this exact (store,
-    // fingerprint) directly via receipt.js - the same on-disk bookkeeping a
-    // real prior distributeTrust call by this same agent would have left
-    // behind after installing the CA and finalizing successfully, before
-    // this agent crashed or lost network and never reported that result.
+    // Seed a finalized "installed" receipt for this exact (store,
+    // fingerprint), simulating a prior distributeTrust call by this same
+    // agent whose result was never reported (crash/lost network).
     receipt.writeIntentReceipt({
       receiptDir,
       store: trustStore.DEBIAN_STORE_NAME,
@@ -515,11 +513,10 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
       transitionGeneration: 1,
     });
 
-    // The control plane re-dispatches (possibly a fresh jobId/generation);
-    // the material is still present, so this lands in the same
-    // preexisting-check branch as the "genuinely never installed" test
-    // above, but this time the on-disk receipt proves THIS agent finalized
-    // an install here.
+    // The control plane re-dispatches; the material is still present, so
+    // this lands in the same branch as the "genuinely never installed"
+    // test above, but the on-disk receipt proves this agent finalized an
+    // install here.
     const result = await trustStore.distributeTrust({
       job: distributeJob(),
       family: "debian",

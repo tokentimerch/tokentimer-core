@@ -149,6 +149,9 @@ const {
   transmitOutboxEntry,
   acknowledgeOutboxEntry,
   drainOutbox,
+  pruneStaleOutboxEntries,
+  pruneDeadLetterEntries,
+  shouldRunPrunePass,
   createEvidenceBuffer,
 } = require("./outbox");
 const {
@@ -6245,6 +6248,13 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
                 err,
               ),
           });
+          // Rate-limited retention pass so a permanently-stuck outbox
+          // (dead-letter included) cannot grow the directory without
+          // bound.
+          if (shouldRunPrunePass(Date.now())) {
+            pruneStaleOutboxEntries(executionContext.outboxDir, Date.now());
+            pruneDeadLetterEntries(executionContext.outboxDir, Date.now());
+          }
           const jobs = await client.claim({
             maxJobs: 1,
             supportedActions: resolveClaimSupportedActions(executionContext),

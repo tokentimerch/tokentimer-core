@@ -2322,26 +2322,15 @@ async function ingestResult({
     // anything, and an unknown-effect report must surface for operator
     // reconciliation rather than being silently resolved either way.
     //
-    // A terminal-negative envelope status (most commonly "failed") does NOT
-    // always mean the OS-level mutation itself failed: the agent faithfully
-    // reports mutationPerformed true whenever the install/remove genuinely
+    // A terminal-negative envelope status (most commonly "failed") does not
+    // always mean the OS-level mutation itself failed: the agent reports
+    // mutationPerformed true whenever the install/remove genuinely
     // completed, even if its own local receipt-finalize write afterward hit
-    // a conflict or filesystem error (packages/agent/src/trust-store/index.js's
-    // RECEIPT_FINALIZE_CONFLICT case) -- and packages/agent/src/index.js
-    // correctly maps that non-null failureCategory to envelope status
-    // "failed" regardless. Routing a mutationPerformed:true result to
-    // onTrustJobTerminalTransition's unwind (deleting a pending_install row
-    // outright, or reverting a pending_remove row back to "installed")
-    // would silently lose track of trust material that is actually sitting
-    // in the machine store: a distribute that truly installed becomes
-    // untracked (and un-revocable, since no installation row references
-    // it), and a revoke that truly removed gets recorded as still
-    // installed. Such a result is instead routed to ingestTrustJobResult
-    // just like a real success, so the row settles on the outcome the
-    // agent actually observed; ingestTrustJobResult itself still rejects
-    // any other failureCategory paired with mutationPerformed true as
-    // self-contradictory (e.g. os_mutation_failed can never legitimately
-    // accompany mutationPerformed:true).
+    // a conflict (packages/agent/src/trust-store/index.js's
+    // RECEIPT_FINALIZE_CONFLICT case). Routing that result to
+    // onTrustJobTerminalTransition's unwind would silently lose track of
+    // trust material that is actually sitting in the machine store, so it
+    // is instead routed to ingestTrustJobResult just like a real success.
     if (isTrustAnchorOperation(job.operation)) {
       const trustMutationGenuinelyPerformed = trustResult?.mutationPerformed === true;
       if (

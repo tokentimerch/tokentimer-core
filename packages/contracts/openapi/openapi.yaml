@@ -7853,9 +7853,14 @@ components:
             instead of creating a duplicate certificate row and is stored as
             the created certificate's source reference. Also required for
             "distribute-trust"/"revoke-trust", where it makes the trust
-            mutation itself retry-safe: a replay with the same key returns
-            the same job rather than re-applying the transition. Optional for
-            every other operation.
+            mutation itself retry-safe: a replay of the same key AND the
+            same operation/trustAnchorId/agentId/store/owner returns the
+            same job (or the same no-op release) rather than re-applying
+            the transition. The same raw key reused for a different
+            operation or a different trust-anchor/agent/store/owner target
+            is treated as an unrelated request, since the key is scoped to
+            its full target tuple rather than shared workspace-wide.
+            Optional for every other operation.
         requiresApproval:
           type: boolean
           default: false

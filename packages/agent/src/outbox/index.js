@@ -51,22 +51,15 @@ const RETRY_JITTER_RATIO = 0.2;
 
 // A transient (never classified permanent) failure keeps retrying with
 // backoff for this long, measured from entry.createdAt, before it is
-// quarantined as a last resort. A fixed attempt count is the wrong knob
-// for this: with the backoff schedule above, 10 attempts elapses in
-// roughly 74-110 minutes (nine waits of 15s/30s/60s/120s/240s/480s/960s/
-// 30min/30min, jittered +/-20%), not "several hours" -- well within a
-// normal extended control-plane/network outage, which would silently
-// dead-letter terminal job evidence with no automatic replay path. 48
-// hours is enough to ride out a multi-day outage while still bounding
-// how long a truly-stuck entry can keep growing the outbox directory.
+// quarantined as a last resort. 48 hours is enough to ride out a
+// multi-day outage while still bounding how long a truly-stuck entry
+// can keep growing the outbox directory.
 const MAX_TRANSIENT_RETRY_AGE_MS = 48 * 60 * 60_000;
 
 // Fallback quarantine ceiling for a transient failure whose age cannot
-// be determined (entry.createdAt fails to parse -- a corrupted or
-// hand-edited entry file, never produced by enqueueOutboxEntry itself).
-// Set far above the ~100 attempts that MAX_TRANSIENT_RETRY_AGE_MS worth
-// of capped 30-minute backoff intervals would produce, so it only fires
-// when the age check genuinely cannot run, never as a shortcut around it.
+// be determined (entry.createdAt fails to parse). Set far above what
+// MAX_TRANSIENT_RETRY_AGE_MS worth of capped backoff would produce, so
+// it only fires when the age check genuinely cannot run.
 const FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE = 500;
 
 // Retention limits so a permanently-stuck outbox cannot grow the
@@ -76,6 +69,12 @@ const FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE = 500;
 // automatically from drainOutbox's hot path (see its doc comment).
 const MAX_OUTBOX_ENTRIES = 5000;
 const MAX_OUTBOX_AGE_MS = 7 * 24 * 60 * 60_000;
+
+// Dead-letter has no automatic replay path, so entries are kept long
+// enough for an operator to notice and investigate, then deleted
+// outright (not quarantined again) so disk usage stays bounded.
+const MAX_DEAD_LETTER_ENTRIES = 5000;
+const MAX_DEAD_LETTER_AGE_MS = 30 * 24 * 60 * 60_000;
 
 /**
  * @param {number} attempts number of prior failed transmission attempts
@@ -568,6 +567,60 @@ async function drainOutbox(
 }
 
 /**
+ * Deletes one dead-letter entry outright. Unlike quarantineOutboxEntry
+ * (a rename that preserves the payload), this is the terminal step for
+ * data that has already been given up on and inspected/aged out; there
+ * is no further stage to move it to.
+ * @param {string} outboxDir
+ * @param {string} id
+ * @returns {boolean} true when a file was removed
+ */
+function deleteDeadLetterEntry(outboxDir, id) {
+  const filePath = entryPath(resolveDeadLetterDir(outboxDir), id);
+  try {
+    fs.unlinkSync(filePath);
+    fsyncParentDirectory(filePath);
+    return true;
+  } catch (err) {
+    if (err && err.code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Deletes dead-letter entries past their retention window: anything
+ * older than maxAgeMs, plus -- if the directory has grown past
+ * maxEntries -- the oldest entries beyond that cap. Unlike
+ * pruneStaleOutboxEntries, this deletes outright rather than
+ * quarantining again, since dead-letter is already the terminal stage.
+ * @param {string} outboxDir
+ * @param {number} nowMs
+ * @param {{ maxEntries?: number, maxAgeMs?: number }} [options] test-only
+ *   overrides for MAX_DEAD_LETTER_ENTRIES/MAX_DEAD_LETTER_AGE_MS
+ * @returns {{ deleted: number }}
+ */
+function pruneDeadLetterEntries(
+  outboxDir,
+  nowMs,
+  { maxEntries = MAX_DEAD_LETTER_ENTRIES, maxAgeMs = MAX_DEAD_LETTER_AGE_MS } = {},
+) {
+  const entries = listDeadLetterEntries(outboxDir); // oldest first
+  const overflowCount = Math.max(0, entries.length - maxEntries);
+  const idsToDelete = new Set();
+  entries.forEach((entry, index) => {
+    const createdAtMs = Date.parse(entry.createdAt);
+    const isAgedOut = Number.isFinite(createdAtMs) && nowMs - createdAtMs > maxAgeMs;
+    const isCountOverflow = index < overflowCount;
+    if (isAgedOut || isCountOverflow) idsToDelete.add(entry.id);
+  });
+  let deleted = 0;
+  for (const id of idsToDelete) {
+    if (deleteDeadLetterEntry(outboxDir, id)) deleted += 1;
+  }
+  return { deleted };
+}
+
+/**
  * Quarantines (never deletes outright) main-outbox entries that are past
  * their useful retention window: anything older than MAX_OUTBOX_AGE_MS,
  * plus -- if the directory has grown past MAX_OUTBOX_ENTRIES -- the
@@ -583,14 +636,11 @@ async function drainOutbox(
  * file via acknowledgeOutboxEntry), so no extra "never transmitted"
  * check is needed beyond "still present in listOutboxEntries".
  *
- * NOT called from drainOutbox automatically. This performs its own full
- * listOutboxEntries scan, which is exactly the O(n) cost this same
- * change just removed from drainOutbox's hot path (the old
- * double-listing bug); calling it unconditionally on every drain tick
- * would silently reintroduce that regression. Callers that want
- * retention enforced should invoke this themselves on a slow, rate-
- * limited cadence -- see shouldRunPrunePass for a minimal in-memory
- * example -- rather than it running on every poll interval.
+ * NOT called from drainOutbox directly (which would reintroduce an
+ * extra full-directory scan on every drain tick). Instead, the runtime
+ * poll loop (packages/agent/src/index.js) calls this alongside
+ * pruneDeadLetterEntries, gated by shouldRunPrunePass so the scan only
+ * runs on a slow, rate-limited cadence.
  *
  * @param {string} outboxDir
  * @param {number} nowMs
@@ -665,6 +715,8 @@ module.exports = {
   FALLBACK_MAX_ATTEMPTS_BEFORE_QUARANTINE,
   MAX_OUTBOX_ENTRIES,
   MAX_OUTBOX_AGE_MS,
+  MAX_DEAD_LETTER_ENTRIES,
+  MAX_DEAD_LETTER_AGE_MS,
   resolveOutboxDir,
   resolveDeadLetterDir,
   ensureOutboxDir,
@@ -674,9 +726,11 @@ module.exports = {
   listDeadLetterEntries,
   acknowledgeOutboxEntry,
   quarantineOutboxEntry,
+  deleteDeadLetterEntry,
   transmitOutboxEntry,
   drainOutbox,
   pruneStaleOutboxEntries,
+  pruneDeadLetterEntries,
   shouldRunPrunePass,
   createEvidenceBuffer,
   computeRetryBackoffMs,
