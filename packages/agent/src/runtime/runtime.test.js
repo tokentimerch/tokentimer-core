@@ -125,6 +125,7 @@ describe("agent runtime: lease, journal, multi-target transaction", () => {
       jobId: "job-lease-journal",
       attemptId: "attempt-1",
       workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: TEST_BOUND_AGENT_ID,
       certificateId: "certificate-1",
       action: "noop",
       target: { type: "domain", reference: "example.com" },

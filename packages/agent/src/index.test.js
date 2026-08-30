@@ -75,6 +75,7 @@ const {
   writeSigningKeyPin,
   readSigningKeyPin,
   listConfiguredDnsProviderIds,
+  DEFAULT_REQUIRE_SIGNED_AGENT_ID,
 } = require("./config");
 const {
   generateSigningKeyPair,
@@ -1026,6 +1027,10 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       schemaVersion: 1,
       jobId: overrides.jobId || "job-signed-1",
       workspaceId: "11111111-2222-3333-4444-555555555555",
+      // Signed dispatch always binds a job to one agent identity, so the
+      // fixture carries it too; tests that probe the binding gate itself
+      // override or drop this field deliberately.
+      agentId: TEST_BOUND_AGENT_ID,
       certificateId: "cert-1",
       action: "noop",
       target: { type: "domain", reference: "example.com" },
@@ -2406,6 +2411,7 @@ describe("observe-only signature verification (ADR-0012 decision 2 Finding B clo
       schemaVersion: 1,
       jobId: "job-observe-1",
       workspaceId: "11111111-2222-3333-4444-555555555555",
+      agentId: TEST_BOUND_AGENT_ID,
       certificateId: "cert-1",
       action: "noop",
       target: { type: "domain", reference: "example.com" },
@@ -2843,7 +2849,7 @@ describe("agentId absence-tolerant rollback: control plane omits agentId entirel
     );
   });
 
-  it("requireSignedAgentId defaulted to true (no override): the identical no-agentId job now fails closed at the gate", async () => {
+  it("requireSignedAgentId explicitly true: the identical no-agentId job now fails closed at the gate", async () => {
     const client = createRecordingClient();
     const job = makeSignedJobV1NoAgentId();
 
@@ -2857,6 +2863,32 @@ describe("agentId absence-tolerant rollback: control plane omits agentId entirel
       log: silentLog,
     });
 
+    assert.equal(outcome.status, "failed");
+    assert.equal(
+      outcome.rejectionReason,
+      AGENT_ID_BINDING_REJECTION_REASONS.AGENT_ID_REQUIRED_BUT_MISSING,
+    );
+    assert.equal(client.calls.reportResult.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  // A caller that forgets the argument must not silently get the permissive
+  // decoder: the parameter default has to track config's compiled-in default,
+  // which fails closed.
+  it("requireSignedAgentId omitted entirely: fails closed exactly as if true were passed, never the absence-tolerant branch", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJobV1NoAgentId();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      boundAgentId: AGENT_B,
+      log: silentLog,
+    });
+
+    assert.equal(DEFAULT_REQUIRE_SIGNED_AGENT_ID, true);
     assert.equal(outcome.status, "failed");
     assert.equal(
       outcome.rejectionReason,
@@ -3248,6 +3280,7 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
       jobId: "job-lease-journal",
       attemptId: "attempt-1",
       workspaceId: "11111111-1111-4111-8111-111111111111",
+      agentId: TEST_BOUND_AGENT_ID,
       certificateId: "certificate-1",
       action: "noop",
       target: { type: "domain", reference: "example.com" },
