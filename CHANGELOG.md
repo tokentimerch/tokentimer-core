@@ -41,6 +41,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The agent's local outbox retried a repeatedly-failing entry on every poll tick forever. It now backs off exponentially (15s, 30s, 60s, capped at 30 minutes). A failure the agent can classify as permanent (a 4xx other than 408/429/401/403) is quarantined into a `dead-letter` subdirectory immediately; an unclassified transient failure only after at least 8 delivery attempts **and** 48 hours measured from the entry's first attempt, so an agent powered off for a week still gets a full retry window instead of being dead-lettered on its first post-restart failure. Both directories are retention-capped (5000 entries; 7 days for the outbox, 30 days for dead-letter), dead-letter age is measured from when the entry was quarantined rather than when the job finished, and an entry too corrupt to parse is aged off its file mtime so a poisoned file cannot occupy the directory indefinitely. There is no automatic replay: inspect `dead-letter/` if a job's result never reaches the control plane.
 - `@tokentimer/contracts` now declares `ajv`/`ajv-formats` as its own runtime dependencies instead of relying on a sibling workspace package's copy, which a production, workspace-filtered install (as the release Docker images use) does not make resolvable.
 
+### Security
+
+- The `subfinder` binary built into the API image is now compiled against `golang.org/x/crypto` 0.55.0 (from 0.53.0), clearing [GO-2026-6303](https://pkg.go.dev/vuln/GO-2026-6303) / CVE-2026-56854, a High finding where an SSH `source-address` restriction was not enforced for non-public-key auth callbacks. TokenTimer does not run an SSH server, so the affected code path was never reachable; the pin moves forward so image scans stay clean. `golang.org/x/net` (0.57.0), `golang.org/x/sys` (0.47.0) and `golang.org/x/text` (0.41.0) move with it to keep the module graph consistent.
+
 ## [0.13.3] - 2026-08-26
 
 ### Added

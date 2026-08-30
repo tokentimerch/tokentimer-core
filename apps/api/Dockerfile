@@ -9,9 +9,9 @@ RUN git clone --depth 1 --branch v2.14.0 https://github.com/projectdiscovery/sub
 
 WORKDIR /src/cmd/subfinder
 RUN go get \
-      golang.org/x/crypto@v0.52.0 \
-      golang.org/x/net@v0.55.0 \
-      golang.org/x/sys@v0.45.0 \
+      golang.org/x/crypto@v0.55.0 \
+      golang.org/x/net@v0.57.0 \
+      golang.org/x/sys@v0.47.0 \
       github.com/cloudflare/circl@v1.6.3 \
       github.com/klauspost/compress@v1.18.7 && \
     go mod tidy && \
