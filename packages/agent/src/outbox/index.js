@@ -673,14 +673,36 @@ function pruneDeadLetterEntries(
 ) {
   const deadLetterDir = resolveDeadLetterDir(outboxDir);
   const entries = listDeadLetterEntries(outboxDir); // oldest first, by createdAt
-  const overflowCount = Math.max(0, entries.length - maxEntries);
+  const withAgeBasis = entries.map((entry) => ({
+    entry,
+    ageBasisMs: resolveDeadLetterAgeBasisMs(entryPath(deadLetterDir, entry.id), entry),
+  }));
   const idsToDelete = new Set();
-  entries.forEach((entry, index) => {
-    const ageBasisMs = resolveDeadLetterAgeBasisMs(entryPath(deadLetterDir, entry.id), entry);
+  for (const { entry, ageBasisMs } of withAgeBasis) {
     const isAgedOut = Number.isFinite(ageBasisMs) && nowMs - ageBasisMs > maxAgeMs;
-    const isCountOverflow = index < overflowCount;
-    if (isAgedOut || isCountOverflow) idsToDelete.add(entry.id);
-  });
+    if (isAgedOut) idsToDelete.add(entry.id);
+  }
+  // Count-overflow victims must be chosen by the same quarantine-age
+  // basis, not by createdAt position: an old job outcome quarantined
+  // just now would otherwise sort first (by createdAt) and be evicted
+  // ahead of entries that have genuinely been sitting in dead-letter
+  // longer. Entries with no parseable age basis at all (NaN) sort
+  // last, i.e. are treated as the newest/least eligible for eviction,
+  // since there is no signal they have overstayed anything.
+  const overflowCount = Math.max(0, withAgeBasis.length - maxEntries);
+  if (overflowCount > 0) {
+    const byAgeAscending = [...withAgeBasis].sort((a, b) => {
+      const aValid = Number.isFinite(a.ageBasisMs);
+      const bValid = Number.isFinite(b.ageBasisMs);
+      if (aValid && bValid) return a.ageBasisMs - b.ageBasisMs;
+      if (aValid) return -1;
+      if (bValid) return 1;
+      return a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0;
+    });
+    for (let i = 0; i < overflowCount; i += 1) {
+      idsToDelete.add(byAgeAscending[i].entry.id);
+    }
+  }
   let deleted = 0;
   for (const id of idsToDelete) {
     if (deleteDeadLetterEntry(outboxDir, id)) deleted += 1;

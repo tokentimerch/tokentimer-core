@@ -558,17 +558,21 @@ describe("outbox", () => {
     const total = 5;
 
     for (let i = 0; i < total; i += 1) {
+      const mtime = nowMs - (total - i) * 1000;
       const entry = {
         id: `outbox-overflow-${String(i).padStart(2, "0")}`,
-        createdAt: new Date(nowMs - (total - i) * 1000).toISOString(),
+        createdAt: new Date(mtime).toISOString(),
         result: { jobId: `job-${i}`, attemptId: "a1", status: "succeeded" },
         evidence: [],
       };
-      fs.writeFileSync(
-        path.join(deadLetterDir, `${entry.id}.json`),
-        `${JSON.stringify(entry)}\n`,
-        "utf8",
-      );
+      const filePath = path.join(deadLetterDir, `${entry.id}.json`);
+      fs.writeFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      // No quarantinedAt/lastAttemptAt on these legacy-style fixtures,
+      // so age falls back to mtime; back-date it to match createdAt so
+      // this test's ordering assumption (oldest createdAt == oldest
+      // age basis) actually holds under the new age-basis-driven
+      // eviction order.
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
     }
 
     const result = pruneDeadLetterEntries(outboxDir, nowMs, { maxEntries: 3 });
@@ -577,5 +581,71 @@ describe("outbox", () => {
     assert.equal(remaining.length, 3);
     // The two oldest (lowest index, oldest createdAt) were the ones removed.
     assert.equal(remaining[0].id, "outbox-overflow-02");
+  });
+
+  it("count-overflow eviction selects victims by quarantine-age basis, not by original createdAt order (an old job outcome quarantined just now must not be evicted ahead of entries that have genuinely been in dead-letter longer)", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    const writeEntry = (id, createdAt, quarantinedAt) => {
+      const entry = {
+        id,
+        createdAt,
+        quarantinedAt,
+        result: { jobId: id, attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 3,
+      };
+      fs.writeFileSync(
+        path.join(deadLetterDir, `${id}.json`),
+        `${JSON.stringify(entry)}\n`,
+        "utf8",
+      );
+    };
+
+    // Oldest createdAt, but quarantined most recently (an agent that
+    // was offline for a very long time, then just reconnected and
+    // immediately quarantined on its first failed attempt).
+    writeEntry(
+      "outbox-old-job-fresh-quarantine",
+      new Date(nowMs - 400 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs).toISOString(),
+    );
+    // Two entries with newer createdAt than the one above, but
+    // quarantined long before it -- these have genuinely been sitting
+    // in dead-letter the longest and must be evicted first.
+    writeEntry(
+      "outbox-recent-job-old-quarantine-1",
+      new Date(nowMs - 10 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 5 * 24 * 60 * 60_000).toISOString(),
+    );
+    writeEntry(
+      "outbox-recent-job-old-quarantine-2",
+      new Date(nowMs - 9 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 4 * 24 * 60 * 60_000).toISOString(),
+    );
+    // A fourth entry, quarantined between the two above and the fresh
+    // one, so it should survive a cap of 3.
+    writeEntry(
+      "outbox-mid-quarantine",
+      new Date(nowMs - 8 * 24 * 60 * 60_000).toISOString(),
+      new Date(nowMs - 3 * 24 * 60 * 60_000).toISOString(),
+    );
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs, { maxEntries: 3 });
+    assert.equal(result.deleted, 1);
+
+    const remainingIds = listDeadLetterEntries(outboxDir).map((e) => e.id);
+    // The two oldest-by-quarantinedAt entries were evicted... only one
+    // eviction needed to get from 4 to 3, so exactly the single oldest
+    // (by quarantinedAt) is gone: outbox-recent-job-old-quarantine-1.
+    assert.ok(!remainingIds.includes("outbox-recent-job-old-quarantine-1"));
+    // The entry with the oldest createdAt but the freshest
+    // quarantinedAt must survive -- proving eviction order follows
+    // quarantine age, not createdAt position.
+    assert.ok(remainingIds.includes("outbox-old-job-fresh-quarantine"));
+    assert.ok(remainingIds.includes("outbox-recent-job-old-quarantine-2"));
+    assert.ok(remainingIds.includes("outbox-mid-quarantine"));
   });
 });
