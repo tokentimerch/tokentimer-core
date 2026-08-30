@@ -1027,7 +1027,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                       value={payloadText}
                       onChange={handlePayloadChange}
                       placeholder={
-                        isRenew ? RENEW_PAYLOAD_JSON_EXAMPLE : PAYLOAD_JSON_EXAMPLE
+                        isRenew
+                          ? RENEW_PAYLOAD_JSON_EXAMPLE
+                          : PAYLOAD_JSON_EXAMPLE
                       }
                     />
                     <FormHelperText>
