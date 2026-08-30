@@ -133,7 +133,10 @@ const create = async (tokenData) => {
     certops_api_token_id = null,
     source_provider = null,
     source_instance = null,
-    source_owner_key = null,
+    // source_owner_key is NOT NULL DEFAULT '' in the schema (the sentinel
+    // lets legacy/no-provenance rows participate in the uniqueness index
+    // without colliding on NULL), so default here must match, not null.
+    source_owner_key = "",
     source_owner_display = null,
     source_kind = null,
     source_dimensions = null,
