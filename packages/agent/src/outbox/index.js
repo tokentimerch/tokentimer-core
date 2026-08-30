@@ -338,14 +338,42 @@ function acknowledgeOutboxEntry(outboxDir, id) {
  * diagnostic fields (attempts/lastErrorMessage/lastAttemptAt) onto the
  * entry file BEFORE calling this -- rename preserves file content
  * verbatim, it does not merge anything in.
+ *
+ * Stamps `quarantinedAt` onto the entry (best effort, via a rewrite of
+ * the source file before the rename) so pruneDeadLetterEntries ages
+ * this entry from the moment it actually entered dead-letter rather
+ * than from its original `createdAt`. Without this, an entry whose
+ * job outcome predates the dead-letter retention window (e.g. an
+ * agent that was offline for longer than MAX_DEAD_LETTER_AGE_MS) would
+ * already look "aged out" the instant it lands in dead-letter, and the
+ * very next prune pass -- which can run in the same tick, since the
+ * poll loop starts immediately -- would delete it before an operator
+ * had any chance to inspect it.
  * @param {string} outboxDir
  * @param {string} id
+ * @param {number} [nowMs]
  * @returns {boolean} true when a file was moved
  */
-function quarantineOutboxEntry(outboxDir, id) {
+function quarantineOutboxEntry(outboxDir, id, nowMs = Date.now()) {
   const deadLetterDir = ensureDeadLetterDir(resolveDeadLetterDir(outboxDir));
   const source = entryPath(outboxDir, id);
   const destination = entryPath(deadLetterDir, id);
+  try {
+    const raw = fs.readFileSync(source, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const stamped = { ...parsed, quarantinedAt: new Date(nowMs).toISOString() };
+      const serialized = `${JSON.stringify(stamped)}\n`;
+      if (Buffer.byteLength(serialized, "utf8") <= MAX_ENTRY_BYTES) {
+        writeFileAtomically(source, serialized, 0o600);
+      }
+    }
+  } catch (err) {
+    if (err && err.code === "ENOENT") return false;
+    // Corrupt/unreadable/oversized entry: fall through and still move
+    // whatever is on disk rather than leaving it stuck in the main
+    // outbox directory forever over a stamping failure.
+  }
   try {
     fs.renameSync(source, destination);
   } catch (err) {
@@ -556,7 +584,7 @@ async function drainOutbox(
         permanent = false;
       }
       if (permanent || hasExceededTransientRetryWindow(updated, nowMs)) {
-        if (quarantineOutboxEntry(outboxDir, entry.id)) {
+        if (quarantineOutboxEntry(outboxDir, entry.id, nowMs)) {
           quarantined += 1;
           remaining -= 1;
         }
@@ -588,6 +616,45 @@ function deleteDeadLetterEntry(outboxDir, id) {
 }
 
 /**
+ * Resolves the timestamp a dead-letter entry's retention age is
+ * measured from. `entry.createdAt` is when the underlying job outcome
+ * was first persisted, which predates quarantine -- sometimes by more
+ * than the retention window itself (e.g. an agent offline for over
+ * MAX_DEAD_LETTER_AGE_MS, whose very first post-restart transmission
+ * attempt exceeds the transient-retry ceiling and is quarantined
+ * immediately). Using createdAt as the age basis would make such an
+ * entry look already-expired the instant it lands in dead-letter, so
+ * the next prune pass -- which can run in the same tick, since the
+ * poll loop starts immediately -- would delete it before an operator
+ * had any chance to inspect it.
+ *
+ * Priority: `quarantinedAt` (stamped by quarantineOutboxEntry, present
+ * on everything quarantined by this build) > `lastAttemptAt` (the most
+ * recent transmission attempt, a close proxy for quarantine time on
+ * entries dead-lettered before this fix shipped) > the dead-letter
+ * file's own mtime (rename preserves it, so it still reflects the last
+ * time the entry's content was written -- close to quarantine time for
+ * entries that had at least one recorded attempt) > `createdAt` as a
+ * final fallback for legacy entries with none of the above.
+ * @param {string} filePath absolute path to the entry inside dead-letter/
+ * @param {object} entry
+ * @returns {number} epoch ms, or NaN if nothing usable was found
+ */
+function resolveDeadLetterAgeBasisMs(filePath, entry) {
+  const quarantinedAtMs = Date.parse(entry.quarantinedAt);
+  if (Number.isFinite(quarantinedAtMs)) return quarantinedAtMs;
+  const lastAttemptAtMs = Date.parse(entry.lastAttemptAt);
+  if (Number.isFinite(lastAttemptAtMs)) return lastAttemptAtMs;
+  try {
+    const mtimeMs = fs.statSync(filePath).mtimeMs;
+    if (Number.isFinite(mtimeMs)) return mtimeMs;
+  } catch (_err) {
+    // Fall through to createdAt.
+  }
+  return Date.parse(entry.createdAt);
+}
+
+/**
  * Deletes dead-letter entries past their retention window: anything
  * older than maxAgeMs, plus -- if the directory has grown past
  * maxEntries -- the oldest entries beyond that cap. Unlike
@@ -604,12 +671,13 @@ function pruneDeadLetterEntries(
   nowMs,
   { maxEntries = MAX_DEAD_LETTER_ENTRIES, maxAgeMs = MAX_DEAD_LETTER_AGE_MS } = {},
 ) {
-  const entries = listDeadLetterEntries(outboxDir); // oldest first
+  const deadLetterDir = resolveDeadLetterDir(outboxDir);
+  const entries = listDeadLetterEntries(outboxDir); // oldest first, by createdAt
   const overflowCount = Math.max(0, entries.length - maxEntries);
   const idsToDelete = new Set();
   entries.forEach((entry, index) => {
-    const createdAtMs = Date.parse(entry.createdAt);
-    const isAgedOut = Number.isFinite(createdAtMs) && nowMs - createdAtMs > maxAgeMs;
+    const ageBasisMs = resolveDeadLetterAgeBasisMs(entryPath(deadLetterDir, entry.id), entry);
+    const isAgedOut = Number.isFinite(ageBasisMs) && nowMs - ageBasisMs > maxAgeMs;
     const isCountOverflow = index < overflowCount;
     if (isAgedOut || isCountOverflow) idsToDelete.add(entry.id);
   });
@@ -658,7 +726,7 @@ function pruneStaleOutboxEntries(outboxDir, nowMs) {
   });
   let quarantined = 0;
   for (const id of idsToQuarantine) {
-    if (quarantineOutboxEntry(outboxDir, id)) quarantined += 1;
+    if (quarantineOutboxEntry(outboxDir, id, nowMs)) quarantined += 1;
   }
   return { quarantined };
 }

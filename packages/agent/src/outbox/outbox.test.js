@@ -444,7 +444,7 @@ describe("outbox", () => {
     fs.mkdirSync(deadLetterDir, { recursive: true });
     const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
 
-    const writeDeadLetterEntry = (id, createdAt) => {
+    const writeDeadLetterEntry = (id, createdAt, mtime) => {
       const entry = {
         id,
         createdAt,
@@ -452,18 +452,22 @@ describe("outbox", () => {
         evidence: [],
         attempts: 5,
       };
-      fs.writeFileSync(
-        path.join(deadLetterDir, `${id}.json`),
-        `${JSON.stringify(entry)}\n`,
-        "utf8",
-      );
+      const filePath = path.join(deadLetterDir, `${id}.json`);
+      fs.writeFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      // No quarantinedAt/lastAttemptAt on these fixtures (simulating a
+      // legacy pre-fix entry), so age falls back to the file's own
+      // mtime; back-date it to the entry's createdAt to exercise that
+      // fallback rather than "now" (when the fixture happens to be
+      // written).
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
     };
 
     writeDeadLetterEntry(
       "outbox-old",
       new Date(nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000).toISOString(),
+      nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000,
     );
-    writeDeadLetterEntry("outbox-recent", new Date(nowMs).toISOString());
+    writeDeadLetterEntry("outbox-recent", new Date(nowMs).toISOString(), nowMs);
 
     const result = pruneDeadLetterEntries(outboxDir, nowMs);
     assert.equal(result.deleted, 1);
@@ -471,6 +475,80 @@ describe("outbox", () => {
     const remaining = listDeadLetterEntries(outboxDir);
     assert.equal(remaining.length, 1);
     assert.equal(remaining[0].id, "outbox-recent");
+  });
+
+  it("an entry quarantined now survives an immediate prune pass even though its original createdAt is already past the dead-letter age ceiling", async () => {
+    // Reproduces an agent that was offline for >30 days: the very first
+    // post-restart transmission attempt exceeds the transient-retry
+    // ceiling (measured from createdAt) and is quarantined immediately,
+    // then the same poll tick's rate-limited prune pass runs right away
+    // (startImmediately: true on the poll loop).
+    const createdAtMs = Date.parse("2026-08-28T00:00:00.000Z");
+    enqueueOutboxEntry(outboxDir, {
+      id: "outbox-stale-restart-1",
+      createdAt: new Date(createdAtMs).toISOString(),
+      result: { jobId: "job-stale", attemptId: "a1", status: "succeeded" },
+      evidence: [],
+    });
+
+    const nowMs = createdAtMs + MAX_TRANSIENT_RETRY_AGE_MS + MAX_DEAD_LETTER_AGE_MS + 60_000;
+    const client = {
+      reportEvidence: async () => {},
+      reportResult: async () => {
+        throw new Error("connection reset");
+      },
+    };
+
+    const drain = await drainOutbox(outboxDir, client, { now: () => nowMs });
+    assert.equal(drain.quarantined, 1);
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
+
+    // The prune pass that runs immediately afterward must not delete
+    // an entry that was only just quarantined, regardless of how old
+    // its original createdAt is.
+    const prune = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(prune.deleted, 0);
+    const survivors = listDeadLetterEntries(outboxDir);
+    assert.equal(survivors.length, 1);
+    assert.equal(survivors[0].id, "outbox-stale-restart-1");
+    assert.equal(typeof survivors[0].quarantinedAt, "string");
+
+    // It only ages out MAX_DEAD_LETTER_AGE_MS after quarantinedAt, not
+    // after the original createdAt.
+    const stillTooSoon = pruneDeadLetterEntries(outboxDir, nowMs + MAX_DEAD_LETTER_AGE_MS - 60_000);
+    assert.equal(stillTooSoon.deleted, 0);
+
+    const nowAgedOut = pruneDeadLetterEntries(outboxDir, nowMs + MAX_DEAD_LETTER_AGE_MS + 60_000);
+    assert.equal(nowAgedOut.deleted, 1);
+  });
+
+  it("pruneDeadLetterEntries falls back to lastAttemptAt, then file mtime, then createdAt when quarantinedAt is absent (legacy entries)", async () => {
+    const deadLetterDir = resolveDeadLetterDir(outboxDir);
+    fs.mkdirSync(deadLetterDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-28T00:00:00.000Z");
+
+    // Legacy entry written directly (as a pre-fix quarantine would have
+    // left it): no quarantinedAt, but a recent lastAttemptAt should
+    // still protect it from a createdAt that is already past the
+    // retention ceiling.
+    const legacyPath = path.join(deadLetterDir, "outbox-legacy-1.json");
+    fs.writeFileSync(
+      legacyPath,
+      `${JSON.stringify({
+        id: "outbox-legacy-1",
+        createdAt: new Date(nowMs - MAX_DEAD_LETTER_AGE_MS - 60_000).toISOString(),
+        lastAttemptAt: new Date(nowMs).toISOString(),
+        result: { jobId: "job-legacy", attemptId: "a1", status: "succeeded" },
+        evidence: [],
+        attempts: 5,
+      })}\n`,
+      "utf8",
+    );
+
+    const result = pruneDeadLetterEntries(outboxDir, nowMs);
+    assert.equal(result.deleted, 0);
+    assert.equal(listDeadLetterEntries(outboxDir).length, 1);
   });
 
   it("pruneDeadLetterEntries deletes the oldest entries once past maxEntries, even if none are individually aged out", async () => {
