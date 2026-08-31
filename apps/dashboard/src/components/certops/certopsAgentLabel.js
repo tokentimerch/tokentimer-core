@@ -45,9 +45,7 @@ export function formatAgentAuditParts(md, agentsById) {
   }
   const host = md?.host != null ? String(md.host).trim() : '';
   if (!host) return parts;
-  const label = agentId
-    ? formatAgentLabel(agentId, agentsById, md || {})
-    : '';
+  const label = agentId ? formatAgentLabel(agentId, agentsById, md || {}) : '';
   if (host !== agentId && host !== label && !label.startsWith(`${host} (`)) {
     parts.push(`Host: ${host}`);
   }

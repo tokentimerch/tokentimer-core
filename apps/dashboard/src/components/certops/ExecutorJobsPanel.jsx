@@ -27,10 +27,7 @@ import {
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsJobs } from './useCertOpsJobs.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
-import {
-  formatAgentLabel,
-  indexAgentsByAnyId,
-} from './certopsAgentLabel.js';
+import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_JOB_FILTERS,
