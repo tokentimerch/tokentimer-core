@@ -17,6 +17,18 @@ const workerUrl = pathToFileURL(
   ),
 ).href;
 
+const metricsUrl = pathToFileURL(
+  path.join(
+    __dirname,
+    "..",
+    "..",
+    "apps",
+    "worker",
+    "src",
+    "certops-metrics.js",
+  ),
+).href;
+
 const silentLogger = {
   info() {},
   warn() {},
@@ -63,6 +75,18 @@ function createReaperClient(rows) {
       return { rows: [] };
     },
   };
+}
+
+// runCertOpsMaintenance rejects when any sweep failed, so a failing run exits
+// non-zero. Tests that assert on per-sweep outcomes rather than on that exit
+// signal read the results off the rejection.
+async function runMaintenanceResults(worker, options) {
+  try {
+    return await worker.runCertOpsMaintenance(options);
+  } catch (error) {
+    if (error?.code !== "CERTOPS_MAINTENANCE_SWEEP_FAILED") throw error;
+    return error.results;
+  }
 }
 
 describe("certops maintenance worker", () => {
@@ -372,6 +396,113 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(auditEvents[0].metadata.jobStatus, "failed");
     assert.strictEqual(auditEvents[0].metadata.errorCode, "agent_offline");
     assert.strictEqual(auditEvents[0].metadata.needsOperatorReconciliation, false);
+  });
+
+  it("unwinds a lease-reaped trust job in the reaper's own transaction", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-trust",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 3,
+        max_attempts: 3,
+        operation: "distribute-trust",
+        subject_type: "trust_anchor",
+        subject_id: "anchor-1",
+        lease_renewed_at: null,
+        agent_alive: false,
+        past_hard_grace: false,
+      },
+    ]);
+    const unwinds = [];
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+      auditWriter: async () => {},
+      trustTerminalHook: async (args) => {
+        unwinds.push(args);
+        return { action: "deleted" };
+      },
+    });
+
+    assert.strictEqual(summary.failed, 1);
+    assert.strictEqual(unwinds.length, 1, "expected one trust unwind");
+    assert.strictEqual(unwinds[0].client, client);
+    assert.strictEqual(unwinds[0].job.id, "job-trust");
+    assert.strictEqual(unwinds[0].job.status, "failed");
+    assert.strictEqual(unwinds[0].job.operation, "distribute-trust");
+    assert.strictEqual(unwinds[0].job.workspace_id, "ws-1");
+
+    // The unwind must land between the failed UPDATE and the COMMIT, so the
+    // job status and the installation state cannot be observed apart.
+    const updateIndex = client.queries.findIndex((q) =>
+      q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
+    );
+    const commitIndex = client.queries.findIndex((q) => q.sql === "COMMIT");
+    assert.ok(updateIndex >= 0 && commitIndex > updateIndex);
+  });
+
+  it("does not unwind non-trust jobs the reaper fails", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-renew",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 3,
+        max_attempts: 3,
+        operation: "renew",
+        lease_renewed_at: null,
+        agent_alive: false,
+        past_hard_grace: false,
+      },
+    ]);
+    let unwindCalls = 0;
+
+    await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+      auditWriter: async () => {},
+      trustTerminalHook: async () => {
+        unwindCalls += 1;
+      },
+    });
+
+    assert.strictEqual(unwindCalls, 0);
+  });
+
+  it("rolls the whole reaper transaction back when a trust unwind fails", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-trust-broken",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 3,
+        max_attempts: 3,
+        operation: "revoke-trust",
+        lease_renewed_at: null,
+        agent_alive: false,
+        past_hard_grace: false,
+      },
+    ]);
+
+    await assert.rejects(
+      () =>
+        worker.reapExpiredLeases({
+          client,
+          log: silentLogger,
+          auditWriter: async () => {},
+          trustTerminalHook: async () => {
+            throw new Error("installation row locked");
+          },
+        }),
+      /installation row locked/,
+    );
+
+    assert.strictEqual(client.queries.at(-1).sql, "ROLLBACK");
   });
 
   it("never requeues running jobs; marks them orphaned_unknown_effect instead", async () => {
@@ -1260,7 +1391,7 @@ describe("certops maintenance worker", () => {
     let nonceCalls = 0;
     let renewalCalls = 0;
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {},
       log: silentLogger,
       // Lease reaper and stale-agent sweep both explode.
@@ -1301,7 +1432,7 @@ describe("certops maintenance worker", () => {
     let renewalCalls = 0;
     let clientCalls = 0;
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {
       CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
       CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "0",
@@ -1342,7 +1473,7 @@ describe("certops maintenance worker", () => {
     const worker = await import(workerUrl);
     let renewalCalls = 0;
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {
         CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS: "20",
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
@@ -1389,7 +1520,7 @@ describe("certops maintenance worker", () => {
     const worker = await import(workerUrl);
     const seenClients = [];
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {},
       log: silentLogger,
       withClientFn: async (fn) =>
@@ -1424,7 +1555,7 @@ describe("certops maintenance worker", () => {
     const worker = await import(workerUrl);
     const seenClients = [];
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {
         CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
@@ -1451,7 +1582,7 @@ describe("certops maintenance worker", () => {
     const worker = await import(workerUrl);
     let replayCalls = 0;
 
-    const results = await worker.runCertOpsMaintenance({
+    const results = await runMaintenanceResults(worker, {
       env: {
         CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
@@ -1470,5 +1601,84 @@ describe("certops maintenance worker", () => {
 
     assert.strictEqual(results.registrationReplaySweep.status, "skipped");
     assert.strictEqual(replayCalls, 0);
+  });
+
+  it("rejects with a sweep-failure code so a failing run exits non-zero", async () => {
+    const worker = await import(workerUrl);
+    let metricsPushed = 0;
+
+    await assert.rejects(
+      () =>
+        worker.runCertOpsMaintenance({
+          env: {
+            CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+            CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false",
+            CERTOPS_SWEEP_NONCE_ENABLED: "false",
+            CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+            CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
+            CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
+            CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
+            CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+          },
+          log: silentLogger,
+          withClientFn: async () => {
+            throw new Error("db down");
+          },
+          pushMetricsFn: async () => {
+            metricsPushed += 1;
+          },
+        }),
+      (err) => {
+        assert.strictEqual(err.code, "CERTOPS_MAINTENANCE_SWEEP_FAILED");
+        assert.match(err.message, /1 sweep\(s\) failed: leaseReaper/);
+        assert.strictEqual(err.results.leaseReaper.status, "failed");
+        return true;
+      },
+    );
+
+    // Metrics must still ship for a failing run, otherwise the failure is
+    // invisible in the series that would explain it.
+    assert.strictEqual(metricsPushed, 1);
+  });
+
+  it("does not fail the run when sweeps are only skipped", async () => {
+    const worker = await import(workerUrl);
+
+    const results = await worker.runCertOpsMaintenance({
+      env: {
+        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+        CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false",
+        CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
+        CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
+        CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
+        CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+      },
+      log: silentLogger,
+      dbPool: { marker: "pool" },
+      nonceSweeper: async () => 2,
+      pushMetricsFn: async () => {},
+    });
+
+    assert.strictEqual(results.leaseReaper.status, "skipped");
+    assert.strictEqual(results.trustAnchorReconciliation.status, "skipped");
+    assert.strictEqual(results.nonceSweep.status, "success");
+  });
+
+  it("treats only failed sweeps as a failed run", async () => {
+    const metrics = await import(metricsUrl);
+
+    assert.deepStrictEqual(metrics.identifyFailedSweeps({}), []);
+    assert.deepStrictEqual(metrics.identifyFailedSweeps(undefined), []);
+    assert.deepStrictEqual(
+      metrics.identifyFailedSweeps({
+        a: { status: "success" },
+        b: { status: "skipped" },
+        c: { status: "failed" },
+        d: { status: "failed" },
+      }),
+      ["c", "d"],
+    );
   });
 });

@@ -50,6 +50,7 @@ import {
   gCertopsDiagnosticAgentsRetired,
   gCertopsAgentHealthAlerts,
   gCertopsTrustAnchorReconciliation,
+  identifyFailedSweeps,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
@@ -88,6 +89,7 @@ const { writeAudit } = require("../../api/services/audit.js");
 const {
   JOB_STATUSES,
   isTerminalJobStatus,
+  isTrustAnchorOperation,
 } = require("../../api/services/certops/jobs.js");
 
 const {
@@ -106,6 +108,7 @@ const { resolveRenewalPathsForWorkspace } = require(
 // service, not this worker).
 const {
   sweepOverdueTrustInstallations,
+  onTrustJobTerminalTransition,
 } = require("../../api/services/certops/trustAnchors.js");
 
 // Single source of truth for the 10-minute agent liveness threshold, shared
@@ -602,6 +605,7 @@ export async function reapExpiredLeases({
   log = logger,
   recordOutboxEvent = enqueueOutboxEvent,
   auditWriter = writeAudit,
+  trustTerminalHook = onTrustJobTerminalTransition,
 } = {}) {
   const summary = { scanned: 0, requeued: 0, failed: 0, deferred: 0 };
 
@@ -791,6 +795,18 @@ export async function reapExpiredLeases({
             WHERE id = $1`,
           [row.id, errorCode],
         );
+
+        // A lease-reaped trust job is a terminal-negative transition like any
+        // other. Unwinding in this transaction, not later via the
+        // reconciliation sweep an operator can disable, keeps the job's failed
+        // status and the installation's unwound state from being observed apart.
+        if (isTrustAnchorOperation(row.operation)) {
+          await trustTerminalHook({
+            client,
+            job: { ...row, status: "failed" },
+          });
+        }
+
         await insertJobLog(client, row, {
           eventType: "job.failed",
           status: "failed",
@@ -1724,6 +1740,19 @@ export async function runCertOpsMaintenance({
   await pushMetricsFn("certops").catch((e) =>
     log.warn("Failed to push metrics", { error: e.message }),
   );
+
+  // Metrics push first so a failing run stays observable. Without the throw the
+  // process exits 0 and CronJob / Compose supervision calls a run healthy while
+  // every sweep in it fails.
+  const failedSweeps = identifyFailedSweeps(results);
+  if (failedSweeps.length > 0) {
+    const error = new Error(
+      `certops-worker: ${failedSweeps.length} sweep(s) failed: ${failedSweeps.join(", ")}`,
+    );
+    error.code = "CERTOPS_MAINTENANCE_SWEEP_FAILED";
+    error.results = results;
+    throw error;
+  }
 
   return results;
 }

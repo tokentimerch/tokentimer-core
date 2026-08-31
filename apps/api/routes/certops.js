@@ -100,6 +100,7 @@ const {
   listCertificateJobLog,
   listCertificateJobs,
   manualRenewalJobCreator,
+  preflightManualRenewalJob,
 } = require("../services/certops/jobs");
 const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
@@ -154,6 +155,7 @@ const {
   CERTOPS_TARGET_AGENT_NOT_FOUND,
   createTrustAnchor,
   listTrustAnchors,
+  listInstallationsForAnchor,
   manualTrustJobCreator,
   retireTrustAnchor,
 } = require("../services/certops/trustAnchors");
@@ -941,14 +943,14 @@ const BULK_RENEW_ALLOWED_BODY_FIELDS = Object.freeze([
 const BULK_RENEW_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
-  // Non-dry-run bulk creates must always carry a stable per-certificate key
-  // so client retries cannot enqueue duplicate renew jobs. When the caller
-  // omits a request key, derive one from the certificate id alone (scoped
-  // by the workspace-scoped unique index on the jobs table's idempotency key).
+  // No auto-derived fallback: the jobs table's (workspace_id,
+  // idempotency_key) uniqueness has no time component, so a key derived from
+  // the certificate id alone would make that certificate renewable exactly
+  // once, forever. Retry safety is opt-in instead, via a caller-supplied key.
   if (idempotencyKey) {
     return `bulk-renew:${idempotencyKey}:${certificateId}`;
   }
-  return `bulk-renew:auto:${certificateId}`;
+  return null;
 }
 
 /**
@@ -1042,17 +1044,22 @@ function parseBulkRenewRequest(body) {
  * An optional request-level idempotencyKey makes retries safe: each item is
  * created with a derived "bulk-renew:<key>:<certificateId>" job key, so a
  * replayed batch returns the already-created jobs (marked replayed: true)
- * instead of enqueueing duplicates.
+ * instead of enqueueing duplicates. Omitting the key leaves items without
+ * one, so a replayed POST enqueues fresh jobs.
  *
  * Dry run preflights each certificate without writing: existence, renewable
- * inventory status, the same payload validation the real run applies, and
- * whether a non-terminal renew job is already in flight (reported as
- * activeJobId so callers can spot double-renewals before committing).
+ * inventory status, resolution of that certificate's stored renewal profile
+ * into the payload the real run would insert (so an incomplete or invalid
+ * profile fails the item here rather than at real-run time), and whether a
+ * non-terminal renew job is already in flight (reported as activeJobId so
+ * callers can spot double-renewals before committing). Capacity is not
+ * checked: a dry run must not reserve per-CA capacity.
  */
 function bulkRenewCertificatesHandler({
   manualJobCreator = createManualCertificateJob,
   certificateLoader = getManagedCertificate,
   activeJobFinder = findActiveJobForSubject,
+  renewalPreflight = preflightManualRenewalJob,
 } = {}) {
   return async function bulkRenewCertificatesHandler(req, res) {
     const parsed = parseBulkRenewRequest(req.body);
@@ -1108,6 +1115,11 @@ function bulkRenewCertificatesHandler({
         }
 
         if (parsed.dryRun) {
+          await renewalPreflight({
+            workspaceId: req.workspace.id,
+            certificateId,
+            payload: parsed.payload,
+          });
           const activeJob = await activeJobFinder({
             workspaceId: req.workspace.id,
             subjectType: "managed_certificate",
@@ -2474,6 +2486,43 @@ router.post(
       });
       return res.status(500).json({
         error: "Failed to retire trust anchor",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+// Read-only: intentionally omits requireWorkspaceCertOpsActive (unlike the
+// two mutating trust-anchor routes above) so an operator diagnosing a
+// frozen/deactivated workspace can still see where a trust anchor landed.
+router.get(
+  "/api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.trust_anchor.manage"),
+  async (req, res) => {
+    const anchorId = trustAnchorIdFromParams(req, res);
+    if (!anchorId) return null;
+
+    try {
+      const items = await listInstallationsForAnchor({
+        workspaceId: req.workspace.id,
+        trustAnchorId: anchorId,
+      });
+      return res.json({ items });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps trust anchor installations list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        anchorId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list trust anchor installations",
         code: "INTERNAL_ERROR",
       });
     }

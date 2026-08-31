@@ -163,6 +163,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/settings",
       "GET /api/v1/workspaces/:id/certops/targets",
       "GET /api/v1/workspaces/:id/certops/trust-anchors",
+      "GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations",
       "PATCH /api/v1/workspaces/:id/certops/agents/:agentId/alert-settings",
       "PATCH /api/v1/workspaces/:id/certops/profiles/:profileId",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",

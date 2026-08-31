@@ -1359,6 +1359,34 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
 }
 
 /**
+ * Single materializer for a manual/bulk renew payload: reads the certificate
+ * with its linked profile and resolves the stored renewal profile into the
+ * same payload the scheduler would build. Read-only. Shared by the real
+ * creation path and its dry-run preflight so the two cannot drift.
+ */
+async function materializeManualRenewalPayload({
+  db,
+  workspaceId,
+  certificateId,
+  overrides,
+  loadCertificate = loadManagedCertificateForRenewal,
+}) {
+  const certificate = await loadCertificate({
+    db,
+    workspaceId,
+    certificateId,
+  });
+  if (!certificate) {
+    throw serviceError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+  }
+  return buildManualRenewalJobPayload({
+    certificate,
+    defaultReason: MANUAL_RENEWAL_DEFAULT_REASON,
+    overrides,
+  });
+}
+
+/**
  * jobCreator swapped in (by routes/certops.js) for a renew job whose
  * subject is an existing managed certificate, for both single manual and
  * bulk creation. Materializes the payload the same way the scheduler does
@@ -1375,22 +1403,12 @@ function manualRenewalJobCreator({
 } = {}) {
   return async function manualRenewalJobCreator(options) {
     const { client, workspaceId } = options;
-    const certificate = await loadCertificate({
+    const payload = await materializeManualRenewalPayload({
       db: client,
       workspaceId,
       certificateId,
-    });
-    if (!certificate) {
-      throw serviceError(
-        "Certificate not found",
-        CERTOPS_CERTIFICATE_NOT_FOUND,
-      );
-    }
-
-    const payload = buildManualRenewalJobPayload({
-      certificate,
-      defaultReason: MANUAL_RENEWAL_DEFAULT_REASON,
       overrides: options.payload,
+      loadCertificate,
     });
 
     return createJob({
@@ -1401,6 +1419,32 @@ function manualRenewalJobCreator({
       payload,
     });
   };
+}
+
+/**
+ * Read-only twin of manualRenewalJobCreator's materialization step: resolves
+ * the certificate's stored renewal profile, builds the renew payload from it
+ * and runs the same payload validation createCertificateJob runs. Writes
+ * nothing, takes no lock and reserves no per-CA capacity, so a bulk dry run
+ * can reject the certificates a real run would reject (notably
+ * CERTOPS_RENEWAL_PROFILE_INCOMPLETE / CERTOPS_RENEWAL_PROFILE_INVALID)
+ * without side effects. Returns the payload the real run would insert.
+ */
+async function preflightManualRenewalJob({
+  client,
+  workspaceId,
+  certificateId,
+  payload,
+  loadCertificate = loadManagedCertificateForRenewal,
+} = {}) {
+  const materialized = await materializeManualRenewalPayload({
+    db: client || pool,
+    workspaceId,
+    certificateId,
+    overrides: payload,
+    loadCertificate,
+  });
+  return validateJobPayloadForOperation(materialized, "renew");
 }
 
 function jobFromRow(row) {
@@ -2338,6 +2382,7 @@ module.exports = {
   normalizePublicObject,
   normalizeRequiredId,
   normalizeWorkspaceId,
+  preflightManualRenewalJob,
   serviceError,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,
