@@ -301,9 +301,27 @@ async function listKvV2KeysRecursive({
   prefix = "",
   limit = 1000,
 }) {
-  // LIST metadata to enumerate keys; recurse into folders
+  // LIST metadata to enumerate keys; recurse into folders.
+  //
+  // `limit` here caps *key enumeration*, a separate and earlier truncation
+  // point than the later per-secret read loop in scanKvV2. If a mount has
+  // more keys than `limit`, this walk stops early and returns fewer keys
+  // than actually exist -- silently, from the caller's point of view, since
+  // a short-but-real key list and a short-because-truncated key list look
+  // identical unless this function also reports which one happened. Without
+  // `truncated` here, scanKvV2's own truncation check (which only fires when
+  // the *read* loop hits `maxItems`) never fires either, because it never
+  // sees more keys than the enumeration cap already trimmed away -- so a
+  // mount with more secrets than maxItemsPerMount was scanned as `complete:
+  // true`, and cleanup could (and in manual testing, did) delete secrets
+  // that were never actually looked at.
   const results = [];
+  let truncated = false;
   async function walk(pathPrefix) {
+    if (results.length >= limit) {
+      truncated = true;
+      return;
+    }
     const listPath = `/v1/${mountPath}metadata/${pathPrefix}`;
     let data;
     try {
@@ -321,7 +339,10 @@ async function listKvV2KeysRecursive({
     const keys =
       data && data.data && Array.isArray(data.data.keys) ? data.data.keys : [];
     for (const key of keys) {
-      if (results.length >= limit) return;
+      if (results.length >= limit) {
+        truncated = true;
+        return;
+      }
       if (key.endsWith("/")) {
         await walk(`${pathPrefix}${key}`);
       } else {
@@ -330,7 +351,7 @@ async function listKvV2KeysRecursive({
     }
   }
   await walk(prefix);
-  return results;
+  return { keys: results, truncated };
 }
 
 async function readKvV2Secret({ address, token, mountPath, secretPath }) {
@@ -441,6 +462,11 @@ function buildKvSecretItems({ mountPath, key, secret }) {
         issuer: null,
         subject: null,
         location: `vault:${mountPath}${key}`,
+        // Explicit KV source kind, never inferred from a path-shape regex --
+        // a KV secret can legally live at a path shaped like a PKI cert path
+        // (e.g. ".../cert/my-secret") without being one.
+        sourceKind: "vault-kv",
+        sourceObjectId: `${mountPath}${key}`,
       },
     ];
   }
@@ -466,6 +492,9 @@ function buildKvSecretItems({ mountPath, key, secret }) {
       field,
     });
 
+    const location = multipleCerts
+      ? `vault:${mountPath}${key}#${field}`
+      : `vault:${mountPath}${key}`;
     return {
       ...base,
       secret_key: field,
@@ -478,9 +507,14 @@ function buildKvSecretItems({ mountPath, key, secret }) {
       // Single-cert secrets keep the legacy location so tokens imported
       // before per-key scanning still dedupe on (name, location);
       // multi-cert secrets need one location per KV field.
-      location: multipleCerts
-        ? `vault:${mountPath}${key}#${field}`
-        : `vault:${mountPath}${key}`,
+      location,
+      // Still vault-kv: a certificate stored as a KV value is a KV object,
+      // not a PKI-engine-issued certificate (vault-pki is reserved for
+      // /pki mount-issued certs enumerated via scanPki below).
+      sourceKind: "vault-kv",
+      sourceObjectId: multipleCerts
+        ? `${mountPath}${key}#${field}`
+        : `${mountPath}${key}`,
     };
   });
 }
@@ -511,7 +545,7 @@ async function scanKvV2({
     }
   }
   const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
-  const keys = await listKvV2KeysRecursive({
+  const { keys, truncated: keyListTruncated } = await listKvV2KeysRecursive({
     address,
     token,
     mountPath,
@@ -535,7 +569,11 @@ async function scanKvV2({
     }
   }
   const items = [];
-  let truncated = false;
+  // Key enumeration can itself be truncated (see listKvV2KeysRecursive)
+  // before the read loop below ever runs; that must carry through even if
+  // every enumerated key happens to be readable and under maxItems.
+  let truncated = keyListTruncated;
+  let hasReadErrors = false;
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
@@ -557,7 +595,11 @@ async function scanKvV2({
             secretPath: key,
           });
         } catch (_e) {
-          // Skip secrets we cannot read
+          // A secret we know exists (it was LIST-ed) but cannot read means
+          // its continued existence is unconfirmed, not confirmed-absent --
+          // the mount's KV sub-scope must be reported incomplete so cleanup
+          // never treats "we skipped it" as "it's gone".
+          hasReadErrors = true;
           return null;
         }
         return buildKvSecretItems({ mountPath, key, secret });
@@ -576,7 +618,7 @@ async function scanKvV2({
       }
     }
   }
-  return { items, truncated };
+  return { items, truncated, hasErrors: hasReadErrors };
 }
 
 async function tryListPkiCertSerials({ address, token, mountPath }) {
@@ -613,6 +655,7 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
   const mountPath = mount.path; // ends with '/'
   const serials = await tryListPkiCertSerials({ address, token, mountPath });
   const items = [];
+  let hasReadErrors = false;
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < serials.length; i += BATCH_SIZE) {
@@ -631,6 +674,11 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
             serial,
           });
         } catch (_) {
+          // A per-serial read failure means this cert's continued existence
+          // is unconfirmed, not confirmed-absent -- the mount's PKI
+          // sub-scope must be reported incomplete so cleanup never treats
+          // an unreadable cert as "not rediscovered, therefore obsolete".
+          hasReadErrors = true;
           return null;
         }
         if (!pem) return null;
@@ -651,9 +699,12 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
           issuer,
           subject,
           location: `vault:${mountPath}cert/${serial}`,
+          sourceKind: "vault-pki",
+          sourceObjectId: `${mountPath}cert/${serial}`,
         };
       }),
     );
+
 
     // Add non-null results to items
     for (const item of batchResults) {
@@ -662,7 +713,8 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
       }
     }
   }
-  return { items, truncated: serials.length > items.length };
+  const truncated = serials.length > items.length && !hasReadErrors;
+  return { items, truncated, hasErrors: hasReadErrors };
 }
 
 async function scanVault({
@@ -761,7 +813,11 @@ async function scanVault({
     if (m.type === "kv") {
       try {
         logger.debug("Scanning Vault KV mount", { mount: m.path });
-        const { items: rawItems, truncated } = await scanKvV2({
+        const {
+          items: rawItems,
+          truncated,
+          hasErrors,
+        } = await scanKvV2({
           address,
           token,
           mount: m,
@@ -770,16 +826,34 @@ async function scanVault({
         });
         const items = rawItems.filter(keepByCategory);
         results.push(...items);
+        // A mount sub-scope is only "complete" (usable as a cleanup basis)
+        // when nothing was truncated by the item cap and no per-secret read
+        // failed -- either would make "not rediscovered" ambiguous between
+        // "actually gone" and "we just didn't get to check".
         summary.push({
           mount: m.path,
           type: m.type,
+          sourceKind: "vault-kv",
           found: items.length,
           truncated,
+          hasErrors,
+          complete: !truncated && !hasErrors,
+          // Sub-scope dimensions use different key semantics than a token's
+          // own recorded dimensions: `pathPrefix` triggers a LIKE-prefix
+          // match against the token's exact `path`, and `categories` is a
+          // membership check against the token's single `category` --
+          // neither can be exact-matched against, unlike `mount`.
+          dimensions: {
+            mount: m.path,
+            pathPrefix: pathPrefix || null,
+            categories: categorySet ? [...categorySet].sort() : null,
+          },
         });
         logger.info("Vault KV mount scan completed", {
           mount: m.path,
           itemsFound: items.length,
           truncated,
+          hasErrors,
         });
       } catch (e) {
         logger.warn("Vault KV mount scan failed", {
@@ -787,12 +861,22 @@ async function scanVault({
           error: e.message,
           status: e.status,
         });
-        summary.push({ mount: m.path, type: m.type, error: e.message });
+        summary.push({
+          mount: m.path,
+          type: m.type,
+          sourceKind: "vault-kv",
+          error: e.message,
+          complete: false,
+        });
       }
     } else if (m.type === "pki") {
       try {
         logger.debug("Scanning Vault PKI mount", { mount: m.path });
-        const { items: rawItems, truncated } = await scanPki({
+        const {
+          items: rawItems,
+          truncated,
+          hasErrors,
+        } = await scanPki({
           address,
           token,
           mount: m,
@@ -803,13 +887,21 @@ async function scanVault({
         summary.push({
           mount: m.path,
           type: m.type,
+          sourceKind: "vault-pki",
           found: items.length,
           truncated,
+          hasErrors,
+          complete: !truncated && !hasErrors,
+          dimensions: {
+            mount: m.path,
+            categories: categorySet ? [...categorySet].sort() : null,
+          },
         });
         logger.info("Vault PKI mount scan completed", {
           mount: m.path,
           itemsFound: items.length,
           truncated,
+          hasErrors,
         });
       } catch (e) {
         logger.warn("Vault PKI mount scan failed", {
@@ -817,7 +909,13 @@ async function scanVault({
           error: e.message,
           status: e.status,
         });
-        summary.push({ mount: m.path, type: m.type, error: e.message });
+        summary.push({
+          mount: m.path,
+          type: m.type,
+          sourceKind: "vault-pki",
+          error: e.message,
+          complete: false,
+        });
       }
     }
   }

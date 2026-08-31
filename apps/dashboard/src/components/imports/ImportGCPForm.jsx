@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -15,6 +16,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gcpAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 
@@ -91,6 +93,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGcp.size);
@@ -124,6 +129,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       const items = Array.isArray(res?.items) ? res.items : [];
       setGcpItems(items);
       setGcpSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('gcp');
       }
@@ -137,6 +143,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     } catch (e) {
       setGcpItems([]);
       setGcpSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -176,6 +183,18 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'gcp',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -203,18 +222,11 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           access token from Cloud Shell (`gcloud auth print-access-token`), not
           a JSON key. Grant Secret Manager Viewer on the project; Secret
           Accessor cannot list secrets. Token is used for this scan and not
-          stored.
+          stored. If auto-sync is enabled, the token is stored encrypted.
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/self-hosted/integrations/gcp',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
+            href={IMPORT_DOCS.gcp}
             color='blue.500'
             textDecoration='underline'
             isExternal
@@ -260,6 +272,42 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           Scan
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            size='sm'
+            colorScheme='red'
+            isDisabled={!lastScanId}
+          >
+            Remove previously imported secrets no longer found at the source
+          </Checkbox>
+          {!lastScanId ? (
+            <Text fontSize='xs' color={helpTextColor} pl={6}>
+              Run a scan first; cleanup is driven by the backend's record of
+              what that scan covered.
+            </Text>
+          ) : gcpSummary.some(s => s.complete === false) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              The last scan didn't fully complete (see the errors below). The
+              backend refuses to clean up an incomplete or truncated scan.
+            </Text>
+          ) : gcpSummary.some(s => s.failedCount > 0) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              Some listed secrets have no expiration because their version
+              lookup failed. Cleanup still runs against the listed set.
+            </Text>
+          ) : null}
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported secrets from this GCP project that no
+              longer appear anywhere in this scan's results, regardless of which
+              items you select for import below. This cannot be undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {gcpSummary.length > 0 && (
         <Box
           border='1px solid'
@@ -274,7 +322,14 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
                 {s.error ? (
                   <Badge colorScheme='red'>{s.error}</Badge>
                 ) : (
-                  <Badge colorScheme='green'>found {s.found}</Badge>
+                  <HStack spacing={2}>
+                    <Badge colorScheme='green'>found {s.found}</Badge>
+                    {s.failedCount > 0 ? (
+                      <Badge colorScheme='orange'>
+                        {s.failedCount} without expiration
+                      </Badge>
+                    ) : null}
+                  </HStack>
                 )}
               </HStack>
             ))}

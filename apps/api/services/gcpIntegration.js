@@ -60,6 +60,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
   let nextPageToken = null;
   let pageCount = 0;
   const maxPages = 50;
+  let truncated = false;
 
   do {
     try {
@@ -91,7 +92,10 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
       nextPageToken = data.nextPageToken || null;
       pageCount++;
 
-      if (secrets.length >= maxItems || pageCount >= maxPages) break;
+      if (secrets.length >= maxItems || pageCount >= maxPages) {
+        truncated = Boolean(nextPageToken) || secrets.length > maxItems;
+        break;
+      }
     } catch (e) {
       // Axios errors have response.status, not status directly
       const status = e.response?.status || e.status;
@@ -105,7 +109,7 @@ async function listSecrets({ projectId, accessToken, maxItems = 500 }) {
     }
   } while (nextPageToken && secrets.length < maxItems);
 
-  return secrets.slice(0, maxItems);
+  return { items: secrets.slice(0, maxItems), truncated };
 }
 
 async function getSecretVersions({ projectId, accessToken, secretId }) {
@@ -210,7 +214,8 @@ async function scanGCP({
     // Scan Secrets
     if (include.secrets) {
       try {
-        const secrets = await listSecrets({ projectId, accessToken, maxItems });
+        const { items: secrets, truncated: secretsTruncated } =
+          await listSecrets({ projectId, accessToken, maxItems });
         logger.info("GCP secrets listed", {
           count: secrets.length,
           firstSecretSample:
@@ -225,6 +230,7 @@ async function scanGCP({
               : null,
         });
 
+        let describeFailedCount = 0;
         const BATCH_SIZE = 10;
         for (let i = 0; i < secrets.length; i += BATCH_SIZE) {
           if (items.length >= maxItems) break;
@@ -233,13 +239,14 @@ async function scanGCP({
           await Promise.all(
             batch.map(async (secret) => {
               if (items.length >= maxItems) return;
+              const secretName = secret.name.split("/").pop();
 
               // Get enabled versions to check expiration
               try {
                 const versions = await getSecretVersions({
                   projectId,
                   accessToken,
-                  secretId: secret.name.split("/").pop(),
+                  secretId: secretName,
                 });
 
                 // Filter for enabled versions and get the latest by version number
@@ -275,7 +282,7 @@ async function scanGCP({
                 }
 
                 logger.debug("GCP secret expiration check", {
-                  secretName: secret.name.split("/").pop(),
+                  secretName,
                   hasSecretExpireTime: !!secret.expireTime,
                   secretExpireTime: secret.expireTime,
                   hasNestedExpiration: !!secret.expiration?.expireTime,
@@ -289,29 +296,37 @@ async function scanGCP({
 
                 items.push({
                   source: "gcp-secret-manager",
-                  name: secret.name.split("/").pop() || secret.name,
+                  sourceKind: "gcp-secret-manager",
+                  sourceObjectId: secretName,
+                  name: secretName || secret.name,
                   category: "key_secret",
                   type: "secret",
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-                  location: `gcp:${projectId}/secrets/${secret.name.split("/").pop()}`,
+                  location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
                   version_count: versions.length || 0,
                   enabled_versions: enabledVersions.length || 0,
                 });
               } catch (e) {
+                // Version lookup is expiration metadata, not membership.
+                // The secret was already listed, so record it without an
+                // expiry and keep the kind complete: cleanup must still
+                // drop secrets that were not on this list.
+                describeFailedCount++;
                 logger.warn("Failed to get GCP secret versions", {
                   secretName: secret.name,
                   error: e.message,
                 });
-                // Add secret without expiration if we can't access versions
                 items.push({
                   source: "gcp-secret-manager",
-                  name: secret.name.split("/").pop() || secret.name,
+                  sourceKind: "gcp-secret-manager",
+                  sourceObjectId: secretName,
+                  name: secretName || secret.name,
                   category: "key_secret",
                   type: "secret",
                   expiration: null,
-                  location: `gcp:${projectId}/secrets/${secret.name.split("/").pop()}`,
+                  location: `gcp:${projectId}/secrets/${secretName}`,
                   created_at: secret.createTime || null,
                   updated_at: secret.updateTime || null,
                 });
@@ -319,10 +334,18 @@ async function scanGCP({
             }),
           );
         }
-        summary.push({ type: "secrets", found: secrets.length });
+        summary.push({
+          type: "secrets",
+          sourceKind: "gcp-secret-manager",
+          found: secrets.length,
+          failedCount: describeFailedCount,
+          truncated: secretsTruncated,
+          complete: !secretsTruncated,
+        });
         logger.info("GCP secrets scan completed", {
           secretsFound: secrets.length,
           itemsExtracted: items.length,
+          versionLookupFailures: describeFailedCount,
         });
       } catch (e) {
         logger.error("GCP secrets scan failed", {
@@ -332,14 +355,16 @@ async function scanGCP({
         });
         summary.push({
           type: "secrets",
+          sourceKind: "gcp-secret-manager",
           error: e.message,
           status: e.status || e.response?.status,
+          complete: false,
         });
       }
     }
   } catch (e) {
     logger.error("GCP scan failed", { error: e.message, projectId });
-    summary.push({ type: "scan", error: e.message });
+    summary.push({ type: "scan", error: e.message, complete: false });
   }
 
   // If all scan types failed with authentication errors, throw instead of returning partial results

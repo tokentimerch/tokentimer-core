@@ -17,6 +17,7 @@
 
 const crypto = require("crypto");
 const { TestUtils, request, expect } = require("./setup");
+const { persistScan } = require("../../apps/api/services/integrationScans");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 // Must match API/worker SESSION_SECRET in docker-compose.test.yml / .env.test
@@ -221,6 +222,190 @@ describe("Auto-sync import deduplication — with location", function () {
       })
       .expect(201);
 
+    expect(res.body.created).to.be.an("array").with.length(1);
+    expect(await tokenCount(workspaceId)).to.equal(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 1b: adoption of a pre-existing *unattributed* row by a later
+// scan-bound import (e.g. auto-sync). Regression coverage for the bug where
+// a token imported once without a scan_id (stale/missing client scanId) got
+// permanently duplicated the next time the same item was imported *with* a
+// bound scan_id -- because source-identity lookup can never match a row
+// that has no source_object_id, and the old code never fell back to
+// name+location for that case. See Token.findUnattributedByNameLocation.
+// ---------------------------------------------------------------------------
+describe("Auto-sync import adoption of pre-existing unattributed tokens", function () {
+  this.timeout(90000);
+
+  let testUser, workspaceId;
+
+  before(async () => {
+    testUser = await TestUtils.createVerifiedTestUser();
+    const ws = await TestUtils.execQuery(
+      "SELECT id FROM workspaces WHERE created_by = $1 LIMIT 1",
+      [testUser.id],
+    );
+    workspaceId = ws.rows[0].id;
+  });
+
+  afterEach(async () => {
+    await TestUtils.execQuery("DELETE FROM tokens WHERE workspace_id = $1", [
+      workspaceId,
+    ]);
+  });
+
+  after(async () => {
+    await TestUtils.cleanupTestUser(testUser.email);
+  });
+
+  it("adopts an unattributed row instead of duplicating it when a later import binds to a scan", async () => {
+    const session = await TestUtils.loginTestUser(
+      testUser.email,
+      "SecureTest123!@#",
+    );
+    const location = "github:repos/acme/widgets/actions/secrets/TEST3";
+
+    // 1. First import has no scan_id (mirrors a stale/missing client
+    //    scanId) -> falls back to name+location, creates an unattributed row.
+    const first = await request(BASE)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Cookie", session.cookie)
+      .send({
+        items: [
+          {
+            name: "TEST3",
+            source: "github-secret",
+            type: "secret",
+            category: "key_secret",
+            location,
+          },
+        ],
+      })
+      .expect(201);
+    expect(first.body.created).to.be.an("array").with.length(1);
+    expect(await tokenCount(workspaceId)).to.equal(1);
+    const firstRow = (await getTokens(workspaceId))[0];
+    expect(firstRow.source_object_id).to.equal(null);
+
+    // 2. A scan records the same item's real source identity (what a
+    //    GitHub scan would persist for this secret).
+    const instance = `github-adopt-${crypto.randomUUID()}.example.com`;
+    const sourceObjectId = `12345:TEST3`;
+    const scan = await persistScan({
+      workspaceId,
+      provider: "github",
+      identityContext: { host: instance, address: instance, ownerKey: instance },
+      items: [
+        { sourceKind: "github-secret", sourceObjectId, dimensions: {} },
+      ],
+      subScopes: [{ sourceKind: "github-secret", dimensions: {}, complete: true }],
+    });
+
+    // 3. A second import of the *same* name+location, now scan-bound
+    //    (source_object_id resolvable), must adopt the existing row rather
+    //    than create a duplicate.
+    const second = await request(BASE)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Cookie", session.cookie)
+      .send({
+        items: [
+          {
+            name: "TEST3",
+            source: "github-secret",
+            sourceKind: "github-secret",
+            sourceObjectId,
+            type: "secret",
+            category: "key_secret",
+            location,
+          },
+        ],
+        scan_id: scan.scanId,
+      })
+      .expect(201);
+
+    expect(second.body.created).to.be.an("array").with.length(0);
+    expect(second.body.updated).to.be.an("array").with.length(1);
+    expect(await tokenCount(workspaceId)).to.equal(1);
+
+    const adopted = (await getTokens(workspaceId))[0];
+    expect(adopted.id).to.equal(firstRow.id);
+    expect(adopted.source_object_id).to.equal(sourceObjectId);
+    expect(adopted.source_provider).to.equal("github");
+  });
+
+  it("never adopts a row that already has a different source_object_id", async () => {
+    const session = await TestUtils.loginTestUser(
+      testUser.email,
+      "SecureTest123!@#",
+    );
+    const location = "github:repos/acme/widgets/actions/secrets/TEST4";
+    const instance = `github-adopt-${crypto.randomUUID()}.example.com`;
+
+    // A row that is already attributed to a *different* object id at the
+    // same name+location must never be silently repointed.
+    const scanA = await persistScan({
+      workspaceId,
+      provider: "github",
+      identityContext: { host: instance, address: instance, ownerKey: instance },
+      items: [
+        { sourceKind: "github-secret", sourceObjectId: "aaa:TEST4", dimensions: {} },
+      ],
+      subScopes: [{ sourceKind: "github-secret", dimensions: {}, complete: true }],
+    });
+    await request(BASE)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Cookie", session.cookie)
+      .send({
+        items: [
+          {
+            name: "TEST4",
+            source: "github-secret",
+            sourceKind: "github-secret",
+            sourceObjectId: "aaa:TEST4",
+            type: "secret",
+            category: "key_secret",
+            location,
+          },
+        ],
+        scan_id: scanA.scanId,
+      })
+      .expect(201);
+    expect(await tokenCount(workspaceId)).to.equal(1);
+
+    const scanB = await persistScan({
+      workspaceId,
+      provider: "github",
+      identityContext: { host: instance, address: instance, ownerKey: instance },
+      items: [
+        { sourceKind: "github-secret", sourceObjectId: "bbb:TEST4", dimensions: {} },
+      ],
+      subScopes: [{ sourceKind: "github-secret", dimensions: {}, complete: true }],
+    });
+    const res = await request(BASE)
+      .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+      .set("Cookie", session.cookie)
+      .send({
+        items: [
+          {
+            name: "TEST4",
+            source: "github-secret",
+            sourceKind: "github-secret",
+            sourceObjectId: "bbb:TEST4",
+            type: "secret",
+            category: "key_secret",
+            location,
+          },
+        ],
+        scan_id: scanB.scanId,
+      })
+      .expect(201);
+
+    // Different source_object_id at the same name+location is a distinct
+    // upstream object (findUnattributedByNameLocation only ever matches rows
+    // with source_object_id IS NULL) -- this must create a second row, not
+    // repoint the first one's identity.
     expect(res.body.created).to.be.an("array").with.length(1);
     expect(await tokenCount(workspaceId)).to.equal(2);
   });

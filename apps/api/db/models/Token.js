@@ -131,6 +131,17 @@ const create = async (tokenData) => {
     last_used = null,
     created_at = null,
     certops_api_token_id = null,
+    source_provider = null,
+    source_instance = null,
+    // source_owner_key is NOT NULL DEFAULT '' in the schema (the sentinel
+    // lets legacy/no-provenance rows participate in the uniqueness index
+    // without colliding on NULL), so default here must match, not null.
+    source_owner_key = "",
+    source_owner_display = null,
+    source_kind = null,
+    source_dimensions = null,
+    source_object_id = null,
+    source_observed_at = null,
   } = tokenData;
 
   const query = `
@@ -138,9 +149,10 @@ const create = async (tokenData) => {
       user_id, workspace_id, created_by, name, expiration, type, category, domains, location, used_by, section, contact_group_id,
       issuer, serial_number, subject, key_size, algorithm, license_type, vendor, cost,
       renewal_url, renewal_date, contacts, description, notes, privileges, imported_at, last_used, created_at, updated_at,
-      certops_api_token_id
+      certops_api_token_id, source_provider, source_instance, source_owner_key, source_owner_display,
+      source_kind, source_dimensions, source_object_id, source_observed_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW(), $30)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW(), $30, $31, $32, $33, $34, $35, $36, $37, $38)
     RETURNING *
   `;
 
@@ -175,6 +187,14 @@ const create = async (tokenData) => {
     last_used,
     created_at || null,
     certops_api_token_id,
+    source_provider,
+    source_instance,
+    source_owner_key,
+    source_owner_display,
+    source_kind,
+    source_dimensions,
+    source_object_id,
+    source_observed_at,
   ];
 
   try {
@@ -227,6 +247,14 @@ const update = async (id, tokenData) => {
     last_used,
     created_at,
     imported_at,
+    source_provider,
+    source_instance,
+    source_owner_key,
+    source_owner_display,
+    source_kind,
+    source_dimensions,
+    source_object_id,
+    source_observed_at,
   } = tokenData;
 
   // Build dynamic query to only update provided fields
@@ -337,6 +365,44 @@ const update = async (id, tokenData) => {
   if (imported_at !== undefined) {
     updateFields.push(`imported_at = $${paramIndex++}`);
     values.push(imported_at);
+  }
+  if (source_provider !== undefined) {
+    updateFields.push(`source_provider = $${paramIndex++}`);
+    values.push(source_provider);
+  }
+  if (source_instance !== undefined) {
+    updateFields.push(`source_instance = $${paramIndex++}`);
+    values.push(source_instance);
+  }
+  if (source_owner_key !== undefined) {
+    updateFields.push(`source_owner_key = $${paramIndex++}`);
+    values.push(source_owner_key);
+  }
+  if (source_owner_display !== undefined) {
+    updateFields.push(`source_owner_display = $${paramIndex++}`);
+    values.push(source_owner_display);
+  }
+  if (source_kind !== undefined) {
+    updateFields.push(`source_kind = $${paramIndex++}`);
+    values.push(source_kind);
+  }
+  if (source_dimensions !== undefined) {
+    updateFields.push(`source_dimensions = $${paramIndex++}`);
+    values.push(source_dimensions);
+  }
+  if (source_object_id !== undefined) {
+    updateFields.push(`source_object_id = $${paramIndex++}`);
+    values.push(source_object_id);
+  }
+  if (source_observed_at !== undefined) {
+    // Monotonic: never let an older/slower scan's observed_at move the
+    // fence backwards past a newer one already recorded by a concurrent
+    // scan (see importCleanup.js's observation fence).
+    updateFields.push(
+      `source_observed_at = GREATEST(COALESCE(source_observed_at, $${paramIndex}), $${paramIndex})`,
+    );
+    values.push(source_observed_at);
+    paramIndex++;
   }
 
   // If no fields to update, return the existing token
@@ -472,6 +538,67 @@ const findByNameLocationAndWorkspace = async (name, location, workspaceId) => {
   return token ? convertNumericFields(token) : null;
 };
 
+// Find token by its provenance-aware upsert identity (see migration 48's
+// uq_tokens_source_identity). Used by provenance-aware imports instead of
+// findByNameLocationAndWorkspace so re-importing the same upstream object
+// updates the same row even if its display name or location string changed.
+const findBySourceIdentity = async ({
+  workspaceId,
+  sourceProvider,
+  sourceInstance,
+  sourceOwnerKey,
+  sourceKind,
+  sourceObjectId,
+}) => {
+  if (!sourceObjectId) return null;
+  const query = `
+    SELECT * FROM tokens
+    WHERE workspace_id = $1
+      AND source_provider = $2
+      AND source_instance = $3
+      AND source_owner_key = $4
+      AND source_kind = $5
+      AND source_object_id = $6
+    LIMIT 1
+  `;
+  const result = await pool.query(query, [
+    workspaceId,
+    sourceProvider,
+    sourceInstance,
+    sourceOwnerKey,
+    sourceKind,
+    sourceObjectId,
+  ]);
+  const token = result.rows[0];
+  return token ? convertNumericFields(token) : null;
+};
+
+// Find a pre-existing *unattributed* token (source_object_id IS NULL) by
+// name+location. Used only as a one-time adoption path when a scan-bound
+// import can't find a source-identity match: the row predates provenance
+// tracking (or an earlier import of it wasn't scan-bound), so there is no
+// uq_tokens_source_identity row to collide with. Restricting to
+// source_object_id IS NULL keeps this from ever touching an already
+// provenance-attributed row -- adoption never overrides existing provenance,
+// it only fills in provenance that was missing.
+const findUnattributedByNameLocation = async (name, location, workspaceId) => {
+  if (!name) return null;
+  if (location === null || location === undefined || location === "")
+    return null;
+
+  const query = `
+    SELECT * FROM tokens
+    WHERE name = $1
+      AND workspace_id = $2
+      AND location = $3
+      AND source_object_id IS NULL
+    LIMIT 1
+  `;
+  const result = await pool.query(query, [name, workspaceId, location]);
+  const token = result.rows[0];
+  return token ? convertNumericFields(token) : null;
+};
+
 module.exports = {
   convertNumericFields,
   findByUserId,
@@ -485,4 +612,6 @@ module.exports = {
   findExpiringSoon,
   findByDomain,
   findByNameLocationAndWorkspace,
+  findBySourceIdentity,
+  findUnattributedByNameLocation,
 };

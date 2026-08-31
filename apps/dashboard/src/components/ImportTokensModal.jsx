@@ -41,6 +41,7 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
+import { IMPORT_DOCS } from '../utils/docsUrls';
 import apiClient, {
   tokenAPI,
   workspaceAPI,
@@ -72,6 +73,7 @@ import ImportAWSForm, {
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
+import { collapseScanSummaryByType } from './imports/collapseScanSummaryByType';
 import ImportCertificateForm from './certops/ImportCertificateForm.jsx';
 import { invalidateCertOpsInventoryCache } from './certops/certopsApi.js';
 import { describeCertificateImportOutcome } from './certops/certopsFormat.js';
@@ -996,9 +998,17 @@ export default function ImportTokensModal({
   const [azureADIncludeSPs, setAzureADIncludeSPs] = React.useState(true);
   const [azureADItems, setAzureADItems] = React.useState([]);
   const [azureADSummary, setAzureADSummary] = React.useState([]);
+  const azureADSummaryRows = React.useMemo(
+    () => collapseScanSummaryByType(azureADSummary),
+    [azureADSummary]
+  );
   const [selectedRowsAzureAD, setSelectedRowsAzureAD] = React.useState(
     new Set()
   );
+  const [azureADCleanupObsolete, setAzureADCleanupObsolete] =
+    React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [azureADLastScanId, setAzureADLastScanId] = React.useState(null);
 
   // Show/hide toggle for secret fields
   const [showSecrets, setShowSecrets] = React.useState({});
@@ -1087,7 +1097,11 @@ export default function ImportTokensModal({
             Array.isArray(sp.filterRules) ? sp.filterRules : null
           );
           setRestoredCleanupObsolete(
-            typeof sp.cleanupObsolete === 'boolean' ? sp.cleanupObsolete : null
+            typeof sp.cleanupObsolete === 'boolean'
+              ? sp.cleanupObsolete
+              : typeof existing.cleanup_obsolete === 'boolean'
+                ? existing.cleanup_obsolete
+                : null
           );
           switch (source) {
             case 'github':
@@ -1393,6 +1407,7 @@ export default function ImportTokensModal({
       // scan_params (filters) never contain secrets, so they're always sent,
       // even if the user didn't re-enter the token.
       scan_params: scanParams,
+      cleanup_obsolete: scanParams?.cleanupObsolete === true,
     };
     if (credentialsHasSecrets(credentials, source)) {
       payload.credentials = credentials;
@@ -1482,6 +1497,7 @@ export default function ImportTokensModal({
         frequency: enableSyncFrequency,
         schedule_time: enableSyncTime,
         schedule_tz: enableSyncTz,
+        cleanup_obsolete: scanParams?.cleanupObsolete === true,
       });
       showSuccess(`Auto-sync enabled for ${source}`);
       const res = await apiClient.get(
@@ -1925,6 +1941,7 @@ export default function ImportTokensModal({
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureADItems(items);
       setAzureADSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setAzureADLastScanId(res?.scan_id || null);
       if (items.length > 0)
         setScanSucceededFor(prev => new Set(prev).add('azure-ad'));
 
@@ -1940,6 +1957,7 @@ export default function ImportTokensModal({
       // Clear summary on error to prevent showing partial/error data
       setAzureADItems([]);
       setAzureADSummary([]);
+      setAzureADLastScanId(null);
       // Handle quota exceeded error
       if (isQuotaExceededError(e)) {
         setError(formatQuotaError(e));
@@ -1977,6 +1995,18 @@ export default function ImportTokensModal({
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: azureADLastScanId || undefined,
+        cleanup:
+          azureADCleanupObsolete && azureADLastScanId
+            ? {
+                enabled: true,
+                provider: 'azure-ad',
+                scanId: azureADLastScanId,
+              }
+            : undefined,
       });
       onImported && onImported(selected);
     } catch (e) {
@@ -2537,14 +2567,7 @@ export default function ImportTokensModal({
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import-file',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.file}
                         color='blue.500'
                         textDecoration='underline'
                         isExternal
@@ -2829,14 +2852,7 @@ export default function ImportTokensModal({
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import-azure-ad',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.entraId}
                         color='blue.500'
                         textDecoration='underline'
                         isExternal
@@ -2909,6 +2925,52 @@ export default function ImportTokensModal({
                       Scan
                     </Button>
                   </HStack>
+                  <Box
+                    border='1px solid'
+                    borderColor={border}
+                    borderRadius='md'
+                    p={3}
+                  >
+                    <VStack align='stretch' spacing={2}>
+                      <Checkbox
+                        isChecked={azureADCleanupObsolete}
+                        onChange={e =>
+                          setAzureADCleanupObsolete(e.target.checked)
+                        }
+                        size='sm'
+                        colorScheme='red'
+                        isDisabled={!azureADLastScanId}
+                      >
+                        Remove previously imported items no longer found at the
+                        source
+                      </Checkbox>
+                      {!azureADLastScanId ? (
+                        <Text fontSize='xs' color={muted} pl={6}>
+                          Run a scan first; cleanup is driven by the backend's
+                          record of what that scan covered.
+                        </Text>
+                      ) : azureADSummary.some(s => s.complete === false) ? (
+                        <Text fontSize='xs' color='orange.400' pl={6}>
+                          The last scan didn't fully complete for every item
+                          type above (see the errors below). The backend will
+                          only clean up App Registrations or Service Principals
+                          it confirmed were fully scanned; nothing incomplete or
+                          errored is ever touched.
+                        </Text>
+                      ) : null}
+                      {azureADCleanupObsolete ? (
+                        <Text fontSize='xs' color='red.400' pl={6}>
+                          Deletes previously imported secrets and certificates
+                          of the item types scanned above (App Registrations,
+                          Service Principals, or both) that no longer appear
+                          anywhere in this scan's results, regardless of which
+                          items you select for import below. Item types this
+                          scan couldn't fully complete are never affected. This
+                          cannot be undone.
+                        </Text>
+                      ) : null}
+                    </VStack>
+                  </Box>
                   {azureADSummary.length > 0 && !error && (
                     <Box
                       border='1px solid'
@@ -2917,8 +2979,8 @@ export default function ImportTokensModal({
                       p={3}
                     >
                       <VStack align='stretch' spacing={2}>
-                        {azureADSummary.map((s, i) => (
-                          <HStack key={i} justify='space-between'>
+                        {azureADSummaryRows.map((s, i) => (
+                          <HStack key={s.type || i} justify='space-between'>
                             <Text fontSize='sm'>{s.type}</Text>
                             {s.error ? (
                               <Badge colorScheme='red'>{s.error}</Badge>
@@ -3121,16 +3183,10 @@ export default function ImportTokensModal({
                     <Text fontSize='xs'>
                       Need help? See{' '}
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.integrations}
                         textDecoration='underline'
                         color='blue.500'
+                        isExternal
                       >
                         import docs
                       </ChakraLink>

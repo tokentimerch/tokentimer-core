@@ -2,6 +2,7 @@
 
 const { formatDateYmd } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+const { normalizeAwsSweepRegions } = require("./awsScanPersist");
 
 // AWS regions list (for region detection)
 const ALL_AWS_REGIONS = [
@@ -66,6 +67,7 @@ async function scanAWS({
   secretAccessKey,
   sessionToken = null,
   region = "us-east-1",
+  regions = null,
   include = { secrets: true, iam: true, certificates: true },
   maxItems = 500,
 }) {
@@ -73,7 +75,8 @@ async function scanAWS({
     throw new Error("accessKeyId and secretAccessKey are required");
   }
 
-  if (!region) {
+  const isSweep = Array.isArray(regions);
+  if (!isSweep && !region) {
     throw new Error("region is required");
   }
 
@@ -90,22 +93,128 @@ async function scanAWS({
   ) {
     throw new Error("Invalid sessionToken format");
   }
-  if (typeof region !== "string" || region.length > 50) {
+  if (!isSweep && (typeof region !== "string" || region.length > 50)) {
     throw new Error("Invalid region format");
   }
   if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000) {
     throw new Error("maxItems must be between 1 and 2000");
   }
 
-  // Single region scan only
-  return await scanAWSSingleRegion({
+  // STS account id is the immutable identity cleanup scopes against (see
+  // sourceIdentity.js) -- resolved once up front so a single scan/import
+  // round-trip never has to guess it from unrelated API responses.
+  const accountId = await getAccountId({
     accessKeyId,
     secretAccessKey,
     sessionToken,
+  });
+
+  const shared = {
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+    maxItems,
+  };
+
+  if (isSweep) {
+    const sweepRegions = normalizeAwsSweepRegions(regions);
+    const items = [];
+    const summary = [];
+    if (include.iam !== false) {
+      const iamPart = await scanAWSSingleRegion({
+        ...shared,
+        region: "us-east-1",
+        include: { secrets: false, iam: true, certificates: false },
+      });
+      items.push(...iamPart.items);
+      summary.push(...iamPart.summary);
+    }
+    const regionalInclude = {
+      secrets: include.secrets !== false,
+      iam: false,
+      certificates: include.certificates !== false,
+    };
+    for (const sweepRegion of sweepRegions) {
+      const part = await scanAWSSingleRegion({
+        ...shared,
+        region: sweepRegion,
+        include: regionalInclude,
+      });
+      items.push(...part.items);
+      summary.push(...part.summary);
+    }
+    return { items, summary, accountId, scannedRegions: sweepRegions };
+  }
+
+  const result = await scanAWSSingleRegion({
+    ...shared,
     region,
     include,
-    maxItems,
   });
+  return { ...result, accountId };
+}
+
+async function getAccountId({ accessKeyId, secretAccessKey, sessionToken }) {
+  try {
+    const { STSClient, GetCallerIdentityCommand } = require("@aws-sdk/client-sts");
+    const client = new STSClient({
+      region: "us-east-1",
+      credentials: { accessKeyId, secretAccessKey, sessionToken },
+      requestHandler: createDetectRequestHandler(),
+    });
+    const identity = await client.send(new GetCallerIdentityCommand({}));
+    if (!identity.Account) {
+      throw new Error("STS GetCallerIdentity returned no Account");
+    }
+    return identity.Account;
+  } catch (e) {
+    // The account id anchors every AWS token's provenance; without it there
+    // is no safe instance/ownerKey to attribute this scan's tokens to, so a
+    // scan that can't resolve it must fail outright rather than silently
+    // produce unattributed (and therefore cleanup-ineligible) results.
+    const err = new Error(`Failed to resolve AWS account id via STS: ${e.message}`);
+    err.status = e.status || 401;
+    throw err;
+  }
+}
+
+// Enumerates regions actually enabled for this account via EC2
+// DescribeRegions instead of a hardcoded list, so newly-launched AWS
+// regions and accounts that opted out of "all regions" both scan exactly
+// their real footprint. Falls back to the hardcoded list (with an explicit
+// `usedFallbackList: true` flag) only if EC2 access itself fails, so a scan
+// missing an intended region is always visible in scan output rather than
+// silently narrowed.
+async function listEnabledAWSRegions({
+  accessKeyId,
+  secretAccessKey,
+  sessionToken,
+}) {
+  try {
+    const { EC2Client, DescribeRegionsCommand } = require("@aws-sdk/client-ec2");
+    const client = new EC2Client({
+      region: "us-east-1",
+      credentials: { accessKeyId, secretAccessKey, sessionToken },
+      requestHandler: createDetectRequestHandler(),
+    });
+    const res = await client.send(
+      new DescribeRegionsCommand({ AllRegions: false }),
+    );
+    const regions = (res.Regions || [])
+      .map((r) => r.RegionName)
+      .filter(Boolean)
+      .sort();
+    if (regions.length === 0) {
+      throw new Error("DescribeRegions returned no regions");
+    }
+    return { regions, usedFallbackList: false };
+  } catch (e) {
+    logger.warn(
+      "EC2 DescribeRegions failed; falling back to hardcoded region list",
+      { error: e.message },
+    );
+    return { regions: [...ALL_AWS_REGIONS], usedFallbackList: true };
+  }
 }
 
 // Internal function to scan a single AWS region
@@ -204,10 +313,15 @@ async function scanAWSSingleRegion({
         secrets.push(...(listResponse.SecretList || []));
         secretsNextToken = listResponse.NextToken;
       } while (secretsNextToken && secrets.length < maxItems);
+      // If a NextToken is still present when we stop, the account has more
+      // secrets than maxItems allowed us to enumerate -- this sub-scope did
+      // not see the whole region and must not be reported complete.
+      const secretsListTruncated = Boolean(secretsNextToken);
       logger.info("AWS Secrets Manager list response", {
         region,
         totalSecretsFound: secrets.length,
         maxItems,
+        truncated: secretsListTruncated,
       });
 
       let describedCount = 0;
@@ -242,6 +356,9 @@ async function scanAWSSingleRegion({
                 last_used_at: desc.LastAccessedDate
                   ? new Date(desc.LastAccessedDate).toISOString()
                   : null,
+                sourceKind: "aws-secrets-manager",
+                sourceObjectId: secret.ARN,
+                region,
               });
               describedCount++;
             } catch (e) {
@@ -261,7 +378,25 @@ async function scanAWSSingleRegion({
       const secretsCount = items.filter(
         (item) => item.source === "aws-secrets-manager",
       ).length;
-      summary.push({ type: "secrets_manager", found: secretsCount });
+      // Truncated if: (a) NextToken remained (more secrets exist upstream
+      // than we listed), or (b) we found more secrets than maxItems allowed
+      // us to describe/import.
+      const secretsTruncated =
+        secretsListTruncated || secrets.length > maxItems;
+      // A DescribeSecret failure means that secret's continued existence is
+      // unconfirmed, not confirmed-deleted -- this region+service sub-scope
+      // must be reported incomplete so cleanup never treats a describe
+      // failure as "not rediscovered, therefore obsolete".
+      summary.push({
+        type: "secrets_manager",
+        sourceKind: "aws-secrets-manager",
+        region,
+        service: "secrets_manager",
+        found: secretsCount,
+        failedCount,
+        truncated: secretsTruncated,
+        complete: failedCount === 0 && !secretsTruncated,
+      });
       logger.info("AWS Secrets Manager scan completed", {
         found: secretsCount,
         described: describedCount,
@@ -275,7 +410,14 @@ async function scanAWSSingleRegion({
         errorName: e.name,
         region,
       });
-      summary.push({ type: "secrets_manager", error: e.message });
+      summary.push({
+        type: "secrets_manager",
+        sourceKind: "aws-secrets-manager",
+        region,
+        service: "secrets_manager",
+        error: e.message,
+        complete: false,
+      });
     }
   }
 
@@ -320,9 +462,14 @@ async function scanAWSSingleRegion({
         certificates.push(...(listResponse.CertificateSummaryList || []));
         acmNextToken = listResponse.NextToken;
       } while (acmNextToken && certificates.length < acmMaxItems);
+      // If a NextToken remains, the account has more certificates than
+      // acmMaxItems allowed us to enumerate -- this sub-scope did not see
+      // the whole region.
+      const certsListTruncated = Boolean(acmNextToken);
       logger.info("AWS ACM list response", {
         region,
         totalCertificatesFound: certificates.length,
+        truncated: certsListTruncated,
       });
 
       let describedCount = 0;
@@ -381,6 +528,9 @@ async function scanAWSSingleRegion({
                   : null,
                 // Store status and in_use in notes/description since they're not standard fields
                 description: `Status: ${certificate.Status || "Unknown"}. In use: ${certificate.InUseBy && certificate.InUseBy.length > 0 ? "Yes" : "No"}`,
+                sourceKind: "aws-acm",
+                sourceObjectId: cert.CertificateArn,
+                region,
               });
               describedCount++;
             } catch (e) {
@@ -399,7 +549,18 @@ async function scanAWSSingleRegion({
       const certsCount = items.filter(
         (item) => item.source === "aws-acm",
       ).length;
-      summary.push({ type: "acm_certificates", found: certsCount });
+      const certsTruncated =
+        certsListTruncated || certificates.length > maxItems;
+      summary.push({
+        type: "acm_certificates",
+        sourceKind: "aws-acm",
+        region,
+        service: "acm_certificates",
+        found: certsCount,
+        failedCount,
+        truncated: certsTruncated,
+        complete: failedCount === 0 && !certsTruncated,
+      });
       logger.info("AWS ACM scan completed", {
         found: certsCount,
         described: describedCount,
@@ -413,7 +574,14 @@ async function scanAWSSingleRegion({
         errorName: e.name,
         region,
       });
-      summary.push({ type: "acm_certificates", error: e.message });
+      summary.push({
+        type: "acm_certificates",
+        sourceKind: "aws-acm",
+        region,
+        service: "acm_certificates",
+        error: e.message,
+        complete: false,
+      });
     }
   }
 
@@ -445,13 +613,21 @@ async function scanAWSSingleRegion({
           ? usersResponse.Marker
           : undefined;
       } while (usersMarker && users.length < maxItems);
+      // If a Marker remains, IAM has more users than maxItems allowed us to
+      // enumerate -- some users' keys were never even attempted.
+      const usersListTruncated = Boolean(usersMarker);
       let iamKeysCount = 0;
+      let iamListFailedCount = 0;
+      let usersSkippedByCap = 0;
       const BATCH_SIZE = 10;
 
       // Scan IAM keys independently of items from other services
       // Apply maxItems limit per-service to ensure each service gets fair representation
       for (let i = 0; i < users.length; i += BATCH_SIZE) {
-        if (iamKeysCount >= maxItems) break;
+        if (iamKeysCount >= maxItems) {
+          usersSkippedByCap += users.length - i;
+          break;
+        }
         const batch = users.slice(i, i + BATCH_SIZE);
 
         await Promise.all(
@@ -502,10 +678,13 @@ async function scanAWSSingleRegion({
                     ? new Date(key.CreateDate).toISOString()
                     : null,
                   last_used_at: lastUsedAt,
+                  sourceKind: "aws-iam-key",
+                  sourceObjectId: key.AccessKeyId,
                 });
                 iamKeysCount++;
               }
             } catch (e) {
+              iamListFailedCount++;
               logger.warn("Failed to list IAM keys for user", {
                 userName: user.UserName,
                 error: e.message,
@@ -515,11 +694,30 @@ async function scanAWSSingleRegion({
           }),
         );
       }
-      summary.push({ type: "iam_keys", found: iamKeysCount });
+      // IAM keys are global, not per-region, so this sub-scope's dimensions
+      // omit `region` entirely -- a token here is never partitioned by
+      // which region happened to be selected for the rest of the scan.
+      const iamTruncated =
+        usersListTruncated || usersSkippedByCap > 0 || iamKeysCount >= maxItems;
+      summary.push({
+        type: "iam_keys",
+        sourceKind: "aws-iam-key",
+        service: "iam_keys",
+        found: iamKeysCount,
+        failedCount: iamListFailedCount,
+        truncated: iamTruncated,
+        complete: iamListFailedCount === 0 && !iamTruncated,
+      });
       logger.info("AWS IAM scan completed", { found: iamKeysCount });
     } catch (e) {
       logger.error("AWS IAM scan failed", { error: e.message, region });
-      summary.push({ type: "iam_keys", error: e.message });
+      summary.push({
+        type: "iam_keys",
+        sourceKind: "aws-iam-key",
+        service: "iam_keys",
+        error: e.message,
+        complete: false,
+      });
     }
   }
 
@@ -551,9 +749,7 @@ async function detectAWSRegions({
     throw new Error("Invalid sessionToken format");
   }
 
-  logger.info("Starting AWS region detection", {
-    totalRegions: ALL_AWS_REGIONS.length,
-  });
+  logger.info("Starting AWS region detection");
 
   // Try to load AWS SDK
   let SecretsManagerClient, ListSecretsCommand;
@@ -601,6 +797,7 @@ async function detectAWSRegions({
   const results = [];
   let iamKeysCount = 0;
   let iamUsersCount = 0;
+  let accountId = null;
 
   // First, validate credentials using STS GetCallerIdentity
   // This is the standard AWS way to validate credentials - works with any valid credentials
@@ -613,6 +810,7 @@ async function detectAWSRegions({
         requestHandler: createDetectRequestHandler(),
       });
       const identity = await stsClient.send(new GetCallerIdentityCommand({}));
+      accountId = identity.Account || null;
       logger.info("AWS credentials validated", {
         account: identity.Account,
         arn: identity.Arn,
@@ -757,9 +955,16 @@ async function detectAWSRegions({
     }
   };
 
+  // Enumerate regions actually enabled for this account (EC2
+  // DescribeRegions) instead of iterating a static hardcoded list, so a
+  // newly-launched AWS region or an account that opted out of "all
+  // regions" both scan exactly their real footprint.
+  const { regions: regionsToCheck, usedFallbackList } =
+    await listEnabledAWSRegions({ accessKeyId, secretAccessKey, sessionToken });
+
   // Process regions in batches to avoid overwhelming the API
-  for (let i = 0; i < ALL_AWS_REGIONS.length; i += DETECT_REGION_BATCH_SIZE) {
-    const batch = ALL_AWS_REGIONS.slice(i, i + DETECT_REGION_BATCH_SIZE);
+  for (let i = 0; i < regionsToCheck.length; i += DETECT_REGION_BATCH_SIZE) {
+    const batch = regionsToCheck.slice(i, i + DETECT_REGION_BATCH_SIZE);
     await Promise.all(
       batch.map((region) =>
         withWallClockTimeout(
@@ -826,7 +1031,8 @@ async function detectAWSRegions({
   }
 
   logger.info("AWS region detection completed", {
-    totalRegions: ALL_AWS_REGIONS.length,
+    totalRegionsChecked: regionsToCheck.length,
+    usedFallbackList,
     regionsWithSecrets: regionsWithSecrets.length,
     regionsWithCertificates: regionsWithCertificates.length,
     iamUsers: iamUsersCount,
@@ -839,8 +1045,11 @@ async function detectAWSRegions({
   );
 
   return {
+    accountId,
     regionsWithSecrets: regionsWithSecrets.sort(),
     regionsWithCertificates: regionsWithCertificates.sort(),
+    regionsChecked: regionsToCheck.sort(),
+    usedFallbackRegionList: usedFallbackList,
     allResults: relevantResults, // Only regions with resources or errors
     iam: {
       usersCount: iamUsersCount,
@@ -856,11 +1065,15 @@ async function detectAWSRegions({
 module.exports = {
   scanAWS,
   detectAWSRegions,
+  listEnabledAWSRegions,
+  getAccountId,
 };
 
 // Test-only exports for unit coverage (when AWS SDK is available)
 if (process.env.NODE_ENV === "test") {
   module.exports._test = {
-    // AWS SDK-dependent functions would be exported here if needed for testing
+    listEnabledAWSRegions,
+    getAccountId,
+    ALL_AWS_REGIONS,
   };
 }

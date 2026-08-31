@@ -20,6 +20,40 @@ const { logger } = require("../utils/logger");
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
+// Cleanup needs an independent completeness flag per credential sourceKind.
+// Each Graph type (applications / service principals) therefore contributes
+// two summary rows. `found` is extracted credentials of that kind, not the
+// number of Graph objects enumerated (a tenant can have 105 SPs and 3 secrets).
+function pushCredentialKindSummaries(
+  summary,
+  {
+    type,
+    secretKind,
+    certKind,
+    secretsCount,
+    certsCount,
+    truncated,
+    complete,
+  },
+) {
+  summary.push({
+    type,
+    sourceKind: secretKind,
+    found: secretsCount,
+    secrets: secretsCount,
+    truncated,
+    complete,
+  });
+  summary.push({
+    type,
+    sourceKind: certKind,
+    found: certsCount,
+    certificates: certsCount,
+    truncated,
+    complete,
+  });
+}
+
 async function graphRequest({ token, method = "GET", path, params = {} }) {
   // Accept absolute URLs as-is (Graph returns full URLs in @odata.nextLink,
   // whose path already contains /v1.0 - prepending the base again would
@@ -100,6 +134,7 @@ async function listApplications({ token, maxItems = 500 }) {
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
+  let truncated = false;
 
   do {
     try {
@@ -129,14 +164,17 @@ async function listApplications({ token, maxItems = 500 }) {
       nextLink = data["@odata.nextLink"] || null;
       pageCount++;
 
-      if (apps.length >= maxItems || pageCount >= maxPages) break;
+      if (apps.length >= maxItems || pageCount >= maxPages) {
+        truncated = Boolean(nextLink) || apps.length > maxItems;
+        break;
+      }
     } catch (e) {
       if (e.status === 404 || e.status === 403) break;
       throw e;
     }
   } while (nextLink && apps.length < maxItems);
 
-  return apps.slice(0, maxItems);
+  return { items: apps.slice(0, maxItems), truncated };
 }
 
 async function listServicePrincipals({ token, maxItems = 500 }) {
@@ -144,6 +182,7 @@ async function listServicePrincipals({ token, maxItems = 500 }) {
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
+  let truncated = false;
 
   do {
     try {
@@ -171,14 +210,17 @@ async function listServicePrincipals({ token, maxItems = 500 }) {
       nextLink = data["@odata.nextLink"] || null;
       pageCount++;
 
-      if (sps.length >= maxItems || pageCount >= maxPages) break;
+      if (sps.length >= maxItems || pageCount >= maxPages) {
+        truncated = Boolean(nextLink) || sps.length > maxItems;
+        break;
+      }
     } catch (e) {
       if (e.status === 404 || e.status === 403) break;
       throw e;
     }
   } while (nextLink && sps.length < maxItems);
 
-  return sps.slice(0, maxItems);
+  return { items: sps.slice(0, maxItems), truncated };
 }
 
 async function scanAzureAD({
@@ -233,6 +275,19 @@ async function scanAzureAD({
     logger.warn("Failed to decode token claims", { error: e.message });
   }
 
+  // The tenant id anchors every Azure AD token's provenance (see
+  // sourceIdentity.js); it comes from the token's own `tid` claim rather
+  // than a caller-supplied value, since a caller cannot be trusted to
+  // correctly attribute which tenant a given app registration belongs to.
+  const tenantId = tokenClaims?.tid || null;
+  if (!tenantId) {
+    const err = new Error(
+      "Azure AD token is missing a tenant id (tid claim); cannot safely attribute scan results",
+    );
+    err.status = 401;
+    throw err;
+  }
+
   logger.info("Starting Azure AD scan", {
     maxItems,
     includeApps: include.applications,
@@ -250,12 +305,21 @@ async function scanAzureAD({
     // Scan Applications
     if (include.applications) {
       try {
-        const apps = await listApplications({ token: cleanToken, maxItems });
+        const { items: apps, truncated: appsTruncated } =
+          await listApplications({ token: cleanToken, maxItems });
         let secretsCount = 0;
         let certsCount = 0;
+        let appsBudgetExhausted = false;
 
         for (const app of apps) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            // The shared cross-type item budget ran out before every listed
+            // application's credentials were inspected -- some apps here
+            // were never even attempted, so this cannot be "complete" even
+            // though listApplications() itself paginated fine.
+            appsBudgetExhausted = true;
+            break;
+          }
 
           logger.debug("Azure AD app credentials", {
             appId: app.appId,
@@ -277,6 +341,8 @@ async function scanAzureAD({
 
             items.push({
               source: "azure-ad-client-secret",
+              sourceKind: "azure-ad-client-secret",
+              sourceObjectId: `${app.appId}:${cred.keyId}`,
               name: `${app.displayName || app.appId}/${cred.displayName || cred.hint || "Secret"}`,
               category: "key_secret",
               type: "api_key",
@@ -304,6 +370,8 @@ async function scanAzureAD({
 
             items.push({
               source: "azure-ad-certificate",
+              sourceKind: "azure-ad-certificate",
+              sourceObjectId: `${app.appId}:${cert.keyId}`,
               name: `${app.displayName || app.appId}/${cert.displayName || "Certificate"}`,
               category: "cert",
               type: "ssl_cert",
@@ -321,11 +389,14 @@ async function scanAzureAD({
           }
         }
 
-        summary.push({
+        pushCredentialKindSummaries(summary, {
           type: "applications",
-          found: apps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
+          secretKind: "azure-ad-client-secret",
+          certKind: "azure-ad-certificate",
+          secretsCount,
+          certsCount,
+          truncated: appsTruncated || appsBudgetExhausted,
+          complete: !appsTruncated && !appsBudgetExhausted,
         });
         logger.info("Azure AD applications scan completed", {
           apps: apps.length,
@@ -335,22 +406,38 @@ async function scanAzureAD({
         });
       } catch (e) {
         logger.error("Azure AD applications scan failed", { error: e.message });
-        summary.push({ type: "applications", error: e.message });
+        summary.push({
+          type: "applications",
+          sourceKind: "azure-ad-client-secret",
+          error: e.message,
+          complete: false,
+        });
+        summary.push({
+          type: "applications",
+          sourceKind: "azure-ad-certificate",
+          error: e.message,
+          complete: false,
+        });
       }
     }
 
     // Scan Service Principals
     if (include.servicePrincipals) {
       try {
-        const sps = await listServicePrincipals({
-          token: cleanToken,
-          maxItems,
-        });
+        const { items: sps, truncated: spsTruncated } =
+          await listServicePrincipals({
+            token: cleanToken,
+            maxItems,
+          });
         let secretsCount = 0;
         let certsCount = 0;
+        let spsBudgetExhausted = false;
 
         for (const sp of sps) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            spsBudgetExhausted = true;
+            break;
+          }
 
           // Process passwordCredentials (client secrets)
           for (const cred of sp.passwordCredentials || []) {
@@ -365,6 +452,8 @@ async function scanAzureAD({
 
             items.push({
               source: "azure-ad-sp-secret",
+              sourceKind: "azure-ad-sp-secret",
+              sourceObjectId: `${sp.appId}:${cred.keyId}`,
               name: `${sp.displayName || sp.appId}/SP/${cred.displayName || cred.hint || "Secret"}`,
               category: "key_secret",
               type: "api_key",
@@ -392,6 +481,8 @@ async function scanAzureAD({
 
             items.push({
               source: "azure-ad-sp-certificate",
+              sourceKind: "azure-ad-sp-certificate",
+              sourceObjectId: `${sp.appId}:${cert.keyId}`,
               name: `${sp.displayName || sp.appId}/SP/${cert.displayName || "Certificate"}`,
               category: "cert",
               type: "ssl_cert",
@@ -409,11 +500,14 @@ async function scanAzureAD({
           }
         }
 
-        summary.push({
+        pushCredentialKindSummaries(summary, {
           type: "service_principals",
-          found: sps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
+          secretKind: "azure-ad-sp-secret",
+          certKind: "azure-ad-sp-certificate",
+          secretsCount,
+          certsCount,
+          truncated: spsTruncated || spsBudgetExhausted,
+          complete: !spsTruncated && !spsBudgetExhausted,
         });
         logger.info("Azure AD service principals scan completed", {
           sps: sps.length,
@@ -424,12 +518,23 @@ async function scanAzureAD({
         logger.error("Azure AD service principals scan failed", {
           error: e.message,
         });
-        summary.push({ type: "service_principals", error: e.message });
+        summary.push({
+          type: "service_principals",
+          sourceKind: "azure-ad-sp-secret",
+          error: e.message,
+          complete: false,
+        });
+        summary.push({
+          type: "service_principals",
+          sourceKind: "azure-ad-sp-certificate",
+          error: e.message,
+          complete: false,
+        });
       }
     }
   } catch (e) {
     logger.error("Azure AD scan failed", { error: e.message });
-    summary.push({ type: "scan", error: e.message });
+    summary.push({ type: "scan", error: e.message, complete: false });
   }
 
   // If all scan types failed with authentication errors, throw instead of returning partial results
@@ -454,7 +559,7 @@ async function scanAzureAD({
     summaryCount: summary.length,
     items: items.map((i) => ({ name: i.name, type: i.type, source: i.source })),
   });
-  return { items, summary };
+  return { items, summary, tenantId };
 }
 
 module.exports = {
@@ -467,5 +572,6 @@ if (process.env.NODE_ENV === "test") {
     graphRequest,
     listApplications,
     listServicePrincipals,
+    pushCredentialKindSummaries,
   };
 }

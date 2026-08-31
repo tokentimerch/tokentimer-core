@@ -23,6 +23,7 @@ import {
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
+import { adoptOrCreateMonitorToken } from "./shared/adoptOrCreateMonitorToken.js";
 
 const require = createRequire(import.meta.url);
 const { bridgeEndpointCertificateObservation } = require(
@@ -484,28 +485,18 @@ async function runEndpointChecks() {
                     logger.warn("DB operation failed", { error: _err.message });
                   }
 
-                  const tokenRes = await client.query(
-                    `INSERT INTO tokens (workspace_id, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id)
-                     VALUES ($1, $2, $3, 'ssl_cert', 'cert', $4, $5, $6, $7, $8, $9, $10)
-                     RETURNING id`,
-                    [
-                      workspace_id,
-                      parsedUrl.hostname.substring(0, 100),
-                      formatDateYmd(sslData.ssl_valid_to),
-                      sslData.ssl_issuer,
-                      sslData.ssl_serial,
-                      sslData.ssl_subject,
-                      [parsedUrl.hostname],
-                      url,
-                      `Auto-created by endpoint monitor. Fingerprint: ${sslData.ssl_fingerprint || "unknown"}`,
-                      defaultCgId,
-                    ],
-                  );
+                  const tokenId = await adoptOrCreateMonitorToken(client, {
+                    workspaceId: workspace_id,
+                    hostname: parsedUrl.hostname,
+                    url,
+                    sslData,
+                    defaultContactGroupId: defaultCgId,
+                  });
                   await client.query(
                     "UPDATE domain_monitors SET token_id = $1 WHERE id = $2",
-                    [tokenRes.rows[0].id, id],
+                    [tokenId, id],
                   );
-                  currentTokenId = tokenRes.rows[0].id;
+                  currentTokenId = tokenId;
                 } catch (tokenErr) {
                   logger.warn("Failed to auto-create token for endpoint", {
                     url,
@@ -730,4 +721,4 @@ if (isNodeEntrypoint(import.meta.url)) {
   })();
 }
 
-export { runEndpointChecks };
+export { runEndpointChecks, adoptOrCreateMonitorToken };

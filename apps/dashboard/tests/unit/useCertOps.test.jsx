@@ -50,8 +50,10 @@ import {
   useCertOpsAvailability,
   useWorkspaceCertOps,
   useCertOpsForToken,
+  useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
   useCertOpsWorkspaceKillSwitch,
+  invalidateWorkspaceRoleCache,
 } from '../../src/components/certops/useCertOps.js';
 
 describe('useCertOpsAvailability cached-verdict revalidation', () => {
@@ -238,6 +240,7 @@ describe('useCertOpsForToken instance error handling', () => {
 describe('useCertOpsIsWorkspaceAdmin', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    invalidateWorkspaceRoleCache();
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
   });
 
@@ -265,6 +268,42 @@ describe('useCertOpsIsWorkspaceAdmin', () => {
 
     await waitFor(() => expect(workspaceAPIGetMock).toHaveBeenCalled());
     expect(result.current).toBe(false);
+  });
+
+  it('shares a single workspace fetch across concurrent callers instead of one per hook instance', async () => {
+    let resolveGet;
+    workspaceAPIGetMock.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveGet = resolve;
+        })
+    );
+
+    // Mirrors the Agents tab: several components each call a role hook
+    // for the same workspace on the same mount.
+    const { result: admin } = renderHook(() => useCertOpsIsWorkspaceAdmin());
+    const { result: manager } = renderHook(() => useCertOpsCanManage());
+    const { result: manager2 } = renderHook(() => useCertOpsCanManage());
+
+    expect(workspaceAPIGetMock).toHaveBeenCalledTimes(1);
+
+    resolveGet({ role: 'admin' });
+    await waitFor(() => expect(admin.current).toBe(true));
+    expect(manager.current).toBe(true);
+    expect(manager2.current).toBe(true);
+    expect(workspaceAPIGetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves a second mount from cache without refetching within the TTL', async () => {
+    workspaceAPIGetMock.mockResolvedValue({ role: 'workspace_manager' });
+
+    const { result: first } = renderHook(() => useCertOpsCanManage());
+    await waitFor(() => expect(first.current).toBe(true));
+    expect(workspaceAPIGetMock).toHaveBeenCalledTimes(1);
+
+    const { result: second } = renderHook(() => useCertOpsCanManage());
+    await waitFor(() => expect(second.current).toBe(true));
+    expect(workspaceAPIGetMock).toHaveBeenCalledTimes(1);
   });
 });
 

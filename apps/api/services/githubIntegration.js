@@ -127,10 +127,18 @@ async function githubRequest({
   }
 }
 
-async function listRepositories({ baseUrl, token, maxItems = 100 }) {
+// Returns `{ repos, truncated }`. `truncated` is true whenever the caller
+// cannot trust that every repository the token can see was actually listed
+// -- either the `maxItems` cap was hit while more pages likely remained, or
+// a page fetch failed partway through pagination. A truncated repo list
+// means every downstream per-repo scan (secrets, deploy keys) is scanning
+// less than the real scope, so those sub-scopes must never be reported
+// complete in that case (see scanGitHub below).
+async function listRepositories({ baseUrl, token, maxItems = 2000 }) {
   const repos = [];
   let page = 1;
   const perPage = Math.min(100, maxItems);
+  let truncated = false;
 
   while (repos.length < maxItems) {
     try {
@@ -146,15 +154,26 @@ async function listRepositories({ baseUrl, token, maxItems = 100 }) {
       if (data.length === 0) break;
 
       repos.push(...data);
+      if (repos.length >= maxItems && data.length === perPage) {
+        // Hit the cap on a full page -- there may be more repos we never
+        // even requested.
+        truncated = true;
+        break;
+      }
       if (data.length < perPage) break;
       page++;
     } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
+      if (e.status === 404 || e.status === 403) {
+        // A 403/404 mid-pagination (rate limit, permission change) means
+        // the repo list itself is incomplete, not merely "no more pages".
+        truncated = true;
+        break;
+      }
       throw e;
     }
   }
 
-  return repos.slice(0, maxItems);
+  return { repos: repos.slice(0, maxItems), truncated };
 }
 
 async function listRepoSecrets({ baseUrl, token, owner, repo }) {
@@ -220,6 +239,8 @@ async function scanGitHub({
 
   const items = [];
   const summary = [];
+  let host = null;
+  let ghUser = null;
 
   try {
     // Normalize baseUrl (default to github.com if not provided)
@@ -233,10 +254,15 @@ async function scanGitHub({
         ? "https://api.github.com"
         : normalizedUrl;
 
+    // The host anchors every GitHub token's provenance (see
+    // sourceIdentity.js) so that two GitHub Enterprise instances with
+    // colliding user/repo ids can never cross-delete each other's tokens.
+    host = new URL(apiBase).host;
+
     // Get current user info
     // Use short timeout (15s) for initial connection check - fail fast if unreachable
     try {
-      await githubRequest({
+      ghUser = await githubRequest({
         baseUrl: apiBase,
         token,
         method: "GET",
@@ -299,11 +325,17 @@ async function scanGitHub({
       try {
         const sshKeys = await listSSHKeys({ baseUrl: apiBase, token });
         logger.info("GitHub SSH keys retrieved", { count: sshKeys.length });
+        let sshKeysSkippedByCap = 0;
         for (const key of sshKeys) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            sshKeysSkippedByCap++;
+            continue;
+          }
           // GitHub SSH keys don't have expiration dates in the API
           items.push({
             source: "github-ssh-key",
+            sourceKind: "github-ssh-key",
+            sourceObjectId: String(key.id),
             name: key.title || `SSH Key (${key.id})`,
             category: "key_secret",
             type: "ssh_key",
@@ -313,7 +345,13 @@ async function scanGitHub({
             last_used_at: key.last_used_at || null,
           });
         }
-        summary.push({ type: "ssh_keys", found: sshKeys.length });
+        summary.push({
+          type: "ssh_keys",
+          sourceKind: "github-ssh-key",
+          found: sshKeys.length,
+          truncated: sshKeysSkippedByCap > 0,
+          complete: sshKeysSkippedByCap === 0,
+        });
       } catch (e) {
         logger.error("GitHub SSH keys scan failed", {
           error: e.message,
@@ -330,13 +368,17 @@ async function scanGitHub({
         if (e.status === 403) {
           summary.push({
             type: "ssh_keys",
+            sourceKind: "github-ssh-key",
             error:
               "Your PAT needs 'read:public_key' or 'admin:public_key' scope",
+            complete: false,
           });
         } else {
           summary.push({
             type: "ssh_keys",
+            sourceKind: "github-ssh-key",
             error: e.message || "Unknown error",
+            complete: false,
           });
         }
       }
@@ -345,16 +387,21 @@ async function scanGitHub({
     // Scan Repository Secrets (Actions secrets)
     if (include.secrets) {
       try {
-        const repos = await listRepositories({
-          baseUrl: apiBase,
-          token,
-          maxItems: 100,
-        });
+        const { repos, truncated: reposListTruncated } =
+          await listRepositories({
+            baseUrl: apiBase,
+            token,
+          });
         let secretsCount = 0;
+        let reposFailed = 0;
+        let reposSkippedByCap = 0;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            reposSkippedByCap += repos.length - i;
+            break;
+          }
           const batch = repos.slice(i, i + BATCH_SIZE);
 
           await Promise.all(
@@ -372,6 +419,8 @@ async function scanGitHub({
                   // GitHub secrets don't expose expiration dates in the API
                   items.push({
                     source: "github-secret",
+                    sourceKind: "github-secret",
+                    sourceObjectId: `${repo.id}:${secret.name}`,
                     name: secret.name || `Secret (${secret.name})`,
                     category: "key_secret",
                     type: "secret",
@@ -385,20 +434,43 @@ async function scanGitHub({
                   secretsCount++;
                 }
               } catch (_e) {
-                // Skip repos we can't access
+                // Skip repos we can't access, but count them so a scan
+                // that couldn't see every repo's secrets is never reported
+                // complete for this sub-scope.
+                reposFailed++;
               }
             }),
           );
         }
-        summary.push({ type: "repository_secrets", found: secretsCount });
+        // "Complete" requires: the repo list itself was exhaustive, every
+        // repo we did visit succeeded, and the shared item cap never cut
+        // the scan short before every repo was visited.
+        const truncated =
+          reposListTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+        summary.push({
+          type: "repository_secrets",
+          sourceKind: "github-secret",
+          found: secretsCount,
+          reposFailed,
+          reposSkippedByCap,
+          truncated,
+          complete: reposFailed === 0 && !truncated,
+        });
       } catch (e) {
         if (e.status === 403) {
           summary.push({
             type: "repository_secrets",
+            sourceKind: "github-secret",
             error: "Your PAT needs 'repo' scope",
+            complete: false,
           });
         } else {
-          summary.push({ type: "repository_secrets", error: e.message });
+          summary.push({
+            type: "repository_secrets",
+            sourceKind: "github-secret",
+            error: e.message,
+            complete: false,
+          });
         }
       }
     }
@@ -406,16 +478,21 @@ async function scanGitHub({
     // Scan Deploy Keys (repository-scoped keys)
     if (include.deployKeys) {
       try {
-        const repos = await listRepositories({
-          baseUrl: apiBase,
-          token,
-          maxItems: 100,
-        });
+        const { repos, truncated: reposListTruncated } =
+          await listRepositories({
+            baseUrl: apiBase,
+            token,
+          });
         let deployKeysCount = 0;
+        let reposFailed = 0;
+        let reposSkippedByCap = 0;
         const BATCH_SIZE = 10;
 
         for (let i = 0; i < repos.length; i += BATCH_SIZE) {
-          if (items.length >= maxItems) break;
+          if (items.length >= maxItems) {
+            reposSkippedByCap += repos.length - i;
+            break;
+          }
           const batch = repos.slice(i, i + BATCH_SIZE);
 
           await Promise.all(
@@ -432,6 +509,8 @@ async function scanGitHub({
                   if (items.length >= maxItems) break;
                   items.push({
                     source: "github-deploy-key",
+                    sourceKind: "github-deploy-key",
+                    sourceObjectId: `${repo.id}:${key.id}`,
                     name: key.title || `Deploy Key (${key.id})`,
                     category: "key_secret",
                     type: "ssh_key",
@@ -444,14 +523,29 @@ async function scanGitHub({
                   deployKeysCount++;
                 }
               } catch (_e) {
-                // Skip repos we can't access
+                reposFailed++;
               }
             }),
           );
         }
-        summary.push({ type: "deploy_keys", found: deployKeysCount });
+        const truncated =
+          reposListTruncated || reposSkippedByCap > 0 || items.length >= maxItems;
+        summary.push({
+          type: "deploy_keys",
+          sourceKind: "github-deploy-key",
+          found: deployKeysCount,
+          reposFailed,
+          reposSkippedByCap,
+          truncated,
+          complete: reposFailed === 0 && !truncated,
+        });
       } catch (e) {
-        summary.push({ type: "deploy_keys", error: e.message });
+        summary.push({
+          type: "deploy_keys",
+          sourceKind: "github-deploy-key",
+          error: e.message,
+          complete: false,
+        });
       }
     }
 
@@ -567,7 +661,7 @@ async function scanGitHub({
   }
 
   logger.info("GitHub scan completed", { itemsFound: items.length });
-  return { items, summary };
+  return { items, summary, host, ownerKey: ghUser?.id ? String(ghUser.id) : null };
 }
 
 module.exports = {

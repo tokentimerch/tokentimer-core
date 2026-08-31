@@ -77,6 +77,44 @@ async function expectReject(promiseFactory, pattern) {
   }
 }
 
+// Builds a JWT-shaped (but unsigned) token string containing a `tid` claim
+// of at least `minLength` characters, since scanAzureAD now requires a
+// tenant id to attribute scan results (see sourceIdentity.js) and refuses
+// tokens that don't decode to one.
+function fakeAzureAdToken(minLength = 0) {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString(
+    "base64",
+  );
+  let padLength = 0;
+  let token;
+  do {
+    const payload = Buffer.from(
+      JSON.stringify({
+        tid: "11111111-1111-1111-1111-111111111111",
+        aud: "https://graph.microsoft.com",
+        pad: "x".repeat(padLength),
+      }),
+    ).toString("base64");
+    token = `${header}.${payload}.signature`;
+    padLength += 100;
+  } while (token.length < minLength);
+  return token;
+}
+
+// Every scanAWS() call now resolves the STS account id up front (it anchors
+// AWS token provenance -- see sourceIdentity.js), so any test that reaches
+// past input validation needs this mocked regardless of which AWS service
+// it's actually exercising.
+function mockSts(accountId = "123456789012") {
+  class GetCallerIdentityCommand {}
+  class STSClient {
+    async send() {
+      return { Account: accountId, Arn: "arn:aws:iam::123456789012:user/test" };
+    }
+  }
+  return { "@aws-sdk/client-sts": { STSClient, GetCallerIdentityCommand } };
+}
+
 describe("Provider service unit coverage", () => {
   describe("AWS integration", () => {
     it("validates required credentials", async () => {
@@ -93,16 +131,19 @@ describe("Provider service unit coverage", () => {
     // GetSessionToken credentials (e.g. with session tags or chained roles)
     // with "Invalid sessionToken format" before any AWS call was made.
     it("accepts a sessionToken above the old 2000-char cap", async () => {
-      const aws = require(resolveServiceModule("awsIntegration"));
-      const result = await aws.scanAWS({
-        accessKeyId: "AKIAEXAMPLE123",
-        secretAccessKey: "super-secret-key",
-        sessionToken: "x".repeat(3500),
-        region: "us-east-1",
-        // Skip every scan type so this stays a pure validation test with no
-        // AWS SDK client instantiation or network calls.
-        include: { secrets: false, iam: false, certificates: false },
-      });
+      const stsMocks = mockSts();
+      const aws = requireWithMocks(resolveServiceModule("awsIntegration"), stsMocks);
+      const result = await withPatchedLoad(stsMocks, () =>
+        aws.scanAWS({
+          accessKeyId: "AKIAEXAMPLE123",
+          secretAccessKey: "super-secret-key",
+          sessionToken: "x".repeat(3500),
+          region: "us-east-1",
+          // Skip every scan type so this stays a pure validation test with no
+          // AWS SDK client instantiation or network calls.
+          include: { secrets: false, iam: false, certificates: false },
+        }),
+      );
       expect(result).to.have.property("items").that.is.an("array");
       expect(result).to.have.property("summary").that.is.an("array");
     });
@@ -256,6 +297,7 @@ describe("Provider service unit coverage", () => {
           ListCertificatesCommand,
           DescribeCertificateCommand,
         },
+        ...mockSts(),
       };
       const aws = requireWithMocks(
         resolveServiceModule("awsIntegration"),
@@ -351,6 +393,7 @@ describe("Provider service unit coverage", () => {
           ListCertificatesCommand,
           DescribeCertificateCommand,
         },
+        ...mockSts(),
       };
       const aws = requireWithMocks(
         resolveServiceModule("awsIntegration"),
@@ -422,7 +465,7 @@ describe("Provider service unit coverage", () => {
         token: "test-token",
         maxItems: 10,
       });
-      expect(result).to.deep.equal([]);
+      expect(result.items).to.deep.equal([]);
     });
 
     it("returns null on 404 for getSecret", async () => {
@@ -536,7 +579,7 @@ describe("Provider service unit coverage", () => {
         token: "test-token",
         maxItems: 10,
       });
-      expect(secrets.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
+      expect(secrets.items.map((s) => s.id)).to.deep.equal(["s1", "s2"]);
       expect(requestedUrls[1]).to.match(/vault\.example\.com/);
       expect(requestedUrls[1]).to.match(/skiptoken=abc/);
     });
@@ -595,7 +638,7 @@ describe("Provider service unit coverage", () => {
         token: "header.payload.signature",
         maxItems: 10,
       });
-      expect(apps.map((a) => a.id)).to.deep.equal(["app-1", "app-2"]);
+      expect(apps.items.map((a) => a.id)).to.deep.equal(["app-1", "app-2"]);
       // Regression guard: @odata.nextLink already contains the /v1.0 prefix.
       // Re-prepending the Graph base URL produced /v1.0/v1.0/... which 404s
       // and silently truncated tenants with more than one page of apps.
@@ -647,11 +690,121 @@ describe("Provider service unit coverage", () => {
         { axios: axiosMock },
       );
       const result = await azureAd.scanAzureAD({
-        token: "x".repeat(4000),
+        token: fakeAzureAdToken(4000),
         include: { applications: true, servicePrincipals: false },
       });
       expect(result).to.have.property("items").that.is.an("array");
       expect(result).to.have.property("summary").that.is.an("array");
+    });
+
+    it("summarizes extracted credentials per sourceKind, not Graph object counts", async () => {
+      const end = new Date(Date.now() + 86400000).toISOString();
+      const start = new Date().toISOString();
+      const secret = (keyId) => ({
+        keyId,
+        displayName: keyId,
+        startDateTime: start,
+        endDateTime: end,
+      });
+      const cert = (keyId) => ({
+        keyId,
+        displayName: keyId,
+        startDateTime: start,
+        endDateTime: end,
+        type: "AsymmetricX509Cert",
+        usage: "Verify",
+      });
+      const apps = [
+        {
+          appId: "app-1",
+          displayName: "App One",
+          passwordCredentials: [secret("s1"), secret("s2")],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-2",
+          displayName: "App Two",
+          passwordCredentials: [secret("s3")],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-3",
+          displayName: "App Three",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-4",
+          displayName: "App Four",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+      ];
+      const sps = [
+        {
+          appId: "sp-1",
+          displayName: "SP One",
+          passwordCredentials: [secret("p1")],
+          keyCredentials: [cert("c1"), cert("c2")],
+        },
+        {
+          appId: "sp-2",
+          displayName: "SP Two",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+        {
+          appId: "sp-3",
+          displayName: "SP Three",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+      ];
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("servicePrincipals")) {
+          return { data: { value: sps } };
+        }
+        return { data: { value: apps } };
+      };
+      const azureAd = requireWithMocks(
+        resolveServiceModule("azureADIntegration"),
+        { axios: axiosMock },
+      );
+      const result = await azureAd.scanAzureAD({
+        token: fakeAzureAdToken(),
+        include: { applications: true, servicePrincipals: true },
+      });
+
+      expect(result.items).to.have.length(6);
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["azure-ad-client-secret"]).to.include({
+        type: "applications",
+        found: 3,
+        secrets: 3,
+      });
+      expect(byKind["azure-ad-client-secret"]).to.not.have.property(
+        "certificates",
+      );
+      expect(byKind["azure-ad-certificate"]).to.include({
+        type: "applications",
+        found: 0,
+        certificates: 0,
+      });
+      expect(byKind["azure-ad-sp-secret"]).to.include({
+        type: "service_principals",
+        found: 1,
+        secrets: 1,
+      });
+      expect(byKind["azure-ad-sp-certificate"]).to.include({
+        type: "service_principals",
+        found: 2,
+        certificates: 2,
+      });
+      expect(byKind["azure-ad-client-secret"].found).to.not.equal(apps.length);
+      expect(byKind["azure-ad-sp-secret"].found).to.not.equal(sps.length);
     });
 
     it("still rejects a token over the 5000-char hard cap", async () => {
@@ -697,7 +850,7 @@ describe("Provider service unit coverage", () => {
         accessToken: "token",
         maxItems: 5,
       });
-      expect(secrets).to.deep.equal([]);
+      expect(secrets.items).to.deep.equal([]);
     });
 
     it("returns null on 404 for getSecretVersion", async () => {
@@ -715,6 +868,61 @@ describe("Provider service unit coverage", () => {
         secretId: "secret-1",
       });
       expect(version).to.equal(null);
+    });
+
+    it("keeps the secrets kind complete when a version lookup fails", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("/versions")) {
+          if (url.includes("/blocked/")) {
+            const err = new Error("denied");
+            err.response = { status: 403, data: { error: "PERMISSION_DENIED" } };
+            throw err;
+          }
+          return {
+            data: {
+              versions: [
+                {
+                  name: "projects/proj/secrets/ok/versions/1",
+                  state: "ENABLED",
+                },
+              ],
+            },
+          };
+        }
+        return {
+          data: {
+            secrets: [
+              { name: "projects/proj/secrets/ok" },
+              { name: "projects/proj/secrets/blocked" },
+            ],
+          },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: true },
+      });
+
+      expect(result.items.map((i) => i.sourceObjectId).sort()).to.deep.equal([
+        "blocked",
+        "ok",
+      ]);
+      expect(result.items.find((i) => i.sourceObjectId === "blocked")).to.include(
+        { expiration: null },
+      );
+      expect(result.summary).to.have.length(1);
+      expect(result.summary[0]).to.include({
+        sourceKind: "gcp-secret-manager",
+        found: 2,
+        failedCount: 1,
+        truncated: false,
+        complete: true,
+      });
     });
   });
 });

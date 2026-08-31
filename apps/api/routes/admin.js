@@ -198,6 +198,19 @@ const REQUIRED_CRED_FIELDS = {
   vault: ["address", "token"],
 };
 
+// Dashboard stores the checkbox in scan_params.cleanupObsolete and (now)
+// also sends cleanup_obsolete. Accept either so a config created from only
+// the nested flag still drives scheduled cleanup.
+function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
+  if (cleanup_obsolete === true) return true;
+  if (cleanup_obsolete === false) return false;
+  return Boolean(
+    scan_params &&
+      typeof scan_params === "object" &&
+      scan_params.cleanupObsolete === true,
+  );
+}
+
 function validateAutoSyncCredentials(provider, credentials) {
   if (!credentials || typeof credentials !== "object") return null;
   const required = REQUIRED_CRED_FIELDS[provider] || [];
@@ -221,7 +234,8 @@ router.get(
       const result = await pool.query(
         `SELECT id, provider, scan_params, frequency, schedule_time, schedule_tz,
                 enabled, last_sync_at, last_sync_status, last_sync_error,
-                last_sync_items_count, next_sync_at, created_at, updated_at
+                last_sync_items_count, next_sync_at, created_at, updated_at,
+                cleanup_obsolete, connection_key
          FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider`,
         [req.workspace.id],
       );
@@ -250,6 +264,7 @@ router.post(
         frequency,
         schedule_time,
         schedule_tz,
+        cleanup_obsolete,
       } = req.body || {};
       if (!provider || !credentials) {
         return res
@@ -286,9 +301,9 @@ router.post(
 
       const result = await pool.query(
         `INSERT INTO auto_sync_configs
-          (workspace_id, provider, credentials_encrypted, scan_params, frequency, schedule_time, schedule_tz, next_sync_at, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_at`,
+          (workspace_id, provider, credentials_encrypted, scan_params, frequency, schedule_time, schedule_tz, next_sync_at, created_by, cleanup_obsolete)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_at, cleanup_obsolete`,
         [
           req.workspace.id,
           provider,
@@ -299,6 +314,7 @@ router.post(
           effTz,
           nextSync,
           req.user.id,
+          resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params),
         ],
       );
       try {
@@ -361,6 +377,7 @@ router.put(
         schedule_time,
         schedule_tz,
         enabled,
+        cleanup_obsolete,
       } = req.body || {};
       const updates = [];
       const values = [];
@@ -404,6 +421,18 @@ router.put(
         updates.push(`enabled = $${idx++}`);
         values.push(enabled);
       }
+      if (cleanup_obsolete !== undefined) {
+        updates.push(`cleanup_obsolete = $${idx++}`);
+        values.push(cleanup_obsolete === true);
+      } else if (
+        scan_params !== undefined &&
+        scan_params &&
+        typeof scan_params === "object" &&
+        typeof scan_params.cleanupObsolete === "boolean"
+      ) {
+        updates.push(`cleanup_obsolete = $${idx++}`);
+        values.push(scan_params.cleanupObsolete === true);
+      }
       updates.push(`updated_at = NOW()`);
 
       if (updates.length <= 1) {
@@ -414,7 +443,7 @@ router.put(
       const result = await pool.query(
         `UPDATE auto_sync_configs SET ${updates.join(", ")}
          WHERE id = $${idx++} AND workspace_id = $${idx}
-         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at`,
+         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
         values,
       );
       if (result.rows.length === 0) {
