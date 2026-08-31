@@ -150,8 +150,15 @@ export async function listJobEvidence(
 /**
  * Create a manual CertOps job through the session-authenticated workspace
  * surface. source is always forced to "api" by the server. Requires
- * workspace_manager role or above.
- * @returns {Promise<{ job: object }>}
+ * workspace_manager role or above (distribute-trust/revoke-trust require
+ * the stricter certops.trust_anchor.manage admin bar, checked server-side).
+ *
+ * `agentId` and `assignedAgentId` are distinct wire fields, not aliases:
+ * `agentId` targets a trust-anchor job's specific agent (required for
+ * distribute-trust/revoke-trust, read directly by the route handler),
+ * while `assignedAgentId` is the optional pin-to-agent override every other
+ * operation accepts. A trust-op request supplies only `agentId`.
+ * @returns {Promise<{ job: object }|{ ownershipReleased: boolean, installation: object }>}
  */
 export async function createJob(
   workspaceId,
@@ -163,6 +170,8 @@ export async function createJob(
     idempotencyKey,
     requiresApproval,
     assignedAgentId,
+    agentId,
+    owner,
   } = {}
 ) {
   const body = { operation };
@@ -172,6 +181,8 @@ export async function createJob(
   if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
   if (requiresApproval !== undefined) body.requiresApproval = requiresApproval;
   if (assignedAgentId !== undefined) body.assignedAgentId = assignedAgentId;
+  if (agentId !== undefined) body.agentId = agentId;
+  if (owner !== undefined) body.owner = owner;
 
   const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body);
   return res.data;

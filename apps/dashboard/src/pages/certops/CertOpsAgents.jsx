@@ -4,6 +4,7 @@ import { useOutletContext } from 'react-router';
 import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
 import BootstrapTokenList from '../../components/certops/BootstrapTokenList.jsx';
 import DeployAgentModal from '../../components/certops/DeployAgentModal.jsx';
+import TrustAnchorsPanel from '../../components/certops/TrustAnchorsPanel.jsx';
 import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
 import {
   DashboardActionButton,
@@ -44,6 +45,9 @@ export default function CertOpsAgents() {
       </DashboardPanel>
       <DashboardPanel>
         <BootstrapTokenList />
+      </DashboardPanel>
+      <DashboardPanel>
+        <TrustAnchorsPanel />
       </DashboardPanel>
 
       <DeployAgentModal

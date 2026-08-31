@@ -33,6 +33,8 @@ const JOB_OPERATION_LABELS = {
   reload: 'Reload',
   revoke: 'Revoke',
   noop: 'No-op',
+  'distribute-trust': 'Distribute trust',
+  'revoke-trust': 'Revoke trust',
 };
 
 const EVENT_TYPE_LABELS = {
@@ -74,6 +76,7 @@ const SUBJECT_TYPE_LABELS = {
   domain: 'Domain',
   endpoint: 'Endpoint',
   external: 'External',
+  trust_anchor: 'Trust anchor',
 };
 
 const REDACTED_LITERAL = '[REDACTED]';

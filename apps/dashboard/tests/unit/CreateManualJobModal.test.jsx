@@ -9,12 +9,14 @@ const {
   useWorkspaceMock,
   useCertOpsAgentsMock,
   useCertOpsControllerClustersMock,
+  useCertOpsIsWorkspaceAdminMock,
   createJobMock,
   createControllerProvisionIntentMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
   useCertOpsControllerClustersMock: vi.fn(),
+  useCertOpsIsWorkspaceAdminMock: vi.fn(),
   createJobMock: vi.fn(),
   createControllerProvisionIntentMock: vi.fn(),
 }));
@@ -29,6 +31,10 @@ vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOpsControllerClusters.js', () => ({
   useCertOpsControllerClusters: useCertOpsControllerClustersMock,
+}));
+
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
@@ -76,6 +82,7 @@ beforeEach(() => {
   useWorkspaceMock.mockReset();
   useCertOpsAgentsMock.mockReset();
   useCertOpsControllerClustersMock.mockReset();
+  useCertOpsIsWorkspaceAdminMock.mockReset();
   createJobMock.mockReset();
   createControllerProvisionIntentMock.mockReset();
   useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
@@ -87,6 +94,7 @@ beforeEach(() => {
     error: '',
     refresh: vi.fn(),
   });
+  useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
 });
 
 describe('CreateManualJobModal executor toggle', () => {
@@ -353,6 +361,223 @@ describe('CreateManualJobModal renew payload fields', () => {
         subjectType: 'managed_certificate',
         subjectId: 'cert-1',
       });
+    });
+  });
+});
+
+describe('CreateManualJobModal trustOp mode', () => {
+  const AGENT_A = { id: 'agent-a', name: 'Agent A', status: 'active' };
+  const AGENT_B = { id: 'agent-b', name: 'Agent B', status: 'active' };
+
+  const distributeTrustOp = {
+    anchorId: 'anchor-1',
+    anchorName: 'Internal Root CA',
+    anchorFingerprint: 'aa'.repeat(32),
+    operation: 'distribute-trust',
+    installations: [
+      {
+        id: 'install-1',
+        agentId: 'agent-a',
+        owner: 'team-a',
+        host: 'host-a',
+        store: 'root',
+        transitionState: 'installed',
+      },
+    ],
+  };
+
+  const revokeTrustOp = {
+    ...distributeTrustOp,
+    operation: 'revoke-trust',
+  };
+
+  beforeEach(() => {
+    useCertOpsAgentsMock.mockReturnValue({ agents: [AGENT_A, AGENT_B] });
+  });
+
+  it('renders the trust-op header instead of the generic manual-job form', () => {
+    renderModal({ trustOp: distributeTrustOp });
+
+    expect(
+      screen.getByText('Distribute trust trust anchor')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Operation')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Subject type/)).not.toBeInTheDocument();
+  });
+
+  it('disables submit until an agent and owner are chosen on distribute', () => {
+    renderModal({ trustOp: distributeTrustOp });
+
+    const submit = screen.getByRole('button', { name: 'Distribute trust' });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Owner/), {
+      target: { value: 'team-a' },
+    });
+
+    expect(submit).toBeEnabled();
+  });
+
+  it('submits distribute-trust with agentId/owner/subjectType trust_anchor and an auto-generated idempotency key', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+
+    renderModal({ trustOp: distributeTrustOp });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Owner/), {
+      target: { value: 'team-a' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledTimes(1);
+    });
+    const [workspaceId, body] = createJobMock.mock.calls[0];
+    expect(workspaceId).toBe('ws-1');
+    expect(body.operation).toBe('distribute-trust');
+    expect(body.subjectType).toBe('trust_anchor');
+    expect(body.subjectId).toBe('anchor-1');
+    expect(body.agentId).toBe('agent-b');
+    expect(body.owner).toBe('team-a');
+    expect(body.idempotencyKey).toBeTruthy();
+  });
+
+  it("offers only the anchor's existing owners on distribute, from the installations the panel passed in", () => {
+    renderModal({ trustOp: distributeTrustOp });
+
+    const ownerSelect = screen.getByLabelText(/^Owner/);
+    expect(ownerSelect.tagName).toBe('SELECT');
+    expect(screen.getByRole('option', { name: 'team-a' })).toBeInTheDocument();
+  });
+
+  it('switches to a free-text new-owner input and submits the typed value', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+
+    renderModal({ trustOp: distributeTrustOp });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'New owner' }));
+    fireEvent.change(
+      screen.getByPlaceholderText('e.g. a team or system label'),
+      { target: { value: 'team-b' } }
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledTimes(1);
+    });
+    expect(createJobMock.mock.calls[0][1].owner).toBe('team-b');
+  });
+
+  it('warns on a case-only near-duplicate of an existing owner without blocking submit', () => {
+    renderModal({ trustOp: distributeTrustOp });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'New owner' }));
+    fireEvent.change(
+      screen.getByPlaceholderText('e.g. a team or system label'),
+      { target: { value: 'Team-A' } }
+    );
+
+    expect(
+      screen.getByText(/Close to existing owner "team-a"/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Distribute trust' })
+    ).toBeEnabled();
+  });
+
+  it('on revoke, only lists live installations and derives agentId/owner from the one selected', async () => {
+    createJobMock.mockResolvedValue({ ownershipReleased: true });
+
+    renderModal({ trustOp: revokeTrustOp });
+
+    expect(
+      screen.getByRole('option', {
+        name: /team-a — Agent A \(agent-a\) \(root\)/,
+      })
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'install-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke trust' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledTimes(1);
+    });
+    const body = createJobMock.mock.calls[0][1];
+    expect(body.operation).toBe('revoke-trust');
+    expect(body.agentId).toBe('agent-a');
+    expect(body.owner).toBe('team-a');
+  });
+
+  it('excludes a removed installation from the revoke picker', () => {
+    renderModal({
+      trustOp: {
+        ...revokeTrustOp,
+        installations: [
+          {
+            ...distributeTrustOp.installations[0],
+            transitionState: 'removed',
+          },
+        ],
+      },
+    });
+
+    expect(
+      screen.queryByRole('option', { name: /team-a/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('requires workspace admin to submit', () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+    renderModal({ trustOp: distributeTrustOp });
+
+    expect(
+      screen.getByText('Trust-anchor operations require workspace admin.')
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Owner/), {
+      target: { value: 'team-a' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'Distribute trust' })
+    ).toBeDisabled();
+  });
+
+  it('maps CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT to a friendly retry message', async () => {
+    createJobMock.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          error: 'idempotency conflict',
+          code: 'CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT',
+        },
+      },
+    });
+
+    renderModal({ trustOp: distributeTrustOp });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Owner/), {
+      target: { value: 'team-a' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+
+    await waitFor(() => {
+      expect(createJobMock).toHaveBeenCalledTimes(1);
     });
   });
 });

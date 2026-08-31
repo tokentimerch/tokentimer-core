@@ -47,8 +47,35 @@ import {
 } from './certopsJobsFormat';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { useCertOpsControllerClusters } from './useCertOpsControllerClusters.js';
+import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
+
+/**
+ * Client-side idempotency key for a trust-op submission. `crypto.randomUUID`
+ * is available in every browser this dashboard supports; the fallback only
+ * guards against a test/SSR environment without a `crypto` global.
+ */
+function generateIdempotencyKey() {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID();
+  }
+  return `trust-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Installation transitionStates that still represent a live reference; a
+// 'removed' row has nothing left to revoke, so it is excluded from the
+// revoke-trust owner picker (distribute's "existing owner" list still
+// includes it, since re-distributing to a previously-removed owner is
+// exactly re-establishing that reference).
+const LIVE_INSTALLATION_STATES = new Set([
+  'pending_install',
+  'installed',
+  'pending_remove',
+]);
 
 const SUBJECT_ID_MAX_LENGTH = 128;
 const MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID =
@@ -196,13 +223,30 @@ function createJobErrorMessage(err) {
   const code = err?.response?.data?.code;
   const status = err?.response?.status;
   if (status === 403 || code === 'INSUFFICIENT_ROLE') {
-    return 'You need workspace manager permission to create a job.';
+    return 'You need workspace manager permission to create a job. Trust-anchor operations need workspace admin.';
   }
   if (code === 'PRIVATE_KEY_MATERIAL_REJECTED') {
     return 'Private key or secret material is not accepted in job fields.';
   }
   if (code === 'CERTOPS_JOB_IDEMPOTENCY_CONFLICT') {
     return 'This idempotency key was already used with different job details.';
+  }
+  if (code === 'CERTOPS_TRUST_JOB_IDEMPOTENCY_CONFLICT') {
+    return 'This idempotency key was already used with a different trust-anchor job. Retry to generate a new one.';
+  }
+  if (code === 'CERTOPS_TRUST_ANCHOR_NOT_ACTIVE') {
+    return 'This trust anchor was retired and can no longer be distributed.';
+  }
+  if (code === 'CERTOPS_TARGET_AGENT_INVALID') {
+    return 'The selected agent id is not well-formed.';
+  }
+  if (code === 'CERTOPS_TARGET_AGENT_NOT_FOUND') {
+    return 'That agent was not found in this workspace. It may have been retired.';
+  }
+  if (code === 'CERTOPS_TRUST_ANCHOR_INVALID') {
+    return (
+      err?.response?.data?.error || 'This trust-anchor job request is invalid.'
+    );
   }
   if (code === 'CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY') {
     return 'This certificate/secret name was already retired in this namespace and cannot be reactivated by provisioning. Choose a different certificate or secret name.';
@@ -220,8 +264,20 @@ function createJobErrorMessage(err) {
  * Manual job creation modal: the exception path for creating
  * a CertOps job before the certops-scheduler exists. Always posts with
  * source "api"; the server never accepts a client-supplied source.
+ *
+ * `trustOp` puts the modal in its narrower trust-anchor mode: opened from
+ * TrustAnchorsPanel with the anchor and operation already chosen, so this
+ * modal never needs its own anchor picker. Shape:
+ * `{ anchorId, anchorName, anchorFingerprint, operation, installations }`,
+ * where `installations` is the panel's already-fetched list for that
+ * anchor (this modal never fetches its own).
  */
-export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
+export default function CreateManualJobModal({
+  isOpen,
+  onClose,
+  onCreated,
+  trustOp,
+}) {
   const {
     overlayProps,
     headerProps,
@@ -234,6 +290,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const { workspaceId } = useWorkspace();
   const { agents } = useCertOpsAgents();
   const { clusters: controllerClusters } = useCertOpsControllerClusters();
+  const isWorkspaceAdmin = useCertOpsIsWorkspaceAdmin();
+  const isTrustOp = Boolean(trustOp?.anchorId);
+  const isDistributeTrust = trustOp?.operation === 'distribute-trust';
   const [operation, setOperation] = useState('');
   const [executor, setExecutor] = useState('agent');
   const [subjectType, setSubjectType] = useState('');
@@ -264,6 +323,13 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   );
   const [controllerIssuerName, setControllerIssuerName] = useState('');
   const [controllerDnsNames, setControllerDnsNames] = useState('');
+  // Trust-op-only state: irrelevant (and left at defaults) outside isTrustOp.
+  const [trustAgentId, setTrustAgentId] = useState('');
+  const [trustOwnerMode, setTrustOwnerMode] = useState('existing');
+  const [trustExistingOwner, setTrustExistingOwner] = useState('');
+  const [trustNewOwner, setTrustNewOwner] = useState('');
+  const [trustInstallationId, setTrustInstallationId] = useState('');
+  const [trustKeyEdited, setTrustKeyEdited] = useState(false);
 
   // "issue" has no existing subject to act on (ADR-0008): the control
   // plane creates the managed_certificate row itself, so passing
@@ -319,6 +385,99 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     if (hidesAgentField) setAssignedAgentId('');
   }, [hidesAgentField]);
 
+  // Distinct owner strings across every installation the panel handed in
+  // for this anchor (any agent/store), for the "existing owner" picker on
+  // distribute. Case preserved for display; collision detection below
+  // folds case, matching the dangling-reference hazard this UI exists to
+  // prevent (see plan: "Distribute as Team-A, revoke as team-a...").
+  const trustExistingOwners = Array.from(
+    new Set(
+      (trustOp?.installations || []).map(row => row.owner).filter(Boolean)
+    )
+  );
+
+  // revoke-trust only ever targets a still-live reference: a 'removed' row
+  // has nothing left for a job to release, so offering it would just
+  // produce a confusing no-op 200 ownershipReleased response.
+  const trustRevocableInstallations = (trustOp?.installations || []).filter(
+    row => LIVE_INSTALLATION_STATES.has(row.transitionState)
+  );
+
+  const trustSelectedInstallation = trustRevocableInstallations.find(
+    row => row.id === trustInstallationId
+  );
+
+  // Resolves to the agentId/owner pair the request will actually submit:
+  // for distribute, the separately-picked target agent plus either the
+  // selected existing owner or the typed new owner; for revoke, both come
+  // from the one installation row selected above (revoke always targets
+  // an existing reference, never a free-typed owner).
+  const trustResolvedAgentId = isDistributeTrust
+    ? trustAgentId
+    : trustSelectedInstallation?.agentId || '';
+  const trustResolvedOwner = isDistributeTrust
+    ? trustOwnerMode === 'new'
+      ? trustNewOwner.trim()
+      : trustExistingOwner
+    : trustSelectedInstallation?.owner || '';
+
+  // Case-insensitive near-duplicate warning, not a hard block: the same
+  // owner label legitimately recurs across different agents, so only flag
+  // it when it is not already the exact string being reused deliberately.
+  const trustNewOwnerCollision =
+    isDistributeTrust && trustOwnerMode === 'new' && trustNewOwner.trim()
+      ? trustExistingOwners.find(
+          existing =>
+            existing.toLowerCase() === trustNewOwner.trim().toLowerCase() &&
+            existing !== trustNewOwner.trim()
+        )
+      : null;
+
+  // Re-seeds every trust-op field whenever the modal opens in trust mode,
+  // or the panel hands it a different anchor/operation without a full
+  // close/reopen (e.g. clicking Distribute on anchor B while the modal
+  // instance persists across renders). Regenerating the idempotency key
+  // here, not just on open, matters because 0.14.0 scopes a trust job's
+  // conflict key to the full target tuple (operation+anchor+agent+owner):
+  // reusing a stale key against a new tuple would just 409.
+  useEffect(() => {
+    if (!isOpen || !isTrustOp) return;
+    setTrustAgentId('');
+    setTrustOwnerMode('existing');
+    setTrustExistingOwner('');
+    setTrustNewOwner('');
+    setTrustInstallationId('');
+    setTrustKeyEdited(false);
+    setIdempotencyKey(generateIdempotencyKey());
+    setRequiresApproval(false);
+  }, [isOpen, isTrustOp, trustOp?.anchorId, trustOp?.operation]);
+
+  // Regenerates the auto-filled key as the target tuple changes, unless
+  // the admin has already typed their own override (trustKeyEdited).
+  useEffect(() => {
+    if (!isOpen || !isTrustOp || trustKeyEdited) return;
+    setIdempotencyKey(generateIdempotencyKey());
+    // trustResolvedAgentId/Owner intentionally drive this effect even
+    // though they are derived, not state: the key must track the actual
+    // submission target, and re-deriving them here would duplicate the
+    // resolution logic above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isOpen,
+    isTrustOp,
+    trustKeyEdited,
+    trustResolvedAgentId,
+    trustResolvedOwner,
+  ]);
+
+  const trustCanSubmit =
+    isTrustOp &&
+    isWorkspaceAdmin &&
+    Boolean(trustResolvedAgentId) &&
+    Boolean(trustResolvedOwner) &&
+    Boolean(idempotencyKey.trim()) &&
+    !(isDistributeTrust && trustOwnerMode === 'new' && !trustNewOwner.trim());
+
   const resetForm = () => {
     setOperation('');
     setExecutor('agent');
@@ -346,6 +505,12 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     setControllerIssuerName('');
     setControllerDnsNames('');
     setSubjectSuggestions([]);
+    setTrustAgentId('');
+    setTrustOwnerMode('existing');
+    setTrustExistingOwner('');
+    setTrustNewOwner('');
+    setTrustInstallationId('');
+    setTrustKeyEdited(false);
   };
 
   const handleClose = () => {
@@ -422,16 +587,17 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       controllerDnsNamesList.length > 0
     );
 
-  const canSubmit =
-    Boolean(operation) &&
-    Boolean(workspaceId) &&
-    !submitting &&
-    fieldsRequiredForIssueMet &&
-    controllerFieldsMet &&
-    (isIssue
-      ? Boolean(idempotencyKey.trim()) &&
-        (isControllerIssue || payloadMode === 'fields' || !payloadError)
-      : subjectPairComplete && (payloadMode === 'fields' || !payloadError));
+  const canSubmit = isTrustOp
+    ? trustCanSubmit && !submitting
+    : Boolean(operation) &&
+      Boolean(workspaceId) &&
+      !submitting &&
+      fieldsRequiredForIssueMet &&
+      controllerFieldsMet &&
+      (isIssue
+        ? Boolean(idempotencyKey.trim()) &&
+          (isControllerIssue || payloadMode === 'fields' || !payloadError)
+        : subjectPairComplete && (payloadMode === 'fields' || !payloadError));
 
   const handlePayloadChange = event => {
     const text = event.target.value;
@@ -497,6 +663,31 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
+      if (isTrustOp) {
+        const result = await createJob(workspaceId, {
+          operation: trustOp.operation,
+          subjectType: 'trust_anchor',
+          subjectId: trustOp.anchorId,
+          agentId: trustResolvedAgentId,
+          owner: trustResolvedOwner,
+          idempotencyKey: idempotencyKey.trim(),
+        });
+        if (result?.ownershipReleased) {
+          showSuccess(
+            'Reference released, no agent job dispatched',
+            'Another owner still references this anchor on this agent, so the OS trust store was not touched.'
+          );
+        } else {
+          showSuccess(
+            'Job created',
+            result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
+          );
+        }
+        resetForm();
+        onClose();
+        onCreated?.();
+        return;
+      }
       if (isControllerIssue) {
         const result = await createControllerProvisionIntent(workspaceId, {
           idempotencyKey: idempotencyKey.trim(),
@@ -562,489 +753,170 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '640px' }}>
         <ModalHeader {...headerProps}>
-          <DashboardModalTitle>Create manual job</DashboardModalTitle>
+          <DashboardModalTitle>
+            {isTrustOp
+              ? `${jobOperationLabel(trustOp.operation)} trust anchor`
+              : 'Create manual job'}
+          </DashboardModalTitle>
           <DashboardModalDescription>
-            Manual job creation is an exception path for driving certificate
-            operations before automated scheduling ships.
+            {isTrustOp
+              ? `${trustOp.anchorName || 'Trust anchor'}${
+                  trustOp.anchorFingerprint
+                    ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
+                    : ''
+                }. The job is recorded with source "api".`
+              : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
         <ModalBody {...bodyProps}>
-          <VStack align='stretch' spacing={4}>
-            <Alert status='info' variant='subtle' borderRadius='md'>
-              <AlertIcon boxSize={4} />
-              <AlertDescription fontSize='sm'>
-                The job is recorded with source &quot;api&quot; and appears at
-                the start of the job&apos;s history.
-              </AlertDescription>
-            </Alert>
-            <FormControl isRequired>
-              <FormLabel fontSize='sm'>Operation</FormLabel>
-              <Select
-                size='sm'
-                placeholder='Select an operation'
-                value={operation}
-                onChange={handleOperationChange}
-              >
-                {CERTOPS_JOB_OPERATIONS.map(op => (
-                  <option key={op} value={op}>
-                    {jobOperationLabel(op)}
-                  </option>
-                ))}
-              </Select>
-              {isIssue ? (
-                <FormHelperText>
-                  Issue creates a new managed certificate; TokenTimer assigns
-                  its ID once the request is accepted, so subject fields below
-                  are hidden.
-                </FormHelperText>
+          {isTrustOp ? (
+            <VStack align='stretch' spacing={4}>
+              {!isWorkspaceAdmin ? (
+                <Alert status='warning' variant='subtle' borderRadius='md'>
+                  <AlertIcon boxSize={4} />
+                  <AlertDescription fontSize='sm'>
+                    Trust-anchor operations require workspace admin.
+                  </AlertDescription>
+                </Alert>
               ) : null}
-            </FormControl>
-            {isIssue ? (
-              <FormControl>
-                <FormLabel fontSize='sm'>Executor</FormLabel>
-                <ButtonGroup size='sm' isAttached variant='outline'>
-                  {JOB_EXECUTORS.map(option => (
-                    <Button
-                      key={option.value}
-                      colorScheme={
-                        executor === option.value ? 'blue' : undefined
-                      }
-                      variant={executor === option.value ? 'solid' : 'outline'}
-                      onClick={() => setExecutor(option.value)}
-                    >
-                      {option.label}
-                    </Button>
-                  ))}
-                </ButtonGroup>
-                <FormHelperText>
-                  {isControllerIssue
-                    ? 'Hands a strict public desired state (namespace, certificate/secret name, issuer, DNS names) to a controller bound to the chosen cluster. No manifest, Secret data, CSR, or private key material is ever sent.'
-                    : 'The default path: an agent runs the ACME/DNS-01 issuance below.'}
-                </FormHelperText>
-              </FormControl>
-            ) : null}
-            {isControllerIssue ? (
-              <>
-                <FormControl isRequired>
-                  <FormLabel fontSize='sm'>Cluster</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontSize='sm'>Target agent</FormLabel>
+                {isDistributeTrust ? (
                   <Select
                     size='sm'
-                    placeholder={
-                      controllerClusters.length
-                        ? 'Select a cluster'
-                        : 'No controller-bound clusters found'
-                    }
-                    value={controllerClusterId}
-                    onChange={event =>
-                      setControllerClusterId(event.target.value)
-                    }
-                    isDisabled={controllerClusters.length === 0}
+                    placeholder='Select an agent'
+                    value={trustAgentId}
+                    onChange={event => setTrustAgentId(event.target.value)}
                   >
-                    {controllerClusters.map(clusterId => (
-                      <option key={clusterId} value={clusterId}>
-                        {clusterId}
+                    {assignableAgents.map(agent => (
+                      <option key={agent.id} value={agent.id}>
+                        {agentSelectLabel(agent)}
                       </option>
                     ))}
                   </Select>
-                  <FormHelperText>
-                    {controllerClusters.length
-                      ? 'Only clusters with an active API token scoped to certops:observations:write or certops:provision:execute appear here.'
-                      : 'Create an API token scoped to a cluster on the API Tokens tab first, then come back here.'}
-                  </FormHelperText>
-                </FormControl>
-                <SimpleGrid columns={2} spacing={2}>
-                  <FormControl isRequired>
-                    <FormLabel fontSize='sm'>Namespace</FormLabel>
-                    <Input
-                      size='sm'
-                      value={controllerNamespace}
-                      onChange={event =>
-                        setControllerNamespace(event.target.value)
-                      }
-                      placeholder='e.g. default'
-                      autoComplete='off'
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontSize='sm'>Certificate name</FormLabel>
-                    <Input
-                      size='sm'
-                      value={controllerCertificateName}
-                      onChange={event =>
-                        setControllerCertificateName(event.target.value)
-                      }
-                      placeholder='e.g. example-web-tls'
-                      autoComplete='off'
-                    />
-                  </FormControl>
-                </SimpleGrid>
-                <FormControl isRequired>
-                  <FormLabel fontSize='sm'>Secret name</FormLabel>
-                  <Input
+                ) : (
+                  <Select
                     size='sm'
-                    value={controllerSecretName}
+                    placeholder='Select an installation to revoke'
+                    value={trustInstallationId}
                     onChange={event =>
-                      setControllerSecretName(event.target.value)
+                      setTrustInstallationId(event.target.value)
                     }
-                    placeholder='e.g. example-web-tls'
-                    autoComplete='off'
-                  />
-                  <FormHelperText>
-                    The Kubernetes Secret the cert-manager Certificate will
-                    write to. Only its metadata is ever read back by TokenTimer.
-                  </FormHelperText>
-                </FormControl>
-                <SimpleGrid columns={2} spacing={2}>
-                  <FormControl isRequired>
-                    <FormLabel fontSize='sm'>Issuer kind</FormLabel>
+                  >
+                    {trustRevocableInstallations.map(row => {
+                      const agent = agents.find(a => a.id === row.agentId);
+                      return (
+                        <option key={row.id} value={row.id}>
+                          {`${row.owner} — ${agent ? agentSelectLabel(agent) : row.host} (${row.store})`}
+                        </option>
+                      );
+                    })}
+                  </Select>
+                )}
+                <FormHelperText>
+                  {isDistributeTrust
+                    ? 'The agent whose OS trust store will receive this anchor.'
+                    : trustRevocableInstallations.length
+                      ? 'Revoke always targets an existing installation reference, not a free-typed owner.'
+                      : 'No live installations to revoke for this anchor.'}
+                </FormHelperText>
+              </FormControl>
+              {isDistributeTrust ? (
+                <FormControl isRequired>
+                  <FormLabel fontSize='sm'>Owner</FormLabel>
+                  <ButtonGroup size='sm' isAttached variant='outline' mb={2}>
+                    <Button
+                      colorScheme={
+                        trustOwnerMode === 'existing' ? 'blue' : undefined
+                      }
+                      variant={
+                        trustOwnerMode === 'existing' ? 'solid' : 'outline'
+                      }
+                      onClick={() => setTrustOwnerMode('existing')}
+                      isDisabled={trustExistingOwners.length === 0}
+                    >
+                      Existing owner
+                    </Button>
+                    <Button
+                      colorScheme={
+                        trustOwnerMode === 'new' ? 'blue' : undefined
+                      }
+                      variant={trustOwnerMode === 'new' ? 'solid' : 'outline'}
+                      onClick={() => setTrustOwnerMode('new')}
+                    >
+                      New owner
+                    </Button>
+                  </ButtonGroup>
+                  {trustOwnerMode === 'existing' ? (
                     <Select
                       size='sm'
-                      value={controllerIssuerKind}
-                      onChange={event =>
-                        setControllerIssuerKind(event.target.value)
+                      placeholder={
+                        trustExistingOwners.length
+                          ? 'Select an existing owner'
+                          : 'No existing owners for this anchor yet'
                       }
+                      value={trustExistingOwner}
+                      onChange={event =>
+                        setTrustExistingOwner(event.target.value)
+                      }
+                      isDisabled={trustExistingOwners.length === 0}
                     >
-                      {CONTROLLER_ISSUER_KINDS.map(kind => (
-                        <option key={kind} value={kind}>
-                          {kind}
+                      {trustExistingOwners.map(owner => (
+                        <option key={owner} value={owner}>
+                          {owner}
                         </option>
                       ))}
                     </Select>
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontSize='sm'>Issuer name</FormLabel>
+                  ) : (
                     <Input
                       size='sm'
-                      value={controllerIssuerName}
-                      onChange={event =>
-                        setControllerIssuerName(event.target.value)
-                      }
-                      placeholder='e.g. letsencrypt-prod'
+                      value={trustNewOwner}
+                      onChange={event => setTrustNewOwner(event.target.value)}
+                      placeholder='e.g. a team or system label'
+                      maxLength={128}
                       autoComplete='off'
                     />
-                  </FormControl>
-                </SimpleGrid>
-                <FormControl isRequired>
-                  <FormLabel fontSize='sm'>DNS names</FormLabel>
-                  <Textarea
-                    size='sm'
-                    rows={2}
-                    value={controllerDnsNames}
-                    onChange={event =>
-                      setControllerDnsNames(event.target.value)
-                    }
-                    placeholder='Comma or newline separated, e.g. example.com, www.example.com'
-                  />
-                  <FormHelperText>
-                    At least one DNS name is required; wildcards (e.g.
-                    *.example.com) are accepted.
-                  </FormHelperText>
-                </FormControl>
-              </>
-            ) : null}
-            {isIssue ? null : (
-              <>
-                <FormControl
-                  isRequired={
-                    subjectRequiredForOperation || Boolean(subjectId.trim())
-                  }
-                >
-                  <FormLabel fontSize='sm'>Subject type</FormLabel>
-                  <Select
-                    size='sm'
-                    placeholder='No subject'
-                    value={subjectType}
-                    onChange={event => {
-                      setSubjectType(event.target.value);
-                      setSubjectId('');
-                    }}
+                  )}
+                  <FormHelperText
+                    color={trustNewOwnerCollision ? 'orange.500' : undefined}
                   >
-                    {MANUAL_JOB_SUBJECT_TYPES.map(type => (
-                      <option key={type} value={type}>
-                        {subjectTypeLabel(type)}
-                      </option>
-                    ))}
-                  </Select>
-                  <FormHelperText>
-                    {subjectRequiredForOperation
-                      ? 'Required for this operation, together with subject ID.'
-                      : 'Required together with subject ID, or leave both empty.'}
+                    {trustNewOwnerCollision
+                      ? `Close to existing owner "${trustNewOwnerCollision}" (case differs only). Reference counting is exact-match, so this would create a separate, dangling reference. Consider reusing the existing owner instead.`
+                      : 'Picked from an existing reference on this agent/anchor, or a new label. Reference counting matches this string exactly, including case.'}
                   </FormHelperText>
                 </FormControl>
-                <FormControl
-                  isRequired={
-                    subjectRequiredForOperation || Boolean(subjectType)
-                  }
-                >
-                  <FormLabel fontSize='sm'>Subject ID</FormLabel>
+              ) : (
+                <FormControl>
+                  <FormLabel fontSize='sm'>Owner</FormLabel>
                   <Input
                     size='sm'
-                    value={subjectId}
-                    onChange={event => setSubjectId(event.target.value)}
-                    maxLength={SUBJECT_ID_MAX_LENGTH}
-                    placeholder={
-                      SUBJECT_ID_PLACEHOLDERS[subjectType] ||
-                      DEFAULT_SUBJECT_ID_PLACEHOLDER
-                    }
-                    list={
-                      subjectSuggestions.length
-                        ? MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID
-                        : undefined
-                    }
-                    autoComplete='off'
+                    value={trustSelectedInstallation?.owner || ''}
+                    isReadOnly
+                    isDisabled
                   />
                   <FormHelperText>
-                    {subjectRequiredForOperation
-                      ? 'Required for this operation, together with subject type.'
-                      : 'Required together with subject type, or leave both empty.'}
+                    Owner is fixed to the installation selected above.
                   </FormHelperText>
-                  {subjectSuggestions.length ? (
-                    <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
-                      {subjectSuggestions.map(item => (
-                        <option
-                          key={item.id}
-                          value={item.id}
-                          label={item.label}
-                        />
-                      ))}
-                    </datalist>
-                  ) : null}
                 </FormControl>
-              </>
-            )}
-            {hidesAgentField ? null : (
-              <FormControl>
-                <FormLabel fontSize='sm'>Agent</FormLabel>
-                <Select
+              )}
+              <FormControl isRequired>
+                <FormLabel fontSize='sm'>Idempotency key</FormLabel>
+                <Input
                   size='sm'
-                  placeholder='Any eligible agent (default)'
-                  value={assignedAgentId}
-                  onChange={event => setAssignedAgentId(event.target.value)}
-                >
-                  {assignableAgents.map(agent => (
-                    <option key={agent.id} value={agent.id}>
-                      {agentSelectLabel(agent)}
-                    </option>
-                  ))}
-                </Select>
+                  value={idempotencyKey}
+                  onChange={event => {
+                    setTrustKeyEdited(true);
+                    setIdempotencyKey(event.target.value);
+                  }}
+                  autoComplete='off'
+                />
                 <FormHelperText>
-                  Optional. Leave unset to let any agent whose declared
-                  selectors/profiles/DNS providers match claim the job first;
-                  pin to one agent to force a specific host to run it.
+                  Auto-generated per target; regenerates while unedited if the
+                  agent/owner selection changes. Override only if you need a
+                  specific retry key.
                 </FormHelperText>
               </FormControl>
-            )}
-            <FormControl isRequired={isIssue}>
-              <FormLabel fontSize='sm'>Idempotency key</FormLabel>
-              <Input
-                size='sm'
-                value={idempotencyKey}
-                onChange={event => setIdempotencyKey(event.target.value)}
-                placeholder='e.g. a client-generated request id'
-                autoComplete='off'
-              />
-              <FormHelperText>
-                {isIssue
-                  ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
-                  : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
-              </FormHelperText>
-            </FormControl>
-            {isControllerIssue ? null : (
-              <FormControl
-                isInvalid={payloadMode === 'json' && Boolean(payloadError)}
-              >
-                <HStack justify='space-between' align='center' mb={1}>
-                  <FormLabel fontSize='sm' mb={0}>
-                    Payload
-                  </FormLabel>
-                  <ButtonGroup size='sm' isAttached variant='outline'>
-                    <Button
-                      colorScheme={
-                        payloadMode === 'fields' ? 'blue' : undefined
-                      }
-                      variant={payloadMode === 'fields' ? 'solid' : 'outline'}
-                      onClick={() => setPayloadMode('fields')}
-                    >
-                      Fields
-                    </Button>
-                    <Button
-                      colorScheme={payloadMode === 'json' ? 'blue' : undefined}
-                      variant={payloadMode === 'json' ? 'solid' : 'outline'}
-                      onClick={() => {
-                        // Switching to JSON seeds the textarea from whatever
-                        // was entered in the fields tab, so nothing is lost
-                        // and an operator can start from the structured
-                        // fields and drop into raw JSON only to add what the
-                        // fields do not cover.
-                        const seeded = buildFieldsPayload();
-                        if (Object.keys(seeded).length && !payloadText.trim()) {
-                          setPayloadText(JSON.stringify(seeded, null, 2));
-                        }
-                        setPayloadMode('json');
-                      }}
-                    >
-                      JSON
-                    </Button>
-                  </ButtonGroup>
-                </HStack>
-                {payloadMode === 'fields' ? (
-                  isRenew ? (
-                    <VStack align='stretch' spacing={2}>
-                      <FormControl>
-                        <FormLabel fontSize='xs' mb={0.5}>
-                          Reason
-                        </FormLabel>
-                        <Input
-                          size='sm'
-                          value={fieldReason}
-                          onChange={event => setFieldReason(event.target.value)}
-                          placeholder='e.g. manual renewal requested by ops'
-                          autoComplete='off'
-                        />
-                      </FormControl>
-                      <FormHelperText>
-                        Optional. The only overridable field for a renew job:
-                        target, SANs, ACME command, CA, DNS-01 zone/provider,
-                        and deploy path always come from the certificate&apos;s
-                        stored renewal profile and cannot be set here.
-                      </FormHelperText>
-                    </VStack>
-                  ) : (
-                    <VStack align='stretch' spacing={2}>
-                      <FormControl isRequired={isIssue}>
-                        <FormLabel fontSize='xs' mb={0.5}>
-                          Target domain
-                        </FormLabel>
-                        <Input
-                          size='sm'
-                          value={fieldTarget}
-                          onChange={event => setFieldTarget(event.target.value)}
-                          placeholder='e.g. example.com'
-                          autoComplete='off'
-                        />
-                      </FormControl>
-                      <FormControl>
-                        <FormLabel fontSize='xs' mb={0.5}>
-                          SANs
-                        </FormLabel>
-                        <Input
-                          size='sm'
-                          value={fieldSans}
-                          onChange={event => setFieldSans(event.target.value)}
-                          placeholder='Comma or newline separated (defaults to target)'
-                          autoComplete='off'
-                        />
-                      </FormControl>
-                      <SimpleGrid columns={2} spacing={2}>
-                        <FormControl isRequired={isIssue}>
-                          <FormLabel fontSize='xs' mb={0.5}>
-                            Command ref
-                          </FormLabel>
-                          <Input
-                            size='sm'
-                            value={fieldCommandRef}
-                            onChange={event =>
-                              setFieldCommandRef(event.target.value)
-                            }
-                            placeholder='e.g. certbot-csr'
-                            autoComplete='off'
-                          />
-                        </FormControl>
-                        <FormControl isRequired={isIssue}>
-                          <FormLabel fontSize='xs' mb={0.5}>
-                            DNS provider
-                          </FormLabel>
-                          <Input
-                            size='sm'
-                            value={fieldDnsProvider}
-                            onChange={event =>
-                              setFieldDnsProvider(event.target.value)
-                            }
-                            placeholder='e.g. cloudflare'
-                            autoComplete='off'
-                          />
-                        </FormControl>
-                      </SimpleGrid>
-                      <FormControl isRequired={isIssue}>
-                        <FormLabel fontSize='xs' mb={0.5}>
-                          CA endpoint
-                        </FormLabel>
-                        <Input
-                          size='sm'
-                          value={fieldCaEndpoint}
-                          onChange={event =>
-                            setFieldCaEndpoint(event.target.value)
-                          }
-                          placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
-                          autoComplete='off'
-                        />
-                      </FormControl>
-                      <SimpleGrid columns={2} spacing={2}>
-                        <FormControl isRequired={isIssue}>
-                          <FormLabel fontSize='xs' mb={0.5}>
-                            DNS zone
-                          </FormLabel>
-                          <Input
-                            size='sm'
-                            value={fieldDnsZone}
-                            onChange={event =>
-                              setFieldDnsZone(event.target.value)
-                            }
-                            placeholder='e.g. example.com'
-                            autoComplete='off'
-                          />
-                        </FormControl>
-                        <FormControl isRequired={isIssue}>
-                          <FormLabel fontSize='xs' mb={0.5}>
-                            Cert file path
-                          </FormLabel>
-                          <Input
-                            size='sm'
-                            value={fieldCertPath}
-                            onChange={event =>
-                              setFieldCertPath(event.target.value)
-                            }
-                            placeholder='e.g. /etc/ssl/example.com.pem'
-                            autoComplete='off'
-                          />
-                        </FormControl>
-                      </SimpleGrid>
-                      <FormHelperText>
-                        {isIssue
-                          ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
-                          : 'Optional. Fills the same execution payload keys a deploy/reload job reads. Switch to JSON for anything not listed here.'}
-                      </FormHelperText>
-                    </VStack>
-                  )
-                ) : (
-                  <>
-                    <Textarea
-                      size='sm'
-                      fontFamily='mono'
-                      fontSize='xs'
-                      rows={6}
-                      value={payloadText}
-                      onChange={handlePayloadChange}
-                      placeholder={
-                        isRenew
-                          ? RENEW_PAYLOAD_JSON_EXAMPLE
-                          : PAYLOAD_JSON_EXAMPLE
-                      }
-                    />
-                    <FormHelperText>
-                      {payloadError ||
-                        (isIssue
-                          ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
-                          : isRenew
-                            ? "Optional. Only 'reason' is accepted here; every other execution field comes from the certificate's stored renewal profile."
-                            : 'Optional. Free-form JSON merged into the job payload.')}
-                    </FormHelperText>
-                  </>
-                )}
-              </FormControl>
-            )}
-            {isControllerIssue ? null : (
               <FormControl>
                 <Checkbox
                   size='sm'
@@ -1058,11 +930,521 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                 <FormHelperText>
                   The job starts at &quot;Pending approval&quot; instead of
                   claimable; an authorized workspace member other than you must
-                  approve it from this page before an agent can pick it up.
+                  approve it before an agent can pick it up.
                 </FormHelperText>
               </FormControl>
-            )}
-          </VStack>
+            </VStack>
+          ) : (
+            <VStack align='stretch' spacing={4}>
+              <Alert status='info' variant='subtle' borderRadius='md'>
+                <AlertIcon boxSize={4} />
+                <AlertDescription fontSize='sm'>
+                  The job is recorded with source &quot;api&quot; and appears at
+                  the start of the job&apos;s history.
+                </AlertDescription>
+              </Alert>
+              <FormControl isRequired>
+                <FormLabel fontSize='sm'>Operation</FormLabel>
+                <Select
+                  size='sm'
+                  placeholder='Select an operation'
+                  value={operation}
+                  onChange={handleOperationChange}
+                >
+                  {CERTOPS_JOB_OPERATIONS.map(op => (
+                    <option key={op} value={op}>
+                      {jobOperationLabel(op)}
+                    </option>
+                  ))}
+                </Select>
+                {isIssue ? (
+                  <FormHelperText>
+                    Issue creates a new managed certificate; TokenTimer assigns
+                    its ID once the request is accepted, so subject fields below
+                    are hidden.
+                  </FormHelperText>
+                ) : null}
+              </FormControl>
+              {isIssue ? (
+                <FormControl>
+                  <FormLabel fontSize='sm'>Executor</FormLabel>
+                  <ButtonGroup size='sm' isAttached variant='outline'>
+                    {JOB_EXECUTORS.map(option => (
+                      <Button
+                        key={option.value}
+                        colorScheme={
+                          executor === option.value ? 'blue' : undefined
+                        }
+                        variant={
+                          executor === option.value ? 'solid' : 'outline'
+                        }
+                        onClick={() => setExecutor(option.value)}
+                      >
+                        {option.label}
+                      </Button>
+                    ))}
+                  </ButtonGroup>
+                  <FormHelperText>
+                    {isControllerIssue
+                      ? 'Hands a strict public desired state (namespace, certificate/secret name, issuer, DNS names) to a controller bound to the chosen cluster. No manifest, Secret data, CSR, or private key material is ever sent.'
+                      : 'The default path: an agent runs the ACME/DNS-01 issuance below.'}
+                  </FormHelperText>
+                </FormControl>
+              ) : null}
+              {isControllerIssue ? (
+                <>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Cluster</FormLabel>
+                    <Select
+                      size='sm'
+                      placeholder={
+                        controllerClusters.length
+                          ? 'Select a cluster'
+                          : 'No controller-bound clusters found'
+                      }
+                      value={controllerClusterId}
+                      onChange={event =>
+                        setControllerClusterId(event.target.value)
+                      }
+                      isDisabled={controllerClusters.length === 0}
+                    >
+                      {controllerClusters.map(clusterId => (
+                        <option key={clusterId} value={clusterId}>
+                          {clusterId}
+                        </option>
+                      ))}
+                    </Select>
+                    <FormHelperText>
+                      {controllerClusters.length
+                        ? 'Only clusters with an active API token scoped to certops:observations:write or certops:provision:execute appear here.'
+                        : 'Create an API token scoped to a cluster on the API Tokens tab first, then come back here.'}
+                    </FormHelperText>
+                  </FormControl>
+                  <SimpleGrid columns={2} spacing={2}>
+                    <FormControl isRequired>
+                      <FormLabel fontSize='sm'>Namespace</FormLabel>
+                      <Input
+                        size='sm'
+                        value={controllerNamespace}
+                        onChange={event =>
+                          setControllerNamespace(event.target.value)
+                        }
+                        placeholder='e.g. default'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel fontSize='sm'>Certificate name</FormLabel>
+                      <Input
+                        size='sm'
+                        value={controllerCertificateName}
+                        onChange={event =>
+                          setControllerCertificateName(event.target.value)
+                        }
+                        placeholder='e.g. example-web-tls'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Secret name</FormLabel>
+                    <Input
+                      size='sm'
+                      value={controllerSecretName}
+                      onChange={event =>
+                        setControllerSecretName(event.target.value)
+                      }
+                      placeholder='e.g. example-web-tls'
+                      autoComplete='off'
+                    />
+                    <FormHelperText>
+                      The Kubernetes Secret the cert-manager Certificate will
+                      write to. Only its metadata is ever read back by
+                      TokenTimer.
+                    </FormHelperText>
+                  </FormControl>
+                  <SimpleGrid columns={2} spacing={2}>
+                    <FormControl isRequired>
+                      <FormLabel fontSize='sm'>Issuer kind</FormLabel>
+                      <Select
+                        size='sm'
+                        value={controllerIssuerKind}
+                        onChange={event =>
+                          setControllerIssuerKind(event.target.value)
+                        }
+                      >
+                        {CONTROLLER_ISSUER_KINDS.map(kind => (
+                          <option key={kind} value={kind}>
+                            {kind}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel fontSize='sm'>Issuer name</FormLabel>
+                      <Input
+                        size='sm'
+                        value={controllerIssuerName}
+                        onChange={event =>
+                          setControllerIssuerName(event.target.value)
+                        }
+                        placeholder='e.g. letsencrypt-prod'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>DNS names</FormLabel>
+                    <Textarea
+                      size='sm'
+                      rows={2}
+                      value={controllerDnsNames}
+                      onChange={event =>
+                        setControllerDnsNames(event.target.value)
+                      }
+                      placeholder='Comma or newline separated, e.g. example.com, www.example.com'
+                    />
+                    <FormHelperText>
+                      At least one DNS name is required; wildcards (e.g.
+                      *.example.com) are accepted.
+                    </FormHelperText>
+                  </FormControl>
+                </>
+              ) : null}
+              {isIssue ? null : (
+                <>
+                  <FormControl
+                    isRequired={
+                      subjectRequiredForOperation || Boolean(subjectId.trim())
+                    }
+                  >
+                    <FormLabel fontSize='sm'>Subject type</FormLabel>
+                    <Select
+                      size='sm'
+                      placeholder='No subject'
+                      value={subjectType}
+                      onChange={event => {
+                        setSubjectType(event.target.value);
+                        setSubjectId('');
+                      }}
+                    >
+                      {MANUAL_JOB_SUBJECT_TYPES.map(type => (
+                        <option key={type} value={type}>
+                          {subjectTypeLabel(type)}
+                        </option>
+                      ))}
+                    </Select>
+                    <FormHelperText>
+                      {subjectRequiredForOperation
+                        ? 'Required for this operation, together with subject ID.'
+                        : 'Required together with subject ID, or leave both empty.'}
+                    </FormHelperText>
+                  </FormControl>
+                  <FormControl
+                    isRequired={
+                      subjectRequiredForOperation || Boolean(subjectType)
+                    }
+                  >
+                    <FormLabel fontSize='sm'>Subject ID</FormLabel>
+                    <Input
+                      size='sm'
+                      value={subjectId}
+                      onChange={event => setSubjectId(event.target.value)}
+                      maxLength={SUBJECT_ID_MAX_LENGTH}
+                      placeholder={
+                        SUBJECT_ID_PLACEHOLDERS[subjectType] ||
+                        DEFAULT_SUBJECT_ID_PLACEHOLDER
+                      }
+                      list={
+                        subjectSuggestions.length
+                          ? MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID
+                          : undefined
+                      }
+                      autoComplete='off'
+                    />
+                    <FormHelperText>
+                      {subjectRequiredForOperation
+                        ? 'Required for this operation, together with subject type.'
+                        : 'Required together with subject type, or leave both empty.'}
+                    </FormHelperText>
+                    {subjectSuggestions.length ? (
+                      <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
+                        {subjectSuggestions.map(item => (
+                          <option
+                            key={item.id}
+                            value={item.id}
+                            label={item.label}
+                          />
+                        ))}
+                      </datalist>
+                    ) : null}
+                  </FormControl>
+                </>
+              )}
+              {hidesAgentField ? null : (
+                <FormControl>
+                  <FormLabel fontSize='sm'>Agent</FormLabel>
+                  <Select
+                    size='sm'
+                    placeholder='Any eligible agent (default)'
+                    value={assignedAgentId}
+                    onChange={event => setAssignedAgentId(event.target.value)}
+                  >
+                    {assignableAgents.map(agent => (
+                      <option key={agent.id} value={agent.id}>
+                        {agentSelectLabel(agent)}
+                      </option>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Optional. Leave unset to let any agent whose declared
+                    selectors/profiles/DNS providers match claim the job first;
+                    pin to one agent to force a specific host to run it.
+                  </FormHelperText>
+                </FormControl>
+              )}
+              <FormControl isRequired={isIssue}>
+                <FormLabel fontSize='sm'>Idempotency key</FormLabel>
+                <Input
+                  size='sm'
+                  value={idempotencyKey}
+                  onChange={event => setIdempotencyKey(event.target.value)}
+                  placeholder='e.g. a client-generated request id'
+                  autoComplete='off'
+                />
+                <FormHelperText>
+                  {isIssue
+                    ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
+                    : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
+                </FormHelperText>
+              </FormControl>
+              {isControllerIssue ? null : (
+                <FormControl
+                  isInvalid={payloadMode === 'json' && Boolean(payloadError)}
+                >
+                  <HStack justify='space-between' align='center' mb={1}>
+                    <FormLabel fontSize='sm' mb={0}>
+                      Payload
+                    </FormLabel>
+                    <ButtonGroup size='sm' isAttached variant='outline'>
+                      <Button
+                        colorScheme={
+                          payloadMode === 'fields' ? 'blue' : undefined
+                        }
+                        variant={payloadMode === 'fields' ? 'solid' : 'outline'}
+                        onClick={() => setPayloadMode('fields')}
+                      >
+                        Fields
+                      </Button>
+                      <Button
+                        colorScheme={
+                          payloadMode === 'json' ? 'blue' : undefined
+                        }
+                        variant={payloadMode === 'json' ? 'solid' : 'outline'}
+                        onClick={() => {
+                          // Switching to JSON seeds the textarea from whatever
+                          // was entered in the fields tab, so nothing is lost
+                          // and an operator can start from the structured
+                          // fields and drop into raw JSON only to add what the
+                          // fields do not cover.
+                          const seeded = buildFieldsPayload();
+                          if (
+                            Object.keys(seeded).length &&
+                            !payloadText.trim()
+                          ) {
+                            setPayloadText(JSON.stringify(seeded, null, 2));
+                          }
+                          setPayloadMode('json');
+                        }}
+                      >
+                        JSON
+                      </Button>
+                    </ButtonGroup>
+                  </HStack>
+                  {payloadMode === 'fields' ? (
+                    isRenew ? (
+                      <VStack align='stretch' spacing={2}>
+                        <FormControl>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            Reason
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldReason}
+                            onChange={event =>
+                              setFieldReason(event.target.value)
+                            }
+                            placeholder='e.g. manual renewal requested by ops'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <FormHelperText>
+                          Optional. The only overridable field for a renew job:
+                          target, SANs, ACME command, CA, DNS-01 zone/provider,
+                          and deploy path always come from the
+                          certificate&apos;s stored renewal profile and cannot
+                          be set here.
+                        </FormHelperText>
+                      </VStack>
+                    ) : (
+                      <VStack align='stretch' spacing={2}>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            Target domain
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldTarget}
+                            onChange={event =>
+                              setFieldTarget(event.target.value)
+                            }
+                            placeholder='e.g. example.com'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <FormControl>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            SANs
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldSans}
+                            onChange={event => setFieldSans(event.target.value)}
+                            placeholder='Comma or newline separated (defaults to target)'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <SimpleGrid columns={2} spacing={2}>
+                          <FormControl isRequired={isIssue}>
+                            <FormLabel fontSize='xs' mb={0.5}>
+                              Command ref
+                            </FormLabel>
+                            <Input
+                              size='sm'
+                              value={fieldCommandRef}
+                              onChange={event =>
+                                setFieldCommandRef(event.target.value)
+                              }
+                              placeholder='e.g. certbot-csr'
+                              autoComplete='off'
+                            />
+                          </FormControl>
+                          <FormControl isRequired={isIssue}>
+                            <FormLabel fontSize='xs' mb={0.5}>
+                              DNS provider
+                            </FormLabel>
+                            <Input
+                              size='sm'
+                              value={fieldDnsProvider}
+                              onChange={event =>
+                                setFieldDnsProvider(event.target.value)
+                              }
+                              placeholder='e.g. cloudflare'
+                              autoComplete='off'
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+                        <FormControl isRequired={isIssue}>
+                          <FormLabel fontSize='xs' mb={0.5}>
+                            CA endpoint
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={fieldCaEndpoint}
+                            onChange={event =>
+                              setFieldCaEndpoint(event.target.value)
+                            }
+                            placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <SimpleGrid columns={2} spacing={2}>
+                          <FormControl isRequired={isIssue}>
+                            <FormLabel fontSize='xs' mb={0.5}>
+                              DNS zone
+                            </FormLabel>
+                            <Input
+                              size='sm'
+                              value={fieldDnsZone}
+                              onChange={event =>
+                                setFieldDnsZone(event.target.value)
+                              }
+                              placeholder='e.g. example.com'
+                              autoComplete='off'
+                            />
+                          </FormControl>
+                          <FormControl isRequired={isIssue}>
+                            <FormLabel fontSize='xs' mb={0.5}>
+                              Cert file path
+                            </FormLabel>
+                            <Input
+                              size='sm'
+                              value={fieldCertPath}
+                              onChange={event =>
+                                setFieldCertPath(event.target.value)
+                              }
+                              placeholder='e.g. /etc/ssl/example.com.pem'
+                              autoComplete='off'
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+                        <FormHelperText>
+                          {isIssue
+                            ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
+                            : 'Optional. Fills the same execution payload keys a deploy/reload job reads. Switch to JSON for anything not listed here.'}
+                        </FormHelperText>
+                      </VStack>
+                    )
+                  ) : (
+                    <>
+                      <Textarea
+                        size='sm'
+                        fontFamily='mono'
+                        fontSize='xs'
+                        rows={6}
+                        value={payloadText}
+                        onChange={handlePayloadChange}
+                        placeholder={
+                          isRenew
+                            ? RENEW_PAYLOAD_JSON_EXAMPLE
+                            : PAYLOAD_JSON_EXAMPLE
+                        }
+                      />
+                      <FormHelperText>
+                        {payloadError ||
+                          (isIssue
+                            ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
+                            : isRenew
+                              ? "Optional. Only 'reason' is accepted here; every other execution field comes from the certificate's stored renewal profile."
+                              : 'Optional. Free-form JSON merged into the job payload.')}
+                      </FormHelperText>
+                    </>
+                  )}
+                </FormControl>
+              )}
+              {isControllerIssue ? null : (
+                <FormControl>
+                  <Checkbox
+                    size='sm'
+                    isChecked={requiresApproval}
+                    onChange={event =>
+                      setRequiresApproval(event.target.checked)
+                    }
+                  >
+                    <Text as='span' fontSize='sm'>
+                      Require approval before this job can run
+                    </Text>
+                  </Checkbox>
+                  <FormHelperText>
+                    The job starts at &quot;Pending approval&quot; instead of
+                    claimable; an authorized workspace member other than you
+                    must approve it from this page before an agent can pick it
+                    up.
+                  </FormHelperText>
+                </FormControl>
+              )}
+            </VStack>
+          )}
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Button
@@ -1080,7 +1462,11 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             isLoading={submitting}
             loadingText='Creating'
           >
-            {isControllerIssue ? 'Create provisioning intent' : 'Create job'}
+            {isControllerIssue
+              ? 'Create provisioning intent'
+              : isTrustOp
+                ? jobOperationLabel(trustOp.operation)
+                : 'Create job'}
           </Button>
         </ModalFooter>
       </DashboardModalFrame>
