@@ -47,6 +47,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
   useCertOpsEnabled: () => true,
+  useCertOpsIsWorkspaceAdmin: () => false,
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
