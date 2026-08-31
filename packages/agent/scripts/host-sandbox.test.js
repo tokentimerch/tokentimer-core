@@ -4,6 +4,9 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   validateAbsolutePath,
+  trustStoreWritePaths,
+  isSystemTrustStorePath,
+  isTrustStoreRecursiveAclPath,
   buildSystemdOverride,
   buildPolkitRule,
   mapReloadService,
@@ -47,6 +50,47 @@ describe("host-sandbox systemd override", () => {
       (text.match(/\/etc\/ssl\/certs/g) || []).length,
       1,
     );
+  });
+});
+
+describe("host-sandbox trust-store paths", () => {
+  it("returns Debian write paths without granting all of /etc", () => {
+    const paths = trustStoreWritePaths("debian");
+    assert.deepEqual(paths, [
+      "/usr/local/share/ca-certificates",
+      "/etc/ssl/certs",
+    ]);
+    assert.ok(paths.every((p) => p !== "/etc" && p !== "/usr"));
+  });
+
+  it("returns RHEL write paths without granting all of /etc", () => {
+    const paths = trustStoreWritePaths("rhel");
+    assert.deepEqual(paths, [
+      "/etc/pki/ca-trust/source/anchors",
+      "/etc/pki/ca-trust/extracted",
+      "/etc/pki/tls/certs",
+    ]);
+    assert.ok(paths.every((p) => p !== "/etc" && !p.startsWith("/etc/pki/ca-trust/source/anchors/")));
+  });
+
+  it("rejects an unknown family", () => {
+    assert.throws(() => trustStoreWritePaths("windows"), /debian or rhel/);
+    assert.throws(() => trustStoreWritePaths(""), /debian or rhel/);
+  });
+
+  it("identifies OS-owned trust-store directories so the installer will not chown them", () => {
+    assert.equal(isSystemTrustStorePath("/etc/ssl/certs"), true);
+    assert.equal(isSystemTrustStorePath("/usr/local/share/ca-certificates/"), true);
+    assert.equal(isSystemTrustStorePath("/etc/pki/ca-trust/source/anchors"), true);
+    assert.equal(isSystemTrustStorePath("/etc/nginx/certs"), false);
+    assert.equal(isSystemTrustStorePath("/etc/ssl/tokentimer"), false);
+  });
+
+  it("marks only RHEL extracted/ as needing a recursive ACL", () => {
+    assert.equal(isTrustStoreRecursiveAclPath("/etc/pki/ca-trust/extracted"), true);
+    assert.equal(isTrustStoreRecursiveAclPath("/etc/pki/ca-trust/source/anchors"), false);
+    assert.equal(isTrustStoreRecursiveAclPath("/etc/ssl/certs"), false);
+    assert.equal(isTrustStoreRecursiveAclPath("/usr/local/share/ca-certificates"), false);
   });
 });
 

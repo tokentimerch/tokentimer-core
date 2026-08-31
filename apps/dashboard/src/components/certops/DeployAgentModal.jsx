@@ -83,13 +83,15 @@ function buildTokenlessInstallCommand({ apiUrl, workspaceId, os }) {
     return [
       '.\\install-agent.ps1 `',
       `  --api-url '${apiUrl}' \``,
-      `  --workspace-id '${workspaceId}'`,
+      `  --workspace-id '${workspaceId}' \``,
+      `  --trust-store`,
     ].join('\n');
   }
   return [
     `sudo ./install-agent.sh \\`,
     `  --api-url '${apiUrl}' \\`,
-    `  --workspace-id '${workspaceId}'`,
+    `  --workspace-id '${workspaceId}' \\`,
+    `  --trust-store`,
   ].join('\n');
 }
 

@@ -236,6 +236,90 @@ describe('TrustAnchorsPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('places Refresh beside Distribute to an agent', () => {
+    const refreshInstallations = vi.fn();
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({ refresh: refreshInstallations })
+    );
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    const distribute = screen.getByRole('button', {
+      name: 'Distribute to an agent',
+      hidden: true,
+    });
+    const refresh = screen.getByRole('button', {
+      name: 'Refresh',
+      hidden: true,
+    });
+    expect(distribute.parentElement).toBe(refresh.parentElement);
+
+    fireEvent.click(refresh);
+    expect(refreshInstallations).toHaveBeenCalled();
+  });
+
+  it('keeps the expanded installation table visible while Refresh is in flight', () => {
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        loading: true,
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'installed',
+          },
+        ],
+      })
+    );
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({
+        anchors: [
+          sampleAnchor(),
+          sampleAnchor({ id: 'anchor-2', name: 'Intermediate CA' }),
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(screen.getByText('team-a')).toBeInTheDocument();
+    expect(screen.getByText('Intermediate CA')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Loading installations...')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Loading trust anchors...')
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the anchor list mounted while a later refresh is in flight', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({
+        loading: true,
+        anchors: [
+          sampleAnchor(),
+          sampleAnchor({ id: 'anchor-2', name: 'Intermediate CA' }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Internal Root CA')).toBeInTheDocument();
+    expect(screen.getByText('Intermediate CA')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Loading trust anchors...')
+    ).not.toBeInTheDocument();
+  });
+
   it('opens the trust-op modal in revoke mode from an installation row', () => {
     useCertOpsTrustAnchorsMock.mockReturnValue(
       anchorsState({ anchors: [sampleAnchor()] })

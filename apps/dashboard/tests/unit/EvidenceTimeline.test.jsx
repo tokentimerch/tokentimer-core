@@ -6,12 +6,24 @@ import { ChakraProvider } from '@chakra-ui/react';
 import EvidenceTimeline from '../../src/components/certops/EvidenceTimeline.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
-const { useCertOpsJobTimelineMock } = vi.hoisted(() => ({
+const { useCertOpsJobTimelineMock, useCertOpsAgentsMock } = vi.hoisted(() => ({
   useCertOpsJobTimelineMock: vi.fn(),
+  useCertOpsAgentsMock: vi.fn(() => ({
+    enabled: true,
+    agents: [],
+    pagination: null,
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+  })),
 }));
 
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
   useCertOpsJobTimeline: useCertOpsJobTimelineMock,
+}));
+
+vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
+  useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
 function renderWithProviders(ui) {
@@ -39,6 +51,15 @@ function baseJob(overrides = {}) {
 describe('EvidenceTimeline', () => {
   beforeEach(() => {
     useCertOpsJobTimelineMock.mockReset();
+    useCertOpsAgentsMock.mockReset();
+    useCertOpsAgentsMock.mockReturnValue({
+      enabled: true,
+      agents: [],
+      pagination: null,
+      loading: false,
+      error: '',
+      refresh: vi.fn(),
+    });
   });
 
   it('shows a loading spinner while the timeline is loading', () => {
@@ -650,5 +671,36 @@ describe('EvidenceTimeline', () => {
     expect(screen.getByText('Attempt 4')).toBeInTheDocument();
     expect(screen.getByText('Attempt 5')).toBeInTheDocument();
     expect(screen.queryByText('Later attempt')).not.toBeInTheDocument();
+  });
+
+  it('shows the claimed agent hostname next to the copyable id', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      enabled: true,
+      agents: [
+        {
+          id: 'agent-row-1',
+          agentId: 'candidate-DESKTOP-J85DKKR-153006',
+          hostname: 'DESKTOP-J85DKKR',
+        },
+      ],
+      pagination: null,
+      loading: false,
+      error: '',
+      refresh: vi.fn(),
+    });
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ claimedByAgentId: 'agent-row-1' }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getByText('DESKTOP-J85DKKR (agent-row-1)')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
   });
 });
