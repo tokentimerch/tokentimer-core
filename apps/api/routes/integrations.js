@@ -1529,7 +1529,7 @@ router.post(
         e?.message?.includes("PermissionDenied")
       ) {
         userMessage =
-          'GCP permission denied. Ensure your account has "Secret Manager Secret Accessor" role (roles/secretmanager.secretAccessor) on the project.';
+          'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.';
       } else if (e?.status === 404 || e?.message?.includes("NotFound")) {
         userMessage =
           "GCP project or resource not found. Verify your project ID is correct and you have access.";
