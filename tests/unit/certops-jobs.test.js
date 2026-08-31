@@ -2758,4 +2758,71 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
     );
     assert.equal(client.jobs.length, 0);
   });
+
+  it("preflight returns the payload the real creation path would insert, without writing anything", async () => {
+    const { preflightManualRenewalJob } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const certificate = certificateRow();
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificate],
+    });
+
+    const payload = await preflightManualRenewalJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      certificateId: MANUAL_RENEWAL_CERT_ID,
+      payload: { reason: "pre-audit" },
+    });
+
+    assert.equal(payload.reason, "pre-audit");
+    assert.equal(payload.certificateId, MANUAL_RENEWAL_CERT_ID);
+    assert.equal(payload.commandRef, "acme-renew-default");
+    assert.ok(payload.renewalProfile);
+    assert.equal(client.jobs.length, 0);
+  });
+
+  it("preflight surfaces an incomplete stored renewal profile with the same code the real run raises", async () => {
+    const { CERTOPS_RENEWAL_PROFILE_INCOMPLETE } = require(
+      path.resolve(
+        __dirname,
+        "../../apps/api/services/certops/renewalProfile.js",
+      ),
+    );
+    const { preflightManualRenewalJob } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createManualRenewalMemoryClient({
+      certificates: [certificateRow({ profile_id: null })],
+    });
+
+    await assert.rejects(
+      () =>
+        preflightManualRenewalJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          certificateId: MANUAL_RENEWAL_CERT_ID,
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+    assert.equal(client.jobs.length, 0);
+  });
+
+  it("preflight rejects an unknown certificate the same way the real run does", async () => {
+    const { CERTOPS_CERTIFICATE_NOT_FOUND, preflightManualRenewalJob } =
+      require(
+        path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+      );
+    const client = createManualRenewalMemoryClient({ certificates: [] });
+
+    await assert.rejects(
+      () =>
+        preflightManualRenewalJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          certificateId: MANUAL_RENEWAL_CERT_ID,
+        }),
+      (error) => error?.code === CERTOPS_CERTIFICATE_NOT_FOUND,
+    );
+  });
 });

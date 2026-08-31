@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-acm": "3.1045.0",
+    "@aws-sdk/client-ec2": "3.1045.0",
     "@aws-sdk/client-iam": "3.1045.0",
     "@aws-sdk/client-secrets-manager": "3.1045.0",
     "@aws-sdk/client-sts": "3.1045.0",

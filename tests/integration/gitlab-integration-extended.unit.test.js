@@ -117,7 +117,7 @@ describe("GitLab integration helper coverage", () => {
     const gitlab = requireWithMocks(resolveGitlabModule(), {
       axios: axiosMock,
     });
-    const projects = await gitlab._test.listProjects({
+    const { projects } = await gitlab._test.listProjects({
       baseUrl: "https://gitlab.example.com",
       token: "token",
       maxItems: 3,
@@ -405,4 +405,119 @@ describe("GitLab integration helper coverage", () => {
       "revoked-deploy-token",
     ]);
   });
+
+  // Regression guard: two self-hosted GitLab instances can easily assign the
+  // same numeric user/project ids to unrelated accounts. If the scan's
+  // provenance only carried the owner id (not the host), a cleanup driven
+  // by a scan against instance A could delete tokens actually imported from
+  // instance B. scanGitLab must return a `host` reflecting which server was
+  // actually scanned, independent of the numeric owner id.
+  it("returns a distinct host per self-hosted GitLab instance even when owner ids collide", async () => {
+    const buildAxiosMock = () =>
+      async (config) => {
+        const { pathname } = new URL(config.url);
+        if (pathname === "/api/v4/user") {
+          return { data: { id: 99, username: "bot", is_admin: false } };
+        }
+        return { data: [], headers: {} };
+      };
+
+    const gitlabA = requireWithMocks(resolveGitlabModule(), {
+      axios: buildAxiosMock(),
+    });
+    const resultA = await gitlabA.scanGitLab({
+      baseUrl: "https://gitlab-a.example.com",
+      token: "token-a",
+      include: { tokens: false, keys: false },
+      filters: {
+        includePATs: false,
+        includeProjectTokens: false,
+        includeGroupTokens: false,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: false,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+
+    const gitlabB = requireWithMocks(resolveGitlabModule(), {
+      axios: buildAxiosMock(),
+    });
+    const resultB = await gitlabB.scanGitLab({
+      baseUrl: "https://gitlab-b.example.com",
+      token: "token-b",
+      include: { tokens: false, keys: false },
+      filters: {
+        includePATs: false,
+        includeProjectTokens: false,
+        includeGroupTokens: false,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: false,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+
+    expect(resultA.host).to.equal("gitlab-a.example.com");
+    expect(resultB.host).to.equal("gitlab-b.example.com");
+    expect(resultA.host).to.not.equal(resultB.host);
+    // Same colliding numeric owner id on both instances -- host is what
+    // must keep their cleanup scopes apart.
+    expect(resultA.ownerKey).to.equal(resultB.ownerKey);
+  });
+
+  it("tags scanned items with an explicit sourceKind and sourceObjectId", async () => {
+    const axiosMock = async (config) => {
+      const { pathname } = new URL(config.url);
+      if (pathname === "/api/v4/user") {
+        return { data: { id: 1, username: "alice", is_admin: false } };
+      }
+      if (pathname === "/api/v4/projects") {
+        return { data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }] };
+      }
+      if (pathname === "/api/v4/projects/10/access_tokens") {
+        return {
+          data: [
+            { id: 100, name: "proj-token", active: true, scopes: ["api"] },
+          ],
+        };
+      }
+      if (pathname === "/api/v4/user/keys") {
+        return { data: [{ id: 55, title: "laptop" }] };
+      }
+      return { data: [] };
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    const { items } = await gitlab.scanGitLab({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      include: { tokens: true, keys: true },
+      filters: {
+        includePATs: false,
+        includeProjectTokens: true,
+        includeGroupTokens: false,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: true,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+
+    const projectToken = items.find((i) => i.source === "gitlab-project-token");
+    const sshKey = items.find((i) => i.source === "gitlab-ssh-key");
+
+    expect(projectToken.sourceKind).to.equal("gitlab-project-token");
+    expect(projectToken.sourceObjectId).to.equal("10:100");
+    expect(sshKey.sourceKind).to.equal("gitlab-ssh-key");
+    expect(sshKey.sourceObjectId).to.equal("55");
+  });
 });
+

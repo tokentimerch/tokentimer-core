@@ -680,6 +680,41 @@ function installationFromRow(row) {
 }
 
 /**
+ * Read-only listing of every installation row for one trust anchor, for a
+ * future admin UI to see where an anchor actually landed (agent, store,
+ * transition state, provenance, last error) before revoking/distributing
+ * it further. Filters on workspace_id AND trust_anchor_id in the same
+ * WHERE clause, mirroring getTrustAnchorById's own tenant-isolation style
+ * above, so a cross-workspace read is impossible by construction rather
+ * than merely checked after the fact.
+ */
+async function listInstallationsForAnchor(options = {}) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const trustAnchorId = normalizeRequiredId(
+    options.trustAnchorId,
+    CERTOPS_TRUST_ANCHOR_INVALID,
+  );
+
+  const anchor = await getTrustAnchorById(db, workspaceId, trustAnchorId);
+  if (!anchor) {
+    throw trustAnchorError(
+      "Trust anchor not found",
+      CERTOPS_TRUST_ANCHOR_NOT_FOUND,
+    );
+  }
+
+  const result = await db.query(
+    `SELECT ${INSTALLATION_SELECT_FIELDS}
+       FROM certops_trust_anchor_installations
+      WHERE workspace_id = $1 AND trust_anchor_id = $2
+      ORDER BY updated_at DESC`,
+    [workspaceId, trustAnchorId],
+  );
+  return result.rows.map(installationFromRow);
+}
+
+/**
  * Locks (or creates, if absent) the ownership-reference row for
  * (workspace, agent, store, fingerprint, owner) inside the caller's
  * transaction. SELECT ... FOR UPDATE serializes concurrent requests on this
@@ -2156,6 +2191,7 @@ module.exports = {
   listTrustAnchors,
   getTrustAnchorById,
   retireTrustAnchor,
+  listInstallationsForAnchor,
   anchorFromRow,
   installationFromRow,
   normalizeStore,

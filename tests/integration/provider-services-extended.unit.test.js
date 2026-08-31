@@ -72,8 +72,8 @@ describe("Provider services extended unit coverage", () => {
       token: "token",
       maxItems: 10,
     });
-    expect(certs).to.deep.equal([]);
-    expect(keys).to.deep.equal([]);
+    expect(certs.items).to.deep.equal([]);
+    expect(keys.items).to.deep.equal([]);
   });
 
   it("azure scan returns empty result when endpoints return 403/404-style failures", async () => {
@@ -120,7 +120,7 @@ describe("Provider services extended unit coverage", () => {
       token: "header.payload.signature",
       maxItems: 10,
     });
-    expect(sps.map((s) => s.id)).to.deep.equal(["sp-1", "sp-2"]);
+    expect(sps.items.map((s) => s.id)).to.deep.equal(["sp-1", "sp-2"]);
   });
 
   it("azure AD refuses service principal pagination URLs off graph.microsoft.com", async () => {

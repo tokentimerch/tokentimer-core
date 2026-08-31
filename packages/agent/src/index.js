@@ -87,6 +87,7 @@ const {
   deleteBootstrapEnvFile,
   listConfiguredDnsProviderIds,
   resolveAcmeAccountCredentials,
+  DEFAULT_REQUIRE_SIGNED_AGENT_ID,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
 const { isWindows, clearWindowsServiceBootstrapToken } = require("./platform");
@@ -1486,8 +1487,11 @@ async function reportStepEvidence(client, jobId, items, claimId = null) {
  *   verification still runs, only the post-verdict action differs
  * @param {string} params.boundAgentId this agent's own registered agentId
  *   (ADR-0012 decision 3, gate step 11)
- * @param {boolean} [params.requireSignedAgentId] effective runtime value
- *   of CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (default false)
+ * @param {boolean} [params.requireSignedAgentId] effective runtime value of
+ *   CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID as resolved by loadAgentConfig.
+ *   Falls back to config's DEFAULT_REQUIRE_SIGNED_AGENT_ID rather than to a
+ *   literal here, so omitting it can never be more permissive than what a
+ *   real agent resolves, and the default cannot drift out of sync.
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -1497,7 +1501,7 @@ async function handleClaimedJob({
   client,
   executionContext = null,
   boundAgentId,
-  requireSignedAgentId = false,
+  requireSignedAgentId = DEFAULT_REQUIRE_SIGNED_AGENT_ID,
   log = null,
 }) {
   const executionEnabled =
@@ -1712,8 +1716,9 @@ function verifyClaimedJobEnvelope({
  * @param {boolean} params.executionEnabled
  * @param {string} params.boundAgentId this agent's own registered agentId
  *   (ADR-0012 decision 3, gate step 11)
- * @param {boolean} [params.requireSignedAgentId] effective runtime value
- *   of CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID (default false)
+ * @param {boolean} [params.requireSignedAgentId] effective runtime value of
+ *   CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID as resolved by loadAgentConfig;
+ *   same fail-closed fallback as handleClaimedJob's
  * @param {(msg: string, details?: *) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -1724,7 +1729,7 @@ async function handleSignedJob({
   executionContext,
   executionEnabled,
   boundAgentId,
-  requireSignedAgentId = false,
+  requireSignedAgentId = DEFAULT_REQUIRE_SIGNED_AGENT_ID,
   log,
 }) {
   const pinnedSigningKey = executionEnabled
