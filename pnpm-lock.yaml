@@ -80,6 +80,9 @@ importers:
       '@aws-sdk/client-sts':
         specifier: 3.1045.0
         version: 3.1045.0
+      '@tokentimer/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tokentimer/log-scrub':
         specifier: workspace:*
         version: link:../../packages/log-scrub
@@ -326,6 +329,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@tokentimer/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tokentimer/log-scrub':
         specifier: workspace:*
         version: link:../../packages/log-scrub

@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/worker",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.13.0",
@@ -27,6 +27,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@tokentimer/contracts": "workspace:*",
     "@tokentimer/log-scrub": "workspace:*",
     "@tokentimer/node-compat": "workspace:*",
     "@tokentimer/webhook-safety": "workspace:*",
