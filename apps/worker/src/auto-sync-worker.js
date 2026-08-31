@@ -29,6 +29,10 @@ import {
   recordAutoSyncFailure,
   summarizeImportErrors,
 } from "./shared/autoSyncFailure.js";
+import {
+  buildAutoSyncImportBody,
+  gitlabFiltersForAutoSync,
+} from "./shared/autoSyncImportBody.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
 const KDF_SALT = "tokentimer-settings-encryption";
@@ -286,6 +290,8 @@ async function runAutoSync() {
           const filterRules = Array.isArray(scan_params?.filterRules)
             ? scan_params.filterRules
             : undefined;
+          const cleanupObsolete =
+            cleanupObsoleteFlag === true || scan_params?.cleanupObsolete === true;
 
           switch (provider) {
             case "github":
@@ -310,7 +316,10 @@ async function runAutoSync() {
                 token: creds.token,
                 include: scan_params?.include || { tokens: true, keys: true },
                 maxItems: scan_params?.maxItems || 500,
-                filters: scan_params?.filters || {},
+                filters: gitlabFiltersForAutoSync(
+                  scan_params?.filters,
+                  cleanupObsolete,
+                ),
                 filterRules,
               };
               break;
@@ -334,8 +343,6 @@ async function runAutoSync() {
           let importErrorCount = 0;
           let importErrors = [];
           let deletedCount = 0;
-          const cleanupObsolete =
-            cleanupObsoleteFlag === true || scan_params?.cleanupObsolete === true;
           // A scan that legitimately finds zero items in a fully-scanned,
           // complete scope is still a real "everything here is now obsolete"
           // result -- it must still reach the import endpoint (with an empty
@@ -367,7 +374,11 @@ async function runAutoSync() {
             }
             const importResponse = await axios.post(
               importUrl,
-              { items: scanResult.items, ...(cleanup ? { cleanup } : {}) },
+              buildAutoSyncImportBody({
+                items: scanResult.items,
+                scanId,
+                cleanup,
+              }),
               { timeout: 60000, headers: authHeaders },
             );
             const importResult = importResponse.data || {};
@@ -495,4 +506,4 @@ if (isNodeEntrypoint(import.meta.url)) {
   })();
 }
 
-export { runAutoSync };
+export { runAutoSync, buildAutoSyncImportBody };

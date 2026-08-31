@@ -573,6 +573,32 @@ const findBySourceIdentity = async ({
   return token ? convertNumericFields(token) : null;
 };
 
+// Find a pre-existing *unattributed* token (source_object_id IS NULL) by
+// name+location. Used only as a one-time adoption path when a scan-bound
+// import can't find a source-identity match: the row predates provenance
+// tracking (or an earlier import of it wasn't scan-bound), so there is no
+// uq_tokens_source_identity row to collide with. Restricting to
+// source_object_id IS NULL keeps this from ever touching an already
+// provenance-attributed row -- adoption never overrides existing provenance,
+// it only fills in provenance that was missing.
+const findUnattributedByNameLocation = async (name, location, workspaceId) => {
+  if (!name) return null;
+  if (location === null || location === undefined || location === "")
+    return null;
+
+  const query = `
+    SELECT * FROM tokens
+    WHERE name = $1
+      AND workspace_id = $2
+      AND location = $3
+      AND source_object_id IS NULL
+    LIMIT 1
+  `;
+  const result = await pool.query(query, [name, workspaceId, location]);
+  const token = result.rows[0];
+  return token ? convertNumericFields(token) : null;
+};
+
 module.exports = {
   convertNumericFields,
   findByUserId,
@@ -587,4 +613,5 @@ module.exports = {
   findByDomain,
   findByNameLocationAndWorkspace,
   findBySourceIdentity,
+  findUnattributedByNameLocation,
 };

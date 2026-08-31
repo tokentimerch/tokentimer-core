@@ -110,6 +110,7 @@ tests/integration/integrations-route-matrix.test.js
 # Auto-sync (core worker allowlist tests omitted; see enterprise-auto-sync-* tests)
 tests/integration/auto-sync.test.js
 tests/integration/auto-sync-import.test.js
+tests/integration/import-cleanup-scan-lifecycle.test.js
 tests/integration/weekly-digest-worker.integration.test.js
 
 # Audit

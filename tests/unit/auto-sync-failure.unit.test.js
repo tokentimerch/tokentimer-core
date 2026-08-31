@@ -205,3 +205,58 @@ describe("autoSyncFailure helpers", () => {
     assert.match(metadata.error, /Details: t1: missing name/);
   });
 });
+
+describe("buildAutoSyncImportBody", () => {
+  it("always forwards scan_id when present, even without cleanup", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    assert.deepStrictEqual(
+      mod.buildAutoSyncImportBody({
+        items: [{ name: "TEST3" }],
+        scanId: "scan-42",
+        cleanup: null,
+      }),
+      { items: [{ name: "TEST3" }], scan_id: "scan-42" },
+    );
+  });
+
+  it("omits scan_id when it is missing and still attaches cleanup when set", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    assert.deepStrictEqual(
+      mod.buildAutoSyncImportBody({
+        items: [],
+        scanId: null,
+        cleanup: { categories: ["secret"] },
+      }),
+      { items: [], cleanup: { categories: ["secret"] } },
+    );
+  });
+
+  it("normalizes a non-array items value to an empty list", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    assert.deepStrictEqual(
+      mod.buildAutoSyncImportBody({ items: null, scanId: "scan-1" }),
+      { items: [], scan_id: "scan-1" },
+    );
+  });
+});
+
+describe("gitlabFiltersForAutoSync", () => {
+  it("forces includeRevoked off when cleanup is enabled", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    assert.deepStrictEqual(
+      mod.gitlabFiltersForAutoSync(
+        { includePATs: true, includeRevoked: true, includeExpired: true },
+        true,
+      ),
+      { includePATs: true, includeRevoked: false, includeExpired: true },
+    );
+  });
+
+  it("leaves includeRevoked alone when cleanup is off", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    assert.deepStrictEqual(
+      mod.gitlabFiltersForAutoSync({ includeRevoked: true }, false),
+      { includeRevoked: true },
+    );
+  });
+});

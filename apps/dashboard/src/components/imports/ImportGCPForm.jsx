@@ -16,6 +16,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gcpAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 
@@ -222,14 +223,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/tokens#import-gcp',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
+            href={IMPORT_DOCS.gcp}
             color='blue.500'
             textDecoration='underline'
             isExternal
@@ -296,6 +290,11 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
               The last scan didn't fully complete (see the errors below). The
               backend refuses to clean up an incomplete or truncated scan.
             </Text>
+          ) : gcpSummary.some(s => s.failedCount > 0) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              Some listed secrets have no expiration because their version
+              lookup failed. Cleanup still runs against the listed set.
+            </Text>
           ) : null}
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
@@ -320,7 +319,14 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
                 {s.error ? (
                   <Badge colorScheme='red'>{s.error}</Badge>
                 ) : (
-                  <Badge colorScheme='green'>found {s.found}</Badge>
+                  <HStack spacing={2}>
+                    <Badge colorScheme='green'>found {s.found}</Badge>
+                    {s.failedCount > 0 ? (
+                      <Badge colorScheme='orange'>
+                        {s.failedCount} without expiration
+                      </Badge>
+                    ) : null}
+                  </HStack>
                 )}
               </HStack>
             ))}

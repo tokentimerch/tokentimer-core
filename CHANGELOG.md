@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Azure AD import FOUND counts are extracted secrets/certs, not Graph object counts.
+- A GCP Secret Manager version-lookup miss no longer marks the secrets kind incomplete, so listed secrets can still be cleaned up.
+- GitLab cleanup-on scans force include-revoked off, so a just-revoked token is not kept as "still present".
+- A later scan-bound import of the same name+location adopts a pre-provenance row instead of inserting a duplicate cleanup can never reach.
+- AWS All Regions + Global persists as one scan with a single `scan_id`, so the cleanup checkbox can attach.
+
 ## [0.14.1] - 2026-08-31
 
 ### Added

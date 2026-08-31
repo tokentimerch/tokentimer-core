@@ -35,11 +35,12 @@
  *     so they are structurally excluded from this cleanup path forever --
  *     not a "best effort", a hard exclusion by construction.
  *
- * Known, deliberate limitation: legacy tokens are never adopted into a new
- * scan's provenance by guessing. If a legacy token's underlying object is
- * rediscovered by a provenance-aware scan, the import path inserts a new,
- * fully-attributed row for it; the old ambiguous row is left alone and is
- * only ever removable by the user manually.
+ * Unattributed rows (source_object_id IS NULL) are still excluded from this
+ * DELETE, because there is no instance/kind to match. Import, not cleanup,
+ * is what adopts them: a later scan-bound import of the same name+location
+ * updates that row in place (see Token.findUnattributedByNameLocation)
+ * rather than inserting a second attributed copy. Adoption never guesses
+ * identity onto a row that already has a source_object_id.
  */
 
 const { pool } = require("../db/database");

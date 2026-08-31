@@ -26,6 +26,7 @@ const {
   upsertAgentFilesystemInstance,
   ensureManagedCertificateToken,
   findManagedCertificateBySourceRef,
+  findManagedCertificateByDeployedPath,
 } = require("./inventory");
 const { createControllerObservationEvidence, createCertificateEvidence } = require("./evidence");
 const {
@@ -638,7 +639,7 @@ async function upsertInventoryForObservation(client, observation) {
   // Looked up by the stable (source, source_ref) identity first, not
   // fingerprint, since a rotation at the same file path/binding keeps the
   // same source_ref but changes the fingerprint.
-  const existingManagedCertificate = await findManagedCertificateBySourceRef(
+  let existingManagedCertificate = await findManagedCertificateBySourceRef(
     client,
     {
       workspaceId: observation.workspaceId,
@@ -646,6 +647,20 @@ async function upsertInventoryForObservation(client, observation) {
       sourceRef: certSourceRef,
     },
   );
+  // Issuance records the same deployed path under (agent_issuance, idempotency
+  // key). A later filesystem scan of that path must reuse that row instead of
+  // minting a parallel identity that would collide on the deployed-path unique
+  // index. Windows discovery never records a file path, so skip this lookup.
+  if (!existingManagedCertificate && isFilesystem) {
+    existingManagedCertificate = await findManagedCertificateByDeployedPath(
+      client,
+      {
+        workspaceId: observation.workspaceId,
+        deployedAgentId: observation.agentRowId,
+        deployedCertPath: observation.filePath,
+      },
+    );
+  }
   const tokenId = await ensureManagedCertificateToken(
     client,
     certificate,
@@ -667,6 +682,7 @@ async function upsertInventoryForObservation(client, observation) {
       status: "discovered",
       source: observation.source,
       sourceRef: certSourceRef,
+      reuseCertificateId: existingManagedCertificate?.id,
       name: displayName,
       // os-store-managed only when the agent actually
       // observed a private key at this location (observation.keyPresent ===

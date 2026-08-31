@@ -296,6 +296,119 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
       "deployed_agent_id must be populated from the discovering agent",
     );
   });
+
+  it("reuses an issuance row at the same deployed path instead of minting a parallel identity", async () => {
+    const issuanceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const issuanceTokenId = 7777;
+    const queries = [];
+    const client = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+        if (sql.includes("SET last_sequence")) {
+          return { rows: [{ id: AGENT.id }] };
+        }
+        if (sql.includes("FROM certificate_evidence")) {
+          return { rows: [] };
+        }
+        // Path lookup must win over source_ref miss: issuance used a
+        // different (source, source_ref) than filesystem discovery.
+        if (sql.includes("FROM managed_certificates") && sql.includes("deployed_cert_path")) {
+          return { rows: [{ id: issuanceId, token_id: issuanceTokenId }] };
+        }
+        if (sql.includes("FROM managed_certificates") && sql.includes("source_ref")) {
+          return { rows: [] };
+        }
+        if (sql.includes("FROM managed_certificates") && sql.includes("SELECT")) {
+          return { rows: [] };
+        }
+        if (sql.includes("UPDATE managed_certificates")) {
+          return {
+            rows: [
+              {
+                id: issuanceId,
+                token_id: issuanceTokenId,
+                workspace_id: AGENT.workspaceId,
+                status: "active",
+                source: "agent_issuance",
+                source_ref: "issuance-idempotency-key",
+                deployed_cert_path: "/etc/ssl/certs/app.pem",
+                deployed_agent_id: AGENT.id,
+              },
+            ],
+          };
+        }
+        if (sql.includes("INSERT INTO certificate_targets")) {
+          return { rows: [{ id: "target-reuse-1" }] };
+        }
+        if (sql.includes("INSERT INTO certificate_instances")) {
+          return { rows: [{ id: "instance-reuse-1" }] };
+        }
+        if (sql.includes("INSERT INTO certificate_evidence")) {
+          return { rows: [{ id: "evidence-reuse-1" }] };
+        }
+        return { rows: [] };
+      },
+      release() {},
+    };
+
+    const result = await persistAgentDiscoveryEvidenceBatch({
+      dbPool: {
+        async connect() {
+          return client;
+        },
+      },
+      agent: AGENT,
+      envelope: { sequence: 5 },
+      evidenceItems: [
+        {
+          evidenceId: "ev_reuse_1",
+          eventType: "certificate.observed",
+          observedAt: "2026-07-24T08:00:00.000Z",
+          fingerprintSha256: "f".repeat(64),
+          metadata: [
+            { name: "filePath", value: "/etc/ssl/certs/app.pem" },
+            { name: "targetHost", value: "edge-01.example" },
+            { name: "subject", value: "CN=app.example.com" },
+            { name: "validFrom", value: "2026-01-01T00:00:00.000Z" },
+            { name: "validTo", value: "2027-01-01T00:00:00.000Z" },
+          ],
+        },
+      ],
+      deps: {
+        enforceAgentSequence: async ({ client: c, envelope }) => {
+          await c.query("SET last_sequence = $1", [envelope.sequence]);
+        },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(
+      queries.some((entry) => entry.sql.includes("INSERT INTO tokens")),
+      false,
+      "must reuse the issuance token instead of minting another ssl_cert row",
+    );
+    assert.equal(
+      queries.some((entry) => entry.sql.includes("INSERT INTO managed_certificates")),
+      false,
+      "must not insert a parallel managed_certificate under agent_filesystem",
+    );
+    const certUpdate = queries.find((entry) =>
+      entry.sql.includes("UPDATE managed_certificates"),
+    );
+    assert.ok(certUpdate, "expected an in-place refresh of the issuance row");
+    assert.equal(certUpdate.params[1], issuanceId);
+    assert.equal(certUpdate.params[2], issuanceTokenId);
+    assert.ok(
+      certUpdate.sql.includes("public_metadata ||"),
+      "refresh must merge public_metadata so issuance metadata is not wiped",
+    );
+    assert.equal(
+      certUpdate.sql.includes("source ="),
+      false,
+      "first observer keeps (source, source_ref); refresh must not overwrite them",
+    );
+  });
 });
 
 // Windows / OS-store discovery generalizes the observation contract beyond

@@ -41,6 +41,7 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
+import { IMPORT_DOCS } from '../utils/docsUrls';
 import apiClient, {
   tokenAPI,
   workspaceAPI,
@@ -72,6 +73,7 @@ import ImportAWSForm, {
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
+import { collapseScanSummaryByType } from './imports/collapseScanSummaryByType';
 import ImportCertificateForm from './certops/ImportCertificateForm.jsx';
 import { invalidateCertOpsInventoryCache } from './certops/certopsApi.js';
 import { describeCertificateImportOutcome } from './certops/certopsFormat.js';
@@ -996,6 +998,10 @@ export default function ImportTokensModal({
   const [azureADIncludeSPs, setAzureADIncludeSPs] = React.useState(true);
   const [azureADItems, setAzureADItems] = React.useState([]);
   const [azureADSummary, setAzureADSummary] = React.useState([]);
+  const azureADSummaryRows = React.useMemo(
+    () => collapseScanSummaryByType(azureADSummary),
+    [azureADSummary]
+  );
   const [selectedRowsAzureAD, setSelectedRowsAzureAD] = React.useState(
     new Set()
   );
@@ -1091,7 +1097,11 @@ export default function ImportTokensModal({
             Array.isArray(sp.filterRules) ? sp.filterRules : null
           );
           setRestoredCleanupObsolete(
-            typeof sp.cleanupObsolete === 'boolean' ? sp.cleanupObsolete : null
+            typeof sp.cleanupObsolete === 'boolean'
+              ? sp.cleanupObsolete
+              : typeof existing.cleanup_obsolete === 'boolean'
+                ? existing.cleanup_obsolete
+                : null
           );
           switch (source) {
             case 'github':
@@ -1397,6 +1407,7 @@ export default function ImportTokensModal({
       // scan_params (filters) never contain secrets, so they're always sent,
       // even if the user didn't re-enter the token.
       scan_params: scanParams,
+      cleanup_obsolete: scanParams?.cleanupObsolete === true,
     };
     if (credentialsHasSecrets(credentials, source)) {
       payload.credentials = credentials;
@@ -1486,6 +1497,7 @@ export default function ImportTokensModal({
         frequency: enableSyncFrequency,
         schedule_time: enableSyncTime,
         schedule_tz: enableSyncTz,
+        cleanup_obsolete: scanParams?.cleanupObsolete === true,
       });
       showSuccess(`Auto-sync enabled for ${source}`);
       const res = await apiClient.get(
@@ -2555,14 +2567,7 @@ export default function ImportTokensModal({
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import-file',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.file}
                         color='blue.500'
                         textDecoration='underline'
                         isExternal
@@ -2847,14 +2852,7 @@ export default function ImportTokensModal({
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import-azure-ad',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.entraId}
                         color='blue.500'
                         textDecoration='underline'
                         isExternal
@@ -2981,8 +2979,8 @@ export default function ImportTokensModal({
                       p={3}
                     >
                       <VStack align='stretch' spacing={2}>
-                        {azureADSummary.map((s, i) => (
-                          <HStack key={i} justify='space-between'>
+                        {azureADSummaryRows.map((s, i) => (
+                          <HStack key={s.type || i} justify='space-between'>
                             <Text fontSize='sm'>{s.type}</Text>
                             {s.error ? (
                               <Badge colorScheme='red'>{s.error}</Badge>
@@ -3185,16 +3183,10 @@ export default function ImportTokensModal({
                     <Text fontSize='xs'>
                       Need help? See{' '}
                       <ChakraLink
-                        onClick={() =>
-                          window.open(
-                            'https://tokentimer.ch/docs/tokens#import',
-                            '_blank',
-                            'noopener,noreferrer'
-                          )
-                        }
-                        cursor='pointer'
+                        href={IMPORT_DOCS.integrations}
                         textDecoration='underline'
                         color='blue.500'
+                        isExternal
                       >
                         import docs
                       </ChakraLink>

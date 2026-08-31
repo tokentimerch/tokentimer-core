@@ -17,6 +17,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { awsAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 
@@ -47,6 +48,27 @@ function getAWSItemDetails(item) {
     details.push({ label: 'Location', value: item.location });
   }
   return details;
+}
+
+function aggregateAwsSummary(summary) {
+  const byType = {};
+  for (const s of summary || []) {
+    if (!s?.type) continue;
+    if (!byType[s.type]) {
+      byType[s.type] = {
+        type: s.type,
+        found: 0,
+        error: null,
+        note: null,
+        complete: true,
+      };
+    }
+    if (s.found !== undefined) byType[s.type].found += s.found;
+    if (s.error) byType[s.type].error = s.error;
+    if (s.note) byType[s.type].note = s.note;
+    if (s.complete === false) byType[s.type].complete = false;
+  }
+  return Object.values(byType);
 }
 
 async function checkDuplicatesForItems(items, workspaceId) {
@@ -150,13 +172,9 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
-  // The backend-authoritative scan record cleanup is driven from. Only set
-  // when a single backend scan call covers this scan (global or one
-  // specific region); "all regions" makes multiple backend calls (one per
-  // region, since AWS has no single "list every region" secrets API), so
-  // there's no single scan_id that covers the whole sweep yet -- cleanup
-  // stays unavailable for that mode until scan persistence supports
-  // combining multiple scan calls into one record.
+  // Backend-authoritative scan record cleanup is driven from. Set after
+  // any completed scan that returned a scan_id, including All Regions
+  // (one persist covering IAM plus every region that actually ran).
   const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
@@ -255,70 +273,20 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       const isAllRegionsScan = awsRegion === 'all-regions';
 
       if (isAllRegionsScan) {
-        const allItems = [];
-        const summaryByType = {};
-
-        const iamRes = await awsAPI.scan({
+        const res = await awsAPI.scan({
           workspaceId,
           accessKeyId: awsAccessKeyId,
           secretAccessKey: awsSecretAccessKey,
           region: 'us-east-1',
+          scanMode: 'all-regions',
+          regions: [...awsDetectedRegions],
           maxItems: 2000,
-          include: { secrets: false, iam: true, certificates: false },
-          isContinuation: false,
+          include: { secrets: true, iam: true, certificates: true },
         });
-        allItems.push(...(iamRes?.items || []));
-
-        (iamRes?.summary || []).forEach(s => {
-          if (!summaryByType[s.type]) {
-            summaryByType[s.type] = {
-              type: s.type,
-              found: 0,
-              error: null,
-              note: null,
-            };
-          }
-          if (s.found !== undefined) summaryByType[s.type].found += s.found;
-          if (s.error) summaryByType[s.type].error = s.error;
-          if (s.note) summaryByType[s.type].note = s.note;
-        });
-
-        for (const region of awsDetectedRegions) {
-          const regionRes = await awsAPI.scan({
-            workspaceId,
-            accessKeyId: awsAccessKeyId,
-            secretAccessKey: awsSecretAccessKey,
-            region,
-            maxItems: 2000,
-            include: { secrets: true, iam: false, certificates: true },
-            isContinuation: true,
-          });
-          allItems.push(...(regionRes?.items || []));
-
-          (regionRes?.summary || []).forEach(s => {
-            if (!summaryByType[s.type]) {
-              summaryByType[s.type] = {
-                type: s.type,
-                found: 0,
-                error: null,
-                note: null,
-              };
-            }
-            if (s.found !== undefined) summaryByType[s.type].found += s.found;
-            if (s.error && !summaryByType[s.type].error)
-              summaryByType[s.type].error = s.error;
-            if (s.note && !summaryByType[s.type].note)
-              summaryByType[s.type].note = s.note;
-          });
-        }
-
-        const aggregatedSummary = Object.values(summaryByType);
+        const allItems = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(allItems);
-        setAwsSummary(aggregatedSummary);
-        // Each region (and the IAM call) is a separate backend scan record,
-        // so there is no single scan_id covering the whole sweep -- cleanup
-        // stays unavailable for this mode.
-        setLastScanId(null);
+        setAwsSummary(aggregateAwsSummary(res?.summary));
+        setLastScanId(res?.scan_id || null);
         if (allItems.length > 0) {
           onScanSuccess && onScanSuccess('aws');
         }
@@ -326,7 +294,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const dups = await checkDuplicatesForItems(allItems, workspaceId);
         setAwsDuplicates(dups);
 
-        if (updateQuotaFromResponse && !updateQuotaFromResponse(iamRes)) {
+        if (updateQuotaFromResponse && !updateQuotaFromResponse(res)) {
           if (refreshIntegrationQuota) await refreshIntegrationQuota();
         }
       } else {
@@ -446,14 +414,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/tokens#import-aws',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
+            href={IMPORT_DOCS.aws}
             color='blue.500'
             textDecoration='underline'
             isExternal
@@ -516,12 +477,10 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             Remove previously imported items no longer found at the source
           </Checkbox>
           <Text fontSize='xs' color={helpTextColor} pl={6}>
-            Only available for a &quot;Global (IAM only)&quot; scan, or a single
-            specific region, right after that scan completes. Each region is
-            checked independently, so a single scan_id can only certify what it
-            actually covered; an &quot;All Regions&quot; sweep makes one backend
-            call per region and has no single scan record to attach cleanup to
-            yet.
+            Only available right after a scan completes. An All Regions sweep
+            records IAM plus every region that actually ran, so cleanup is
+            scoped to those complete sub-scopes. A region that errored or
+            truncated is never used as a deletion basis.
           </Text>
           {lastScanId && awsSummary.some(s => s.complete === false) ? (
             <Text fontSize='xs' color='orange.400' pl={6}>
