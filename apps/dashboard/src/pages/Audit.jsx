@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import {
   Box,
@@ -42,6 +42,11 @@ import apiClient, {
   workspaceAPI,
 } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
+import { useCertOpsAgents } from '../components/certops/useCertOpsAgents.js';
+import {
+  formatAgentAuditParts,
+  indexAgentsByAnyId,
+} from '../components/certops/certopsAgentLabel.js';
 
 function _download(filename, text, type = 'text/plain') {
   const element = document.createElement('a');
@@ -329,6 +334,11 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   const [isAdminAny, setIsAdminAny] = useState(false);
   const [isAdminOrg, setIsAdminOrg] = useState(false);
   const { workspaceId } = useWorkspace();
+  const { agents: certOpsAgents } = useCertOpsAgents();
+  const certOpsAgentsById = useMemo(
+    () => indexAgentsByAnyId(certOpsAgents),
+    [certOpsAgents]
+  );
   const [auditWorkspaceId, setAuditWorkspaceId] = useState('');
   const [authorized, setAuthorized] = useState(null);
   const [_rolesLoaded, setRolesLoaded] = useState(false);
@@ -698,6 +708,15 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.commonName) parts.push(`Common name: ${md.commonName}`);
       if (md.source) parts.push(`Source: ${md.source}`);
       if (md.trigger) parts.push(`Trigger: ${md.trigger}`);
+      parts.push(
+        ...formatAgentAuditParts(
+          {
+            ...md,
+            agentId: md.agentId || md.assignedAgentId,
+          },
+          certOpsAgentsById
+        )
+      );
       parts.push(...formatWindowsTargetParts(md));
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
@@ -713,8 +732,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.trustAnchorId) parts.push(`Anchor ID: ${md.trustAnchorId}`);
       if (md.fingerprintSha256)
         parts.push(`Fingerprint: ${md.fingerprintSha256}`);
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
-      if (md.host) parts.push(`Host: ${md.host}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.store) parts.push(`Store: ${md.store}`);
       if (md.owner) parts.push(`Owner: ${md.owner}`);
       if (md.transitionState) parts.push(`State: ${md.transitionState}`);
@@ -801,7 +819,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       // 'issue' is a first issuance; 'renew' here is a retry against a
       // certificate that had not reconciled, which is worth telling apart.
       if (md.operation) parts.push(`Operation: ${md.operation}`);
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.notAfter) parts.push(`Expires: ${md.notAfter}`);
       if (md.serialNumber) parts.push(`Serial: ${md.serialNumber}`);
       if (md.issuer) parts.push(`Issuer: ${md.issuer}`);
@@ -830,7 +848,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         parts.push(`Derivation reason: ${md.derivationReason}`);
       if (md.detail) parts.push(`Detail: ${md.detail}`);
       if (md.operation) parts.push(`Operation: ${md.operation}`);
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
       // Unlike DERIVATION_DECLINED below, an _UNRECONCILED event's
       // windowsStore/binding fields ARE trustworthy: agentDispatch.js's
@@ -858,7 +876,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         parts.push(`Derivation reason: ${md.derivationReason}`);
       if (md.detail) parts.push(`Detail: ${md.detail}`);
       if (md.operation) parts.push(`Operation: ${md.operation}`);
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
       // Unlike the _UNRECONCILED events and CERTOPS_RENEWAL_PROFILE_DERIVED,
       // only targetType is safe to show here: a decline usually means the
@@ -898,7 +916,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           `Error: ${collapsed.length > 300 ? `${collapsed.slice(0, 300)}...` : collapsed}`
         );
       }
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.subjectId) parts.push(`Subject ID: ${md.subjectId}`);
       if (md.source) parts.push(`Source: ${md.source}`);
       if (md.mode) parts.push(`Mode: ${md.mode}`);
@@ -946,8 +964,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     try {
       const md = ev?.metadata || {};
       const parts = [];
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
-      if (md.hostname) parts.push(`Host: ${md.hostname}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.platform) parts.push(`Platform: ${md.platform}`);
       if (md.agentVersion) parts.push(`Version: ${md.agentVersion}`);
       // The scope the agent asked for. Sent only at registration, so this event
@@ -985,7 +1002,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     try {
       const md = ev?.metadata || {};
       const parts = [];
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       const previous = Array.isArray(md.previousCapabilities)
         ? md.previousCapabilities
         : [];
@@ -1131,7 +1148,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     try {
       const md = ev?.metadata || {};
       const parts = [];
-      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      parts.push(...formatAgentAuditParts(md, certOpsAgentsById));
       if (md.force != null) parts.push(`Forced: ${md.force ? 'yes' : 'no'}`);
       if (md.reason) parts.push(`Reason: ${md.reason}`);
       if (md.leasedJobs != null) parts.push(`Leased jobs: ${md.leasedJobs}`);

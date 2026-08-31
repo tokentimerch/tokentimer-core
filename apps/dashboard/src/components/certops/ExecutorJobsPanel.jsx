@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -26,6 +26,11 @@ import {
 } from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsJobs } from './useCertOpsJobs.js';
+import { useCertOpsAgents } from './useCertOpsAgents.js';
+import {
+  formatAgentLabel,
+  indexAgentsByAnyId,
+} from './certopsAgentLabel.js';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_JOB_FILTERS,
@@ -91,6 +96,8 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
   const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const canManage = useCertOpsCanManage();
+  const { agents } = useCertOpsAgents();
+  const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
   const { workspaceId } = useWorkspace();
   const {
     limit,
@@ -247,6 +254,15 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
             const awaitingApproval = job.status === 'pending_approval';
             const stalledByPause =
               certOpsPaused && AWAITING_EXECUTION_STATUSES.has(job.status);
+            const agentLabel = formatAgentLabel(
+              job.assignedAgentId || job.claimedByAgentId,
+              agentsById
+            );
+            const subject = job.subjectId
+              ? `${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId}`
+              : job.source
+                ? `Source: ${job.source}`
+                : '';
             return (
               <Box key={job.id} borderColor={border}>
                 <HStack
@@ -295,11 +311,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     <CopyableId id={job.id} display={truncateId(job.id)} />
                   </Box>
                   <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
-                    {job.subjectId
-                      ? `${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId}`
-                      : job.source
-                        ? `Source: ${job.source}`
-                        : ''}
+                    {[agentLabel, subject].filter(Boolean).join(' · ')}
                   </Text>
                   {stalledByPause ? (
                     <Text fontSize='xs' color={muted} flexShrink={0}>

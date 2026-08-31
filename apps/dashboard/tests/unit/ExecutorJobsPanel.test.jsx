@@ -16,6 +16,7 @@ const {
   useCertOpsJobsMock,
   useCertOpsCanManageMock,
   useCertOpsJobTimelineMock,
+  useCertOpsAgentsMock,
   createJobMock,
   approveJobMock,
   rejectJobMock,
@@ -31,6 +32,14 @@ const {
     evidence: [],
     loading: false,
     error: '',
+  })),
+  useCertOpsAgentsMock: vi.fn(() => ({
+    enabled: true,
+    agents: [],
+    pagination: null,
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
   })),
   createJobMock: vi.fn(),
   approveJobMock: vi.fn(),
@@ -80,14 +89,7 @@ vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
 }));
 
 vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
-  useCertOpsAgents: () => ({
-    enabled: false,
-    agents: [],
-    pagination: null,
-    loading: false,
-    error: '',
-    refresh: vi.fn(),
-  }),
+  useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
 function renderPanel(props = {}, initialEntries = ['/']) {
@@ -146,6 +148,15 @@ beforeEach(() => {
   listWorkspaceCertificateInstancesMock.mockReset();
   listWorkspaceCertificateInstancesMock.mockResolvedValue({ items: [] });
   useCertOpsCanManageMock.mockReturnValue(true);
+  useCertOpsAgentsMock.mockReset();
+  useCertOpsAgentsMock.mockReturnValue({
+    enabled: true,
+    agents: [],
+    pagination: null,
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+  });
   useCertOpsJobsMock.mockReturnValue(jobsState());
 });
 
@@ -734,5 +745,40 @@ describe('ExecutorJobsPanel list states', () => {
     expect(useCertOpsJobsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ offset: 0 })
     );
+  });
+
+  it('shows the assigned agent hostname on the job row, not only the id', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      enabled: true,
+      agents: [
+        {
+          id: 'agent-row-1',
+          agentId: 'candidate-tt-trustvfy-5100',
+          hostname: 'tt-trustvfy',
+        },
+      ],
+      pagination: null,
+      loading: false,
+      error: '',
+      refresh: vi.fn(),
+    });
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            operation: 'distribute-trust',
+            assignedAgentId: 'agent-row-1',
+            subjectType: 'trust_anchor',
+            subjectId: 'anchor-1',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(
+      screen.getByText(/tt-trustvfy \(agent-row-1\)/)
+    ).toBeInTheDocument();
   });
 });

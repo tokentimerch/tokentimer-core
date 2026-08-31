@@ -13,7 +13,41 @@
  *   node host-sandbox.js polkit --user NAME [--reload-service UNIT ...]
  *   node host-sandbox.js validate-path PATH
  *   node host-sandbox.js map-reload-service NAME
+ *   node host-sandbox.js trust-store-paths FAMILY
+ *   node host-sandbox.js is-trust-store-path PATH
+ *   node host-sandbox.js is-trust-store-recursive-acl PATH
  */
+
+/**
+ * OS-owned trust-store directories the agent must write for
+ * distribute-trust / revoke-trust. These are NOT ordinary --write-path
+ * targets: the installer must never chown or chmod them (that would take
+ * /etc/ssl/certs away from the rest of the host). --trust-store only adds
+ * them to ReadWritePaths and grants a write ACL.
+ *
+ * Debian: anchors dir plus /etc/ssl/certs (update-ca-certificates writes
+ * pem symlinks, hash links, and ca-certificates.crt there).
+ * RHEL: source anchors plus extracted bundles (update-ca-trust extract).
+ * `extracted` needs a recursive ACL because extract writes into
+ * extracted/pem, extracted/openssl, and extracted/java, not only the
+ * parent directory.
+ */
+const TRUST_STORE_WRITE_PATHS = Object.freeze({
+  debian: Object.freeze([
+    "/usr/local/share/ca-certificates",
+    "/etc/ssl/certs",
+  ]),
+  rhel: Object.freeze([
+    "/etc/pki/ca-trust/source/anchors",
+    "/etc/pki/ca-trust/extracted",
+    "/etc/pki/tls/certs",
+  ]),
+});
+
+/** Paths whose children, not just the directory itself, must be writable. */
+const TRUST_STORE_RECURSIVE_ACL_PATHS = Object.freeze([
+  "/etc/pki/ca-trust/extracted",
+]);
 
 const ALLOWED_RELOAD_SERVICES = Object.freeze({
   nginx: Object.freeze({ unit: "nginx.service", validateBinaries: ["nginx"] }),
@@ -74,6 +108,46 @@ function validateAbsolutePath(value) {
     fail("refusing ReadWritePaths=/etc; pass concrete cert/deploy directories instead");
   }
   return value.replace(/\/+$/, "") || "/";
+}
+
+/**
+ * @param {string} family
+ * @returns {string[]}
+ */
+function trustStoreWritePaths(family) {
+  if (typeof family !== "string" || family.length === 0) {
+    fail("trust-store family must be debian or rhel");
+  }
+  const key = family.toLowerCase();
+  const paths = TRUST_STORE_WRITE_PATHS[key];
+  if (!paths) {
+    fail(`unknown trust-store family: ${JSON.stringify(family)} (debian or rhel)`);
+  }
+  return [...paths];
+}
+
+/**
+ * True when PATH is one of the OS-owned trust-store directories above.
+ * Used by install-agent.sh so --write-path of those dirs never chowns them.
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isSystemTrustStorePath(value) {
+  const normalized = validateAbsolutePath(value);
+  for (const family of Object.keys(TRUST_STORE_WRITE_PATHS)) {
+    if (TRUST_STORE_WRITE_PATHS[family].includes(normalized)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when POSIX ACL/group-write must be applied recursively.
+ * RHEL `update-ca-trust extract` writes into extracted/{pem,openssl,java}.
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isTrustStoreRecursiveAclPath(value) {
+  return TRUST_STORE_RECURSIVE_ACL_PATHS.includes(validateAbsolutePath(value));
 }
 
 function uniquePreserveOrder(values) {
@@ -189,7 +263,10 @@ function printUsage() {
       "  node host-sandbox.js override --state-dir DIR [--write-path DIR ...]\n" +
       "  node host-sandbox.js polkit --user NAME [--reload-service UNIT ...]\n" +
       "  node host-sandbox.js validate-path PATH\n" +
-      "  node host-sandbox.js map-reload-service NAME\n",
+      "  node host-sandbox.js map-reload-service NAME\n" +
+      "  node host-sandbox.js trust-store-paths FAMILY\n" +
+      "  node host-sandbox.js is-trust-store-path PATH\n" +
+      "  node host-sandbox.js is-trust-store-recursive-acl PATH\n",
   );
 }
 
@@ -202,6 +279,7 @@ function parseArgs(argv) {
     reloadServices: [],
     path: "",
     service: "",
+    family: "",
   };
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -225,6 +303,12 @@ function parseArgs(argv) {
       options.path = arg;
     } else if (command === "map-reload-service" && !options.service) {
       options.service = arg;
+    } else if (command === "trust-store-paths" && !options.family) {
+      options.family = arg;
+    } else if (command === "is-trust-store-path" && !options.path) {
+      options.path = arg;
+    } else if (command === "is-trust-store-recursive-acl" && !options.path) {
+      options.path = arg;
     } else {
       fail(`unknown argument: ${arg}`);
     }
@@ -263,13 +347,30 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(mapReloadService(options.service))}\n`);
     return 0;
   }
+  if (command === "trust-store-paths") {
+    process.stdout.write(`${trustStoreWritePaths(options.family).join("\n")}\n`);
+    return 0;
+  }
+  if (command === "is-trust-store-path") {
+    process.stdout.write(isSystemTrustStorePath(options.path) ? "yes\n" : "no\n");
+    return 0;
+  }
+  if (command === "is-trust-store-recursive-acl") {
+    process.stdout.write(isTrustStoreRecursiveAclPath(options.path) ? "yes\n" : "no\n");
+    return 0;
+  }
   fail(`unknown command: ${command}`);
   return 1;
 }
 
 module.exports = {
   ALLOWED_RELOAD_SERVICES,
+  TRUST_STORE_WRITE_PATHS,
+  TRUST_STORE_RECURSIVE_ACL_PATHS,
   validateAbsolutePath,
+  trustStoreWritePaths,
+  isSystemTrustStorePath,
+  isTrustStoreRecursiveAclPath,
   buildSystemdOverride,
   buildPolkitRule,
   mapReloadService,

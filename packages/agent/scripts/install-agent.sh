@@ -15,10 +15,12 @@
 #   5. Stores the bootstrap token in state/bootstrap.env (0600) for the
 #      service's first-run registration. The token is single-use and is
 #      NEVER echoed back to the terminal by this script.
-#   6. Installs, enables and starts the tokentimer-agent systemd unit
+#   6. Installs, enables       and starts the tokentimer-agent systemd unit
 #      (template: tokentimer-agent.service next to this script), writes a
-#      target-specific drop-in override for ReadWritePaths from --write-path,
-#      and optionally installs a polkit rule for --reload-service units.
+#      target-specific drop-in override for ReadWritePaths from --write-path
+#      plus auto-detected OS trust-store dirs (Ubuntu/Debian and
+#      RHEL/AlmaLinux), and optionally installs a polkit rule for
+#      --reload-service units.
 #
 # Security notes:
 #   - config.json is 0600 and the state dir is 0700, matching what the agent
@@ -53,6 +55,9 @@ WRITE_PATHS=""
 RELOAD_SERVICES=""
 WRITE_PATHS_FILE=""
 ALLOW_INSECURE_LOCAL_HTTP=0
+# auto: grant when Debian/RHEL trust-store tools are present (Ubuntu
+# 22/24/26 and AlmaLinux 9). on: require them. off: skip.
+TRUST_STORE_MODE=auto
 VALIDATE_SERVER_URL_JS="$SCRIPT_DIR/validate-server-url.js"
 
 UNIT_DROPIN_DIR="/etc/systemd/system/${UNIT_NAME}.d"
@@ -96,9 +101,25 @@ Options:
                          into (repeatable). Examples: /etc/letsencrypt,
                          /etc/nginx/certs, /etc/ssl/tokentimer. Never grants
                          all of /etc. Paths are installed into a systemd
-                         drop-in ReadWritePaths list.
+                         drop-in ReadWritePaths list. Do not use this for the
+                         OS trust store: the installer takes ownership of
+                         --write-path dirs, which would break /etc/ssl/certs
+                         for the rest of the host. Trust-store dirs are
+                         granted automatically (see --trust-store).
   --write-paths-file F   File with one absolute write path per line (# comments
                          and blank lines allowed). Merged with --write-path.
+  --trust-store          Require the OS machine trust-store grant (default
+                         is to apply it automatically when this host is
+                         Debian/Ubuntu or RHEL/AlmaLinux). Ubuntu/Debian:
+                         /usr/local/share/ca-certificates and /etc/ssl/certs.
+                         RHEL/AlmaLinux: pki anchors, extracted bundles, and
+                         /etc/pki/tls/certs. Opens those paths in
+                         ReadWritePaths and grants tokentimer-agent write
+                         via setfacl, or group-write with owner left root
+                         when setfacl is missing. Never chowns the store.
+                         Fails if neither update-ca-certificates nor
+                         update-ca-trust is on PATH.
+  --no-trust-store       Skip the OS trust-store grant (renew-only hosts).
   --reload-service NAME  Allow the agent to `systemctl reload` this service
                          via a generated polkit rule (repeatable). Allowed:
                          nginx, apache/apache2, httpd, haproxy. Polkit is used
@@ -130,7 +151,8 @@ Layout created:
                                 acme/acme.sh/ (acme.sh --home/--config-home)
                                 with dnsapi/dns_certops.sh -> app/bin symlink
   .../tokentimer-agent.service.d/override.conf
-                                generated ReadWritePaths (state + --write-path)
+                                generated ReadWritePaths (state + --write-path
+                                + auto-detected OS trust-store dirs)
   /etc/polkit-1/rules.d/50-tokentimer-agent.rules
                                 optional, only when --reload-service is set
 
@@ -142,6 +164,9 @@ Host permissions note:
   ReadWritePaths lets the sandbox reach a path; the tokentimer-agent user
   must still own or have write ACL on those directories. Ensure that before
   enabling deploy jobs (for example: setfacl -m u:tokentimer-agent:rwx DIR).
+  --trust-store applies that ACL (or a group-write fallback) on the OS
+  trust-store directories itself when Debian/Ubuntu or RHEL/AlmaLinux
+  tools are present. Pass --no-trust-store to skip.
 EOF
 }
 
@@ -155,6 +180,40 @@ run() {
     printf '%s\n' "[dry-run] $*"
   else
     "$@"
+  fi
+}
+
+# Grant the unprivileged agent user write on an OS-owned CA directory
+# without taking ownership. Prefer setfacl (Ubuntu 22/24/26); fall back to
+# group-write with owner left root when the acl package is missing
+# (AlmaLinux 9 minimal). Recursive on RHEL extracted/ because
+# update-ca-trust extract writes into pem/openssl/java children.
+grant_trust_store_write() {
+  trust_path="$1"
+  if [ ! -d "$trust_path" ]; then
+    log "Creating trust-store directory $trust_path (root-owned, mode 0755)"
+    run mkdir -p "$trust_path"
+    run chmod 0755 "$trust_path"
+  fi
+  recursive=no
+  if [ "$(node "$HOST_SANDBOX_JS" is-trust-store-recursive-acl "$trust_path")" = "yes" ]; then
+    recursive=yes
+  fi
+  if command -v setfacl >/dev/null 2>&1; then
+    if [ "$recursive" = yes ]; then
+      run setfacl -R -m "u:${AGENT_USER}:rwx" "$trust_path"
+    else
+      run setfacl -m "u:${AGENT_USER}:rwx" "$trust_path"
+    fi
+  else
+    log "setfacl not found; granting group-write on $trust_path to $AGENT_USER (owner stays root)"
+    if [ "$recursive" = yes ]; then
+      run chgrp -R "$AGENT_USER" "$trust_path"
+      run chmod -R g+w "$trust_path"
+    else
+      run chgrp "$AGENT_USER" "$trust_path"
+      run chmod g+w "$trust_path"
+    fi
   fi
 }
 
@@ -189,6 +248,16 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --allow-insecure-local-http) ALLOW_INSECURE_LOCAL_HTTP=1; shift ;;
+    --trust-store)
+      [ "$TRUST_STORE_MODE" = off ] && fail "cannot combine --trust-store and --no-trust-store"
+      TRUST_STORE_MODE=on
+      shift
+      ;;
+    --no-trust-store)
+      [ "$TRUST_STORE_MODE" = on ] && fail "cannot combine --trust-store and --no-trust-store"
+      TRUST_STORE_MODE=off
+      shift
+      ;;
     --dry-run) DRY_RUN=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -328,6 +397,31 @@ for write_path in $WRITE_PATHS; do
 done
 WRITE_PATHS=$VALIDATED_WRITE_PATHS
 
+# OS-owned CA directories for this host family. Kept separate from
+# WRITE_PATHS so the mkdir/chown/chmod loop below never takes ownership of
+# /etc/ssl/certs (or the RHEL pki store). Default is auto: Ubuntu 22/24/26
+# and AlmaLinux 9 all get the grant when their update command exists.
+TRUST_STORE_PATHS=""
+if [ "$TRUST_STORE_MODE" != off ]; then
+  TRUST_STORE_FAMILY=""
+  if command -v update-ca-certificates >/dev/null 2>&1 || [ -x /usr/sbin/update-ca-certificates ]; then
+    TRUST_STORE_FAMILY="debian"
+  elif command -v update-ca-trust >/dev/null 2>&1 || [ -x /usr/bin/update-ca-trust ]; then
+    TRUST_STORE_FAMILY="rhel"
+  fi
+  if [ -n "$TRUST_STORE_FAMILY" ]; then
+    TRUST_STORE_PATHS=$(node "$HOST_SANDBOX_JS" trust-store-paths "$TRUST_STORE_FAMILY") \
+      || fail "could not resolve trust-store write paths for family $TRUST_STORE_FAMILY"
+    log "Trust-store family $TRUST_STORE_FAMILY: opening $(printf '%s' "$TRUST_STORE_PATHS" | tr '\n' ' ')"
+  elif [ "$TRUST_STORE_MODE" = on ]; then
+    fail "--trust-store requires update-ca-certificates (Debian/Ubuntu) or update-ca-trust (RHEL/AlmaLinux) on PATH"
+  else
+    log "No Debian/Ubuntu or RHEL/AlmaLinux trust-store tools on PATH; skipping OS trust-store grant."
+  fi
+else
+  log "Skipping OS trust-store grant (--no-trust-store)."
+fi
+
 VALIDATED_RELOAD_SERVICES=""
 for reload_service in $RELOAD_SERVICES; do
   node "$HOST_SANDBOX_JS" map-reload-service "$reload_service" >/dev/null \
@@ -411,6 +505,12 @@ run chmod 0700 "$STATE_DIR"
 # above, so the unit started later in this script comes up clean on its
 # first try.
 for write_path in $WRITE_PATHS; do
+  # System trust-store dirs stay root-owned; chown/chmod 0750 would lock
+  # the host CA bundle away from every other process. ACL is applied later.
+  if [ "$(node "$HOST_SANDBOX_JS" is-trust-store-path "$write_path")" = "yes" ]; then
+    log "Leaving ownership of system trust-store path $write_path unchanged (OS trust-store grant, not --write-path)."
+    continue
+  fi
   run mkdir -p "$write_path"
   if [ "$IS_DARWIN" -eq 0 ]; then
     run chown "$AGENT_USER:$AGENT_USER" "$write_path"
@@ -530,11 +630,17 @@ fi
 run cp "$UNIT_TEMPLATE" "$UNIT_DEST"
 run chmod 0644 "$UNIT_DEST"
 
-# Target-specific sandbox drop-in: state dir + operator --write-path list.
+# Target-specific sandbox drop-in: state dir + operator --write-path list
+# + optional OS trust-store dirs from --trust-store.
 # Always written so upgrades replace a previous broader (or empty) override.
 OVERRIDE_ARGS="--state-dir $STATE_DIR"
 for write_path in $WRITE_PATHS; do
   OVERRIDE_ARGS="$OVERRIDE_ARGS --write-path $write_path"
+done
+# TRUST_STORE_PATHS is newline-separated from host-sandbox.js.
+# shellcheck disable=SC2086
+for trust_path in $TRUST_STORE_PATHS; do
+  OVERRIDE_ARGS="$OVERRIDE_ARGS --write-path $trust_path"
 done
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "[dry-run] mkdir -p $UNIT_DROPIN_DIR"
@@ -549,6 +655,16 @@ else
   node "$HOST_SANDBOX_JS" override $OVERRIDE_ARGS > "$OVERRIDE_TMP"
   chmod 0644 "$OVERRIDE_TMP"
   mv "$OVERRIDE_TMP" "$UNIT_DROPIN_FILE"
+fi
+
+# Write grant on OS trust-store directories. Never chown: that would steal
+# the host CA store. Create a missing dir as root 0755 so systemd
+# ReadWritePaths does not fail with 226/NAMESPACE (same trap as --write-path
+# on Ubuntu 22/24/26 and AlmaLinux 9).
+if [ -n "$TRUST_STORE_PATHS" ]; then
+  for trust_path in $TRUST_STORE_PATHS; do
+    grant_trust_store_write "$trust_path"
+  done
 fi
 
 # Optional polkit rule for narrowly scoped systemctl reload. Prefer polkit
@@ -596,12 +712,17 @@ log "     registering; no manual cleanup is needed.)"
 log "  4. Configure agent-local policy and discovery in $CONFIG_PATH"
 log "     (allowlists are default-deny until you set them), then:"
 log "     systemctl restart $UNIT_NAME"
-if [ -n "$WRITE_PATHS" ]; then
-  log "  5. Ensure $AGENT_USER can write the configured cert paths:"
+if [ -n "$WRITE_PATHS" ] || [ -n "$TRUST_STORE_PATHS" ]; then
+  log "  5. Ensure $AGENT_USER can write the configured cert/trust-store paths:"
   for write_path in $WRITE_PATHS; do
     log "       $write_path"
   done
-  log "     (ReadWritePaths opens the sandbox; ownership/ACLs still required.)"
+  for trust_path in $TRUST_STORE_PATHS; do
+    log "       $trust_path (OS trust-store grant)"
+  done
+  log "     (ReadWritePaths opens the sandbox; ownership/ACLs still required"
+  log "      for --write-path dirs. The OS trust-store grant applies ACL or"
+  log "      group-write itself and does not chown the system CA store.)"
 fi
 if [ -n "$RELOAD_SERVICES" ]; then
   log "  6. Reload authorization installed via polkit for: $RELOAD_SERVICES"
