@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A GCP Secret Manager scan that failed with 403 told operators to grant Secret Manager Secret Accessor. That role can read secret values but cannot list secrets, which is what the scan does. The error now asks for Secret Manager Viewer (`roles/secretmanager.viewer`) on the project.
+
 ## [0.14.1] - 2026-08-31
 
 ### Fixed

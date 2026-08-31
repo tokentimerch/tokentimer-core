@@ -199,14 +199,16 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     <VStack align='stretch' spacing={3}>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
-          Scans GCP Secret Manager for secrets with expiration dates. Token is
-          used for scanning and stored encrypted if auto-sync is enabled.
+          Scans GCP Secret Manager for secrets with expiration dates. Grant
+          Secret Manager Viewer on the project; Secret Accessor cannot list
+          secrets. Token is used for scanning and stored encrypted if auto-sync
+          is enabled.
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
             onClick={() =>
               window.open(
-                'https://tokentimer.ch/docs/tokens#import-gcp',
+                'https://tokentimer.ch/docs/self-hosted/integrations/gcp',
                 '_blank',
                 'noopener,noreferrer'
               )
