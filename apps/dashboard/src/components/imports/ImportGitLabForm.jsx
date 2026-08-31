@@ -16,6 +16,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { gitlabAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
@@ -175,6 +176,12 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setCleanupObsolete(initialCleanupObsolete);
     }
   }, [initialCleanupObsolete]);
+
+  React.useEffect(() => {
+    if (cleanupObsolete && gitlabIncludeRevoked) {
+      setGitlabIncludeRevoked(false);
+    }
+  }, [cleanupObsolete, gitlabIncludeRevoked]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGitlab.size);
@@ -372,14 +379,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
           </Text>
           <Text fontSize='sm' mt={1}>
             <ChakraLink
-              onClick={() =>
-                window.open(
-                  'https://tokentimer.ch/docs/tokens#import-gitlab',
-                  '_blank',
-                  'noopener,noreferrer'
-                )
-              }
-              cursor='pointer'
+              href={IMPORT_DOCS.gitlab}
               color='blue.500'
               textDecoration='underline'
               isExternal
@@ -513,11 +513,18 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
               <Checkbox
                 isChecked={gitlabIncludeRevoked}
                 onChange={e => setGitlabIncludeRevoked(e.target.checked)}
+                isDisabled={cleanupObsolete}
                 size='sm'
                 colorScheme='red'
               >
                 Include revoked tokens
               </Checkbox>
+              {cleanupObsolete ? (
+                <Text fontSize='xs' color={helpTextColor} pl={6}>
+                  GitLab still lists revoked PATs. Cleanup turns this off so a
+                  revoked token is treated as gone, not as still found.
+                </Text>
+              ) : null}
               <Checkbox
                 isChecked={cleanupObsolete}
                 onChange={e => setCleanupObsolete(e.target.checked)}

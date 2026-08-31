@@ -20,6 +20,40 @@ const { logger } = require("../utils/logger");
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
+// Cleanup needs an independent completeness flag per credential sourceKind.
+// Each Graph type (applications / service principals) therefore contributes
+// two summary rows. `found` is extracted credentials of that kind, not the
+// number of Graph objects enumerated (a tenant can have 105 SPs and 3 secrets).
+function pushCredentialKindSummaries(
+  summary,
+  {
+    type,
+    secretKind,
+    certKind,
+    secretsCount,
+    certsCount,
+    truncated,
+    complete,
+  },
+) {
+  summary.push({
+    type,
+    sourceKind: secretKind,
+    found: secretsCount,
+    secrets: secretsCount,
+    truncated,
+    complete,
+  });
+  summary.push({
+    type,
+    sourceKind: certKind,
+    found: certsCount,
+    certificates: certsCount,
+    truncated,
+    complete,
+  });
+}
+
 async function graphRequest({ token, method = "GET", path, params = {} }) {
   // Accept absolute URLs as-is (Graph returns full URLs in @odata.nextLink,
   // whose path already contains /v1.0 - prepending the base again would
@@ -355,21 +389,12 @@ async function scanAzureAD({
           }
         }
 
-        summary.push({
+        pushCredentialKindSummaries(summary, {
           type: "applications",
-          sourceKind: "azure-ad-client-secret",
-          found: apps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
-          truncated: appsTruncated || appsBudgetExhausted,
-          complete: !appsTruncated && !appsBudgetExhausted,
-        });
-        summary.push({
-          type: "applications",
-          sourceKind: "azure-ad-certificate",
-          found: apps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
+          secretKind: "azure-ad-client-secret",
+          certKind: "azure-ad-certificate",
+          secretsCount,
+          certsCount,
           truncated: appsTruncated || appsBudgetExhausted,
           complete: !appsTruncated && !appsBudgetExhausted,
         });
@@ -475,21 +500,12 @@ async function scanAzureAD({
           }
         }
 
-        summary.push({
+        pushCredentialKindSummaries(summary, {
           type: "service_principals",
-          sourceKind: "azure-ad-sp-secret",
-          found: sps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
-          truncated: spsTruncated || spsBudgetExhausted,
-          complete: !spsTruncated && !spsBudgetExhausted,
-        });
-        summary.push({
-          type: "service_principals",
-          sourceKind: "azure-ad-sp-certificate",
-          found: sps.length,
-          secrets: secretsCount,
-          certificates: certsCount,
+          secretKind: "azure-ad-sp-secret",
+          certKind: "azure-ad-sp-certificate",
+          secretsCount,
+          certsCount,
           truncated: spsTruncated || spsBudgetExhausted,
           complete: !spsTruncated && !spsBudgetExhausted,
         });
@@ -556,5 +572,6 @@ if (process.env.NODE_ENV === "test") {
     graphRequest,
     listApplications,
     listServicePrincipals,
+    pushCredentialKindSummaries,
   };
 }

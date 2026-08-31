@@ -11,10 +11,12 @@
  * against `integration_scan_items` for the submitted `scan_id`, and only
  * attribute source_* fields on the ones that match a real recorded row.
  * An item that doesn't match (no scan_id supplied, wrong scan_id, or the
- * item simply wasn't part of that scan) is imported the same way imports
- * always worked before this feature -- unattributed, and therefore never a
- * cleanup candidate. This is the deliberate "don't guess" behavior for
- * ambiguous/legacy-shaped imports.
+ * item simply wasn't part of that scan) is imported unattributed -- never
+ * a cleanup candidate on this pass. A later scan-bound import of the same
+ * name+location adopts that row in place (see findUnattributedByNameLocation)
+ * instead of creating a duplicate. This is the deliberate "don't guess"
+ * behavior for ambiguous/legacy-shaped imports: we never invent provenance
+ * on the first pass, we only fill it in once a real scan item matches.
  */
 
 const { getScan, lookupScanItems } = require("./integrationScans");

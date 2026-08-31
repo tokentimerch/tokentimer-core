@@ -18,6 +18,10 @@ const { scanVault } = require("../services/vaultIntegration");
 const { scanGitLab } = require("../services/gitlabIntegration");
 const { scanGitHub } = require("../services/githubIntegration");
 const { scanAWS, detectAWSRegions } = require("../services/awsIntegration");
+const {
+  normalizeAwsSweepRegions,
+  awsScanPersistRecords,
+} = require("../services/awsScanPersist");
 const { scanAzure } = require("../services/azureIntegration");
 const { scanAzureAD } = require("../services/azureADIntegration");
 const { scanGCP } = require("../services/gcpIntegration");
@@ -639,9 +643,16 @@ router.post(
           // Items that didn't bind to a scan (legacy behavior) fall back to
           // the old name+location match -- see the "ambiguous legacy rows"
           // policy in importCleanup.js: we never try to retrofit provenance
-          // onto a pre-existing ambiguous row by guessing.
+          // onto a pre-existing *attributed* row by guessing (that row keeps
+          // whatever identity it already has). But if this item DID bind to
+          // a scan and no source-identity row exists yet, check for a
+          // pre-existing *unattributed* row at the same name+location before
+          // creating a new one -- otherwise a token imported once without a
+          // scan_id (e.g. a stale client scan_id) can never be adopted by a
+          // later scan-bound import (like auto-sync), leaving a permanent
+          // duplicate cleanup can never reach.
           let tok;
-          const existingToken = tokenPayload.source_object_id
+          let existingToken = tokenPayload.source_object_id
             ? await Token.findBySourceIdentity({
                 workspaceId,
                 sourceProvider: tokenPayload.source_provider,
@@ -655,6 +666,13 @@ router.post(
                 tokenPayload.location,
                 workspaceId,
               );
+          if (!existingToken && tokenPayload.source_object_id) {
+            existingToken = await Token.findUnattributedByNameLocation(
+              tokenPayload.name,
+              tokenPayload.location,
+              workspaceId,
+            );
+          }
 
           if (existingToken) {
             // Update existing token with new characteristics
@@ -1355,6 +1373,8 @@ router.post(
         secretAccessKey,
         sessionToken,
         region,
+        regions,
+        scanMode,
         include,
         maxItems,
         filterRules,
@@ -1378,11 +1398,19 @@ router.post(
           .status(400)
           .json(withQuota({ error: "maxItems must be between 1 and 2000" }));
       }
+      const isSweep = scanMode === "all-regions";
+      if (isSweep && regions !== undefined && regions !== null && !Array.isArray(regions)) {
+        return res
+          .status(400)
+          .json(withQuota({ error: "regions must be an array" }));
+      }
+      const sweepRegions = isSweep ? normalizeAwsSweepRegions(regions || []) : null;
       const result = await scanAWS({
         accessKeyId,
         secretAccessKey,
         sessionToken: sessionToken || null,
         region: region || "us-east-1",
+        regions: sweepRegions,
         include: {
           secrets:
             include && typeof include.secrets === "boolean"
@@ -1400,35 +1428,23 @@ router.post(
 
       // Persist this scan as the backend-authoritative record of what was
       // covered (per region+service completeness), so import's cleanup
-      // request can be driven by scan_id.
+      // request can be driven by scan_id. An all-regions sweep is one
+      // persist covering IAM plus every region that actually ran.
       try {
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId && result.accountId) {
+          const persist = awsScanPersistRecords(
+            result.items,
+            result.summary,
+            region || "us-east-1",
+          );
           const scan = await persistScan({
             workspaceId,
             provider: "aws",
             identityContext: { accountId: result.accountId },
             createdBy: req.user?.id || null,
-            items: result.items.map((item) => ({
-              sourceKind: item.sourceKind,
-              sourceObjectId: item.sourceObjectId,
-              // `service` intentionally omitted: sourceKind already
-              // distinguishes aws-secrets-manager / aws-acm / aws-iam-key,
-              // and the summary's `service` field below uses different
-              // string values (e.g. "secrets_manager") than sourceKind
-              // (e.g. "aws-secrets-manager") -- keeping both would make
-              // cleanup's exact-match dimension filter never match.
-              dimensions:
-                item.sourceKind === "aws-iam-key"
-                  ? {}
-                  : { region: region || "us-east-1" },
-            })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: s.region ? { region: s.region } : {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
-            })),
+            items: persist.items,
+            subScopes: persist.subScopes,
           });
           result.scan_id = scan.scanId;
         }
@@ -1785,7 +1801,7 @@ router.post(
               sourceKind: s.sourceKind,
               dimensions: {},
               complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
             })),
           });
           result.scan_id = scan.scanId;
@@ -1843,7 +1859,7 @@ router.post(
         e?.message?.includes("PermissionDenied")
       ) {
         userMessage =
-          'GCP permission denied. Ensure your account has "Secret Manager Secret Accessor" role (roles/secretmanager.secretAccessor) on the project.';
+          'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.';
       } else if (e?.status === 404 || e?.message?.includes("NotFound")) {
         userMessage =
           "GCP project or resource not found. Verify your project ID is correct and you have access.";
@@ -2581,9 +2597,15 @@ router.post(
           // name/location drift); items that didn't bind to a scan fall
           // back to the pre-existing name+location match. See
           // importCleanup.js for why ambiguous legacy rows are never
-          // retrofitted with guessed provenance.
+          // retrofitted with guessed provenance. But if this item *did*
+          // bind to a scan and no source-identity row exists, adopt a
+          // pre-existing *unattributed* row at the same name+location
+          // instead of creating a duplicate -- this is what makes an
+          // auto-sync run (which always sends scan_id) converge onto a
+          // token that a prior manual import created without one (e.g. a
+          // stale/missing client scan_id), rather than shadowing it forever.
           let tok;
-          const existingToken = tokenPayload.source_object_id
+          let existingToken = tokenPayload.source_object_id
             ? await Token.findBySourceIdentity({
                 workspaceId,
                 sourceProvider: tokenPayload.source_provider,
@@ -2597,6 +2619,13 @@ router.post(
                 tokenPayload.location,
                 workspaceId,
               );
+          if (!existingToken && tokenPayload.source_object_id) {
+            existingToken = await Token.findUnattributedByNameLocation(
+              tokenPayload.name,
+              tokenPayload.location,
+              workspaceId,
+            );
+          }
 
           if (existingToken) {
             // Update existing token with new characteristics

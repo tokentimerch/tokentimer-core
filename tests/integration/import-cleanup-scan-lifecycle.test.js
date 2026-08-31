@@ -213,7 +213,325 @@ describe("Import cleanup scan lifecycle (real database)", function () {
     expect(await tokenStillExists(tokenB.id)).to.equal(true);
   });
 
-  it("never deletes anything from a sub-scope the scan reported incomplete", async () => {    const instance = `aws-${crypto.randomUUID()}`;
+  it("All-Regions AWS scan only deletes the missing region's token", async () => {
+    const accountId = `aws-${crypto.randomUUID()}`;
+    const goneEast = await createProvenanceToken({
+      name: "secret-us-east-1-deleted",
+      provider: "aws",
+      instance: accountId,
+      ownerKey: accountId,
+      kind: "aws-secrets-manager",
+      objectId: "arn:aws:secretsmanager:us-east-1:123:secret:gone",
+      dimensions: { region: "us-east-1", service: "secretsmanager" },
+    });
+    const keptWest = await createProvenanceToken({
+      name: "secret-eu-west-1-kept",
+      provider: "aws",
+      instance: accountId,
+      ownerKey: accountId,
+      kind: "aws-secrets-manager",
+      objectId: "arn:aws:secretsmanager:eu-west-1:123:secret:kept",
+      dimensions: { region: "eu-west-1", service: "secretsmanager" },
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "aws",
+      identityContext: { accountId },
+      items: [
+        {
+          sourceKind: "aws-secrets-manager",
+          sourceObjectId: "arn:aws:secretsmanager:eu-west-1:123:secret:kept",
+          dimensions: { region: "eu-west-1", service: "secretsmanager" },
+        },
+      ],
+      subScopes: [
+        {
+          sourceKind: "aws-secrets-manager",
+          dimensions: { region: "us-east-1", service: "secretsmanager" },
+          complete: true,
+        },
+        {
+          sourceKind: "aws-secrets-manager",
+          dimensions: { region: "eu-west-1", service: "secretsmanager" },
+          complete: true,
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "aws", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(goneEast.id);
+    expect(deleted.map((d) => d.id)).to.not.include(keptWest.id);
+    expect(await tokenStillExists(keptWest.id)).to.equal(true);
+    expect(await tokenStillExists(goneEast.id)).to.equal(false);
+  });
+
+  it("never touches a different Azure Key Vault when cleaning vault A", async () => {
+    const vaultA = `https://vault-a-${crypto.randomUUID()}.vault.azure.net`;
+    const vaultB = `https://vault-b-${crypto.randomUUID()}.vault.azure.net`;
+    const goneA = await createProvenanceToken({
+      name: "vault-a-secret-gone",
+      provider: "azure",
+      instance: vaultA,
+      ownerKey: vaultA,
+      kind: "azure-key-vault-secret",
+      objectId: `${vaultA}/secrets/gone`,
+    });
+    const keptB = await createProvenanceToken({
+      name: "vault-b-secret-kept",
+      provider: "azure",
+      instance: vaultB,
+      ownerKey: vaultB,
+      kind: "azure-key-vault-secret",
+      objectId: `${vaultB}/secrets/kept`,
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "azure",
+      identityContext: { vaultUrl: vaultA },
+      items: [],
+      subScopes: [
+        {
+          sourceKind: "azure-key-vault-secret",
+          dimensions: {},
+          complete: true,
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "azure", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(goneA.id);
+    expect(deleted.map((d) => d.id)).to.not.include(keptB.id);
+    expect(await tokenStillExists(keptB.id)).to.equal(true);
+  });
+
+  it("cleans complete Azure KV types while leaving an incomplete type untouched", async () => {
+    const vaultUrl = `https://kv-mixed-${crypto.randomUUID()}.vault.azure.net`;
+    const goneSecret = await createProvenanceToken({
+      name: "kv-secret-gone",
+      provider: "azure",
+      instance: vaultUrl,
+      ownerKey: vaultUrl,
+      kind: "azure-key-vault-secret",
+      objectId: `${vaultUrl}/secrets/gone`,
+    });
+    const keptSecret = await createProvenanceToken({
+      name: "kv-secret-kept",
+      provider: "azure",
+      instance: vaultUrl,
+      ownerKey: vaultUrl,
+      kind: "azure-key-vault-secret",
+      objectId: `${vaultUrl}/secrets/kept`,
+    });
+    const unscannedCert = await createProvenanceToken({
+      name: "kv-cert-permission-denied",
+      provider: "azure",
+      instance: vaultUrl,
+      ownerKey: vaultUrl,
+      kind: "azure-key-vault-certificate",
+      objectId: `${vaultUrl}/certificates/unseen`,
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "azure",
+      identityContext: { vaultUrl },
+      items: [
+        {
+          sourceKind: "azure-key-vault-secret",
+          sourceObjectId: `${vaultUrl}/secrets/kept`,
+        },
+      ],
+      subScopes: [
+        {
+          sourceKind: "azure-key-vault-secret",
+          dimensions: {},
+          complete: true,
+        },
+        {
+          sourceKind: "azure-key-vault-certificate",
+          dimensions: {},
+          complete: false,
+          reason: "list_forbidden",
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "azure", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(goneSecret.id);
+    expect(deleted.map((d) => d.id)).to.not.include(keptSecret.id);
+    expect(deleted.map((d) => d.id)).to.not.include(unscannedCert.id);
+    expect(await tokenStillExists(keptSecret.id)).to.equal(true);
+    expect(await tokenStillExists(unscannedCert.id)).to.equal(true);
+  });
+
+  it("Azure AD cleanup only removes the deleted app secret, not another app's", async () => {
+    const tenantId = `tenant-${crypto.randomUUID()}`;
+    const gone = await createProvenanceToken({
+      name: "app-a-secret-gone",
+      provider: "azure-ad",
+      instance: tenantId,
+      ownerKey: tenantId,
+      kind: "azure-ad-client-secret",
+      objectId: "app-a-secret-1",
+    });
+    const kept = await createProvenanceToken({
+      name: "app-b-secret-kept",
+      provider: "azure-ad",
+      instance: tenantId,
+      ownerKey: tenantId,
+      kind: "azure-ad-client-secret",
+      objectId: "app-b-secret-1",
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "azure-ad",
+      identityContext: { tenantId },
+      items: [
+        {
+          sourceKind: "azure-ad-client-secret",
+          sourceObjectId: "app-b-secret-1",
+        },
+      ],
+      subScopes: [
+        {
+          sourceKind: "azure-ad-client-secret",
+          dimensions: {},
+          complete: true,
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "azure-ad", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(gone.id);
+    expect(deleted.map((d) => d.id)).to.not.include(kept.id);
+    expect(await tokenStillExists(kept.id)).to.equal(true);
+  });
+
+  it("GCP incomplete secrets kind skips cleanup even for a secret missing from the scan", async () => {
+    const projectId = `gcp-${crypto.randomUUID()}`;
+    const listed = await createProvenanceToken({
+      name: "gcp-secret-listed-but-describe-failed",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-secret-manager",
+      objectId: "projects/x/secrets/listed",
+    });
+    const missing = await createProvenanceToken({
+      name: "gcp-secret-actually-deleted",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-secret-manager",
+      objectId: "projects/x/secrets/gone",
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "gcp",
+      identityContext: { projectId },
+      items: [
+        {
+          sourceKind: "gcp-secret-manager",
+          sourceObjectId: "projects/x/secrets/listed",
+        },
+      ],
+      subScopes: [
+        {
+          sourceKind: "gcp-secret-manager",
+          dimensions: {},
+          complete: false,
+          reason: "describe_failures",
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "gcp", scanId: scan.scanId },
+    });
+
+    expect(deleted).to.have.length(0);
+    expect(await tokenStillExists(listed.id)).to.equal(true);
+    expect(await tokenStillExists(missing.id)).to.equal(true);
+  });
+
+  it("GCP complete scan still deletes a missing secret when a listed one had a version-lookup failure", async () => {
+    const projectId = `gcp-${crypto.randomUUID()}`;
+    const listed = await createProvenanceToken({
+      name: "gcp-secret-listed-without-expiration",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-secret-manager",
+      objectId: "projects/x/secrets/listed",
+    });
+    const missing = await createProvenanceToken({
+      name: "gcp-secret-actually-deleted",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-secret-manager",
+      objectId: "projects/x/secrets/gone",
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "gcp",
+      identityContext: { projectId },
+      items: [
+        {
+          sourceKind: "gcp-secret-manager",
+          sourceObjectId: "projects/x/secrets/listed",
+        },
+      ],
+      subScopes: [
+        {
+          sourceKind: "gcp-secret-manager",
+          dimensions: {},
+          complete: true,
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "gcp", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(missing.id);
+    expect(deleted.map((d) => d.id)).to.not.include(listed.id);
+    expect(await tokenStillExists(listed.id)).to.equal(true);
+    expect(await tokenStillExists(missing.id)).to.equal(false);
+  });
+
+  it("never deletes anything from a sub-scope the scan reported incomplete", async () => {
+    const instance = `aws-${crypto.randomUUID()}`;
     const obsolete = await createProvenanceToken({
       name: "aws-secret-truncated-region",
       provider: "aws",
@@ -538,6 +856,13 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       instance,
       ownerKey: instance,
     });
+    // Postgres timestamptz can collapse two back-to-back NOW() inserts to
+    // the same tick, which would make B's rediscovery look simultaneous
+    // with A and defeat the observation fence. Pin A firmly in the past.
+    await TestUtils.execQuery(
+      "UPDATE integration_scans SET started_at = NOW() - INTERVAL '2 seconds' WHERE id = $1",
+      [scanA.id],
+    );
 
     // Scan B starts after A, rediscovers the token (item recorded ->
     // source_observed_at bumped immediately), and finishes before A's

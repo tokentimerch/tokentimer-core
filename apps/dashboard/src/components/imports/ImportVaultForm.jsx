@@ -24,6 +24,7 @@ import {
 import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
@@ -389,14 +390,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/tokens#import-hashicorp',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
+            href={IMPORT_DOCS.vault}
             color='blue.500'
             textDecoration='underline'
             isExternal
@@ -567,9 +561,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                 Deletes previously imported items of the asset kinds scanned
                 above (KV, PKI, or both) that no longer appear anywhere in this
                 scan's results, regardless of which items you select for import
-                below. Asset kinds or mounts you did not scan for, or that this
-                scan couldn't fully complete, are never affected. This cannot be
-                undone.
+                below. Mounts you did not scan, or that this scan couldn't fully
+                complete, are never affected -- and neither is a category
+                (certificates / secrets &amp; keys) you left unchecked above:
+                cleanup only ever considers the categories this specific scan
+                was run with. This cannot be undone.
               </Text>
             ) : null}
           </VStack>

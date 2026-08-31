@@ -1379,6 +1379,8 @@ export const awsAPI = {
     secretAccessKey,
     sessionToken = null,
     region = 'us-east-1',
+    regions = null,
+    scanMode = null,
     include = { secrets: true, iam: true, certificates: true },
     maxItems = 500,
     isContinuation = false, // For multi-region scans, set true after first scan
@@ -1395,15 +1397,17 @@ export const awsAPI = {
         include,
         maxItems,
       };
+      if (scanMode) payload.scanMode = scanMode;
+      if (Array.isArray(regions)) payload.regions = regions;
       // Add is_continuation query param for multi-region scans
       const url = isContinuation
         ? `${API_ENDPOINTS.AWS_SCAN(workspaceId)}&is_continuation=true`
         : API_ENDPOINTS.AWS_SCAN(workspaceId);
       const res = await apiClient.post(url, payload, {
         _suppressLog: true,
-        timeout: 150000, // 150 seconds timeout (longer than backend's 120s to receive error response)
+        timeout: Array.isArray(regions) ? 300000 : 150000,
       });
-      return res.data; // { items, summary }
+      return res.data; // { items, summary, scan_id }
     } catch (e) {
       const errorMessage = handleApiError(e, 'AWS scan failed');
       const err = new Error(errorMessage);

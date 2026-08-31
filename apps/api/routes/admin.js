@@ -198,6 +198,19 @@ const REQUIRED_CRED_FIELDS = {
   vault: ["address", "token"],
 };
 
+// Dashboard stores the checkbox in scan_params.cleanupObsolete and (now)
+// also sends cleanup_obsolete. Accept either so a config created from only
+// the nested flag still drives scheduled cleanup.
+function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
+  if (cleanup_obsolete === true) return true;
+  if (cleanup_obsolete === false) return false;
+  return Boolean(
+    scan_params &&
+      typeof scan_params === "object" &&
+      scan_params.cleanupObsolete === true,
+  );
+}
+
 function validateAutoSyncCredentials(provider, credentials) {
   if (!credentials || typeof credentials !== "object") return null;
   const required = REQUIRED_CRED_FIELDS[provider] || [];
@@ -301,7 +314,7 @@ router.post(
           effTz,
           nextSync,
           req.user.id,
-          cleanup_obsolete === true,
+          resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params),
         ],
       );
       try {
@@ -411,6 +424,14 @@ router.put(
       if (cleanup_obsolete !== undefined) {
         updates.push(`cleanup_obsolete = $${idx++}`);
         values.push(cleanup_obsolete === true);
+      } else if (
+        scan_params !== undefined &&
+        scan_params &&
+        typeof scan_params === "object" &&
+        typeof scan_params.cleanupObsolete === "boolean"
+      ) {
+        updates.push(`cleanup_obsolete = $${idx++}`);
+        values.push(scan_params.cleanupObsolete === true);
       }
       updates.push(`updated_at = NOW()`);
 
