@@ -131,7 +131,9 @@ describe('CreateManualJobModal executor toggle', () => {
 
     renderModal();
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
 
     expect(screen.getByText('Cluster')).toBeInTheDocument();
     expect(screen.getByText('Namespace')).toBeInTheDocument();
@@ -160,10 +162,14 @@ describe('CreateManualJobModal executor toggle', () => {
 
     renderModal();
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
 
     expect(
-      screen.getByText('Create an API token scoped to a cluster on the API Tokens tab first, then come back here.')
+      screen.getByText(
+        'Create an API token scoped to a cluster on the API Tokens tab first, then come back here.'
+      )
     ).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /^Cluster/ })).toBeDisabled();
   });
@@ -171,7 +177,9 @@ describe('CreateManualJobModal executor toggle', () => {
   it('reverts to the Agent executor when the operation changes away from issue', () => {
     renderModal();
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
 
     selectOperation('renew');
     selectOperation('issue');
@@ -220,7 +228,9 @@ describe('CreateManualJobModal controller provisioning submission', () => {
   it('disables submit until the required controller fields are filled', () => {
     renderModal();
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
 
     expect(
       screen.getByRole('button', { name: 'Create provisioning intent' })
@@ -245,7 +255,9 @@ describe('CreateManualJobModal controller provisioning submission', () => {
 
     renderModal({ onClose, onCreated });
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
     fillControllerFields();
 
     fireEvent.click(
@@ -273,12 +285,12 @@ describe('CreateManualJobModal controller provisioning submission', () => {
   });
 
   it('surfaces the terminal-identity error with a friendly message', async () => {
-
     createControllerProvisionIntentMock.mockRejectedValue({
       response: {
         status: 409,
         data: {
-          error: 'Provisioning cannot reactivate a terminal managed certificate',
+          error:
+            'Provisioning cannot reactivate a terminal managed certificate',
           code: 'CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY',
         },
       },
@@ -286,7 +298,9 @@ describe('CreateManualJobModal controller provisioning submission', () => {
 
     renderModal();
     selectOperation('issue');
-    fireEvent.click(screen.getByRole('button', { name: 'Controller (cluster)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Controller (cluster)' })
+    );
     fillControllerFields();
 
     fireEvent.click(
@@ -398,8 +412,9 @@ describe('CreateManualJobModal trustOp mode', () => {
   it('renders the trust-op header instead of the generic manual-job form', () => {
     renderModal({ trustOp: distributeTrustOp });
 
+    // Title and submit button now share this text, so pin to the title's <p>.
     expect(
-      screen.getByText('Distribute trust trust anchor')
+      screen.getByText('Distribute trust anchor', { selector: 'p' })
     ).toBeInTheDocument();
     expect(screen.queryByText('Operation')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^Subject type/)).not.toBeInTheDocument();
@@ -408,7 +423,9 @@ describe('CreateManualJobModal trustOp mode', () => {
   it('disables submit until an agent and owner are chosen on distribute', () => {
     renderModal({ trustOp: distributeTrustOp });
 
-    const submit = screen.getByRole('button', { name: 'Distribute trust' });
+    const submit = screen.getByRole('button', {
+      name: 'Distribute trust anchor',
+    });
     expect(submit).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Target agent/), {
@@ -432,7 +449,9 @@ describe('CreateManualJobModal trustOp mode', () => {
       target: { value: 'team-a' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
+    );
 
     await waitFor(() => {
       expect(createJobMock).toHaveBeenCalledTimes(1);
@@ -468,7 +487,9 @@ describe('CreateManualJobModal trustOp mode', () => {
       { target: { value: 'team-b' } }
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
+    );
 
     await waitFor(() => {
       expect(createJobMock).toHaveBeenCalledTimes(1);
@@ -491,7 +512,7 @@ describe('CreateManualJobModal trustOp mode', () => {
       screen.getByText(/Close to existing owner "team-a"/)
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Distribute trust' })
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
     ).toBeEnabled();
   });
 
@@ -509,7 +530,9 @@ describe('CreateManualJobModal trustOp mode', () => {
     fireEvent.change(screen.getByLabelText(/^Target agent/), {
       target: { value: 'install-1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke trust' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Revoke trust anchor' })
+    );
 
     await waitFor(() => {
       expect(createJobMock).toHaveBeenCalledTimes(1);
@@ -552,7 +575,7 @@ describe('CreateManualJobModal trustOp mode', () => {
       target: { value: 'team-a' },
     });
     expect(
-      screen.getByRole('button', { name: 'Distribute trust' })
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
     ).toBeDisabled();
   });
 
@@ -574,7 +597,9 @@ describe('CreateManualJobModal trustOp mode', () => {
     fireEvent.change(screen.getByLabelText(/^Owner/), {
       target: { value: 'team-a' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Distribute trust' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
+    );
 
     await waitFor(() => {
       expect(createJobMock).toHaveBeenCalledTimes(1);

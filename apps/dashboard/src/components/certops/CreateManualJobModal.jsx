@@ -755,7 +755,9 @@ export default function CreateManualJobModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
             {isTrustOp
-              ? `${jobOperationLabel(trustOp.operation)} trust anchor`
+              ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
+                // trust"), so appending the full "trust anchor" would stutter.
+                `${jobOperationLabel(trustOp.operation)} anchor`
               : 'Create manual job'}
           </DashboardModalTitle>
           <DashboardModalDescription>
@@ -1465,7 +1467,7 @@ export default function CreateManualJobModal({
             {isControllerIssue
               ? 'Create provisioning intent'
               : isTrustOp
-                ? jobOperationLabel(trustOp.operation)
+                ? `${jobOperationLabel(trustOp.operation)} anchor`
                 : 'Create job'}
           </Button>
         </ModalFooter>

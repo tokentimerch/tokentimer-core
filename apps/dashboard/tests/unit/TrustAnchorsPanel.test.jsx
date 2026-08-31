@@ -141,7 +141,9 @@ describe('TrustAnchorsPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('No trust anchors approved yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('No trust anchors approved yet.')
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Approve a trust anchor' })
     ).toBeInTheDocument();
@@ -230,7 +232,7 @@ describe('TrustAnchorsPanel', () => {
     );
 
     expect(
-      screen.getByText('Distribute trust trust anchor')
+      screen.getByText('Distribute trust anchor', { selector: 'p' })
     ).toBeInTheDocument();
   });
 
@@ -259,7 +261,9 @@ describe('TrustAnchorsPanel', () => {
       screen.getByRole('button', { name: 'Revoke', hidden: true })
     );
 
-    expect(screen.getByText('Revoke trust trust anchor')).toBeInTheDocument();
+    expect(
+      screen.getByText('Revoke trust anchor', { selector: 'p' })
+    ).toBeInTheDocument();
   });
 
   it('disables distribute for a retired anchor', () => {
@@ -294,7 +298,9 @@ describe('TrustAnchorsPanel', () => {
       target: { value: 'Internal Root CA' },
     });
     fireEvent.change(screen.getByLabelText(/^CA certificate/), {
-      target: { value: '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----' },
+      target: {
+        value: '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
+      },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Approve anchor' }));
 
