@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-08-31
+
+### Fixed
+
+- A trust-anchor job result reported by an agent could fail ingestion with `Cannot find module 'ajv'` on a production install. `apps/api`'s and `apps/worker`'s `package.json` never declared a dependency on the workspace's own `packages/contracts`, so a production (`--filter`, non-hoisted) install never provisioned that package's `node_modules`, and both apps reach it by relative `require()`. Only surfaced once an agent actually reported a trust-anchor result on a production-built image; a full unfiltered `pnpm install` (dev, CI unit tests) always masked it.
+
 ## [0.14.0] - 2026-08-30
 
 ### Added
