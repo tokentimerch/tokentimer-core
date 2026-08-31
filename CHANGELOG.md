@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- A GCP Secret Manager scan that failed with 403 told operators to grant Secret Manager Secret Accessor. That role can read secret values but cannot list secrets, which is what the scan does. The error now asks for Secret Manager Viewer (`roles/secretmanager.viewer`) on the project.
+- A GCP Secret Manager scan that failed with 403 told operators to grant Secret Manager Secret Accessor. That role can read secret values but cannot list secrets, which is what the scan does. The error now asks for Secret Manager Viewer (`roles/secretmanager.viewer`) on the project. The import form now says to paste a Cloud Shell access token (`gcloud auth print-access-token`), not a JSON key.
 
 ## [0.14.1] - 2026-08-31
 
