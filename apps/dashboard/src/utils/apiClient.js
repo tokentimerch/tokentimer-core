@@ -1203,13 +1203,20 @@ export const vaultAPI = {
       throw new Error(handleApiError(e, 'Failed to load mounts'));
     }
   },
-  import: async ({ workspaceId, items, defaults = {} }) => {
+  import: async ({ workspaceId, items, defaults = {}, cleanup, scanId }) => {
     try {
       const payload = {
         items,
         default_category: defaults.category,
         default_type: defaults.type,
         contact_group_id: defaults.contact_group_id || null,
+        // scan_id is sent independently of cleanup so every scan-backed
+        // import gets provenance attribution, whether or not the user opted
+        // into deletion this time -- otherwise a later cleanup-enabled
+        // import can never adopt this row (see importCleanup.js's "ambiguous
+        // legacy rows" policy) and ends up creating a duplicate instead.
+        ...(scanId ? { scan_id: scanId } : {}),
+        ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_IMPORT(workspaceId),
@@ -1217,12 +1224,17 @@ export const vaultAPI = {
       );
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
+      const deletedCount = res?.data?.deleted_count || 0;
+      const deletedSuffix =
+        deletedCount > 0
+          ? `, removed ${deletedCount} obsolete item${deletedCount !== 1 ? 's' : ''}`
+          : '';
       if (updatedCount > 0) {
         showSuccessMessage(
-          `Imported ${createdCount} new items, updated ${updatedCount} existing items`
+          `Imported ${createdCount} new items, updated ${updatedCount} existing items${deletedSuffix}`
         );
       } else {
-        showSuccessMessage(`Imported ${createdCount} items`);
+        showSuccessMessage(`Imported ${createdCount} items${deletedSuffix}`);
       }
       return res.data;
     } catch (e) {
@@ -1522,6 +1534,7 @@ export const integrationAPI = {
     defaults = {},
     filterRules,
     cleanup,
+    scanId,
   }) => {
     try {
       const payload = {
@@ -1532,6 +1545,12 @@ export const integrationAPI = {
         ...(Array.isArray(filterRules) && filterRules.length > 0
           ? { filterRules }
           : {}),
+        // scan_id is sent independently of cleanup so every scan-backed
+        // import gets provenance attribution, whether or not the user opted
+        // into deletion this time -- otherwise a later cleanup-enabled
+        // import can never adopt this row (see importCleanup.js's "ambiguous
+        // legacy rows" policy) and ends up creating a duplicate instead.
+        ...(scanId ? { scan_id: scanId } : {}),
         ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(

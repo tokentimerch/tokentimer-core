@@ -132,8 +132,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
-  // Source kinds included in the last scan; cleanup only touches these.
-  const [lastScanSources, setLastScanSources] = React.useState([]);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   // Restore persisted rules from auto-sync scan_params
   React.useEffect(() => {
@@ -223,16 +223,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setGitlabItems(items);
       setGitlabSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
-      const scannedSources = [];
-      if (gitlabIncludePATs) scannedSources.push('gitlab-pat');
-      if (gitlabIncludeProjectTokens)
-        scannedSources.push('gitlab-project-token');
-      if (gitlabIncludeGroupTokens) scannedSources.push('gitlab-group-token');
-      if (gitlabIncludeDeployTokens) scannedSources.push('gitlab-deploy-token');
-      if (gitlabIncludeTriggerTokens)
-        scannedSources.push('gitlab-trigger-token');
-      if (gitlabIncludeSSHKeys) scannedSources.push('gitlab-ssh-key');
-      setLastScanSources(scannedSources);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('gitlab');
       }
@@ -250,6 +241,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setGitlabItems([]);
       setGitlabSummary([]);
       setFilterSummary(null);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -322,18 +314,18 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         workspaceId,
         items: selected,
         defaults: {},
-        cleanup: cleanupObsolete
-          ? {
-              enabled: true,
-              provider: 'gitlab',
-              scannedSources: lastScanSources,
-              // All rediscovered locations (whole scan, not just selection)
-              // so unselected-but-still-present tokens are never deleted.
-              scannedLocations: gitlabItems
-                .map(it => it.location)
-                .filter(Boolean),
-            }
-          : undefined,
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'gitlab',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -531,16 +523,30 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
                 onChange={e => setCleanupObsolete(e.target.checked)}
                 size='sm'
                 colorScheme='red'
+                isDisabled={!lastScanId}
               >
                 Remove previously imported tokens no longer found at the source
               </Checkbox>
+              {!lastScanId ? (
+                <Text fontSize='xs' color={helpTextColor} pl={6}>
+                  Run a scan first; cleanup is driven by the backend's record of
+                  what that scan covered.
+                </Text>
+              ) : gitlabSummary.some(s => s.complete === false) ? (
+                <Text fontSize='xs' color='orange.400' pl={6}>
+                  The last scan didn't fully complete for every token type above
+                  (see the errors below). The backend will only clean up the
+                  token types and scopes it confirmed were fully scanned;
+                  nothing incomplete or errored is ever touched.
+                </Text>
+              ) : null}
               {cleanupObsolete ? (
                 <Text fontSize='xs' color='red.400' pl={6}>
                   Deletes previously imported tokens of the token types scanned
                   above that no longer appear anywhere in this scan's results,
                   regardless of which items you select for import below. Token
-                  types you did not scan for are never affected. This cannot be
-                  undone.
+                  types you did not scan for, or that this scan couldn't fully
+                  complete, are never affected. This cannot be undone.
                 </Text>
               ) : null}
             </VStack>

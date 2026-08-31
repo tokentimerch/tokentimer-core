@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -95,6 +96,9 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAzure.size);
@@ -128,6 +132,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureItems(items);
       setAzureSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('azure');
       }
@@ -141,6 +146,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     } catch (e) {
       setAzureItems([]);
       setAzureSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -180,6 +186,18 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'azure',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -267,6 +285,41 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           Scan
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            size='sm'
+            colorScheme='red'
+            isDisabled={!lastScanId}
+          >
+            Remove previously imported items no longer found at the source
+          </Checkbox>
+          {!lastScanId ? (
+            <Text fontSize='xs' color={helpTextColor} pl={6}>
+              Run a scan first; cleanup is driven by the backend's record of
+              what that scan covered.
+            </Text>
+          ) : azureSummary.some(s => s.complete === false) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              The last scan didn't fully complete for every item type above (see
+              the errors below). The backend will only clean up secrets,
+              certificates, or keys it confirmed were fully scanned; nothing
+              incomplete or errored is ever touched.
+            </Text>
+          ) : null}
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported secrets, certificates, and keys from
+              this Key Vault that no longer appear anywhere in this scan's
+              results, regardless of which items you select for import below.
+              Item types this scan couldn't fully complete are never affected.
+              This cannot be undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {azureSummary.length > 0 && (
         <Box
           border='1px solid'

@@ -30,6 +30,10 @@ const {
   validateCleanupRequest,
   cleanupObsoleteTokens,
 } = require("../services/importCleanup");
+const {
+  persistScan,
+} = require("../services/integrationScans");
+const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
 
@@ -67,6 +71,27 @@ function summarizeImportErrors(errors) {
     item: String(e?.item || "unknown").substring(0, 200),
     error: String(e?.error || "unknown error").substring(0, 300),
   }));
+}
+
+// importCleanup.validateCleanupRequest requires `cleanup.scanId` (camelCase).
+// Callers have echoed the scan id under other names -- a top-level
+// `scan_id` on the request body, or a `scan_id` nested inside the `cleanup`
+// object itself -- so this normalizes every accepted shape into
+// `cleanup.scanId` in exactly one place, shared by both import routes,
+// rather than trusting each call site to get the casing right.
+function resolveEffectiveCleanup(cleanup, topLevelScanId) {
+  if (!cleanup || cleanup.enabled !== true) return cleanup;
+  if (typeof cleanup.scanId === "string" && cleanup.scanId.trim() !== "") {
+    return cleanup;
+  }
+  const nestedScanId =
+    typeof cleanup.scan_id === "string" && cleanup.scan_id.trim() !== ""
+      ? cleanup.scan_id
+      : null;
+  const scanId = nestedScanId || topLevelScanId;
+  if (!scanId) return cleanup;
+  const { scan_id: _unused, ...rest } = cleanup;
+  return { ...rest, scanId };
 }
 
 // --- Vault integration: scan mounts for inventory/expirations ---
@@ -170,6 +195,43 @@ router.post(
         categories: Array.isArray(categories) ? categories : null,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record of what was
+      // covered, so a later import's cleanup request can be driven by
+      // scan_id instead of trusting reconstructed client-side scan state.
+      // Best-effort: a persistence failure must not block returning scan
+      // results to the user, it only means cleanup won't be offered.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "vault",
+            identityContext: { address },
+            createdBy: req.user?.id || null,
+            items: result.items.map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {
+                mount: item.mount,
+                path: item.path,
+                category: item.category,
+              },
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: s.dimensions || { mount: s.mount },
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.hasErrors ? "read_errors" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Vault scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -383,11 +445,54 @@ router.post(
         return res.status(403).json({ error: "Forbidden" });
       }
       const workspaceId = req.workspace.id;
-      const { items, default_category, default_type, contact_group_id } =
-        req.body || {};
-      if (!Array.isArray(items) || items.length === 0) {
+      const {
+        items,
+        default_category,
+        default_type,
+        contact_group_id,
+        cleanup,
+        scan_id: scanId,
+      } = req.body || {};
+      const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
+      const cleanupError = validateCleanupRequest(effectiveCleanup);
+      if (cleanupError) {
+        return res.status(400).json({ error: cleanupError });
+      }
+      // A complete scan that legitimately finds zero items is still a real
+      // cleanup-driving result (see importCleanup.js), so an empty items
+      // array is only rejected when cleanup isn't the reason for the call.
+      const cleanupWillRun =
+        effectiveCleanup && effectiveCleanup.enabled === true;
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
         return res.status(400).json({ error: "items array required" });
       }
+
+      // Bind each submitted item to the scan that actually discovered it
+      // (metadata-only integration_scan_items rows), so provenance comes
+      // from what the backend recorded, never from client-echoed fields.
+      // Items that don't bind (no scan_id, stale scan_id, or the item
+      // wasn't part of that scan) import unattributed, same as before this
+      // feature existed -- never a cleanup candidate.
+      const bindingPairs = items.map((it) => ({
+        sourceKind: it?.sourceKind || it?.source || "vault-kv",
+        sourceObjectId:
+          it?.sourceObjectId ||
+          String(it?.location || "").replace(/^vault:/, ""),
+      }));
+      // Provenance binding must not depend on the cleanup checkbox: the
+      // dashboard sends a bare top-level `scan_id` on every scan-backed
+      // import, and additionally nests `cleanup.scanId` when cleanup is
+      // enabled. Prefer the cleanup-nested id (covers older/other callers
+      // that only set it there) and fall back to the top-level id, so an
+      // import with cleanup off still gets attributed instead of staying
+      // permanently ambiguous once cleanup is turned on later.
+      const { resolveForItem } = await bindImportItemsToScan({
+        scanId: effectiveCleanup?.scanId || scanId || null,
+        workspaceId,
+        provider: "vault",
+        pairs: bindingPairs,
+      });
+
       // Reuse core validation constraints for type/category; allow past expiration for imports
       const ALLOWED_TYPES = [
         "ssl_cert",
@@ -415,7 +520,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (const it of items) {
+      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+        const it = items[itemIndex];
         try {
           const name = String(it?.name || "").trim();
           let expiration = it?.expiration || it?.expiresAt || null;
@@ -525,15 +631,30 @@ router.post(
             last_used: it?.last_used_at || it?.last_used || null,
             created_at: it?.created_at || null,
             imported_at: new Date(),
+            ...(resolveForItem(itemIndex) || {}),
           };
 
-          // Check if token with same name and location already exists in this workspace
+          // Provenance-aware imports upsert by source identity so
+          // re-scanning updates the same row even if name/location changed.
+          // Items that didn't bind to a scan (legacy behavior) fall back to
+          // the old name+location match -- see the "ambiguous legacy rows"
+          // policy in importCleanup.js: we never try to retrofit provenance
+          // onto a pre-existing ambiguous row by guessing.
           let tok;
-          const existingToken = await Token.findByNameLocationAndWorkspace(
-            tokenPayload.name,
-            tokenPayload.location,
-            workspaceId,
-          );
+          const existingToken = tokenPayload.source_object_id
+            ? await Token.findBySourceIdentity({
+                workspaceId,
+                sourceProvider: tokenPayload.source_provider,
+                sourceInstance: tokenPayload.source_instance,
+                sourceOwnerKey: tokenPayload.source_owner_key,
+                sourceKind: tokenPayload.source_kind,
+                sourceObjectId: tokenPayload.source_object_id,
+              })
+            : await Token.findByNameLocationAndWorkspace(
+                tokenPayload.name,
+                tokenPayload.location,
+                workspaceId,
+              );
 
           if (existingToken) {
             // Update existing token with new characteristics
@@ -602,6 +723,31 @@ router.post(
           });
         }
       }
+      // Remove previously imported tokens that are no longer present at the
+      // source. Opt-in via the `cleanup` payload, driven by a backend-
+      // persisted scan_id (see importCleanup.js for the full safety
+      // contract) rather than a client-reconstructed scope.
+      let cleanupDeleted = [];
+      if (effectiveCleanup && effectiveCleanup.enabled === true) {
+        try {
+          const cleanupResult = await cleanupObsoleteTokens({
+            workspaceId,
+            actorUserId: req.user.id,
+            cleanup: { ...effectiveCleanup, provider: "vault" },
+            reason:
+              effectiveCleanup.reason === "auto_sync_cleanup"
+                ? "auto_sync_cleanup"
+                : "import_cleanup",
+          });
+          cleanupDeleted = cleanupResult.deleted;
+        } catch (cleanupErr) {
+          logger.error("Obsolete token cleanup failed", {
+            error: cleanupErr.message,
+            workspaceId,
+          });
+        }
+      }
+
       // Batch audit summary (best-effort)
       try {
         await writeAudit({
@@ -619,6 +765,7 @@ router.post(
             ...(errors.length > 0
               ? { errors: summarizeImportErrors(errors) }
               : {}),
+            deleted_count: cleanupDeleted.length,
             source: "vault",
           },
         });
@@ -629,6 +776,8 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
+        deleted_count: cleanupDeleted.length,
+        deleted: cleanupDeleted,
         created,
         updated,
         errors,
@@ -740,6 +889,38 @@ router.post(
         filters: scanFilters,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record. Host
+      // anchors the instance so two self-hosted GitLab servers with
+      // colliding numeric user/project/group ids never share a cleanup
+      // scope.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.host && result.ownerKey) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "gitlab",
+            identityContext: { host: result.host, ownerKey: result.ownerKey },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GitLab scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -926,6 +1107,37 @@ router.post(
         maxItems: maxItems || 500,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record. Host
+      // anchors the instance so two GitHub Enterprise servers with
+      // colliding numeric user/repo ids never share a cleanup scope.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.host && result.ownerKey) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "github",
+            identityContext: { host: result.host, ownerKey: result.ownerKey },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GitHub scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -1186,6 +1398,46 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record of what was
+      // covered (per region+service completeness), so import's cleanup
+      // request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.accountId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "aws",
+            identityContext: { accountId: result.accountId },
+            createdBy: req.user?.id || null,
+            items: result.items.map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              // `service` intentionally omitted: sourceKind already
+              // distinguishes aws-secrets-manager / aws-acm / aws-iam-key,
+              // and the summary's `service` field below uses different
+              // string values (e.g. "secrets_manager") than sourceKind
+              // (e.g. "aws-secrets-manager") -- keeping both would make
+              // cleanup's exact-match dimension filter never match.
+              dimensions:
+                item.sourceKind === "aws-iam-key"
+                  ? {}
+                  : { region: region || "us-east-1" },
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: s.region ? { region: s.region } : {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("AWS scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {
@@ -1358,6 +1610,38 @@ router.post(
       });
       applyScanFilterRulesToResult(filterRules, result);
 
+      // Persist this scan as the backend-authoritative record (per source
+      // kind completeness: secrets/certificates/keys tracked independently
+      // so a failure or truncation in one kind never marks another kind
+      // complete), so import's cleanup request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "azure",
+            identityContext: { vaultUrl },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Azure Key Vault scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
+
       res.json(withQuota(result));
       try {
         if (req && req.user) {
@@ -1481,6 +1765,36 @@ router.post(
         maxItems: maxItems || 500,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record, so import's
+      // cleanup request can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "gcp",
+            identityContext: { projectId },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.failedCount > 0 ? "describe_failures" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("GCP scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -1620,6 +1934,39 @@ router.post(
         maxItems: maxItems || 500,
       });
       applyScanFilterRulesToResult(filterRules, result);
+
+      // Persist this scan as the backend-authoritative record (Applications
+      // and Service Principals tracked as independent completeness
+      // dimensions, so a global item cap or partial failure in one never
+      // silently marks the other "scanned"), so import's cleanup request
+      // can be driven by scan_id.
+      try {
+        const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
+        if (workspaceId && result.tenantId) {
+          const scan = await persistScan({
+            workspaceId,
+            provider: "azure-ad",
+            identityContext: { tenantId: result.tenantId },
+            createdBy: req.user?.id || null,
+            items: (result.items || []).map((item) => ({
+              sourceKind: item.sourceKind,
+              sourceObjectId: item.sourceObjectId,
+              dimensions: {},
+            })),
+            subScopes: (result.summary || []).map((s) => ({
+              sourceKind: s.sourceKind,
+              dimensions: {},
+              complete: s.complete === true,
+              reason: s.error ? "error" : s.truncated ? "truncated" : null,
+            })),
+          });
+          result.scan_id = scan.scanId;
+        }
+      } catch (scanPersistErr) {
+        logger.warn("Azure AD scan persistence failed (cleanup will be unavailable for this scan)", {
+          error: scanPersistErr.message,
+        });
+      }
 
       res.json(withQuota(result));
       try {
@@ -1781,22 +2128,85 @@ router.post(
         contact_group_id,
         filterRules,
         cleanup,
+        scan_id: scanId,
       } = req.body || {};
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "items array required" });
+      const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
+      const cleanupError = validateCleanupRequest(effectiveCleanup);
+      if (cleanupError) {
+        return res.status(400).json({ error: cleanupError });
       }
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError) {
         return res.status(400).json({ error: filterRulesError });
       }
-      const cleanupError = validateCleanupRequest(cleanup);
-      if (cleanupError) {
-        return res.status(400).json({ error: cleanupError });
+      // A complete scan that legitimately finds zero items is still a real
+      // cleanup-driving result (see importCleanup.js), so an empty items
+      // array is only rejected when cleanup isn't the reason for the call.
+      const cleanupWillRun =
+        effectiveCleanup && effectiveCleanup.enabled === true;
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
+        return res.status(400).json({ error: "items array required" });
       }
       // Issue #69: apply include/exclude rules at import time too, so
       // auto-sync (which posts scan items here) honors the same rules.
       const { items: itemsToImport, excludedCount: filteredOutCount } =
         applyFilterRules(filterRules, items);
+
+      // Derive which of the 7 known providers each item's `source` belongs
+      // to (azure-ad must be checked before the plainer "azure" prefix),
+      // then bind each item to the scan that actually discovered it -- see
+      // scanBinding.js. Grouped per-provider since a single import batch is
+      // expected to come from one provider's scan, but nothing here assumes
+      // that beyond grouping the lookup calls.
+      const deriveProvider = (source) => {
+        const s = String(source || "");
+        if (s.startsWith("gitlab")) return "gitlab";
+        if (s.startsWith("github")) return "github";
+        if (s.startsWith("aws")) return "aws";
+        if (s.startsWith("azure-ad")) return "azure-ad";
+        if (s.startsWith("azure")) return "azure";
+        if (s.startsWith("gcp")) return "gcp";
+        return null;
+      };
+      const itemProviders = itemsToImport.map((it) => deriveProvider(it?.source));
+      const resolvers = new Array(itemsToImport.length).fill(null);
+      const providersPresent = [...new Set(itemProviders.filter(Boolean))];
+      for (const provider of providersPresent) {
+        const indices = [];
+        const pairs = [];
+        itemsToImport.forEach((it, idx) => {
+          if (itemProviders[idx] !== provider) return;
+          indices.push(idx);
+          pairs.push({
+            sourceKind: it?.sourceKind || it?.source || provider,
+            sourceObjectId:
+              it?.sourceObjectId || String(it?.location || "").trim(),
+          });
+        });
+        try {
+          // Provenance binding must not depend on the cleanup checkbox: the
+          // dashboard sends a bare top-level `scan_id` on every scan-backed
+          // import, and additionally nests `cleanup.scanId` when cleanup is
+          // enabled. Prefer the cleanup-nested id and fall back to the
+          // top-level id (see the vault/import route above for the same
+          // pattern).
+          const { resolveForItem } = await bindImportItemsToScan({
+            scanId: effectiveCleanup?.scanId || scanId || null,
+            workspaceId,
+            provider,
+            pairs,
+          });
+          indices.forEach((originalIdx, i) => {
+            resolvers[originalIdx] = resolveForItem(i);
+          });
+        } catch (bindErr) {
+          logger.warn("Scan binding failed for provider group", {
+            provider,
+            error: bindErr.message,
+          });
+        }
+      }
+
       const ALLOWED_TYPES = [
         "ssl_cert",
         "tls_cert",
@@ -1819,7 +2229,8 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (const it of itemsToImport) {
+      for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
+        const it = itemsToImport[itemIndex];
         try {
           // Sanitize and validate name (HTML escape for XSS protection)
           let name = String(it?.name || "").trim();
@@ -2163,15 +2574,29 @@ router.post(
             last_used: parseIntegrationDate(it?.last_used_at || it?.last_used),
             created_at: parseIntegrationDate(it?.created_at),
             imported_at: new Date(),
+            ...(resolvers[itemIndex] || {}),
           };
 
-          // Check if token with same name and location already exists in this workspace
+          // Provenance-aware imports upsert by source identity (immune to
+          // name/location drift); items that didn't bind to a scan fall
+          // back to the pre-existing name+location match. See
+          // importCleanup.js for why ambiguous legacy rows are never
+          // retrofitted with guessed provenance.
           let tok;
-          const existingToken = await Token.findByNameLocationAndWorkspace(
-            tokenPayload.name,
-            tokenPayload.location,
-            workspaceId,
-          );
+          const existingToken = tokenPayload.source_object_id
+            ? await Token.findBySourceIdentity({
+                workspaceId,
+                sourceProvider: tokenPayload.source_provider,
+                sourceInstance: tokenPayload.source_instance,
+                sourceOwnerKey: tokenPayload.source_owner_key,
+                sourceKind: tokenPayload.source_kind,
+                sourceObjectId: tokenPayload.source_object_id,
+              })
+            : await Token.findByNameLocationAndWorkspace(
+                tokenPayload.name,
+                tokenPayload.location,
+                workspaceId,
+              );
 
           if (existingToken) {
             // Update existing token with new characteristics
@@ -2245,17 +2670,18 @@ router.post(
           });
         }
       }
-      // Item 4 (0.10.0): remove previously imported tokens that are no longer
-      // present at the source. Opt-in via the `cleanup` payload; scoped to the
-      // provider prefix and the source kinds included in this scan.
+      // Remove previously imported tokens that are no longer present at the
+      // source. Opt-in via the `cleanup` payload, driven by a backend-
+      // persisted scan_id (see importCleanup.js for the full safety
+      // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
-      if (cleanup && cleanup.enabled === true) {
+      if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
           const cleanupResult = await cleanupObsoleteTokens({
             workspaceId,
             actorUserId: req.user.id,
-            cleanup,
-            reason: cleanup.reason === "auto_sync_cleanup"
+            cleanup: effectiveCleanup,
+            reason: effectiveCleanup.reason === "auto_sync_cleanup"
               ? "auto_sync_cleanup"
               : "import_cleanup",
           });

@@ -159,6 +159,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   const [isScanning, setIsScanning] = React.useState(false);
   const [vaultItems, setVaultItems] = React.useState([]);
@@ -277,6 +280,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       setVaultItems(items);
       setSummary(Array.isArray(res?.summary) ? res.summary : []);
       setFilterSummary(res?.filterSummary || null);
+      setLastScanId(res?.scan_id || null);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('vault');
       }
@@ -290,6 +294,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     } catch (e) {
       setVaultItems([]);
       setSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -337,6 +342,18 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         workspaceId,
         items: selected,
         defaults: vaultDefaults,
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'vault',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -514,6 +531,48 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             All kinds are scanned by default. Uncheck a kind to skip it, e.g.
             uncheck Secrets &amp; keys to only import certificates.
           </Text>
+        </Box>
+
+        <Box
+          border='1px solid'
+          borderColor={borderColor}
+          borderRadius='md'
+          p={3}
+        >
+          <VStack align='stretch' spacing={2}>
+            <Checkbox
+              isChecked={cleanupObsolete}
+              onChange={e => setCleanupObsolete(e.target.checked)}
+              size='sm'
+              colorScheme='red'
+              isDisabled={!lastScanId}
+            >
+              Remove previously imported items no longer found at the source
+            </Checkbox>
+            {!lastScanId ? (
+              <Text fontSize='xs' color={helpTextColor} pl={6}>
+                Run a scan first; cleanup is driven by the backend's record of
+                what that scan covered.
+              </Text>
+            ) : summary.some(s => s.complete === false) ? (
+              <Text fontSize='xs' color='orange.400' pl={6}>
+                The last scan didn't fully complete for every mount above (see
+                the errors below). The backend will only clean up mounts and
+                asset kinds it confirmed were fully scanned; nothing incomplete,
+                truncated, or errored is ever touched.
+              </Text>
+            ) : null}
+            {cleanupObsolete ? (
+              <Text fontSize='xs' color='red.400' pl={6}>
+                Deletes previously imported items of the asset kinds scanned
+                above (KV, PKI, or both) that no longer appear anywhere in this
+                scan's results, regardless of which items you select for import
+                below. Asset kinds or mounts you did not scan for, or that this
+                scan couldn't fully complete, are never affected. This cannot be
+                undone.
+              </Text>
+            ) : null}
+          </VStack>
         </Box>
 
         {/* Advanced options - collapsible */}

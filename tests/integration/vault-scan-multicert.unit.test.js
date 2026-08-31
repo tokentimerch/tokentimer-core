@@ -305,7 +305,16 @@ describe("Vault KV scan behavior", () => {
       expect(res.items).to.have.length(3);
       expect(res.items.filter((i) => i.category === "cert")).to.have.length(2);
       expect(res.summary).to.deep.equal([
-        { mount: "secret/", type: "kv", found: 3, truncated: false },
+        {
+          mount: "secret/",
+          type: "kv",
+          found: 3,
+          truncated: false,
+          complete: true,
+          hasErrors: false,
+          sourceKind: "vault-kv",
+          dimensions: { mount: "secret/", pathPrefix: null, categories: null },
+        },
       ]);
     });
 
@@ -343,6 +352,93 @@ describe("Vault KV scan behavior", () => {
     it("treats a prefix equal to just the mount name as no prefix", async () => {
       const res = await scan("secret");
       expect(res.items).to.have.length(3);
+    });
+  });
+
+  describe("scanVault truncation during key enumeration (regression)", () => {
+    // Regression for a bug found during live cleanup verification: the KV
+    // key-listing walk (listKvV2KeysRecursive) enforces `maxItemsPerMount`
+    // as a hard cap on how many keys it even enumerates, stopping the walk
+    // before it reaches later folders. If the read loop downstream never
+    // sees more keys than that cap, it never observes a "too many items"
+    // condition either, so the mount was reported `truncated: false,
+    // complete: true` even though real secrets in a later folder
+    // ("team-a/") were never looked at. Cleanup treating that scan as
+    // complete deleted secrets that still existed upstream.
+    const routes = {
+      "GET /v1/sys/mounts": {
+        status: 200,
+        body: {
+          data: { "secret/": { type: "kv", options: { version: "2" } } },
+        },
+      },
+      // Alphabetically-first folder holds exactly `maxItemsPerMount` items,
+      // so the walk's own cap trips while still inside this folder and
+      // never even lists the sibling "team-a/" folder below.
+      "LIST /v1/secret/metadata/": {
+        status: 200,
+        body: { data: { keys: ["cert/", "team-a/"] } },
+      },
+      "LIST /v1/secret/metadata/cert/": {
+        status: 200,
+        body: { data: { keys: ["one", "two"] } },
+      },
+      "LIST /v1/secret/metadata/team-a/": {
+        status: 200,
+        body: { data: { keys: ["token"] } },
+      },
+      "GET /v1/secret/data/cert/one": {
+        status: 200,
+        body: {
+          data: {
+            data: { password: "a" },
+            metadata: { created_time: "2026-01-01T00:00:00Z" },
+          },
+        },
+      },
+      "GET /v1/secret/data/cert/two": {
+        status: 200,
+        body: {
+          data: {
+            data: { password: "b" },
+            metadata: { created_time: "2026-01-01T00:00:00Z" },
+          },
+        },
+      },
+      "GET /v1/secret/data/team-a/token": {
+        status: 200,
+        body: {
+          data: {
+            data: { password: "c" },
+            metadata: { created_time: "2026-01-01T00:00:00Z" },
+          },
+        },
+      },
+    };
+
+    let vault;
+
+    before(async () => {
+      vault = await startFakeVault(routes);
+    });
+
+    after(async () => {
+      if (vault) await vault.close();
+    });
+
+    it("reports truncated (never complete) when the key cap is hit mid-listing, even though the read loop itself never overflows", async () => {
+      const res = await mod.scanVault({
+        address: vault.address,
+        token: "test-token",
+        include: { kv: true, pki: false },
+        maxItemsPerMount: 2,
+      });
+      // Only the 2 keys under cert/ were enumerated; team-a/token was never
+      // even listed, let alone read -- exactly the silently-dropped case.
+      expect(res.items).to.have.length(2);
+      const summary = res.summary.find((s) => s.mount === "secret/");
+      expect(summary.truncated).to.equal(true);
+      expect(summary.complete).to.equal(false);
     });
   });
 
@@ -407,7 +503,16 @@ describe("Vault KV scan behavior", () => {
       expect(res.items).to.have.length(1);
       expect(res.items[0].category).to.equal("cert");
       expect(res.summary).to.deep.equal([
-        { mount: "secret/", type: "kv", found: 1, truncated: false },
+        {
+          mount: "secret/",
+          type: "kv",
+          found: 1,
+          truncated: false,
+          complete: true,
+          hasErrors: false,
+          sourceKind: "vault-kv",
+          dimensions: { mount: "secret/", pathPrefix: null, categories: ["cert"] },
+        },
       ]);
     });
 

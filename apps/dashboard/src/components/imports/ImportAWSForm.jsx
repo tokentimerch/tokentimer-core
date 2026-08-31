@@ -7,6 +7,7 @@ import {
   Input,
   Button,
   Badge,
+  Checkbox,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -148,6 +149,15 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // The backend-authoritative scan record cleanup is driven from. Only set
+  // when a single backend scan call covers this scan (global or one
+  // specific region); "all regions" makes multiple backend calls (one per
+  // region, since AWS has no single "list every region" secrets API), so
+  // there's no single scan_id that covers the whole sweep yet -- cleanup
+  // stays unavailable for that mode until scan persistence supports
+  // combining multiple scan calls into one record.
+  const [lastScanId, setLastScanId] = React.useState(null);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAws.size);
@@ -305,6 +315,10 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const aggregatedSummary = Object.values(summaryByType);
         setAwsItems(allItems);
         setAwsSummary(aggregatedSummary);
+        // Each region (and the IAM call) is a separate backend scan record,
+        // so there is no single scan_id covering the whole sweep -- cleanup
+        // stays unavailable for this mode.
+        setLastScanId(null);
         if (allItems.length > 0) {
           onScanSuccess && onScanSuccess('aws');
         }
@@ -332,6 +346,11 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         const items = Array.isArray(res?.items) ? res.items : [];
         setAwsItems(items);
         setAwsSummary(Array.isArray(res?.summary) ? res.summary : []);
+        // A single backend call (global IAM sweep, or one specific region)
+        // maps to exactly one persisted scan record, so its scan_id can
+        // drive cleanup scoped to whatever the backend confirms it fully
+        // covered (account-wide IAM, or that one region's secrets/certs).
+        setLastScanId(res?.scan_id || null);
         if (items.length > 0) {
           onScanSuccess && onScanSuccess('aws');
         }
@@ -346,6 +365,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     } catch (e) {
       setAwsItems([]);
       setAwsSummary([]);
+      setLastScanId(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -385,6 +405,18 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         workspaceId,
         items: selected,
         defaults: {},
+        // scan_id is sent whenever this import followed a scan, regardless
+        // of whether cleanup is enabled -- provenance attribution must not
+        // depend on the cleanup toggle (see apiClient.js).
+        scanId: lastScanId || undefined,
+        cleanup:
+          cleanupObsolete && lastScanId
+            ? {
+                enabled: true,
+                provider: 'aws',
+                scanId: lastScanId,
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -472,6 +504,44 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           Detect Regions
         </Button>
       </HStack>
+      <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
+        <VStack align='stretch' spacing={2}>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            isDisabled={!lastScanId}
+            size='sm'
+            colorScheme='red'
+          >
+            Remove previously imported items no longer found at the source
+          </Checkbox>
+          <Text fontSize='xs' color={helpTextColor} pl={6}>
+            Only available for a &quot;Global (IAM only)&quot; scan, or a single
+            specific region, right after that scan completes. Each region is
+            checked independently, so a single scan_id can only certify what it
+            actually covered; an &quot;All Regions&quot; sweep makes one backend
+            call per region and has no single scan record to attach cleanup to
+            yet.
+          </Text>
+          {lastScanId && awsSummary.some(s => s.complete === false) ? (
+            <Text fontSize='xs' color='orange.400' pl={6}>
+              The last scan didn't fully complete for every item type above (see
+              the errors below). The backend will only clean up item types it
+              confirmed were fully scanned; nothing incomplete or errored is
+              ever touched.
+            </Text>
+          ) : null}
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes previously imported items of the item types scanned above
+              (secrets, certificates, and/or IAM keys, depending on the scan you
+              run) that no longer appear anywhere in this scan's results,
+              regardless of which items you select for import below. Item types
+              you did not scan for are never affected. This cannot be undone.
+            </Text>
+          ) : null}
+        </VStack>
+      </Box>
       {(awsDetectedRegions.length > 0 ||
         (awsIamInfo && awsIamInfo.keysCount > 0)) && (
         <VStack align='stretch' spacing={3}>
