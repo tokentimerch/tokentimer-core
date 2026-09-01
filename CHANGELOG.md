@@ -9,7 +9,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.14.2] - TBD
+## [0.14.2] - 2026-09-01
 
 ### Fixed
 
