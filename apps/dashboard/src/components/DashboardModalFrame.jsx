@@ -100,3 +100,28 @@ export function DashboardModalFrame({
     </ModalContent>
   );
 }
+
+/** Stable shell shared by every Dashboard/CertOps asset Details modal. */
+export function DashboardDetailsModalFrame({ children, sx, ...rest }) {
+  return (
+    <DashboardModalFrame
+      data-dashboard-details-modal
+      w={{ base: 'calc(100vw - 16px)', md: 'calc(100vw - 48px)' }}
+      maxW='1150px'
+      maxH={{
+        base: 'calc(100dvh - 16px)',
+        md: 'min(84dvh, 880px)',
+      }}
+      sx={{
+        height: {
+          base: 'calc(100dvh - 16px) !important',
+          md: 'min(84dvh, 880px) !important',
+        },
+        ...sx,
+      }}
+      {...rest}
+    >
+      {children}
+    </DashboardModalFrame>
+  );
+}

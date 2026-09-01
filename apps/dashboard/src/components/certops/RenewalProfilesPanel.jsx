@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Box,
   Button,
+  Flex,
   HStack,
   Modal,
   ModalBody,
@@ -47,6 +48,13 @@ import {
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
 import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
+import {
+  CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
+  nextCertOpsTableSort,
+  sortCertOpsTableRows,
+  useCertOpsResponsiveTableStyles,
+} from './CertOpsResponsiveTable.jsx';
 
 /**
  * Renewal profiles.
@@ -72,6 +80,32 @@ function statusBadge(profile) {
     scheme: 'orange',
     variant: 'solid',
   };
+}
+
+const PROFILE_COLUMNS = [
+  ['profile', 'Profile'],
+  ['certificates', 'Certificates'],
+  ['autoRenew', 'Auto-renew'],
+  ['leadTime', 'Lead time'],
+  ['key', 'Key'],
+];
+
+function profileSortValue(profile, key) {
+  if (key === 'profile') return profile.name || '';
+  if (key === 'certificates') return Number(profile.certificateCount || 0);
+  if (key === 'autoRenew') return profile.autoRenewEnabled ? 1 : 0;
+  if (key === 'leadTime') {
+    return profile.renewBeforeDays == null
+      ? null
+      : Number(profile.renewBeforeDays);
+  }
+  if (key === 'key') {
+    const renewal = profile.renewalProfile || {};
+    return renewal.keyAlgorithm
+      ? `${renewal.keyAlgorithm} ${renewal.keySize || ''}`.trim()
+      : '';
+  }
+  return '';
 }
 
 /**
@@ -232,6 +266,12 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
+  const tableStyles = useCertOpsResponsiveTableStyles();
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
+  const sortedProfiles = useMemo(
+    () => sortCertOpsTableRows(profiles, sort, profileSortValue),
+    [profiles, sort]
+  );
   // The panel token is deliberately translucent, so it cannot serve as the
   // backdrop for a pinned cell: scrolled columns show through it. This is an
   // opaque approximation of the same surface.
@@ -253,10 +293,10 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
    * underneath.
    */
   const stickyActions = {
-    position: 'sticky',
+    position: { base: 'static', lg: 'sticky' },
     right: 0,
-    bg: pinnedBg,
-    boxShadow: pinnedShadow,
+    bg: { base: 'transparent', lg: pinnedBg },
+    boxShadow: { base: 'none', lg: pinnedShadow },
     zIndex: 1,
   };
 
@@ -334,29 +374,49 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
       {!loading && profiles.length > 0 ? (
         <>
-          <TableContainer>
-            <Table size='sm' variant='simple'>
-              <Thead>
+          {pagination ? (
+            <Flex justify='flex-end' mb={4}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='renewal profiles'
+                onChange={setPage}
+              />
+            </Flex>
+          ) : null}
+          <TableContainer {...tableStyles.tableContainerProps}>
+            <Table {...tableStyles.tableProps}>
+              <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  <Th>Profile</Th>
-                  <Th>Certificates</Th>
-                  <Th>Auto-renew</Th>
-                  <Th>Lead time</Th>
-                  <Th>Key</Th>
+                  {PROFILE_COLUMNS.map(([key, label]) => (
+                    <CertOpsSortableHeader
+                      key={key}
+                      label={label}
+                      sortKey={key}
+                      sort={sort}
+                      onSort={sortKey =>
+                        setSort(current =>
+                          nextCertOpsTableSort(current, sortKey)
+                        )
+                      }
+                    />
+                  ))}
                   <Th textAlign='right' {...stickyActions}>
                     Actions
                   </Th>
                 </Tr>
               </Thead>
-              <Tbody>
-                {profiles.map(profile => {
+              <Tbody {...tableStyles.tbodyProps}>
+                {sortedProfiles.map(profile => {
                   const badge = statusBadge(profile);
                   const renewal = profile.renewalProfile || {};
                   const rowSaving = saving === profile.id;
                   const archived = profile.status === 'archived';
                   return (
-                    <Tr key={profile.id}>
-                      <Td>
+                    <Tr key={profile.id} {...tableStyles.rowProps}>
+                      <Td {...tableStyles.primaryCellProps}>
                         <Text fontSize='sm' fontWeight='medium'>
                           {profile.name}
                         </Text>
@@ -386,10 +446,16 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                           ) : null}
                         </HStack>
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Certificates
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>{profile.certificateCount}</Text>
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Auto-renew
+                        </CertOpsMobileFieldLabel>
                         <Badge
                           colorScheme={badge.scheme}
                           variant={badge.variant}
@@ -400,7 +466,10 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                           {badge.label}
                         </Badge>
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Lead time
+                        </CertOpsMobileFieldLabel>
                         <LeadTimeEditor
                           profile={profile}
                           saving={rowSaving}
@@ -414,14 +483,21 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                           }
                         />
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Key
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>
                           {renewal.keyAlgorithm
                             ? `${String(renewal.keyAlgorithm).toUpperCase()} ${renewal.keySize || ''}`.trim()
                             : '--'}
                         </Text>
                       </Td>
-                      <Td textAlign='right' {...stickyActions}>
+                      <Td
+                        {...tableStyles.actionCellProps}
+                        textAlign='right'
+                        {...stickyActions}
+                      >
                         <HStack spacing={1} justify='flex-end'>
                           <Button
                             size='xs'
@@ -470,18 +546,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {pagination ? (
-            <Box mt={2}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='renewal profiles'
-                onChange={setPage}
-              />
-            </Box>
-          ) : null}
           {!isAdmin ? (
             <Text fontSize='xs' color={muted} mt={2}>
               Only workspace admins can change renewal settings.

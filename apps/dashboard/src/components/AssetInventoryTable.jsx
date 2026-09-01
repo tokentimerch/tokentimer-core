@@ -149,6 +149,13 @@ const SORT_HEADER_BUTTON_PROPS = {
   variant: 'ghost',
   size: 'xs',
   px: 1,
+  h: '24px',
+  minH: '24px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  lineHeight: '1',
+  whiteSpace: 'nowrap',
   color: 'rgba(148, 163, 184, 0.95)',
   _hover: {
     bg: 'rgba(30, 41, 59, 0.72)',
@@ -341,16 +348,20 @@ function SortableHeader({ column, sort, onSort }) {
         aria-label={`Sort by ${column.label}`}
       >
         {column.label}
-        {isActive && (
-          <Text
-            as='span'
-            ml={2}
-            fontSize='10px'
-            color='rgba(147, 197, 253, 0.96)'
-          >
-            {sort.direction === 'asc' ? 'Asc' : 'Desc'}
-          </Text>
-        )}
+        <Text
+          as='span'
+          display='inline-block'
+          minW='30px'
+          ml={2}
+          fontSize='10px'
+          lineHeight='1'
+          textAlign='left'
+          color='rgba(147, 197, 253, 0.96)'
+          visibility={isActive ? 'visible' : 'hidden'}
+          aria-hidden={!isActive}
+        >
+          {isActive && sort.direction === 'desc' ? 'Desc' : 'Asc'}
+        </Text>
       </Button>
     </Th>
   );

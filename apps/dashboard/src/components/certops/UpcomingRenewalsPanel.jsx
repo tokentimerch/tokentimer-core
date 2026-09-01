@@ -1,7 +1,9 @@
+import { useMemo, useState } from 'react';
 import {
   Badge,
   Box,
   Button,
+  Flex,
   HStack,
   Spinner,
   Table,
@@ -9,7 +11,6 @@ import {
   Tbody,
   Td,
   Text,
-  Th,
   Thead,
   Tooltip,
   Tr,
@@ -22,6 +23,13 @@ import {
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import JobStatusBadge from './JobStatusBadge.jsx';
+import {
+  CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
+  nextCertOpsTableSort,
+  sortCertOpsTableRows,
+  useCertOpsResponsiveTableStyles,
+} from './CertOpsResponsiveTable.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
 import { expiryDescriptor, formatDate } from './certopsFormat';
 
@@ -74,6 +82,29 @@ const BLOCKED_FALLBACK = {
   tooltip:
     'The scheduler will not renew this certificate automatically. It will expire unless it is renewed manually.',
 };
+
+const RENEWAL_COLUMNS = [
+  ['certificate', 'Certificate'],
+  ['expires', 'Expires'],
+  ['renewalWindow', 'Renewal window'],
+  ['autoRenew', 'Auto-renew'],
+  ['lastAttempt', 'Last attempt'],
+];
+
+function renewalSortValue(item, key) {
+  if (key === 'certificate') return item.commonName || '';
+  if (key === 'expires') {
+    const value = Date.parse(item.notAfter);
+    return Number.isNaN(value) ? null : value;
+  }
+  if (key === 'renewalWindow') {
+    const value = Date.parse(item.renewsFrom);
+    return Number.isNaN(value) ? null : value;
+  }
+  if (key === 'autoRenew') return item.autoRenewEnabled ? 1 : 0;
+  if (key === 'lastAttempt') return item.lastRenewJobStatus || '';
+  return '';
+}
 
 function blockedDescriptor(reason) {
   return BLOCKED_REASONS[reason] || BLOCKED_FALLBACK;
@@ -133,6 +164,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
+  const tableStyles = useCertOpsResponsiveTableStyles();
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
+  const sortedRenewals = useMemo(
+    () => sortCertOpsTableRows(renewals, sort, renewalSortValue),
+    [renewals, sort]
+  );
 
   const switchedOff = renewals.filter(
     item => item.blockedReason === 'auto_renew_disabled'
@@ -209,23 +246,43 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
 
       {!loading && renewals.length > 0 ? (
         <>
-          <TableContainer>
-            <Table size='sm' variant='simple'>
-              <Thead>
+          {pagination ? (
+            <Flex justify='flex-end' mb={4}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='certificates'
+                onChange={setPage}
+              />
+            </Flex>
+          ) : null}
+          <TableContainer {...tableStyles.tableContainerProps}>
+            <Table {...tableStyles.tableProps}>
+              <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  <Th>Certificate</Th>
-                  <Th>Expires</Th>
-                  <Th>Renewal window</Th>
-                  <Th>Auto-renew</Th>
-                  <Th>Last attempt</Th>
+                  {RENEWAL_COLUMNS.map(([key, label]) => (
+                    <CertOpsSortableHeader
+                      key={key}
+                      label={label}
+                      sortKey={key}
+                      sort={sort}
+                      onSort={sortKey =>
+                        setSort(current =>
+                          nextCertOpsTableSort(current, sortKey)
+                        )
+                      }
+                    />
+                  ))}
                 </Tr>
               </Thead>
-              <Tbody>
-                {renewals.map(item => {
+              <Tbody {...tableStyles.tbodyProps}>
+                {sortedRenewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
                   return (
-                    <Tr key={item.certificateId}>
-                      <Td>
+                    <Tr key={item.certificateId} {...tableStyles.rowProps}>
+                      <Td {...tableStyles.primaryCellProps}>
                         <Text fontSize='sm' fontWeight='medium'>
                           {item.commonName || '--'}
                         </Text>
@@ -235,7 +292,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Text>
                         ) : null}
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Expires
+                        </CertOpsMobileFieldLabel>
                         <HStack spacing={2}>
                           <Text fontSize='sm'>{formatDate(item.notAfter)}</Text>
                           <Badge
@@ -249,7 +309,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Badge>
                         </HStack>
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Renewal window
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>
                           {renewalWindowLabel(item.renewsFrom)}
                         </Text>
@@ -257,7 +320,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           {item.renewBeforeDays} days before expiry
                         </Text>
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Auto-renew
+                        </CertOpsMobileFieldLabel>
                         {item.autoRenewEnabled ? (
                           <Badge
                             colorScheme='green'
@@ -289,7 +355,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Tooltip>
                         )}
                       </Td>
-                      <Td>
+                      <Td {...tableStyles.fullWidthCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Last attempt
+                        </CertOpsMobileFieldLabel>
                         {item.lastRenewJobStatus ? (
                           <JobStatusBadge status={item.lastRenewJobStatus} />
                         ) : (
@@ -304,18 +373,6 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {pagination ? (
-            <Box mt={2}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='certificates'
-                onChange={setPage}
-              />
-            </Box>
-          ) : null}
         </>
       ) : null}
     </Box>

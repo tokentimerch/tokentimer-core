@@ -6,6 +6,11 @@ import {
   Icon,
   IconButton,
   Link,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   Spinner,
   Text,
   Tooltip,
@@ -17,6 +22,7 @@ import {
   CheckCircle2,
   Circle,
   FileSearch,
+  MoreHorizontal,
   Play,
   Shield,
   X,
@@ -147,7 +153,7 @@ function mergeTimelineItems(logEntries, evidence) {
   });
 }
 
-function TimelineItem({ item, attemptLabel }) {
+function TimelineItem({ item, attemptLabel, compact = false }) {
   const { muted, border } = useDashboardTheme();
   const dotBg = useColorModeValue('white', 'gray.800');
   const isEvidence = item.kind === 'evidence';
@@ -217,7 +223,7 @@ function TimelineItem({ item, attemptLabel }) {
           ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
-        {isEvidence && entry.subjectId ? (
+        {!compact && isEvidence && entry.subjectId ? (
           <CopyableId
             id={entry.subjectId}
             label={subjectTypeLabel(entry.subjectType) || 'Subject'}
@@ -227,6 +233,20 @@ function TimelineItem({ item, attemptLabel }) {
           <Text fontSize='sm' color={muted} noOfLines={3}>
             {detail}
           </Text>
+        ) : null}
+        {compact && isEvidence && entry.subjectId ? (
+          <Box as='details' fontSize='xs' color={muted}>
+            <Text as='summary' cursor='pointer' w='fit-content'>
+              Evidence subject
+            </Text>
+            <Box mt={1}>
+              <CopyableId
+                id={entry.subjectId}
+                label={subjectTypeLabel(entry.subjectType) || 'Subject'}
+                size='xs'
+              />
+            </Box>
+          </Box>
         ) : null}
         <Text fontSize='xs' color={muted}>
           {timestamp}
@@ -241,7 +261,12 @@ function TimelineItem({ item, attemptLabel }) {
  *
  * @param {{ jobId: string, onClose?: function, refreshToken?: * }} props
  */
-export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
+export default function EvidenceTimeline({
+  jobId,
+  onClose,
+  refreshToken,
+  compact = false,
+}) {
   const { muted, border } = useDashboardTheme();
   const failureBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.28)');
   const failureBorder = useColorModeValue('red.200', 'red.700');
@@ -303,11 +328,15 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
       <HStack justify='space-between' align='start' spacing={3}>
         <VStack align='stretch' spacing={1}>
           <HStack spacing={2} flexWrap='wrap'>
-            <Text fontSize='sm' fontWeight='bold'>
-              {jobOperationLabel(job.operation)}
-            </Text>
-            <JobStatusBadge status={job.status} />
-            {job.source ? (
+            {!compact ? (
+              <>
+                <Text fontSize='sm' fontWeight='bold'>
+                  {jobOperationLabel(job.operation)}
+                </Text>
+                <JobStatusBadge status={job.status} />
+              </>
+            ) : null}
+            {!compact && job.source ? (
               <Badge variant='outline' textTransform='none' fontSize='2xs'>
                 {job.source}
               </Badge>
@@ -322,50 +351,126 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
                 View audit log
               </Link>
             ) : null}
+            {compact ? (
+              <Popover placement='bottom-end' isLazy>
+                <PopoverTrigger>
+                  <IconButton
+                    aria-label='Job metadata'
+                    title='Job metadata'
+                    icon={<Icon as={MoreHorizontal} boxSize={4} />}
+                    size='xs'
+                    variant='ghost'
+                  />
+                </PopoverTrigger>
+                <PopoverContent
+                  w='min(340px, calc(100vw - 32px))'
+                  borderColor={border}
+                >
+                  <PopoverArrow />
+                  <PopoverBody>
+                    <VStack align='stretch' spacing={2}>
+                      {job.source ? (
+                        <Text fontSize='xs'>Executor source: {job.source}</Text>
+                      ) : null}
+                      {job.id ? (
+                        <CopyableId id={job.id} label='Job ID' />
+                      ) : null}
+                      {job.subjectId ? (
+                        <CopyableId
+                          id={job.subjectId}
+                          label={subjectTypeLabel(job.subjectType) || 'Subject'}
+                        />
+                      ) : null}
+                      {job.claimId ? (
+                        <CopyableId id={job.claimId} label='Claim ID' />
+                      ) : null}
+                      {job.claimedByAgentId ? (
+                        <CopyableId
+                          id={job.claimedByAgentId}
+                          label='Claimed by agent'
+                        />
+                      ) : null}
+                      {job.claimedByControllerClusterId ? (
+                        <CopyableId
+                          id={job.claimedByControllerClusterId}
+                          label='Claimed by controller'
+                        />
+                      ) : null}
+                      {job.claimedByAgentSigningKeyId ? (
+                        <CopyableId
+                          id={job.claimedByAgentSigningKeyId}
+                          label="Agent's pinned signing key"
+                        />
+                      ) : null}
+                      {job.leaseExpiresAt ? (
+                        <Text fontSize='xs'>
+                          Lease expires {formatDateTime(job.leaseExpiresAt)}
+                        </Text>
+                      ) : null}
+                      {typeof job.attemptCount === 'number' ? (
+                        <Text fontSize='xs'>
+                          Attempt {job.attemptCount}
+                          {typeof job.maxAttempts === 'number'
+                            ? ` of ${job.maxAttempts}`
+                            : ''}
+                        </Text>
+                      ) : null}
+                    </VStack>
+                  </PopoverBody>
+                </PopoverContent>
+              </Popover>
+            ) : null}
           </HStack>
-          <HStack spacing={3} flexWrap='wrap'>
-            {job.id ? <CopyableId id={job.id} label='Job ID' /> : null}
-            {job.subjectId ? (
-              <CopyableId
-                id={job.subjectId}
-                label={subjectTypeLabel(job.subjectType) || 'Subject'}
-              />
-            ) : null}
-            {job.claimId ? (
-              <CopyableId id={job.claimId} label='Claim ID' />
-            ) : null}
-            {job.claimedByAgentId ? (
-              <CopyableId id={job.claimedByAgentId} label='Claimed by agent' />
-            ) : null}
-            {job.claimedByControllerClusterId ? (
-              <CopyableId
-                id={job.claimedByControllerClusterId}
-                label='Claimed by controller'
-              />
-            ) : null}
-            {job.claimedByAgentSigningKeyId ? (
-              <CopyableId
-                id={job.claimedByAgentSigningKeyId}
-                label="Agent's pinned signing key"
-              />
-            ) : null}
-          </HStack>
-          {job.claimId || job.leaseExpiresAt || job.attemptCount ? (
-            <HStack spacing={3} flexWrap='wrap'>
-              {job.leaseExpiresAt ? (
-                <Text fontSize='xs' color={muted}>
-                  Lease expires {formatDateTime(job.leaseExpiresAt)}
-                </Text>
+          {!compact ? (
+            <>
+              <HStack spacing={3} flexWrap='wrap'>
+                {job.id ? <CopyableId id={job.id} label='Job ID' /> : null}
+                {job.subjectId ? (
+                  <CopyableId
+                    id={job.subjectId}
+                    label={subjectTypeLabel(job.subjectType) || 'Subject'}
+                  />
+                ) : null}
+                {job.claimId ? (
+                  <CopyableId id={job.claimId} label='Claim ID' />
+                ) : null}
+                {job.claimedByAgentId ? (
+                  <CopyableId
+                    id={job.claimedByAgentId}
+                    label='Claimed by agent'
+                  />
+                ) : null}
+                {job.claimedByControllerClusterId ? (
+                  <CopyableId
+                    id={job.claimedByControllerClusterId}
+                    label='Claimed by controller'
+                  />
+                ) : null}
+                {job.claimedByAgentSigningKeyId ? (
+                  <CopyableId
+                    id={job.claimedByAgentSigningKeyId}
+                    label="Agent's pinned signing key"
+                  />
+                ) : null}
+              </HStack>
+              {job.claimId || job.leaseExpiresAt || job.attemptCount ? (
+                <HStack spacing={3} flexWrap='wrap'>
+                  {job.leaseExpiresAt ? (
+                    <Text fontSize='xs' color={muted}>
+                      Lease expires {formatDateTime(job.leaseExpiresAt)}
+                    </Text>
+                  ) : null}
+                  {typeof job.attemptCount === 'number' ? (
+                    <Text fontSize='xs' color={muted}>
+                      Attempt {job.attemptCount}
+                      {typeof job.maxAttempts === 'number'
+                        ? ` of ${job.maxAttempts}`
+                        : ''}
+                    </Text>
+                  ) : null}
+                </HStack>
               ) : null}
-              {typeof job.attemptCount === 'number' ? (
-                <Text fontSize='xs' color={muted}>
-                  Attempt {job.attemptCount}
-                  {typeof job.maxAttempts === 'number'
-                    ? ` of ${job.maxAttempts}`
-                    : ''}
-                </Text>
-              ) : null}
-            </HStack>
+            </>
           ) : null}
         </VStack>
         {typeof onClose === 'function' ? (
@@ -432,6 +537,7 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
                 key={item.id}
                 item={item}
                 attemptLabel={attemptLabel}
+                compact={compact}
               />
             );
           })}

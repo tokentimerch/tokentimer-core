@@ -134,7 +134,8 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
           </Button>
           <Button
             {...(pausing ? dangerButtonProps : primaryButtonProps)}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleConfirm}
             isLoading={submitting}
             loadingText={pausing ? 'Pausing' : 'Resuming'}
@@ -238,28 +239,38 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
       <Box mb={3}>
         <Alert status='warning' borderRadius='md' variant='left-accent'>
           <AlertIcon />
-          <Box flex='1'>
-            <HStack spacing={2} align='center' flexWrap='wrap'>
-              <Text fontSize='sm' fontWeight='bold'>
-                Certificate operations are paused for this workspace
-              </Text>
-              <Badge
-                colorScheme='red'
-                variant='subtle'
-                textTransform='none'
-                fontWeight='medium'
-                fontSize='xs'
-              >
-                Paused
-              </Badge>
-            </HStack>
-            <AlertDescription fontSize='sm' display='block'>
-              New provisioning intent and command delivery to agents are
-              refused. Already-leased jobs keep running, and agents can still
-              report observations and evidence.
-            </AlertDescription>
+          <Box
+            flex='1'
+            minW={0}
+            display='flex'
+            flexDirection={{ base: 'column', md: 'row' }}
+            alignItems={{ base: 'stretch', md: 'center' }}
+          >
+            <Box flex='1' minW={0}>
+              <HStack spacing={2} align='center' flexWrap='wrap'>
+                <Text fontSize='sm' fontWeight='bold'>
+                  Certificate operations are paused for this workspace
+                </Text>
+                <Badge
+                  colorScheme='red'
+                  variant='subtle'
+                  textTransform='none'
+                  fontWeight='medium'
+                  fontSize='xs'
+                >
+                  Paused
+                </Badge>
+              </HStack>
+              <AlertDescription fontSize='sm' display='block'>
+                New provisioning intent and command delivery to agents are
+                refused. Already-leased jobs keep running, and agents can still
+                report observations and evidence.
+              </AlertDescription>
+            </Box>
+            <Box mt={{ base: 3, md: 0 }} ml={{ base: 0, md: 4 }}>
+              {actionOrNote}
+            </Box>
           </Box>
-          {actionOrNote}
         </Alert>
         {confirmModal}
       </Box>

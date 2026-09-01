@@ -9,23 +9,38 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react';
-import TokenDetailModal from '../TokenDetailModal.jsx';
-import { TOKEN_CATEGORIES } from '../../constants/tokenCategories.js';
 import apiClient, { tokenAPI, workspaceAPI } from '../../utils/apiClient';
 import {
-  DashboardModalFrame,
+  DashboardDetailsModalFrame,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
+import {
+  DashboardDetailsModalFooter,
+  DashboardDetailsModalHeader,
+} from '../DashboardModalDetails.jsx';
+import CertificateDetailsModal from './CertificateDetailsModal.jsx';
+import { useCertOpsForToken } from './useCertOps.js';
+
+function CertificateDetailsModalWithCertOps(props) {
+  const certOps = useCertOpsForToken(props.token?.id);
+  return (
+    <CertificateDetailsModal
+      {...props}
+      certOps={certOps}
+      compactTableSections
+      propertyValueRows
+    />
+  );
+}
 
 /**
- * Opens the same TokenDetailModal the main dashboard uses, for a
- * certificate's underlying token, from a page (CertOps certificates) that
- * only has a `tokenId` and never loaded the workspace's full token list.
+ * Loads the underlying token for the certificate selected on the CertOps
+ * certificates page, which only has a `tokenId` and never loaded the
+ * workspace's full token list.
  *
- * TokenDetailModal renders nothing at all while `token` is null (it bails
- * out before the Modal itself), so this wrapper shows its own loading shell
- * until the token, contact groups, and workspace contacts it needs have
- * been fetched, then hands off to the real modal.
+ * This wrapper shows a loading shell until the token, contact groups, and
+ * workspace contacts are available, then mounts the certificate-specific
+ * inspection modal and its managed-certificate enrichment.
  */
 export default function CertificateTokenDetailModal({
   isOpen,
@@ -34,7 +49,15 @@ export default function CertificateTokenDetailModal({
   tokenId,
   canManage,
 }) {
-  const { headerProps, bodyProps, closeButtonProps } = useDashboardModalProps();
+  const {
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
   const [token, setToken] = useState(null);
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);
@@ -91,11 +114,10 @@ export default function CertificateTokenDetailModal({
 
   if (token && !loading && !error) {
     return (
-      <TokenDetailModal
+      <CertificateDetailsModalWithCertOps
         token={token}
         isOpen={isOpen}
         onClose={onClose}
-        TOKEN_CATEGORIES={TOKEN_CATEGORIES}
         isViewer={!canManage}
         contactGroups={contactGroups}
         workspaceContacts={workspaceContacts}
@@ -105,18 +127,35 @@ export default function CertificateTokenDetailModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} isCentered motionPreset='none'>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      scrollBehavior='inside'
+      isCentered
+      motionPreset='none'
+    >
       <ModalOverlay />
-      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '420px' }}>
-        <ModalHeader {...headerProps}>Certificate details</ModalHeader>
-        <ModalCloseButton {...closeButtonProps} />
-        <ModalBody {...bodyProps} pb={6}>
-          <VStack spacing={3} py={4}>
+      <DashboardDetailsModalFrame>
+        <ModalHeader {...headerProps} py={{ base: 4, md: 4 }}>
+          <DashboardDetailsModalHeader
+            title='Certificate details'
+            subtitle={
+              loading
+                ? 'Loading certificate data'
+                : 'Certificate data unavailable'
+            }
+            badgeLabel='Certificate'
+            badgeColorScheme='blue'
+          />
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} top={{ base: 3, md: 3 }} />
+        <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
+          <VStack align='start' spacing={3} py={2}>
             {loading ? (
               <>
-                <Spinner size='md' />
-                <Text fontSize='sm' color='gray.500'>
-                  Loading token details...
+                <Spinner size='sm' />
+                <Text fontSize='sm' color='dashboard.modal.muted'>
+                  Loading token details…
                 </Text>
               </>
             ) : (
@@ -126,7 +165,23 @@ export default function CertificateTokenDetailModal({
             )}
           </VStack>
         </ModalBody>
-      </DashboardModalFrame>
+        <DashboardDetailsModalFooter
+          footerProps={footerProps}
+          tokens={modalTokens}
+          isViewer
+          isEditing={false}
+          saveError=''
+          saving={false}
+          onClose={onClose}
+          outlineButtonProps={outlineButtonProps}
+          primaryButtonProps={primaryButtonProps}
+          message={
+            loading
+              ? 'Loading asset details…'
+              : 'Asset details are unavailable.'
+          }
+        />
+      </DashboardDetailsModalFrame>
     </Modal>
   );
 }

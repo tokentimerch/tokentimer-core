@@ -11,7 +11,7 @@ import { showSuccess, showError } from '../utils/toast.js';
  *
  * @param {{ id: string, label?: string, display?: string, size?: 'xs'|'sm' }} props
  */
-export default function CopyableId({ id, label, display, size = 'xs' }) {
+export default function CopyableId({ id, label, display, size = 'xs', color }) {
   const [copied, setCopied] = React.useState(false);
   const value = String(id ?? '').trim();
   const shown = display ?? value;
@@ -42,7 +42,7 @@ export default function CopyableId({ id, label, display, size = 'xs' }) {
         as='span'
         fontFamily='mono'
         fontSize={size}
-        color={idColor}
+        color={color || idColor}
         title={value}
         overflowWrap='anywhere'
       >

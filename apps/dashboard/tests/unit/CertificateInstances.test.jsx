@@ -53,7 +53,11 @@ describe('CertificateInstances', () => {
     renderInstances({
       instances: [
         instance({ id: 'a', targetId: 't1' }),
-        instance({ id: 'b', targetId: 't2', deploymentReference: 'other-target' }),
+        instance({
+          id: 'b',
+          targetId: 't2',
+          deploymentReference: 'other-target',
+        }),
       ],
     });
 
@@ -80,9 +84,13 @@ describe('CertificateInstances', () => {
     });
 
     // Only the current (newest) observation renders as a top-level row by default.
-    expect(screen.getByText('Show 1 earlier observation at this location')).toBeInTheDocument();
+    expect(
+      screen.getByText('Show 1 earlier observation at this location')
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Show 1 earlier observation at this location'));
+    fireEvent.click(
+      screen.getByText('Show 1 earlier observation at this location')
+    );
 
     expect(screen.getByText('Hide earlier observations')).toBeInTheDocument();
   });
@@ -90,8 +98,16 @@ describe('CertificateInstances', () => {
   it('shows a Renewed badge only when two observations at the same target have different fingerprints', () => {
     renderInstances({
       instances: [
-        instance({ id: 'older', targetId: 't1', observedFingerprintSha256: 'old' }),
-        instance({ id: 'newer', targetId: 't1', observedFingerprintSha256: 'new' }),
+        instance({
+          id: 'older',
+          targetId: 't1',
+          observedFingerprintSha256: 'old',
+        }),
+        instance({
+          id: 'newer',
+          targetId: 't1',
+          observedFingerprintSha256: 'new',
+        }),
       ],
     });
 
@@ -101,8 +117,16 @@ describe('CertificateInstances', () => {
   it('does not show a Renewed badge when fingerprints are missing (cannot be proven true)', () => {
     renderInstances({
       instances: [
-        instance({ id: 'older', targetId: 't1', observedFingerprintSha256: null }),
-        instance({ id: 'newer', targetId: 't1', observedFingerprintSha256: null }),
+        instance({
+          id: 'older',
+          targetId: 't1',
+          observedFingerprintSha256: null,
+        }),
+        instance({
+          id: 'newer',
+          targetId: 't1',
+          observedFingerprintSha256: null,
+        }),
       ],
     });
 
@@ -123,12 +147,24 @@ describe('CertificateInstances', () => {
     const newer = '2026-07-28T13:34:26.000Z';
     renderInstances({
       instances: [
-        instance({ id: 'older', targetId: 't1', observedAt: older, observedFingerprintSha256: 'old' }),
-        instance({ id: 'newer', targetId: 't1', observedAt: newer, observedFingerprintSha256: 'new' }),
+        instance({
+          id: 'older',
+          targetId: 't1',
+          observedAt: older,
+          observedFingerprintSha256: 'old',
+        }),
+        instance({
+          id: 'newer',
+          targetId: 't1',
+          observedAt: newer,
+          observedFingerprintSha256: 'new',
+        }),
       ],
     });
 
-    fireEvent.click(screen.getByText('Show 1 earlier observation at this location'));
+    fireEvent.click(
+      screen.getByText('Show 1 earlier observation at this location')
+    );
 
     expect(screen.getByTitle(formatDateTime(newer))).toBeInTheDocument();
     expect(screen.getByTitle(formatDateTime(older))).toBeInTheDocument();
@@ -274,5 +310,42 @@ describe('CertificateInstances', () => {
     expect(screen.getByText('k8s://cluster/ns/secret/tls')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
     expect(screen.getByText('Agent offline')).toBeInTheDocument();
+  });
+
+  it('retains every compact table column and exposes truncated values in titles', () => {
+    const longLocation =
+      'winstore://LocalMachine/My/very-long-certificate-location-reference';
+    renderInstances({
+      instances: [
+        instance({
+          deploymentReference: longLocation,
+          locationKind: 'windows_store',
+          agent: {
+            agentId: 'agent-1',
+            name: 'production-windows-agent-01',
+            livenessState: 'live',
+          },
+        }),
+      ],
+    });
+
+    [
+      'Location',
+      'Type',
+      'Agent',
+      'Connectivity',
+      'Last observed',
+      'State',
+    ].forEach(heading => {
+      expect(
+        screen.getByRole('columnheader', { name: heading })
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTitle(longLocation)).toHaveTextContent(longLocation);
+    expect(
+      screen.getByTitle('production-windows-agent-01')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Reachable')).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
   });
 });
