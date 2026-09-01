@@ -668,9 +668,17 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.notEqual(caReceipt.row.id, intermediateReceipt.row.id);
   });
 
-  it("reports installed with a warning (not os_mutation_failed) when the update command fails but the anchor is genuinely present in the anchors directory afterward", async () => {
+  it("reports installed with a warning (not os_mutation_failed) when the update command fails but the anchor is genuinely present in the derived trust bundle afterward", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
-    const fsImpl = makeFakeFs({});
+    // Models the real AlmaLinux 9 false negative: the SOURCE write (below,
+    // via installLinuxAnchorFile) always lands regardless of this test's
+    // point, so seeding only that would make the post-condition check
+    // trivially true no matter what it actually verifies. The genuinely
+    // discriminating signal is the DERIVED directory p11-kit/update-ca-
+    // trust extract itself writes to - seeded here to simulate that the
+    // consolidated bundle really was regenerated despite the non-zero exit.
+    const derivedPath = path.join(trustStore.RHEL_DERIVED_ANCHORS_DIR, "ca-bundle-entry.pem");
+    const fsImpl = makeFakeFs({ [derivedPath]: CA_PEM });
     const execFileImpl = makeFakeExecFile({ succeed: false, stderr: "chmod: changing permissions: Operation not permitted" });
 
     const result = await trustStore.distributeTrust({
@@ -727,6 +735,36 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
 
     assert.equal(result.mutationAttempted, true);
     assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "os_mutation_failed");
+    assert.equal(result.receipt.state, "intent_written");
+    assert.equal(result.metadata, undefined);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "pending_install");
+  });
+
+  it("reports os_mutation_failed, not installed, when the source anchor write succeeds but the derived/extracted trust bundle was never regenerated (real-host regression: a *_ANCHORS_DIR-based post-condition scan is trivially always 'present' here since that's exactly the directory the write above just landed in)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    // Deliberately does NOT seed anything at RHEL_DERIVED_ANCHORS_DIR: the
+    // source write below still succeeds and is visible at RHEL_ANCHORS_DIR,
+    // exactly reproducing a real AlmaLinux 9 host where update-ca-trust
+    // extract fails before writing any consolidated output at all (e.g.
+    // the extracted directory made fully unwritable, or PrivateTmp=false
+    // breaking its internal mktemp) - the CA is genuinely NOT trusted, and
+    // the post-condition override must not paper over that.
+    const fsImpl = makeFakeFs({});
+    const execFileImpl = makeFakeExecFile({ succeed: false, stderr: "update-ca-trust: extract: error" });
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.outcome, "already_absent");
     assert.equal(result.failureCategory, "os_mutation_failed");
     assert.equal(result.receipt.state, "intent_written");
     assert.equal(result.metadata, undefined);

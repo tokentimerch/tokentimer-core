@@ -69,6 +69,30 @@ const RHEL_UPDATE_COMMAND = "update-ca-trust";
 const RHEL_UPDATE_ARGS = Object.freeze(["extract"]);
 const RHEL_STORE_NAME = "rhel-ca-trust";
 
+/**
+ * Where the family's update command actually deposits its consolidated,
+ * per-certificate output - distinct from *_ANCHORS_DIR (this agent's own
+ * write target, read by the update command as its INPUT). The
+ * post-mutation "is this genuinely trusted" re-observation in
+ * distributeTrust below must scan one of THESE, never *_ANCHORS_DIR: by
+ * the time that check runs, the source anchor file is already known to be
+ * on disk (that branch is only reached after installLinuxAnchorFile's own
+ * write succeeded), so re-scanning *_ANCHORS_DIR again would trivially
+ * always report "present" regardless of whether the update command did
+ * anything at all - verified against a real AlmaLinux 9 host with
+ * `/etc/pki/ca-trust/extracted` made fully unwritable: `update-ca-trust
+ * extract` failed before touching any consolidated output, yet a
+ * *_ANCHORS_DIR-based post-condition scan still reported the CA as
+ * present. Debian's `update-ca-certificates` populates `/etc/ssl/certs`
+ * with one hash-named symlink per trusted certificate; RHEL's `update-
+ * ca-trust extract` (via p11-kit) populates the OpenSSL CApath-style hash
+ * directory below with one file per certificate - both are `readdirSync`-
+ * shaped exactly like *_ANCHORS_DIR, so scanLinuxAnchorsDirectoryForFingerprint
+ * works unchanged against either.
+ */
+const DEBIAN_DERIVED_ANCHORS_DIR = "/etc/ssl/certs";
+const RHEL_DERIVED_ANCHORS_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+
 /** Grep-able marker of agent-owned artifacts on a shared filesystem. */
 const ANCHOR_FILENAME_PREFIX = "tokentimer-";
 
@@ -1068,13 +1092,20 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
     // probeLinuxAnchorFile - that only proves this agent's own
     // deterministic file is on disk, not that the consolidated bundle was
     // rebuilt) before reporting a failure a real host would contradict.
+    // Scans *_DERIVED_ANCHORS_DIR (the update command's OUTPUT), never
+    // seams.anchorsDir (its INPUT, where the write above already landed -
+    // scanning that again would trivially always say "present" no matter
+    // what the update command actually did; confirmed on a real AlmaLinux
+    // 9 host with the extracted trust store made fully unwritable).
     // Never reachable for Windows: addWindowsStoreEntry's certutil call is
     // a single atomic step with no analogous partial-failure mode.
     if (family !== "windows") {
       const postCondition = scanLinuxAnchorsDirectoryForFingerprint({
         family,
         fingerprintSha256,
-        anchorsDir: seams.anchorsDir,
+        anchorsDir:
+          seams.derivedAnchorsDir ||
+          (family === "debian" ? DEBIAN_DERIVED_ANCHORS_DIR : RHEL_DERIVED_ANCHORS_DIR),
         fsImpl: seams.fsImpl,
       });
       if (postCondition.present) {
@@ -1885,6 +1916,8 @@ module.exports = {
   RHEL_UPDATE_COMMAND,
   RHEL_UPDATE_ARGS,
   RHEL_STORE_NAME,
+  DEBIAN_DERIVED_ANCHORS_DIR,
+  RHEL_DERIVED_ANCHORS_DIR,
   ANCHOR_FILENAME_PREFIX,
   TRUST_STORE_COMMAND_REFS,
   trustStoreCommandRefForFamily,
