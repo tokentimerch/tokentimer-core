@@ -331,6 +331,24 @@ describe('AgentFleetPanel', () => {
     expect(screen.getByText('ttsk_0123456...')).toBeInTheDocument();
   });
 
+  it('renders an Execution column badging declared-capability agents "Enabled" and others "No capability declared"', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    agents[0].supportedOperations = ['renew', 'distribute-trust'];
+    agents[1].supportedOperations = [];
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('columnheader', { name: 'Execution' })
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Enabled')).toHaveLength(1);
+    // Row 2 (no declared operations) and row 3 (retired, no operations key
+    // at all) both fall back to the same warning badge.
+    expect(screen.getAllByText('No capability declared')).toHaveLength(2);
+  });
+
   it('hides the actions column for a non-manager viewer', () => {
     useCertOpsCanManageMock.mockReturnValue(false);
     useCertOpsAgentsMock.mockReturnValue(

@@ -161,6 +161,57 @@ function NtpBadge({ ntpSynced }) {
 }
 
 /**
+ * Execution capability chip: whether this agent declared ANY executable
+ * action (renew/deploy/reload/distribute-trust/revoke-trust) the last time
+ * it successfully claimed a job. supportedOperations is only ever written
+ * from that claim call (see agentRegistry.js's agentMetadataFromRow), so an
+ * empty list is genuinely ambiguous between "this agent is running
+ * observe-only (no execution block, or execution.enabled is not true, in
+ * its config.json)" and "this agent is healthy but has not had its first
+ * poll cycle yet" - the title makes that caveat explicit rather than
+ * asserting a diagnosis this one field cannot prove on its own. Before this
+ * chip existed, there was no indication anywhere in the fleet table that an
+ * agent could never claim a job - operators only discovered it once a job
+ * sat at Pending with no explanation (see the pendingReason surfaced on
+ * trust installation rows for the other half of that fix).
+ */
+function ExecutionCapabilityBadge({ supportedOperations }) {
+  const declared = Array.isArray(supportedOperations) ? supportedOperations : [];
+  if (declared.length > 0) {
+    return (
+      <Badge
+        colorScheme='green'
+        variant='subtle'
+        textTransform='none'
+        fontWeight='medium'
+        fontSize='xs'
+        title={`Last declared on claim: ${declared.join(', ')}`}
+      >
+        Enabled
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      colorScheme='orange'
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+      title={
+        'No executable action declared on the last claim call. Most often ' +
+        'this means the agent is running observe-only (no execution block, ' +
+        'or execution.enabled is not true, in its config.json) - a job ' +
+        'pinned to it will sit at Pending forever. A brand-new agent that ' +
+        'has not polled for a job yet looks identical here.'
+      }
+    >
+      No capability declared
+    </Badge>
+  );
+}
+
+/**
  * Confirm dialog for retiring an agent (RetireCertificateModal pattern).
  * A non-forced retire is refused server-side with 409
  * CERTOPS_AGENT_RETIRE_BLOCKED while the agent holds job leases; the dialog
@@ -596,6 +647,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                   <Th>Protocol</Th>
                   <Th>Clock drift</Th>
                   <Th>NTP</Th>
+                  <Th>Execution</Th>
                   <Th>Signing key</Th>
                   <Th>Last heartbeat</Th>
                   {canManage ? <Th textAlign='right'>Actions</Th> : null}
@@ -681,6 +733,11 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                       </Td>
                       <Td>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
+                      </Td>
+                      <Td>
+                        <ExecutionCapabilityBadge
+                          supportedOperations={agent.supportedOperations}
+                        />
                       </Td>
                       <Td>
                         {agent.pinnedSigningKeyId ? (

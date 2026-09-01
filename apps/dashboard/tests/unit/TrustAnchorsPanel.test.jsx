@@ -424,6 +424,74 @@ describe('TrustAnchorsPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('surfaces a pendingReason as advisory text under a stuck-pending installation instead of a bare badge', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'pending_install',
+            lastError: null,
+            pendingReason: {
+              code: 'agent_retired',
+              message:
+                'This agent has been retired and can no longer be assigned any job.',
+            },
+          },
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(
+      screen.getByText(
+        'This agent has been retired and can no longer be assigned any job.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('prefers a real lastError over pendingReason when both are present on a row', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'pending_install',
+            lastError: 'agent unreachable',
+            pendingReason: {
+              code: 'agent_retired',
+              message: 'This agent has been retired.',
+            },
+          },
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(screen.getByText('agent unreachable')).toBeInTheDocument();
+    expect(
+      screen.queryByText('This agent has been retired.')
+    ).not.toBeInTheDocument();
+  });
+
   it('retires an anchor through the confirm modal and refreshes', async () => {
     const refresh = vi.fn();
     useCertOpsTrustAnchorsMock.mockReturnValue(

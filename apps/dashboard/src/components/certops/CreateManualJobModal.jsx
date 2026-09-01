@@ -219,6 +219,28 @@ function agentSelectLabel(agent) {
   return `${primary}${idSuffix}${offlineSuffix}`;
 }
 
+/**
+ * True when `agent` did not declare `operation` in supportedOperations the
+ * last time it successfully claimed a job. This is a real, useful signal
+ * (it is the exact field the server's own dispatch-time eligibility check
+ * reads - see agentJobEligibility.js's operation_unsupported), but it is
+ * NOT proof the agent is misconfigured: supported_operations is only ever
+ * written from a successful claim call, so a brand-new agent that has
+ * simply not polled yet reads the same as one running permanently
+ * observe-only (no execution block in its config.json). Callers must show
+ * this as a caveated warning, never as a hard block on selecting the
+ * agent - see this file's server-side counterpart
+ * (assertTargetAgentEligibleForTrustJob in trustAnchors.js) for why the
+ * same ambiguity keeps this out of any hard validation there too.
+ */
+function agentMissingDeclaredCapability(agent, operation) {
+  if (!agent) return false;
+  const declared = Array.isArray(agent.supportedOperations)
+    ? agent.supportedOperations
+    : [];
+  return !declared.includes(operation);
+}
+
 function createJobErrorMessage(err) {
   const code = err?.response?.data?.code;
   const status = err?.response?.status;
@@ -368,6 +390,18 @@ export default function CreateManualJobModal({
   // Only agents that can still be handed a job: a retired agent can never
   // claim anything, so pinning to one would silently strand the job.
   const assignableAgents = agents.filter(agent => agent.status !== 'retired');
+
+  // Advisory-only capability warning for the currently selected
+  // distribute-trust target - see agentMissingDeclaredCapability's own
+  // header comment for why this can never be a hard block here.
+  const selectedTrustAgent = assignableAgents.find(
+    agent => agent.id === trustAgentId
+  );
+  const trustAgentMissingCapability =
+    isTrustOp &&
+    isDistributeTrust &&
+    Boolean(selectedTrustAgent) &&
+    agentMissingDeclaredCapability(selectedTrustAgent, 'distribute-trust');
 
   // domain/endpoint/external subjects are free-text references an agent
   // can never match against (see MANUAL_ONLY_SUBJECT_TYPES above), so the
@@ -794,6 +828,9 @@ export default function CreateManualJobModal({
                     {assignableAgents.map(agent => (
                       <option key={agent.id} value={agent.id}>
                         {agentSelectLabel(agent)}
+                        {agentMissingDeclaredCapability(agent, 'distribute-trust')
+                          ? ' \u2014 no distribute-trust capability declared'
+                          : ''}
                       </option>
                     ))}
                   </Select>
@@ -816,6 +853,25 @@ export default function CreateManualJobModal({
                     })}
                   </Select>
                 )}
+                {trustAgentMissingCapability ? (
+                  <Alert
+                    status='warning'
+                    variant='subtle'
+                    borderRadius='md'
+                    mt={2}
+                  >
+                    <AlertIcon boxSize={4} />
+                    <AlertDescription fontSize='sm'>
+                      This agent did not declare distribute-trust support the
+                      last time it claimed a job. If it is running in
+                      observe-only mode (no execution block, or
+                      execution.enabled is not true, in its config.json), this
+                      job will sit at Pending indefinitely. A brand-new agent
+                      that has not polled yet will look the same here - check
+                      its logs if this persists.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <FormHelperText>
                   {isDistributeTrust
                     ? 'The agent whose OS trust store will receive this anchor.'

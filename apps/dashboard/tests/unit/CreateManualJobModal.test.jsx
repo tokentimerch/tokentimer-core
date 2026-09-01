@@ -438,6 +438,67 @@ describe('CreateManualJobModal trustOp mode', () => {
     expect(submit).toBeEnabled();
   });
 
+  it('annotates an agent option lacking distribute-trust in its declared capabilities', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      agents: [
+        { ...AGENT_A, supportedOperations: ['renew', 'distribute-trust'] },
+        { ...AGENT_B, supportedOperations: ['renew'] },
+      ],
+    });
+
+    renderModal({ trustOp: distributeTrustOp });
+
+    const options = screen.getAllByRole('option');
+    const optionA = options.find(option =>
+      option.textContent.startsWith('Agent A')
+    );
+    const optionB = options.find(option =>
+      option.textContent.startsWith('Agent B')
+    );
+    expect(optionA.textContent).not.toMatch(/no distribute-trust capability/);
+    expect(optionB.textContent).toMatch(
+      /Agent B.*— no distribute-trust capability declared/
+    );
+  });
+
+  it('shows an inline warning once the selected distribute-trust target is the capability-missing agent', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      agents: [
+        AGENT_A,
+        { ...AGENT_B, supportedOperations: [] },
+      ],
+    });
+
+    renderModal({ trustOp: distributeTrustOp });
+
+    expect(
+      screen.queryByText(/did not declare distribute-trust support/)
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+
+    expect(
+      screen.getByText(/did not declare distribute-trust support/)
+    ).toBeInTheDocument();
+  });
+
+  it('does not warn about capability for a revoke-trust target (only distribute-trust is checked)', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      agents: [{ ...AGENT_A, supportedOperations: [] }, AGENT_B],
+    });
+
+    renderModal({ trustOp: revokeTrustOp });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-a' },
+    });
+
+    expect(
+      screen.queryByText(/did not declare distribute-trust support/)
+    ).not.toBeInTheDocument();
+  });
+
   it('submits distribute-trust with agentId/owner/subjectType trust_anchor and an auto-generated idempotency key', async () => {
     createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
 

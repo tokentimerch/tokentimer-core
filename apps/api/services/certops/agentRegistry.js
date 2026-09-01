@@ -110,6 +110,16 @@ function certopsCapabilityFreshnessMs(env = process.env) {
 
 // The workspace admin surface must never see credential_prefix or
 // credential_hash; only these columns leave the service layer.
+//
+// supported_operations/declared_capabilities/capabilities_updated_at and the
+// declared routing arrays are included so the dashboard can show *why* an
+// agent is (or isn't) eligible for a given job, instead of an agent's
+// observe-only/capability-missing state being invisible until a job it was
+// pinned to sits at "pending" forever with no explanation (the gap that
+// motivated adding these fields here). They mirror exactly what
+// agentDispatch.js's real claim-time check reads, so the dashboard's view of
+// "can this agent do X" can never diverge from what dispatch actually
+// enforces.
 const AGENT_SAFE_SELECT_FIELDS = `
   id,
   workspace_id,
@@ -129,8 +139,26 @@ const AGENT_SAFE_SELECT_FIELDS = `
   retired_at,
   retire_reason,
   downtime_alerts_enabled,
-  contact_group_id
+  contact_group_id,
+  supported_operations,
+  declared_capabilities,
+  capabilities_updated_at,
+  declared_target_selectors,
+  declared_command_profile_names,
+  supported_dns_providers
 `;
+
+/**
+ * jsonb columns arrive from node-postgres already parsed into JS values, so
+ * this only needs to guard against a legacy NULL/non-array shape - no
+ * JSON.parse needed. Mirrors agentDispatch.js's own jsonbTextArray; kept as
+ * a separate copy rather than a shared import to avoid adding a new
+ * cross-module dependency for a three-line helper.
+ */
+function jsonbTextArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
 
 // Idempotent revocation guard for retireAgent below. Generates a fresh
 // cryptographically random value in Node (not SQL): gen_random_bytes()
@@ -387,6 +415,25 @@ function agentMetadataFromRow(row, env = process.env) {
     // DEFAULT TRUE backfilled every pre-existing row at migration time).
     downtimeAlertsEnabled: Boolean(row.downtime_alerts_enabled ?? true),
     contactGroupId: row.contact_group_id ?? null,
+    // supportedOperations is only ever written from the wire-declared
+    // supportedActions on a successful claim call (agentDispatch.js); an
+    // observe-only agent never calls claim at all, so a freshly registered
+    // observe-only agent correctly reads [] here. An agent that WAS
+    // execution-enabled, successfully claimed at least once, and was then
+    // reconfigured to observe-only without another claim call will still
+    // read its last-claimed set until its next claim attempt - the same
+    // staleness trade-off ADR-0012 decision 17 already accepts for
+    // declaredCapabilities, not something new introduced by exposing this
+    // field here. Still the single most useful signal available: it is the
+    // exact field evaluateAgentJobEligibility's operation_unsupported check
+    // reads for real dispatch, so this can never disagree with what
+    // actually happens when a job is claimed.
+    supportedOperations: jsonbTextArray(row.supported_operations),
+    declaredCapabilities: jsonbTextArray(row.declared_capabilities),
+    capabilitiesUpdatedAt: dateToIso(row.capabilities_updated_at),
+    targetSelectors: jsonbTextArray(row.declared_target_selectors),
+    commandProfiles: jsonbTextArray(row.declared_command_profile_names),
+    dnsProviders: jsonbTextArray(row.supported_dns_providers),
   };
   const compatibility = computeAgentCompatibility(base, env);
   return {
@@ -466,6 +513,37 @@ async function getAgentById(options) {
     [normalizeWorkspaceId(options.workspaceId), options.agentId],
   );
   return agentMetadataFromRow(result.rows[0] || null, options.env);
+}
+
+/**
+ * Batch-resolves agents by their internal UUID primary key (certops_agents.id),
+ * not the human-readable agent_id string - the identity trustAnchors.js's
+ * certops_trust_anchor_installations rows are actually keyed on (agent_id
+ * FK). Sibling of getAgentsByAgentIdStrings just below, which serves the
+ * string-keyed callers; kept separate rather than a single dual-mode
+ * function so neither caller has to reason about which key shape it holds.
+ *
+ * @param {{ workspaceId: string, ids: string[], client?: object, env?: NodeJS.ProcessEnv }} options
+ * @returns {Promise<Map<string, object>>} internal id (string) -> agentMetadataFromRow shape
+ */
+async function getAgentsByIds(options) {
+  const ids = Array.from(
+    new Set((options.ids || []).filter((value) => typeof value === "string" && value)),
+  );
+  if (ids.length === 0) return new Map();
+  const result = await (options.client || pool).query(
+    `SELECT ${AGENT_SAFE_SELECT_FIELDS}
+       FROM certops_agents
+      WHERE workspace_id = $1
+        AND id = ANY($2::uuid[])`,
+    [normalizeWorkspaceId(options.workspaceId), ids],
+  );
+  const map = new Map();
+  for (const row of result.rows) {
+    const metadata = agentMetadataFromRow(row, options.env);
+    map.set(String(metadata.id), metadata);
+  }
+  return map;
 }
 
 /**
@@ -1011,6 +1089,7 @@ module.exports = {
   fenceAgentInFlightWork,
   getAgentById,
   getAgentsByAgentIdStrings,
+  getAgentsByIds,
   listAgents,
   normalizeRequiredRetireReason,
   readCompatibilityConfig,

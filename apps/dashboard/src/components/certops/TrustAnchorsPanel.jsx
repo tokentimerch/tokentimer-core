@@ -469,6 +469,15 @@ function AnchorInstallationsBody({
                       <Text fontSize='xs' color='red.500' noOfLines={1}>
                         {row.lastError}
                       </Text>
+                    ) : row.pendingReason ? (
+                      <Text
+                        fontSize='xs'
+                        color='orange.600'
+                        noOfLines={2}
+                        title={row.pendingReason.message}
+                      >
+                        {row.pendingReason.message}
+                      </Text>
                     ) : null}
                   </VStack>
                 </Td>

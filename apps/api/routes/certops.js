@@ -153,6 +153,7 @@ const {
   CERTOPS_TRUST_RESULT_STALE_GENERATION,
   CERTOPS_TARGET_AGENT_INVALID,
   CERTOPS_TARGET_AGENT_NOT_FOUND,
+  CERTOPS_TARGET_AGENT_INELIGIBLE,
   createTrustAnchor,
   listTrustAnchors,
   listInstallationsForAnchor,
@@ -627,6 +628,19 @@ function handleCertOpsError(res, err) {
     return res.status(404).json({
       error: err.message || "Target agent not found",
       code: CERTOPS_TARGET_AGENT_NOT_FOUND,
+    });
+  }
+  // Refuses to pin a trust job to an agent that is currently, definitely
+  // incapable of ever claiming it (observe-only, retired, or compatibility-
+  // blocked) - see assertTargetAgentEligibleForTrustJob's header comment.
+  // 409 rather than 400: the request is well-formed, but the current state
+  // of the named resource (this agent) conflicts with performing the
+  // action, matching this codebase's existing convention for that shape of
+  // error (e.g. CERTOPS_TRUST_ANCHOR_NOT_ACTIVE below).
+  if (err?.code === CERTOPS_TARGET_AGENT_INELIGIBLE) {
+    return res.status(409).json({
+      error: err.message || "Target agent cannot currently claim this job",
+      code: CERTOPS_TARGET_AGENT_INELIGIBLE,
     });
   }
   // Result-ingestion codes (agentDispatch.ingestResult) mapped here too for

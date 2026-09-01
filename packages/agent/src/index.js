@@ -6044,6 +6044,32 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   // any network call so a corrupted replay store fails startup immediately.
   const executionContext = buildExecutionContext({ config });
 
+  // Loud, operator-visible signal for the most common source of "why is my
+  // job stuck pending" support questions: an agent with no `execution` block
+  // (or `execution.enabled: false`) registers, heartbeats, and reports
+  // discovery evidence, but silently never polls the claim endpoint (see the
+  // module docblock above). Previously this was undocumented anywhere an
+  // operator would actually look at runtime - only in code comments - so a
+  // misconfigured agent gave zero indication of the problem until someone
+  // noticed a job never left "pending". Emitted once at startup via the
+  // same sink used for real errors so it is impossible to miss in
+  // host.log/journalctl, without changing any control-flow decision (agents
+  // already correctly ran observe-only before this line existed).
+  // buildExecutionContext only ever returns null or { enabled: true, ... }
+  // (see its own doc comment), so the sole observe-only signal is nullness.
+  if (executionContext === null) {
+    defaultAgentLogger.error(
+      "running in OBSERVE-ONLY mode: config.execution is absent or " +
+        "execution.enabled is not true. This agent will register, " +
+        "heartbeat, and report discovery evidence, but it will NEVER poll " +
+        "for or claim jobs (renew, deploy, reload, distribute-trust, " +
+        "revoke-trust). If you expected this agent to execute jobs, set " +
+        '"execution": { "enabled": true, "dryRun": false } in config.json ' +
+        "and restart. See the `execution` block in the Config reference " +
+        "section of docs/certops/agent.md.",
+    );
+  }
+
   // Crash-safety: surface unresolved side-effect journals for operator
   // reconciliation. Do not auto-re-execute those jobIds.
   try {
