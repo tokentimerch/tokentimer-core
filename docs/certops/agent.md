@@ -270,7 +270,7 @@ Top level:
 | `allowedDnsProviders` | string[] | Exact match. |
 
 Trust-anchor distribution (`trust-anchor-deploy-v1`) resolves its platform-native
-update command through this same `allowedCommands` map, under three dedicated
+update command through this same `allowedCommands` map, under dedicated
 profile names that no other job family uses:
 
 | Profile name | Platform | Typical `argv` |
@@ -278,6 +278,15 @@ profile names that no other job family uses:
 | `trust-store:update-ca-certificates` | Debian/Ubuntu | `["/usr/sbin/update-ca-certificates"]` |
 | `trust-store:update-ca-trust` | RHEL/Fedora | `["/usr/bin/update-ca-trust", "extract"]` |
 | `trust-store:certutil` | Windows | `["certutil.exe"]` |
+| `trust-store:update-ca-certificates-fresh` | Debian/Ubuntu, `revoke-trust` only | `["/usr/sbin/update-ca-certificates", "--fresh"]` |
+
+The `-fresh` profile is optional and only consulted on the Debian
+`revoke-trust` path: `update-ca-certificates` without `--fresh` does not
+prune a just-removed anchor's dangling `/etc/ssl/certs` symlink, so
+configuring this profile lets revoke self-heal that symlink instead of only
+warning about it (`debian_fresh_command_ref_missing` in the result's
+`metadata`). It is never consulted for `distribute-trust`, and RHEL has no
+equivalent flag.
 
 Because these names are distinct from every ACME/reload profile, a renewal-only
 agent grants no trust-store command execution, and a trust-only agent grants no
@@ -885,9 +894,48 @@ directories. `install-agent.sh` grants that automatically on Ubuntu
 22.04/24.04/26.04 and AlmaLinux 9 when the family update command exists
 (pass `--no-trust-store` to skip). Without that grant, distribute fails
 with `EROFS` on the anchors directory even though the agent advertised
-`trust-anchor-deploy-v1`. Do not chown the system CA store. Windows
-needs no extra grant: LocalSystem already writes `LocalMachine\Root` /
-`LocalMachine\CA`.
+`trust-anchor-deploy-v1`; as of 0.14.2 that failure is a tagged
+`trust_store_not_writable` result rather than a thrown error that
+surfaces as a generic job-execution failure. Do not chown the system CA
+store. Windows needs no extra grant: LocalSystem already writes
+`LocalMachine\Root` / `LocalMachine\CA`.
+
+AlmaLinux 9 (and other RHEL-family hosts) get the same recursive ACL grant,
+but the grant is necessary, not sufficient: `update-ca-trust extract`'s
+underlying `p11-kit` step calls `chmod(2)` on the extracted
+directory-hash bundle directory, an operation that requires ownership no
+POSIX ACL can confer. That `chmod` can fail (non-zero exit) even while the
+consolidated trust bundle is genuinely regenerated and the certificate is
+genuinely trusted. Before 0.14.2 this was reported as a false-negative
+`os_mutation_failed`, and a later `revoke-trust` on the same target would
+then refuse permanently with `receipt_pending_install` (there was no
+agent-side path to recover a target stuck this way; it required manual
+root intervention). As of 0.14.2, `distribute-trust` re-observes the real
+anchors-directory state before trusting that exit code: if the certificate
+is genuinely present it reports `installed` with the non-zero exit's output
+carried as a non-fatal warning, and `revoke-trust` can additionally unwind
+a `pending_install` receipt it finds already stranded from an older agent,
+as long as the anchor is still observably present.
+
+Debian-family revoke has a related but separate gap: plain
+`update-ca-certificates` reports "0 added, 0 removed" and does not prune a
+just-removed anchor's dangling `/etc/ssl/certs` symlink - only
+`update-ca-certificates --fresh` does. As of 0.14.2, `revoke-trust` prefers
+a policy-supplied `--fresh` argv under the
+`trust-store:update-ca-certificates-fresh` profile (see the config
+reference above) when the operator has configured it, and otherwise falls
+back to the pre-0.14.2 behaviour with a non-fatal `debian_fresh_command_ref_missing`
+warning on the result rather than silently leaving the symlink.
+
+The hardened unit's `PrivateTmp=true` (shipped in
+`packages/agent/scripts/tokentimer-agent.service`) matters specifically
+here: `update-ca-certificates`/`update-ca-trust extract` both call
+`mktemp` internally, and without `PrivateTmp=true`, `ProtectSystem=strict`
+leaves the real `/tmp` read-only, so the update command fails at `mktemp`
+before it ever touches the anchors directory - a failure mode easy to
+mistake for the anchors-directory grant itself being missing. A manually
+written unit (bypassing `install-agent.sh`) that omits `PrivateTmp=true`
+will reproduce this even with every other grant correctly in place.
 
 On every platform the update command/executable is gated through the same
 `policyEngine.checkCommandRef` allowlist as ACME/reload commands, under the
@@ -933,10 +981,14 @@ agent's own local receipt-finalize write fails, the control plane still
 settles the installation row on the observed outcome (`installed`/`removed`)
 rather than unwinding it, and records `receipt_finalize_conflict` in the
 row's `last_error`; a later `revoke-trust` on that same target can then fail
-with the agent's own `receipt_pending_install`, since its on-disk receipt
-never reached `finalized`. The recovery is to re-run `distribute-trust` for
-that same target, which retries the finalize write and clears the stale
-receipt state. See ADR-0012 decisions 6 and (d) (twelfth amendment)
+with the agent's own `receipt_pending_install`. As of 0.14.2 there are two
+ways to recover that: re-run `distribute-trust` for the same target, which
+retries the finalize write and clears the stale receipt state, or simply
+re-run `revoke-trust` directly - it now re-observes the real anchors-
+directory state before refusing, and unwinds (finalizes, then removes) a
+`pending_install` receipt it finds stranded whenever the anchor is still
+observably present, only falling back to the original refusal when it
+genuinely is not. See ADR-0012 decisions 6 and (d) (twelfth amendment)
 for the full ownership-reference and crash-recovery contract.
 
 Dry-run mode behaves identically to the renewal chain above: `mode: "dry_run"`

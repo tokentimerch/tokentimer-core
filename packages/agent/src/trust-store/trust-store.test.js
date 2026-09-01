@@ -668,14 +668,59 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.notEqual(caReceipt.row.id, intermediateReceipt.row.id);
   });
 
-  it("reports a failure when the update command itself fails, leaving the receipt at intent_written (not finalized)", async () => {
+  it("reports installed with a warning (not os_mutation_failed) when the update command fails but the anchor is genuinely present in the anchors directory afterward", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
     const fsImpl = makeFakeFs({});
+    const execFileImpl = makeFakeExecFile({ succeed: false, stderr: "chmod: changing permissions: Operation not permitted" });
+
+    const result = await trustStore.distributeTrust({
+      job: distributeJob(),
+      family: "rhel",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(result.outcome, "installed");
+    assert.equal(result.observedFingerprintAfter, CA_FINGERPRINT);
+    assert.equal(result.failureCategory, null);
+    assert.equal(result.receipt.state, "finalized");
+    assert.ok(Array.isArray(result.metadata));
+    assert.ok(result.metadata.some((entry) => entry.name === "post_condition_override_applied" && entry.value === true));
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "installed");
+
+    const validation = validateTrustResult(result);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  });
+
+  it("reports os_mutation_failed (true failure), leaving the receipt at intent_written, when the update command fails and the anchor is genuinely absent afterward", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    // A write that reports success but leaves nothing visible to the
+    // post-condition re-scan: distinct from CORE-01's writeFailed path
+    // (mkdirSync/writeFileSync throwing), this models the write landing
+    // somewhere the verification step cannot see it landing (e.g. a stale
+    // mount view) - the negative case the post-condition override must
+    // never paper over.
+    const fsImpl = {
+      mkdirSync() {},
+      writeFileSync() {},
+      readdirSync() {
+        return [];
+      },
+      readFileSync() {
+        const err = new Error("ENOENT");
+        err.code = "ENOENT";
+        throw err;
+      },
+    };
     const execFileImpl = makeFakeExecFile({ succeed: false });
 
     const result = await trustStore.distributeTrust({
       job: distributeJob(),
-      family: "debian",
+      family: "rhel",
       receiptDir,
       seams: { fsImpl, execFileImpl },
     });
@@ -684,25 +729,31 @@ describe("trust-store: distributeTrust on Debian-family (install idempotency, fi
     assert.equal(result.mutationPerformed, false);
     assert.equal(result.failureCategory, "os_mutation_failed");
     assert.equal(result.receipt.state, "intent_written");
+    assert.equal(result.metadata, undefined);
 
-    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    const persisted = receipt.readReceipt(receiptDir, trustStore.RHEL_STORE_NAME, CA_FINGERPRINT);
     assert.equal(persisted.row.state, "pending_install");
   });
 
   it("retries the trust-refresh command when a prior attempt left pending_install and the anchor file is already on disk", async () => {
     const receiptDir = path.join(makeTempDir("receipts"), "receipts");
-    const fsImpl = makeFakeFs({});
-    const failExec = makeFakeExecFile({ succeed: false });
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    const fsImpl = makeFakeFs({ [filePath]: CA_PEM });
     const succeedExec = makeFakeExecFile({ succeed: true });
 
-    const first = await trustStore.distributeTrust({
-      job: distributeJob(),
-      family: "debian",
+    // Seed a stranded pending_install receipt directly, simulating a prior
+    // distributeTrust attempt whose OS mutation genuinely completed but
+    // whose local finalize step itself failed (a receipt-level conflict,
+    // not an OS-level one) - the file is already on disk, but the receipt
+    // never advanced past intent_written.
+    receipt.writeIntentReceipt({
       receiptDir,
-      seams: { fsImpl, execFileImpl: failExec },
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-dist-prior-attempt",
+      transitionGeneration: 1,
+      intentState: "pending_install",
     });
-    assert.equal(first.failureCategory, "os_mutation_failed");
-    assert.equal(failExec.calls.length, 1);
 
     const second = await trustStore.distributeTrust({
       job: distributeJob(),
@@ -1178,6 +1229,114 @@ describe("trust-store: revokeTrust on Debian-family (ownership-proof-gated remov
     assert.equal(result.mutationPerformed, false);
     assert.equal(result.failureCategory, "receipt_pending_install");
     assert.equal(execFileImpl.calls.length, 0);
+  });
+
+  it("unstrands a pending_install receipt and proceeds to remove it when the anchor is observably present (post-condition override recovery)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const filePath = trustStore.linuxAnchorFilePath("debian", CA_FINGERPRINT);
+    const fsImpl = makeFakeFs({ [filePath]: CA_PEM });
+
+    // Models a receipt genuinely stranded at pending_install: the material
+    // reached the store (the file is on disk, per fsImpl above), but this
+    // agent's own receipt never advanced to "installed" - either because
+    // finalizeReceipt itself failed, or because this receipt predates the
+    // post-condition override that would otherwise have finalized it.
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-install-stranded",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.failureCategory, null);
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.mutationAttempted, true);
+    assert.equal(result.mutationPerformed, true);
+    assert.equal(result.receipt.state, "finalized");
+    assert.equal(execFileImpl.calls.length, 1);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "removed");
+  });
+
+  it("still refuses a pending_install receipt when the anchor is genuinely absent (unstranding never applies to a real crash-before-mutation case)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    receipt.writeIntentReceipt({
+      receiptDir,
+      store: trustStore.DEBIAN_STORE_NAME,
+      fingerprintSha256: CA_FINGERPRINT,
+      jobId: "job-install-crashed",
+      transitionGeneration: 1,
+      intentState: "pending_install",
+    });
+
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    const result = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.mutationAttempted, false);
+    assert.equal(result.mutationPerformed, false);
+    assert.equal(result.failureCategory, "receipt_pending_install");
+    assert.equal(execFileImpl.calls.length, 0);
+
+    const persisted = receipt.readReceipt(receiptDir, trustStore.DEBIAN_STORE_NAME, CA_FINGERPRINT);
+    assert.equal(persisted.row.state, "pending_install");
+  });
+
+  it("uses the policy-supplied --fresh argv on a Debian revoke when seams.freshUpdateCommandArgv is configured, with no fallback warning", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+    const freshArgv = ["/usr/sbin/update-ca-certificates", "--fresh"];
+
+    const result = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl, freshUpdateCommandArgv: freshArgv },
+    });
+
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.metadata, undefined);
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.deepEqual(execFileImpl.calls[0], freshArgv);
+  });
+
+  it("falls back to the plain update-ca-certificates argv with a non-fatal warning when no --fresh command-ref is configured (pre-0.14.2 config.json upgrade compat)", async () => {
+    const receiptDir = path.join(makeTempDir("receipts"), "receipts");
+    const fsImpl = makeFakeFs({});
+    await installFirst(receiptDir, fsImpl);
+    const execFileImpl = makeFakeExecFile({ succeed: true });
+
+    const result = await trustStore.revokeTrust({
+      job: revokeJob(),
+      family: "debian",
+      receiptDir,
+      seams: { fsImpl, execFileImpl },
+    });
+
+    assert.equal(result.outcome, "removed");
+    assert.equal(result.failureCategory, null);
+    assert.ok(Array.isArray(result.metadata));
+    assert.ok(result.metadata.some((entry) => entry.name === "debian_fresh_command_ref_missing" && entry.value === true));
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0][0], trustStore.DEBIAN_UPDATE_COMMAND);
   });
 
   it("reports already_absent idempotently when the receipt is already in the removed terminal state", async () => {

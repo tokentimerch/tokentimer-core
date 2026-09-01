@@ -410,6 +410,13 @@ flows use this path when `certops.enabled` is on.
   `observedSubject`, `observedIssuer`, `observedSerialNumber`,
   `observedFingerprintSha256`, and `source`. It must never expose private key
   material, evidence, or secret fields.
+- Trust-anchor installation history is available at
+  `GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations`
+  (`apps/api/routes/certops.js`). It is workspace-scoped and gated by
+  `certops.enabled`, but deliberately omits `requireWorkspaceCertOpsActive`
+  (unlike the two mutating trust-anchor routes) so an operator diagnosing a
+  frozen/deactivated workspace can still see where a trust anchor landed.
+  Already covered by the OpenAPI spec.
 
 ## Editions
 
