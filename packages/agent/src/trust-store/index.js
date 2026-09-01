@@ -69,6 +69,30 @@ const RHEL_UPDATE_COMMAND = "update-ca-trust";
 const RHEL_UPDATE_ARGS = Object.freeze(["extract"]);
 const RHEL_STORE_NAME = "rhel-ca-trust";
 
+/**
+ * Where the family's update command actually deposits its consolidated,
+ * per-certificate output - distinct from *_ANCHORS_DIR (this agent's own
+ * write target, read by the update command as its INPUT). The
+ * post-mutation "is this genuinely trusted" re-observation in
+ * distributeTrust below must scan one of THESE, never *_ANCHORS_DIR: by
+ * the time that check runs, the source anchor file is already known to be
+ * on disk (that branch is only reached after installLinuxAnchorFile's own
+ * write succeeded), so re-scanning *_ANCHORS_DIR again would trivially
+ * always report "present" regardless of whether the update command did
+ * anything at all - verified against a real AlmaLinux 9 host with
+ * `/etc/pki/ca-trust/extracted` made fully unwritable: `update-ca-trust
+ * extract` failed before touching any consolidated output, yet a
+ * *_ANCHORS_DIR-based post-condition scan still reported the CA as
+ * present. Debian's `update-ca-certificates` populates `/etc/ssl/certs`
+ * with one hash-named symlink per trusted certificate; RHEL's `update-
+ * ca-trust extract` (via p11-kit) populates the OpenSSL CApath-style hash
+ * directory below with one file per certificate - both are `readdirSync`-
+ * shaped exactly like *_ANCHORS_DIR, so scanLinuxAnchorsDirectoryForFingerprint
+ * works unchanged against either.
+ */
+const DEBIAN_DERIVED_ANCHORS_DIR = "/etc/ssl/certs";
+const RHEL_DERIVED_ANCHORS_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+
 /** Grep-able marker of agent-owned artifacts on a shared filesystem. */
 const ANCHOR_FILENAME_PREFIX = "tokentimer-";
 
@@ -88,6 +112,19 @@ const TRUST_STORE_COMMAND_REFS = Object.freeze({
   DEBIAN_UPDATE_CA_CERTIFICATES: "trust-store:update-ca-certificates",
   RHEL_UPDATE_CA_TRUST: "trust-store:update-ca-trust",
   WINDOWS_CERTUTIL: "trust-store:certutil",
+  /**
+   * A distinct, opt-in profile for the Debian revoke path only.
+   * `update-ca-certificates` without `--fresh` reports "0 added, 0
+   * removed" and does not prune a just-deleted anchor's dangling
+   * `/etc/ssl/certs` symlink, so self-healing revoke needs `--fresh`
+   * specifically. Kept as its own command-ref (never folded into
+   * DEBIAN_UPDATE_CA_CERTIFICATES) so upgrading an agent never silently
+   * starts invoking an unreviewed `--fresh` argv against an existing
+   * operator config.json: absent, revoke falls back to the
+   * DEBIAN_UPDATE_CA_CERTIFICATES argv exactly as before, with a
+   * non-fatal warning recorded on the result instead.
+   */
+  DEBIAN_UPDATE_CA_CERTIFICATES_FRESH: "trust-store:update-ca-certificates-fresh",
 });
 
 /**
@@ -562,7 +599,7 @@ function scanLinuxAnchorsDirectoryForFingerprint({ family, fingerprintSha256, an
  * @param {string[]} [input.updateCommandArgv] policy-resolved argv override;
  *   falls back to the hardcoded command literals for tests/bypass callers.
  * @param {number} [input.timeoutMs]
- * @returns {Promise<{ ok: true }|{ ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }>}
+ * @returns {Promise<{ ok: true }|{ ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string, writeFailed?: true }>}
  */
 async function installLinuxAnchorFile({
   family,
@@ -575,8 +612,28 @@ async function installLinuxAnchorFile({
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
   const filePath = linuxAnchorFilePath(family, fingerprintSha256, anchorsDir);
-  fsImpl.mkdirSync(path.dirname(filePath), { recursive: true });
-  fsImpl.writeFileSync(filePath, pem, { encoding: "utf8", mode: 0o644 });
+
+  // Mirrors removeLinuxAnchorFile's own unlinkSync guard below. Previously
+  // unguarded, so a read-only anchors directory (EROFS) or a permissions
+  // problem (EACCES) escaped as a thrown error all the way out through
+  // distributeTrust/executeTrustJob, arriving at the control plane as a
+  // generic "job execution failed" string with no failureCategory.
+  // `writeFailed: true` lets distributeTrust distinguish this ("the file
+  // itself never landed, definitely absent") from the update-command
+  // exiting non-zero after a real write (see below), where "absent" is not
+  // a safe assumption.
+  try {
+    fsImpl.mkdirSync(path.dirname(filePath), { recursive: true });
+    fsImpl.writeFileSync(filePath, pem, { encoding: "utf8", mode: 0o644 });
+  } catch (err) {
+    return {
+      ok: false,
+      exitCode: null,
+      stdoutExcerpt: "",
+      stderrExcerpt: boundAndRedactExcerpt(String(err && err.message ? err.message : err)),
+      writeFailed: true,
+    };
+  }
 
   const argv =
     updateCommandArgv || (family === "debian" ? [DEBIAN_UPDATE_COMMAND] : [RHEL_UPDATE_COMMAND, ...RHEL_UPDATE_ARGS]);
@@ -751,8 +808,24 @@ function tryReceiptStep(fn) {
 }
 
 /**
+ * Bounds a string to trust-result-contract.schema.json's publicMetadataEntry
+ * value limit (512 chars), distinct from OUTPUT_EXCERPT_MAX_CHARS (1024),
+ * which bounds the internal stdoutExcerpt/stderrExcerpt shape these
+ * metadata values are themselves derived from.
+ * @param {*} value
+ * @returns {string}
+ */
+function boundMetadataExcerpt(value) {
+  return String(value === undefined || value === null ? "" : value).slice(0, 512);
+}
+
+/**
  * Builds one trust-result-contract.schema.json-shaped result object.
  * @param {object} input see call sites for the exact fields threaded through.
+ * @param {Array<{name: string, value: *}>} [input.metadata] optional
+ *   sanitized, non-fatal evidence entries (0.14.2: used to carry a
+ *   post-condition override's warning, or a missing-optional-command-ref
+ *   revoke warning, without abusing failureCategory for a non-failure).
  * @returns {object}
  */
 function buildResult({
@@ -771,9 +844,10 @@ function buildResult({
   receiptId: builtReceiptId,
   receiptState,
   failureCategory = null,
+  metadata,
   now = () => new Date(),
 }) {
-  return {
+  const result = {
     schemaVersion: 1,
     jobId,
     workspaceId,
@@ -791,6 +865,10 @@ function buildResult({
     failureCategory,
     observedAt: now().toISOString(),
   };
+  if (Array.isArray(metadata) && metadata.length > 0) {
+    result.metadata = metadata;
+  }
+  return result;
 }
 
 /**
@@ -977,6 +1055,116 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
         });
 
   if (!mutationResult.ok) {
+    if (family !== "windows" && mutationResult.writeFailed) {
+      // The anchor file itself could not be written (mkdirSync/
+      // writeFileSync threw) - the store is provably untouched, no update
+      // command ever ran. Distinct failureCategory from os_mutation_failed
+      // below so a write that never landed is never conflated with a
+      // command that ran and failed.
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "distribute-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        outcome: "already_absent",
+        mutationAttempted: true,
+        mutationPerformed: false,
+        receiptId: intentRow.id,
+        receiptState: "intent_written",
+        failureCategory: "trust_store_not_writable",
+        now,
+      });
+    }
+
+    // On Debian/RHEL the anchor file write succeeded but
+    // the family's refresh command (update-ca-certificates /
+    // update-ca-trust extract) exited non-zero. Known false negative on
+    // AlmaLinux 9: p11-kit's `extract` calls chmod(2) on the extracted
+    // directory-hash bundle, which needs ownership no POSIX ACL grant can
+    // confer, yet the bundle is still genuinely regenerated and the CA
+    // genuinely trusted. Re-observe real OS state via the whole-directory
+    // scan (scanLinuxAnchorsDirectoryForFingerprint, NOT
+    // probeLinuxAnchorFile - that only proves this agent's own
+    // deterministic file is on disk, not that the consolidated bundle was
+    // rebuilt) before reporting a failure a real host would contradict.
+    // Scans *_DERIVED_ANCHORS_DIR (the update command's OUTPUT), never
+    // seams.anchorsDir (its INPUT, where the write above already landed -
+    // scanning that again would trivially always say "present" no matter
+    // what the update command actually did; confirmed on a real AlmaLinux
+    // 9 host with the extracted trust store made fully unwritable).
+    // Never reachable for Windows: addWindowsStoreEntry's certutil call is
+    // a single atomic step with no analogous partial-failure mode.
+    if (family !== "windows") {
+      const postCondition = scanLinuxAnchorsDirectoryForFingerprint({
+        family,
+        fingerprintSha256,
+        anchorsDir:
+          seams.derivedAnchorsDir ||
+          (family === "debian" ? DEBIAN_DERIVED_ANCHORS_DIR : RHEL_DERIVED_ANCHORS_DIR),
+        fsImpl: seams.fsImpl,
+      });
+      if (postCondition.present) {
+        const warningMetadata = [
+          { name: "post_condition_override_applied", value: true },
+          {
+            name: "refresh_command_exit_code",
+            value: Number.isInteger(mutationResult.exitCode) ? mutationResult.exitCode : null,
+          },
+          { name: "refresh_command_stderr_excerpt", value: boundMetadataExcerpt(mutationResult.stderrExcerpt) },
+        ];
+        const finalizeAfterPostCondition = tryReceiptStep(() =>
+          receipt.finalizeReceipt({ receiptDir, store: osStore, fingerprintSha256, jobId, transitionGeneration, now }),
+        );
+        if (!finalizeAfterPostCondition.ok) {
+          // The CA is genuinely trusted - report that truthfully - but the
+          // local receipt didn't reach "finalized"; mirrors the ordinary
+          // success path's own RECEIPT_FINALIZE_CONFLICT handling below.
+          return buildResult({
+            jobId,
+            workspaceId,
+            agentId,
+            trustAnchorId,
+            action: "distribute-trust",
+            transitionGeneration,
+            store,
+            observedFingerprintBefore: null,
+            observedFingerprintAfter: fingerprintSha256,
+            outcome: "installed",
+            mutationAttempted: true,
+            mutationPerformed: true,
+            receiptId: intentRow.id,
+            receiptState: "intent_written",
+            failureCategory: RECEIPT_FINALIZE_CONFLICT,
+            metadata: warningMetadata,
+            now,
+          });
+        }
+        return buildResult({
+          jobId,
+          workspaceId,
+          agentId,
+          trustAnchorId,
+          action: "distribute-trust",
+          transitionGeneration,
+          store,
+          observedFingerprintBefore: null,
+          observedFingerprintAfter: fingerprintSha256,
+          outcome: "installed",
+          mutationAttempted: true,
+          mutationPerformed: true,
+          receiptId: intentRow.id,
+          receiptState: "finalized",
+          metadata: warningMetadata,
+          now,
+        });
+      }
+    }
+
     return buildResult({
       jobId,
       workspaceId,
@@ -1045,6 +1233,51 @@ async function distributeTrust({ job, family, receiptDir, workDir, seams = {}, n
 }
 
 /**
+ * Resolves the argv removeLinuxAnchorFile should run for
+ * a Debian-family revoke specifically. Plain `update-ca-certificates`
+ * reports "0 added, 0 removed" and does not prune a just-deleted anchor's
+ * dangling `/etc/ssl/certs` symlink (see revokeTrust's `isPresent` branch
+ * doc comment for the two-step unlink-then-refresh ordering this closes) -
+ * only `--fresh` does. Falls back, with a non-fatal warning, to
+ * `seams.updateCommandArgv` (the ordinary DEBIAN_UPDATE_CA_CERTIFICATES
+ * profile) when the operator's config.json has no
+ * DEBIAN_UPDATE_CA_CERTIFICATES_FRESH profile configured yet: switching the
+ * default argv outright the moment a fleet upgrades to 0.14.2 would
+ * otherwise silently change every existing operator's revoke behaviour.
+ * RHEL's `update-ca-trust extract` has no analogous flag and no analogous
+ * dangling-symlink defect, so this only ever applies to family "debian".
+ * @param {"debian"|"rhel"} family
+ * @param {object} seams
+ * @returns {{ argv: string[]|undefined, usedFreshFallbackWarning: boolean }}
+ */
+function resolveRevokeUpdateCommandArgv(family, seams) {
+  if (family !== "debian") {
+    return { argv: seams.updateCommandArgv, usedFreshFallbackWarning: false };
+  }
+  if (Array.isArray(seams.freshUpdateCommandArgv) && seams.freshUpdateCommandArgv.length > 0) {
+    return { argv: seams.freshUpdateCommandArgv, usedFreshFallbackWarning: false };
+  }
+  return { argv: seams.updateCommandArgv, usedFreshFallbackWarning: true };
+}
+
+/**
+ * Metadata entry warning that a Debian revoke ran without `--fresh`, for
+ * every result the fallback path produces regardless of outcome, so
+ * an operator's evidence trail always shows the dangling-symlink risk was
+ * live for this particular revoke rather than only surfacing it once a
+ * symlink is actually found stale.
+ * @returns {Array<{name: string, value: *}>}
+ */
+function freshFallbackWarningMetadata() {
+  return [
+    {
+      name: "debian_fresh_command_ref_missing",
+      value: true,
+    },
+  ];
+}
+
+/**
  * Executes a signed `revoke-trust` job. Removal is ownership-proof-gated: a
  * missing or corrupt receipt refuses removal (never treated as
  * `already_absent`). Only once a receipt proves this agent installed the
@@ -1098,7 +1331,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     });
   }
 
-  const existingReceipt = receipt.readReceipt(receiptDir, osStore, fingerprintSha256);
+  let existingReceipt = receipt.readReceipt(receiptDir, osStore, fingerprintSha256);
 
   if (existingReceipt === null) {
     // No ownership proof at all: fail-safe refusal.
@@ -1142,27 +1375,79 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     });
   }
   if (existingReceipt.row.state === "pending_install") {
-    // Crash before the install mutation completed: no proof this agent's
-    // material reached the store, so nothing is proven to remove. Refuse
-    // rather than guess whether the earlier mutation silently succeeded.
-    return buildResult({
-      jobId,
-      workspaceId,
-      agentId,
-      trustAnchorId,
-      action: "revoke-trust",
-      transitionGeneration,
-      store,
-      observedFingerprintBefore: null,
-      observedFingerprintAfter: null,
-      outcome: "already_absent",
-      mutationAttempted: false,
-      mutationPerformed: false,
-      receiptId: existingReceipt.row.id,
-      receiptState: "intent_written",
-      failureCategory: "receipt_pending_install",
-      now,
-    });
+    // Crash before the install mutation completed, OR a
+    // receipt stranded by the now-fixed AlmaLinux false-negative (or
+    // any pre-0.14.2 agent that never reached finalizeReceipt after a real
+    // successful install): re-observe real OS state before refusing. When
+    // the anchor is genuinely present, this agent's install proof was
+    // merely never finalized, not actually missing - unwind the stranding
+    // by finalizing the intent under its OWN original jobId/
+    // transitionGeneration (never this revoke job's own identity, which
+    // finalizeReceipt would reject as a generation mismatch), then fall
+    // through to the normal installed-state removal logic below so this
+    // same revoke-trust job proceeds to actually remove it. When genuinely
+    // absent, the original refusal still applies unchanged: "no proof
+    // this agent's material reached the store" remains the correct
+    // fail-safe default.
+    const strandedPresence =
+      family === "windows"
+        ? findWindowsStoreEntryByFingerprint({
+            store: osStore,
+            fingerprintSha256,
+            spawnImpl: seams.spawnImpl,
+            onWarning: seams.onWarning,
+          })
+        : probeLinuxAnchorFile({
+            family,
+            fingerprintSha256,
+            anchorsDir: seams.anchorsDir,
+            fsImpl: seams.fsImpl,
+          });
+    const strandedIsPresent =
+      family === "windows" ? strandedPresence.found : strandedPresence.present === true;
+
+    if (strandedIsPresent) {
+      const unstrandAttempt = tryReceiptStep(() =>
+        receipt.finalizeReceipt({
+          receiptDir,
+          store: osStore,
+          fingerprintSha256,
+          jobId: existingReceipt.row.jobId,
+          transitionGeneration: existingReceipt.row.transitionGeneration,
+          now,
+        }),
+      );
+      if (unstrandAttempt.ok) {
+        existingReceipt = { row: unstrandAttempt.value };
+      }
+      // If the unstrand attempt itself fails (e.g. a genuine concurrent
+      // writer holding a newer generation), existingReceipt is left
+      // exactly as read and the refusal below still applies - never
+      // silently swallowed.
+    }
+
+    if (existingReceipt.row.state === "pending_install") {
+      return buildResult({
+        jobId,
+        workspaceId,
+        agentId,
+        trustAnchorId,
+        action: "revoke-trust",
+        transitionGeneration,
+        store,
+        observedFingerprintBefore: null,
+        observedFingerprintAfter: null,
+        outcome: "already_absent",
+        mutationAttempted: false,
+        mutationPerformed: false,
+        receiptId: existingReceipt.row.id,
+        receiptState: "intent_written",
+        failureCategory: "receipt_pending_install",
+        now,
+      });
+    }
+    // else: existingReceipt.row.state is now "installed" - continue below
+    // exactly as if the receipt had always said so.
   }
   if (existingReceipt.row.state === "removed") {
     // Already removed by a prior transition; nothing left to prove ownership
@@ -1302,13 +1587,14 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       }
       const reclaimedIntent = reclaimAttempt.value;
 
+      const revokeArgvResolution = resolveRevokeUpdateCommandArgv(family, seams);
       const refreshRetryResult = await removeLinuxAnchorFile({
         family,
         fingerprintSha256,
         anchorsDir: seams.anchorsDir,
         fsImpl: seams.fsImpl,
         execFileImpl: seams.execFileImpl,
-        updateCommandArgv: seams.updateCommandArgv,
+        updateCommandArgv: revokeArgvResolution.argv,
         timeoutMs: seams.timeoutMs,
       });
       if (!refreshRetryResult.ok) {
@@ -1328,6 +1614,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           receiptId: reclaimedIntent.id,
           receiptState: "intent_written",
           failureCategory: "os_mutation_failed",
+          metadata: revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
           now,
         });
       }
@@ -1363,6 +1650,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           receiptId: reclaimedIntent.id,
           receiptState: "intent_written",
           failureCategory: RECEIPT_FINALIZE_CONFLICT,
+          metadata: revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
           now,
         });
       }
@@ -1382,6 +1670,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
         mutationPerformed: true,
         receiptId: finalizedAfterRetry.id,
         receiptState: "finalized",
+        metadata: revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
         now,
       });
     }
@@ -1518,6 +1807,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
   }
   const intentRow = intentAttempt.value;
 
+  const revokeArgvResolution = family !== "windows" ? resolveRevokeUpdateCommandArgv(family, seams) : null;
   const mutationResult =
     family === "windows"
       ? await removeWindowsStoreEntry({
@@ -1533,7 +1823,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
           anchorsDir: seams.anchorsDir,
           fsImpl: seams.fsImpl,
           execFileImpl: seams.execFileImpl,
-          updateCommandArgv: seams.updateCommandArgv,
+          updateCommandArgv: revokeArgvResolution.argv,
           timeoutMs: seams.timeoutMs,
         });
 
@@ -1558,6 +1848,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       receiptId: intentRow.id,
       receiptState: "intent_written",
       failureCategory: "os_mutation_failed",
+      metadata: revokeArgvResolution && revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
       now,
     });
   }
@@ -1585,6 +1876,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
       receiptId: intentRow.id,
       receiptState: "intent_written",
       failureCategory: RECEIPT_FINALIZE_CONFLICT,
+      metadata: revokeArgvResolution && revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
       now,
     });
   }
@@ -1604,6 +1896,7 @@ async function revokeTrust({ job, family, receiptDir, seams = {}, now = () => ne
     mutationPerformed: true,
     receiptId: intentRow.id,
     receiptState: "finalized",
+    metadata: revokeArgvResolution && revokeArgvResolution.usedFreshFallbackWarning ? freshFallbackWarningMetadata() : undefined,
     now,
   });
 }
@@ -1623,6 +1916,8 @@ module.exports = {
   RHEL_UPDATE_COMMAND,
   RHEL_UPDATE_ARGS,
   RHEL_STORE_NAME,
+  DEBIAN_DERIVED_ANCHORS_DIR,
+  RHEL_DERIVED_ANCHORS_DIR,
   ANCHOR_FILENAME_PREFIX,
   TRUST_STORE_COMMAND_REFS,
   trustStoreCommandRefForFamily,

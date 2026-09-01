@@ -398,20 +398,34 @@ function AnchorInstallationsBody({
           Where this anchor has been distributed and its current state on each
           host.
         </Text>
-        {isWorkspaceAdmin ? (
+        <HStack spacing={2}>
+          {isWorkspaceAdmin ? (
+            <Button
+              size='xs'
+              colorScheme='blue'
+              variant='outline'
+              onClick={() => onDistribute(anchor, installations)}
+              isDisabled={anchor.status !== 'active'}
+            >
+              Distribute to an agent
+            </Button>
+          ) : null}
           <Button
+            type='button'
             size='xs'
-            colorScheme='blue'
             variant='outline'
-            onClick={() => onDistribute(anchor, installations)}
-            isDisabled={anchor.status !== 'active'}
+            onClick={event => {
+              event.stopPropagation();
+              refresh();
+            }}
+            isLoading={loading}
           >
-            Distribute to an agent
+            Refresh
           </Button>
-        ) : null}
+        </HStack>
       </HStack>
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-      {loading ? (
+      {loading && installations.length === 0 ? (
         <HStack spacing={2} color={muted} py={2} justify='center'>
           <Spinner size='sm' />
           <Text fontSize='sm'>Loading installations...</Text>
@@ -422,7 +436,7 @@ function AnchorInstallationsBody({
           Not distributed to any agent yet.
         </Text>
       ) : null}
-      {!loading && installations.length > 0 ? (
+      {installations.length > 0 ? (
         <Table size='sm' variant='simple'>
           <Thead>
             <Tr>
@@ -492,11 +506,6 @@ function AnchorInstallationsBody({
           </Tbody>
         </Table>
       ) : null}
-      <Box>
-        <Button size='xs' variant='ghost' onClick={refresh}>
-          Refresh
-        </Button>
-      </Box>
     </VStack>
   );
 }
@@ -566,7 +575,7 @@ export default function TrustAnchorsPanel() {
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 
-      {loading ? (
+      {loading && anchors.length === 0 ? (
         <HStack spacing={2} color={muted} py={4} justify='center'>
           <Spinner size='sm' />
           <Text fontSize='sm'>Loading trust anchors...</Text>
@@ -584,7 +593,7 @@ export default function TrustAnchorsPanel() {
         </Box>
       ) : null}
 
-      {!loading && anchors.length > 0 ? (
+      {anchors.length > 0 ? (
         <VStack align='stretch' spacing={1}>
           {anchors.map(anchor => {
             const isOpen = expandedId === anchor.id;

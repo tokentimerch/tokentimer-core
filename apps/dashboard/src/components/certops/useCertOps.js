@@ -13,6 +13,62 @@ import {
 } from './certopsApi';
 import { pickPrimaryCertificate } from './certopsFormat';
 
+/** @type {Map<string, { at: number, role: string }>} */
+const workspaceRoleCache = new Map();
+/** @type {Map<string, Promise<string>>} */
+const workspaceRoleInFlight = new Map();
+const WORKSPACE_ROLE_TTL_MS = 60_000;
+
+/**
+ * Resolves the caller's role in a workspace, deduped and cached.
+ *
+ * useCertOpsCanManage and useCertOpsIsWorkspaceAdmin both derive their
+ * boolean from the same `GET /workspaces/:id` call, and a single CertOps
+ * screen typically mounts several components that each call one of those
+ * hooks (fleet, bootstrap tokens, trust anchors, ...). Without sharing the
+ * fetch, one tab mount fires that identical request 3-4 times in series
+ * with the panels' own data fetch; this collapses concurrent callers onto
+ * one in-flight request and serves repeat mounts from cache for
+ * WORKSPACE_ROLE_TTL_MS, same TTL as the certops.enabled probe below.
+ * @returns {Promise<string>} lowercased role, or '' on failure (not cached)
+ */
+function resolveWorkspaceRole(workspaceId) {
+  const key = String(workspaceId);
+  const cached = workspaceRoleCache.get(key);
+  if (cached && Date.now() - cached.at < WORKSPACE_ROLE_TTL_MS) {
+    return Promise.resolve(cached.role);
+  }
+
+  const pending = workspaceRoleInFlight.get(key);
+  if (pending) return pending;
+
+  const promise = workspaceAPI
+    .get(workspaceId)
+    .then(ws => {
+      const role = String(ws?.role || '').toLowerCase();
+      workspaceRoleCache.set(key, { at: Date.now(), role });
+      return role;
+    })
+    .catch(() => '')
+    .finally(() => {
+      workspaceRoleInFlight.delete(key);
+    });
+
+  workspaceRoleInFlight.set(key, promise);
+  return promise;
+}
+
+/**
+ * Drops the cached role for a workspace (or all workspaces), so the next
+ * useCertOpsCanManage/useCertOpsIsWorkspaceAdmin resolution re-fetches
+ * instead of serving a stale verdict. Exists for tests and for callers
+ * that just changed the current user's own membership/role.
+ */
+export function invalidateWorkspaceRoleCache(workspaceId) {
+  if (workspaceId) workspaceRoleCache.delete(String(workspaceId));
+  else workspaceRoleCache.clear();
+}
+
 /**
  * Resolves CertOps availability for the active workspace.
  *
@@ -135,16 +191,11 @@ export function useCertOpsCanManage() {
     }
 
     let cancelled = false;
-    workspaceAPI
-      .get(workspaceId)
-      .then(ws => {
-        if (cancelled) return;
-        const role = String(ws?.role || '').toLowerCase();
+    resolveWorkspaceRole(workspaceId).then(role => {
+      if (!cancelled) {
         setCanManage(role === 'admin' || role === 'workspace_manager');
-      })
-      .catch(() => {
-        if (!cancelled) setCanManage(false);
-      });
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -172,16 +223,9 @@ export function useCertOpsIsWorkspaceAdmin() {
     }
 
     let cancelled = false;
-    workspaceAPI
-      .get(workspaceId)
-      .then(ws => {
-        if (cancelled) return;
-        const role = String(ws?.role || '').toLowerCase();
-        setIsAdmin(role === 'admin');
-      })
-      .catch(() => {
-        if (!cancelled) setIsAdmin(false);
-      });
+    resolveWorkspaceRole(workspaceId).then(role => {
+      if (!cancelled) setIsAdmin(role === 'admin');
+    });
 
     return () => {
       cancelled = true;

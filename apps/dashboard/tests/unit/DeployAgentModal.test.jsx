@@ -173,6 +173,7 @@ describe('DeployAgentModal', () => {
     const commandBlock = screen.getByText(/install-agent\.sh/);
     expect(commandBlock.textContent).toContain('--api-url');
     expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
+    expect(commandBlock.textContent).toContain('--trust-store');
     expect(commandBlock.textContent).not.toContain('ttboot_secret_value');
     expect(commandBlock.textContent).not.toContain('--bootstrap-token');
   });
@@ -350,6 +351,7 @@ describe('DeployAgentModal', () => {
     const commandBlock = screen.getByText(/install-agent\.ps1/);
     expect(commandBlock.textContent).toContain('--api-url');
     expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
+    expect(commandBlock.textContent).toContain('--trust-store');
     expect(commandBlock.textContent).not.toContain('install-agent.sh');
     expect(
       screen.getByText(/elevated \(Administrator\) PowerShell prompt/)

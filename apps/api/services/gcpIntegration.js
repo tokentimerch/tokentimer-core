@@ -309,18 +309,15 @@ async function scanGCP({
                   enabled_versions: enabledVersions.length || 0,
                 });
               } catch (e) {
-                // A failed version lookup means this secret's expiration
-                // (and, by extension, whether it's genuinely still active)
-                // is unconfirmed -- still record the secret itself (it
-                // demonstrably exists) but count the failure so this scan's
-                // "secrets" sub-scope is reported incomplete rather than
-                // silently treating the lookup failure as fully resolved.
+                // Version lookup is expiration metadata, not membership.
+                // The secret was already listed, so record it without an
+                // expiry and keep the kind complete: cleanup must still
+                // drop secrets that were not on this list.
                 describeFailedCount++;
                 logger.warn("Failed to get GCP secret versions", {
                   secretName: secret.name,
                   error: e.message,
                 });
-                // Add secret without expiration if we can't access versions
                 items.push({
                   source: "gcp-secret-manager",
                   sourceKind: "gcp-secret-manager",
@@ -343,11 +340,12 @@ async function scanGCP({
           found: secrets.length,
           failedCount: describeFailedCount,
           truncated: secretsTruncated,
-          complete: describeFailedCount === 0 && !secretsTruncated,
+          complete: !secretsTruncated,
         });
         logger.info("GCP secrets scan completed", {
           secretsFound: secrets.length,
           itemsExtracted: items.length,
+          versionLookupFailures: describeFailedCount,
         });
       } catch (e) {
         logger.error("GCP secrets scan failed", {

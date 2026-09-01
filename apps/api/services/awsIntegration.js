@@ -2,6 +2,7 @@
 
 const { formatDateYmd } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+const { normalizeAwsSweepRegions } = require("./awsScanPersist");
 
 // AWS regions list (for region detection)
 const ALL_AWS_REGIONS = [
@@ -66,6 +67,7 @@ async function scanAWS({
   secretAccessKey,
   sessionToken = null,
   region = "us-east-1",
+  regions = null,
   include = { secrets: true, iam: true, certificates: true },
   maxItems = 500,
 }) {
@@ -73,7 +75,8 @@ async function scanAWS({
     throw new Error("accessKeyId and secretAccessKey are required");
   }
 
-  if (!region) {
+  const isSweep = Array.isArray(regions);
+  if (!isSweep && !region) {
     throw new Error("region is required");
   }
 
@@ -90,7 +93,7 @@ async function scanAWS({
   ) {
     throw new Error("Invalid sessionToken format");
   }
-  if (typeof region !== "string" || region.length > 50) {
+  if (!isSweep && (typeof region !== "string" || region.length > 50)) {
     throw new Error("Invalid region format");
   }
   if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 2000) {
@@ -106,14 +109,47 @@ async function scanAWS({
     sessionToken,
   });
 
-  // Single region scan only
-  const result = await scanAWSSingleRegion({
+  const shared = {
     accessKeyId,
     secretAccessKey,
     sessionToken,
+    maxItems,
+  };
+
+  if (isSweep) {
+    const sweepRegions = normalizeAwsSweepRegions(regions);
+    const items = [];
+    const summary = [];
+    if (include.iam !== false) {
+      const iamPart = await scanAWSSingleRegion({
+        ...shared,
+        region: "us-east-1",
+        include: { secrets: false, iam: true, certificates: false },
+      });
+      items.push(...iamPart.items);
+      summary.push(...iamPart.summary);
+    }
+    const regionalInclude = {
+      secrets: include.secrets !== false,
+      iam: false,
+      certificates: include.certificates !== false,
+    };
+    for (const sweepRegion of sweepRegions) {
+      const part = await scanAWSSingleRegion({
+        ...shared,
+        region: sweepRegion,
+        include: regionalInclude,
+      });
+      items.push(...part.items);
+      summary.push(...part.summary);
+    }
+    return { items, summary, accountId, scannedRegions: sweepRegions };
+  }
+
+  const result = await scanAWSSingleRegion({
+    ...shared,
     region,
     include,
-    maxItems,
   });
   return { ...result, accountId };
 }
@@ -322,6 +358,7 @@ async function scanAWSSingleRegion({
                   : null,
                 sourceKind: "aws-secrets-manager",
                 sourceObjectId: secret.ARN,
+                region,
               });
               describedCount++;
             } catch (e) {
@@ -493,6 +530,7 @@ async function scanAWSSingleRegion({
                 description: `Status: ${certificate.Status || "Unknown"}. In use: ${certificate.InUseBy && certificate.InUseBy.length > 0 ? "Yes" : "No"}`,
                 sourceKind: "aws-acm",
                 sourceObjectId: cert.CertificateArn,
+                region,
               });
               describedCount++;
             } catch (e) {

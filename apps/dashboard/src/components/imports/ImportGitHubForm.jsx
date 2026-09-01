@@ -16,6 +16,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { githubAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
@@ -347,14 +348,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           </Text>
           <Text fontSize='sm' mt={1}>
             <ChakraLink
-              onClick={() =>
-                window.open(
-                  'https://tokentimer.ch/docs/tokens#import-github',
-                  '_blank',
-                  'noopener,noreferrer'
-                )
-              }
-              cursor='pointer'
+              href={IMPORT_DOCS.github}
               color='blue.500'
               textDecoration='underline'
               isExternal

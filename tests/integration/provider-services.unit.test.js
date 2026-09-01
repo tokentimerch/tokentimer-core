@@ -697,6 +697,116 @@ describe("Provider service unit coverage", () => {
       expect(result).to.have.property("summary").that.is.an("array");
     });
 
+    it("summarizes extracted credentials per sourceKind, not Graph object counts", async () => {
+      const end = new Date(Date.now() + 86400000).toISOString();
+      const start = new Date().toISOString();
+      const secret = (keyId) => ({
+        keyId,
+        displayName: keyId,
+        startDateTime: start,
+        endDateTime: end,
+      });
+      const cert = (keyId) => ({
+        keyId,
+        displayName: keyId,
+        startDateTime: start,
+        endDateTime: end,
+        type: "AsymmetricX509Cert",
+        usage: "Verify",
+      });
+      const apps = [
+        {
+          appId: "app-1",
+          displayName: "App One",
+          passwordCredentials: [secret("s1"), secret("s2")],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-2",
+          displayName: "App Two",
+          passwordCredentials: [secret("s3")],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-3",
+          displayName: "App Three",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+        {
+          appId: "app-4",
+          displayName: "App Four",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+      ];
+      const sps = [
+        {
+          appId: "sp-1",
+          displayName: "SP One",
+          passwordCredentials: [secret("p1")],
+          keyCredentials: [cert("c1"), cert("c2")],
+        },
+        {
+          appId: "sp-2",
+          displayName: "SP Two",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+        {
+          appId: "sp-3",
+          displayName: "SP Three",
+          passwordCredentials: [],
+          keyCredentials: [],
+        },
+      ];
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("servicePrincipals")) {
+          return { data: { value: sps } };
+        }
+        return { data: { value: apps } };
+      };
+      const azureAd = requireWithMocks(
+        resolveServiceModule("azureADIntegration"),
+        { axios: axiosMock },
+      );
+      const result = await azureAd.scanAzureAD({
+        token: fakeAzureAdToken(),
+        include: { applications: true, servicePrincipals: true },
+      });
+
+      expect(result.items).to.have.length(6);
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["azure-ad-client-secret"]).to.include({
+        type: "applications",
+        found: 3,
+        secrets: 3,
+      });
+      expect(byKind["azure-ad-client-secret"]).to.not.have.property(
+        "certificates",
+      );
+      expect(byKind["azure-ad-certificate"]).to.include({
+        type: "applications",
+        found: 0,
+        certificates: 0,
+      });
+      expect(byKind["azure-ad-sp-secret"]).to.include({
+        type: "service_principals",
+        found: 1,
+        secrets: 1,
+      });
+      expect(byKind["azure-ad-sp-certificate"]).to.include({
+        type: "service_principals",
+        found: 2,
+        certificates: 2,
+      });
+      expect(byKind["azure-ad-client-secret"].found).to.not.equal(apps.length);
+      expect(byKind["azure-ad-sp-secret"].found).to.not.equal(sps.length);
+    });
+
     it("still rejects a token over the 5000-char hard cap", async () => {
       const azureAd = require(resolveServiceModule("azureADIntegration"));
       await expectReject(
@@ -758,6 +868,61 @@ describe("Provider service unit coverage", () => {
         secretId: "secret-1",
       });
       expect(version).to.equal(null);
+    });
+
+    it("keeps the secrets kind complete when a version lookup fails", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("/versions")) {
+          if (url.includes("/blocked/")) {
+            const err = new Error("denied");
+            err.response = { status: 403, data: { error: "PERMISSION_DENIED" } };
+            throw err;
+          }
+          return {
+            data: {
+              versions: [
+                {
+                  name: "projects/proj/secrets/ok/versions/1",
+                  state: "ENABLED",
+                },
+              ],
+            },
+          };
+        }
+        return {
+          data: {
+            secrets: [
+              { name: "projects/proj/secrets/ok" },
+              { name: "projects/proj/secrets/blocked" },
+            ],
+          },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: true },
+      });
+
+      expect(result.items.map((i) => i.sourceObjectId).sort()).to.deep.equal([
+        "blocked",
+        "ok",
+      ]);
+      expect(result.items.find((i) => i.sourceObjectId === "blocked")).to.include(
+        { expiration: null },
+      );
+      expect(result.summary).to.have.length(1);
+      expect(result.summary[0]).to.include({
+        sourceKind: "gcp-secret-manager",
+        found: 2,
+        failedCount: 1,
+        truncated: false,
+        complete: true,
+      });
     });
   });
 });

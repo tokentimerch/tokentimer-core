@@ -43,12 +43,13 @@
 # Known platform differences from install-agent.sh (documented, not
 # hidden, per ADR-0012's own policy that real-host gaps must be visible):
 #   - Windows has no equivalent of systemd's ProtectSystem=strict sandbox,
-#     so -WritePath/--write-path and -ReloadService/--reload-service are
-#     accepted and validated for CLI-contract parity, but there is no
-#     drop-in override to generate: a LocalSystem service already has
-#     ambient host-wide access (ADR-0012 decision 11), so the enforcement
+#     so -WritePath/--write-path, -ReloadService/--reload-service, and
+#     --trust-store/--no-trust-store are accepted and validated for CLI-contract
+#     parity, but there is no drop-in override to generate: a LocalSystem
+#     service already has ambient host-wide access including LocalMachine\Root
+#     and LocalMachine\CA (ADR-0012 decision 11), so the enforcement
 #     point on Windows is agent-local policy (config.json allowlists),
-#     not an OS-level sandbox.
+#     not an OS-level sandbox. --trust-store is therefore a documented no-op.
 #   - certbot/acme.sh are POSIX shell tools; the acme/certbot/{config,work,
 #     logs} state subdirectories install-agent.sh creates for certbot are
 #     not created here (certbot itself creates them on first run on any
@@ -99,6 +100,8 @@ $script:WritePaths = New-Object System.Collections.Generic.List[string]
 $script:ReloadServices = New-Object System.Collections.Generic.List[string]
 $script:WritePathsFile = ""
 $script:AllowInsecureLocalHttp = $false
+$script:TrustStore = $false
+$script:NoTrustStore = $false
 
 function Write-Log {
     param([string]$Message)
@@ -178,6 +181,12 @@ Options:
                          by agent-local policy (config.json
                          commandProfiles.reloadArgv), not by anything this
                          installer configures.
+  --trust-store          Accepted for parity with install-agent.sh.
+                         LocalSystem already has LocalMachine\Root and
+                         LocalMachine\CA on Windows Server 2016+ (the
+                         verified 2019/2022/2025 matrix); no extra grant.
+  --no-trust-store       Accepted for parity. Has no effect: the service
+                         still runs as LocalSystem.
   --allow-insecure-local-http
                          Permit plain http:// ONLY for loopback hosts,
                          matching the runtime allowInsecureLocalHttp gate.
@@ -213,8 +222,10 @@ After install:
 
 Host permissions note:
   The service runs as LocalSystem, which already has host-wide filesystem
-  access; --write-path/--write-paths-file only remind you which directories
-  the agent's own configured allowlist should include (see config.json).
+  access and can already write LocalMachine\Root / LocalMachine\CA;
+  --write-path/--write-paths-file/--trust-store only remind you which
+  directories the agent's own configured allowlist should include
+  (see config.json).
 '@ | Write-Host
 }
 
@@ -248,6 +259,16 @@ function Parse-Arguments {
                 $i += 2; continue
             }
             '^--reload-service=(.*)$' { $script:ReloadServices.Add($Matches[1]); $i += 1; continue }
+            '^--trust-store$' {
+                if ($script:NoTrustStore) { Fail "cannot combine --trust-store and --no-trust-store" }
+                $script:TrustStore = $true
+                $i += 1; continue
+            }
+            '^--no-trust-store$' {
+                if ($script:TrustStore) { Fail "cannot combine --trust-store and --no-trust-store" }
+                $script:NoTrustStore = $true
+                $i += 1; continue
+            }
             '^--allow-insecure-local-http$' { $script:AllowInsecureLocalHttp = $true; $i += 1; continue }
             '^--dry-run$' { $script:DryRun = $true; $i += 1; continue }
             '^--uninstall$' { $script:Uninstall = $true; $i += 1; continue }
@@ -864,8 +885,13 @@ Write-Log "     registering; no manual cleanup is needed.)"
 Write-Log "  3. Configure agent-local policy and discovery in $configPath"
 Write-Log "     (allowlists are default-deny until you set them), then:"
 Write-Log "     Restart-Service $ServiceName"
+Write-Log "  4. Trust-store: LocalSystem already has LocalMachine\Root and"
+Write-Log "     LocalMachine\CA on Windows Server 2016+ (verified 2019/2022/2025)."
+if ($script:NoTrustStore) {
+    Write-Log "     --no-trust-store has no effect; the service still runs as LocalSystem."
+}
 if ($script:WritePaths.Count -gt 0) {
-    Write-Log "  4. Ensure the LocalSystem service account can write the configured cert paths:"
+    Write-Log "  5. Ensure the LocalSystem service account can write the configured cert paths:"
     foreach ($writePath in $script:WritePaths) {
         Write-Log "       $writePath"
     }
@@ -873,7 +899,7 @@ if ($script:WritePaths.Count -gt 0) {
     Write-Log "     config.json's own write-path allowlist, not an OS-level grant.)"
 }
 if ($script:ReloadServices.Count -gt 0) {
-    Write-Log "  5. Reload authorization is enforced by agent-local policy on Windows"
+    Write-Log "  6. Reload authorization is enforced by agent-local policy on Windows"
     Write-Log "     (no polkit/sudoers equivalent needed): configure policy"
     Write-Log "     commandProfiles.reloadArgv for: $($script:ReloadServices -join ', ')"
 }

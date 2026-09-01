@@ -702,6 +702,28 @@ async function findManagedCertificateBySourceRef(client, { workspaceId, source, 
   return result.rows[0] || null;
 }
 
+// Correlation key recorded at issuance (and by filesystem discovery) so a
+// later agent_filesystem scan of the same path reuses the issuance row
+// instead of minting a parallel identity under a different (source, source_ref).
+async function findManagedCertificateByDeployedPath(
+  client,
+  { workspaceId, deployedAgentId, deployedCertPath },
+) {
+  const certPath =
+    typeof deployedCertPath === "string" ? deployedCertPath.trim() : "";
+  if (!workspaceId || !deployedAgentId || !certPath) return null;
+  const result = await client.query(
+    `SELECT id, token_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND deployed_agent_id = $2
+        AND deployed_cert_path = $3
+      LIMIT 1`,
+    [workspaceId, deployedAgentId, certPath],
+  );
+  return result.rows[0] || null;
+}
+
 async function existingCertOpsToken(client, certificate, options, domains) {
   const fingerprintSha256 = fingerprintSha256For(certificate);
   if (fingerprintSha256) {
@@ -903,6 +925,95 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
 }
 
 /**
+ * Refresh an existing managed_certificate by id without changing its
+ * (source, source_ref) identity. Used when a later observer (agent filesystem
+ * discovery) finds a row that issuance already created at the same deployed
+ * path. First observer keeps the identity; inserting a second row would hit
+ * uq_managed_certificates_agent_deployed_path.
+ */
+async function refreshManagedCertificateById(
+  client,
+  certificate,
+  options,
+  chainIndex,
+  certificateId,
+) {
+  const keyReference = normalizeKeyReference(options.keyReference);
+  const deployedCertPath =
+    typeof options.deployedCertPath === "string" && options.deployedCertPath.trim() !== ""
+      ? options.deployedCertPath.trim()
+      : null;
+  const deployedAgentId = options.deployedAgentId || null;
+
+  const result = await client.query(
+    `UPDATE managed_certificates
+        SET token_id = COALESCE($3, token_id),
+            status = CASE
+              WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+              THEN managed_certificates.status
+              ELSE $4
+            END,
+            name = COALESCE($5, name),
+            common_name = $6,
+            subject_alt_names = $7::text[],
+            issuer = $8,
+            subject = $9,
+            serial_number = $10,
+            certificate_pem = $11,
+            fingerprint_sha256 = $12,
+            spki_fingerprint_sha256 = $13,
+            public_key_algorithm = $14,
+            public_key_size = $15,
+            signature_algorithm = $16,
+            not_before = $17,
+            not_after = $18,
+            key_mode = COALESCE($19, key_mode),
+            key_reference = COALESCE($20, key_reference),
+            public_metadata = public_metadata || $21::jsonb,
+            created_by = COALESCE(created_by, $22),
+            deployed_cert_path = COALESCE($23, deployed_cert_path),
+            deployed_agent_id = COALESCE($24::uuid, deployed_agent_id),
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2
+      RETURNING *`,
+    [
+      options.workspaceId,
+      certificateId,
+      options.tokenId || null,
+      options.status || "discovered",
+      chooseCertificateName(certificate, options.name),
+      certificate.commonName || null,
+      certificate.subjectAltNames || [],
+      certificate.issuer || null,
+      certificate.subject || null,
+      certificate.serialNumber || null,
+      certificate.certificatePem || null,
+      certificate.fingerprintSha256 || certificate.fingerprint256 || null,
+      certificate.spkiFingerprintSha256 || null,
+      certificate.publicKeyAlgorithm || null,
+      certificate.publicKeySize || null,
+      certificate.signatureAlgorithm || null,
+      certificate.notBefore || certificate.validFrom || null,
+      certificate.notAfter || certificate.validTo || null,
+      options.keyMode || null,
+      keyReference,
+      JSON.stringify(publicMetadataFor(certificate, options, chainIndex)),
+      options.createdBy || null,
+      deployedCertPath,
+      deployedAgentId,
+    ],
+  );
+  if (!result.rows[0]) {
+    throw certOpsValidationError(
+      "Managed certificate not found",
+      CERTOPS_CERTIFICATE_NOT_FOUND,
+    );
+  }
+  return toInventoryRecord(result.rows[0]);
+}
+
+/**
  * Upsert a managed certificate keyed by source identity (workspace, source,
  * source_ref). This supports observers whose stable identity must not merge on
  * a shared public certificate fingerprint.
@@ -916,6 +1027,16 @@ async function upsertManagedCertificateByMonitorSource(
   const sourceRef = normalizeSourceRef(options.sourceRef);
   if (!sourceRef) {
     throw new Error("sourceRef is required for monitor-source upsert");
+  }
+
+  if (options.reuseCertificateId) {
+    return refreshManagedCertificateById(
+      client,
+      certificate,
+      options,
+      chainIndex,
+      options.reuseCertificateId,
+    );
   }
 
   const keyReference = normalizeKeyReference(options.keyReference);
@@ -1732,6 +1853,7 @@ module.exports = {
   countActiveManagedCertificatesWithClient,
   countQuotaConsumingNewFingerprints,
   ensureManagedCertificateToken,
+  findManagedCertificateByDeployedPath,
   findManagedCertificateBySourceRef,
   fingerprintsFromCertificates,
   getManagedCertificate,

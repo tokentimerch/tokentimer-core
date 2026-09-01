@@ -29,6 +29,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Link as RouterLink } from 'react-router';
+import { useMemo } from 'react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
 import {
@@ -42,6 +43,8 @@ import {
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
+import { useCertOpsAgents } from './useCertOpsAgents.js';
+import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
@@ -270,6 +273,8 @@ export default function EvidenceTimeline({
   const { muted, border } = useDashboardTheme();
   const failureBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.28)');
   const failureBorder = useColorModeValue('red.200', 'red.700');
+  const { agents } = useCertOpsAgents();
+  const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
   const {
     job,
     logEntries,
@@ -388,6 +393,35 @@ export default function EvidenceTimeline({
                         <CopyableId
                           id={job.claimedByAgentId}
                           label='Claimed by agent'
+                          display={
+                            formatAgentLabel(
+                              job.claimedByAgentId,
+                              agentsById
+                            ) !== String(job.claimedByAgentId)
+                              ? formatAgentLabel(
+                                  job.claimedByAgentId,
+                                  agentsById
+                                )
+                              : undefined
+                          }
+                        />
+                      ) : null}
+                      {job.assignedAgentId &&
+                      job.assignedAgentId !== job.claimedByAgentId ? (
+                        <CopyableId
+                          id={job.assignedAgentId}
+                          label='Assigned agent'
+                          display={
+                            formatAgentLabel(
+                              job.assignedAgentId,
+                              agentsById
+                            ) !== String(job.assignedAgentId)
+                              ? formatAgentLabel(
+                                  job.assignedAgentId,
+                                  agentsById
+                                )
+                              : undefined
+                          }
                         />
                       ) : null}
                       {job.claimedByControllerClusterId ? (
@@ -438,6 +472,25 @@ export default function EvidenceTimeline({
                   <CopyableId
                     id={job.claimedByAgentId}
                     label='Claimed by agent'
+                    display={
+                      formatAgentLabel(job.claimedByAgentId, agentsById) !==
+                      String(job.claimedByAgentId)
+                        ? formatAgentLabel(job.claimedByAgentId, agentsById)
+                        : undefined
+                    }
+                  />
+                ) : null}
+                {job.assignedAgentId &&
+                job.assignedAgentId !== job.claimedByAgentId ? (
+                  <CopyableId
+                    id={job.assignedAgentId}
+                    label='Assigned agent'
+                    display={
+                      formatAgentLabel(job.assignedAgentId, agentsById) !==
+                      String(job.assignedAgentId)
+                        ? formatAgentLabel(job.assignedAgentId, agentsById)
+                        : undefined
+                    }
                   />
                 ) : null}
                 {job.claimedByControllerClusterId ? (

@@ -17,6 +17,7 @@ import {
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
+import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 
@@ -232,14 +233,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/tokens#import-azure',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
+            href={IMPORT_DOCS.azureKeyVault}
             color='blue.500'
             textDecoration='underline'
             isExternal

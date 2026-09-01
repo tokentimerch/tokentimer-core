@@ -49,6 +49,7 @@ const {
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
+const { envCertOpsEnabled } = require("./services/certops/settings");
 
 const swaggerOptions = {
   definition: {
@@ -772,6 +773,28 @@ function validateStartupConfig() {
     logger.warn(
       "In local http://localhost with NODE_ENV=production, browser does not persist/send the secure session cookie correctly for auth flow. You need HTTPS in front of API/dashboard (reverse proxy with TLS), otherwise secure cookies are expected to fail in local HTTP.",
     );
+  }
+
+  // CertOps agent registration and job signing already fail closed per
+  // request (jobSigning.js / registrationCredentialCrypto.js throw
+  // CERTOPS_{SIGNING,REGISTRATION}_ENCRYPTION_KEY_MISSING) when these wrap
+  // keys are unset or malformed. In production, with CertOps enabled,
+  // catch that at boot instead of only once the first agent hits it.
+  if (nodeEnv === "production" && envCertOpsEnabled(process.env) === true) {
+    const certOpsFatal = [];
+    const HEX64 = /^[0-9a-f]{64}$/i;
+    for (const name of ["CERTOPS_SIGNING_ENCRYPTION_KEY", "CERTOPS_REGISTRATION_ENCRYPTION_KEY"]) {
+      const value = process.env[name];
+      if (!value) {
+        certOpsFatal.push(`${name} is not set while CertOps is enabled (CERTOPS_ENABLED=true)`);
+      } else if (!HEX64.test(value.trim())) {
+        certOpsFatal.push(`${name} must be 64 hex characters (32 bytes); generate with 'openssl rand -hex 32'`);
+      }
+    }
+    if (certOpsFatal.length > 0) {
+      for (const problem of certOpsFatal) logger.error(`Startup configuration error: ${problem}`);
+      process.exit(1);
+    }
   }
 }
 

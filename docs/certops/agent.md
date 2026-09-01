@@ -83,9 +83,11 @@ the same surface with the operator-relevant caveats.
 | bootstrap token | yes (install) | Preferably **not** a flag. With neither `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN` nor `--bootstrap-token` set, the installer reads it from a hidden prompt, so nothing lands in shell history or process listings. |
 | `--bootstrap-token TOKEN` | no | Works, but discouraged: argv is visible in process listings while the installer runs. Prefer the prompt or the env var. |
 | `--ca-bundle PATH` | no | PEM CA bundle for a private-CA control plane; copied into the state dir and referenced as `caBundlePath`. Note it *replaces* the default trust store for control-plane requests rather than extending it. |
-| `--write-path PATH` | no | Absolute directory the agent may write certificates into. Repeatable. Installed into a systemd drop-in `ReadWritePaths` list. Never grants all of `/etc`. |
+| `--write-path PATH` | no | Absolute directory the agent may write certificates into. Repeatable. Installed into a systemd drop-in `ReadWritePaths` list. Never grants all of `/etc`. Do not use this for the OS trust store (the installer takes ownership of `--write-path` dirs). |
 | `--write-paths-file F` | no | One absolute path per line (`#` comments and blank lines allowed), merged with `--write-path`. |
-| `--reload-service NAME` | no | Allows `systemctl reload NAME` through a generated polkit rule. Repeatable. Allowlist: `nginx`, `apache`/`apache2`, `httpd`, `haproxy`. Polkit rather than sudoers because the unit keeps `NoNewPrivileges=true`, under which sudo cannot escalate at all. |
+| `--trust-store` | no | Linux: require the OS trust-store grant (the default is to apply it automatically on Debian/Ubuntu and RHEL/AlmaLinux when `update-ca-certificates` or `update-ca-trust` is present). Windows: accepted for flag parity; LocalSystem already has `LocalMachine\Root` and `LocalMachine\CA`. |
+| `--no-trust-store` | no | Linux: skip the OS trust-store sandbox/ACL grant. Windows: accepted, no effect (the service still runs as LocalSystem). |
+| `--reload-service NAME` | no | Allows `systemctl reload NAME` through a generated polkit rule. Repeatable. Allowlist: `nginx`, `apache`/`apache2`, `httpd`, `haproxy`. Polkit rather than sudoers because the unit keeps `NoNewPrivileges=true`, under which sudo cannot escalate at all. On Windows this flag is accepted for parity and does not install a polkit rule. |
 | `--allow-insecure-local-http` | no | Development only. Permits plain `http://` for loopback hosts only, and writes `allowInsecureLocalHttp=true` into `config.json`. |
 | `--dry-run` | no | Print every action, execute nothing. Also valid with `--uninstall`. |
 | `--uninstall` | no | See below. |
@@ -95,6 +97,26 @@ the systemd sandbox *reach* the directory; the `tokentimer-agent` user must
 still be able to write there, for example
 `setfacl -m u:tokentimer-agent:rwx /etc/nginx/certs`. Without that, deploy
 jobs fail with a permission error even though the path is allowlisted.
+
+`--trust-store` is applied automatically on every tested Linux family when
+the OS trust-store tools are present: Ubuntu 22.04/24.04/26.04
+(`update-ca-certificates`, `/usr/local/share/ca-certificates` and
+`/etc/ssl/certs`) and AlmaLinux 9 (`update-ca-trust extract`, pki anchors,
+extracted bundles, and `/etc/pki/tls/certs`). The hardened unit uses
+`ProtectSystem=strict`, so those directories are read-only unless they are
+listed in `ReadWritePaths`. Passing them as `--write-path` is wrong: the
+installer `chown`s those directories, which would take the host CA bundle
+away from every other process. The grant only opens the sandbox and applies
+a write ACL (`setfacl`), or group-write with owner left `root` when the
+`acl` package is missing. On an already-installed agent, re-run the
+installer (trust-store paths are re-detected) or add the family paths to
+the unit drop-in, grant write as above, then
+`systemctl daemon-reload && systemctl restart tokentimer-agent`.
+
+Windows Server 2019/2022/2025 (and 2016+) needs no extra grant:
+`install-agent.ps1` runs the service as LocalSystem, which can already
+write `LocalMachine\Root` and `LocalMachine\CA`. `--trust-store` is
+accepted so a Linux install command pasted into PowerShell does not fail.
 
 `--uninstall` stops and disables the service, then removes the app directory,
 the unit file, the drop-in override, and the polkit rule. It deliberately
@@ -248,7 +270,7 @@ Top level:
 | `allowedDnsProviders` | string[] | Exact match. |
 
 Trust-anchor distribution (`trust-anchor-deploy-v1`) resolves its platform-native
-update command through this same `allowedCommands` map, under three dedicated
+update command through this same `allowedCommands` map, under dedicated
 profile names that no other job family uses:
 
 | Profile name | Platform | Typical `argv` |
@@ -256,6 +278,15 @@ profile names that no other job family uses:
 | `trust-store:update-ca-certificates` | Debian/Ubuntu | `["/usr/sbin/update-ca-certificates"]` |
 | `trust-store:update-ca-trust` | RHEL/Fedora | `["/usr/bin/update-ca-trust", "extract"]` |
 | `trust-store:certutil` | Windows | `["certutil.exe"]` |
+| `trust-store:update-ca-certificates-fresh` | Debian/Ubuntu, `revoke-trust` only | `["/usr/sbin/update-ca-certificates", "--fresh"]` |
+
+The `-fresh` profile is optional and only consulted on the Debian
+`revoke-trust` path: `update-ca-certificates` without `--fresh` does not
+prune a just-removed anchor's dangling `/etc/ssl/certs` symlink, so
+configuring this profile lets revoke self-heal that symlink instead of only
+warning about it (`debian_fresh_command_ref_missing` in the result's
+`metadata`). It is never consulted for `distribute-trust`, and RHEL has no
+equivalent flag.
 
 Because these names are distinct from every ACME/reload profile, a renewal-only
 agent grants no trust-store command execution, and a trust-only agent grants no
@@ -856,8 +887,57 @@ Platform resolution is a hard gate before anything else runs: Windows targets
 `/usr/local/share/ca-certificates` and run `update-ca-certificates`;
 RHEL-family hosts write to `/etc/pki/ca-trust/source/anchors` and run
 `update-ca-trust extract`. A host that is neither Windows nor a detected
-Debian/RHEL-family trust store reports `blocked`, never a silent no-op. On
-every platform the update command/executable is gated through the same
+Debian/RHEL-family trust store reports `blocked`, never a silent no-op.
+
+On Linux the hardened unit also has to be allowed to write those
+directories. `install-agent.sh` grants that automatically on Ubuntu
+22.04/24.04/26.04 and AlmaLinux 9 when the family update command exists
+(pass `--no-trust-store` to skip). Without that grant, distribute fails
+with `EROFS` on the anchors directory even though the agent advertised
+`trust-anchor-deploy-v1`; as of 0.14.2 that failure is a tagged
+`trust_store_not_writable` result rather than a thrown error that
+surfaces as a generic job-execution failure. Do not chown the system CA
+store. Windows needs no extra grant: LocalSystem already writes
+`LocalMachine\Root` / `LocalMachine\CA`.
+
+AlmaLinux 9 (and other RHEL-family hosts) get the same recursive ACL grant,
+but the grant is necessary, not sufficient: `update-ca-trust extract`'s
+underlying `p11-kit` step calls `chmod(2)` on the extracted
+directory-hash bundle directory, an operation that requires ownership no
+POSIX ACL can confer. That `chmod` can fail (non-zero exit) even while the
+consolidated trust bundle is genuinely regenerated and the certificate is
+genuinely trusted. Before 0.14.2 this was reported as a false-negative
+`os_mutation_failed`, and a later `revoke-trust` on the same target would
+then refuse permanently with `receipt_pending_install` (there was no
+agent-side path to recover a target stuck this way; it required manual
+root intervention). As of 0.14.2, `distribute-trust` re-observes the real
+anchors-directory state before trusting that exit code: if the certificate
+is genuinely present it reports `installed` with the non-zero exit's output
+carried as a non-fatal warning, and `revoke-trust` can additionally unwind
+a `pending_install` receipt it finds already stranded from an older agent,
+as long as the anchor is still observably present.
+
+Debian-family revoke has a related but separate gap: plain
+`update-ca-certificates` reports "0 added, 0 removed" and does not prune a
+just-removed anchor's dangling `/etc/ssl/certs` symlink - only
+`update-ca-certificates --fresh` does. As of 0.14.2, `revoke-trust` prefers
+a policy-supplied `--fresh` argv under the
+`trust-store:update-ca-certificates-fresh` profile (see the config
+reference above) when the operator has configured it, and otherwise falls
+back to the pre-0.14.2 behaviour with a non-fatal `debian_fresh_command_ref_missing`
+warning on the result rather than silently leaving the symlink.
+
+The hardened unit's `PrivateTmp=true` (shipped in
+`packages/agent/scripts/tokentimer-agent.service`) matters specifically
+here: `update-ca-certificates`/`update-ca-trust extract` both call
+`mktemp` internally, and without `PrivateTmp=true`, `ProtectSystem=strict`
+leaves the real `/tmp` read-only, so the update command fails at `mktemp`
+before it ever touches the anchors directory - a failure mode easy to
+mistake for the anchors-directory grant itself being missing. A manually
+written unit (bypassing `install-agent.sh`) that omits `PrivateTmp=true`
+will reproduce this even with every other grant correctly in place.
+
+On every platform the update command/executable is gated through the same
 `policyEngine.checkCommandRef` allowlist as ACME/reload commands, under the
 `trust-store:update-ca-certificates` / `trust-store:update-ca-trust` /
 `trust-store:certutil` profile names (see the config reference above): on
@@ -901,10 +981,14 @@ agent's own local receipt-finalize write fails, the control plane still
 settles the installation row on the observed outcome (`installed`/`removed`)
 rather than unwinding it, and records `receipt_finalize_conflict` in the
 row's `last_error`; a later `revoke-trust` on that same target can then fail
-with the agent's own `receipt_pending_install`, since its on-disk receipt
-never reached `finalized`. The recovery is to re-run `distribute-trust` for
-that same target, which retries the finalize write and clears the stale
-receipt state. See ADR-0012 decisions 6 and (d) (twelfth amendment)
+with the agent's own `receipt_pending_install`. As of 0.14.2 there are two
+ways to recover that: re-run `distribute-trust` for the same target, which
+retries the finalize write and clears the stale receipt state, or simply
+re-run `revoke-trust` directly - it now re-observes the real anchors-
+directory state before refusing, and unwinds (finalizes, then removes) a
+`pending_install` receipt it finds stranded whenever the anchor is still
+observably present, only falling back to the original refusal when it
+genuinely is not. See ADR-0012 decisions 6 and (d) (twelfth amendment)
 for the full ownership-reference and crash-recovery contract.
 
 Dry-run mode behaves identically to the renewal chain above: `mode: "dry_run"`
