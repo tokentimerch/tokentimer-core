@@ -45,7 +45,9 @@ const {
   CERTOPS_TRUST_JOB_IDEMPOTENCY_KEY_REQUIRED,
   CERTOPS_TRUST_INSTALLATION_NOT_FOUND,
   deriveTrustJobIdempotencyKey,
+  _test: trustAnchorsTest,
 } = require("../../apps/api/services/certops/trustAnchors");
+const { RECONCILIATION_STALE_MESSAGE_BY_CODE } = trustAnchorsTest;
 const agentTrustStore = require("../../packages/agent/src/trust-store");
 
 // Ten distinct self-signed CA certificates (Basic Constraints CA:TRUE),
@@ -2684,6 +2686,57 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(installation.last_error).to.equal(
       "reconciliation_stale_job_pending",
     );
+
+    const items = await listInstallationsForAnchor({
+      workspaceId,
+      trustAnchorId: anchor.id,
+    });
+    const listed = items.find(
+      (item) => item.id === String(outcome.installation.id),
+    );
+    expect(listed.staleReason).to.deep.equal({
+      code: "reconciliation_stale_job_pending",
+      message:
+        RECONCILIATION_STALE_MESSAGE_BY_CODE.reconciliation_stale_job_pending,
+    });
+  });
+
+  it("marks an overdue pending row stale with the no-job reason when it has no last_job_id", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `sweep-stale-no-job-${crypto.randomUUID()}`,
+      }),
+    );
+
+    // Simulate the (normally unreachable) no-job case directly on the row,
+    // since createTrustJob always attaches a last_job_id.
+    await TestUtils.execQuery(
+      `UPDATE certops_trust_anchor_installations
+          SET next_reconcile_at = NOW() - INTERVAL '1 hour',
+              last_attempt_at = NOW() - INTERVAL '10 hours',
+              last_job_id = NULL
+        WHERE id = $1`,
+      [outcome.installation.id],
+    );
+
+    const summary = await sweepOverdueTrustInstallations({
+      dbPool: pool,
+      maxAgeMs: 60 * 60 * 1000,
+    });
+    expect(summary.markedStale).to.be.greaterThanOrEqual(1);
+
+    const items = await listInstallationsForAnchor({
+      workspaceId,
+      trustAnchorId: anchor.id,
+    });
+    const listed = items.find(
+      (item) => item.id === String(outcome.installation.id),
+    );
+    expect(listed.staleReason.code).to.equal("reconciliation_stale_no_job");
   });
 
   it("reschedules an overdue row that is still within its max age budget", async () => {
@@ -2717,6 +2770,51 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(new Date(after.next_reconcile_at).getTime()).to.be.greaterThan(
       new Date(before.next_reconcile_at).getTime(),
     );
+
+    const items = await listInstallationsForAnchor({
+      workspaceId,
+      trustAnchorId: anchor.id,
+    });
+    const listed = items.find(
+      (item) => item.id === String(outcome.installation.id),
+    );
+    expect(listed.staleReason).to.equal(
+      null,
+      "a still-retrying row must never show the stalled-reconciliation badge",
+    );
+  });
+
+  it("does not reclassify a genuine unrelated last_error as a stalled reconciliation", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const outcome = await createTrustJob(
+      distributeOptions({
+        anchor,
+        agent,
+        idempotencyKey: `sweep-unrelated-error-${crypto.randomUUID()}`,
+      }),
+    );
+
+    await TestUtils.execQuery(
+      `UPDATE certops_trust_anchor_installations
+          SET next_reconcile_at = NULL,
+              last_error = 'some_genuinely_unrelated_error'
+        WHERE id = $1`,
+      [outcome.installation.id],
+    );
+
+    const items = await listInstallationsForAnchor({
+      workspaceId,
+      trustAnchorId: anchor.id,
+    });
+    const listed = items.find(
+      (item) => item.id === String(outcome.installation.id),
+    );
+    expect(listed.staleReason).to.equal(
+      null,
+      "an unrelated error must not be reclassified as a stalled reconciliation",
+    );
+    expect(listed.lastError).to.equal("some_genuinely_unrelated_error");
   });
 
   it("unwinds (rather than redispatches) an overdue row whose job already reached a terminal-negative status", async () => {
@@ -3336,6 +3434,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
             "publicMetadata",
             "createdAt",
             "updatedAt",
+            "staleReason",
           ].sort(),
         );
         expect(returnedB).to.include({
@@ -3347,6 +3446,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
           transitionState: "pending_install",
           provenance: "preexisting",
           lastError: null,
+          staleReason: null,
         });
       });
     });

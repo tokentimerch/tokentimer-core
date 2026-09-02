@@ -13,6 +13,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Agent execution capability is now visible before you pin a job to an agent.** The CertOps Agents tab has a new Execution column showing whether an agent declared any executable action on its last successful claim; hovering "No capability declared" explains it can mean observe-only mode or simply an agent that hasn't polled yet. The manual-job and trust-anchor distribute/revoke modals annotate an agent option and show an inline warning when the selected agent has not declared the operation being requested, and creating a trust job against an agent that is retired or outside the accepted compatibility range is now rejected up front instead of leaving the job stuck at "Pending" forever. A trust-anchor installation stuck in a pending transition with no error now shows the same advisory reason inline instead of a bare "Pending" badge.
 - The CertOps agent fleet table has a new Compatibility column showing each agent's Compatible/Outdated/Blocked state, with the accepted agent and protocol version range in the tooltip. A blocked agent cannot claim any job until upgraded; this was previously only visible as a dispatch-time error in the agent's own logs.
+- The Trust anchors panel now marks a `pending_install`/`pending_remove` row that automatic reconciliation gave up on with a "Needs attention" badge and a plain-language explanation, instead of showing it identically to one still actively retrying or leaving the raw internal reason code on screen.
 
 ### Fixed
 

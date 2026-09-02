@@ -217,6 +217,105 @@ describe('TrustAnchorsPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows the Needs attention badge and mapped message for a stalled reconciliation, not the raw code', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'pending_install',
+            nextReconcileAt: null,
+            lastError: 'reconciliation_stale_job_pending',
+            staleReason: {
+              code: 'reconciliation_stale_job_pending',
+              message:
+                "Check the agent's connectivity/heartbeat, then retry manually.",
+            },
+          },
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(screen.getByText('Pending install')).toBeInTheDocument();
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Check the agent's connectivity/heartbeat, then retry manually."
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('reconciliation_stale_job_pending')
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not show Needs attention for a row still actively retrying', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'pending_install',
+            nextReconcileAt: new Date(Date.now() + 60_000).toISOString(),
+            lastError: null,
+            staleReason: null,
+          },
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(screen.getByText('Pending install')).toBeInTheDocument();
+    expect(screen.queryByText('Needs attention')).not.toBeInTheDocument();
+  });
+
+  it('still shows the raw last_error text for a genuine unrelated error, without the stalled badge', () => {
+    useCertOpsTrustAnchorsMock.mockReturnValue(
+      anchorsState({ anchors: [sampleAnchor()] })
+    );
+    useCertOpsTrustAnchorInstallationsMock.mockReturnValue(
+      installationsState({
+        installations: [
+          {
+            id: 'install-1',
+            agentId: 'agent-a',
+            owner: 'team-a',
+            host: 'host-a',
+            store: 'root',
+            transitionState: 'pending_install',
+            nextReconcileAt: null,
+            lastError: 'agent unreachable',
+            staleReason: null,
+          },
+        ],
+      })
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByText('Internal Root CA'));
+
+    expect(screen.getByText('agent unreachable')).toBeInTheDocument();
+    expect(screen.queryByText('Needs attention')).not.toBeInTheDocument();
+  });
+
   it('opens the trust-op modal in distribute mode with the anchor pre-set', () => {
     useCertOpsTrustAnchorsMock.mockReturnValue(
       anchorsState({ anchors: [sampleAnchor()] })
