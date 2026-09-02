@@ -31,6 +31,13 @@ const {
   updateRenewalProfile,
 } = admin;
 
+const { RENEWAL_JOB_TERMINAL_STATUSES } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/renewalScheduler.js"),
+);
+const { isTerminalJobStatus } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+);
+
 const CERT_PATH = "/etc/ssl/certs/app.pem";
 
 function storedProfile(overrides = {}) {
@@ -271,6 +278,21 @@ describe("CertOps renewal-profile threshold validation", () => {
         CERTOPS_PROFILE_INVALID,
       );
     }
+  });
+});
+
+describe("CertOps renewal-job terminal-status derivation", () => {
+  // Regression: orphaned_unknown_effect is a genuinely terminal status (no
+  // further automatic processing happens to it; it needs manual
+  // reconciliation), but a hand-maintained literal previously omitted it.
+  // Deriving from the full job-status list instead means a status added to
+  // jobs.js can never silently go missing here again.
+  it("treats orphaned_unknown_effect as terminal, matching jobs.isTerminalJobStatus", () => {
+    assert.equal(isTerminalJobStatus("orphaned_unknown_effect"), true);
+    assert.ok(
+      RENEWAL_JOB_TERMINAL_STATUSES.includes("orphaned_unknown_effect"),
+      "RENEWAL_JOB_TERMINAL_STATUSES must agree with isTerminalJobStatus",
+    );
   });
 });
 
@@ -571,6 +593,7 @@ describe("CertOps upcoming renewals coverage", () => {
       profile_renew_before_days: 30,
       renews_from: new Date(Date.now() - 86400000),
       last_renew_job_status: null,
+      has_active_renew_job: false,
       ...overrides,
     };
   }
@@ -918,6 +941,37 @@ describe("CertOps upcoming renewals coverage", () => {
         certificate_ca_endpoint: "https://ca-a.example.com/acme",
         profile_ca_endpoint: "https://ca-a.example.com/acme",
         last_renew_job_status: "pending",
+        has_active_renew_job: true,
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, null);
+  });
+
+  // Regression for a false-positive deferral badge: the latest job's status
+  // alone is not "does this certificate already have a job in flight". An
+  // older non-terminal job (still active) and a newer terminal one (e.g. a
+  // retried/superseded job) can coexist, in which case last_renew_job_status
+  // reads terminal even though a real job is still outstanding for an
+  // unrelated reason. has_active_renew_job mirrors the scheduler's own
+  // "any non-terminal job exists" EXISTS check, so it must gate deferral
+  // instead of the single most-recent-status column.
+  it("does not mark a certificate deferred when an older job is still non-terminal, even though the latest job is terminal", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+        last_renew_job_status: "succeeded",
+        has_active_renew_job: true,
       },
       {
         inFlightRows: [

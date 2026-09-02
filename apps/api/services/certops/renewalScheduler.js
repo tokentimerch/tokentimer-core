@@ -29,6 +29,7 @@ const {
   createCertificateJob,
   isTerminalJobStatus,
   isTrustAnchorOperation,
+  JOB_STATUSES,
 } = require("./jobs");
 const {
   CERTOPS_WORKSPACE_PAUSED,
@@ -65,18 +66,12 @@ const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
 // constant bigint works; this one is arbitrary but must stay stable.
 const RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY = 7_384_211_257_001n;
 
-// "Still in flight" for renewal-capacity accounting. Exported so any other
-// read of in-flight renew jobs (e.g. the upcoming-renewals list) agrees with
-// the sweep on what counts as done; a second copy of this literal would risk
-// silent drift between the two.
-const RENEWAL_JOB_TERMINAL_STATUSES = [
-  "rejected",
-  "succeeded",
-  "failed",
-  "blocked",
-  "cancelled",
-  "dry_run_complete",
-].filter(isTerminalJobStatus);
+// "Still in flight" for renewal-capacity accounting. Derived from the full
+// job status list (not a hand-maintained subset) so a new terminal status
+// added to jobs.js is picked up automatically instead of silently missing
+// here. Exported so any other read of in-flight renew jobs (e.g. the
+// upcoming-renewals list) agrees with the sweep on what counts as done.
+const RENEWAL_JOB_TERMINAL_STATUSES = JOB_STATUSES.filter(isTerminalJobStatus);
 
 // Inventory statuses that never get automated renewal jobs.
 const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([

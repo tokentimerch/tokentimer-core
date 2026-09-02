@@ -616,6 +616,20 @@ async function listUpcomingRenewals({
                ORDER BY cj.created_at DESC
                LIMIT 1
             ) AS last_renew_job_status,
+            -- Same "any non-terminal job exists" predicate
+            -- findCertificatesDueForRenewal uses to skip a certificate: the
+            -- latest job's status alone is not enough, because an older
+            -- still-active job can coexist with a newer terminal one (e.g. a
+            -- retried/superseded job).
+            EXISTS (
+              SELECT 1
+                FROM certificate_jobs cj
+               WHERE cj.workspace_id = mc.workspace_id
+                 AND cj.operation = 'renew'
+                 AND cj.subject_type = 'managed_certificate'
+                 AND cj.subject_id = mc.id::text
+                 AND NOT (cj.status = ANY($5::text[]))
+            ) AS has_active_renew_job,
             NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
               AS certificate_ca_endpoint,
             NULLIF(
@@ -634,7 +648,13 @@ async function listUpcomingRenewals({
         AND mc.status NOT IN (${renewableStatusFilter})
       ORDER BY mc.not_after ASC NULLS LAST, mc.common_name ASC
       LIMIT $3 OFFSET $4`,
-    [workspaceId, String(thresholdDays), safeLimit, safeOffset],
+    [
+      workspaceId,
+      String(thresholdDays),
+      safeLimit,
+      safeOffset,
+      RENEWAL_JOB_TERMINAL_STATUSES,
+    ],
   );
 
   const totalResult = await db.query(
@@ -664,14 +684,16 @@ async function listUpcomingRenewals({
       // Deferral is a separate, independent fact from blockedReason: only a
       // certificate the scheduler would otherwise act on this pass (covered,
       // due, and not already jobbed) can be "waiting", so none of these
-      // guards ever downgrade a real block into a capacity wait.
+      // guards ever downgrade a real block into a capacity wait. Whether a
+      // job already exists is has_active_renew_job (any non-terminal job for
+      // the certificate), matching the sweep's own EXISTS check, not just the
+      // most recent job's status.
       let deferredReason = null;
       if (
         autoRenewEnabled &&
         row.renews_from != null &&
         new Date(row.renews_from).getTime() <= now &&
-        (row.last_renew_job_status == null ||
-          RENEWAL_JOB_TERMINAL_STATUSES.includes(row.last_renew_job_status))
+        !row.has_active_renew_job
       ) {
         const capKey = caCapKey(workspaceId, certificateCaBucket(row));
         const inFlight = inFlightByCa.get(capKey) || 0;

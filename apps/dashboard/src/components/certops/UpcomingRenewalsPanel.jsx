@@ -90,7 +90,7 @@ const DEFERRED_REASONS = {
   ca_capacity: {
     label: 'At CA capacity',
     tooltip:
-      "This certificate is due for renewal, but its issuing CA already has as many renewals in flight as the per-CA limit allows. The scheduler will create this certificate's renewal job automatically once that CA has capacity again; no action is needed.",
+      'This certificate is due for renewal, but its issuing CA already has as many renewals in flight as the per-CA limit allows. The capacity constraint itself clears automatically once earlier renewals for that CA finish; it does not mean nothing here needs attention, since one of those in-flight jobs could be waiting on something else, such as an approval.',
   },
 };
 
@@ -151,8 +151,8 @@ function deferredSentence(deferred, paged = false) {
   if (deferred.length === 0) return '';
   const scope = paged ? ' on this page' : '';
   return deferred.length === 1
-    ? `1 certificate${scope} is due but waiting for capacity at its issuing CA, and will be renewed automatically once it frees up.`
-    : `${deferred.length} certificates${scope} are due but waiting for capacity at their issuing CA, and will be renewed automatically once it frees up.`;
+    ? `1 certificate${scope} is due but waiting for capacity to free up at its issuing CA; this happens automatically once earlier renewals for that CA finish.`
+    : `${deferred.length} certificates${scope} are due but waiting for capacity to free up at their issuing CA; this happens automatically once earlier renewals for that CA finish.`;
 }
 
 export default function UpcomingRenewalsPanel({ refreshSignal }) {
@@ -328,6 +328,13 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                                   textTransform='none'
                                   fontWeight='medium'
                                   fontSize='xs'
+                                  aria-label={`${
+                                    deferredDescriptor(item.deferredReason)
+                                      .label
+                                  }. ${
+                                    deferredDescriptor(item.deferredReason)
+                                      .tooltip
+                                  }`}
                                 >
                                   {
                                     deferredDescriptor(item.deferredReason)

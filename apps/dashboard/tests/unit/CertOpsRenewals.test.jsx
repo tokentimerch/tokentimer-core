@@ -321,6 +321,29 @@ describe('CertOpsRenewals page', () => {
     expect(screen.queryByText('No expiry')).not.toBeInTheDocument();
   });
 
+  it("does not claim blanket 'no action needed' in the capacity-wait tooltip, since an approval elsewhere in the same CA bucket can still need attention", async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'ca_capacity',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    const badge = await screen.findByLabelText(/clears automatically/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute('aria-label')).not.toMatch(
+      /no action is needed/i
+    );
+  });
+
   it('adds a non-alarming capacity-wait sentence separate from the blocked-certificate warning', async () => {
     listUpcomingRenewalsMock.mockResolvedValue({
       items: [
@@ -352,7 +375,7 @@ describe('CertOpsRenewals page', () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        '1 certificate is due but waiting for capacity at its issuing CA, and will be renewed automatically once it frees up.'
+        '1 certificate is due but waiting for capacity to free up at its issuing CA; this happens automatically once earlier renewals for that CA finish.'
       )
     ).toBeInTheDocument();
   });
