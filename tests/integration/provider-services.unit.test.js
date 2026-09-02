@@ -924,5 +924,160 @@ describe("Provider service unit coverage", () => {
         complete: true,
       });
     });
+
+    it("discovers Certificate Manager and Compute Engine SSL certificates", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return {
+            data: {
+              certificates: [
+                {
+                  name: "projects/proj/locations/global/certificates/cm-cert",
+                  expireTime: "2030-01-01T00:00:00Z",
+                  createTime: "2025-01-01T00:00:00Z",
+                  sanDnsnames: ["example.com"],
+                  managed: { state: "ACTIVE" },
+                },
+              ],
+            },
+          };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: [
+                {
+                  name: "lb-ssl-cert",
+                  expireTime: "2031-02-02T00:00:00Z",
+                  creationTimestamp: "2025-02-02T00:00:00Z",
+                  subjectAlternativeNames: ["lb.example.com"],
+                },
+              ],
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const cmItem = result.items.find(
+        (i) => i.sourceKind === "gcp-certificate-manager-cert",
+      );
+      expect(cmItem).to.include({
+        sourceObjectId: "cm-cert",
+        category: "cert",
+        type: "ssl_cert",
+        expiration: "2030-01-01",
+      });
+      expect(cmItem.dimensions).to.deep.equal({ location: "global" });
+
+      const computeItem = result.items.find(
+        (i) => i.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(computeItem).to.include({
+        sourceObjectId: "lb-ssl-cert",
+        category: "cert",
+        type: "ssl_cert",
+        expiration: "2031-02-02",
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        found: 1,
+        complete: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 1,
+        complete: true,
+      });
+    });
+
+    it("reports an empty complete sub-scope for both cert kinds when the project has none", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: [] } };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      expect(result.items).to.have.length(0);
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+    });
+
+    it("marks a cert sub-scope incomplete on API error without failing the whole scan", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          const err = new Error("denied");
+          err.response = {
+            status: 403,
+            data: { error: "PERMISSION_DENIED" },
+          };
+          throw err;
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: [] } };
+        }
+        return {
+          data: { secrets: [{ name: "projects/proj/secrets/only-secret" }] },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: true, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        complete: false,
+        status: 403,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+      // A failed cert sub-scope must not sink the secrets sub-scope or the
+      // overall scan when items were still found elsewhere.
+      expect(result.items.some((i) => i.sourceKind === "gcp-secret-manager"))
+        .to.equal(true);
+    });
   });
 });

@@ -185,6 +185,129 @@ async function getSecretVersion({
   }
 }
 
+// Certificate Manager certificates are scoped to a location ("global" or a
+// region, for regional external HTTPS load balancers). Only "global" is
+// scanned today -- covers the common case without a per-region sweep like
+// AWS's, which regional Certificate Manager users would need to request.
+async function listCertificateManagerCertificates({
+  projectId,
+  accessToken,
+  location = "global",
+  maxItems = 500,
+}) {
+  const certs = [];
+  let nextPageToken = null;
+  let pageCount = 0;
+  const maxPages = 50;
+  let truncated = false;
+
+  do {
+    try {
+      const path = `/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/certificates`;
+      const params = { pageSize: 50 };
+      if (nextPageToken) params.pageToken = nextPageToken;
+
+      const fullUrl = "https://certificatemanager.googleapis.com/v1" + path;
+      const url = new URL(fullUrl);
+      Object.entries(params).forEach(([key, value]) => {
+        url.searchParams.set(key, String(value));
+      });
+
+      const response = await axios({
+        method: "GET",
+        url: url.toString(),
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        timeout: 120000,
+        ...CREDENTIALED_AXIOS_REDIRECTS,
+      });
+
+      const data = response.data;
+      if (Array.isArray(data.certificates)) {
+        certs.push(...data.certificates);
+      }
+
+      nextPageToken = data.nextPageToken || null;
+      pageCount++;
+
+      if (certs.length >= maxItems || pageCount >= maxPages) {
+        truncated = Boolean(nextPageToken) || certs.length > maxItems;
+        break;
+      }
+    } catch (e) {
+      const status = e.response?.status || e.status;
+      if (status === 404) break; // No certificates in this location is OK
+      if (e.response && !e.status) {
+        e.status = e.response.status;
+      }
+      throw e;
+    }
+  } while (nextPageToken && certs.length < maxItems);
+
+  return { items: certs.slice(0, maxItems), truncated };
+}
+
+// Compute Engine's classic sslCertificates are project-global only (no
+// regional variant in this API version), so no location dimension applies.
+async function listComputeSslCertificates({
+  projectId,
+  accessToken,
+  maxItems = 500,
+}) {
+  const certs = [];
+  let nextPageToken = null;
+  let pageCount = 0;
+  const maxPages = 50;
+  let truncated = false;
+
+  do {
+    try {
+      const path = `/projects/${encodeURIComponent(projectId)}/global/sslCertificates`;
+      const params = { maxResults: 50 };
+      if (nextPageToken) params.pageToken = nextPageToken;
+
+      const fullUrl = "https://compute.googleapis.com/compute/v1" + path;
+      const url = new URL(fullUrl);
+      Object.entries(params).forEach(([key, value]) => {
+        url.searchParams.set(key, String(value));
+      });
+
+      const response = await axios({
+        method: "GET",
+        url: url.toString(),
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        timeout: 120000,
+        ...CREDENTIALED_AXIOS_REDIRECTS,
+      });
+
+      const data = response.data;
+      if (Array.isArray(data.items)) {
+        certs.push(...data.items);
+      }
+
+      nextPageToken = data.nextPageToken || null;
+      pageCount++;
+
+      if (certs.length >= maxItems || pageCount >= maxPages) {
+        truncated = Boolean(nextPageToken) || certs.length > maxItems;
+        break;
+      }
+    } catch (e) {
+      const status = e.response?.status || e.status;
+      if (status === 404) break; // No SSL certificates is OK
+      if (e.response && !e.status) {
+        e.status = e.response.status;
+      }
+      throw e;
+    }
+  } while (nextPageToken && certs.length < maxItems);
+
+  return { items: certs.slice(0, maxItems), truncated };
+}
+
 async function scanGCP({
   projectId,
   accessToken,
@@ -205,7 +328,12 @@ async function scanGCP({
     throw new Error("maxItems must be between 1 and 2000");
   }
 
-  logger.info("Starting GCP Secret Manager scan", { projectId, maxItems });
+  logger.info("Starting GCP scan", {
+    projectId,
+    maxItems,
+    includeSecrets: include.secrets,
+    includeCertificates: include.certificates,
+  });
 
   const items = [];
   const summary = [];
@@ -362,6 +490,143 @@ async function scanGCP({
         });
       }
     }
+
+    // Scan Certificate Manager (global location only -- see
+    // listCertificateManagerCertificates)
+    if (include.certificates) {
+      const location = "global";
+      try {
+        const { items: certs, truncated: certsTruncated } =
+          await listCertificateManagerCertificates({
+            projectId,
+            accessToken,
+            location,
+            maxItems,
+          });
+        logger.info("GCP Certificate Manager certificates listed", {
+          count: certs.length,
+          location,
+        });
+
+        for (const cert of certs) {
+          if (items.length >= maxItems) break;
+          const certName = cert.name.split("/").pop();
+          const expiresAt = tryParseDate(cert.expireTime);
+          const isManaged = Boolean(cert.managed);
+          const domains =
+            cert.sanDnsnames && cert.sanDnsnames.length > 0
+              ? cert.sanDnsnames
+              : isManaged
+                ? cert.managed?.domains || []
+                : [];
+
+          items.push({
+            source: "gcp-certificate-manager",
+            sourceKind: "gcp-certificate-manager-cert",
+            sourceObjectId: certName,
+            name: certName || cert.name,
+            category: "cert",
+            type: "ssl_cert",
+            expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            location: `gcp:${projectId}/locations/${location}/certificates/${certName}`,
+            domains,
+            issuer: isManaged ? "Google Trust Services" : null,
+            description: `${isManaged ? "Managed" : "Self-managed"}${cert.managed?.state ? `, ${cert.managed.state}` : ""}`,
+            created_at: cert.createTime || null,
+            updated_at: cert.updateTime || null,
+            dimensions: { location },
+          });
+        }
+
+        summary.push({
+          type: "certificate_manager_certs",
+          sourceKind: "gcp-certificate-manager-cert",
+          location,
+          found: certs.length,
+          truncated: certsTruncated,
+          complete: !certsTruncated,
+          dimensions: { location },
+        });
+        logger.info("GCP Certificate Manager scan completed", {
+          certsFound: certs.length,
+          location,
+        });
+      } catch (e) {
+        logger.error("GCP Certificate Manager scan failed", {
+          error: e.message,
+          status: e.status || e.response?.status,
+          projectId,
+        });
+        summary.push({
+          type: "certificate_manager_certs",
+          sourceKind: "gcp-certificate-manager-cert",
+          location,
+          error: e.message,
+          status: e.status || e.response?.status,
+          complete: false,
+          dimensions: { location },
+        });
+      }
+
+      // Compute Engine sslCertificates are project-global, not per-location
+      try {
+        const { items: sslCerts, truncated: sslCertsTruncated } =
+          await listComputeSslCertificates({ projectId, accessToken, maxItems });
+        logger.info("GCP Compute Engine SSL certificates listed", {
+          count: sslCerts.length,
+        });
+
+        for (const cert of sslCerts) {
+          if (items.length >= maxItems) break;
+          const expiresAt = tryParseDate(cert.expireTime);
+          const isManaged = Boolean(cert.managed);
+          const domains = cert.subjectAlternativeNames?.length
+            ? cert.subjectAlternativeNames
+            : isManaged
+              ? cert.managed?.domains || []
+              : [];
+
+          items.push({
+            source: "gcp-compute-ssl-cert",
+            sourceKind: "gcp-compute-ssl-cert",
+            sourceObjectId: cert.name,
+            name: cert.name,
+            category: "cert",
+            type: "ssl_cert",
+            expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            location: `gcp:${projectId}/global/sslCertificates/${cert.name}`,
+            domains,
+            issuer: isManaged ? "Google Trust Services" : null,
+            description: `${isManaged ? "Managed" : "Self-managed"}${cert.managed?.status ? `, ${cert.managed.status}` : ""}`,
+            created_at: cert.creationTimestamp || null,
+          });
+        }
+
+        summary.push({
+          type: "compute_ssl_certs",
+          sourceKind: "gcp-compute-ssl-cert",
+          found: sslCerts.length,
+          truncated: sslCertsTruncated,
+          complete: !sslCertsTruncated,
+        });
+        logger.info("GCP Compute Engine SSL certificate scan completed", {
+          certsFound: sslCerts.length,
+        });
+      } catch (e) {
+        logger.error("GCP Compute Engine SSL certificate scan failed", {
+          error: e.message,
+          status: e.status || e.response?.status,
+          projectId,
+        });
+        summary.push({
+          type: "compute_ssl_certs",
+          sourceKind: "gcp-compute-ssl-cert",
+          error: e.message,
+          status: e.status || e.response?.status,
+          complete: false,
+        });
+      }
+    }
   } catch (e) {
     logger.error("GCP scan failed", { error: e.message, projectId });
     summary.push({ type: "scan", error: e.message, complete: false });
@@ -418,5 +683,7 @@ if (process.env.NODE_ENV === "test") {
     listSecrets,
     getSecretVersion,
     getSecretVersions,
+    listCertificateManagerCertificates,
+    listComputeSslCertificates,
   };
 }

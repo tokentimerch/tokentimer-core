@@ -598,6 +598,88 @@ describe("Import cleanup scan lifecycle (real database)", function () {
     expect(await tokenStillExists(obsolete.id)).to.equal(false);
   });
 
+  it("GCP certificate sub-scope cleanup only touches the certificate kind, scoped by location dimension", async () => {
+    const projectId = `gcp-${crypto.randomUUID()}`;
+    const goneCert = await createProvenanceToken({
+      name: "gcp-cert-now-gone",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-certificate-manager-cert",
+      objectId: "gone-cert",
+      dimensions: { location: "global" },
+    });
+    const untouchedSecret = await createProvenanceToken({
+      name: "gcp-secret-untouched-by-cert-cleanup",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-secret-manager",
+      objectId: "projects/x/secrets/still-there",
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "gcp",
+      identityContext: { projectId },
+      items: [],
+      subScopes: [
+        {
+          sourceKind: "gcp-certificate-manager-cert",
+          dimensions: { location: "global" },
+          complete: true,
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "gcp", scanId: scan.scanId },
+    });
+
+    expect(deleted.map((d) => d.id)).to.include(goneCert.id);
+    expect(deleted.map((d) => d.id)).to.not.include(untouchedSecret.id);
+    expect(await tokenStillExists(goneCert.id)).to.equal(false);
+    expect(await tokenStillExists(untouchedSecret.id)).to.equal(true);
+  });
+
+  it("GCP compute SSL cert cleanup skips an incomplete sub-scope", async () => {
+    const projectId = `gcp-${crypto.randomUUID()}`;
+    const kept = await createProvenanceToken({
+      name: "gcp-compute-ssl-cert-not-rediscovered",
+      provider: "gcp",
+      instance: projectId,
+      ownerKey: projectId,
+      kind: "gcp-compute-ssl-cert",
+      objectId: "lb-ssl-cert",
+    });
+
+    const scan = await persistScan({
+      workspaceId,
+      provider: "gcp",
+      identityContext: { projectId },
+      items: [],
+      subScopes: [
+        {
+          sourceKind: "gcp-compute-ssl-cert",
+          dimensions: {},
+          complete: false,
+          reason: "error",
+        },
+      ],
+    });
+
+    const { deleted } = await cleanupObsoleteTokens({
+      workspaceId,
+      actorUserId: ownerId,
+      cleanup: { enabled: true, provider: "gcp", scanId: scan.scanId },
+    });
+
+    expect(deleted).to.have.length(0);
+    expect(await tokenStillExists(kept.id)).to.equal(true);
+  });
+
   it("refuses to replay a scan_id for a second destructive cleanup", async () => {
     const instance = `gitlab-${crypto.randomUUID()}.example.com`;
     const obsolete = await createProvenanceToken({
