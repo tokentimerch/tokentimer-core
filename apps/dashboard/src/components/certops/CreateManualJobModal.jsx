@@ -383,16 +383,12 @@ export default function CreateManualJobModal({
   // claim anything, so pinning to one would silently strand the job.
   const assignableAgents = agents.filter(agent => agent.status !== 'retired');
 
-  // Advisory-only capability warning; never a hard block (see
-  // agentMissingDeclaredCapability).
+  // Selected distribute-trust target agent; revoke's equivalent is derived
+  // below once trustSelectedInstallation exists (see
+  // trustCapabilityCheckAgent).
   const selectedTrustAgent = assignableAgents.find(
     agent => agent.id === trustAgentId
   );
-  const trustAgentMissingCapability =
-    isTrustOp &&
-    isDistributeTrust &&
-    Boolean(selectedTrustAgent) &&
-    agentMissingDeclaredCapability(selectedTrustAgent, 'distribute-trust');
 
   // domain/endpoint/external subjects are free-text references an agent
   // can never match against (see MANUAL_ONLY_SUBJECT_TYPES above), so the
@@ -431,6 +427,23 @@ export default function CreateManualJobModal({
   const trustSelectedInstallation = trustRevocableInstallations.find(
     row => row.id === trustInstallationId
   );
+
+  // Advisory-only capability warning; never a hard block (see
+  // agentMissingDeclaredCapability). Applies equally to distribute and
+  // revoke: both pin a job to one specific agent with no fallback
+  // claimant, so a missing capability declaration strands either the same
+  // way. Distribute picks the agent directly; revoke picks an existing
+  // installation row, so its agent comes from that row instead.
+  const trustCapabilityCheckAgent = isDistributeTrust
+    ? selectedTrustAgent
+    : agents.find(agent => agent.id === trustSelectedInstallation?.agentId);
+  const trustAgentMissingCapability =
+    isTrustOp &&
+    Boolean(trustCapabilityCheckAgent) &&
+    agentMissingDeclaredCapability(
+      trustCapabilityCheckAgent,
+      trustOp.operation
+    );
 
   // Resolves to the agentId/owner pair the request will actually submit:
   // for distribute, the separately-picked target agent plus either the
@@ -819,7 +832,10 @@ export default function CreateManualJobModal({
                     {assignableAgents.map(agent => (
                       <option key={agent.id} value={agent.id}>
                         {agentSelectLabel(agent)}
-                        {agentMissingDeclaredCapability(agent, 'distribute-trust')
+                        {agentMissingDeclaredCapability(
+                          agent,
+                          trustOp.operation
+                        )
                           ? ' \u2014 no distribute-trust capability declared'
                           : ''}
                       </option>
@@ -839,6 +855,13 @@ export default function CreateManualJobModal({
                       return (
                         <option key={row.id} value={row.id}>
                           {`${row.owner} — ${agent ? agentSelectLabel(agent) : row.host} (${row.store})`}
+                          {agent &&
+                          agentMissingDeclaredCapability(
+                            agent,
+                            trustOp.operation
+                          )
+                            ? ' \u2014 no revoke-trust capability declared'
+                            : ''}
                         </option>
                       );
                     })}
@@ -853,7 +876,7 @@ export default function CreateManualJobModal({
                   >
                     <AlertIcon boxSize={4} />
                     <AlertDescription fontSize='sm'>
-                      This agent did not declare distribute-trust support the
+                      This agent did not declare {trustOp.operation} support the
                       last time it claimed a job. If it is running in
                       observe-only mode (no execution block, or
                       execution.enabled is not true, in its config.json), this

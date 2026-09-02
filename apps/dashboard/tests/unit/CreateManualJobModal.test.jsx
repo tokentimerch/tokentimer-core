@@ -463,10 +463,7 @@ describe('CreateManualJobModal trustOp mode', () => {
 
   it('shows an inline warning once the selected distribute-trust target is the capability-missing agent', () => {
     useCertOpsAgentsMock.mockReturnValue({
-      agents: [
-        AGENT_A,
-        { ...AGENT_B, supportedOperations: [] },
-      ],
+      agents: [AGENT_A, { ...AGENT_B, supportedOperations: [] }],
     });
 
     renderModal({ trustOp: distributeTrustOp });
@@ -484,19 +481,41 @@ describe('CreateManualJobModal trustOp mode', () => {
     ).toBeInTheDocument();
   });
 
-  it('does not warn about capability for a revoke-trust target (only distribute-trust is checked)', () => {
+  it('annotates a revoke installation option whose agent lacks revoke-trust in its declared capabilities', () => {
+    useCertOpsAgentsMock.mockReturnValue({
+      agents: [
+        { ...AGENT_A, supportedOperations: ['renew'] },
+        { ...AGENT_B, supportedOperations: ['renew', 'revoke-trust'] },
+      ],
+    });
+
+    renderModal({ trustOp: revokeTrustOp });
+
+    expect(
+      screen.getByRole('option', {
+        name: /team-a — Agent A \(agent-a\) \(root\).*no revoke-trust capability declared/,
+      })
+    ).toBeInTheDocument();
+  });
+
+  it('shows an inline warning once the selected revoke-trust installation belongs to a capability-missing agent', () => {
     useCertOpsAgentsMock.mockReturnValue({
       agents: [{ ...AGENT_A, supportedOperations: [] }, AGENT_B],
     });
 
     renderModal({ trustOp: revokeTrustOp });
+
+    expect(
+      screen.queryByText(/did not declare revoke-trust support/)
+    ).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText(/^Target agent/), {
-      target: { value: 'agent-a' },
+      target: { value: 'install-1' },
     });
 
     expect(
-      screen.queryByText(/did not declare distribute-trust support/)
-    ).not.toBeInTheDocument();
+      screen.getByText(/did not declare revoke-trust support/)
+    ).toBeInTheDocument();
   });
 
   it('submits distribute-trust with agentId/owner/subjectType trust_anchor and an auto-generated idempotency key', async () => {
