@@ -137,8 +137,7 @@ const {
   CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
   createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
-  setWorkspaceCertOpsPauseState,
-  setWorkspaceCertOpsRequireApprovalAlways,
+  setWorkspaceCertOpsSettings,
 } = require("../services/certops/workspaceKillSwitch");
 const {
   CERTOPS_TRUST_ANCHOR_INVALID,
@@ -2340,31 +2339,20 @@ router.put(
         });
       }
 
-      let state;
-      let changed = false;
-      if (hasPauseField) {
-        state = await setWorkspaceCertOpsPauseState({
-          workspaceId: req.workspace.id,
-          certOpsPaused: req.body.certOpsPaused,
-          reason: req.body?.reason,
-          actorUserId: req.user?.id || null,
-          subjectUserId: req.user?.id || null,
-        });
-        changed = changed || state.changed === true;
-      }
-      if (hasApprovalField) {
-        // Runs after the pause update (if any) so the response reflects
-        // both writes; each setter independently re-reads the other
-        // column's live value, so ordering can't make the response stale.
-        state = await setWorkspaceCertOpsRequireApprovalAlways({
-          workspaceId: req.workspace.id,
-          requireApprovalAlways: req.body.certOpsRequireApprovalAlways,
-          actorUserId: req.user?.id || null,
-          subjectUserId: req.user?.id || null,
-        });
-        changed = changed || state.changed === true;
-      }
-      return res.json(workspacePauseStateResponse({ ...state, changed }));
+      // Both fields (when present) are written in one transaction so a
+      // failure partway through never leaves one setting applied and the
+      // other not; see setWorkspaceCertOpsSettings.
+      const state = await setWorkspaceCertOpsSettings({
+        workspaceId: req.workspace.id,
+        certOpsPaused: hasPauseField ? req.body.certOpsPaused : undefined,
+        requireApprovalAlways: hasApprovalField
+          ? req.body.certOpsRequireApprovalAlways
+          : undefined,
+        reason: req.body?.reason,
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.json(workspacePauseStateResponse(state));
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

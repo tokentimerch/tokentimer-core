@@ -19,6 +19,7 @@ const {
   normalizeReason,
   setWorkspaceCertOpsPauseState,
   setWorkspaceCertOpsRequireApprovalAlways,
+  setWorkspaceCertOpsSettings,
 } = require(
   path.resolve(
     __dirname,
@@ -86,6 +87,15 @@ function createStatefulPool(initialPaused = false, initialRequireApprovalAlways 
             },
           ],
         };
+      }
+      if (
+        normalized.startsWith(
+          "UPDATE workspaces SET certops_paused = $1, certops_require_approval_always = $2",
+        )
+      ) {
+        certOpsPaused = params[0];
+        certOpsRequireApprovalAlways = params[1];
+        return { rows: [] };
       }
       if (normalized.startsWith("UPDATE workspaces SET certops_paused")) {
         certOpsPaused = params[0];
@@ -696,6 +706,129 @@ describe("CertOps workspace approval-policy setter", () => {
         }),
       (error) => error?.code === CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
     );
+  });
+});
+
+describe("CertOps workspace combined settings update", () => {
+  it("writes both fields in one transaction with one UPDATE and both audits", async () => {
+    const pool = createStatefulPool(false, false);
+    const audits = [];
+
+    const state = await setWorkspaceCertOpsSettings({
+      workspaceId: "workspace-1",
+      certOpsPaused: true,
+      requireApprovalAlways: true,
+      reason: "incident containment",
+      actorUserId: 42,
+      dbPool: pool,
+      certOpsEnabledResolver: async () => true,
+      auditWriter: async (event) => audits.push(event),
+    });
+
+    assert.deepEqual(state, {
+      workspaceId: "workspace-1",
+      certOpsPaused: true,
+      certOpsEnabled: true,
+      certOpsActive: false,
+      certOpsRequireApprovalAlways: true,
+      changed: true,
+    });
+    assert.equal(pool.certOpsPaused, true);
+    assert.equal(pool.certOpsRequireApprovalAlways, true);
+    assert.equal(
+      pool.queries.filter((query) => query.sql.startsWith("UPDATE")).length,
+      1,
+    );
+    assert.equal(audits.length, 2);
+    assert.deepEqual(
+      audits.map((event) => event.action),
+      ["CERTOPS_WORKSPACE_PAUSED", "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED"],
+    );
+  });
+
+  it("rolls back both fields when the second setting's audit write fails", async () => {
+    // This is the review finding: a single request naming both fields must
+    // not be able to commit the pause change and then fail the approval
+    // change, leaving the workspace half-updated.
+    const pool = createStatefulPool(false, false);
+    let auditCalls = 0;
+
+    await assert.rejects(
+      () =>
+        setWorkspaceCertOpsSettings({
+          workspaceId: "workspace-1",
+          certOpsPaused: true,
+          requireApprovalAlways: true,
+          dbPool: pool,
+          certOpsEnabledResolver: async () => true,
+          auditWriter: async ({ action }) => {
+            auditCalls += 1;
+            if (action === "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED") {
+              throw new Error("audit unavailable");
+            }
+          },
+        }),
+      /audit unavailable/,
+    );
+
+    assert.equal(auditCalls, 2);
+    assert.equal(pool.certOpsPaused, false);
+    assert.equal(pool.certOpsRequireApprovalAlways, false);
+    assert.equal(pool.queries.some((query) => query.sql === "ROLLBACK"), true);
+    assert.equal(pool.queries.some((query) => query.sql === "COMMIT"), false);
+  });
+
+  it("only writes and audits the field that actually changed", async () => {
+    const pool = createStatefulPool(true, false);
+    const audits = [];
+
+    const state = await setWorkspaceCertOpsSettings({
+      workspaceId: "workspace-1",
+      certOpsPaused: true,
+      requireApprovalAlways: true,
+      dbPool: pool,
+      certOpsEnabledResolver: async () => true,
+      auditWriter: async (event) => audits.push(event),
+    });
+
+    assert.equal(state.changed, true);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED");
+  });
+
+  it("commits no write and emits no audit when neither field actually changes", async () => {
+    const pool = createStatefulPool(true, true);
+    let auditCount = 0;
+
+    const state = await setWorkspaceCertOpsSettings({
+      workspaceId: "workspace-1",
+      certOpsPaused: true,
+      requireApprovalAlways: true,
+      dbPool: pool,
+      certOpsEnabledResolver: async () => true,
+      auditWriter: async () => {
+        auditCount += 1;
+      },
+    });
+
+    assert.equal(state.changed, false);
+    assert.equal(auditCount, 0);
+    assert.equal(pool.queries.some((query) => query.sql.startsWith("UPDATE")), false);
+  });
+
+  it("rejects a non-boolean field before opening a transaction", async () => {
+    const pool = createStatefulPool(false, false);
+    await assert.rejects(
+      () =>
+        setWorkspaceCertOpsSettings({
+          workspaceId: "workspace-1",
+          certOpsPaused: true,
+          requireApprovalAlways: "yes",
+          dbPool: pool,
+        }),
+      (error) => error?.code === CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
+    );
+    assert.equal(pool.queries.length, 0);
   });
 });
 

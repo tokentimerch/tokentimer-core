@@ -15,6 +15,7 @@ const {
 } = require("../../apps/api/services/certops/jobs");
 const {
   setWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsSettings,
   createManualCertificateJob,
 } = require("../../apps/api/services/certops/workspaceKillSwitch");
 const { writeAudit } = require("../../apps/api/services/audit");
@@ -434,6 +435,46 @@ describe("CertOps workspace kill-switch API", function () {
     ]);
   });
 
+  it("leaves both settings unchanged when a combined update's second write fails atomically", async () => {
+    // Regression test for the review finding on this PR: a PUT naming both
+    // certOpsPaused and certOpsRequireApprovalAlways must not be able to
+    // commit one and fail the other. Force the approval-policy audit write
+    // to fail after the pause change would have succeeded, and assert the
+    // workspace is left exactly as it started.
+    const before = await TestUtils.execQuery(
+      "SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    const auditsBefore = await pauseAudits(fixture.workspaceId);
+
+    await assert.rejects(
+      () =>
+        setWorkspaceCertOpsSettings({
+          workspaceId: fixture.workspaceId,
+          certOpsPaused: !before.rows[0].certops_paused,
+          requireApprovalAlways: !before.rows[0].certops_require_approval_always,
+          actorUserId: fixture.ownerUser.id,
+          auditWriter: async ({ action, ...event }) => {
+            if (action === "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED" ||
+                action === "CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED") {
+              throw new Error("simulated approval-policy audit failure");
+            }
+            await writeAudit({ action, ...event });
+          },
+        }),
+      /simulated approval-policy audit failure/,
+    );
+
+    const after = await TestUtils.execQuery(
+      "SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    expect(after.rows[0]).to.deep.equal(before.rows[0]);
+    expect(await pauseAudits(fixture.workspaceId)).to.have.length(
+      auditsBefore.length,
+    );
+  });
+
   it("rejects internal worker credentials from reading or changing settings", async function () {
     // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
     // test environment, so the internal-worker-credential path this test
@@ -667,6 +708,46 @@ describe("CertOps workspace kill-switch API", function () {
         certOpsActive: CERTOPS_ENABLED && !certOpsPaused,
       });
     }
+  });
+
+  it("updates the pause and approval-policy fields together in one request", async () => {
+    const before = await TestUtils.execQuery(
+      "SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    const nextPaused = !before.rows[0].certops_paused;
+    const nextRequireApproval = !before.rows[0].certops_require_approval_always;
+
+    const response = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({
+        certOpsPaused: nextPaused,
+        certOpsRequireApprovalAlways: nextRequireApproval,
+      })
+      .expect(200);
+    expect(response.body).to.deep.include({
+      certOpsPaused: nextPaused,
+      certOpsRequireApprovalAlways: nextRequireApproval,
+      changed: true,
+    });
+
+    const after = await TestUtils.execQuery(
+      "SELECT certops_paused, certops_require_approval_always FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    expect(after.rows[0].certops_paused).to.equal(nextPaused);
+    expect(after.rows[0].certops_require_approval_always).to.equal(nextRequireApproval);
+
+    // Restore so later tests see the original values.
+    await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({
+        certOpsPaused: before.rows[0].certops_paused,
+        certOpsRequireApprovalAlways: before.rows[0].certops_require_approval_always,
+      })
+      .expect(200);
   });
 
   it("rejects private key material on settings before role checks even with rollout disabled", async () => {
