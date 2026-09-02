@@ -161,19 +161,10 @@ function NtpBadge({ ntpSynced }) {
 }
 
 /**
- * Execution capability chip: whether this agent declared ANY executable
- * action (renew/deploy/reload/distribute-trust/revoke-trust) the last time
- * it successfully claimed a job. supportedOperations is only ever written
- * from that claim call (see agentRegistry.js's agentMetadataFromRow), so an
- * empty list is genuinely ambiguous between "this agent is running
- * observe-only (no execution block, or execution.enabled is not true, in
- * its config.json)" and "this agent is healthy but has not had its first
- * poll cycle yet" - the title makes that caveat explicit rather than
- * asserting a diagnosis this one field cannot prove on its own. Before this
- * chip existed, there was no indication anywhere in the fleet table that an
- * agent could never claim a job - operators only discovered it once a job
- * sat at Pending with no explanation (see the pendingReason surfaced on
- * trust installation rows for the other half of that fix).
+ * Execution capability chip: whether this agent declared any executable
+ * action the last time it successfully claimed a job. Empty is ambiguous
+ * between "observe-only" and "hasn't polled yet" - the title makes that
+ * caveat explicit rather than asserting a diagnosis this field can't prove.
  */
 function ExecutionCapabilityBadge({ supportedOperations }) {
   const declared = Array.isArray(supportedOperations) ? supportedOperations : [];

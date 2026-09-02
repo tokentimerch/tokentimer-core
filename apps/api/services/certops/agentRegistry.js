@@ -111,15 +111,9 @@ function certopsCapabilityFreshnessMs(env = process.env) {
 // The workspace admin surface must never see credential_prefix or
 // credential_hash; only these columns leave the service layer.
 //
-// supported_operations/declared_capabilities/capabilities_updated_at and the
-// declared routing arrays are included so the dashboard can show *why* an
-// agent is (or isn't) eligible for a given job, instead of an agent's
-// observe-only/capability-missing state being invisible until a job it was
-// pinned to sits at "pending" forever with no explanation (the gap that
-// motivated adding these fields here). They mirror exactly what
-// agentDispatch.js's real claim-time check reads, so the dashboard's view of
-// "can this agent do X" can never diverge from what dispatch actually
-// enforces.
+// The capability columns below mirror what agentDispatch.js reads at claim
+// time, so the dashboard can explain *why* an agent is or isn't eligible
+// for a job instead of leaving it stuck at "pending" with no reason.
 const AGENT_SAFE_SELECT_FIELDS = `
   id,
   workspace_id,
@@ -149,11 +143,8 @@ const AGENT_SAFE_SELECT_FIELDS = `
 `;
 
 /**
- * jsonb columns arrive from node-postgres already parsed into JS values, so
- * this only needs to guard against a legacy NULL/non-array shape - no
- * JSON.parse needed. Mirrors agentDispatch.js's own jsonbTextArray; kept as
- * a separate copy rather than a shared import to avoid adding a new
- * cross-module dependency for a three-line helper.
+ * jsonb columns arrive already parsed, so this just guards against a
+ * legacy NULL/non-array shape. Mirrors agentDispatch.js's own helper.
  */
 function jsonbTextArray(value) {
   if (!Array.isArray(value)) return [];
@@ -415,19 +406,11 @@ function agentMetadataFromRow(row, env = process.env) {
     // DEFAULT TRUE backfilled every pre-existing row at migration time).
     downtimeAlertsEnabled: Boolean(row.downtime_alerts_enabled ?? true),
     contactGroupId: row.contact_group_id ?? null,
-    // supportedOperations is only ever written from the wire-declared
-    // supportedActions on a successful claim call (agentDispatch.js); an
-    // observe-only agent never calls claim at all, so a freshly registered
-    // observe-only agent correctly reads [] here. An agent that WAS
-    // execution-enabled, successfully claimed at least once, and was then
-    // reconfigured to observe-only without another claim call will still
-    // read its last-claimed set until its next claim attempt - the same
-    // staleness trade-off ADR-0012 decision 17 already accepts for
-    // declaredCapabilities, not something new introduced by exposing this
-    // field here. Still the single most useful signal available: it is the
-    // exact field evaluateAgentJobEligibility's operation_unsupported check
-    // reads for real dispatch, so this can never disagree with what
-    // actually happens when a job is claimed.
+    // supportedOperations only updates on a successful claim call, so an
+    // observe-only agent and a brand-new agent that hasn't polled yet look
+    // identical here. Same staleness trade-off ADR-0012 decision 17 accepts
+    // for declaredCapabilities. Still the most useful signal available:
+    // it's the exact field dispatch checks for real eligibility.
     supportedOperations: jsonbTextArray(row.supported_operations),
     declaredCapabilities: jsonbTextArray(row.declared_capabilities),
     capabilitiesUpdatedAt: dateToIso(row.capabilities_updated_at),
@@ -516,12 +499,9 @@ async function getAgentById(options) {
 }
 
 /**
- * Batch-resolves agents by their internal UUID primary key (certops_agents.id),
- * not the human-readable agent_id string - the identity trustAnchors.js's
- * certops_trust_anchor_installations rows are actually keyed on (agent_id
- * FK). Sibling of getAgentsByAgentIdStrings just below, which serves the
- * string-keyed callers; kept separate rather than a single dual-mode
- * function so neither caller has to reason about which key shape it holds.
+ * Batch-resolves agents by internal UUID (certops_agents.id), the key
+ * trustAnchors.js's installation rows use. Sibling of
+ * getAgentsByAgentIdStrings below, which serves string-keyed callers.
  *
  * @param {{ workspaceId: string, ids: string[], client?: object, env?: NodeJS.ProcessEnv }} options
  * @returns {Promise<Map<string, object>>} internal id (string) -> agentMetadataFromRow shape

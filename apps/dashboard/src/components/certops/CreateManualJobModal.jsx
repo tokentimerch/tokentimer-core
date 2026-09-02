@@ -220,18 +220,10 @@ function agentSelectLabel(agent) {
 }
 
 /**
- * True when `agent` did not declare `operation` in supportedOperations the
- * last time it successfully claimed a job. This is a real, useful signal
- * (it is the exact field the server's own dispatch-time eligibility check
- * reads - see agentJobEligibility.js's operation_unsupported), but it is
- * NOT proof the agent is misconfigured: supported_operations is only ever
- * written from a successful claim call, so a brand-new agent that has
- * simply not polled yet reads the same as one running permanently
- * observe-only (no execution block in its config.json). Callers must show
- * this as a caveated warning, never as a hard block on selecting the
- * agent - see this file's server-side counterpart
- * (assertTargetAgentEligibleForTrustJob in trustAnchors.js) for why the
- * same ambiguity keeps this out of any hard validation there too.
+ * True when `agent` didn't declare `operation` on its last successful
+ * claim. Not proof of misconfiguration - a brand-new agent that hasn't
+ * polled yet reads the same as a permanently observe-only one. Callers
+ * must show this as an advisory warning, never a hard block.
  */
 function agentMissingDeclaredCapability(agent, operation) {
   if (!agent) return false;
@@ -391,9 +383,8 @@ export default function CreateManualJobModal({
   // claim anything, so pinning to one would silently strand the job.
   const assignableAgents = agents.filter(agent => agent.status !== 'retired');
 
-  // Advisory-only capability warning for the currently selected
-  // distribute-trust target - see agentMissingDeclaredCapability's own
-  // header comment for why this can never be a hard block here.
+  // Advisory-only capability warning; never a hard block (see
+  // agentMissingDeclaredCapability).
   const selectedTrustAgent = assignableAgents.find(
     agent => agent.id === trustAgentId
   );

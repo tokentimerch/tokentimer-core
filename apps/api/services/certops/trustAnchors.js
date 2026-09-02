@@ -50,16 +50,10 @@ const CERTOPS_TRUST_JOB_OPERATION_INVALID =
   "CERTOPS_TRUST_JOB_OPERATION_INVALID";
 const CERTOPS_TRUST_INSTALLATION_NOT_FOUND =
   "CERTOPS_TRUST_INSTALLATION_NOT_FOUND";
-// A trust job is always pinned to one specific agent (never openly
-// claimable), so unlike a renewal/deploy job left for "any eligible agent",
-// there is no fallback claimant if the pinned agent can never claim it. A
-// job created against a currently-ineligible agent (most commonly: observe-
-// only, i.e. no execution block / execution.enabled: false) would previously
-// sit at pending_install/pending_remove forever with no error anywhere - the
-// UI showed nothing beyond a bare "Pending" badge. Rejecting the request up
-// front, with the same reason evaluateAgentJobEligibility would use to
-// refuse the claim anyway, turns a silent stuck job into an actionable error
-// at the moment a human could still do something about it.
+// A trust job is pinned to one specific agent, with no fallback claimant
+// if that agent can never claim it (unlike an open renewal/deploy job).
+// Previously an ineligible agent (most commonly observe-only) left the job
+// stuck pending forever with no error. This rejects it up front instead.
 const CERTOPS_TARGET_AGENT_INELIGIBLE = "CERTOPS_TARGET_AGENT_INELIGIBLE";
 
 // anchor_type determines which OS store (Root/CA) a fingerprint's
@@ -271,18 +265,13 @@ async function assertTargetAgentRegistered({ client, workspaceId, agentId }) {
   return agent;
 }
 
-// Operator-actionable text for each determinate evaluateAgentJobEligibility
-// reason a trust job creation request can hit. Kept separate from the
-// dispatch-time reasons in agentJobEligibility.js, which are terse wire
-// codes rather than sentences meant for a human reading an API error - the
-// two must always stay in the same taxonomy (see the reason keys used
-// below), but this file owns the prose.
+// Operator-facing prose for each evaluateAgentJobEligibility reason a trust
+// job creation request can hit. This file owns the prose; agentJobEligibility.js
+// keeps terse wire codes.
 //
-// Only agent_retired and compatibility_blocked are enforced as hard
-// creation-time blocks (see BLOCKING_TRUST_JOB_CREATION_REASONS below); the
-// other entries here exist so the SAME prose can be reused for advisory
-// (non-blocking) display elsewhere, e.g. explaining an already-stuck
-// pending_install/pending_remove installation row.
+// Only agent_retired and compatibility_blocked are hard creation-time blocks
+// (see BLOCKING_TRUST_JOB_CREATION_REASONS). The rest exist so the same
+// prose can be reused advisory-only, e.g. for a stuck pending installation.
 const TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON = Object.freeze({
   agent_retired:
     "This agent has been retired and can no longer be assigned any job.",
@@ -304,26 +293,21 @@ const TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON = Object.freeze({
 });
 
 // Only agent_retired/compatibility_blocked are safe to hard-block at
-// creation time: both require an operator action to change and can't
-// self-heal. operation_unsupported is excluded because supported_operations
-// only updates on a successful claim, so a brand-new healthy agent reads
-// identically to a genuinely observe-only one until its first poll - see
-// the pending-installation reason (E) for its non-blocking surfacing instead.
+// creation time; both require operator action and can't self-heal.
+// operation_unsupported is excluded because a brand-new agent that hasn't
+// polled yet looks identical to a genuinely observe-only one - see the
+// pending-installation reason for its non-blocking surfacing instead.
 const BLOCKING_TRUST_JOB_CREATION_REASONS = new Set([
   "agent_retired",
   "compatibility_blocked",
 ]);
 
 /**
- * Refuses to create a trust job pinned to an agent that is CURRENTLY,
- * unambiguously incapable of ever claiming it - the same authoritative
- * predicate real dispatch uses (evaluateAgentJobEligibility), called one
- * step earlier so the caller gets an immediate, actionable error for the
- * handful of reasons that are safe to act on before a claim is ever
- * attempted. See BLOCKING_TRUST_JOB_CREATION_REASONS for exactly which
- * reasons that is and why the rest are intentionally excluded. Deliberately
- * does not check liveness/offline state either (an agent that is merely
- * offline right now may come back and claim the job normally).
+ * Refuses to create a trust job pinned to an agent that is currently,
+ * unambiguously incapable of ever claiming it, using the same predicate
+ * real dispatch uses. Only blocks reasons in
+ * BLOCKING_TRUST_JOB_CREATION_REASONS; deliberately ignores liveness (an
+ * agent merely offline right now may come back and claim the job normally).
  */
 function assertTargetAgentEligibleForTrustJob({ agent, operation }) {
   const evaluation = evaluateAgentJobEligibility({
@@ -771,18 +755,11 @@ const LIVE_PENDING_TRANSITION_STATES = new Set(["pending_install", "pending_remo
 
 /**
  * Advisory (never blocking) explanation for a pending_install/pending_remove
- * row that has not yet recorded a last_error: before this, such a row
- * rendered as a bare "Pending" badge with zero information about whether it
- * is progressing normally (the agent just hasn't polled yet) or stuck for a
- * knowable reason (retired, incompatible, or - the case that motivated this
- * - the assigned agent's last claim declared no support for this
- * operation, most commonly because it is running observe-only). Reuses
- * TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON so this can never say something
- * different from what assertTargetAgentEligibleForTrustJob would have
- * blocked creation on, had the same state existed at creation time.
- * Returns null for a row with no knowable reason (agent looks eligible, or
- * the agent record itself is missing/malformed) - callers must keep
- * treating null as "no additional information", not "definitely fine".
+ * row with no last_error. Before this, such a row was just a bare "Pending"
+ * badge with no indication of whether it's progressing normally or stuck.
+ * Reuses TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON so this can't disagree with
+ * what creation-time blocking would have said. Returns null when there's no
+ * knowable reason - callers must treat null as "no info", not "fine".
  */
 function pendingReasonForInstallation(installation, agent) {
   if (!LIVE_PENDING_TRANSITION_STATES.has(installation.transitionState)) return null;
@@ -812,9 +789,8 @@ function pendingReasonForInstallation(installation, agent) {
 }
 
 /**
- * Batch-attaches pendingReason (see pendingReasonForInstallation) to every
- * row in one round-trip: one getAgentsByIds call for the whole page/anchor
- * rather than one agent lookup per installation row.
+ * Batch-attaches pendingReason to every row in one round-trip, rather than
+ * one agent lookup per installation row.
  */
 async function attachPendingReasons({ db, workspaceId, installations }) {
   const candidateIds = installations
@@ -1330,10 +1306,8 @@ async function runCreateTrustJob(client, params) {
     agentId,
   });
 
-  // Refuse up front rather than letting a job get created that can never be
-  // claimed - see assertTargetAgentEligibleForTrustJob's own header comment
-  // for why this matters specifically for pinned trust jobs (no fallback
-  // claimant exists the way there is for an open renewal/deploy job).
+  // Refuse up front rather than create a job that can never be claimed -
+  // trust jobs are pinned with no fallback claimant.
   assertTargetAgentEligibleForTrustJob({ agent: targetAgent, operation });
 
   const { row: installationRow, created: installationCreated } =

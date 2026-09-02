@@ -630,13 +630,8 @@ function handleCertOpsError(res, err) {
       code: CERTOPS_TARGET_AGENT_NOT_FOUND,
     });
   }
-  // Refuses to pin a trust job to an agent that is currently, definitely
-  // incapable of ever claiming it (observe-only, retired, or compatibility-
-  // blocked) - see assertTargetAgentEligibleForTrustJob's header comment.
-  // 409 rather than 400: the request is well-formed, but the current state
-  // of the named resource (this agent) conflicts with performing the
-  // action, matching this codebase's existing convention for that shape of
-  // error (e.g. CERTOPS_TRUST_ANCHOR_NOT_ACTIVE below).
+  // 409: the agent can never claim this job (retired or version-blocked),
+  // same convention as CERTOPS_TRUST_ANCHOR_NOT_ACTIVE below.
   if (err?.code === CERTOPS_TARGET_AGENT_INELIGIBLE) {
     return res.status(409).json({
       error: err.message || "Target agent cannot currently claim this job",
