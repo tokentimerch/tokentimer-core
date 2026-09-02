@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -94,7 +100,9 @@ async function createTokenAndAcknowledge() {
     screen.getByRole('button', { name: 'Create bootstrap token' })
   );
   await screen.findByText(/shown only once and registers exactly one agent/);
-  fireEvent.click(screen.getByRole('button', { name: 'I have saved this token' }));
+  fireEvent.click(
+    screen.getByRole('button', { name: 'I have saved this token' })
+  );
 }
 
 describe('DeployAgentModal', () => {
@@ -199,7 +207,9 @@ describe('DeployAgentModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'I have saved this token' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I have saved this token' })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -302,7 +312,9 @@ describe('DeployAgentModal', () => {
     );
     await screen.findByText(/is now connected/);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Deploy another agent' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Deploy another agent' })
+    );
 
     expect(screen.queryByText(/is now connected/)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^Name/)).toHaveValue('');
@@ -493,20 +505,31 @@ describe('DeployAgentModal', () => {
     it('keeps the hint hidden before the missed-cycle threshold', async () => {
       await beginWaitingWithNoFreshAgent();
 
-      await advanceOnePollTick();
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD - 1; i++) {
+        await advanceOnePollTick();
+      }
 
       expect(screen.getByText(/Checking every 10s/)).toBeInTheDocument();
       expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
     });
 
-    it('shows the hint once the missed-cycle threshold is reached, naming the likely causes and the Linux log commands', async () => {
+    it('shows the hint after the threshold is reached, at the actual ~30s elapsed rather than one cycle early', async () => {
       await beginWaitingWithNoFreshAgent();
 
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      // The immediate tick fires at t=0 and must not count; only the
+      // MISSED_CYCLES_WARNING_THRESHOLD real interval ticks below should.
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD - 1; i++) {
         await advanceOnePollTick();
+        expect(
+          screen.queryByText(/Still waiting after/)
+        ).not.toBeInTheDocument();
       }
+      await advanceOnePollTick();
 
       const warning = screen.getByText(/Still waiting after/);
+      expect(warning.textContent).toContain(
+        `Still waiting after ${(MISSED_CYCLES_WARNING_THRESHOLD * WAIT_POLL_INTERVAL_MS) / 1000}s`
+      );
       expect(warning.textContent).toContain('--api-url');
       expect(warning.textContent).toContain('bootstrap token has expired');
       expect(warning.textContent).toContain('--ca-bundle');
@@ -516,6 +539,38 @@ describe('DeployAgentModal', () => {
       expect(warning.textContent).toContain(
         'journalctl -u tokentimer-agent -f'
       );
+    });
+
+    it('escalates on repeated poll failures too, not just repeated empty results', async () => {
+      useCertOpsCanManageMock.mockReturnValue(true);
+      createBootstrapTokenMock.mockResolvedValue({
+        token: { id: 'bt-1', name: 'dc1-edge' },
+        plaintextToken: 'ttboot_secret_value',
+      });
+      listAgentsMock.mockResolvedValue(agentListResponse([]));
+
+      renderModal();
+      await createTokenAndAcknowledge();
+
+      vi.useFakeTimers();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // A persistently broken API path (the exact case this hint exists to
+      // catch) must still escalate, not spin silently forever.
+      listAgentsMock.mockRejectedValue(new Error('network error'));
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+
+      expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
+      expect(screen.getByText(/Checking every 10s/)).toBeInTheDocument();
     });
 
     it('shows the Windows log command instead when targetOs is windows', async () => {
@@ -539,12 +594,15 @@ describe('DeployAgentModal', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
         await advanceOnePollTick();
       }
 
       const warning = screen.getByText(/Still waiting after/);
       expect(warning.textContent).toContain('Get-Service TokenTimerAgent');
+      expect(warning.textContent).toContain(
+        'Get-Content "C:\\ProgramData\\TokenTimerAgent\\state\\host.log" -Wait -Tail 20'
+      );
       expect(warning.textContent).not.toContain('systemctl');
     });
 
@@ -568,7 +626,7 @@ describe('DeployAgentModal', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
         await advanceOnePollTick();
       }
       expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
@@ -634,7 +692,7 @@ describe('DeployAgentModal', () => {
 
     it('resets the missed-cycle count when stopping and restarting the wait', async () => {
       await beginWaitingWithNoFreshAgent();
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
         await advanceOnePollTick();
       }
       expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
@@ -651,7 +709,7 @@ describe('DeployAgentModal', () => {
 
       expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
 
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
         await advanceOnePollTick();
       }
       expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
@@ -659,7 +717,7 @@ describe('DeployAgentModal', () => {
 
     it('keeps the spinner and "Stop waiting" button visible alongside the hint', async () => {
       await beginWaitingWithNoFreshAgent();
-      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+      for (let i = 0; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
         await advanceOnePollTick();
       }
 

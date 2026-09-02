@@ -250,7 +250,8 @@ export default function DeployAgentModal({
     let cancelled = false;
     const requestWorkspaceId = workspaceId;
 
-    const poll = async () => {
+    const poll = async isFirstTick => {
+      let fresh = null;
       try {
         const data = await listAgents(requestWorkspaceId);
         if (cancelled) return;
@@ -261,7 +262,7 @@ export default function DeployAgentModal({
           knownAgentIdsRef.current = new Set(items.map(agent => agent.id));
           return;
         }
-        const fresh = items.find(agent => {
+        fresh = items.find(agent => {
           if (agent.status === 'retired') return false;
           if (baselineIds !== null && !baselineIds.has(agent.id)) return true;
           if (tokenCreatedAtMs !== null) {
@@ -282,16 +283,23 @@ export default function DeployAgentModal({
           setWaitState('registered');
           showSuccess('Agent registered');
           if (typeof onAgentRegistered === 'function') onAgentRegistered();
-        } else {
-          setMissedCycles(count => count + 1);
         }
       } catch (_) {
-        // Transient poll failures are silent; the next tick retries.
+        // A failed poll is itself "still not resolved this cycle" for the
+        // missed-cycle count below - a persistently broken API path must
+        // still escalate, not spin silently forever.
+      }
+      // The immediate tick fires at t=0, before any real interval has
+      // elapsed, so it must not count toward the elapsed-time hint below or
+      // the displayed "Xs" text would overstate actual wait time by one
+      // full WAIT_POLL_INTERVAL_MS.
+      if (!isFirstTick && !fresh && !cancelled) {
+        setMissedCycles(count => count + 1);
       }
     };
 
-    poll();
-    const timer = setInterval(poll, WAIT_POLL_INTERVAL_MS);
+    poll(true);
+    const timer = setInterval(() => poll(false), WAIT_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -656,7 +664,7 @@ export default function DeployAgentModal({
                       the target host:
                       <Code fontSize='xs' display='block' mt={1}>
                         {targetOs === 'windows'
-                          ? 'Get-Service TokenTimerAgent'
+                          ? 'Get-Service TokenTimerAgent; Get-Content "C:\\ProgramData\\TokenTimerAgent\\state\\host.log" -Wait -Tail 20'
                           : 'systemctl status tokentimer-agent && journalctl -u tokentimer-agent -f'}
                       </Code>
                     </AlertDescription>
