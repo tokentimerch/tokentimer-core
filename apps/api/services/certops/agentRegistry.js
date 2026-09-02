@@ -425,6 +425,16 @@ function agentMetadataFromRow(row, env = process.env) {
     clockDriftState: compatibility.clockDriftState,
     clockDriftMs: compatibility.clockDriftMs,
     livenessState: compatibility.livenessState,
+    // Narrow projection of compatibilityConfig: only the version/protocol
+    // range an operator needs to see next to compatibilityState. The other
+    // config fields (drift thresholds, latest-known version, offline
+    // threshold) are irrelevant here and already surfaced elsewhere.
+    compatibilityRange: {
+      minAgentVersion: compatibility.compatibilityConfig.minAgentVersion,
+      maxAgentVersion: compatibility.compatibilityConfig.maxAgentVersion,
+      minProtocolVersion: compatibility.compatibilityConfig.minProtocolVersion,
+      maxProtocolVersion: compatibility.compatibilityConfig.maxProtocolVersion,
+    },
   };
 }
 
