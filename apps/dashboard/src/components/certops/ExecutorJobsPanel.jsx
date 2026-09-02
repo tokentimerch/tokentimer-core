@@ -318,28 +318,30 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                   ) : null}
                   <VStack align='flex-start' spacing={0} flexShrink={0}>
                     <JobStatusBadge status={job.status} />
-                    {job.errorMessage ? (
-                      <Text
-                        fontSize='xs'
-                        color='red.500'
-                        noOfLines={2}
-                        maxW='280px'
-                        title={job.errorMessage}
-                      >
-                        {job.errorMessage}
-                      </Text>
-                    ) : job.needsOperatorReconciliation ? (
-                      <Text
-                        fontSize='xs'
-                        color='orange.600'
-                        noOfLines={2}
-                        maxW='280px'
-                        title={reconciliationAdvisoryText(
-                          job.reconciliationReason
-                        )}
-                      >
-                        {reconciliationAdvisoryText(job.reconciliationReason)}
-                      </Text>
+                    {job.needsOperatorReconciliation ? (
+                      job.errorMessage ? (
+                        <Text
+                          fontSize='xs'
+                          color='red.500'
+                          noOfLines={2}
+                          maxW='280px'
+                          title={job.errorMessage}
+                        >
+                          {job.errorMessage}
+                        </Text>
+                      ) : (
+                        <Text
+                          fontSize='xs'
+                          color='orange.600'
+                          noOfLines={2}
+                          maxW='280px'
+                          title={reconciliationAdvisoryText(
+                            job.reconciliationReason
+                          )}
+                        >
+                          {reconciliationAdvisoryText(job.reconciliationReason)}
+                        </Text>
+                      )
                     ) : null}
                   </VStack>
                   <Text

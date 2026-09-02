@@ -843,4 +843,27 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
       screen.queryByText(/could not be confirmed and need manual review/)
     ).not.toBeInTheDocument();
   });
+
+  it('does not show errorMessage for a failed job that does not need reconciliation', () => {
+    // Regression guard: errorMessage is common on ordinary failed/rejected
+    // jobs too. The advisory VStack must stay scoped to jobs actually
+    // flagged needsOperatorReconciliation, not to "has an errorMessage".
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'failed',
+            needsOperatorReconciliation: false,
+            errorMessage: 'Deploy target rejected the certificate',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(
+      screen.queryByText('Deploy target rejected the certificate')
+    ).not.toBeInTheDocument();
+  });
 });
