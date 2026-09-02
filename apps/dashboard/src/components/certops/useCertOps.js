@@ -10,6 +10,7 @@ import {
   loadCertOpsInventoryIndex,
   probeCertOpsEnabled,
   updateWorkspaceCertOpsPauseState,
+  updateWorkspaceCertOpsRequireApprovalAlways,
 } from './certopsApi';
 import { pickPrimaryCertificate } from './certopsFormat';
 
@@ -236,13 +237,15 @@ export function useCertOpsIsWorkspaceAdmin() {
 }
 
 /**
- * Loads and manages the workspace CertOps kill-switch state.
+ * Loads and manages the workspace CertOps kill-switch and approval-policy
+ * state.
  *
  * Reads GET /certops/settings (available to any human session member, even
  * while the deployment-wide certops.enabled rollout is off) and exposes a
- * `setPaused` action mapped to PUT /certops/settings (admin-only
- * server-side). `certOpsActive` mirrors the server's composed
- * `certOpsEnabled && !certOpsPaused` so callers do not need to re-derive it.
+ * `setPaused` action and a `setRequireApprovalAlways` action, both mapped to
+ * PUT /certops/settings (admin-only server-side). `certOpsActive` mirrors
+ * the server's composed `certOpsEnabled && !certOpsPaused` so callers do not
+ * need to re-derive it.
  */
 export function useCertOpsWorkspaceKillSwitch() {
   const { workspaceId } = useWorkspace();
@@ -310,7 +313,34 @@ export function useCertOpsWorkspaceKillSwitch() {
     [workspaceId]
   );
 
-  return { ...state, loading, error, saving, setPaused, refresh };
+  const setRequireApprovalAlways = useCallback(
+    async certOpsRequireApprovalAlways => {
+      if (!workspaceId) return null;
+      setSaving(true);
+      try {
+        const data = await updateWorkspaceCertOpsRequireApprovalAlways(
+          workspaceId,
+          { certOpsRequireApprovalAlways }
+        );
+        setState(data);
+        setError('');
+        return data;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [workspaceId]
+  );
+
+  return {
+    ...state,
+    loading,
+    error,
+    saving,
+    setPaused,
+    setRequireApprovalAlways,
+    refresh,
+  };
 }
 
 /**

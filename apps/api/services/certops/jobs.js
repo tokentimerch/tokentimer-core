@@ -1658,9 +1658,19 @@ async function createCertificateJob(options) {
   // services/certops/jobApprovals.approveJob. The flag only chooses the
   // default initial status; an explicit conflicting status is rejected so a
   // caller cannot both request a gate and bypass it.
-  const requiresApproval = options.requiresApproval === true;
+  const perJobRequiresApproval = options.requiresApproval === true;
+  // Workspace-wide override (certops_require_approval_always): callers that
+  // already hold the workspace lock (lockWorkspaceForCertOpsSideEffect) pass
+  // the current column value through here. It wins over whatever the caller
+  // requested, including an explicit status, because it is not a per-job
+  // opt-in the caller can negotiate around. protocol_smoke is exempt by the
+  // same by-construction exclusion as every other approval-flow concept.
+  const workspaceForcesApproval =
+    options.workspaceRequiresApprovalAlways === true &&
+    operation !== "protocol_smoke";
+  const requiresApproval = perJobRequiresApproval || workspaceForcesApproval;
   if (
-    requiresApproval &&
+    perJobRequiresApproval &&
     options.status !== undefined &&
     options.status !== null &&
     options.status !== "pending_approval"
@@ -1671,7 +1681,7 @@ async function createCertificateJob(options) {
     );
   }
   const status = normalizeEnum(
-    options.status,
+    workspaceForcesApproval ? "pending_approval" : options.status,
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",

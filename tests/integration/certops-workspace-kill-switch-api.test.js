@@ -340,6 +340,100 @@ describe("CertOps workspace kill-switch API", function () {
     expect(otherWorkspace.rows[0].certops_paused).to.equal(false);
   });
 
+  it("allows members to read but only admins to change the always-require-approval policy, and audits real transitions", async () => {
+    const getSettings = (session) =>
+      request(BASE)
+        .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+        .set("Cookie", session.cookie);
+
+    for (const session of [fixture.ownerSession, fixture.managerSession, fixture.viewerSession]) {
+      const response = await getSettings(session).expect(200);
+      expect(response.body.certOpsRequireApprovalAlways).to.equal(false);
+    }
+
+    for (const session of [fixture.managerSession, fixture.viewerSession]) {
+      const denied = await request(BASE)
+        .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+        .set("Cookie", session.cookie)
+        .send({ certOpsRequireApprovalAlways: true });
+      expect(denied.status).to.equal(403);
+    }
+
+    const enabled = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({ certOpsRequireApprovalAlways: true })
+      .expect(200);
+    expect(enabled.body).to.deep.include({
+      workspaceId: fixture.workspaceId,
+      certOpsRequireApprovalAlways: true,
+      changed: true,
+    });
+
+    const persisted = await TestUtils.execQuery(
+      "SELECT certops_require_approval_always FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    expect(persisted.rows[0].certops_require_approval_always).to.equal(true);
+
+    const audits = await TestUtils.execQuery(
+      `SELECT action, actor_user_id, subject_user_id, metadata
+         FROM audit_events
+        WHERE workspace_id = $1
+          AND action IN ('CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED', 'CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED')
+        ORDER BY id ASC`,
+      [fixture.workspaceId],
+    );
+    expect(audits.rows).to.have.length(1);
+    expect(audits.rows[0]).to.include({
+      action: "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED",
+      actor_user_id: fixture.ownerUser.id,
+      subject_user_id: fixture.ownerUser.id,
+    });
+    expect(audits.rows[0].metadata).to.deep.include({
+      workspaceId: fixture.workspaceId,
+      previousRequireApprovalAlways: false,
+      certOpsRequireApprovalAlways: true,
+    });
+
+    // A no-op PUT (same value) must not write a second audit row.
+    const sameValue = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({ certOpsRequireApprovalAlways: true })
+      .expect(200);
+    expect(sameValue.body.changed).to.equal(false);
+    const auditsAfterNoop = await TestUtils.execQuery(
+      `SELECT id FROM audit_events
+        WHERE workspace_id = $1
+          AND action IN ('CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED', 'CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED')`,
+      [fixture.workspaceId],
+    );
+    expect(auditsAfterNoop.rows).to.have.length(1);
+
+    const disabled = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({ certOpsRequireApprovalAlways: false })
+      .expect(200);
+    expect(disabled.body).to.deep.include({
+      certOpsRequireApprovalAlways: false,
+      changed: true,
+    });
+
+    const auditsAfterDisable = await TestUtils.execQuery(
+      `SELECT action FROM audit_events
+        WHERE workspace_id = $1
+          AND action IN ('CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED', 'CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED')
+        ORDER BY id ASC`,
+      [fixture.workspaceId],
+    );
+    expect(auditsAfterDisable.rows.map((row) => row.action)).to.deep.equal([
+      "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED",
+      "CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED",
+    ]);
+  });
+
   it("rejects internal worker credentials from reading or changing settings", async function () {
     // skip-reason: no-host - INTERNAL_WORKER_KEY is not configured in this
     // test environment, so the internal-worker-credential path this test

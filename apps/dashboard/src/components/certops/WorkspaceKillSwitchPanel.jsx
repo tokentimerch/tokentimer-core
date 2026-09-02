@@ -14,6 +14,7 @@ import {
   ModalHeader,
   ModalOverlay,
   Spinner,
+  Switch,
   Text,
   Textarea,
   useColorModeValue,
@@ -25,7 +26,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
-import { showSuccess } from '../../utils/toast.js';
+import { showError, showSuccess } from '../../utils/toast.js';
 import {
   useCertOpsIsWorkspaceAdmin,
   useCertOpsWorkspaceKillSwitch,
@@ -169,8 +170,15 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  */
 export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
-  const { certOpsPaused, loading, error, saving, setPaused } =
-    useCertOpsWorkspaceKillSwitch();
+  const {
+    certOpsPaused,
+    certOpsRequireApprovalAlways,
+    loading,
+    error,
+    saving,
+    setPaused,
+    setRequireApprovalAlways,
+  } = useCertOpsWorkspaceKillSwitch();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const muted = useColorModeValue('gray.600', 'gray.400');
@@ -190,6 +198,23 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
         : 'Certificate operations resumed for this workspace'
     );
     setConfirmOpen(false);
+  };
+
+  const handleApprovalPolicyToggle = async event => {
+    const next = event.target.checked;
+    try {
+      await setRequireApprovalAlways(next);
+      showSuccess(
+        next
+          ? 'Every new job in this workspace now requires approval'
+          : 'Jobs in this workspace no longer require approval by default'
+      );
+    } catch (err) {
+      showError(
+        err?.response?.data?.error ||
+          'Could not update the approval policy. Please try again.'
+      );
+    }
   };
 
   const resolved = !loading && !error && certOpsPaused !== undefined;
@@ -223,6 +248,48 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
       onConfirm={handleConfirm}
     />
   );
+
+  // Independent of the pause/resume state above: this policy forces every
+  // new job to pending_approval regardless of the per-job checkbox, so it
+  // is surfaced as its own row rather than folded into the pause banner.
+  const approvalPolicyRow = resolved ? (
+    <HStack
+      spacing={3}
+      align='center'
+      mt={2}
+      px={3}
+      py={1.5}
+      bg={quietBg}
+      borderWidth='1px'
+      borderColor={quietBorder}
+      borderRadius='md'
+    >
+      <Text fontSize='xs' color={muted} flex='1'>
+        Require approval before every new job can run, regardless of the
+        per-job setting.
+      </Text>
+      {isAdmin ? (
+        <Switch
+          size='sm'
+          isChecked={certOpsRequireApprovalAlways === true}
+          isDisabled={saving}
+          onChange={handleApprovalPolicyToggle}
+          aria-label='Require approval for every new job'
+        />
+      ) : (
+        <Badge
+          colorScheme={certOpsRequireApprovalAlways ? 'purple' : 'gray'}
+          variant='subtle'
+          textTransform='none'
+          fontWeight='medium'
+          fontSize='xs'
+          flexShrink={0}
+        >
+          {certOpsRequireApprovalAlways ? 'Always required' : 'Not required'}
+        </Badge>
+      )}
+    </HStack>
+  ) : null;
 
   if (error) {
     return (
@@ -261,41 +328,44 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
           </Box>
           {actionOrNote}
         </Alert>
+        {approvalPolicyRow}
         {confirmModal}
       </Box>
     );
   }
 
   return (
-    <Box
-      mb={3}
-      px={3}
-      py={1.5}
-      bg={quietBg}
-      borderWidth='1px'
-      borderColor={quietBorder}
-      borderRadius='md'
-    >
-      <HStack spacing={3} align='center'>
-        {loading ? <Spinner size='xs' /> : null}
-        {resolved ? (
-          <Badge
-            colorScheme='green'
-            variant='subtle'
-            textTransform='none'
-            fontWeight='medium'
-            fontSize='xs'
-          >
-            Active
-          </Badge>
-        ) : null}
-        <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
-          {resolved
-            ? 'Certificate operations are running for this workspace.'
-            : 'Checking the certificate operations kill switch...'}
-        </Text>
-        {actionOrNote}
-      </HStack>
+    <Box mb={3}>
+      <Box
+        px={3}
+        py={1.5}
+        bg={quietBg}
+        borderWidth='1px'
+        borderColor={quietBorder}
+        borderRadius='md'
+      >
+        <HStack spacing={3} align='center'>
+          {loading ? <Spinner size='xs' /> : null}
+          {resolved ? (
+            <Badge
+              colorScheme='green'
+              variant='subtle'
+              textTransform='none'
+              fontWeight='medium'
+              fontSize='xs'
+            >
+              Active
+            </Badge>
+          ) : null}
+          <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
+            {resolved
+              ? 'Certificate operations are running for this workspace.'
+              : 'Checking the certificate operations kill switch...'}
+          </Text>
+          {actionOrNote}
+        </HStack>
+      </Box>
+      {approvalPolicyRow}
       {confirmModal}
     </Box>
   );

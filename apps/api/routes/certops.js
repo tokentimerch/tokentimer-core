@@ -134,9 +134,11 @@ const {
   CERTOPS_WORKSPACE_PAUSED,
   CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
   CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
   createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
   setWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsRequireApprovalAlways,
 } = require("../services/certops/workspaceKillSwitch");
 const {
   CERTOPS_TRUST_ANCHOR_INVALID,
@@ -762,6 +764,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID) {
+    return res.status(400).json({
+      error: "CertOps workspace approval policy request is invalid",
+      code: err.code,
+    });
+  }
+
   if (err?.code === CERTOPS_WORKSPACE_NOT_FOUND) {
     return res.status(404).json({
       error: "Workspace not found",
@@ -1308,6 +1317,7 @@ function workspacePauseStateResponse(state) {
     certOpsPaused: state.certOpsPaused,
     certOpsEnabled: state.certOpsEnabled,
     certOpsActive: state.certOpsActive,
+    certOpsRequireApprovalAlways: state.certOpsRequireApprovalAlways === true,
     ...(typeof state.changed === "boolean" ? { changed: state.changed } : {}),
   };
 }
@@ -2319,14 +2329,42 @@ router.put(
   authorize("certops.kill_switch.manage"),
   async (req, res) => {
     try {
-      const state = await setWorkspaceCertOpsPauseState({
-        workspaceId: req.workspace.id,
-        certOpsPaused: req.body?.certOpsPaused,
-        reason: req.body?.reason,
-        actorUserId: req.user?.id || null,
-        subjectUserId: req.user?.id || null,
-      });
-      return res.json(workspacePauseStateResponse(state));
+      const hasPauseField = req.body?.certOpsPaused !== undefined;
+      const hasApprovalField =
+        req.body?.certOpsRequireApprovalAlways !== undefined;
+      if (!hasPauseField && !hasApprovalField) {
+        return res.status(400).json({
+          error:
+            "certOpsPaused or certOpsRequireApprovalAlways is required",
+          code: CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+        });
+      }
+
+      let state;
+      let changed = false;
+      if (hasPauseField) {
+        state = await setWorkspaceCertOpsPauseState({
+          workspaceId: req.workspace.id,
+          certOpsPaused: req.body.certOpsPaused,
+          reason: req.body?.reason,
+          actorUserId: req.user?.id || null,
+          subjectUserId: req.user?.id || null,
+        });
+        changed = changed || state.changed === true;
+      }
+      if (hasApprovalField) {
+        // Runs after the pause update (if any) so the response reflects
+        // both writes; each setter independently re-reads the other
+        // column's live value, so ordering can't make the response stale.
+        state = await setWorkspaceCertOpsRequireApprovalAlways({
+          workspaceId: req.workspace.id,
+          requireApprovalAlways: req.body.certOpsRequireApprovalAlways,
+          actorUserId: req.user?.id || null,
+          subjectUserId: req.user?.id || null,
+        });
+        changed = changed || state.changed === true;
+      }
+      return res.json(workspacePauseStateResponse({ ...state, changed }));
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

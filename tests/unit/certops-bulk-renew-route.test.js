@@ -16,7 +16,10 @@ const { NOT_FOUND_RESPONSE } = require(
 const { CERTOPS_DISABLED } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/settings.js"),
 );
-const { CERTOPS_WORKSPACE_PAUSED } = require(
+const {
+  CERTOPS_WORKSPACE_PAUSED,
+  createManualCertificateJob,
+} = require(
   path.resolve(
     __dirname,
     "../../apps/api/services/certops/workspaceKillSwitch.js",
@@ -486,5 +489,179 @@ describe("CertOps bulk-renew route", () => {
       certificateIds: [uuid(1).toUpperCase()],
     });
     assert.deepStrictEqual(mixedCase.certificateIds, [uuid(1)]);
+  });
+});
+
+describe("CertOps bulk-renew route respects the workspace approval policy", () => {
+  function validRenewalProfileSource() {
+    return {
+      schemaVersion: 1,
+      profileId: "profile-1",
+      profileName: "web-tls",
+      sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+      keyRotationPolicy: { rotateOnRenew: true },
+      preferredChain: null,
+      ca: {
+        endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+        accountRef: null,
+        eabRef: null,
+      },
+      acme: { kind: "certbot", commandRef: "acme-renew-default" },
+      dns: { provider: "cloudflare", zone: "example.com" },
+      deploymentTargets: [
+        {
+          type: "endpoint",
+          reference: "host/web",
+          certPath: "/etc/ssl/certs/app.pem",
+          reloadService: "nginx",
+        },
+      ],
+      target: {
+        type: "endpoint",
+        reference: "host/web",
+        certPath: "/etc/ssl/certs/app.pem",
+      },
+      verification: { host: "app.example.com", port: 443, requireMatch: true },
+    };
+  }
+
+  function createBulkRenewTransactionalPool({
+    certOpsRequireApprovalAlways = false,
+    certificate,
+  }) {
+    const jobs = [];
+    let nextJob = 1;
+    const client = {
+      async query(sql, params = []) {
+        const normalized = String(sql).replace(/\s+/g, " ").trim();
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) {
+          return { rows: [] };
+        }
+        if (
+          normalized.startsWith(
+            "SELECT id, certops_paused, certops_require_approval_always FROM workspaces",
+          )
+        ) {
+          return {
+            rows: [
+              {
+                id: "workspace-1",
+                certops_paused: false,
+                certops_require_approval_always: certOpsRequireApprovalAlways,
+              },
+            ],
+          };
+        }
+        if (normalized.includes("FROM managed_certificates")) {
+          const [workspaceId, id] = params;
+          const row =
+            certificate &&
+            certificate.workspace_id === workspaceId &&
+            certificate.id === id
+              ? certificate
+              : null;
+          return { rows: row ? [row] : [] };
+        }
+        if (normalized.includes("pg_advisory_xact_lock")) {
+          return { rows: [{ pg_advisory_xact_lock: "" }] };
+        }
+        if (
+          normalized.includes("FROM certificate_jobs") &&
+          normalized.includes("operation = ANY($3::text[])") &&
+          normalized.includes("FOR UPDATE")
+        ) {
+          return { rows: [] };
+        }
+        if (normalized.includes("idempotency_key = $2")) {
+          return { rows: [] };
+        }
+        if (normalized.includes("INSERT INTO certificate_jobs")) {
+          const createdAt = new Date(Date.UTC(2026, 5, 30, 0, 0, 0));
+          const row = {
+            id: `job-${nextJob++}`,
+            workspace_id: params[0],
+            operation: params[1],
+            status: params[2],
+            mode: params[3],
+            source: params[4],
+            executor_kind: params[5],
+            requested_by_user_id: params[6],
+            requested_by_api_token_id: params[7],
+            idempotency_key: params[8],
+            subject_type: params[9],
+            subject_id: params[10],
+            payload: JSON.parse(params[11]),
+            result_metadata: JSON.parse(params[12]),
+            error_code: params[13],
+            error_message: params[14],
+            assigned_agent_id: params[15],
+            required_target_selector: params[16],
+            required_dns_provider: params[17],
+            required_command_profile: params[18],
+            created_at: createdAt,
+            updated_at: createdAt,
+            queued_at: params[19],
+            started_at: params[20],
+            completed_at: params[21],
+            canceled_at: params[22],
+            creation_request_hash: params[23],
+          };
+          jobs.push(row);
+          return { rows: [row] };
+        }
+        if (normalized.includes("INSERT INTO audit_events")) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query: ${normalized}`);
+      },
+      release() {},
+    };
+
+    return {
+      jobs,
+      async connect() {
+        return client;
+      },
+    };
+  }
+
+  it("creates the renew job at pending_approval even though the request did not ask for approval", async () => {
+    const certificate = {
+      id: uuid(1),
+      workspace_id: "workspace-1",
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      not_after: new Date("2026-08-01T00:00:00.000Z"),
+      key_mode: "agent-local",
+      profile_id: "profile-1",
+      profile_name: "web-tls",
+      profile_key_mode: "agent-local",
+      profile_public_metadata: { renewalProfile: validRenewalProfileSource() },
+    };
+    const pool = createBulkRenewTransactionalPool({
+      certOpsRequireApprovalAlways: true,
+      certificate,
+    });
+    const handler = bulkRenewCertificatesHandler({
+      manualJobCreator: (options) =>
+        createManualCertificateJob({
+          ...options,
+          dbPool: pool,
+          certOpsEnabledResolver: async () => true,
+        }),
+      certificateLoader: async () => certificate,
+    });
+
+    const res = responseRecorder();
+    await handler(
+      makeRequest({ certificateIds: [uuid(1)], requiresApproval: false }),
+      res,
+    );
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.summary.succeeded, 1);
+    assert.strictEqual(pool.jobs[0].status, "pending_approval");
   });
 });
