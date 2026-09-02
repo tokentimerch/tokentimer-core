@@ -344,7 +344,7 @@ describe("renewalPathHealth: resolveRequiredExecutors", () => {
     assert.equal(agents.length, 0);
   });
 
-  it("pinned agent that has never declared any supported operation (fresh/never-polled agent): pinnedAgentIneligibleReason 'operation_unsupported'", () => {
+  it("pinned agent that has never declared any supported operation (fresh/never-polled agent): pinnedAgentIneligibleReason 'operation_unsupported', no declared operations", () => {
     const agentIndex = buildAgentIndex([
       onlineAgentRow({ id: "agent-a", supportedOperations: [] }),
     ]);
@@ -353,23 +353,65 @@ describe("renewalPathHealth: resolveRequiredExecutors", () => {
       executorKind: "agent",
       requiredTargetSelector: "host/web",
     };
-    const { pinned, pinnedAgentIneligibleReason, agents } =
-      resolveRequiredExecutors({
-        certificateRow: certRow({
-          source: "agent_filesystem",
-          deployed_agent_id: null,
-          discovery_agent_id: "agent-a",
-        }),
-        profileMetadata: {
-          renewalProfile: { target: { reference: "host/web" } },
-        },
-        agentIndex,
-        offlineAfterMs: OFFLINE_AFTER_MS,
-        now: NOW,
-        jobRequirements,
-      });
+    const {
+      pinned,
+      pinnedAgentIneligibleReason,
+      pinnedAgentDeclaredOperations,
+      agents,
+    } = resolveRequiredExecutors({
+      certificateRow: certRow({
+        source: "agent_filesystem",
+        deployed_agent_id: null,
+        discovery_agent_id: "agent-a",
+      }),
+      profileMetadata: {
+        renewalProfile: { target: { reference: "host/web" } },
+      },
+      agentIndex,
+      offlineAfterMs: OFFLINE_AFTER_MS,
+      now: NOW,
+      jobRequirements,
+    });
     assert.equal(pinned, true);
     assert.equal(pinnedAgentIneligibleReason, "operation_unsupported");
+    assert.deepEqual(pinnedAgentDeclaredOperations, []);
+    assert.equal(agents.length, 0);
+  });
+
+  it("pinned agent that declared other operations but not renew (partial capability, not never-polled): pinnedAgentDeclaredOperations names what it DID declare", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({
+        id: "agent-a",
+        supportedOperations: ["issue", "deploy"],
+      }),
+    ]);
+    const jobRequirements = {
+      operation: "renew",
+      executorKind: "agent",
+      requiredTargetSelector: "host/web",
+    };
+    const {
+      pinned,
+      pinnedAgentIneligibleReason,
+      pinnedAgentDeclaredOperations,
+      agents,
+    } = resolveRequiredExecutors({
+      certificateRow: certRow({
+        source: "agent_filesystem",
+        deployed_agent_id: null,
+        discovery_agent_id: "agent-a",
+      }),
+      profileMetadata: {
+        renewalProfile: { target: { reference: "host/web" } },
+      },
+      agentIndex,
+      offlineAfterMs: OFFLINE_AFTER_MS,
+      now: NOW,
+      jobRequirements,
+    });
+    assert.equal(pinned, true);
+    assert.equal(pinnedAgentIneligibleReason, "operation_unsupported");
+    assert.deepEqual(pinnedAgentDeclaredOperations, ["issue", "deploy"]);
     assert.equal(agents.length, 0);
   });
 });
@@ -462,6 +504,24 @@ describe("renewalPathHealth: classifyExecutors", () => {
       result.renewalPathSummary,
       TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.operation_unsupported,
     );
+  });
+
+  it("pinnedAgentIneligibleReason 'operation_unsupported' WITH declared operations -> distinct partial-capability summary, not the 'declared nothing' wording", () => {
+    const result = classifyExecutors({
+      agents: [],
+      targetReference: null,
+      hasResolvableTopology: true,
+      pinnedAgentIneligibleReason: "operation_unsupported",
+      pinnedAgentDeclaredOperations: ["issue", "deploy"],
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.notEqual(result.renewalPathSummary, NO_CAPABILITY_DECLARED_SUMMARY);
+    assert.match(result.renewalPathSummary, /issue, deploy/);
+    assert.match(result.renewalPathSummary, /not for renew/);
   });
 
   it("no execution target resolved -> Renewal path unavailable", () => {
@@ -612,7 +672,7 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
     assert.deepEqual(result.dependencies, []);
   });
 
-  it("pinned agent that has never declared any supported operation -> Renewal path unavailable (assigned_agent_ineligible), not no_execution_target", () => {
+  it("pinned agent that has never declared any supported operation -> Renewal path unavailable (assigned_agent_ineligible), not no_execution_target, 'has not declared any executable action' wording", () => {
     const agentIndex = buildAgentIndex([
       onlineAgentRow({ id: "agent-a", supportedOperations: [] }),
     ]);
@@ -630,6 +690,29 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
       result.renewalPathReason,
       RENEWAL_PATH_REASONS.NO_EXECUTION_TARGET,
     );
+    assert.match(result.renewalPathSummary, /has not declared any/);
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("pinned agent that declared other operations but not renew -> Renewal path unavailable (assigned_agent_ineligible), summary names what it DID declare instead of claiming it declared nothing", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({
+        id: "agent-a",
+        supportedOperations: ["issue", "deploy"],
+      }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ discovery_agent_id: "agent-a" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.doesNotMatch(result.renewalPathSummary, /has not declared any/);
+    assert.match(result.renewalPathSummary, /issue, deploy/);
     assert.deepEqual(result.dependencies, []);
   });
 });
