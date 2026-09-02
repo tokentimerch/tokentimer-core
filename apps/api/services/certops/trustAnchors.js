@@ -2310,6 +2310,7 @@ async function sweepOverdueTrustInstallations({
 }
 
 module.exports = {
+  TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON,
   CERTOPS_TRUST_ANCHOR_INVALID,
   CERTOPS_TRUST_ANCHOR_NOT_FOUND,
   CERTOPS_TRUST_ANCHOR_PEM_INVALID,
@@ -2360,6 +2361,5 @@ module.exports = {
 module.exports._test = {
   assertTargetAgentEligibleForTrustJob,
   BLOCKING_TRUST_JOB_CREATION_REASONS,
-  TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON,
   pendingReasonForInstallation,
 };
