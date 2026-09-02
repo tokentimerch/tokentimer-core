@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -444,5 +444,230 @@ describe('DeployAgentModal', () => {
     });
     const [, payload] = createBootstrapTokenMock.mock.calls[0];
     expect(payload.contactGroupId).toBe('g1');
+  });
+
+  describe('registration-wait escalation hint', () => {
+    // Mirrors the component's own WAIT_POLL_INTERVAL_MS /
+    // MISSED_CYCLES_WARNING_THRESHOLD; not exported, so kept in sync here.
+    const WAIT_POLL_INTERVAL_MS = 10000;
+    const MISSED_CYCLES_WARNING_THRESHOLD = 3;
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /**
+     * Creates and acknowledges a token under real timers (so the existing
+     * `findByText` helper still works), then switches to fake timers and
+     * starts watching, flushing the immediate poll tick that fires on entry
+     * to 'waiting'.
+     */
+    async function beginWaitingWithNoFreshAgent() {
+      useCertOpsCanManageMock.mockReturnValue(true);
+      createBootstrapTokenMock.mockResolvedValue({
+        token: { id: 'bt-1', name: 'dc1-edge' },
+        plaintextToken: 'ttboot_secret_value',
+      });
+      listAgentsMock.mockResolvedValue(agentListResponse([]));
+
+      renderModal();
+      await createTokenAndAcknowledge();
+
+      vi.useFakeTimers();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+
+    async function advanceOnePollTick() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(WAIT_POLL_INTERVAL_MS);
+      });
+    }
+
+    it('keeps the hint hidden before the missed-cycle threshold', async () => {
+      await beginWaitingWithNoFreshAgent();
+
+      await advanceOnePollTick();
+
+      expect(screen.getByText(/Checking every 10s/)).toBeInTheDocument();
+      expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
+    });
+
+    it('shows the hint once the missed-cycle threshold is reached, naming the likely causes and the Linux log commands', async () => {
+      await beginWaitingWithNoFreshAgent();
+
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+
+      const warning = screen.getByText(/Still waiting after/);
+      expect(warning.textContent).toContain('--api-url');
+      expect(warning.textContent).toContain('bootstrap token has expired');
+      expect(warning.textContent).toContain('--ca-bundle');
+      expect(warning.textContent).toContain(
+        'systemctl status tokentimer-agent'
+      );
+      expect(warning.textContent).toContain(
+        'journalctl -u tokentimer-agent -f'
+      );
+    });
+
+    it('shows the Windows log command instead when targetOs is windows', async () => {
+      useCertOpsCanManageMock.mockReturnValue(true);
+      createBootstrapTokenMock.mockResolvedValue({
+        token: { id: 'bt-1', name: 'dc1-edge' },
+        plaintextToken: 'ttboot_secret_value',
+      });
+      listAgentsMock.mockResolvedValue(agentListResponse([]));
+
+      renderModal();
+      fireEvent.click(screen.getByRole('button', { name: 'Windows' }));
+      await createTokenAndAcknowledge();
+
+      vi.useFakeTimers();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+
+      const warning = screen.getByText(/Still waiting after/);
+      expect(warning.textContent).toContain('Get-Service TokenTimerAgent');
+      expect(warning.textContent).not.toContain('systemctl');
+    });
+
+    it('clears the hint once the agent registers late, replacing the wait step with the success alert', async () => {
+      useCertOpsCanManageMock.mockReturnValue(true);
+      createBootstrapTokenMock.mockResolvedValue({
+        token: { id: 'bt-1', name: 'dc1-edge' },
+        plaintextToken: 'ttboot_secret_value',
+      });
+      listAgentsMock.mockResolvedValue(agentListResponse([]));
+
+      renderModal();
+      await createTokenAndAcknowledge();
+
+      vi.useFakeTimers();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+      expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
+
+      listAgentsMock.mockResolvedValue(
+        agentListResponse([
+          {
+            id: 'row-late',
+            agentId: 'agent-late',
+            name: 'dc1-edge',
+            status: 'active',
+            createdAt: new Date(Date.now() + 60000).toISOString(),
+          },
+        ])
+      );
+      await advanceOnePollTick();
+
+      expect(screen.getByText(/is now connected/)).toBeInTheDocument();
+      expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
+    });
+
+    it('resets the missed-cycle count when starting a second deployment via "Deploy another agent"', async () => {
+      useCertOpsCanManageMock.mockReturnValue(true);
+      createBootstrapTokenMock.mockResolvedValue({
+        token: { id: 'bt-1', name: 'dc1-edge' },
+        plaintextToken: 'ttboot_secret_value',
+      });
+      listAgentsMock.mockResolvedValue(
+        agentListResponse([
+          {
+            id: 'row-1',
+            agentId: 'agent-1',
+            name: 'dc1-edge',
+            status: 'active',
+            createdAt: new Date(Date.now() + 60000).toISOString(),
+          },
+        ])
+      );
+
+      renderModal();
+      await createTokenAndAcknowledge();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await screen.findByText(/is now connected/);
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Deploy another agent' })
+      );
+
+      listAgentsMock.mockResolvedValue(agentListResponse([]));
+      await createTokenAndAcknowledge();
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+
+      expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
+    });
+
+    it('resets the missed-cycle count when stopping and restarting the wait', async () => {
+      await beginWaitingWithNoFreshAgent();
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+      expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Stop waiting' }));
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'I pasted the token, start watching',
+        })
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.queryByText(/Still waiting after/)).not.toBeInTheDocument();
+
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+      expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
+    });
+
+    it('keeps the spinner and "Stop waiting" button visible alongside the hint', async () => {
+      await beginWaitingWithNoFreshAgent();
+      for (let i = 1; i < MISSED_CYCLES_WARNING_THRESHOLD; i++) {
+        await advanceOnePollTick();
+      }
+
+      expect(screen.getByText(/Still waiting after/)).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Stop waiting' })
+      ).toBeInTheDocument();
+    });
   });
 });

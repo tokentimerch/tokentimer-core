@@ -47,6 +47,8 @@ import { useCertOpsAgents } from './useCertOpsAgents.js';
 
 /** Poll cadence while waiting for the freshly installed agent to register. */
 const WAIT_POLL_INTERVAL_MS = 10000;
+/** Cycles without a fresh agent before showing the "still waiting" hint (~30s). */
+const MISSED_CYCLES_WARNING_THRESHOLD = 3;
 
 function toIsoExpiry(localValue) {
   if (!localValue) return null;
@@ -186,6 +188,9 @@ export default function DeployAgentModal({
   // 'idle' | 'waiting' | 'registered'
   const [waitState, setWaitState] = useState('idle');
   const [registeredAgent, setRegisteredAgent] = useState(null);
+  // Poll ticks since entering 'waiting' that did not find a fresh agent;
+  // drives the "still waiting" hint below, never the poll itself.
+  const [missedCycles, setMissedCycles] = useState(0);
   // Baseline snapshot of agent row ids, captured when the bootstrap token is
   // created (not on the first poll tick): an agent that registers between
   // token creation and the first poll must still be detected as new.
@@ -228,6 +233,7 @@ export default function DeployAgentModal({
     setSecretAcknowledged(false);
     setWaitState('idle');
     setRegisteredAgent(null);
+    setMissedCycles(0);
     setTargetOs('linux');
     knownAgentIdsRef.current = null;
     tokenCreatedAtRef.current = null;
@@ -276,6 +282,8 @@ export default function DeployAgentModal({
           setWaitState('registered');
           showSuccess('Agent registered');
           if (typeof onAgentRegistered === 'function') onAgentRegistered();
+        } else {
+          setMissedCycles(count => count + 1);
         }
       } catch (_) {
         // Transient poll failures are silent; the next tick retries.
@@ -316,6 +324,7 @@ export default function DeployAgentModal({
 
   const beginWaiting = () => {
     setRegisteredAgent(null);
+    setMissedCycles(0);
     setWaitState('waiting');
   };
 
@@ -623,6 +632,36 @@ export default function DeployAgentModal({
                     should appear within about a minute of the service starting.
                   </Text>
                 </HStack>
+                {missedCycles >= MISSED_CYCLES_WARNING_THRESHOLD ? (
+                  <Alert
+                    status='warning'
+                    variant='subtle'
+                    borderRadius='md'
+                    mt={2}
+                  >
+                    <AlertIcon boxSize={4} />
+                    <AlertDescription fontSize='sm'>
+                      Still waiting after{' '}
+                      {Math.round(
+                        (missedCycles * WAIT_POLL_INTERVAL_MS) / 1000
+                      )}
+                      s. This can mean the agent hasn't started registering yet,
+                      or one of: the <Code fontSize='xs'>--api-url</Code> the
+                      installer was given can't be reached from this host, a
+                      firewall/proxy is blocking the outbound connection, the
+                      bootstrap token has expired or was already used, or (if a
+                      private CA is in play) the{' '}
+                      <Code fontSize='xs'>--ca-bundle</Code> doesn't match what
+                      the control plane presents. Check the agent's own logs on
+                      the target host:
+                      <Code fontSize='xs' display='block' mt={1}>
+                        {targetOs === 'windows'
+                          ? 'Get-Service TokenTimerAgent'
+                          : 'systemctl status tokentimer-agent && journalctl -u tokentimer-agent -f'}
+                      </Code>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <Button
                   size='xs'
                   variant='ghost'
