@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A certificate whose renewal is pinned to a real, non-retired agent that can't currently claim the job (a version/protocol compatibility block, or a declared-capability mismatch) reported the generic "no agent is currently associated with this certificate's renewal" instead of naming the pinned agent's actual problem.** The renewal-path health check now reports a distinct `assigned_agent_ineligible` reason with a summary describing why the pinned agent can't claim the job.
+
 ## [0.14.2] - 2026-09-01
 
 ### Fixed
