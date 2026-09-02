@@ -14,6 +14,7 @@ const { computeAgentCompatibility } = require(service("agentRegistry.js"));
 const dispatch = require(service("agentDispatch.js"));
 const {
   RENEWAL_PATH_STATES,
+  RENEWAL_PATH_REASONS,
   _test: { resolveRenewalPathForRow },
 } = require(service("renewalPathHealth.js"));
 const {
@@ -155,6 +156,67 @@ describe("shared agent-job eligibility", () => {
     }
   });
 
+  it("reports assigned_agent_ineligible (not no_execution_target) when the pinned agent itself is the one that fails eligibility", () => {
+    const validated = validateRenewalProfile(profile());
+    const job = {
+      operation: "renew",
+      ...resolveAgentJobRoutingRequirements({
+        executorKind: "agent",
+        payload: executionFieldsFromRenewalProfile(validated),
+      }),
+      subjectIsProvisioning: false,
+    };
+    const cases = [
+      ["eligible", {}, true],
+      ["operation", { supportedOperations: ["deploy"] }, false],
+      ["selector", { targetSelectors: ["host/other"] }, false],
+      ["dns", { dnsProviders: ["route53"] }, false],
+      ["command", { commandProfiles: ["renew.other"] }, false],
+      ["diagnostic kind", { agentKind: "diagnostic" }, false],
+      ["blocked version", { protocolVersion: "999.0.0" }, false],
+    ];
+
+    for (const [label, overrides, expected] of cases) {
+      const candidate = agent({ id: "agent-1", agentId: "assigned", ...overrides });
+      const predicate = evaluateAgentJobEligibility({
+        agent: candidate,
+        job: { ...job, assignedAgentId: "agent-1" },
+        compatibility: computeAgentCompatibility(candidate, {}),
+        env: {},
+        now: NOW,
+      });
+      assert.equal(predicate.eligible, expected, `${label}: predicate`);
+
+      const row = certificateRow();
+      row.source = "agent_filesystem";
+      row.discovery_agent_id = "assigned";
+      const projection = resolveRenewalPathForRow({
+        certificateRow: row,
+        agentIndex: indexFor(candidate),
+        env: {},
+        now: NOW,
+      });
+      if (expected) {
+        assert.equal(
+          projection.renewalPathState,
+          RENEWAL_PATH_STATES.HEALTHY,
+          `${label}: health projection`,
+        );
+      } else {
+        assert.equal(
+          projection.renewalPathReason,
+          RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+          `${label}: renewal path reason`,
+        );
+        assert.notEqual(
+          projection.renewalPathReason,
+          RENEWAL_PATH_REASONS.NO_EXECUTION_TARGET,
+          `${label}: must not fall back to the generic no-agent message`,
+        );
+      }
+    }
+  });
+
   it("requires fresh claim-binding capability for provisioning renewals", () => {
     const candidate = agent({
       declaredCapabilities: ["evidence-claim-binding-v1"],
@@ -245,6 +307,28 @@ describe("shared agent-job eligibility", () => {
       now: NOW,
     });
     assert.equal(projection.renewalPathState, RENEWAL_PATH_STATES.UNKNOWN);
+  });
+
+  it("reports Unknown, not assigned_agent_ineligible, when the pinned agent itself has malformed persisted facts", () => {
+    const malformedPinned = agent({
+      id: "agent-1",
+      agentId: "assigned",
+      targetSelectors: { unexpected: true },
+    });
+    const row = certificateRow();
+    row.source = "agent_filesystem";
+    row.discovery_agent_id = "assigned";
+    const projection = resolveRenewalPathForRow({
+      certificateRow: row,
+      agentIndex: indexFor(malformedPinned),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(projection.renewalPathState, RENEWAL_PATH_STATES.UNKNOWN);
+    assert.notEqual(
+      projection.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
   });
 
   it("reports Unknown when only a live candidate has malformed required facts", () => {
