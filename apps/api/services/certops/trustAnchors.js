@@ -303,26 +303,12 @@ const TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON = Object.freeze({
     "supports distribute-trust/revoke-trust and has heartbeated recently.",
 });
 
-// The only two reasons safe to enforce as a hard block at job CREATION
-// time. Every other determinate reason evaluateAgentJobEligibility can
-// return - most importantly operation_unsupported - is driven by
-// supported_operations, a column ONLY ever written from the wire-declared
-// supportedActions on a successful CLAIM call. That makes it indistinguishable
-// between "genuinely observe-only" and "healthy, execution-enabled agent
-// that simply has not had its first poll cycle yet" - both read as [] at
-// this point. Blocking on it here would produce false "this agent is
-// misconfigured" rejections for a perfectly fine, brand-new agent, which is
-// its own kind of confusing error. agent_retired and compatibility_blocked
-// have no such staleness problem: both are derived from state that cannot
-// self-heal without an operator action anyway (agent_retired is a permanent,
-// human-triggered flag; compatibility_blocked only clears by upgrading the
-// agent build itself), so surfacing them immediately trades nothing away.
-// Reliably detecting "observe-only right now" at creation time would need
-// the agent to self-report execution.enabled on a channel that updates
-// independently of ever claiming a job (e.g. a new heartbeat field) - a
-// wire-protocol change deliberately left for a future release rather than
-// folded into this pass; see the pending-installation reason (E) for the
-// non-blocking surfacing of operation_unsupported this pass ships instead.
+// Only agent_retired/compatibility_blocked are safe to hard-block at
+// creation time: both require an operator action to change and can't
+// self-heal. operation_unsupported is excluded because supported_operations
+// only updates on a successful claim, so a brand-new healthy agent reads
+// identically to a genuinely observe-only one until its first poll - see
+// the pending-installation reason (E) for its non-blocking surfacing instead.
 const BLOCKING_TRUST_JOB_CREATION_REASONS = new Set([
   "agent_retired",
   "compatibility_blocked",
