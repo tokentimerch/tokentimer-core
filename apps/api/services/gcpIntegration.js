@@ -268,11 +268,12 @@ async function listComputeSslCertificates({
   let pageCount = 0;
   const maxPages = 50;
   let truncated = false;
+  const unreachable = new Set();
 
   do {
     try {
       const path = `/projects/${encodeURIComponent(projectId)}/aggregated/sslCertificates`;
-      const params = { maxResults: 50 };
+      const params = { maxResults: 50, returnPartialSuccess: true };
       if (nextPageToken) params.pageToken = nextPageToken;
 
       const fullUrl = "https://compute.googleapis.com/compute/v1" + path;
@@ -304,6 +305,15 @@ async function listComputeSslCertificates({
           }
         }
       }
+      // `unreachables` lists scopes (e.g. "regions/us-east1") the API
+      // could not enumerate this call. Those regions' certificates are
+      // simply missing from `items`, not confirmed empty -- the caller
+      // must treat this listing as incomplete, the same as a 404 or
+      // pagination truncation, or cleanup could delete real certificates
+      // that live in an unreachable region.
+      if (Array.isArray(data.unreachables)) {
+        for (const scope of data.unreachables) unreachable.add(scope);
+      }
 
       nextPageToken = data.nextPageToken || null;
       pageCount++;
@@ -323,7 +333,11 @@ async function listComputeSslCertificates({
     }
   } while (nextPageToken && certs.length < maxItems);
 
-  return { items: certs.slice(0, maxItems), truncated };
+  return {
+    items: certs.slice(0, maxItems),
+    truncated,
+    unreachable: Array.from(unreachable),
+  };
 }
 
 async function scanGCP({
@@ -596,19 +610,25 @@ async function scanGCP({
       // Compute Engine sslCertificates cover both global and regional
       // scopes -- see listComputeSslCertificates.
       try {
-        const { items: sslCerts, truncated: sslCertsTruncated } =
-          await listComputeSslCertificates({ projectId, accessToken, maxItems });
+        const {
+          items: sslCerts,
+          truncated: sslCertsTruncated,
+          unreachable: sslCertsUnreachable,
+        } = await listComputeSslCertificates({
+          projectId,
+          accessToken,
+          maxItems,
+        });
         logger.info("GCP Compute Engine SSL certificates listed", {
           count: sslCerts.length,
+          unreachable: sslCertsUnreachable,
         });
 
         let sslCertsPushed = 0;
         for (const cert of sslCerts) {
           if (items.length >= maxItems) break;
-          const region =
-            cert.scope && cert.scope !== "global"
-              ? cert.scope.replace(/^regions\//, "")
-              : null;
+          const scope = cert.scope || "global";
+          const region = scope !== "global" ? scope.replace(/^regions\//, "") : null;
           const expiresAt = tryParseDate(cert.expireTime);
           const isManaged = Boolean(cert.managed);
           const domains = cert.subjectAlternativeNames?.length
@@ -616,11 +636,19 @@ async function scanGCP({
             : isManaged
               ? cert.managed?.domains || []
               : [];
+          // aggregatedList returns per-scope buckets, so the bare name
+          // alone collides across scopes (e.g. a "foo" in global and a
+          // "foo" in regions/us-central1 both use it) -- and dedup keys on
+          // (scan_id, source_kind, source_object_id), so one would be
+          // silently dropped. selfLink is the API's own stable identifier
+          // and already encodes the scope; fall back to a scope-prefixed
+          // id built from the aggregatedList key when it's missing.
+          const sourceObjectId = cert.selfLink || `${scope}/${cert.name}`;
 
           items.push({
             source: "gcp-compute-ssl-cert",
             sourceKind: "gcp-compute-ssl-cert",
-            sourceObjectId: cert.name,
+            sourceObjectId,
             name: cert.name,
             category: "cert",
             type: "ssl_cert",
@@ -633,6 +661,7 @@ async function scanGCP({
             description: `${isManaged ? "Managed" : "Self-managed"}${cert.managed?.status ? `, ${cert.managed.status}` : ""}`,
             created_at: cert.creationTimestamp || null,
             region,
+            dimensions: { location: region || "global" },
           });
           sslCertsPushed++;
         }
@@ -640,16 +669,27 @@ async function scanGCP({
         // hazard applies here, and this kind runs last so it is the most
         // exposed to a budget already spent by secrets and cert-manager.
         const sslCertsBudgetTruncated = sslCertsPushed < sslCerts.length;
+        // A non-empty `unreachables` means aggregatedList could not
+        // enumerate one or more scopes (e.g. a region-wide outage) --
+        // items[] is then missing whole regions, not confirmed empty, so
+        // this pass must not be treated as a complete enumeration either.
+        const sslCertsHasUnreachable = sslCertsUnreachable.length > 0;
 
         summary.push({
           type: "compute_ssl_certs",
           sourceKind: "gcp-compute-ssl-cert",
           found: sslCertsPushed,
-          truncated: sslCertsTruncated || sslCertsBudgetTruncated,
-          complete: !sslCertsTruncated && !sslCertsBudgetTruncated,
+          truncated:
+            sslCertsTruncated || sslCertsBudgetTruncated || sslCertsHasUnreachable,
+          complete:
+            !sslCertsTruncated &&
+            !sslCertsBudgetTruncated &&
+            !sslCertsHasUnreachable,
+          unreachableScopes: sslCertsUnreachable,
         });
         logger.info("GCP Compute Engine SSL certificate scan completed", {
           certsFound: sslCerts.length,
+          unreachableScopes: sslCertsUnreachable,
         });
       } catch (e) {
         logger.error("GCP Compute Engine SSL certificate scan failed", {

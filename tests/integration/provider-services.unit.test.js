@@ -987,11 +987,14 @@ describe("Provider service unit coverage", () => {
         (i) => i.sourceKind === "gcp-compute-ssl-cert",
       );
       expect(computeItem).to.include({
-        sourceObjectId: "lb-ssl-cert",
+        // No selfLink in this fixture -- falls back to "<scope>/<name>".
+        sourceObjectId: "global/lb-ssl-cert",
+        name: "lb-ssl-cert",
         category: "cert",
         type: "ssl_cert",
         expiration: "2031-02-02",
       });
+      expect(computeItem.dimensions).to.deep.equal({ location: "global" });
 
       const byKind = Object.fromEntries(
         result.summary.map((s) => [s.sourceKind, s]),
@@ -1135,6 +1138,153 @@ describe("Provider service unit coverage", () => {
       );
       expect(globalCert.scope).to.equal("global");
       expect(regionalCert.scope).to.equal("regions/us-central1");
+    });
+
+    it("keeps same-named Compute SSL certificates in different scopes distinct, each with its own scope in dimensions", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: {
+                  sslCertificates: [
+                    {
+                      name: "foo",
+                      expireTime: "2030-06-01T00:00:00Z",
+                      creationTimestamp: "2025-01-01T00:00:00Z",
+                    },
+                  ],
+                },
+                "regions/us-central1": {
+                  sslCertificates: [
+                    {
+                      name: "foo",
+                      expireTime: "2030-07-01T00:00:00Z",
+                      creationTimestamp: "2025-01-02T00:00:00Z",
+                    },
+                  ],
+                },
+              },
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const sslCertItems = result.items.filter(
+        (i) => i.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(sslCertItems).to.have.length(2);
+
+      const ids = sslCertItems.map((i) => i.sourceObjectId);
+      // Same bare name in two scopes must not collapse into one identity --
+      // dedup keys on (scan_id, source_kind, source_object_id).
+      expect(new Set(ids).size).to.equal(2);
+
+      const globalItem = sslCertItems.find((i) => i.region === null);
+      const regionalItem = sslCertItems.find(
+        (i) => i.region === "us-central1",
+      );
+      expect(globalItem.dimensions).to.deep.equal({ location: "global" });
+      expect(regionalItem.dimensions).to.deep.equal({
+        location: "us-central1",
+      });
+      expect(globalItem.sourceObjectId).to.not.equal(
+        regionalItem.sourceObjectId,
+      );
+    });
+
+    it("marks the Compute SSL cert sub-scope incomplete when aggregatedList reports unreachable scopes, so cleanup does not run", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: {
+                  sslCertificates: [
+                    {
+                      name: "global-cert",
+                      expireTime: "2030-06-01T00:00:00Z",
+                      creationTimestamp: "2025-01-01T00:00:00Z",
+                    },
+                  ],
+                },
+              },
+              unreachables: ["regions/us-east1"],
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      // A region aggregatedList could not enumerate is missing from items,
+      // not confirmed empty -- cleanup must be skipped for this pass.
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 1,
+        complete: false,
+        truncated: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"].unreachableScopes).to.deep.equal([
+        "regions/us-east1",
+      ]);
+      // The reachable global certificate was still listed -- only the
+      // sub-scope's completeness flag is affected, not the found items.
+      expect(
+        result.items.some(
+          (i) =>
+            i.sourceKind === "gcp-compute-ssl-cert" &&
+            i.name === "global-cert",
+        ),
+      ).to.equal(true);
+    });
+
+    it("exposes unreachables from the raw aggregatedList response on listComputeSslCertificates", async () => {
+      const axiosMock = async () => ({
+        data: {
+          items: {
+            global: {
+              sslCertificates: [{ name: "global-cert" }],
+            },
+          },
+          unreachables: ["regions/us-east1", "regions/us-east1"],
+        },
+      });
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp._test.listComputeSslCertificates({
+        projectId: "proj",
+        accessToken: "token",
+      });
+
+      expect(result.unreachable).to.deep.equal(["regions/us-east1"]);
     });
 
     it("marks a cert sub-scope errored (not complete-empty) on a 404 from Certificate Manager", async () => {
