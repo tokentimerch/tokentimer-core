@@ -236,8 +236,13 @@ async function listCertificateManagerCertificates({
         break;
       }
     } catch (e) {
-      const status = e.response?.status || e.status;
-      if (status === 404) break; // No certificates in this location is OK
+      // A 404 here is not a genuine "no certificates in this location"
+      // signal -- a real empty location returns 200 with an empty array.
+      // 404 typically means Certificate Manager isn't enabled for the
+      // project or the location doesn't exist, so it must propagate like
+      // any other error and leave this sub-scope reported errored, not
+      // complete-and-empty (which would make cleanup delete every
+      // previously-imported certificate of this kind).
       if (e.response && !e.status) {
         e.status = e.response.status;
       }
@@ -248,8 +253,11 @@ async function listCertificateManagerCertificates({
   return { items: certs.slice(0, maxItems), truncated };
 }
 
-// Compute Engine's classic sslCertificates are project-global only (no
-// regional variant in this API version), so no location dimension applies.
+// Compute Engine sslCertificates support both a global scope (classic load
+// balancers) and per-region scopes (regional external HTTPS/SSL proxy load
+// balancers). aggregatedList covers every scope in one call; the
+// global-only `list` method used previously silently missed every regional
+// certificate.
 async function listComputeSslCertificates({
   projectId,
   accessToken,
@@ -263,7 +271,7 @@ async function listComputeSslCertificates({
 
   do {
     try {
-      const path = `/projects/${encodeURIComponent(projectId)}/global/sslCertificates`;
+      const path = `/projects/${encodeURIComponent(projectId)}/aggregated/sslCertificates`;
       const params = { maxResults: 50 };
       if (nextPageToken) params.pageToken = nextPageToken;
 
@@ -284,8 +292,17 @@ async function listComputeSslCertificates({
       });
 
       const data = response.data;
-      if (Array.isArray(data.items)) {
-        certs.push(...data.items);
+      // aggregatedList buckets results under a per-scope key ("global" or
+      // "regions/<region>"); flatten every scope's sslCertificates into one
+      // list, tagging each with the scope it came from.
+      if (data.items && typeof data.items === "object") {
+        for (const [scopeName, scoped] of Object.entries(data.items)) {
+          if (Array.isArray(scoped?.sslCertificates)) {
+            for (const cert of scoped.sslCertificates) {
+              certs.push({ ...cert, scope: scopeName });
+            }
+          }
+        }
       }
 
       nextPageToken = data.nextPageToken || null;
@@ -296,8 +313,9 @@ async function listComputeSslCertificates({
         break;
       }
     } catch (e) {
-      const status = e.response?.status || e.status;
-      if (status === 404) break; // No SSL certificates is OK
+      // Same reasoning as listCertificateManagerCertificates: a 404 does
+      // not mean "confirmed no certificates" and must not be swallowed
+      // into an empty-but-complete result.
       if (e.response && !e.status) {
         e.status = e.response.status;
       }
@@ -508,6 +526,7 @@ async function scanGCP({
           location,
         });
 
+        let certsPushed = 0;
         for (const cert of certs) {
           if (items.length >= maxItems) break;
           const certName = cert.name.split("/").pop();
@@ -536,15 +555,21 @@ async function scanGCP({
             updated_at: cert.updateTime || null,
             dimensions: { location },
           });
+          certsPushed++;
         }
+        // The shared items/maxItems budget can cut this kind short even
+        // when its own listing wasn't truncated -- e.g. secrets already
+        // consumed the budget. Either kind of truncation means cleanup
+        // must not treat this sub-scope as a complete enumeration.
+        const certsBudgetTruncated = certsPushed < certs.length;
 
         summary.push({
           type: "certificate_manager_certs",
           sourceKind: "gcp-certificate-manager-cert",
           location,
-          found: certs.length,
-          truncated: certsTruncated,
-          complete: !certsTruncated,
+          found: certsPushed,
+          truncated: certsTruncated || certsBudgetTruncated,
+          complete: !certsTruncated && !certsBudgetTruncated,
           dimensions: { location },
         });
         logger.info("GCP Certificate Manager scan completed", {
@@ -568,7 +593,8 @@ async function scanGCP({
         });
       }
 
-      // Compute Engine sslCertificates are project-global, not per-location
+      // Compute Engine sslCertificates cover both global and regional
+      // scopes -- see listComputeSslCertificates.
       try {
         const { items: sslCerts, truncated: sslCertsTruncated } =
           await listComputeSslCertificates({ projectId, accessToken, maxItems });
@@ -576,8 +602,13 @@ async function scanGCP({
           count: sslCerts.length,
         });
 
+        let sslCertsPushed = 0;
         for (const cert of sslCerts) {
           if (items.length >= maxItems) break;
+          const region =
+            cert.scope && cert.scope !== "global"
+              ? cert.scope.replace(/^regions\//, "")
+              : null;
           const expiresAt = tryParseDate(cert.expireTime);
           const isManaged = Boolean(cert.managed);
           const domains = cert.subjectAlternativeNames?.length
@@ -594,20 +625,28 @@ async function scanGCP({
             category: "cert",
             type: "ssl_cert",
             expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-            location: `gcp:${projectId}/global/sslCertificates/${cert.name}`,
+            location: region
+              ? `gcp:${projectId}/regions/${region}/sslCertificates/${cert.name}`
+              : `gcp:${projectId}/global/sslCertificates/${cert.name}`,
             domains,
             issuer: isManaged ? "Google Trust Services" : null,
             description: `${isManaged ? "Managed" : "Self-managed"}${cert.managed?.status ? `, ${cert.managed.status}` : ""}`,
             created_at: cert.creationTimestamp || null,
+            region,
           });
+          sslCertsPushed++;
         }
+        // See the certsBudgetTruncated comment above -- same shared-budget
+        // hazard applies here, and this kind runs last so it is the most
+        // exposed to a budget already spent by secrets and cert-manager.
+        const sslCertsBudgetTruncated = sslCertsPushed < sslCerts.length;
 
         summary.push({
           type: "compute_ssl_certs",
           sourceKind: "gcp-compute-ssl-cert",
-          found: sslCerts.length,
-          truncated: sslCertsTruncated,
-          complete: !sslCertsTruncated,
+          found: sslCertsPushed,
+          truncated: sslCertsTruncated || sslCertsBudgetTruncated,
+          complete: !sslCertsTruncated && !sslCertsBudgetTruncated,
         });
         logger.info("GCP Compute Engine SSL certificate scan completed", {
           certsFound: sslCerts.length,
