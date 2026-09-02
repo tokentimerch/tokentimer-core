@@ -46,7 +46,11 @@ const {
 const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
+  RENEWAL_JOB_TERMINAL_STATUSES,
+  certificateCaBucket,
+  countInFlightRenewalJobsByCaEndpoint,
 } = require("./renewalScheduler");
+const { resolveRenewalPerCaCap, caCapKey } = require("./renewalCapacity");
 const { isAgentDeployableKeyMode } = require("./jobs");
 const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
 
@@ -565,6 +569,13 @@ function classifyRenewalBlock(row) {
  *
  * The profile body is read to classify readiness but never returned: it carries
  * deployment topology, which is why these routes are manager-gated.
+ *
+ * `deferredReason` is independent of `blockedReason`/`autoRenewEnabled`: a
+ * covered certificate can still be `deferredReason: 'ca_capacity'` when the
+ * scheduler would skip it this pass because its CA is already at the
+ * per-CA in-flight cap. It clears itself once that CA has headroom again,
+ * with no write path and no staleness to manage, because it is computed live
+ * from the same in-flight count the sweep itself checks.
  */
 async function listUpcomingRenewals({
   db = pool,
@@ -604,7 +615,18 @@ async function listUpcomingRenewals({
                  AND cj.subject_id = mc.id::text
                ORDER BY cj.created_at DESC
                LIMIT 1
-            ) AS last_renew_job_status
+            ) AS last_renew_job_status,
+            NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
+              AS certificate_ca_endpoint,
+            NULLIF(
+              BTRIM(
+                COALESCE(
+                  cp.public_metadata->'renewalProfile'->'ca'->>'endpoint',
+                  cp.public_metadata->>'caEndpoint'
+                )
+              ),
+              ''
+            ) AS profile_ca_endpoint
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
@@ -623,9 +645,39 @@ async function listUpcomingRenewals({
     [workspaceId],
   );
 
+  // One page-wide in-flight lookup, not one query per row: the sweep's own
+  // cap check reused verbatim, so this can never claim a certificate is
+  // waiting on capacity the scheduler would not also see.
+  const perCaCap = resolveRenewalPerCaCap();
+  const inFlightByCa = await countInFlightRenewalJobsByCaEndpoint({
+    db,
+    terminalStatuses: RENEWAL_JOB_TERMINAL_STATUSES,
+    workspaceId,
+  });
+  const now = Date.now();
+
   return {
     items: result.rows.map((row) => {
       const blockedReason = classifyRenewalBlock(row);
+      const autoRenewEnabled = blockedReason == null;
+
+      // Deferral is a separate, independent fact from blockedReason: only a
+      // certificate the scheduler would otherwise act on this pass (covered,
+      // due, and not already jobbed) can be "waiting", so none of these
+      // guards ever downgrade a real block into a capacity wait.
+      let deferredReason = null;
+      if (
+        autoRenewEnabled &&
+        row.renews_from != null &&
+        new Date(row.renews_from).getTime() <= now &&
+        (row.last_renew_job_status == null ||
+          RENEWAL_JOB_TERMINAL_STATUSES.includes(row.last_renew_job_status))
+      ) {
+        const capKey = caCapKey(workspaceId, certificateCaBucket(row));
+        const inFlight = inFlightByCa.get(capKey) || 0;
+        deferredReason = inFlight >= perCaCap ? "ca_capacity" : null;
+      }
+
       return {
         certificateId: String(row.id),
         commonName: row.common_name,
@@ -634,8 +686,9 @@ async function listUpcomingRenewals({
         renewsFrom: row.renews_from,
         profileId: row.profile_id ? String(row.profile_id) : null,
         profileName: row.profile_name || null,
-        autoRenewEnabled: blockedReason == null,
+        autoRenewEnabled,
         blockedReason,
+        deferredReason,
         renewBeforeDays:
           row.profile_renew_before_days == null
             ? Number(thresholdDays)

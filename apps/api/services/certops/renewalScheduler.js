@@ -65,6 +65,19 @@ const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
 // constant bigint works; this one is arbitrary but must stay stable.
 const RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY = 7_384_211_257_001n;
 
+// "Still in flight" for renewal-capacity accounting. Exported so any other
+// read of in-flight renew jobs (e.g. the upcoming-renewals list) agrees with
+// the sweep on what counts as done; a second copy of this literal would risk
+// silent drift between the two.
+const RENEWAL_JOB_TERMINAL_STATUSES = [
+  "rejected",
+  "succeeded",
+  "failed",
+  "blocked",
+  "cancelled",
+  "dry_run_complete",
+].filter(isTerminalJobStatus);
+
 // Inventory statuses that never get automated renewal jobs.
 const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([
   "revoked",
@@ -167,20 +180,31 @@ function certificateCaEndpointRaw(certificate) {
  * runRenewalSchedulerSweep) and locally increments this map for jobs it
  * creates, so the snapshot stays consistent for the duration of a sweep; a
  * concurrent manual job at worst delays a renewal by one sweep.
+ *
+ * The sweep always queries across every workspace; pass workspaceId to
+ * scope the query to one, which is what a single per-workspace API request
+ * needs instead of paying for a global scan.
  */
 async function countInFlightRenewalJobsByCaEndpoint({
   db = pool,
   terminalStatuses,
+  workspaceId = null,
 } = {}) {
+  const params = [terminalStatuses];
+  let workspaceFilter = "";
+  if (workspaceId != null) {
+    params.push(workspaceId);
+    workspaceFilter = ` AND cj.workspace_id = $${params.length}`;
+  }
   const result = await db.query(
     `SELECT cj.workspace_id,
             NULLIF(BTRIM(cj.payload->>'caEndpoint'), '') AS ca_endpoint,
             COUNT(*)::int AS in_flight
        FROM certificate_jobs cj
       WHERE cj.operation = 'renew'
-        AND NOT (cj.status = ANY($1::text[]))
+        AND NOT (cj.status = ANY($1::text[]))${workspaceFilter}
       GROUP BY 1, 2`,
-    [terminalStatuses],
+    params,
   );
   const counts = new Map();
   for (const row of result.rows || []) {
@@ -477,14 +501,7 @@ async function runRenewalSchedulerSweep({
 } = {}) {
   const thresholdDays = resolveRenewalThresholdDays(env);
   const perCaCap = resolveRenewalPerCaCap(env);
-  const terminalStatuses = [
-    "rejected",
-    "succeeded",
-    "failed",
-    "blocked",
-    "cancelled",
-    "dry_run_complete",
-  ].filter(isTerminalJobStatus);
+  const terminalStatuses = RENEWAL_JOB_TERMINAL_STATUSES;
 
   const summary = {
     thresholdDays,
@@ -644,6 +661,7 @@ module.exports = {
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
+  RENEWAL_JOB_TERMINAL_STATUSES,
   RENEWAL_PER_CA_CAP_ENV,
   RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY,
   RENEWAL_THRESHOLD_ENV,
