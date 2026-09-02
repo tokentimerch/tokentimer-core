@@ -419,6 +419,138 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
   });
 
+  it('shows the "Approved by user" chip and an "Approved" date line when the job carries approval attribution', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        approvedByUserId: 'user-42',
+        approvedAt: '2026-01-05T00:00:00.000Z',
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Approved by user')).toBeInTheDocument();
+    expect(screen.getByText('user-42')).toBeInTheDocument();
+    expect(screen.getByText(/^Approved \d/)).toBeInTheDocument();
+  });
+
+  it('hides the "Approved by user" chip and date line when the job has no approval attribution', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.queryByText('Approved by user')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Approved \d/)).not.toBeInTheDocument();
+  });
+
+  it('renders friendly labels for approval.granted, approval.rejected, and approval.invalidated log entries', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'approval.granted',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          createdByUserId: 'user-42',
+        },
+        {
+          id: 'log-2',
+          eventType: 'approval.rejected',
+          createdAt: '2026-01-02T00:00:00.000Z',
+          createdByUserId: 'user-99',
+        },
+        {
+          id: 'log-3',
+          eventType: 'approval.invalidated',
+          createdAt: '2026-01-03T00:00:00.000Z',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Approval granted')).toBeInTheDocument();
+    expect(screen.getByText('Approval rejected')).toBeInTheDocument();
+    expect(screen.getByText('Approval invalidated')).toBeInTheDocument();
+  });
+
+  it('shows a "Decided by user" line with the approver\'s id for an approval.granted entry', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'approval.granted',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          createdByUserId: 'user-42',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Decided by user')).toBeInTheDocument();
+    expect(screen.getByText('user-42')).toBeInTheDocument();
+  });
+
+  it('shows a "Decided by user" line with the rejecter\'s id for an approval.rejected entry', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'approval.rejected',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          createdByUserId: 'user-99',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Decided by user')).toBeInTheDocument();
+    expect(screen.getByText('user-99')).toBeInTheDocument();
+  });
+
+  it('does not show a "Decided by user" line for an approval.invalidated entry (system-detected, no human actor)', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'approval.invalidated',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.queryByText('Decided by user')).not.toBeInTheDocument();
+  });
+
   it('renders the failure reason for a failed job', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({

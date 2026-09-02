@@ -344,6 +344,19 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                       )
                     ) : null}
                   </VStack>
+                  {job.approvedByUserId ? (
+                    <Tooltip
+                      label={`Approved by user ${job.approvedByUserId}${
+                        job.approvedAt
+                          ? ` at ${formatDateTime(job.approvedAt)}`
+                          : ''
+                      }`}
+                    >
+                      <Text fontSize='xs' color={muted} flexShrink={0}>
+                        Approved
+                      </Text>
+                    </Tooltip>
+                  ) : null}
                   <Text
                     fontSize='xs'
                     color={muted}

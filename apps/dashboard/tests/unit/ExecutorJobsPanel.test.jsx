@@ -540,6 +540,32 @@ describe('ExecutorJobsPanel approvals', () => {
     ).toBeInTheDocument();
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it('shows the "Approved" indicator on a row for a job with approval attribution', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'succeeded',
+            approvedByUserId: 'user-42',
+            approvedAt: '2026-01-05T00:00:00.000Z',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+  });
+
+  it('does not show the "Approved" indicator on a row with no approval attribution', () => {
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
+
+    renderPanel();
+
+    expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+  });
 });
 
 describe('ExecutorJobsPanel list states', () => {

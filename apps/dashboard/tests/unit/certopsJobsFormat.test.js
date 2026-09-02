@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  eventTypeLabel,
   hasRedactionMarkers,
   jobStatusLabel,
   jobStatusScheme,
@@ -42,6 +43,22 @@ describe('reconciliationAdvisoryText', () => {
       )
     ).toBe(
       "This job's side effects could not be confirmed and need manual review (reason: lease_expired_after_side_effect_window_agent_unresponsive)."
+    );
+  });
+});
+
+describe('eventTypeLabel', () => {
+  it('labels the approval decision event types', () => {
+    expect(eventTypeLabel('approval.granted')).toBe('Approval granted');
+    expect(eventTypeLabel('approval.rejected')).toBe('Approval rejected');
+    expect(eventTypeLabel('approval.invalidated')).toBe(
+      'Approval invalidated'
+    );
+  });
+
+  it('falls back to the raw type string for an unmapped event type', () => {
+    expect(eventTypeLabel('job.some_future_event_type_v9')).toBe(
+      'job.some_future_event_type_v9'
     );
   });
 });

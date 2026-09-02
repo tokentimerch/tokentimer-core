@@ -174,6 +174,10 @@ function TimelineItem({ item, attemptLabel }) {
   const detail = isEvidence
     ? metadataSummary || subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
+  const decidedByUserId =
+    !isEvidence && (type === 'approval.granted' || type === 'approval.rejected')
+      ? entry.createdByUserId
+      : null;
 
   return (
     <Box position='relative' pl={6} pb={4} _last={{ pb: 0 }}>
@@ -230,6 +234,9 @@ function TimelineItem({ item, attemptLabel }) {
           <Text fontSize='sm' color={muted} noOfLines={3}>
             {detail}
           </Text>
+        ) : null}
+        {decidedByUserId ? (
+          <CopyableId id={decidedByUserId} label='Decided by user' size='xs' />
         ) : null}
         <Text fontSize='xs' color={muted}>
           {timestamp}
@@ -376,8 +383,14 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
                 label="Agent's pinned signing key"
               />
             ) : null}
+            {job.approvedByUserId ? (
+              <CopyableId id={job.approvedByUserId} label='Approved by user' />
+            ) : null}
           </HStack>
-          {job.claimId || job.leaseExpiresAt || job.attemptCount ? (
+          {job.claimId ||
+          job.leaseExpiresAt ||
+          job.attemptCount ||
+          job.approvedAt ? (
             <HStack spacing={3} flexWrap='wrap'>
               {job.leaseExpiresAt ? (
                 <Text fontSize='xs' color={muted}>
@@ -390,6 +403,11 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
                   {typeof job.maxAttempts === 'number'
                     ? ` of ${job.maxAttempts}`
                     : ''}
+                </Text>
+              ) : null}
+              {job.approvedAt ? (
+                <Text fontSize='xs' color={muted}>
+                  Approved {formatDateTime(job.approvedAt)}
                 </Text>
               ) : null}
             </HStack>
