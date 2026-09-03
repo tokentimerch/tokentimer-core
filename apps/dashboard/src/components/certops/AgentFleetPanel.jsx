@@ -161,6 +161,48 @@ function NtpBadge({ ntpSynced }) {
 }
 
 /**
+ * Execution capability chip: whether this agent declared any executable
+ * action the last time it successfully claimed a job. Empty is ambiguous
+ * between "observe-only" and "hasn't polled yet" - the title makes that
+ * caveat explicit rather than asserting a diagnosis this field can't prove.
+ */
+function ExecutionCapabilityBadge({ supportedOperations }) {
+  const declared = Array.isArray(supportedOperations) ? supportedOperations : [];
+  if (declared.length > 0) {
+    return (
+      <Badge
+        colorScheme='green'
+        variant='subtle'
+        textTransform='none'
+        fontWeight='medium'
+        fontSize='xs'
+        title={`Last declared on claim: ${declared.join(', ')}`}
+      >
+        Enabled
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      colorScheme='orange'
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+      title={
+        'No executable action declared on the last claim call. Most often ' +
+        'this means the agent is running observe-only (no execution block, ' +
+        'or execution.enabled is not true, in its config.json) - a job ' +
+        'pinned to it will sit at Pending forever. A brand-new agent that ' +
+        'has not polled for a job yet looks identical here.'
+      }
+    >
+      No capability declared
+    </Badge>
+  );
+}
+
+/**
  * Confirm dialog for retiring an agent (RetireCertificateModal pattern).
  * A non-forced retire is refused server-side with 409
  * CERTOPS_AGENT_RETIRE_BLOCKED while the agent holds job leases; the dialog
@@ -596,6 +638,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                   <Th>Protocol</Th>
                   <Th>Clock drift</Th>
                   <Th>NTP</Th>
+                  <Th>Execution</Th>
                   <Th>Signing key</Th>
                   <Th>Last heartbeat</Th>
                   {canManage ? <Th textAlign='right'>Actions</Th> : null}
@@ -681,6 +724,11 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                       </Td>
                       <Td>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
+                      </Td>
+                      <Td>
+                        <ExecutionCapabilityBadge
+                          supportedOperations={agent.supportedOperations}
+                        />
                       </Td>
                       <Td>
                         {agent.pinnedSigningKeyId ? (

@@ -36,7 +36,8 @@ const {
 const {
   validateTrustResult,
 } = require("../../../../packages/contracts/certops/validate-trust-result.cjs");
-const { getAgentById } = require("./agentRegistry");
+const { getAgentById, getAgentsByIds } = require("./agentRegistry");
+const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
 
 // --- Error codes ---
 const CERTOPS_TRUST_ANCHOR_INVALID = "CERTOPS_TRUST_ANCHOR_INVALID";
@@ -49,6 +50,12 @@ const CERTOPS_TRUST_JOB_OPERATION_INVALID =
   "CERTOPS_TRUST_JOB_OPERATION_INVALID";
 const CERTOPS_TRUST_INSTALLATION_NOT_FOUND =
   "CERTOPS_TRUST_INSTALLATION_NOT_FOUND";
+// A trust job is pinned to one specific agent, with no fallback claimant
+// if that agent can never claim it (unlike an open renewal/deploy job).
+// Previously an ineligible agent (most commonly observe-only) left the job
+// stuck pending forever with no error. This rejects it up front instead.
+const CERTOPS_TARGET_AGENT_INELIGIBLE = "CERTOPS_TARGET_AGENT_INELIGIBLE";
+
 // anchor_type determines which OS store (Root/CA) a fingerprint's
 // installations live in (resolveTrustAnchorStoreLabel below). It is
 // immutable once ANY non-removed certops_trust_anchor_installations row
@@ -256,6 +263,71 @@ async function assertTargetAgentRegistered({ client, workspaceId, agentId }) {
     );
   }
   return agent;
+}
+
+// Operator-facing prose for each evaluateAgentJobEligibility reason a trust
+// job creation request can hit. This file owns the prose; agentJobEligibility.js
+// keeps terse wire codes.
+//
+// Only agent_retired and compatibility_blocked are hard creation-time blocks
+// (see BLOCKING_TRUST_JOB_CREATION_REASONS). The rest exist so the same
+// prose can be reused advisory-only, e.g. for a stuck pending installation.
+const TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON = Object.freeze({
+  agent_retired:
+    "This agent has been retired and can no longer be assigned any job.",
+  compatibility_blocked:
+    "This agent's build/protocol version is outside the range this " +
+    "control plane accepts and can never claim a job until it is " +
+    "upgraded.",
+  operation_unsupported:
+    "This agent has not declared distribute-trust/revoke-trust support " +
+    "the last time it claimed a job (most commonly because it is running " +
+    "in observe-only mode - no execution block, or execution.enabled is " +
+    "not true, in its config.json - though a brand-new agent that has " +
+    "simply not polled for a job yet looks identical here). If this " +
+    "persists, check the agent's config.json and logs.",
+  trust_anchor_deploy_capability_unavailable:
+    "This agent has not declared (or recently re-declared) support for " +
+    "trust-anchor distribution. Confirm the agent is running a build that " +
+    "supports distribute-trust/revoke-trust and has heartbeated recently.",
+});
+
+// Only agent_retired/compatibility_blocked are safe to hard-block at
+// creation time; both require operator action and can't self-heal.
+// operation_unsupported is excluded because a brand-new agent that hasn't
+// polled yet looks identical to a genuinely observe-only one - see the
+// pending-installation reason for its non-blocking surfacing instead.
+const BLOCKING_TRUST_JOB_CREATION_REASONS = new Set([
+  "agent_retired",
+  "compatibility_blocked",
+]);
+
+/**
+ * Refuses to create a trust job pinned to an agent that is currently,
+ * unambiguously incapable of ever claiming it, using the same predicate
+ * real dispatch uses. Only blocks reasons in
+ * BLOCKING_TRUST_JOB_CREATION_REASONS; deliberately ignores liveness (an
+ * agent merely offline right now may come back and claim the job normally).
+ */
+function assertTargetAgentEligibleForTrustJob({ agent, operation }) {
+  const evaluation = evaluateAgentJobEligibility({
+    agent,
+    job: {
+      operation,
+      executorKind: "agent",
+      assignedAgentId: agent.id,
+      payload: {},
+    },
+    compatibility: { compatibilityState: agent.compatibilityState },
+  });
+  if (evaluation.eligible || evaluation.determinate !== true) return;
+  if (!BLOCKING_TRUST_JOB_CREATION_REASONS.has(evaluation.reason)) return;
+  const message =
+    TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON[evaluation.reason] ||
+
+    `This agent cannot currently be assigned a ${operation} job ` +
+      `(${evaluation.reason}).`;
+  throw trustAnchorError(message, CERTOPS_TARGET_AGENT_INELIGIBLE);
 }
 
 function normalizeIdempotencyKey(value) {
@@ -679,6 +751,65 @@ function installationFromRow(row) {
   };
 }
 
+const LIVE_PENDING_TRANSITION_STATES = new Set(["pending_install", "pending_remove"]);
+
+/**
+ * Advisory (never blocking) explanation for a pending_install/pending_remove
+ * row with no last_error. Before this, such a row was just a bare "Pending"
+ * badge with no indication of whether it's progressing normally or stuck.
+ * Reuses TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON so this can't disagree with
+ * what creation-time blocking would have said. Returns null when there's no
+ * knowable reason - callers must treat null as "no info", not "fine".
+ */
+function pendingReasonForInstallation(installation, agent) {
+  if (!LIVE_PENDING_TRANSITION_STATES.has(installation.transitionState)) return null;
+  if (installation.lastError) return null;
+  if (!agent) return null;
+  const operation =
+    installation.transitionState === "pending_install"
+      ? "distribute-trust"
+      : "revoke-trust";
+  const evaluation = evaluateAgentJobEligibility({
+    agent,
+    job: {
+      operation,
+      executorKind: "agent",
+      assignedAgentId: agent.id,
+      payload: {},
+    },
+    compatibility: { compatibilityState: agent.compatibilityState },
+  });
+  if (evaluation.eligible || evaluation.determinate !== true) return null;
+  return {
+    code: evaluation.reason,
+    message:
+      TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON[evaluation.reason] ||
+      `The assigned agent cannot currently claim this job (${evaluation.reason}).`,
+  };
+}
+
+/**
+ * Batch-attaches pendingReason to every row in one round-trip, rather than
+ * one agent lookup per installation row.
+ */
+async function attachPendingReasons({ db, workspaceId, installations }) {
+  const candidateIds = installations
+    .filter((row) => LIVE_PENDING_TRANSITION_STATES.has(row.transitionState) && !row.lastError)
+    .map((row) => row.agentId);
+  if (candidateIds.length === 0) {
+    return installations.map((row) => ({ ...row, pendingReason: null }));
+  }
+  const agentsById = await getAgentsByIds({
+    client: db,
+    workspaceId,
+    ids: candidateIds,
+  });
+  return installations.map((row) => ({
+    ...row,
+    pendingReason: pendingReasonForInstallation(row, agentsById.get(row.agentId) || null),
+  }));
+}
+
 /**
  * Read-only listing of every installation row for one trust anchor, for a
  * future admin UI to see where an anchor actually landed (agent, store,
@@ -711,8 +842,10 @@ async function listInstallationsForAnchor(options = {}) {
       ORDER BY updated_at DESC`,
     [workspaceId, trustAnchorId],
   );
-  return result.rows.map(installationFromRow);
+  const installations = result.rows.map(installationFromRow);
+  return attachPendingReasons({ db, workspaceId, installations });
 }
+
 
 /**
  * Locks (or creates, if absent) the ownership-reference row for
@@ -1167,7 +1300,15 @@ async function runCreateTrustJob(client, params) {
   // error (invalid UUID syntax or an FK violation on
   // fk_certops_trust_anchor_installations_agent) that handleCertOpsError
   // could not recognize, so both cases fell through to a bare 500.
-  await assertTargetAgentRegistered({ client, workspaceId, agentId });
+  const targetAgent = await assertTargetAgentRegistered({
+    client,
+    workspaceId,
+    agentId,
+  });
+
+  // Refuse up front rather than create a job that can never be claimed -
+  // trust jobs are pinned with no fallback claimant.
+  assertTargetAgentEligibleForTrustJob({ agent: targetAgent, operation });
 
   const { row: installationRow, created: installationCreated } =
     await lockOrCreateInstallation({
@@ -2184,6 +2325,7 @@ module.exports = {
   RECEIPT_FINALIZE_CONFLICT_CATEGORY,
   CERTOPS_TARGET_AGENT_INVALID,
   CERTOPS_TARGET_AGENT_NOT_FOUND,
+  CERTOPS_TARGET_AGENT_INELIGIBLE,
   ANCHOR_TYPES,
   DEFAULT_RECONCILE_DELAY_MS,
   parseAndValidateAnchorPem,
@@ -2192,6 +2334,7 @@ module.exports = {
   getTrustAnchorById,
   retireTrustAnchor,
   listInstallationsForAnchor,
+  pendingReasonForInstallation,
   anchorFromRow,
   installationFromRow,
   normalizeStore,
@@ -2212,4 +2355,11 @@ module.exports = {
   rescheduleTrustInstallation,
   sweepOverdueTrustInstallations,
   DEFAULT_MAX_RECONCILE_AGE_MS,
+};
+
+module.exports._test = {
+  assertTargetAgentEligibleForTrustJob,
+  BLOCKING_TRUST_JOB_CREATION_REASONS,
+  TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON,
+  pendingReasonForInstallation,
 };

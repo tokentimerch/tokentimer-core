@@ -510,6 +510,17 @@ describe("CertOps agents list route", () => {
       retireReason: null,
       downtimeAlertsEnabled: true,
       contactGroupId: null,
+      // Capability fields added for the agent-capability-visibility work:
+      // agentRow() (this file's fixture) never sets these DB columns, so
+      // they read back as their empty/null defaults - see
+      // agentMetadataFromRow's own "defaults capability arrays to []" unit
+      // test above for the case where they ARE populated.
+      supportedOperations: [],
+      declaredCapabilities: [],
+      capabilitiesUpdatedAt: null,
+      targetSelectors: [],
+      commandProfiles: [],
+      dnsProviders: [],
       // 1.2.3 is ahead of the shipped agent package's own version (the
       // default "latest known" reference for the outdated heuristic), so
       // it is compatible, not outdated.
@@ -775,6 +786,52 @@ describe("agentRegistry service internals", () => {
     assert.doesNotMatch(JSON.stringify(metadata), /credential/i);
   });
 
+  it("agentMetadataFromRow exposes supportedOperations/declaredCapabilities so the dashboard can explain why an agent can't claim a job", () => {
+    const withCapabilities = agentRegistry._test.agentMetadataFromRow(
+      agentRow({
+        supported_operations: ["renew", "distribute-trust"],
+        declared_capabilities: ["trust-anchor-deploy-v1"],
+        capabilities_updated_at: new Date("2026-07-01T12:00:00.000Z"),
+        declared_target_selectors: ["prod"],
+        declared_command_profile_names: ["default"],
+        supported_dns_providers: ["route53"],
+      }),
+    );
+    assert.deepEqual(withCapabilities.supportedOperations, [
+      "renew",
+      "distribute-trust",
+    ]);
+    assert.deepEqual(withCapabilities.declaredCapabilities, [
+      "trust-anchor-deploy-v1",
+    ]);
+    assert.equal(
+      withCapabilities.capabilitiesUpdatedAt,
+      "2026-07-01T12:00:00.000Z",
+    );
+    assert.deepEqual(withCapabilities.targetSelectors, ["prod"]);
+    assert.deepEqual(withCapabilities.commandProfiles, ["default"]);
+    assert.deepEqual(withCapabilities.dnsProviders, ["route53"]);
+  });
+
+  it("agentMetadataFromRow defaults capability arrays to [] for a fresh (never-claimed) agent row rather than throwing on a missing/null jsonb column", () => {
+    const fresh = agentRegistry._test.agentMetadataFromRow(
+      agentRow({
+        supported_operations: null,
+        declared_capabilities: null,
+        capabilities_updated_at: null,
+        declared_target_selectors: null,
+        declared_command_profile_names: null,
+        supported_dns_providers: null,
+      }),
+    );
+    assert.deepEqual(fresh.supportedOperations, []);
+    assert.deepEqual(fresh.declaredCapabilities, []);
+    assert.equal(fresh.capabilitiesUpdatedAt, null);
+    assert.deepEqual(fresh.targetSelectors, []);
+    assert.deepEqual(fresh.commandProfiles, []);
+    assert.deepEqual(fresh.dnsProviders, []);
+  });
+
   it("normalizeRequiredRetireReason trims and enforces bounds", () => {
     assert.equal(
       agentRegistry._test.normalizeRequiredRetireReason("  ok  "),
@@ -788,6 +845,7 @@ describe("agentRegistry service internals", () => {
     }
   });
 });
+
 
 
 

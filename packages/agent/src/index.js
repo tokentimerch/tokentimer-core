@@ -6044,6 +6044,25 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   // any network call so a corrupted replay store fails startup immediately.
   const executionContext = buildExecutionContext({ config });
 
+  // Emitted once at startup via the error sink - not just a code comment -
+  // so a misconfigured observe-only agent (no `execution` block, or
+  // `execution.enabled: false`) is visible in host.log/journalctl instead
+  // of silently never claiming jobs until someone notices one stuck pending.
+  // buildExecutionContext only ever returns null or { enabled: true, ... },
+  // so nullness alone is the observe-only signal checked below.
+  if (executionContext === null) {
+    defaultAgentLogger.error(
+      "running in OBSERVE-ONLY mode: config.execution is absent or " +
+        "execution.enabled is not true. This agent will register, " +
+        "heartbeat, and report discovery evidence, but it will NEVER poll " +
+        "for or claim jobs (renew, deploy, reload, distribute-trust, " +
+        "revoke-trust). If you expected this agent to execute jobs, set " +
+        '"execution": { "enabled": true, "dryRun": false } in config.json ' +
+        "and restart. See the `execution` block in the Config reference " +
+        "section of docs/certops/agent.md.",
+    );
+  }
+
   // Crash-safety: surface unresolved side-effect journals for operator
   // reconciliation. Do not auto-re-execute those jobIds.
   try {
