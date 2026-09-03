@@ -23,10 +23,10 @@ const trustAnchors = require(
   ),
 );
 
+const { TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON } = trustAnchors;
 const {
   assertTargetAgentEligibleForTrustJob,
   BLOCKING_TRUST_JOB_CREATION_REASONS,
-  TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON,
   pendingReasonForInstallation,
 } = trustAnchors._test;
 

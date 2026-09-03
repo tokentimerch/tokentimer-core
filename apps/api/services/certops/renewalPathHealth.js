@@ -29,12 +29,14 @@ const {
 const { computeAgentCompatibility } = require("./agentRegistry");
 const {
   evaluateAgentJobEligibility,
+  persistedTextArray,
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
 const {
   resolveAgentOfflineAfterMs,
   classifyAgentLiveness,
 } = require("./agentLiveness");
+const { TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON } = require("./trustAnchors");
 
 const RENEWAL_PATH_STATES = Object.freeze({
   HEALTHY: "healthy",
@@ -57,6 +59,13 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   // separately so an operator knows re-homing (not just waiting for a
   // liveness recovery) is required.
   ASSIGNED_AGENT_RETIRED: "assigned_agent_retired",
+  // The certificate's pinned executor resolves to a real, non-retired agent
+  // that is currently ineligible for a different determinate reason (version/
+  // protocol compatibility, a declared-capability/selector/DNS/command-profile
+  // mismatch, etc.) -- surfaced separately from NO_EXECUTION_TARGET so an
+  // operator is told an agent IS pinned and why it can't claim the job, rather
+  // than being told none is associated at all.
+  ASSIGNED_AGENT_INELIGIBLE: "assigned_agent_ineligible",
   // Not in the product spec's suggested list, but needed so a certificate
   // that is not currently expected to auto-renew never gets shown next to
   // "Renewal path unavailable" -- rule: "auto-renew disabled should not
@@ -199,10 +208,16 @@ function agentDependencyView(agent, { required, offlineAfterMs, now }) {
  * pre-loaded agent index. Pure function of (certificate row, profile
  * metadata, agent index) so it is trivially unit-testable without a DB.
  *
- * @returns {{ pinned: boolean, pinnedButRetired: boolean, agents: object[] }}
+ * @returns {{ pinned: boolean, pinnedButRetired: boolean, pinnedAgentIneligibleReason: (string|null), pinnedAgentDeclaredOperations: (string[]|null), agents: object[] }}
  *   agents is the full candidate list (dependencies view), already
  *   liveness-annotated. pinnedButRetired is true only when a pin target was
  *   configured but resolves to a now-retired agent (see module doc comment).
+ *   pinnedAgentIneligibleReason is set only when the pin target is real,
+ *   non-retired, and determinately ineligible for a different reason (e.g.
+ *   compatibility_blocked, operation_unsupported) -- absent/null otherwise.
+ *   pinnedAgentDeclaredOperations is only populated for operation_unsupported,
+ *   so classifyExecutors can tell "declared nothing" from "declared other
+ *   operations, just not this one" -- both trigger the same reason code.
  */
 function resolveRequiredExecutors({
   certificateRow,
@@ -253,6 +268,8 @@ function resolveRequiredExecutors({
   // the shared dispatch predicate below.
   let eligibilityIndeterminate = false;
   let liveEligibilityIndeterminate = false;
+  let pinnedAgentIneligibleReason = null;
+  let pinnedAgentDeclaredOperations = null;
   const matching = jobRequirements
     ? agentIndex.all.filter((agent) => {
         const evaluation = evaluateAgentJobEligibility({
@@ -270,6 +287,17 @@ function resolveRequiredExecutors({
           if (isAgentOnline(agent, { offlineAfterMs, now })) {
             liveEligibilityIndeterminate = true;
           }
+        } else if (
+          assignedAgentId &&
+          agent.id === assignedAgentId &&
+          !evaluation.eligible
+        ) {
+          pinnedAgentIneligibleReason = evaluation.reason;
+          if (evaluation.reason === "operation_unsupported") {
+            pinnedAgentDeclaredOperations = persistedTextArray(
+              agent.supportedOperations,
+            );
+          }
         }
         return evaluation.eligible;
       })
@@ -282,6 +310,8 @@ function resolveRequiredExecutors({
   return {
     pinned: Boolean(assignedAgentId),
     pinnedButRetired: false,
+    pinnedAgentIneligibleReason,
+    pinnedAgentDeclaredOperations,
     targetReference,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
@@ -295,6 +325,51 @@ function resolveRequiredExecutors({
   };
 }
 
+// Mirrors AgentFleetPanel.jsx's ExecutionCapabilityBadge tooltip copy for the
+// "never declared any operation" case: that text is deliberately
+// operation-agnostic (no mention of a specific op), unlike
+// TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.operation_unsupported, which
+// hardcodes "distribute-trust/revoke-trust" and would be misleading here.
+//
+// ExecutionCapabilityBadge itself never needs the partial-capability case
+// below: it only asks "did this agent declare anything at all", not "does it
+// support this specific operation", so declaring any operation is enough for
+// its "Enabled" state. operation_unsupported here is a per-job answer, so an
+// agent that declared e.g. issue/deploy but not renew is a real, different
+// case from one that declared nothing -- getting told it's "not declared any
+// executable action" would be wrong; it is executing other jobs just fine.
+const NO_CAPABILITY_DECLARED_SUMMARY =
+  "The agent assigned to renew this certificate has not declared any " +
+  "executable action the last time it claimed a job. Most often this means " +
+  "it is running observe-only (no execution block, or execution.enabled is " +
+  "not true, in its config.json) -- though a brand-new agent that has not " +
+  "polled for a job yet looks identical here.";
+
+function partialCapabilitySummary(declaredOperations) {
+  return (
+    `The agent assigned to renew this certificate has declared support ` +
+    `for ${declaredOperations.join(", ")}, but not for renew. It is not ` +
+    `idle -- it simply has not been configured (or does not support) ` +
+    `automatic-renewal jobs.`
+  );
+}
+
+function ineligiblePinSummary(reason, declaredOperations) {
+  if (reason === "compatibility_blocked") {
+    return TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.compatibility_blocked;
+  }
+  if (reason === "operation_unsupported") {
+    return Array.isArray(declaredOperations) && declaredOperations.length > 0
+      ? partialCapabilitySummary(declaredOperations)
+      : NO_CAPABILITY_DECLARED_SUMMARY;
+  }
+  return (
+    `The agent assigned to renew this certificate cannot currently claim ` +
+    `the renewal job (${reason}). Check the agent's declared capabilities ` +
+    `and compatibility state.`
+  );
+}
+
 /**
  * Classify a resolved executor set into a renewalPathState projection.
  */
@@ -303,6 +378,8 @@ function classifyExecutors({
   targetReference,
   hasResolvableTopology,
   pinnedButRetired = false,
+  pinnedAgentIneligibleReason = null,
+  pinnedAgentDeclaredOperations = null,
 }) {
   if (pinnedButRetired) {
     return {
@@ -310,6 +387,16 @@ function classifyExecutors({
       renewalPathReason: RENEWAL_PATH_REASONS.ASSIGNED_AGENT_RETIRED,
       renewalPathSummary:
         "The agent assigned to renew this certificate has been retired. Re-assign this certificate to an active agent.",
+    };
+  }
+  if (pinnedAgentIneligibleReason) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+      renewalPathSummary: ineligiblePinSummary(
+        pinnedAgentIneligibleReason,
+        pinnedAgentDeclaredOperations,
+      ),
     };
   }
   if (!hasResolvableTopology) {
@@ -438,6 +525,8 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     targetReference,
     pinned,
     pinnedButRetired,
+    pinnedAgentIneligibleReason,
+    pinnedAgentDeclaredOperations,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
   } = resolveRequiredExecutors({
@@ -470,6 +559,8 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     targetReference,
     hasResolvableTopology,
     pinnedButRetired,
+    pinnedAgentIneligibleReason,
+    pinnedAgentDeclaredOperations,
   });
 
   return {
@@ -646,5 +737,6 @@ module.exports = {
     classifyExecutors,
     targetReferenceFromProfile,
     loadWorkspaceAgentIndex,
+    NO_CAPABILITY_DECLARED_SUMMARY,
   },
 };
