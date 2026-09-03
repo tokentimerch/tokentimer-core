@@ -139,6 +139,7 @@ const AGENT_COLUMNS = [
   ['protocol', 'Protocol'],
   ['clockDrift', 'Clock drift'],
   ['ntp', 'NTP'],
+  ['execution', 'Execution'],
   ['signingKey', 'Signing key'],
   ['lastHeartbeat', 'Last heartbeat'],
 ];
@@ -159,6 +160,12 @@ function agentSortValue(agent, key) {
   }
   if (key === 'ntp') {
     return agent.ntpSynced == null ? null : agent.ntpSynced ? 1 : 0;
+  }
+  if (key === 'execution') {
+    return Array.isArray(agent.supportedOperations) &&
+      agent.supportedOperations.length > 0
+      ? 1
+      : 0;
   }
   if (key === 'signingKey') return agent.pinnedSigningKeyId || '';
   if (key === 'lastHeartbeat') {
@@ -202,6 +209,48 @@ function NtpBadge({ ntpSynced }) {
       fontSize='xs'
     >
       {ntpSynced ? 'Synced' : 'Not synced'}
+    </Badge>
+  );
+}
+
+/**
+ * Execution capability chip: whether this agent declared any executable
+ * action the last time it successfully claimed a job. Empty is ambiguous
+ * between "observe-only" and "hasn't polled yet" - the title makes that
+ * caveat explicit rather than asserting a diagnosis this field can't prove.
+ */
+function ExecutionCapabilityBadge({ supportedOperations }) {
+  const declared = Array.isArray(supportedOperations) ? supportedOperations : [];
+  if (declared.length > 0) {
+    return (
+      <Badge
+        colorScheme='green'
+        variant='subtle'
+        textTransform='none'
+        fontWeight='medium'
+        fontSize='xs'
+        title={`Last declared on claim: ${declared.join(', ')}`}
+      >
+        Enabled
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      colorScheme='orange'
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+      title={
+        'No executable action declared on the last claim call. Most often ' +
+        'this means the agent is running observe-only (no execution block, ' +
+        'or execution.enabled is not true, in its config.json) - a job ' +
+        'pinned to it will sit at Pending forever. A brand-new agent that ' +
+        'has not polled for a job yet looks identical here.'
+      }
+    >
+      No capability declared
     </Badge>
   );
 }
@@ -808,6 +857,14 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           NTP
                         </CertOpsMobileFieldLabel>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
+                      </Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Execution
+                        </CertOpsMobileFieldLabel>
+                        <ExecutionCapabilityBadge
+                          supportedOperations={agent.supportedOperations}
+                        />
                       </Td>
                       <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>

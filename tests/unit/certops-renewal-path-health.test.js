@@ -15,12 +15,16 @@ const {
     resolveRequiredExecutors,
     classifyExecutors,
     targetReferenceFromProfile,
+    NO_CAPABILITY_DECLARED_SUMMARY,
   },
 } = require(
   path.resolve(
     __dirname,
     "../../apps/api/services/certops/renewalPathHealth.js",
   ),
+);
+const { TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/trustAnchors.js"),
 );
 
 const NOW = new Date("2026-08-07T12:00:00.000Z").getTime();
@@ -36,6 +40,7 @@ function agentRow({
   supportedOperations = ["renew"],
   dnsProviders = ["cloudflare"],
   commandProfiles = ["renew.web"],
+  protocolVersion = "1.0.0",
 }) {
   return {
     id,
@@ -54,7 +59,7 @@ function agentRow({
     capabilities_updated_at: new Date(NOW).toISOString(),
     agent_kind: "normal",
     agent_version: "0.1.0",
-    protocol_version: "1.0.0",
+    protocol_version: protocolVersion,
     clock_offset_ms: 0,
   };
 }
@@ -304,6 +309,111 @@ describe("renewalPathHealth: resolveRequiredExecutors", () => {
     assert.equal(agents.length, 0);
     assert.equal(targetReference, null);
   });
+
+  it("pinned agent_filesystem discovery agent that is compatibility-blocked: pinnedAgentIneligibleReason set, no open-claim fallback even with a live redundant-looking agent", () => {
+    // Real dispatch would never let agent-b claim this job (assigned_agent_id
+    // still hard-pins to agent-a), so a live decoy declaring the same
+    // selector must not resolve this as Degraded/Healthy via agent-b.
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", protocolVersion: "999.0.0" }),
+      onlineAgentRow({ id: "agent-b", targetSelectors: ["host/web"] }),
+    ]);
+    const jobRequirements = {
+      operation: "renew",
+      executorKind: "agent",
+      requiredTargetSelector: "host/web",
+    };
+    const { pinned, pinnedButRetired, pinnedAgentIneligibleReason, agents } =
+      resolveRequiredExecutors({
+        certificateRow: certRow({
+          source: "agent_filesystem",
+          deployed_agent_id: null,
+          discovery_agent_id: "agent-a",
+        }),
+        profileMetadata: {
+          renewalProfile: { target: { reference: "host/web" } },
+        },
+        agentIndex,
+        offlineAfterMs: OFFLINE_AFTER_MS,
+        now: NOW,
+        jobRequirements,
+      });
+    assert.equal(pinned, true);
+    assert.equal(pinnedButRetired, false);
+    assert.equal(pinnedAgentIneligibleReason, "compatibility_blocked");
+    assert.equal(agents.length, 0);
+  });
+
+  it("pinned agent that has never declared any supported operation (fresh/never-polled agent): pinnedAgentIneligibleReason 'operation_unsupported', no declared operations", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", supportedOperations: [] }),
+    ]);
+    const jobRequirements = {
+      operation: "renew",
+      executorKind: "agent",
+      requiredTargetSelector: "host/web",
+    };
+    const {
+      pinned,
+      pinnedAgentIneligibleReason,
+      pinnedAgentDeclaredOperations,
+      agents,
+    } = resolveRequiredExecutors({
+      certificateRow: certRow({
+        source: "agent_filesystem",
+        deployed_agent_id: null,
+        discovery_agent_id: "agent-a",
+      }),
+      profileMetadata: {
+        renewalProfile: { target: { reference: "host/web" } },
+      },
+      agentIndex,
+      offlineAfterMs: OFFLINE_AFTER_MS,
+      now: NOW,
+      jobRequirements,
+    });
+    assert.equal(pinned, true);
+    assert.equal(pinnedAgentIneligibleReason, "operation_unsupported");
+    assert.deepEqual(pinnedAgentDeclaredOperations, []);
+    assert.equal(agents.length, 0);
+  });
+
+  it("pinned agent that declared other operations but not renew (partial capability, not never-polled): pinnedAgentDeclaredOperations names what it DID declare", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({
+        id: "agent-a",
+        supportedOperations: ["issue", "deploy"],
+      }),
+    ]);
+    const jobRequirements = {
+      operation: "renew",
+      executorKind: "agent",
+      requiredTargetSelector: "host/web",
+    };
+    const {
+      pinned,
+      pinnedAgentIneligibleReason,
+      pinnedAgentDeclaredOperations,
+      agents,
+    } = resolveRequiredExecutors({
+      certificateRow: certRow({
+        source: "agent_filesystem",
+        deployed_agent_id: null,
+        discovery_agent_id: "agent-a",
+      }),
+      profileMetadata: {
+        renewalProfile: { target: { reference: "host/web" } },
+      },
+      agentIndex,
+      offlineAfterMs: OFFLINE_AFTER_MS,
+      now: NOW,
+      jobRequirements,
+    });
+    assert.equal(pinned, true);
+    assert.equal(pinnedAgentIneligibleReason, "operation_unsupported");
+    assert.deepEqual(pinnedAgentDeclaredOperations, ["issue", "deploy"]);
+    assert.equal(agents.length, 0);
+  });
 });
 
 describe("renewalPathHealth: classifyExecutors", () => {
@@ -357,6 +467,61 @@ describe("renewalPathHealth: classifyExecutors", () => {
       result.renewalPathReason,
       RENEWAL_PATH_REASONS.ALL_EXECUTORS_OFFLINE,
     );
+  });
+
+  it("pinnedAgentIneligibleReason 'compatibility_blocked' -> Renewal path unavailable, assigned_agent_ineligible, summary reused from TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON", () => {
+    const result = classifyExecutors({
+      agents: [],
+      targetReference: null,
+      hasResolvableTopology: true,
+      pinnedAgentIneligibleReason: "compatibility_blocked",
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.equal(
+      result.renewalPathSummary,
+      TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.compatibility_blocked,
+    );
+  });
+
+  it("pinnedAgentIneligibleReason 'operation_unsupported' -> Renewal path unavailable, assigned_agent_ineligible, operation-agnostic summary (not the trust-specific one)", () => {
+    const result = classifyExecutors({
+      agents: [],
+      targetReference: null,
+      hasResolvableTopology: true,
+      pinnedAgentIneligibleReason: "operation_unsupported",
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.equal(result.renewalPathSummary, NO_CAPABILITY_DECLARED_SUMMARY);
+    assert.notEqual(
+      result.renewalPathSummary,
+      TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON.operation_unsupported,
+    );
+  });
+
+  it("pinnedAgentIneligibleReason 'operation_unsupported' WITH declared operations -> distinct partial-capability summary, not the 'declared nothing' wording", () => {
+    const result = classifyExecutors({
+      agents: [],
+      targetReference: null,
+      hasResolvableTopology: true,
+      pinnedAgentIneligibleReason: "operation_unsupported",
+      pinnedAgentDeclaredOperations: ["issue", "deploy"],
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.notEqual(result.renewalPathSummary, NO_CAPABILITY_DECLARED_SUMMARY);
+    assert.match(result.renewalPathSummary, /issue, deploy/);
+    assert.match(result.renewalPathSummary, /not for renew/);
   });
 
   it("no execution target resolved -> Renewal path unavailable", () => {
@@ -482,6 +647,72 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
       result.renewalPathReason,
       RENEWAL_PATH_REASONS.ASSIGNED_AGENT_RETIRED,
     );
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("pinned agent that is compatibility-blocked -> Renewal path unavailable (assigned_agent_ineligible), not no_execution_target, even with a live redundant-looking agent", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", protocolVersion: "999.0.0" }),
+      onlineAgentRow({ id: "agent-b", targetSelectors: ["host/web"] }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ discovery_agent_id: "agent-a" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.notEqual(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.NO_EXECUTION_TARGET,
+    );
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("pinned agent that has never declared any supported operation -> Renewal path unavailable (assigned_agent_ineligible), not no_execution_target, 'has not declared any executable action' wording", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", supportedOperations: [] }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ discovery_agent_id: "agent-a" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.notEqual(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.NO_EXECUTION_TARGET,
+    );
+    assert.match(result.renewalPathSummary, /has not declared any/);
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("pinned agent that declared other operations but not renew -> Renewal path unavailable (assigned_agent_ineligible), summary names what it DID declare instead of claiming it declared nothing", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({
+        id: "agent-a",
+        supportedOperations: ["issue", "deploy"],
+      }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ discovery_agent_id: "agent-a" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.doesNotMatch(result.renewalPathSummary, /has not declared any/);
+    assert.match(result.renewalPathSummary, /issue, deploy/);
     assert.deepEqual(result.dependencies, []);
   });
 });

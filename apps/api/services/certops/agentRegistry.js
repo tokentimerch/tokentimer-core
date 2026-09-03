@@ -110,6 +110,10 @@ function certopsCapabilityFreshnessMs(env = process.env) {
 
 // The workspace admin surface must never see credential_prefix or
 // credential_hash; only these columns leave the service layer.
+//
+// The capability columns below mirror what agentDispatch.js reads at claim
+// time, so the dashboard can explain *why* an agent is or isn't eligible
+// for a job instead of leaving it stuck at "pending" with no reason.
 const AGENT_SAFE_SELECT_FIELDS = `
   id,
   workspace_id,
@@ -129,8 +133,23 @@ const AGENT_SAFE_SELECT_FIELDS = `
   retired_at,
   retire_reason,
   downtime_alerts_enabled,
-  contact_group_id
+  contact_group_id,
+  supported_operations,
+  declared_capabilities,
+  capabilities_updated_at,
+  declared_target_selectors,
+  declared_command_profile_names,
+  supported_dns_providers
 `;
+
+/**
+ * jsonb columns arrive already parsed, so this just guards against a
+ * legacy NULL/non-array shape. Mirrors agentDispatch.js's own helper.
+ */
+function jsonbTextArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
 
 // Idempotent revocation guard for retireAgent below. Generates a fresh
 // cryptographically random value in Node (not SQL): gen_random_bytes()
@@ -387,6 +406,17 @@ function agentMetadataFromRow(row, env = process.env) {
     // DEFAULT TRUE backfilled every pre-existing row at migration time).
     downtimeAlertsEnabled: Boolean(row.downtime_alerts_enabled ?? true),
     contactGroupId: row.contact_group_id ?? null,
+    // supportedOperations only updates on a successful claim call, so an
+    // observe-only agent and a brand-new agent that hasn't polled yet look
+    // identical here. Same staleness trade-off ADR-0012 decision 17 accepts
+    // for declaredCapabilities. Still the most useful signal available:
+    // it's the exact field dispatch checks for real eligibility.
+    supportedOperations: jsonbTextArray(row.supported_operations),
+    declaredCapabilities: jsonbTextArray(row.declared_capabilities),
+    capabilitiesUpdatedAt: dateToIso(row.capabilities_updated_at),
+    targetSelectors: jsonbTextArray(row.declared_target_selectors),
+    commandProfiles: jsonbTextArray(row.declared_command_profile_names),
+    dnsProviders: jsonbTextArray(row.supported_dns_providers),
   };
   const compatibility = computeAgentCompatibility(base, env);
   return {
@@ -466,6 +496,34 @@ async function getAgentById(options) {
     [normalizeWorkspaceId(options.workspaceId), options.agentId],
   );
   return agentMetadataFromRow(result.rows[0] || null, options.env);
+}
+
+/**
+ * Batch-resolves agents by internal UUID (certops_agents.id), the key
+ * trustAnchors.js's installation rows use. Sibling of
+ * getAgentsByAgentIdStrings below, which serves string-keyed callers.
+ *
+ * @param {{ workspaceId: string, ids: string[], client?: object, env?: NodeJS.ProcessEnv }} options
+ * @returns {Promise<Map<string, object>>} internal id (string) -> agentMetadataFromRow shape
+ */
+async function getAgentsByIds(options) {
+  const ids = Array.from(
+    new Set((options.ids || []).filter((value) => typeof value === "string" && value)),
+  );
+  if (ids.length === 0) return new Map();
+  const result = await (options.client || pool).query(
+    `SELECT ${AGENT_SAFE_SELECT_FIELDS}
+       FROM certops_agents
+      WHERE workspace_id = $1
+        AND id = ANY($2::uuid[])`,
+    [normalizeWorkspaceId(options.workspaceId), ids],
+  );
+  const map = new Map();
+  for (const row of result.rows) {
+    const metadata = agentMetadataFromRow(row, options.env);
+    map.set(String(metadata.id), metadata);
+  }
+  return map;
 }
 
 /**
@@ -1011,6 +1069,7 @@ module.exports = {
   fenceAgentInFlightWork,
   getAgentById,
   getAgentsByAgentIdStrings,
+  getAgentsByIds,
   listAgents,
   normalizeRequiredRetireReason,
   readCompatibilityConfig,

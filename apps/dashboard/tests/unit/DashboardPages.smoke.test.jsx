@@ -12,6 +12,7 @@ const {
   apiGetMock,
   apiPostMock,
   apiDeleteMock,
+  workspaceGetMock,
   workspaceListMock,
   workspaceListMembersMock,
   workspaceCreateMock,
@@ -21,6 +22,7 @@ const {
   apiGetMock: vi.fn(),
   apiPostMock: vi.fn(),
   apiDeleteMock: vi.fn(),
+  workspaceGetMock: vi.fn(),
   workspaceListMock: vi.fn(),
   workspaceListMembersMock: vi.fn(),
   workspaceCreateMock: vi.fn(),
@@ -112,6 +114,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     ALERT_STATS: '/api/alert-stats',
   },
   workspaceAPI: {
+    get: workspaceGetMock,
     list: workspaceListMock,
     listMembers: workspaceListMembersMock,
     create: workspaceCreateMock,
@@ -187,6 +190,10 @@ const baseProps = {
 describe('Dashboard page smoke tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Audit.jsx pulls in useCertOpsAgents -> useCertOpsCanManage, which
+    // resolves the caller's role via workspaceAPI.get; these smoke tests
+    // don't assert on manager gating, so any resolvable role is fine.
+    workspaceGetMock.mockResolvedValue({ role: 'admin' });
     workspaceListMock.mockResolvedValue({ items: [] });
     workspaceListMembersMock.mockResolvedValue({ items: [] });
     workspaceCreateMock.mockResolvedValue({ id: 'ws-2' });
