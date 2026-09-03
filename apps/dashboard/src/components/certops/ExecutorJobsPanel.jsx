@@ -265,6 +265,8 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                 <HStack
                   w='full'
                   spacing={2}
+                  flexWrap={{ base: 'wrap', md: 'nowrap' }}
+                  align={{ base: 'flex-start', md: 'center' }}
                   px={2}
                   py={2}
                   borderRadius='md'
@@ -296,18 +298,32 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                   <Text
                     fontSize='sm'
                     fontWeight='medium'
-                    flexShrink={0}
-                    noOfLines={1}
+                    flex={{ base: '1 1 calc(100% - 24px)', md: '0 1 auto' }}
+                    minW={0}
+                    maxW='100%'
+                    noOfLines={{ base: 2, md: 1 }}
+                    overflowWrap='anywhere'
                   >
                     {jobOperationLabel(job.operation)}
                   </Text>
                   <Box
-                    flexShrink={0}
+                    flexShrink={1}
+                    minW={0}
+                    maxW={{ base: '100%', md: 'none' }}
+                    overflow='hidden'
                     onClick={event => event.stopPropagation()}
                   >
                     <CopyableId id={job.id} display={truncateId(job.id)} />
                   </Box>
-                  <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
+                  <Text
+                    fontSize='xs'
+                    color={muted}
+                    flex={{ base: '1 1 100%', md: 1 }}
+                    minW={0}
+                    maxW='100%'
+                    noOfLines={{ base: 2, md: 1 }}
+                    overflowWrap='anywhere'
+                  >
                     {[agentLabel, subject].filter(Boolean).join(' · ')}
                   </Text>
                   {stalledByPause ? (

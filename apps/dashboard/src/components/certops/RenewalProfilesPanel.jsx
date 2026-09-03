@@ -51,6 +51,7 @@ import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
 import {
   CertOpsMobileFieldLabel,
   CertOpsSortableHeader,
+  CertOpsTruncatedText,
   nextCertOpsTableSort,
   sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
@@ -417,9 +418,11 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                   return (
                     <Tr key={profile.id} {...tableStyles.rowProps}>
                       <Td {...tableStyles.primaryCellProps}>
-                        <Text fontSize='sm' fontWeight='medium'>
-                          {profile.name}
-                        </Text>
+                        <CertOpsTruncatedText
+                          value={profile.name}
+                          fontSize='sm'
+                          fontWeight='medium'
+                        />
                         <HStack spacing={2} mt={1}>
                           {profile.derived ? (
                             <Tooltip
@@ -440,9 +443,11 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             </Tooltip>
                           ) : null}
                           {renewal.dns?.provider ? (
-                            <Text fontSize='xs' color={muted}>
-                              {renewal.dns.provider}
-                            </Text>
+                            <CertOpsTruncatedText
+                              value={renewal.dns.provider}
+                              fontSize='xs'
+                              color={muted}
+                            />
                           ) : null}
                         </HStack>
                       </Td>

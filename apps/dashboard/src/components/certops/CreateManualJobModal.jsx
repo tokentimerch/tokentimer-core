@@ -1458,7 +1458,8 @@ export default function CreateManualJobModal({
           </Button>
           <Button
             {...primaryButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleSubmit}
             isDisabled={!canSubmit}
             isLoading={submitting}

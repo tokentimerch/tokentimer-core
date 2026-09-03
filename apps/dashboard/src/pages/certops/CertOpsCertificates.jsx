@@ -56,6 +56,7 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import DashboardPagination from '../../components/DashboardPagination.jsx';
+import { CertOpsTruncatedText } from '../../components/certops/CertOpsResponsiveTable.jsx';
 import {
   CERTOPS_CERTIFICATE_FILTERS,
   CERTOPS_PAGE_SIZE_OPTIONS,
@@ -663,9 +664,11 @@ export default function CertOpsCertificates() {
                         borderBottomWidth={{ base: '1px', lg: '1px' }}
                         borderColor={mobileActionBorder}
                       >
-                        <Text fontSize='sm' fontWeight='medium' noOfLines={1}>
-                          {certificateDisplayName(certificate)}
-                        </Text>
+                        <CertOpsTruncatedText
+                          value={certificateDisplayName(certificate)}
+                          fontSize='sm'
+                          fontWeight='medium'
+                        />
                         <HStack spacing={2}>
                           <CopyableId
                             id={certificate.id}

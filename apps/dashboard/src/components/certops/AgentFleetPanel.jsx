@@ -56,6 +56,7 @@ import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
   CertOpsMobileFieldLabel,
   CertOpsSortableHeader,
+  CertOpsTruncatedText,
   nextCertOpsTableSort,
   sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
@@ -335,7 +336,8 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
           </Button>
           <Button
             {...dangerButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleConfirm}
             isLoading={submitting}
             loadingText='Retiring'
@@ -499,7 +501,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
           </Button>
           <Button
             {...primaryButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleSave}
             isLoading={submitting}
             loadingText='Saving'
@@ -546,6 +549,41 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const infoBorder = useColorModeValue('blue.200', 'blue.700');
   const infoText = useColorModeValue('blue.800', 'blue.100');
   const tableStyles = useCertOpsResponsiveTableStyles();
+  const agentTableProps = {
+    ...tableStyles.tableProps,
+    sx: {
+      ...tableStyles.tableProps.sx,
+      'thead th': {
+        ...tableStyles.tableProps.sx['thead th'],
+        px: 2,
+      },
+      'thead th button': {
+        px: 0,
+      },
+      'tbody td': {
+        ...tableStyles.tableProps.sx['tbody td'],
+        verticalAlign: 'top',
+      },
+    },
+  };
+  const agentPrimaryCellProps = {
+    ...tableStyles.primaryCellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 3, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
+  const agentCellProps = {
+    ...tableStyles.cellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 2, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
+  const agentActionCellProps = {
+    ...tableStyles.actionCellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 2, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
   const [sort, setSort] = useState({ key: null, direction: 'asc' });
   const sortedAgents = useMemo(
     () => sortCertOpsTableRows(agents, sort, agentSortValue),
@@ -649,7 +687,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
             </Flex>
           ) : null}
           <TableContainer {...tableStyles.tableContainerProps}>
-            <Table {...tableStyles.tableProps}>
+            <Table {...agentTableProps}>
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {AGENT_COLUMNS.map(([key, label]) => (
@@ -673,18 +711,22 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                   const status = String(agent.status || '').toLowerCase();
                   return (
                     <Tr key={agent.id} {...tableStyles.rowProps}>
-                      <Td {...tableStyles.primaryCellProps}>
+                      <Td {...agentPrimaryCellProps}>
                         <Box>
-                          <Text fontSize='sm' fontWeight='semibold'>
-                            {agent.name || agent.hostname || 'Unnamed agent'}
-                          </Text>
+                          <CertOpsTruncatedText
+                            value={
+                              agent.name || agent.hostname || 'Unnamed agent'
+                            }
+                            fontSize='sm'
+                            fontWeight='semibold'
+                          />
                           <CopyableId
                             id={agent.agentId}
                             display={shortId(agent.agentId)}
                           />
                         </Box>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           OS
                         </CertOpsMobileFieldLabel>
@@ -692,7 +734,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           {platformLabel(agent.platform)}
                         </Text>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Status
                         </CertOpsMobileFieldLabel>
@@ -720,7 +762,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           ) : null}
                         </VStack>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Version
                         </CertOpsMobileFieldLabel>
@@ -728,7 +770,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           {agent.agentVersion || '--'}
                         </Text>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Protocol
                         </CertOpsMobileFieldLabel>
@@ -739,7 +781,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                             : String(agent.protocolVersion)}
                         </Text>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Clock drift
                         </CertOpsMobileFieldLabel>
@@ -761,13 +803,13 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           ) : null}
                         </HStack>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           NTP
                         </CertOpsMobileFieldLabel>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Signing key
                         </CertOpsMobileFieldLabel>
@@ -780,7 +822,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           <Text fontSize='sm'>--</Text>
                         )}
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
                           Last heartbeat
                         </CertOpsMobileFieldLabel>
@@ -793,10 +835,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                         </Text>
                       </Td>
                       {canManage ? (
-                        <Td
-                          {...tableStyles.actionCellProps}
-                          textAlign='right'
-                        >
+                        <Td {...agentActionCellProps} textAlign='right'>
                           <HStack spacing={2} justify='flex-end'>
                             {status !== 'retired' ? (
                               <Button

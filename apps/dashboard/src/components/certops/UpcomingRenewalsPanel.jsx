@@ -26,6 +26,7 @@ import JobStatusBadge from './JobStatusBadge.jsx';
 import {
   CertOpsMobileFieldLabel,
   CertOpsSortableHeader,
+  CertOpsTruncatedText,
   nextCertOpsTableSort,
   sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
@@ -283,20 +284,31 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                   return (
                     <Tr key={item.certificateId} {...tableStyles.rowProps}>
                       <Td {...tableStyles.primaryCellProps}>
-                        <Text fontSize='sm' fontWeight='medium'>
-                          {item.commonName || '--'}
-                        </Text>
+                        <CertOpsTruncatedText
+                          value={item.commonName}
+                          fontSize='sm'
+                          fontWeight='medium'
+                        />
                         {item.profileName ? (
-                          <Text fontSize='xs' color={muted}>
-                            {item.profileName}
-                          </Text>
+                          <CertOpsTruncatedText
+                            value={item.profileName}
+                            fontSize='xs'
+                            color={muted}
+                          />
                         ) : null}
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
                         <CertOpsMobileFieldLabel color={muted}>
                           Expires
                         </CertOpsMobileFieldLabel>
-                        <HStack spacing={2}>
+                        <Flex
+                          direction={{ base: 'column', lg: 'row' }}
+                          align={{ base: 'flex-start', lg: 'center' }}
+                          gap={{ base: 1, lg: 2 }}
+                        >
                           <Text fontSize='sm'>{formatDate(item.notAfter)}</Text>
                           <Badge
                             colorScheme={expiry.scheme}
@@ -307,9 +319,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           >
                             {expiry.label}
                           </Badge>
-                        </HStack>
+                        </Flex>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
                         <CertOpsMobileFieldLabel color={muted}>
                           Renewal window
                         </CertOpsMobileFieldLabel>
@@ -320,7 +335,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           {item.renewBeforeDays} days before expiry
                         </Text>
                       </Td>
-                      <Td {...tableStyles.cellProps}>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
                         <CertOpsMobileFieldLabel color={muted}>
                           Auto-renew
                         </CertOpsMobileFieldLabel>
@@ -355,7 +373,10 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Tooltip>
                         )}
                       </Td>
-                      <Td {...tableStyles.fullWidthCellProps}>
+                      <Td
+                        {...tableStyles.fullWidthCellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
                         <CertOpsMobileFieldLabel color={muted}>
                           Last attempt
                         </CertOpsMobileFieldLabel>

@@ -63,11 +63,11 @@ function CertOpsSubNav() {
             key={tab.to}
             as={NavLink}
             to={tab.to}
-            px={3}
+            px={{ base: 1.5, sm: 3 }}
             py={1.5}
             flexShrink={0}
             whiteSpace='nowrap'
-            fontSize='sm'
+            fontSize={{ base: '2xs', sm: 'sm' }}
             fontWeight='medium'
             color={muted}
             borderLeftWidth={index === 0 ? 0 : '1px'}

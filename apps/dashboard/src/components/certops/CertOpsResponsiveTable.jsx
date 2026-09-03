@@ -1,4 +1,4 @@
-import { Button, Text, Th, useColorModeValue } from '@chakra-ui/react';
+import { Button, Text, Th, Tooltip, useColorModeValue } from '@chakra-ui/react';
 
 const SORT_HEADER_BUTTON_PROPS = {
   variant: 'ghost',
@@ -98,6 +98,25 @@ export function CertOpsMobileFieldLabel({ children, color }) {
     >
       {children}
     </Text>
+  );
+}
+
+export function CertOpsTruncatedText({ value, maxLength = 40, ...textProps }) {
+  const fullValue =
+    value === null || value === undefined || value === ''
+      ? '--'
+      : String(value);
+  const displayValue =
+    fullValue.length > maxLength
+      ? `${fullValue.slice(0, Math.max(0, maxLength - 1))}…`
+      : fullValue;
+
+  return (
+    <Tooltip label={fullValue} hasArrow placement='top' openDelay={250}>
+      <Text {...textProps} minW={0} noOfLines={1}>
+        {displayValue}
+      </Text>
+    </Tooltip>
   );
 }
 
