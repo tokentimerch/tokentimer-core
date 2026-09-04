@@ -344,6 +344,26 @@ describe('CertOpsRenewals page', () => {
     );
   });
 
+  it('renders a fallback deferred badge for an unknown deferredReason instead of crashing', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'future_reason_unknown_to_ui',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Deferred')).toBeInTheDocument();
+    expect(screen.getByLabelText(/temporarily deferred/i)).toBeInTheDocument();
+  });
+
   it('adds a non-alarming capacity-wait sentence separate from the blocked-certificate warning', async () => {
     listUpcomingRenewalsMock.mockResolvedValue({
       items: [

@@ -94,8 +94,14 @@ const DEFERRED_REASONS = {
   },
 };
 
+const DEFERRED_FALLBACK = {
+  label: 'Deferred',
+  tooltip:
+    'Renewal is temporarily deferred. It will proceed once the underlying condition clears.',
+};
+
 function deferredDescriptor(reason) {
-  return DEFERRED_REASONS[reason] || null;
+  return DEFERRED_REASONS[reason] || DEFERRED_FALLBACK;
 }
 
 function renewalWindowLabel(renewsFrom) {
@@ -266,6 +272,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               <Tbody>
                 {renewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
+                  const deferred = item.deferredReason
+                    ? deferredDescriptor(item.deferredReason)
+                    : null;
                   return (
                     <Tr key={item.certificateId}>
                       <Td>
@@ -312,12 +321,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                             >
                               On
                             </Badge>
-                            {item.deferredReason ? (
+                            {deferred ? (
                               <Tooltip
-                                label={
-                                  deferredDescriptor(item.deferredReason)
-                                    .tooltip
-                                }
+                                label={deferred.tooltip}
                                 hasArrow
                                 placement='top'
                                 openDelay={250}
@@ -328,18 +334,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                                   textTransform='none'
                                   fontWeight='medium'
                                   fontSize='xs'
-                                  aria-label={`${
-                                    deferredDescriptor(item.deferredReason)
-                                      .label
-                                  }. ${
-                                    deferredDescriptor(item.deferredReason)
-                                      .tooltip
-                                  }`}
+                                  aria-label={`${deferred.label}. ${deferred.tooltip}`}
                                 >
-                                  {
-                                    deferredDescriptor(item.deferredReason)
-                                      .label
-                                  }
+                                  {deferred.label}
                                 </Badge>
                               </Tooltip>
                             ) : null}
