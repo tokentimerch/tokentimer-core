@@ -115,6 +115,20 @@ function InstallationStateBadge({ state }) {
   );
 }
 
+function StaleReconciliationBadge() {
+  return (
+    <Badge
+      colorScheme='red'
+      variant='solid'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+    >
+      Needs attention
+    </Badge>
+  );
+}
+
 const ANCHOR_TRUST_ANCHOR_PEM_ERROR_MESSAGE =
   'That does not look like a single CA certificate (Basic Constraints CA=true). Bundles and leaf/server certificates are rejected.';
 
@@ -466,7 +480,19 @@ function AnchorInstallationsBody({
                 <Td>
                   <VStack align='flex-start' spacing={0.5}>
                     <InstallationStateBadge state={row.transitionState} />
-                    {row.lastError ? (
+                    {row.staleReason ? (
+                      <>
+                        <StaleReconciliationBadge />
+                        <Text
+                          fontSize='xs'
+                          color='red.600'
+                          noOfLines={2}
+                          title={row.staleReason.message}
+                        >
+                          {row.staleReason.message}
+                        </Text>
+                      </>
+                    ) : row.lastError ? (
                       <Text fontSize='xs' color='red.500' noOfLines={1}>
                         {row.lastError}
                       </Text>

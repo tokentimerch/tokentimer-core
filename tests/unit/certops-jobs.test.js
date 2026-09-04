@@ -43,19 +43,51 @@ function json(value) {
   return typeof value === "string" ? JSON.parse(value) : value;
 }
 
-function createMemoryClient() {
+function createMemoryClient(options = {}) {
   const jobs = [];
   const logs = [];
   let nextJob = 1;
   let nextLog = 1;
   let tick = 0;
   const now = () => new Date(Date.UTC(2026, 5, 30, 0, tick++, 0));
+  const workspaces = new Map([
+    [
+      WORKSPACE_A,
+      {
+        certops_require_approval_always:
+          options.requireApprovalAlways === true,
+      },
+    ],
+    [WORKSPACE_B, { certops_require_approval_always: false }],
+  ]);
 
   return {
     jobs,
     logs,
+    setRequireApprovalAlways(workspaceId, value) {
+      const row = workspaces.get(workspaceId) || {};
+      row.certops_require_approval_always = value === true;
+      workspaces.set(workspaceId, row);
+    },
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ");
+
+      if (
+        normalizedSql.includes("FROM workspaces") &&
+        normalizedSql.includes("certops_require_approval_always")
+      ) {
+        const row = workspaces.get(params[0]);
+        return {
+          rows: row
+            ? [
+                {
+                  certops_require_approval_always:
+                    row.certops_require_approval_always === true,
+                },
+              ]
+            : [],
+        };
+      }
 
       if (normalizedSql.includes("pg_advisory_xact_lock")) {
         return { rows: [{ pg_advisory_xact_lock: "" }] };
@@ -1933,6 +1965,116 @@ describe("CertOps jobs service", () => {
   });
 });
 
+describe("CertOps jobs service - workspace-forced approval policy override", () => {
+  it("forces pending_approval when the workspace policy is on and the caller did not request approval", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      workspaceRequiresApprovalAlways: true,
+    });
+
+    assert.equal(job.status, "pending_approval");
+  });
+
+  it("overrides an explicit conflicting status when the workspace forces approval", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      status: "pending",
+      workspaceRequiresApprovalAlways: true,
+    });
+
+    assert.equal(job.status, "pending_approval");
+  });
+
+  it("still requires pending_approval, not a bypass, when both the per-job flag and the workspace policy are on", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      requiresApproval: true,
+      workspaceRequiresApprovalAlways: true,
+    });
+
+    assert.equal(job.status, "pending_approval");
+  });
+
+  it("leaves the default status alone when the workspace policy is off", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      workspaceRequiresApprovalAlways: false,
+    });
+
+    assert.equal(job.status, "pending");
+  });
+
+  it("does not force approval for protocol_smoke, exempt the same way it is exempt from every other approval-flow concept", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "protocol_smoke",
+      allowDiagnosticOperation: true,
+      mode: "dry_run",
+      workspaceRequiresApprovalAlways: true,
+    });
+
+    assert.equal(job.status, "pending");
+  });
+
+  it("forces pending_approval from the workspace row even when the caller omits workspaceRequiresApprovalAlways", async () => {
+    const client = createMemoryClient();
+    client.setRequireApprovalAlways(WORKSPACE_A, true);
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+    });
+
+    assert.equal(job.status, "pending_approval");
+  });
+
+  it("does not let an explicit false override a true workspace policy row", async () => {
+    const client = createMemoryClient();
+    client.setRequireApprovalAlways(WORKSPACE_A, true);
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      status: "pending",
+      workspaceRequiresApprovalAlways: false,
+    });
+
+    assert.equal(job.status, "pending_approval");
+  });
+});
+
 describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decisions 4-6, 14)", () => {
   it("adds distribute-trust/revoke-trust to the operation vocabulary and trust_anchor to the subject vocabulary", () => {
     assert.ok(JOB_OPERATIONS.includes("distribute-trust"));
@@ -2123,6 +2265,13 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
       jobs,
       async query(sql, params = []) {
         const normalizedSql = sql.replace(/\s+/g, " ");
+
+        if (
+          normalizedSql.includes("FROM workspaces") &&
+          normalizedSql.includes("certops_require_approval_always")
+        ) {
+          return { rows: [{ certops_require_approval_always: false }] };
+        }
 
         if (normalizedSql.includes("pg_advisory_xact_lock")) {
           return { rows: [{ pg_advisory_xact_lock: "" }] };
@@ -2563,6 +2712,13 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
       jobs,
       async query(sql, params = []) {
         const normalizedSql = sql.replace(/\s+/g, " ");
+
+        if (
+          normalizedSql.includes("FROM workspaces") &&
+          normalizedSql.includes("certops_require_approval_always")
+        ) {
+          return { rows: [{ certops_require_approval_always: false }] };
+        }
 
         if (normalizedSql.includes("pg_advisory_xact_lock")) {
           return { rows: [{ pg_advisory_xact_lock: "" }] };

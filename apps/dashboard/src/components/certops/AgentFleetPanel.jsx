@@ -136,16 +136,14 @@ const AGENT_COLUMNS = [
   ['status', 'Status'],
   ['version', 'Version'],
   ['protocol', 'Protocol'],
+  ['compatibility', 'Compatibility'],
   ['clockDrift', 'Clock drift'],
   ['ntp', 'NTP'],
   ['execution', 'Execution'],
   ['signingKey', 'Signing key'],
   ['lastHeartbeat', 'Last heartbeat'],
 ];
-const AGENT_NON_SORTABLE_COLUMNS = new Set(['status']);
-
-/** Clock offsets beyond this are flagged as drifted in the fleet table. */
-const CLOCK_DRIFT_WARN_MS = 5000;
+const AGENT_NON_SORTABLE_COLUMNS = new Set(['status', 'compatibility']);
 
 /** Signed millisecond offset for display, e.g. "+120 ms"; '--' when unknown. */
 function formatClockOffset(value) {
@@ -155,9 +153,76 @@ function formatClockOffset(value) {
   return `${ms < 0 ? '-' : '+'}${Math.abs(ms)} ms`;
 }
 
-function isClockDrifted(value) {
-  const ms = Number(value);
-  return Number.isFinite(ms) && Math.abs(ms) > CLOCK_DRIFT_WARN_MS;
+const CLOCK_DRIFT_SCHEME = {
+  warn: 'orange',
+  alert: 'red',
+};
+
+const CLOCK_DRIFT_LABEL = {
+  warn: 'Drift',
+  alert: 'Drift (alert)',
+};
+
+/** Two-tier clock-drift chip, server-computed (agentRegistry.js#computeAgentCompatibility). */
+function ClockDriftBadge({ clockDriftState }) {
+  const key = String(clockDriftState || '').toLowerCase();
+  if (key !== 'warn' && key !== 'alert') return null;
+  return (
+    <Badge
+      colorScheme={CLOCK_DRIFT_SCHEME[key]}
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+      title={
+        key === 'alert'
+          ? 'Clock offset exceeds the alert threshold (CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS).'
+          : 'Clock offset exceeds the warn threshold (CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS).'
+      }
+    >
+      {CLOCK_DRIFT_LABEL[key]}
+    </Badge>
+  );
+}
+
+const COMPATIBILITY_SCHEME = {
+  compatible: 'green',
+  outdated: 'orange',
+  blocked: 'red',
+};
+
+const COMPATIBILITY_LABEL = {
+  compatible: 'Compatible',
+  outdated: 'Outdated',
+  blocked: 'Blocked',
+};
+
+/** Version/protocol compatibility chip; 'blocked' is a hard stop (agentJobEligibility.js
+ *  rejects every claim from this agent with compatibility_blocked). */
+function AgentCompatibilityBadge({ compatibilityState, compatibilityRange }) {
+  const key = String(compatibilityState || '').toLowerCase();
+  const range = compatibilityRange || {};
+  const rangeText =
+    `agent ${range.minAgentVersion || '?'}-${range.maxAgentVersion || '?'}, ` +
+    `protocol ${range.minProtocolVersion || '?'}-${range.maxProtocolVersion || '?'}`;
+  const title =
+    key === 'blocked'
+      ? `Outside the accepted range (${rangeText}). This agent cannot claim any job until it is upgraded.`
+      : key === 'outdated'
+        ? `Within the accepted range (${rangeText}) but more than one minor version behind the latest known build. Upgrade when convenient; it can still claim jobs.`
+        : `Within the accepted range (${rangeText}).`;
+  return (
+    <Badge
+      colorScheme={COMPATIBILITY_SCHEME[key] || 'gray'}
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+      title={title}
+    >
+      {COMPATIBILITY_LABEL[key] || 'Unknown'}
+    </Badge>
+  );
 }
 
 /** NTP sync state chip: green Synced, orange Not synced, muted when unknown. */
@@ -806,24 +871,24 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                       </Td>
                       <Td {...agentCellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
+                          Compatibility
+                        </CertOpsMobileFieldLabel>
+                        <AgentCompatibilityBadge
+                          compatibilityState={agent.compatibilityState}
+                          compatibilityRange={agent.compatibilityRange}
+                        />
+                      </Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
                           Clock drift
                         </CertOpsMobileFieldLabel>
                         <HStack spacing={2}>
                           <Text fontSize='sm' fontFamily='mono'>
                             {formatClockOffset(agent.clockOffsetMs)}
                           </Text>
-                          {isClockDrifted(agent.clockOffsetMs) ? (
-                            <Badge
-                              colorScheme='orange'
-                              variant='subtle'
-                              textTransform='none'
-                              fontWeight='medium'
-                              fontSize='xs'
-                              title={`Clock offset exceeds ${CLOCK_DRIFT_WARN_MS / 1000}s`}
-                            >
-                              Drift
-                            </Badge>
-                          ) : null}
+                          <ClockDriftBadge
+                            clockDriftState={agent.clockDriftState}
+                          />
                         </HStack>
                       </Td>
                       <Td {...agentCellProps}>

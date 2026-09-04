@@ -12,6 +12,8 @@ const CERTOPS_WORKSPACE_PAUSE_REASON_INVALID =
   "CERTOPS_WORKSPACE_PAUSE_REASON_INVALID";
 const CERTOPS_WORKSPACE_PAUSE_STATE_INVALID =
   "CERTOPS_WORKSPACE_PAUSE_STATE_INVALID";
+const CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID =
+  "CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID";
 const MAX_CERTOPS_PAUSE_REASON_LENGTH = 500;
 
 class CertOpsWorkspaceKillSwitchError extends Error {
@@ -35,6 +37,16 @@ function normalizePaused(value) {
     throw workspaceKillSwitchError(
       "certOpsPaused must be a boolean",
       CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+    );
+  }
+  return value;
+}
+
+function normalizeRequireApprovalAlways(value) {
+  if (typeof value !== "boolean") {
+    throw workspaceKillSwitchError(
+      "requireApprovalAlways must be a boolean",
+      CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
     );
   }
   return value;
@@ -71,7 +83,12 @@ function normalizeReason(value) {
   return redactGenericSecrets(reason);
 }
 
-function stateFromRow({ workspaceId, certOpsPaused, certOpsEnabled }) {
+function stateFromRow({
+  workspaceId,
+  certOpsPaused,
+  certOpsEnabled,
+  certOpsRequireApprovalAlways,
+}) {
   const paused = certOpsPaused === true;
   const enabled = certOpsEnabled === true;
   return {
@@ -79,6 +96,7 @@ function stateFromRow({ workspaceId, certOpsPaused, certOpsEnabled }) {
     certOpsPaused: paused,
     certOpsEnabled: enabled,
     certOpsActive: enabled && !paused,
+    certOpsRequireApprovalAlways: certOpsRequireApprovalAlways === true,
   };
 }
 
@@ -86,7 +104,7 @@ async function loadWorkspacePauseState(dbPool, workspaceId, { lock = null } = {}
   const lockClause =
     lock === "update" ? " FOR UPDATE" : lock === "share" ? " FOR SHARE" : "";
   const result = await dbPool.query(
-    `SELECT id, certops_paused
+    `SELECT id, certops_paused, certops_require_approval_always
        FROM workspaces
       WHERE id = $1${lockClause}`,
     [workspaceId],
@@ -125,6 +143,7 @@ async function getWorkspaceCertOpsPauseState({
     workspaceId: workspace.id,
     certOpsPaused: workspace.certops_paused,
     certOpsEnabled,
+    certOpsRequireApprovalAlways: workspace.certops_require_approval_always,
   });
 }
 
@@ -200,6 +219,7 @@ async function lockWorkspaceForCertOpsSideEffect({
     workspaceId: workspace.id,
     certOpsPaused: workspace.certops_paused,
     certOpsEnabled,
+    certOpsRequireApprovalAlways: workspace.certops_require_approval_always,
   });
 
   if (!state.certOpsEnabled) {
@@ -321,6 +341,106 @@ async function setWorkspaceCertOpsPauseState({
 }
 
 /**
+ * Change the workspace-wide "always require approval" policy and its audit
+ * event atomically, mirroring setWorkspaceCertOpsPauseState. A failed audit
+ * write rolls the row update back; an idempotent request commits no row
+ * change and emits no duplicate transition audit.
+ */
+async function setWorkspaceCertOpsRequireApprovalAlways({
+  workspaceId,
+  requireApprovalAlways,
+  actorUserId = null,
+  subjectUserId = actorUserId,
+  dbPool = defaultPool(),
+  auditWriter = writeAudit,
+  certOpsEnabledResolver = isCertOpsEnabled,
+  env = process.env,
+} = {}) {
+  if (!workspaceId) {
+    throw workspaceKillSwitchError(
+      "workspaceId is required",
+      CERTOPS_WORKSPACE_NOT_FOUND,
+    );
+  }
+
+  const requireApproval = normalizeRequireApprovalAlways(requireApprovalAlways);
+  const client = await dbPool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const workspace = await loadWorkspacePauseState(client, workspaceId, {
+      lock: "update",
+    });
+    const previousRequireApprovalAlways =
+      workspace.certops_require_approval_always === true;
+    const certOpsEnabled = await certOpsEnabledResolver({ dbPool: client, env });
+
+    if (previousRequireApprovalAlways === requireApproval) {
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return {
+        ...stateFromRow({
+          workspaceId: workspace.id,
+          certOpsPaused: workspace.certops_paused,
+          certOpsEnabled,
+          certOpsRequireApprovalAlways: requireApproval,
+        }),
+        changed: false,
+      };
+    }
+
+    await client.query(
+      `UPDATE workspaces
+          SET certops_require_approval_always = $1,
+              updated_at = NOW()
+        WHERE id = $2`,
+      [requireApproval, workspace.id],
+    );
+
+    const state = stateFromRow({
+      workspaceId: workspace.id,
+      certOpsPaused: workspace.certops_paused,
+      certOpsEnabled,
+      certOpsRequireApprovalAlways: requireApproval,
+    });
+    await auditWriter({
+      client,
+      actorUserId,
+      subjectUserId,
+      action: requireApproval
+        ? "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED"
+        : "CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED",
+      targetType: "workspace",
+      targetId: workspace.id,
+      workspaceId: workspace.id,
+      metadata: {
+        workspaceId: workspace.id,
+        previousRequireApprovalAlways,
+        certOpsRequireApprovalAlways: requireApproval,
+      },
+    });
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return { ...state, changed: true };
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Preserve the primary write/audit failure for the caller.
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Create a manual job and its creation audit as one workspace-serialized
  * transaction. The shared row lock conflicts with the kill switch's update
  * lock, so a pause that commits first is always observed before this job is
@@ -363,6 +483,8 @@ async function createManualCertificateJob({
       workspaceId: workspace.id,
       source: "api",
       client,
+      workspaceRequiresApprovalAlways:
+        workspace.certops_require_approval_always === true,
       returnOutcome: true,
     });
     const job = outcome?.job || outcome;
@@ -411,11 +533,145 @@ async function createManualCertificateJob({
   }
 }
 
+/**
+ * Change the workspace-local pause state and/or the always-require-approval
+ * policy as one transaction. A request naming both fields must not be able
+ * to commit one and fail the other: this locks the row once, writes both
+ * changed columns in a single UPDATE, and emits a transition audit per
+ * field that actually changed. A failure at any point (including an audit
+ * write) rolls back every column this call would have touched, so the
+ * caller's error response always matches a workspace that changed nothing.
+ */
+async function setWorkspaceCertOpsSettings({
+  workspaceId,
+  certOpsPaused,
+  requireApprovalAlways,
+  reason,
+  actorUserId = null,
+  subjectUserId = actorUserId,
+  dbPool = defaultPool(),
+  auditWriter = writeAudit,
+  certOpsEnabledResolver = isCertOpsEnabled,
+  env = process.env,
+} = {}) {
+  if (!workspaceId) {
+    throw workspaceKillSwitchError(
+      "workspaceId is required",
+      CERTOPS_WORKSPACE_NOT_FOUND,
+    );
+  }
+
+  const hasPauseField = certOpsPaused !== undefined;
+  const hasApprovalField = requireApprovalAlways !== undefined;
+  const paused = hasPauseField ? normalizePaused(certOpsPaused) : undefined;
+  const requireApproval = hasApprovalField
+    ? normalizeRequireApprovalAlways(requireApprovalAlways)
+    : undefined;
+  const safeReason = normalizeReason(reason);
+
+  const client = await dbPool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const workspace = await loadWorkspacePauseState(client, workspaceId, {
+      lock: "update",
+    });
+    const previousCertOpsPaused = workspace.certops_paused === true;
+    const previousRequireApprovalAlways =
+      workspace.certops_require_approval_always === true;
+    const certOpsEnabled = await certOpsEnabledResolver({ dbPool: client, env });
+
+    const nextPaused = hasPauseField ? paused : previousCertOpsPaused;
+    const nextRequireApproval = hasApprovalField
+      ? requireApproval
+      : previousRequireApprovalAlways;
+    const pauseChanged = hasPauseField && previousCertOpsPaused !== paused;
+    const approvalChanged =
+      hasApprovalField && previousRequireApprovalAlways !== requireApproval;
+
+    if (pauseChanged || approvalChanged) {
+      await client.query(
+        `UPDATE workspaces
+            SET certops_paused = $1,
+                certops_require_approval_always = $2,
+                updated_at = NOW()
+          WHERE id = $3`,
+        [nextPaused, nextRequireApproval, workspace.id],
+      );
+
+      if (pauseChanged) {
+        await auditWriter({
+          client,
+          actorUserId,
+          subjectUserId,
+          action: nextPaused
+            ? "CERTOPS_WORKSPACE_PAUSED"
+            : "CERTOPS_WORKSPACE_RESUMED",
+          targetType: "workspace",
+          targetId: workspace.id,
+          workspaceId: workspace.id,
+          metadata: {
+            workspaceId: workspace.id,
+            previousCertOpsPaused,
+            certOpsPaused: nextPaused,
+            certOpsEnabled,
+            certOpsActive: certOpsEnabled && !nextPaused,
+            reason: safeReason,
+          },
+        });
+      }
+      if (approvalChanged) {
+        await auditWriter({
+          client,
+          actorUserId,
+          subjectUserId,
+          action: nextRequireApproval
+            ? "CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED"
+            : "CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED",
+          targetType: "workspace",
+          targetId: workspace.id,
+          workspaceId: workspace.id,
+          metadata: {
+            workspaceId: workspace.id,
+            previousRequireApprovalAlways,
+            certOpsRequireApprovalAlways: nextRequireApproval,
+          },
+        });
+      }
+    }
+
+    const state = stateFromRow({
+      workspaceId: workspace.id,
+      certOpsPaused: nextPaused,
+      certOpsEnabled,
+      certOpsRequireApprovalAlways: nextRequireApproval,
+    });
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return { ...state, changed: pauseChanged || approvalChanged };
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Preserve the primary write/audit failure for the caller.
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   CERTOPS_WORKSPACE_PAUSED,
   CERTOPS_WORKSPACE_NOT_FOUND,
   CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
   CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
   MAX_CERTOPS_PAUSE_REASON_LENGTH,
   CertOpsWorkspaceKillSwitchError,
   assertWorkspaceCertOpsActive,
@@ -425,5 +681,8 @@ module.exports = {
   lockWorkspaceForCertOpsSideEffect,
   normalizePaused,
   normalizeReason,
+  normalizeRequireApprovalAlways,
   setWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsRequireApprovalAlways,
+  setWorkspaceCertOpsSettings,
 };

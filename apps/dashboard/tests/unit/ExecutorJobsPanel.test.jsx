@@ -57,6 +57,9 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
   useCertOpsEnabled: () => true,
   useCertOpsIsWorkspaceAdmin: () => false,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsRequireApprovalAlways: false,
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
@@ -540,6 +543,32 @@ describe('ExecutorJobsPanel approvals', () => {
     ).toBeInTheDocument();
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it('shows the "Approved" indicator on a row for a job with approval attribution', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'succeeded',
+            approvedByUserId: 'user-42',
+            approvedAt: '2026-01-05T00:00:00.000Z',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+  });
+
+  it('does not show the "Approved" indicator on a row with no approval attribution', () => {
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
+
+    renderPanel();
+
+    expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+  });
 });
 
 describe('ExecutorJobsPanel list states', () => {
@@ -777,8 +806,93 @@ describe('ExecutorJobsPanel list states', () => {
 
     renderPanel();
 
+    expect(screen.getByText(/tt-trustvfy \(agent-row-1\)/)).toBeInTheDocument();
+  });
+});
+
+describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
+  it('shows the "Needs reconciliation" badge for an orphaned_unknown_effect job', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({ jobs: [job({ status: 'orphaned_unknown_effect' })] })
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Needs reconciliation')).toBeInTheDocument();
+  });
+
+  it('shows the advisory line for a job needing reconciliation with no errorMessage', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'orphaned_unknown_effect',
+            needsOperatorReconciliation: true,
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
     expect(
-      screen.getByText(/tt-trustvfy \(agent-row-1\)/)
+      screen.getByText(/could not be confirmed and need manual review/)
     ).toBeInTheDocument();
+  });
+
+  it('prefers a real errorMessage over the reconciliation advisory line', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'orphaned_unknown_effect',
+            needsOperatorReconciliation: true,
+            errorMessage: 'Lease expired after renew; side effects unknown',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(
+      screen.getByText('Lease expired after renew; side effects unknown')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/could not be confirmed and need manual review/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows no second line under the badge for a job that needs no reconciliation', () => {
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
+
+    renderPanel();
+
+    expect(
+      screen.queryByText(/could not be confirmed and need manual review/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not show errorMessage for a failed job that does not need reconciliation', () => {
+    // Regression guard: errorMessage is common on ordinary failed/rejected
+    // jobs too. The advisory VStack must stay scoped to jobs actually
+    // flagged needsOperatorReconciliation, not to "has an errorMessage".
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'failed',
+            needsOperatorReconciliation: false,
+            errorMessage: 'Deploy target rejected the certificate',
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(
+      screen.queryByText('Deploy target rejected the certificate')
+    ).not.toBeInTheDocument();
   });
 });

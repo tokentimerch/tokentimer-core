@@ -3644,6 +3644,18 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS cleanup_obsolete BOOLEAN NOT NULL DEFAULT FALSE;
     `,
   },
+  {
+    version: 51,
+    name: "certops_workspace_approval_policy",
+    sql: `
+      -- Workspace-wide override of the per-job requiresApproval flag: when on,
+      -- every new certificate job starts at pending_approval regardless of
+      -- what the caller requested. Same shape as certops_paused (migration
+      -- 19) -- workspace-scoped, admin-toggled, safe default off.
+      ALTER TABLE workspaces
+        ADD COLUMN IF NOT EXISTS certops_require_approval_always BOOLEAN NOT NULL DEFAULT FALSE;
+    `,
+  },
 ];
 
 async function runMigrations() {

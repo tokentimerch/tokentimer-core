@@ -26,7 +26,11 @@ const {
   ),
 );
 
-function createTransactionalPool({ certOpsPaused = false, certificates = [] } = {}) {
+function createTransactionalPool({
+  certOpsPaused = false,
+  certOpsRequireApprovalAlways = false,
+  certificates = [],
+} = {}) {
   const queries = [];
   const jobs = [];
   let nextJob = 1;
@@ -37,9 +41,19 @@ function createTransactionalPool({ certOpsPaused = false, certificates = [] } = 
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) {
         return { rows: [] };
       }
-      if (normalized.startsWith("SELECT id, certops_paused FROM workspaces")) {
+      if (
+        normalized.startsWith(
+          "SELECT id, certops_paused, certops_require_approval_always FROM workspaces",
+        )
+      ) {
         return {
-          rows: [{ id: "workspace-1", certops_paused: certOpsPaused }],
+          rows: [
+            {
+              id: "workspace-1",
+              certops_paused: certOpsPaused,
+              certops_require_approval_always: certOpsRequireApprovalAlways,
+            },
+          ],
         };
       }
       if (normalized.includes("FROM managed_certificates")) {
@@ -279,6 +293,38 @@ describe("CertOps handleCertOpsError status mapping", () => {
     });
     assert.equal(handled, null);
     assert.equal(res.statusCode, null);
+  });
+});
+
+describe("CertOps manual-job route respects the workspace approval policy", () => {
+  it("creates the job at pending_approval even though the caller explicitly asked for no approval", async () => {
+    const pool = createTransactionalPool({ certOpsRequireApprovalAlways: true });
+    const handler = certOpsRouter._test.createManualCertificateJobHandler({
+      manualJobCreator: (options) =>
+        createManualCertificateJob({
+          ...options,
+          dbPool: pool,
+          certOpsEnabledResolver: async () => true,
+        }),
+    });
+
+    const req = {
+      workspace: { id: "workspace-1" },
+      user: { id: 42 },
+      authz: { workspaceRole: "workspace_manager" },
+      body: {
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId: "cert-1",
+        requiresApproval: false,
+        payload: { target: "host/web" },
+      },
+    };
+    const res = responseRecorder();
+    await handler(req, res);
+
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.job.status, "pending_approval");
   });
 });
 

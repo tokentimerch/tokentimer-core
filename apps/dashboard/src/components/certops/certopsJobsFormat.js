@@ -9,6 +9,7 @@ const JOB_STATUS_SCHEMES = {
   running: 'blue',
   succeeded: 'green',
   failed: 'red',
+  orphaned_unknown_effect: 'red',
   blocked: 'orange',
   cancelled: 'gray',
 };
@@ -22,6 +23,7 @@ const JOB_STATUS_LABELS = {
   running: 'Running',
   succeeded: 'Succeeded',
   failed: 'Failed',
+  orphaned_unknown_effect: 'Needs reconciliation',
   blocked: 'Blocked',
   cancelled: 'Cancelled',
 };
@@ -48,6 +50,9 @@ const EVENT_TYPE_LABELS = {
   'job.cancelled': 'Job cancelled',
   'job.status_updated': 'Status updated',
   'evidence.attached': 'Evidence attached',
+  'approval.granted': 'Approval granted',
+  'approval.rejected': 'Approval rejected',
+  'approval.invalidated': 'Approval invalidated',
 };
 
 const EVIDENCE_TYPE_LABELS = {
@@ -96,6 +101,12 @@ export function jobOperationLabel(operation) {
   return (
     JOB_OPERATION_LABELS[key] || (operation ? String(operation) : 'Unknown')
   );
+}
+
+/** Advisory line for a job needing manual reconciliation; reason is optional. */
+export function reconciliationAdvisoryText(reason) {
+  const suffix = reason ? ` (reason: ${reason})` : '';
+  return `This job's side effects could not be confirmed and need manual review${suffix}.`;
 }
 
 export function eventTypeLabel(eventType) {

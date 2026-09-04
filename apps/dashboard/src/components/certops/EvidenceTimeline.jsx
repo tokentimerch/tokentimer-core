@@ -180,6 +180,10 @@ function TimelineItem({ item, attemptLabel, compact = false }) {
   const detail = isEvidence
     ? metadataSummary || subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
+  const decidedByUserId =
+    !isEvidence && (type === 'approval.granted' || type === 'approval.rejected')
+      ? entry.createdByUserId
+      : null;
 
   return (
     <Box position='relative' pl={6} pb={4} _last={{ pb: 0 }}>
@@ -250,6 +254,9 @@ function TimelineItem({ item, attemptLabel, compact = false }) {
               />
             </Box>
           </Box>
+        ) : null}
+        {decidedByUserId ? (
+          <CopyableId id={decidedByUserId} label='Decided by user' size='xs' />
         ) : null}
         <Text fontSize='xs' color={muted}>
           {timestamp}
@@ -449,10 +456,18 @@ export default function EvidenceTimeline({
                             : ''}
                         </Text>
                       ) : null}
+                      {job.approvedAt ? (
+                        <Text fontSize='xs'>
+                          Approved {formatDateTime(job.approvedAt)}
+                        </Text>
+                      ) : null}
                     </VStack>
                   </PopoverBody>
                 </PopoverContent>
               </Popover>
+            ) : null}
+            {job.approvedByUserId ? (
+              <CopyableId id={job.approvedByUserId} label='Approved by user' />
             ) : null}
           </HStack>
           {!compact ? (
@@ -506,7 +521,10 @@ export default function EvidenceTimeline({
                   />
                 ) : null}
               </HStack>
-              {job.claimId || job.leaseExpiresAt || job.attemptCount ? (
+              {job.claimId ||
+              job.leaseExpiresAt ||
+              job.attemptCount ||
+              job.approvedAt ? (
                 <HStack spacing={3} flexWrap='wrap'>
                   {job.leaseExpiresAt ? (
                     <Text fontSize='xs' color={muted}>
@@ -519,6 +537,11 @@ export default function EvidenceTimeline({
                       {typeof job.maxAttempts === 'number'
                         ? ` of ${job.maxAttempts}`
                         : ''}
+                    </Text>
+                  ) : null}
+                  {job.approvedAt ? (
+                    <Text fontSize='xs' color={muted}>
+                      Approved {formatDateTime(job.approvedAt)}
                     </Text>
                   ) : null}
                 </HStack>

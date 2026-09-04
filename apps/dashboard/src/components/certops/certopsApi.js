@@ -298,7 +298,7 @@ export async function retryRenewalSetupIntent(workspaceId, outboxId) {
  * can be inspected and staged ahead of a rollout. Any human session member
  * can read it; only workspace admins can change it (see
  * updateWorkspaceCertOpsPauseState).
- * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean }>}
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, certOpsRequireApprovalAlways: boolean }>}
  */
 export async function getWorkspaceCertOpsPauseState(
   workspaceId,
@@ -317,7 +317,7 @@ export async function getWorkspaceCertOpsPauseState(
  * server-side (certops.kill_switch.manage); a 403 surfaces for
  * managers/viewers. `reason` is optional free text recorded on the
  * pause/resume audit event, not persisted as ongoing state.
- * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, changed: boolean }>}
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, certOpsRequireApprovalAlways: boolean, changed: boolean }>}
  */
 export async function updateWorkspaceCertOpsPauseState(
   workspaceId,
@@ -326,6 +326,23 @@ export async function updateWorkspaceCertOpsPauseState(
   const res = await apiClient.put(`${workspaceBase(workspaceId)}/settings`, {
     certOpsPaused,
     reason,
+  });
+  return res.data;
+}
+
+/**
+ * Toggle the workspace-wide "always require approval" policy: when on,
+ * every new CertOps job starts at pending_approval regardless of the
+ * per-job requiresApproval flag a caller passes. Same PUT endpoint and
+ * admin-only gate as updateWorkspaceCertOpsPauseState.
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, certOpsRequireApprovalAlways: boolean, changed: boolean }>}
+ */
+export async function updateWorkspaceCertOpsRequireApprovalAlways(
+  workspaceId,
+  { certOpsRequireApprovalAlways } = {}
+) {
+  const res = await apiClient.put(`${workspaceBase(workspaceId)}/settings`, {
+    certOpsRequireApprovalAlways,
   });
   return res.data;
 }

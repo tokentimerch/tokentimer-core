@@ -31,6 +31,13 @@ const {
   updateRenewalProfile,
 } = admin;
 
+const { RENEWAL_JOB_TERMINAL_STATUSES } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/renewalScheduler.js"),
+);
+const { isTerminalJobStatus } = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+);
+
 const CERT_PATH = "/etc/ssl/certs/app.pem";
 
 function storedProfile(overrides = {}) {
@@ -271,6 +278,21 @@ describe("CertOps renewal-profile threshold validation", () => {
         CERTOPS_PROFILE_INVALID,
       );
     }
+  });
+});
+
+describe("CertOps renewal-job terminal-status derivation", () => {
+  // Regression: orphaned_unknown_effect is a genuinely terminal status (no
+  // further automatic processing happens to it; it needs manual
+  // reconciliation), but a hand-maintained literal previously omitted it.
+  // Deriving from the full job-status list instead means a status added to
+  // jobs.js can never silently go missing here again.
+  it("treats orphaned_unknown_effect as terminal, matching jobs.isTerminalJobStatus", () => {
+    assert.equal(isTerminalJobStatus("orphaned_unknown_effect"), true);
+    assert.ok(
+      RENEWAL_JOB_TERMINAL_STATUSES.includes("orphaned_unknown_effect"),
+      "RENEWAL_JOB_TERMINAL_STATUSES must agree with isTerminalJobStatus",
+    );
   });
 });
 
@@ -571,17 +593,27 @@ describe("CertOps upcoming renewals coverage", () => {
       profile_renew_before_days: 30,
       renews_from: new Date(Date.now() - 86400000),
       last_renew_job_status: null,
+      has_active_renew_job: false,
       ...overrides,
     };
   }
 
-  function listPool(rows) {
+  function listPool(rows, { inFlightRows = [] } = {}) {
     const seen = [];
+    const calls = [];
     return {
       seen,
+      calls,
       async query(sql, params = []) {
         const normalized = String(sql).replace(/\s+/g, " ").trim();
         seen.push(normalized);
+        calls.push({ sql: normalized, params });
+        // Checked before the generic COUNT(*) branch: the total-count query
+        // is also a COUNT(*) query, so ordering here matters, same as the
+        // scheduler's own mock pool dispatch.
+        if (normalized.includes("AS in_flight")) {
+          return { rows: inFlightRows };
+        }
         if (normalized.includes("COUNT(*)")) {
           return { rows: [{ total: rows.length }] };
         }
@@ -590,14 +622,14 @@ describe("CertOps upcoming renewals coverage", () => {
     };
   }
 
-  async function listOne(overrides) {
-    const pool = listPool([certificateRow(overrides)]);
+  async function listOne(overrides, { inFlightRows } = {}) {
+    const pool = listPool([certificateRow(overrides)], { inFlightRows });
     const result = await listUpcomingRenewals({
       db: pool,
       workspaceId: "ws-1",
       thresholdDays: 30,
     });
-    return { item: result.items[0], queries: pool.seen };
+    return { item: result.items[0], queries: pool.seen, calls: pool.calls };
   }
 
   it("reports a certificate with no profile instead of hiding it", async () => {
@@ -833,5 +865,175 @@ describe("CertOps upcoming renewals coverage", () => {
       );
     }
     assert.equal(JSON.stringify(item).includes(CERT_PATH), false);
+  });
+
+  // deferredReason is a live-derived signal, independent of blockedReason: a
+  // certificate that is otherwise fully covered can still be waiting because
+  // the scheduler would skip it this pass for lack of CA capacity. These
+  // cases pin exactly which rows qualify, mirroring the guards the sweep
+  // itself applies before it would create a job.
+  it("marks a due, fully-resolvable certificate as deferred when its CA is at the per-CA cap", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, "ca_capacity");
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("does not mark a certificate deferred when its CA still has headroom", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 4,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, null);
+  });
+
+  it("does not mark a certificate deferred when it is not yet in its renewal window", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+        renews_from: new Date(Date.now() + 86400000),
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, null);
+  });
+
+  it("does not mark a certificate deferred when it already has a non-terminal renew job", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+        last_renew_job_status: "pending",
+        has_active_renew_job: true,
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, null);
+  });
+
+  // Regression for a false-positive deferral badge: the latest job's status
+  // alone is not "does this certificate already have a job in flight". An
+  // older non-terminal job (still active) and a newer terminal one (e.g. a
+  // retried/superseded job) can coexist, in which case last_renew_job_status
+  // reads terminal even though a real job is still outstanding for an
+  // unrelated reason. has_active_renew_job mirrors the scheduler's own
+  // "any non-terminal job exists" EXISTS check, so it must gate deferral
+  // instead of the single most-recent-status column.
+  it("does not mark a certificate deferred when an older job is still non-terminal, even though the latest job is terminal", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+        last_renew_job_status: "succeeded",
+        has_active_renew_job: true,
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, null);
+  });
+
+  it("prefers a real block reason over a capacity deferral", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_ca_endpoint: "https://ca-a.example.com/acme",
+        profile_public_metadata: { renewalProfile: { schemaVersion: 1 } },
+      },
+      {
+        inFlightRows: [
+          {
+            workspace_id: "ws-1",
+            ca_endpoint: "https://ca-a.example.com/acme",
+            in_flight: 5,
+          },
+        ],
+      },
+    );
+
+    assert.equal(item.blockedReason, "incomplete_profile");
+    assert.equal(item.deferredReason, null);
+  });
+
+  it("scopes the in-flight count to the requesting workspace", async () => {
+    const { calls } = await listOne();
+    const inFlightCall = calls.find((call) =>
+      call.sql.includes("AS in_flight"),
+    );
+
+    assert.ok(inFlightCall, "expected an in-flight count query");
+    assert.ok(inFlightCall.sql.includes("workspace_id = $2"));
+    assert.ok(Array.isArray(inFlightCall.params[0]));
+    assert.equal(inFlightCall.params[1], "ws-1");
+  });
+
+  it("buckets an unresolvable caEndpoint into the shared unknown bucket for deferral, same as the scheduler", async () => {
+    const { item } = await listOne(
+      {
+        certificate_ca_endpoint: null,
+        profile_ca_endpoint: null,
+      },
+      {
+        inFlightRows: [
+          { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
+        ],
+      },
+    );
+
+    assert.equal(item.deferredReason, "ca_capacity");
   });
 });

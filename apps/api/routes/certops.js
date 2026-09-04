@@ -137,9 +137,10 @@ const {
   CERTOPS_WORKSPACE_PAUSED,
   CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
   CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID,
   createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
-  setWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsSettings,
 } = require("../services/certops/workspaceKillSwitch");
 const {
   CERTOPS_TRUST_ANCHOR_INVALID,
@@ -772,6 +773,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID) {
+    return res.status(400).json({
+      error: "CertOps workspace approval policy request is invalid",
+      code: err.code,
+    });
+  }
+
   if (err?.code === CERTOPS_WORKSPACE_NOT_FOUND) {
     return res.status(404).json({
       error: "Workspace not found",
@@ -1318,6 +1326,7 @@ function workspacePauseStateResponse(state) {
     certOpsPaused: state.certOpsPaused,
     certOpsEnabled: state.certOpsEnabled,
     certOpsActive: state.certOpsActive,
+    certOpsRequireApprovalAlways: state.certOpsRequireApprovalAlways === true,
     ...(typeof state.changed === "boolean" ? { changed: state.changed } : {}),
   };
 }
@@ -1339,6 +1348,8 @@ function jobSummary(job) {
     cancelledAt: job.cancelledAt,
     requestedByUserId: job.requestedByUserId,
     requestedByApiTokenId: job.requestedByApiTokenId,
+    approvedByUserId: job.approvedByUserId,
+    approvedAt: job.approvedAt,
   };
 }
 
@@ -2329,9 +2340,26 @@ router.put(
   authorize("certops.kill_switch.manage"),
   async (req, res) => {
     try {
-      const state = await setWorkspaceCertOpsPauseState({
+      const hasPauseField = req.body?.certOpsPaused !== undefined;
+      const hasApprovalField =
+        req.body?.certOpsRequireApprovalAlways !== undefined;
+      if (!hasPauseField && !hasApprovalField) {
+        return res.status(400).json({
+          error:
+            "certOpsPaused or certOpsRequireApprovalAlways is required",
+          code: CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+        });
+      }
+
+      // Both fields (when present) are written in one transaction so a
+      // failure partway through never leaves one setting applied and the
+      // other not; see setWorkspaceCertOpsSettings.
+      const state = await setWorkspaceCertOpsSettings({
         workspaceId: req.workspace.id,
-        certOpsPaused: req.body?.certOpsPaused,
+        certOpsPaused: hasPauseField ? req.body.certOpsPaused : undefined,
+        requireApprovalAlways: hasApprovalField
+          ? req.body.certOpsRequireApprovalAlways
+          : undefined,
         reason: req.body?.reason,
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
@@ -3742,6 +3770,7 @@ module.exports._test = {
   loadRenewalSetupIntents,
   projectRenewalSetupState,
   apiTokenMetadata,
+  jobSummary,
   jobDetail,
   redactClaimIdForNonAdmins,
 };

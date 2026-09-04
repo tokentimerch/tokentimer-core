@@ -1777,6 +1777,10 @@ router.post(
             include && typeof include.secrets === "boolean"
               ? include.secrets
               : true,
+          certificates:
+            include && typeof include.certificates === "boolean"
+              ? include.certificates
+              : false,
         },
         maxItems: maxItems || 500,
       });
@@ -1795,14 +1799,16 @@ router.post(
             items: (result.items || []).map((item) => ({
               sourceKind: item.sourceKind,
               sourceObjectId: item.sourceObjectId,
-              dimensions: {},
+              dimensions: item.dimensions || {},
             })),
-            subScopes: (result.summary || []).map((s) => ({
-              sourceKind: s.sourceKind,
-              dimensions: {},
-              complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : null,
-            })),
+            subScopes: (result.summary || [])
+              .filter((s) => s && s.sourceKind)
+              .map((s) => ({
+                sourceKind: s.sourceKind,
+                dimensions: s.dimensions || {},
+                complete: s.complete === true,
+                reason: s.error ? "error" : s.truncated ? "truncated" : null,
+              })),
           });
           result.scan_id = scan.scanId;
         }
@@ -1858,8 +1864,10 @@ router.post(
         e?.status === 403 ||
         e?.message?.includes("PermissionDenied")
       ) {
-        userMessage =
-          'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.';
+        const scannedCertificates = req.body?.include?.certificates === true;
+        userMessage = scannedCertificates
+          ? 'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer), "Certificate Manager Viewer" (roles/certificatemanager.viewer) and "Compute Viewer" (roles/compute.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.'
+          : 'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.';
       } else if (e?.status === 404 || e?.message?.includes("NotFound")) {
         userMessage =
           "GCP project or resource not found. Verify your project ID is correct and you have access.";
@@ -1875,7 +1883,7 @@ router.post(
         e?.message?.includes("API_NOT_ACTIVATED")
       ) {
         userMessage =
-          'GCP Secret Manager API is not enabled. Enable it in Google Cloud Console: APIs & Services -> Enable "Secret Manager API".';
+          'A required GCP API is not enabled for this project. Enable "Secret Manager API", and if certificate scanning is on, "Certificate Manager API" and "Compute Engine API" too, in Google Cloud Console -> APIs & Services.';
       } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
         userMessage = "Cannot connect to GCP. Check your network connectivity.";
       } else if (e?.message) {

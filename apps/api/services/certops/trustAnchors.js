@@ -843,7 +843,15 @@ async function listInstallationsForAnchor(options = {}) {
     [workspaceId, trustAnchorId],
   );
   const installations = result.rows.map(installationFromRow);
-  return attachPendingReasons({ db, workspaceId, installations });
+  const withPending = await attachPendingReasons({
+    db,
+    workspaceId,
+    installations,
+  });
+  return withPending.map((row) => ({
+    ...row,
+    staleReason: reconciliationStaleReasonForInstallation(row),
+  }));
 }
 
 
@@ -1248,7 +1256,11 @@ async function runCreateTrustJob(client, params) {
     env,
   } = params;
 
-  await lockWorkspaceForCertOpsSideEffect({ client, workspaceId, env });
+  const workspace = await lockWorkspaceForCertOpsSideEffect({
+    client,
+    workspaceId,
+    env,
+  });
 
   // The anchor is locked first so its status and routing columns can't
   // change under us while the installation row and job are written.
@@ -1617,6 +1629,8 @@ async function runCreateTrustJob(client, params) {
     assignedAgentId: agentId,
     executorKind: "agent",
     requiresApproval,
+    workspaceRequiresApprovalAlways:
+      workspace.certops_require_approval_always === true,
     requestedByUserId,
     requestedByApiTokenId,
     source,
@@ -2210,6 +2224,51 @@ async function rescheduleTrustInstallation({
 // counter (this row shape has no per-row attempt count).
 const DEFAULT_MAX_RECONCILE_AGE_MS = 6 * DEFAULT_RECONCILE_DELAY_MS;
 
+// Operator-facing prose for each markTrustInstallationStale() code. Backend
+// owns the prose so the UI never has to render a raw internal code.
+// reconciliation_stale_job_<status> codes not listed here fall back to a
+// generic template in reconciliationStaleReasonForInstallation below.
+const RECONCILIATION_STALE_MESSAGE_BY_CODE = Object.freeze({
+  reconciliation_stale_no_job:
+    "Automatic reconciliation gave up: this installation has no dispatched job to track. This should not normally happen; contact support before retrying.",
+  reconciliation_stale_job_pending_approval:
+    "The job for this change is still waiting on manual approval and automatic reconciliation has given up retrying. Approve or reject the job to unblock it.",
+  reconciliation_stale_job_approved:
+    "The job for this change was approved but never claimed by the target agent in time, and automatic reconciliation has given up retrying. Check the agent's connectivity/heartbeat, then retry manually.",
+  reconciliation_stale_job_pending:
+    "The job for this change has been waiting to be claimed by the target agent for too long, and automatic reconciliation has given up retrying. Check the agent's connectivity/heartbeat, then retry manually.",
+  reconciliation_stale_job_claimed:
+    "The target agent claimed this job but never started executing it in time, and automatic reconciliation has given up retrying. Check the agent's logs, then retry manually.",
+  reconciliation_stale_job_running:
+    "The target agent has been running this job far longer than expected, and automatic reconciliation has given up retrying. Check the agent's logs before retrying manually.",
+});
+
+const RECONCILIATION_STALE_CODE_PREFIX = "reconciliation_stale_";
+
+const RECONCILE_LIVE_PENDING_STATES = new Set(["pending_install", "pending_remove"]);
+
+/**
+ * Distinguishes "the sweep gave up on this row" from "still actively being
+ * retried" or "a genuine unrelated error". Only ever non-null when
+ * markTrustInstallationStale is the reason last_error is set: requires the
+ * row still pending, next_reconcile_at cleared (the sweep's own signal that
+ * it stopped touching this row), AND last_error matching the sweep's own
+ * code prefix - any other last_error value must fall through unchanged to
+ * the existing plain-text rendering.
+ */
+function reconciliationStaleReasonForInstallation(installation) {
+  if (!RECONCILE_LIVE_PENDING_STATES.has(installation.transitionState)) return null;
+  if (installation.nextReconcileAt) return null;
+  const code = installation.lastError;
+  if (!code || !code.startsWith(RECONCILIATION_STALE_CODE_PREFIX)) return null;
+  return {
+    code,
+    message:
+      RECONCILIATION_STALE_MESSAGE_BY_CODE[code] ||
+      `Automatic reconciliation gave up retrying this change (${code}). Manual retry is required.`,
+  };
+}
+
 /**
  * The reconciliation sweep, called by certops-worker.js on the same
  * tick-based schedule as this codebase's other certops sweeps. Owns one
@@ -2362,4 +2421,6 @@ module.exports._test = {
   assertTargetAgentEligibleForTrustJob,
   BLOCKING_TRUST_JOB_CREATION_REASONS,
   pendingReasonForInstallation,
+  reconciliationStaleReasonForInstallation,
+  RECONCILIATION_STALE_MESSAGE_BY_CODE,
 };

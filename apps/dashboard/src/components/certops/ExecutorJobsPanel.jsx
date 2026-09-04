@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatRelativeDateTime,
   jobOperationLabel,
+  reconciliationAdvisoryText,
   subjectTypeLabel,
   truncateId,
 } from './certopsJobsFormat';
@@ -331,7 +332,47 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                       Not executable while paused
                     </Text>
                   ) : null}
-                  <JobStatusBadge status={job.status} />
+                  <VStack align='flex-start' spacing={0} flexShrink={0}>
+                    <JobStatusBadge status={job.status} />
+                    {job.needsOperatorReconciliation ? (
+                      job.errorMessage ? (
+                        <Text
+                          fontSize='xs'
+                          color='red.500'
+                          noOfLines={2}
+                          maxW='280px'
+                          title={job.errorMessage}
+                        >
+                          {job.errorMessage}
+                        </Text>
+                      ) : (
+                        <Text
+                          fontSize='xs'
+                          color='orange.600'
+                          noOfLines={2}
+                          maxW='280px'
+                          title={reconciliationAdvisoryText(
+                            job.reconciliationReason
+                          )}
+                        >
+                          {reconciliationAdvisoryText(job.reconciliationReason)}
+                        </Text>
+                      )
+                    ) : null}
+                  </VStack>
+                  {job.approvedByUserId ? (
+                    <Tooltip
+                      label={`Approved by user ${job.approvedByUserId}${
+                        job.approvedAt
+                          ? ` at ${formatDateTime(job.approvedAt)}`
+                          : ''
+                      }`}
+                    >
+                      <Text fontSize='xs' color={muted} flexShrink={0}>
+                        Approved
+                      </Text>
+                    </Tooltip>
+                  ) : null}
                   <Text
                     fontSize='xs'
                     color={muted}
