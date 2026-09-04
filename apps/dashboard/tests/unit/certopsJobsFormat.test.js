@@ -2,8 +2,49 @@ import { describe, it, expect } from 'vitest';
 
 import {
   hasRedactionMarkers,
+  jobStatusLabel,
+  jobStatusScheme,
+  reconciliationAdvisoryText,
   redactionCount,
 } from '../../src/components/certops/certopsJobsFormat';
+
+describe('jobStatusLabel / jobStatusScheme', () => {
+  it('labels and colors a job stuck needing manual reconciliation', () => {
+    expect(jobStatusLabel('orphaned_unknown_effect')).toBe(
+      'Needs reconciliation'
+    );
+    expect(jobStatusScheme('orphaned_unknown_effect')).toBe('red');
+  });
+
+  it('falls back to the raw status and gray for a status not yet mapped', () => {
+    // dry_run_complete is a real status (same migration as
+    // orphaned_unknown_effect) that hits the same unmapped fallback -
+    // documents the gap rather than fixing it.
+    expect(jobStatusLabel('dry_run_complete')).toBe('dry_run_complete');
+    expect(jobStatusScheme('dry_run_complete')).toBe('gray');
+  });
+});
+
+describe('reconciliationAdvisoryText', () => {
+  it('returns the base sentence when no reason is given', () => {
+    expect(reconciliationAdvisoryText(null)).toBe(
+      "This job's side effects could not be confirmed and need manual review."
+    );
+    expect(reconciliationAdvisoryText(undefined)).toBe(
+      "This job's side effects could not be confirmed and need manual review."
+    );
+  });
+
+  it('appends the reason slug when one is given', () => {
+    expect(
+      reconciliationAdvisoryText(
+        'lease_expired_after_side_effect_window_agent_unresponsive'
+      )
+    ).toBe(
+      "This job's side effects could not be confirmed and need manual review (reason: lease_expired_after_side_effect_window_agent_unresponsive)."
+    );
+  });
+});
 
 describe('hasRedactionMarkers', () => {
   it('recognizes the nested server-owned marker (exact backend shape)', () => {
@@ -57,7 +98,10 @@ describe('redactionCount', () => {
 
   it('prefers the nested count when both shapes are present', () => {
     expect(
-      redactionCount({ redaction: { applied: true, count: 5 }, redactionCount: 1 })
+      redactionCount({
+        redaction: { applied: true, count: 5 },
+        redactionCount: 1,
+      })
     ).toBe(5);
   });
 
