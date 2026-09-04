@@ -15,6 +15,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The CertOps agent fleet table has a new Compatibility column showing each agent's Compatible/Outdated/Blocked state, with the accepted agent and protocol version range in the tooltip. A blocked agent cannot claim any job until upgraded; this was previously only visible as a dispatch-time error in the agent's own logs.
 - The Trust anchors panel now marks a `pending_install`/`pending_remove` row that automatic reconciliation gave up on with a "Needs attention" badge and a plain-language explanation, instead of showing it identically to one still actively retrying or leaving the raw internal reason code on screen.
 - The CertOps jobs list now shows when a job needs manual reconciliation instead of only on the Audit page: a job stuck as `orphaned_unknown_effect` gets a red "Needs reconciliation" badge (previously an unlabeled gray badge), and its row shows either the recorded error or, if none was recorded, an advisory line explaining the side effects could not be confirmed.
+- The jobs panel and evidence timeline now show who approved or rejected a certificate job and when, instead of only the Audit page.
 
 ### Fixed
 

@@ -1329,6 +1329,8 @@ function jobSummary(job) {
     cancelledAt: job.cancelledAt,
     requestedByUserId: job.requestedByUserId,
     requestedByApiTokenId: job.requestedByApiTokenId,
+    approvedByUserId: job.approvedByUserId,
+    approvedAt: job.approvedAt,
   };
 }
 
@@ -3723,6 +3725,7 @@ module.exports._test = {
   loadRenewalSetupIntents,
   projectRenewalSetupState,
   apiTokenMetadata,
+  jobSummary,
   jobDetail,
   redactClaimIdForNonAdmins,
 };

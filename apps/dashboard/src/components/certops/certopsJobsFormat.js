@@ -50,6 +50,9 @@ const EVENT_TYPE_LABELS = {
   'job.cancelled': 'Job cancelled',
   'job.status_updated': 'Status updated',
   'evidence.attached': 'Evidence attached',
+  'approval.granted': 'Approval granted',
+  'approval.rejected': 'Approval rejected',
+  'approval.invalidated': 'Approval invalidated',
 };
 
 const EVIDENCE_TYPE_LABELS = {
