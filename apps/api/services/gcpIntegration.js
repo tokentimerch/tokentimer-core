@@ -7,6 +7,7 @@ const {
   CREDENTIALED_AXIOS_REDIRECTS,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+const { formatGcpApiError } = require("./gcpApiError");
 
 async function gcpRequest({ accessToken, method = "GET", path, body = null }) {
   const baseUrl = `https://secretmanager.googleapis.com/v1`;
@@ -508,15 +509,17 @@ async function scanGCP({
           versionLookupFailures: describeFailedCount,
         });
       } catch (e) {
+        const error = formatGcpApiError(e, "Secrets");
         logger.error("GCP secrets scan failed", {
-          error: e.message,
+          error,
+          googleError: e.message,
           status: e.status || e.response?.status,
           projectId,
         });
         summary.push({
           type: "secrets",
           sourceKind: "gcp-secret-manager",
-          error: e.message,
+          error,
           status: e.status || e.response?.status,
           complete: false,
         });
@@ -591,8 +594,10 @@ async function scanGCP({
           location,
         });
       } catch (e) {
+        const error = formatGcpApiError(e, "Certificate Manager");
         logger.error("GCP Certificate Manager scan failed", {
-          error: e.message,
+          error,
+          googleError: e.message,
           status: e.status || e.response?.status,
           projectId,
         });
@@ -600,7 +605,7 @@ async function scanGCP({
           type: "certificate_manager_certs",
           sourceKind: "gcp-certificate-manager-cert",
           location,
-          error: e.message,
+          error,
           status: e.status || e.response?.status,
           complete: false,
           dimensions: { location },
@@ -692,23 +697,33 @@ async function scanGCP({
           unreachableScopes: sslCertsUnreachable,
         });
       } catch (e) {
+        const error = formatGcpApiError(
+          e,
+          "Compute Engine SSL certificates",
+        );
         logger.error("GCP Compute Engine SSL certificate scan failed", {
-          error: e.message,
+          error,
+          googleError: e.message,
           status: e.status || e.response?.status,
           projectId,
         });
         summary.push({
           type: "compute_ssl_certs",
           sourceKind: "gcp-compute-ssl-cert",
-          error: e.message,
+          error,
           status: e.status || e.response?.status,
           complete: false,
         });
       }
     }
   } catch (e) {
-    logger.error("GCP scan failed", { error: e.message, projectId });
-    summary.push({ type: "scan", error: e.message, complete: false });
+    const error = formatGcpApiError(e, "Scan");
+    logger.error("GCP scan failed", {
+      error,
+      googleError: e.message,
+      projectId,
+    });
+    summary.push({ type: "scan", error, complete: false });
   }
 
   // If all scan types failed with authentication errors, throw instead of returning partial results
@@ -733,7 +748,11 @@ async function scanGCP({
   });
 
   if (allFailed && hasAuthError && items.length === 0) {
-    const err = new Error("Authentication failed");
+    const details = summary
+      .filter((s) => s.error)
+      .map((s) => s.error)
+      .join(" ");
+    const err = new Error(details || "Authentication failed");
     err.status =
       summary.find((s) => s.status === 401 || s.status === 403)?.status || 401;
     throw err;

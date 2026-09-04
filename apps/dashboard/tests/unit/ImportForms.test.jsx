@@ -353,4 +353,62 @@ describe('Dashboard import forms', () => {
     expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
     expect(gcpScanMock).not.toHaveBeenCalled();
   });
+
+  it('ImportGCPForm shows a failed certificate sub-scan as readable text', async () => {
+    gcpScanMock.mockResolvedValue({
+      items: [],
+      summary: [
+        {
+          type: 'compute_ssl_certs',
+          found: 0,
+          complete: false,
+          error:
+            "Compute Engine SSL certificates: this project's Compute Engine API (compute.googleapis.com) is not enabled. Enable it in APIs & Services, then retry.",
+        },
+      ],
+    });
+
+    renderWithProviders(
+      <ImportGCPForm
+        workspaceId='ws-gcp'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='gcp-token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('my-project-123'), {
+      target: { value: 'my-project' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('gcp-token'), {
+      target: { value: 'ya29.token' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Certificates' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Compute Engine SSL certificates')
+      ).toBeInTheDocument()
+    );
+    const failedBadge = screen.getByText('Failed');
+    expect(failedBadge).toBeInTheDocument();
+    expect(failedBadge.textContent).toBe('Failed');
+    const errorText = screen.getByText(/not enabled/);
+    expect(errorText.tagName).toBe('P');
+    expect(errorText.textContent).not.toMatch(/^Compute Engine SSL certificates:/);
+    expect(
+      screen.queryByText(/Request failed with status code/)
+    ).not.toBeInTheDocument();
+  });
 });

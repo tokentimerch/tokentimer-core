@@ -3049,9 +3049,20 @@ export default function ImportTokensModal({
               ) : null}
 
               {error ? (
-                <Alert status='error'>
-                  <AlertIcon />
-                  <VStack align='start' spacing={3} w='full'>
+                <Alert
+                  status='error'
+                  minW={0}
+                  maxW='100%'
+                  alignItems='flex-start'
+                >
+                  <AlertIcon flexShrink={0} />
+                  <VStack
+                    align='start'
+                    spacing={3}
+                    w='full'
+                    minW={0}
+                    maxW='100%'
+                  >
                     {(() => {
                       const parsed = parseErrorMessage(error);
                       const errorTextColor = isLight ? 'red.800' : 'red.200';
@@ -3059,7 +3070,13 @@ export default function ImportTokensModal({
 
                       if (!parsed)
                         return (
-                          <Text fontSize='sm' color={errorTextColor}>
+                          <Text
+                            fontSize='sm'
+                            color={errorTextColor}
+                            whiteSpace='normal'
+                            overflowWrap='anywhere'
+                            wordBreak='break-word'
+                          >
                             {error}
                           </Text>
                         );
@@ -3074,6 +3091,9 @@ export default function ImportTokensModal({
                               fontSize='sm'
                               fontWeight='semibold'
                               color={errorTextColor}
+                              whiteSpace='normal'
+                              overflowWrap='anywhere'
+                              wordBreak='break-word'
                             >
                               {parsed.shortMessage}
                             </Text>
@@ -3099,6 +3119,8 @@ export default function ImportTokensModal({
                               fontSize='sm'
                               color={errorTextColor}
                               whiteSpace='pre-wrap'
+                              overflowWrap='anywhere'
+                              wordBreak='break-word'
                             >
                               {parsed.fullMessage}
                             </Text>
