@@ -21,6 +21,25 @@ import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 
+const GCP_SUMMARY_LABELS = {
+  secrets: 'Secrets',
+  certificate_manager_certs: 'Certificate Manager',
+  compute_ssl_certs: 'Compute Engine SSL certificates',
+  scan: 'Scan',
+};
+
+function gcpSummaryLabel(type) {
+  return GCP_SUMMARY_LABELS[type] || type;
+}
+
+function gcpSummaryErrorText(summary) {
+  if (!summary?.error) return null;
+  const prefix = `${gcpSummaryLabel(summary.type)}: `;
+  return summary.error.startsWith(prefix)
+    ? summary.error.slice(prefix.length)
+    : summary.error;
+}
+
 function getGCPItemDetails(item) {
   const details = [];
   if (item.description) {
@@ -223,7 +242,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   }));
 
   return (
-    <VStack align='stretch' spacing={3}>
+    <VStack align='stretch' spacing={3} minW={0} maxW='100%'>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
           Scans GCP Secret Manager and SSL certificates. Token is used for
@@ -231,7 +250,14 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         </Text>
         <Text fontSize='xs' color={helpTextColor} mt={1}>
           Get token from Cloud Shell:{' '}
-          <Code fontSize='xs'>gcloud auth print-access-token</Code>
+          <Code fontSize='xs'>gcloud auth print-access-token</Code>. That token
+          belongs to the account you are logged in as. Roles on a service
+          account apply only if you impersonate it (
+          <Code fontSize='xs'>
+            gcloud auth print-access-token
+            --impersonate-service-account=SA_EMAIL
+          </Code>
+          ).
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
@@ -344,24 +370,49 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           borderColor={borderColor}
           borderRadius='md'
           p={3}
+          minW={0}
+          maxW='100%'
         >
-          <VStack align='stretch' spacing={2}>
+          <VStack align='stretch' spacing={2} minW={0} maxW='100%'>
             {gcpSummary.map((s, i) => (
-              <HStack key={i} justify='space-between'>
-                <Text fontSize='sm'>{s.type}</Text>
+              <Box key={i} minW={0} maxW='100%'>
+                <HStack
+                  justify='space-between'
+                  align='flex-start'
+                  spacing={3}
+                  minW={0}
+                >
+                  <Text fontSize='sm' minW={0}>
+                    {gcpSummaryLabel(s.type)}
+                  </Text>
+                  {s.error ? (
+                    <Badge colorScheme='red' flexShrink={0}>
+                      Failed
+                    </Badge>
+                  ) : (
+                    <HStack spacing={2} flexShrink={0}>
+                      <Badge colorScheme='green'>found {s.found}</Badge>
+                      {s.failedCount > 0 ? (
+                        <Badge colorScheme='orange'>
+                          {s.failedCount} without expiration
+                        </Badge>
+                      ) : null}
+                    </HStack>
+                  )}
+                </HStack>
                 {s.error ? (
-                  <Badge colorScheme='red'>{s.error}</Badge>
-                ) : (
-                  <HStack spacing={2}>
-                    <Badge colorScheme='green'>found {s.found}</Badge>
-                    {s.failedCount > 0 ? (
-                      <Badge colorScheme='orange'>
-                        {s.failedCount} without expiration
-                      </Badge>
-                    ) : null}
-                  </HStack>
-                )}
-              </HStack>
+                  <Text
+                    fontSize='xs'
+                    color={helpTextColor}
+                    mt={1}
+                    whiteSpace='normal'
+                    overflowWrap='anywhere'
+                    wordBreak='break-word'
+                  >
+                    {gcpSummaryErrorText(s)}
+                  </Text>
+                ) : null}
+              </Box>
             ))}
           </VStack>
         </Box>

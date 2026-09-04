@@ -1861,12 +1861,23 @@ router.post(
         userMessage =
           "GCP authentication failed. Token may be expired or invalid. Generate fresh token: gcloud auth print-access-token";
       } else if (
+        e?.message &&
+        e.message !== "Authentication failed" &&
+        !/^Request failed with status code \d+$/.test(e.message) &&
+        (e?.status === 403 ||
+          e.message.includes("PermissionDenied") ||
+          e.message.includes("not enabled") ||
+          e.message.includes("API has not been used") ||
+          e.message.includes("API_NOT_ACTIVATED"))
+      ) {
+        userMessage = e.message;
+      } else if (
         e?.status === 403 ||
         e?.message?.includes("PermissionDenied")
       ) {
         const scannedCertificates = req.body?.include?.certificates === true;
         userMessage = scannedCertificates
-          ? 'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer), "Certificate Manager Viewer" (roles/certificatemanager.viewer) and "Compute Viewer" (roles/compute.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.'
+          ? 'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer), "Certificate Manager Viewer" (roles/certificatemanager.viewer) and "Compute Viewer" (roles/compute.viewer) on the project to the identity that minted the token. gcloud auth print-access-token is your user, not a service account, unless you impersonate that account. Secret Accessor cannot list secrets.'
           : 'GCP permission denied. Grant "Secret Manager Viewer" (roles/secretmanager.viewer) on the project to the identity that minted the token. Secret Accessor cannot list secrets.';
       } else if (e?.status === 404 || e?.message?.includes("NotFound")) {
         userMessage =

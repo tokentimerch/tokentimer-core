@@ -1087,6 +1087,52 @@ describe("Provider service unit coverage", () => {
         .to.equal(true);
     });
 
+    it("surfaces a disabled Compute Engine API instead of axios's 403 string", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          const err = new Error("Request failed with status code 403");
+          err.response = {
+            status: 403,
+            data: {
+              error: {
+                code: 403,
+                message:
+                  "Compute Engine API has not been used in project proj before or it is disabled.",
+                status: "PERMISSION_DENIED",
+                details: [{ reason: "SERVICE_DISABLED" }],
+              },
+            },
+          };
+          throw err;
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const compute = result.summary.find(
+        (s) => s.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(compute).to.include({ complete: false, status: 403 });
+      expect(compute.error).to.match(/Compute Engine API/);
+      expect(compute.error).to.match(/not enabled/);
+      expect(compute.error).to.not.include("Request failed with status code");
+      expect(result.summary.find((s) => s.sourceKind === "gcp-certificate-manager-cert")).to.include({
+        complete: true,
+        found: 0,
+      });
+    });
+
     it("discovers both regional and global Compute Engine SSL certificates via aggregatedList", async () => {
       let requestedUrl = null;
       const axiosMock = async (config) => {
