@@ -79,6 +79,31 @@ function blockedDescriptor(reason) {
   return BLOCKED_REASONS[reason] || BLOCKED_FALLBACK;
 }
 
+/**
+ * Reasons a certificate is temporarily deferred despite being fully covered.
+ * Kept separate from BLOCKED_REASONS: these certificates WILL renew on their
+ * own once the condition clears, so folding them into the "defect" bucket
+ * above would misrepresent a self-resolving wait as something an operator
+ * needs to fix.
+ */
+const DEFERRED_REASONS = {
+  ca_capacity: {
+    label: 'At CA capacity',
+    tooltip:
+      'This certificate is due for renewal, but its issuing CA already has as many renewals in flight as the per-CA limit allows. The capacity constraint itself clears automatically once earlier renewals for that CA finish; it does not mean nothing here needs attention, since one of those in-flight jobs could be waiting on something else, such as an approval.',
+  },
+};
+
+const DEFERRED_FALLBACK = {
+  label: 'Deferred',
+  tooltip:
+    'Renewal is temporarily deferred. It will proceed once the underlying condition clears.',
+};
+
+function deferredDescriptor(reason) {
+  return DEFERRED_REASONS[reason] || DEFERRED_FALLBACK;
+}
+
 function renewalWindowLabel(renewsFrom) {
   if (!renewsFrom) return '--';
   const from = new Date(renewsFrom);
@@ -122,6 +147,20 @@ function warningSentence(switchedOff, uncovered, paged = false) {
   return `${parts.join(', and ')}. Affected certificates will expire unless they are renewed by hand.`;
 }
 
+/**
+ * Separate, deliberately calmer sentence for capacity-deferred certificates.
+ * Kept out of warningSentence() above: that sentence's closing line ("will
+ * expire unless renewed by hand") is false for this group, so folding it in
+ * would misstate risk for the one group that has none.
+ */
+function deferredSentence(deferred, paged = false) {
+  if (deferred.length === 0) return '';
+  const scope = paged ? ' on this page' : '';
+  return deferred.length === 1
+    ? `1 certificate${scope} is due but waiting for capacity to free up at its issuing CA; this happens automatically once earlier renewals for that CA finish.`
+    : `${deferred.length} certificates${scope} are due but waiting for capacity to free up at their issuing CA; this happens automatically once earlier renewals for that CA finish.`;
+}
+
 export default function UpcomingRenewalsPanel({ refreshSignal }) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'schedule',
@@ -141,8 +180,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
     item =>
       !item.autoRenewEnabled && item.blockedReason !== 'auto_renew_disabled'
   );
+  const deferredByCapacity = renewals.filter(
+    item => item.deferredReason === 'ca_capacity'
+  );
   const paged = Boolean(pagination && pagination.total > renewals.length);
   const warning = warningSentence(switchedOff, uncovered, paged);
+  const deferredNotice = deferredSentence(deferredByCapacity, paged);
   const firstPage = () => setPage({ offset: 0 });
   const pageIsPastEnd = Boolean(
     pagination && pagination.total > 0 && offset >= pagination.total
@@ -168,6 +211,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
       {!loading && !error && warning ? (
         <Text fontSize='sm' color='orange.400' mb={3} fontWeight='medium'>
           {warning}
+        </Text>
+      ) : null}
+
+      {!loading && !error && deferredNotice ? (
+        <Text fontSize='sm' color='blue.400' mb={3} fontWeight='medium'>
+          {deferredNotice}
         </Text>
       ) : null}
 
@@ -223,6 +272,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               <Tbody>
                 {renewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
+                  const deferred = item.deferredReason
+                    ? deferredDescriptor(item.deferredReason)
+                    : null;
                   return (
                     <Tr key={item.certificateId}>
                       <Td>
@@ -259,15 +311,36 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                       </Td>
                       <Td>
                         {item.autoRenewEnabled ? (
-                          <Badge
-                            colorScheme='green'
-                            variant='subtle'
-                            textTransform='none'
-                            fontWeight='medium'
-                            fontSize='xs'
-                          >
-                            On
-                          </Badge>
+                          <HStack spacing={2}>
+                            <Badge
+                              colorScheme='green'
+                              variant='subtle'
+                              textTransform='none'
+                              fontWeight='medium'
+                              fontSize='xs'
+                            >
+                              On
+                            </Badge>
+                            {deferred ? (
+                              <Tooltip
+                                label={deferred.tooltip}
+                                hasArrow
+                                placement='top'
+                                openDelay={250}
+                              >
+                                <Badge
+                                  colorScheme='yellow'
+                                  variant='subtle'
+                                  textTransform='none'
+                                  fontWeight='medium'
+                                  fontSize='xs'
+                                  aria-label={`${deferred.label}. ${deferred.tooltip}`}
+                                >
+                                  {deferred.label}
+                                </Badge>
+                              </Tooltip>
+                            ) : null}
+                          </HStack>
                         ) : (
                           <Tooltip
                             label={

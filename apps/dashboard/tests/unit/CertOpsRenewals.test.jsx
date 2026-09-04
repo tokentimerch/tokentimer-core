@@ -296,6 +296,134 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('Incomplete')).toBeInTheDocument();
   });
 
+  it("shows an 'At CA capacity' badge for a certificate deferred by CA capacity, distinct from a blocked badge", async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'ca_capacity',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('At CA capacity')).toBeInTheDocument();
+    expect(screen.getAllByText('On').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
+    expect(screen.queryByText('No profile')).not.toBeInTheDocument();
+    expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
+    expect(screen.queryByText('No key access')).not.toBeInTheDocument();
+    expect(screen.queryByText('No expiry')).not.toBeInTheDocument();
+  });
+
+  it("does not claim blanket 'no action needed' in the capacity-wait tooltip, since an approval elsewhere in the same CA bucket can still need attention", async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'ca_capacity',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    const badge = await screen.findByLabelText(/clears automatically/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge.getAttribute('aria-label')).not.toMatch(
+      /no action is needed/i
+    );
+  });
+
+  it('renders a fallback deferred badge for an unknown deferredReason instead of crashing', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'future_reason_unknown_to_ui',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Deferred')).toBeInTheDocument();
+    expect(screen.getByLabelText(/temporarily deferred/i)).toBeInTheDocument();
+  });
+
+  it('adds a non-alarming capacity-wait sentence separate from the blocked-certificate warning', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          certificateId: 'cert-blocked',
+          autoRenewEnabled: false,
+          blockedReason: 'no_profile',
+          profileId: null,
+          profileName: null,
+        }),
+        upcoming({
+          certificateId: 'cert-deferred',
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'ca_capacity',
+        }),
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText(
+        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        '1 certificate is due but waiting for capacity to free up at its issuing CA; this happens automatically once earlier renewals for that CA finish.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("does not count a capacity-deferred certificate in the 'will not be renewed automatically' warning", async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: true,
+          blockedReason: null,
+          deferredReason: 'ca_capacity',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    await screen.findByText('At CA capacity');
+    expect(
+      screen.queryByText(
+        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
   it('reports a certificate that has never been renewed instead of leaving the cell blank', async () => {
     listUpcomingRenewalsMock.mockResolvedValue({
       items: [upcoming({ lastRenewJobStatus: null })],
