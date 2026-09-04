@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Flex,
   FormControl,
   FormHelperText,
   FormLabel,
@@ -29,7 +30,6 @@ import {
   Th,
   Thead,
   Tr,
-  useColorModeValue,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -45,6 +45,7 @@ import {
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
@@ -52,6 +53,13 @@ import { retireAgent, updateAgentAlertSettings } from './certopsAgentsApi.js';
 import { formatDateTime, formatRelativeDateTime } from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
+import {
+  CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
+  CertOpsTruncatedText,
+  nextCertOpsTableSort,
+  useCertOpsResponsiveTableStyles,
+} from './CertOpsResponsiveTable.jsx';
 
 const AGENT_STATUS_SCHEME = {
   active: 'green',
@@ -122,6 +130,21 @@ function platformLabel(platform) {
   return PLATFORM_LABELS[platform] || String(platform);
 }
 
+const AGENT_COLUMNS = [
+  ['agent', 'Agent'],
+  ['os', 'OS'],
+  ['status', 'Status'],
+  ['version', 'Version'],
+  ['protocol', 'Protocol'],
+  ['compatibility', 'Compatibility'],
+  ['clockDrift', 'Clock drift'],
+  ['ntp', 'NTP'],
+  ['execution', 'Execution'],
+  ['signingKey', 'Signing key'],
+  ['lastHeartbeat', 'Last heartbeat'],
+];
+const AGENT_NON_SORTABLE_COLUMNS = new Set(['status', 'compatibility']);
+
 /** Signed millisecond offset for display, e.g. "+120 ms"; '--' when unknown. */
 function formatClockOffset(value) {
   if (value === null || value === undefined) return '--';
@@ -174,20 +197,29 @@ const COMPATIBILITY_LABEL = {
   blocked: 'Blocked',
 };
 
+/** Dummy reject-ceilings (major.999.999) are not operator-useful; hide them. */
+function isUnboundedVersionCeiling(version) {
+  return typeof version === 'string' && /^\d+\.999\.999$/.test(version);
+}
+
 /** Version/protocol compatibility chip; 'blocked' is a hard stop (agentJobEligibility.js
  *  rejects every claim from this agent with compatibility_blocked). */
 function AgentCompatibilityBadge({ compatibilityState, compatibilityRange }) {
   const key = String(compatibilityState || '').toLowerCase();
   const range = compatibilityRange || {};
-  const rangeText =
-    `agent ${range.minAgentVersion || '?'}-${range.maxAgentVersion || '?'}, ` +
-    `protocol ${range.minProtocolVersion || '?'}-${range.maxProtocolVersion || '?'}`;
-  const title =
-    key === 'blocked'
-      ? `Outside the accepted range (${rangeText}). This agent cannot claim any job until it is upgraded.`
-      : key === 'outdated'
-        ? `Within the accepted range (${rangeText}) but more than one minor version behind the latest known build. Upgrade when convenient; it can still claim jobs.`
-        : `Within the accepted range (${rangeText}).`;
+  const minAgent = range.minAgentVersion || 'unknown';
+  const minProtocol = range.minProtocolVersion || 'unknown';
+  const hasRealMax =
+    range.maxAgentVersion && !isUnboundedVersionCeiling(range.maxAgentVersion);
+  let title = 'This agent meets the versions this control plane accepts.';
+  if (key === 'blocked') {
+    title = hasRealMax
+      ? `This agent is outside the versions this control plane accepts (agent ${minAgent} to ${range.maxAgentVersion}, protocol ${minProtocol} and above). It cannot claim any job until it is upgraded.`
+      : `This agent is below the minimum this control plane accepts (agent ${minAgent}, protocol ${minProtocol}). It cannot claim any job until it is upgraded.`;
+  } else if (key === 'outdated') {
+    title =
+      'This agent can still claim jobs, but it is more than one minor version behind the latest known build. Upgrade when convenient.';
+  }
   return (
     <Badge
       colorScheme={COMPATIBILITY_SCHEME[key] || 'gray'}
@@ -231,7 +263,9 @@ function NtpBadge({ ntpSynced }) {
  * caveat explicit rather than asserting a diagnosis this field can't prove.
  */
 function ExecutionCapabilityBadge({ supportedOperations }) {
-  const declared = Array.isArray(supportedOperations) ? supportedOperations : [];
+  const declared = Array.isArray(supportedOperations)
+    ? supportedOperations
+    : [];
   if (declared.length > 0) {
     return (
       <Badge
@@ -396,7 +430,8 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
           </Button>
           <Button
             {...dangerButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleConfirm}
             isLoading={submitting}
             loadingText='Retiring'
@@ -560,7 +595,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
           </Button>
           <Button
             {...primaryButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleSave}
             isLoading={submitting}
             loadingText='Saving'
@@ -592,21 +628,65 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'agent',
   });
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
   // The fleet list is unbounded server-side unless a limit is sent. Now that
   // this table has a page control, sending one is safe: every row past the
   // first page is reachable.
   const { enabled, agents, pagination, loading, error, refresh } =
-    useCertOpsAgents(refreshSignal, { limit, offset });
+    useCertOpsAgents(refreshSignal, {
+      limit,
+      offset,
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+    });
 
   const [retireTarget, setRetireTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
 
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const infoBg = useColorModeValue('blue.50', 'blue.900');
-  const infoBorder = useColorModeValue('blue.200', 'blue.700');
-  const infoText = useColorModeValue('blue.800', 'blue.100');
-
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
+  const infoBg = dashboard.accent.interactiveSurface;
+  const infoBorder = dashboard.accent.interactiveBorder;
+  const infoText = dashboard.accent.interactiveForeground;
+  const tableStyles = useCertOpsResponsiveTableStyles();
+  const agentTableProps = {
+    ...tableStyles.tableProps,
+    sx: {
+      ...tableStyles.tableProps.sx,
+      'thead th': {
+        ...tableStyles.tableProps.sx['thead th'],
+        px: 2,
+      },
+      'thead th button': {
+        px: 0,
+      },
+      'tbody td': {
+        ...tableStyles.tableProps.sx['tbody td'],
+        verticalAlign: 'top',
+      },
+    },
+  };
+  const agentPrimaryCellProps = {
+    ...tableStyles.primaryCellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 3, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
+  const agentCellProps = {
+    ...tableStyles.cellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 2, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
+  const agentActionCellProps = {
+    ...tableStyles.actionCellProps,
+    px: { base: 3, lg: 2 },
+    py: { base: 2, lg: '0.45rem' },
+    verticalAlign: 'top',
+  };
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
   if (enabled !== true) return null;
 
   const handleRetire = async ({ force, reason }) => {
@@ -691,46 +771,70 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
 
       {!loading && agents.length > 0 ? (
         <Box>
-          <TableContainer>
-            <Table size='sm' variant='simple'>
-              <Thead>
+          {pagination ? (
+            <Flex justify='flex-end' mb={4}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='agents'
+                onChange={setPage}
+              />
+            </Flex>
+          ) : null}
+          <TableContainer {...tableStyles.tableContainerProps}>
+            <Table {...agentTableProps}>
+              <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  <Th>Agent</Th>
-                  <Th>OS</Th>
-                  <Th>Status</Th>
-                  <Th>Version</Th>
-                  <Th>Protocol</Th>
-                  <Th>Compatibility</Th>
-                  <Th>Clock drift</Th>
-                  <Th>NTP</Th>
-                  <Th>Execution</Th>
-                  <Th>Signing key</Th>
-                  <Th>Last heartbeat</Th>
+                  {AGENT_COLUMNS.map(([key, label]) =>
+                    AGENT_NON_SORTABLE_COLUMNS.has(key) ? (
+                      <Th key={key}>{label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={key}
+                        label={label}
+                        sortKey={key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                   {canManage ? <Th textAlign='right'>Actions</Th> : null}
                 </Tr>
               </Thead>
-              <Tbody>
+              <Tbody {...tableStyles.tbodyProps}>
                 {agents.map(agent => {
                   const status = String(agent.status || '').toLowerCase();
                   return (
-                    <Tr key={agent.id}>
-                      <Td>
+                    <Tr key={agent.id} {...tableStyles.rowProps}>
+                      <Td {...agentPrimaryCellProps}>
                         <Box>
-                          <Text fontSize='sm' fontWeight='semibold'>
-                            {agent.name || agent.hostname || 'Unnamed agent'}
-                          </Text>
+                          <CertOpsTruncatedText
+                            value={
+                              agent.name || agent.hostname || 'Unnamed agent'
+                            }
+                            fontSize='sm'
+                            fontWeight='semibold'
+                          />
                           <CopyableId
                             id={agent.agentId}
                             display={shortId(agent.agentId)}
                           />
                         </Box>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          OS
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>
                           {platformLabel(agent.platform)}
                         </Text>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Status
+                        </CertOpsMobileFieldLabel>
                         <VStack align='flex-start' spacing={0.5}>
                           <AgentStatusBadge
                             status={displayAgentStatus(agent)}
@@ -742,7 +846,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           ) && agent.dependentAutoRenewCertificateCount > 0 ? (
                             <Text
                               fontSize='xs'
-                              color='orange.600'
+                              color={dashboard.state.warning}
                               title='Auto-renew certificates whose renewal path currently depends on this agent'
                             >
                               {agent.dependentAutoRenewCertificateCount}{' '}
@@ -755,12 +859,18 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           ) : null}
                         </VStack>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Version
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm' fontFamily='mono'>
                           {agent.agentVersion || '--'}
                         </Text>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Protocol
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm' fontFamily='mono'>
                           {agent.protocolVersion === null ||
                           agent.protocolVersion === undefined
@@ -768,13 +878,19 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                             : String(agent.protocolVersion)}
                         </Text>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Compatibility
+                        </CertOpsMobileFieldLabel>
                         <AgentCompatibilityBadge
                           compatibilityState={agent.compatibilityState}
                           compatibilityRange={agent.compatibilityRange}
                         />
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Clock drift
+                        </CertOpsMobileFieldLabel>
                         <HStack spacing={2}>
                           <Text fontSize='sm' fontFamily='mono'>
                             {formatClockOffset(agent.clockOffsetMs)}
@@ -784,15 +900,24 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           />
                         </HStack>
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          NTP
+                        </CertOpsMobileFieldLabel>
                         <NtpBadge ntpSynced={agent.ntpSynced} />
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Execution
+                        </CertOpsMobileFieldLabel>
                         <ExecutionCapabilityBadge
                           supportedOperations={agent.supportedOperations}
                         />
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Signing key
+                        </CertOpsMobileFieldLabel>
                         {agent.pinnedSigningKeyId ? (
                           <CopyableId
                             id={agent.pinnedSigningKeyId}
@@ -802,7 +927,10 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           <Text fontSize='sm'>--</Text>
                         )}
                       </Td>
-                      <Td>
+                      <Td {...agentCellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Last heartbeat
+                        </CertOpsMobileFieldLabel>
                         <Text
                           fontSize='sm'
                           color={muted}
@@ -812,7 +940,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                         </Text>
                       </Td>
                       {canManage ? (
-                        <Td textAlign='right'>
+                        <Td {...agentActionCellProps} textAlign='right'>
                           <HStack spacing={2} justify='flex-end'>
                             {status !== 'retired' ? (
                               <Button
@@ -842,18 +970,6 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
               </Tbody>
             </Table>
           </TableContainer>
-          {pagination ? (
-            <Box mt={2}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='agents'
-                onChange={setPage}
-              />
-            </Box>
-          ) : null}
         </Box>
       ) : null}
 

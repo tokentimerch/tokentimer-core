@@ -25,7 +25,6 @@ import {
   Switch,
   Text,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   DashboardModalDescription,
@@ -33,6 +32,7 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { setUpCertificateRenewal } from './certopsApi.js';
 import { listRenewalProfiles } from './certopsRenewalApi.js';
 
@@ -121,16 +121,16 @@ export default function SetupRenewalModal({
     outlineButtonProps,
     primaryButtonProps,
   } = useDashboardModalProps();
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const cardBorder = useColorModeValue('gray.200', 'gray.600');
-  const cardSelectedBorder = useColorModeValue('blue.400', 'blue.300');
-  const cardSelectedBg = useColorModeValue('blue.50', 'whiteAlpha.100');
-  const matchedBorder = useColorModeValue('green.400', 'green.300');
-  const matchedBg = useColorModeValue('green.50', 'whiteAlpha.100');
-  const matchedText = useColorModeValue('green.600', 'green.300');
-  const mismatchedBorder = useColorModeValue('orange.400', 'orange.300');
-  const mismatchedBg = useColorModeValue('orange.50', 'whiteAlpha.100');
-  const mismatchedText = useColorModeValue('orange.600', 'orange.300');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const cardBorder = dashboard.border.subtle;
+  const cardSelectedBorder = dashboard.accent.interactiveBorder;
+  const cardSelectedBg = dashboard.accent.interactiveSurface;
+  const matchedBorder = dashboard.state.success;
+  const matchedBg = dashboard.bg.nested;
+  const matchedText = dashboard.state.success;
+  const mismatchedBorder = dashboard.callout.warningBorder;
+  const mismatchedBg = dashboard.callout.warningSurface;
+  const mismatchedText = dashboard.callout.warningText;
 
   const [presets, setPresets] = useState([]);
   const [loadingPresets, setLoadingPresets] = useState(false);
@@ -494,7 +494,7 @@ export default function SetupRenewalModal({
                                       fontFamily='mono'
                                       color={
                                         !certPath
-                                          ? 'orange.500'
+                                          ? dashboard.state.warning
                                           : mismatched
                                             ? mismatchedText
                                             : matched

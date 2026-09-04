@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
+const { resolveListSort } = require("./listSorting");
 const {
   TRANSITION_ORIGINS,
   classifyTerminalTransition,
@@ -455,11 +456,39 @@ function normalizeOffset(value) {
   return Math.max(0, parsed);
 }
 
+const AGENT_LIST_SORTS = Object.freeze({
+  agent: "COALESCE(NULLIF(name, ''), NULLIF(hostname, ''), 'Unnamed agent')",
+  os: `CASE platform
+    WHEN 'win32' THEN 'Windows'
+    WHEN 'linux' THEN 'Linux'
+    WHEN 'darwin' THEN 'macOS'
+    ELSE COALESCE(platform, '--')
+  END`,
+  version: "agent_version",
+  protocol: "protocol_version",
+  clockDrift: "clock_offset_ms",
+  ntp: "ntp_synced",
+  execution: `CASE
+    WHEN jsonb_typeof(supported_operations) = 'array'
+      AND jsonb_array_length(supported_operations) > 0 THEN 1
+    ELSE 0
+  END`,
+  signingKey: "pinned_signing_key_id",
+  lastHeartbeat: "last_seen_at",
+});
+
 async function listAgents(options) {
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const limit = normalizeOptionalLimit(options.limit);
   const offset = normalizeOffset(options.offset);
+  const orderBy = resolveListSort({
+    sort: options.sort,
+    direction: options.direction,
+    allowlist: AGENT_LIST_SORTS,
+    defaultOrderBy: "created_at DESC, id ASC",
+    tieBreaker: "id ASC",
+  });
   const params = [workspaceId];
   let pageClause = "";
   if (limit !== null) {
@@ -482,7 +511,7 @@ async function listAgents(options) {
     `SELECT ${AGENT_SAFE_SELECT_FIELDS}
        FROM certops_agents
       WHERE workspace_id = $1
-      ORDER BY created_at DESC, id ASC${pageClause}`,
+      ORDER BY ${orderBy}${pageClause}`,
     params,
   );
 

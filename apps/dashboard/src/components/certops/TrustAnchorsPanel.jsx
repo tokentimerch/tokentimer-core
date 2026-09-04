@@ -29,8 +29,8 @@ import {
   Textarea,
   Th,
   Thead,
+  Tooltip,
   Tr,
-  useColorModeValue,
   VStack,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -44,7 +44,9 @@ import {
   DashboardActionButton,
   DashboardErrorAlert,
 } from '../DashboardPrimitives.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
+import { pendingReasonLabel, staleReasonLabel } from './certopsJobsFormat';
 import CreateManualJobModal from './CreateManualJobModal.jsx';
 import {
   CERTOPS_TRUST_ANCHOR_TYPES,
@@ -126,6 +128,16 @@ function StaleReconciliationBadge() {
     >
       Needs attention
     </Badge>
+  );
+}
+
+function AdvisoryHover({ label, color, children }) {
+  return (
+    <Tooltip label={label} hasArrow placement='top' openDelay={250}>
+      <Text fontSize='xs' color={color}>
+        {children}
+      </Text>
+    </Tooltip>
   );
 }
 
@@ -268,7 +280,8 @@ function CreateTrustAnchorModal({ isOpen, onClose, onCreated }) {
           </Button>
           <Button
             {...primaryButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleSubmit}
             isDisabled={!canSubmit}
             isLoading={submitting}
@@ -403,7 +416,7 @@ function AnchorInstallationsBody({
 }) {
   const { installations, loading, error, refresh } =
     useCertOpsTrustAnchorInstallations(anchor.id);
-  const muted = useColorModeValue('gray.600', 'gray.400');
+  const { muted, dashboard } = useDashboardThemeColors();
 
   return (
     <VStack align='stretch' spacing={3}>
@@ -476,34 +489,33 @@ function AnchorInstallationsBody({
                     {row.store}
                   </Text>
                 </Td>
-                <Td>
-                  <VStack align='flex-start' spacing={0.5}>
-                    <InstallationStateBadge state={row.transitionState} />
+                <Td maxW='280px'>
+                  <VStack align='flex-start' spacing={1}>
+                    <HStack spacing={1} flexWrap='wrap'>
+                      <InstallationStateBadge state={row.transitionState} />
+                      {row.staleReason ? <StaleReconciliationBadge /> : null}
+                    </HStack>
                     {row.staleReason ? (
-                      <>
-                        <StaleReconciliationBadge />
-                        <Text
-                          fontSize='xs'
-                          color='red.600'
-                          noOfLines={2}
-                          title={row.staleReason.message}
-                        >
-                          {row.staleReason.message}
-                        </Text>
-                      </>
-                    ) : row.lastError ? (
-                      <Text fontSize='xs' color='red.500' noOfLines={1}>
-                        {row.lastError}
-                      </Text>
-                    ) : row.pendingReason ? (
-                      <Text
-                        fontSize='xs'
-                        color='orange.600'
-                        noOfLines={2}
-                        title={row.pendingReason.message}
+                      <AdvisoryHover
+                        label={row.staleReason.message}
+                        color={dashboard.state.danger}
                       >
-                        {row.pendingReason.message}
-                      </Text>
+                        {staleReasonLabel(row.staleReason)}
+                      </AdvisoryHover>
+                    ) : row.lastError ? (
+                      <AdvisoryHover
+                        label={row.lastError}
+                        color={dashboard.state.danger}
+                      >
+                        {row.lastError}
+                      </AdvisoryHover>
+                    ) : row.pendingReason ? (
+                      <AdvisoryHover
+                        label={row.pendingReason.message}
+                        color={dashboard.state.warning}
+                      >
+                        {pendingReasonLabel(row.pendingReason)}
+                      </AdvisoryHover>
                     ) : null}
                   </VStack>
                 </Td>
@@ -564,11 +576,11 @@ export default function TrustAnchorsPanel() {
   const [retireTarget, setRetireTarget] = useState(null);
   const [jobModalTarget, setJobModalTarget] = useState(null);
 
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const infoBg = useColorModeValue('blue.50', 'blue.900');
-  const infoBorder = useColorModeValue('blue.200', 'blue.700');
-  const infoText = useColorModeValue('blue.800', 'blue.100');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
+  const infoBg = dashboard.accent.interactiveSurface;
+  const infoBorder = dashboard.accent.interactiveBorder;
+  const infoText = dashboard.accent.interactiveForeground;
 
   if (enabled !== true || !isAdmin) return null;
 

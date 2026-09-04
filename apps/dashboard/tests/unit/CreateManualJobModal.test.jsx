@@ -35,6 +35,9 @@ vi.mock('../../src/components/certops/useCertOpsControllerClusters.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsRequireApprovalAlways: false,
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
@@ -457,7 +460,7 @@ describe('CreateManualJobModal trustOp mode', () => {
     );
     expect(optionA.textContent).not.toMatch(/no distribute-trust capability/);
     expect(optionB.textContent).toMatch(
-      /Agent B.*— no distribute-trust capability declared/
+      /Agent B.*; no distribute-trust capability declared/
     );
   });
 
@@ -493,7 +496,7 @@ describe('CreateManualJobModal trustOp mode', () => {
 
     expect(
       screen.getByRole('option', {
-        name: /team-a — Agent A \(agent-a\) \(root\).*no revoke-trust capability declared/,
+        name: /team-a: Agent A \(agent-a\) \(root\).*no revoke-trust capability declared/,
       })
     ).toBeInTheDocument();
   });
@@ -603,7 +606,7 @@ describe('CreateManualJobModal trustOp mode', () => {
 
     expect(
       screen.getByRole('option', {
-        name: /team-a — Agent A \(agent-a\) \(root\)/,
+        name: /team-a: Agent A \(agent-a\) \(root\)/,
       })
     ).toBeInTheDocument();
 

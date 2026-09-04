@@ -35,7 +35,10 @@ function workspaceBase(workspaceId) {
  * (an agent picker, a "has any agent" check) deliberately do not.
  * @returns {Promise<{ items: object[], pagination: { limit: number|null, offset: number, total: number } }>}
  */
-export async function listAgents(workspaceId, { limit, offset, signal } = {}) {
+export async function listAgents(
+  workspaceId,
+  { limit, offset, sort, direction, signal } = {}
+) {
   const params = {};
   if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
     params.limit = Number(limit);
@@ -43,6 +46,8 @@ export async function listAgents(workspaceId, { limit, offset, signal } = {}) {
   if (Number.isFinite(Number(offset)) && Number(offset) > 0) {
     params.offset = Number(offset);
   }
+  if (sort) params.sort = sort;
+  if (direction) params.direction = direction;
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/agents`, {
     params,
     signal,

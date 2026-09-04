@@ -24,10 +24,13 @@ function workspaceBase(workspaceId) {
  */
 export async function listRenewalProfiles(
   workspaceId,
-  { limit = 50, offset = 0, signal } = {}
+  { limit = 50, offset = 0, sort, direction, signal } = {}
 ) {
+  const params = { limit, offset };
+  if (sort) params.sort = sort;
+  if (direction) params.direction = direction;
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/profiles`, {
-    params: { limit, offset },
+    params,
     signal,
   });
   return res.data;
@@ -87,12 +90,15 @@ export async function updateRenewalProfile(
  */
 export async function listUpcomingRenewals(
   workspaceId,
-  { limit = 50, offset = 0, signal } = {}
+  { limit = 50, offset = 0, sort, direction, signal } = {}
 ) {
+  const params = { limit, offset };
+  if (sort) params.sort = sort;
+  if (direction) params.direction = direction;
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/renewals/upcoming`,
     {
-      params: { limit, offset },
+      params,
       signal,
     }
   );

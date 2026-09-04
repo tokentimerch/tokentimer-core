@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import {
   Badge,
   Box,
   Button,
+  Flex,
   HStack,
   Spinner,
   Table,
@@ -13,15 +15,22 @@ import {
   Thead,
   Tooltip,
   Tr,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import JobStatusBadge from './JobStatusBadge.jsx';
+import {
+  CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
+  CertOpsTruncatedText,
+  nextCertOpsTableSort,
+  useCertOpsResponsiveTableStyles,
+} from './CertOpsResponsiveTable.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
 import { expiryDescriptor, formatDate } from './certopsFormat';
 
@@ -74,6 +83,15 @@ const BLOCKED_FALLBACK = {
   tooltip:
     'The scheduler will not renew this certificate automatically. It will expire unless it is renewed manually.',
 };
+
+const RENEWAL_COLUMNS = [
+  ['certificate', 'Certificate'],
+  ['expires', 'Expires'],
+  ['renewalWindow', 'Renewal window'],
+  ['autoRenew', 'Auto-renew'],
+  ['lastAttempt', 'Last attempt'],
+];
+const NON_SORTABLE_RENEWAL_COLUMNS = new Set(['autoRenew']);
 
 function blockedDescriptor(reason) {
   return BLOCKED_REASONS[reason] || BLOCKED_FALLBACK;
@@ -165,13 +183,23 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'schedule',
   });
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
   const { renewals, pagination, loading, error } = useCertOpsUpcomingRenewals(
     refreshSignal,
-    { limit, offset }
+    {
+      limit,
+      offset,
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+    }
   );
 
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const muted = useColorModeValue('gray.600', 'gray.400');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
+  const tableStyles = useCertOpsResponsiveTableStyles();
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
 
   const switchedOff = renewals.filter(
     item => item.blockedReason === 'auto_renew_disabled'
@@ -209,13 +237,23 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 
       {!loading && !error && warning ? (
-        <Text fontSize='sm' color='orange.400' mb={3} fontWeight='medium'>
+        <Text
+          fontSize='sm'
+          color={dashboard.state.warning}
+          mb={3}
+          fontWeight='medium'
+        >
           {warning}
         </Text>
       ) : null}
 
       {!loading && !error && deferredNotice ? (
-        <Text fontSize='sm' color='blue.400' mb={3} fontWeight='medium'>
+        <Text
+          fontSize='sm'
+          color={dashboard.accent.interactiveForeground}
+          mb={3}
+          fontWeight='medium'
+        >
           {deferredNotice}
         </Text>
       ) : null}
@@ -258,37 +296,71 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
 
       {!loading && renewals.length > 0 ? (
         <>
-          <TableContainer>
-            <Table size='sm' variant='simple'>
-              <Thead>
+          {pagination ? (
+            <Flex justify='flex-end' mb={4}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='certificates'
+                onChange={setPage}
+              />
+            </Flex>
+          ) : null}
+          <TableContainer {...tableStyles.tableContainerProps}>
+            <Table {...tableStyles.tableProps}>
+              <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  <Th>Certificate</Th>
-                  <Th>Expires</Th>
-                  <Th>Renewal window</Th>
-                  <Th>Auto-renew</Th>
-                  <Th>Last attempt</Th>
+                  {RENEWAL_COLUMNS.map(([key, label]) =>
+                    NON_SORTABLE_RENEWAL_COLUMNS.has(key) ? (
+                      <Th key={key}>{label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={key}
+                        label={label}
+                        sortKey={key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                 </Tr>
               </Thead>
-              <Tbody>
+              <Tbody {...tableStyles.tbodyProps}>
                 {renewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
                   const deferred = item.deferredReason
                     ? deferredDescriptor(item.deferredReason)
                     : null;
                   return (
-                    <Tr key={item.certificateId}>
-                      <Td>
-                        <Text fontSize='sm' fontWeight='medium'>
-                          {item.commonName || '--'}
-                        </Text>
+                    <Tr key={item.certificateId} {...tableStyles.rowProps}>
+                      <Td {...tableStyles.primaryCellProps}>
+                        <CertOpsTruncatedText
+                          value={item.commonName}
+                          fontSize='sm'
+                          fontWeight='medium'
+                        />
                         {item.profileName ? (
-                          <Text fontSize='xs' color={muted}>
-                            {item.profileName}
-                          </Text>
+                          <CertOpsTruncatedText
+                            value={item.profileName}
+                            fontSize='xs'
+                            color={muted}
+                          />
                         ) : null}
                       </Td>
-                      <Td>
-                        <HStack spacing={2}>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Expires
+                        </CertOpsMobileFieldLabel>
+                        <Flex
+                          direction={{ base: 'column', lg: 'row' }}
+                          align={{ base: 'flex-start', lg: 'center' }}
+                          gap={{ base: 1, lg: 2 }}
+                        >
                           <Text fontSize='sm'>{formatDate(item.notAfter)}</Text>
                           <Badge
                             colorScheme={expiry.scheme}
@@ -299,9 +371,15 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           >
                             {expiry.label}
                           </Badge>
-                        </HStack>
+                        </Flex>
                       </Td>
-                      <Td>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Renewal window
+                        </CertOpsMobileFieldLabel>
                         <Text fontSize='sm'>
                           {renewalWindowLabel(item.renewsFrom)}
                         </Text>
@@ -309,7 +387,13 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           {item.renewBeforeDays} days before expiry
                         </Text>
                       </Td>
-                      <Td>
+                      <Td
+                        {...tableStyles.cellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Auto-renew
+                        </CertOpsMobileFieldLabel>
                         {item.autoRenewEnabled ? (
                           <HStack spacing={2}>
                             <Badge
@@ -362,7 +446,13 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Tooltip>
                         )}
                       </Td>
-                      <Td>
+                      <Td
+                        {...tableStyles.fullWidthCellProps}
+                        bg={{ base: 'transparent', lg: 'transparent' }}
+                      >
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Last attempt
+                        </CertOpsMobileFieldLabel>
                         {item.lastRenewJobStatus ? (
                           <JobStatusBadge status={item.lastRenewJobStatus} />
                         ) : (
@@ -377,18 +467,6 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {pagination ? (
-            <Box mt={2}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='certificates'
-                onChange={setPage}
-              />
-            </Box>
-          ) : null}
         </>
       ) : null}
     </Box>

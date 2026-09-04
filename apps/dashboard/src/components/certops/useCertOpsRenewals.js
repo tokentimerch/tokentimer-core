@@ -62,14 +62,14 @@ function readPagination(data, requested) {
  * Loads renewal profiles for the active workspace.
  *
  * @param {number} [externalRefreshSignal] - Changing this refetches.
- * @param {{ limit?: number, offset?: number }} [page] - Page position; the
+ * @param {{ limit?: number, offset?: number, sort?: string, direction?: 'asc'|'desc' }} [page] - Page position; the
  *   caller owns it (it lives in the URL), so this hook never adjusts it.
  * @returns {{ enabled: boolean|null, profiles: object[], total: number, pagination: { limit: number, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsRenewalProfiles(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
-  const { limit = 20, offset = 0 } = page;
+  const { limit = 20, offset = 0, sort, direction } = page;
   const [profiles, setProfiles] = useState([]);
   // Null until the server answers: an absent page block must stay
   // distinguishable from a real total of 0.
@@ -106,6 +106,7 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal, page = {}) {
     listRenewalProfiles(workspaceId, {
       limit,
       offset,
+      ...(sort ? { sort, direction } : {}),
       signal: controller.signal,
     })
       .then(data => {
@@ -127,7 +128,16 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal, page = {}) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, reloadTick, externalRefreshSignal, limit, offset]);
+  }, [
+    workspaceId,
+    enabled,
+    reloadTick,
+    externalRefreshSignal,
+    limit,
+    offset,
+    sort,
+    direction,
+  ]);
 
   return {
     enabled,
@@ -144,13 +154,13 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal, page = {}) {
  * Loads the upcoming automatic renewal schedule for the active workspace.
  *
  * @param {number} [externalRefreshSignal] - Changing this refetches.
- * @param {{ limit?: number, offset?: number }} [page]
+ * @param {{ limit?: number, offset?: number, sort?: string, direction?: 'asc'|'desc' }} [page]
  * @returns {{ enabled: boolean|null, renewals: object[], total: number, pagination: { limit: number, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
-  const { limit = 20, offset = 0 } = page;
+  const { limit = 20, offset = 0, sort, direction } = page;
   const [renewals, setRenewals] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -182,6 +192,7 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
     listUpcomingRenewals(workspaceId, {
       limit,
       offset,
+      ...(sort ? { sort, direction } : {}),
       signal: controller.signal,
     })
       .then(data => {
@@ -205,7 +216,16 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, reloadTick, externalRefreshSignal, limit, offset]);
+  }, [
+    workspaceId,
+    enabled,
+    reloadTick,
+    externalRefreshSignal,
+    limit,
+    offset,
+    sort,
+    direction,
+  ]);
 
   return {
     enabled,

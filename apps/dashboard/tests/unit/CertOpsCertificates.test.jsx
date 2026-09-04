@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -152,9 +158,125 @@ describe('CertOpsCertificates list states', () => {
 
     const row = screen.getByText('example.test').closest('tr');
     expect(row).not.toBeNull();
+    expect(row).toHaveAttribute('data-certificate-mobile-card');
     expect(screen.getByText('example.test')).toBeInTheDocument();
-    expect(screen.getByRole('cell', { name: 'Active' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('cell', { name: 'Status Active' })
+    ).toBeInTheDocument();
     expect(screen.getByText('No auto-renewal')).toBeInTheDocument();
+  });
+
+  it('preserves the server page order and leaves derived renewal state non-sortable', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            id: 'cert-zulu',
+            commonName: 'zulu.example.test',
+            notAfter: '2099-12-31T00:00:00.000Z',
+          }),
+          certificate({
+            id: 'cert-alpha',
+            commonName: 'alpha.example.test',
+            notAfter: '2027-01-01T00:00:00.000Z',
+          }),
+        ],
+        pagination: { limit: 20, offset: 20, total: 100 },
+      })
+    );
+
+    renderPage();
+
+    const first = screen.getByText('zulu.example.test');
+    const second = screen.getByText('alpha.example.test');
+    expect(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Sort by Expiry')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Sort by Renewal')).not.toBeInTheDocument();
+  });
+
+  it('requests ascending and descending server sorts and resets the offset', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [certificate()],
+        pagination: { limit: 20, offset: 20, total: 100 },
+      })
+    );
+
+    renderPage(['/?offset=20']);
+
+    fireEvent.click(screen.getByLabelText('Sort by Certificate'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'certificate',
+          direction: 'asc',
+        })
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText('Sort by Certificate'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'certificate',
+          direction: 'desc',
+        })
+      );
+    });
+  });
+
+  it('places dashboard-style pagination above the table and uses icon actions', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [certificate({ tokenId: 'token-1' })],
+        pagination: { limit: 20, offset: 0, total: 1 },
+      })
+    );
+
+    renderPage();
+
+    const pagination = screen.getByRole('navigation', {
+      name: 'certificates pagination',
+    });
+    const table = screen.getByRole('table');
+    expect(
+      pagination.compareDocumentPosition(table) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+
+    ['Details', 'Set up renewal', 'Retire'].forEach(name => {
+      expect(
+        screen.getByRole('button', { name }).querySelector('svg')
+      ).not.toBeNull();
+    });
+  });
+
+  it('shows the renewal-path badge when the server reports an ineligible pinned agent', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            renewalPathState: 'unavailable',
+            renewalPathReason: 'assigned_agent_ineligible',
+            renewalPathSummary:
+              'The agent assigned to renew this certificate has declared support for issue, deploy, but not for renew.',
+          }),
+        ],
+      })
+    );
+
+    renderPage();
+
+    expect(screen.getByText('Renewal path unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        /declared support for issue, deploy, but not for renew/
+      )
+    ).toBeInTheDocument();
   });
 
   it('shows an error message distinct from the loading and empty states', () => {
@@ -276,7 +398,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
       })
     );
@@ -293,7 +417,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
       })
     );
@@ -349,7 +475,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
         refresh,
       })
@@ -367,10 +495,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     // No existing renewal profiles (see beforeEach), so the modal falls back
     // to manual entry directly; wait for that async check to settle before
     // looking for the manual inputs.
-    fireEvent.change(
-      await screen.findByPlaceholderText('e.g. certbot-csr'),
-      { target: { value: 'certbot-csr' } }
-    );
+    fireEvent.change(await screen.findByPlaceholderText('e.g. certbot-csr'), {
+      target: { value: 'certbot-csr' },
+    });
     fireEvent.change(screen.getByPlaceholderText('e.g. cloudflare'), {
       target: { value: 'cloudflare' },
     });
@@ -408,7 +535,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
         refresh,
       })
@@ -463,7 +592,9 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
       })
     );
@@ -500,11 +631,13 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('prefills manual entry with the selected preset\'s values when switching', async () => {
+  it("prefills manual entry with the selected preset's values when switching", async () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
-          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+          }),
         ],
       })
     );
@@ -538,9 +671,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     // does not require retyping the rest.
     expect(await screen.findByDisplayValue('certbot-csr')).toBeInTheDocument();
     expect(
-      screen.getByDisplayValue(
-        'https://acme-v02.api.letsencrypt.org/directory'
-      )
+      screen.getByDisplayValue('https://acme-v02.api.letsencrypt.org/directory')
     ).toBeInTheDocument();
     expect(screen.getByDisplayValue('cloudflare')).toBeInTheDocument();
     expect(screen.getByDisplayValue('example.com')).toBeInTheDocument();
@@ -566,9 +697,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
             acme: { commandRef: 'certbot-csr' },
             ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
             dns: { provider: 'cloudflare', zone: 'example.com' },
-            deploymentTargets: [
-              { certPath: '/etc/ssl/certs/other.test.pem' },
-            ],
+            deploymentTargets: [{ certPath: '/etc/ssl/certs/other.test.pem' }],
           },
         },
       ],
@@ -644,9 +773,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
             acme: { commandRef: 'certbot-csr' },
             ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
             dns: { provider: 'cloudflare', zone: 'example.com' },
-            deploymentTargets: [
-              { certPath: '/etc/ssl/certs/other.test.pem' },
-            ],
+            deploymentTargets: [{ certPath: '/etc/ssl/certs/other.test.pem' }],
           },
         },
       ],

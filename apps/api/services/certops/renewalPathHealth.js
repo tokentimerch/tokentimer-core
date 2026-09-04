@@ -227,6 +227,7 @@ function resolveRequiredExecutors({
   now,
   env = process.env,
   jobRequirements = null,
+  forceDeployedAgentPin = false,
 }) {
   let assignedAgentId = null;
   if (certificateRow.source === "agent_filesystem") {
@@ -245,7 +246,12 @@ function resolveRequiredExecutors({
         };
       }
     }
-  } else if (certificateRow.source === "agent_windows" && certificateRow.deployed_agent_id) {
+  }
+  if (
+    !assignedAgentId &&
+    certificateRow.deployed_agent_id &&
+    (certificateRow.source === "agent_windows" || forceDeployedAgentPin)
+  ) {
     const candidateId = String(certificateRow.deployed_agent_id);
     if (agentIndex.byRowId.has(candidateId)) assignedAgentId = candidateId;
     if (agentIndex.retiredRowIds?.has(candidateId)) {
@@ -342,14 +348,14 @@ const NO_CAPABILITY_DECLARED_SUMMARY =
   "The agent assigned to renew this certificate has not declared any " +
   "executable action the last time it claimed a job. Most often this means " +
   "it is running observe-only (no execution block, or execution.enabled is " +
-  "not true, in its config.json) -- though a brand-new agent that has not " +
+  "not true, in its config.json), though a brand-new agent that has not " +
   "polled for a job yet looks identical here.";
 
 function partialCapabilitySummary(declaredOperations) {
   return (
     `The agent assigned to renew this certificate has declared support ` +
     `for ${declaredOperations.join(", ")}, but not for renew. It is not ` +
-    `idle -- it simply has not been configured (or does not support) ` +
+    `idle; it simply has not been configured (or does not support) ` +
     `automatic-renewal jobs.`
   );
 }
@@ -450,6 +456,61 @@ function classifyExecutors({
 }
 
 /**
+ * A certificate with no renewal profile is not expected to auto-renew, so
+ * the usual projection stays null. If an agent is already pinned
+ * (discovery id, Windows deploy, or any-source deployed_agent_id), still
+ * evaluate that pin so an operator can see why that agent cannot renew
+ * (retired, compatibility, declared issue/deploy but not renew) instead of
+ * a blank renewal column.
+ */
+function resolvePinProblemWithoutProfile({
+  certificateRow,
+  agentIndex,
+  env,
+  now,
+  offlineAfterMs,
+}) {
+  const {
+    agents,
+    targetReference,
+    pinned,
+    pinnedButRetired,
+    pinnedAgentIneligibleReason,
+    pinnedAgentDeclaredOperations,
+  } = resolveRequiredExecutors({
+    certificateRow,
+    profileMetadata: {},
+    agentIndex,
+    offlineAfterMs,
+    now,
+    env,
+    forceDeployedAgentPin: true,
+    jobRequirements: {
+      operation: "renew",
+      executorKind: "agent",
+    },
+  });
+  if (!pinned && !pinnedButRetired && !pinnedAgentIneligibleReason) {
+    return null;
+  }
+  if (!pinnedButRetired && !pinnedAgentIneligibleReason) {
+    return null;
+  }
+  const classification = classifyExecutors({
+    agents,
+    targetReference,
+    hasResolvableTopology: true,
+    pinnedButRetired,
+    pinnedAgentIneligibleReason,
+    pinnedAgentDeclaredOperations,
+  });
+  return {
+    ...classification,
+    dependencies: agents,
+  };
+}
+
+/**
  * Full renewal-path projection for one certificate row (as returned by the
  * SELECT in loadCertificateRowsForRenewalPath).
  */
@@ -477,6 +538,14 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     };
   }
   if (!certificateRow.profile_id) {
+    const pinProblem = resolvePinProblemWithoutProfile({
+      certificateRow,
+      agentIndex,
+      env,
+      now,
+      offlineAfterMs,
+    });
+    if (pinProblem) return pinProblem;
     return {
       renewalPathState: null,
       renewalPathReason: RENEWAL_PATH_REASONS.NO_PROFILE,

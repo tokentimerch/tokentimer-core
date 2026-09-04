@@ -581,6 +581,51 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
     assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.NO_PROFILE);
   });
 
+  it("unprofiled certificate with a deployed-agent pin that declared issue/deploy but not renew reports assigned_agent_ineligible", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({
+        id: "agent-a",
+        supportedOperations: ["issue", "deploy"],
+      }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_id: null,
+        source: "manual",
+        deployed_agent_id: "agent-a",
+        discovery_agent_id: null,
+      }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+    assert.match(result.renewalPathSummary, /issue, deploy/);
+    assert.match(result.renewalPathSummary, /not for renew/);
+    assert.doesNotMatch(result.renewalPathSummary, /has not declared any/);
+  });
+
+  it("unprofiled certificate with a capable deployed-agent pin still reports no_profile (not a healthy auto-renew path)", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", supportedOperations: ["renew"] }),
+    ]);
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_id: null,
+        source: "manual",
+        deployed_agent_id: "agent-a",
+        discovery_agent_id: null,
+      }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, null);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.NO_PROFILE);
+  });
+
   it("observation-only certificate (no agent-deployable key custody) is not_agent_deployable", () => {
     const agentIndex = buildAgentIndex([]);
     const result = resolveRenewalPathForRow({

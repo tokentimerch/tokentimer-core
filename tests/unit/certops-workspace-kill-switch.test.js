@@ -74,9 +74,8 @@ function createStatefulPool(initialPaused = false, initialRequireApprovalAlways 
         return { rows: [] };
       }
       if (
-        normalized.startsWith(
-          "SELECT id, certops_paused, certops_require_approval_always FROM workspaces",
-        )
+        normalized.includes("FROM workspaces") &&
+        normalized.includes("certops_require_approval_always")
       ) {
         return {
           rows: [

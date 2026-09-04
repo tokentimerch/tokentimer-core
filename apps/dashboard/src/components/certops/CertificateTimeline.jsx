@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Collapse,
@@ -7,7 +7,6 @@ import {
   Spinner,
   Text,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
@@ -30,21 +29,35 @@ export default function CertificateTimeline({
   subjectType = 'managed_certificate',
   subjectId,
   limit = 10,
+  defaultLatestExpanded = false,
+  compact = false,
+  hideWhenEmpty = false,
+  renderContainer,
 }) {
-  const { muted, border } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const { muted, border, dashboard } = useDashboardTheme();
+  const rowHoverBg = dashboard.table.rowHover;
+  const expandedBg = dashboard.bg.nested;
   const { enabled, jobs, pagination, loading, error } = useCertOpsJobs({
     subjectType,
     subjectId,
     limit,
   });
   const [expandedId, setExpandedId] = useState(null);
+  const initializedSubjectRef = useRef(null);
+
+  useEffect(() => {
+    if (!jobs?.length || initializedSubjectRef.current === subjectId) return;
+    initializedSubjectRef.current = subjectId;
+    setExpandedId(defaultLatestExpanded ? jobs[0].id : null);
+  }, [defaultLatestExpanded, jobs, subjectId]);
+
+  const wrapContent = content =>
+    typeof renderContainer === 'function' ? renderContainer(content) : content;
 
   if (enabled !== true) return null;
 
   if (loading) {
-    return (
+    return wrapContent(
       <HStack spacing={2} py={2}>
         <Spinner size='xs' />
         <Text fontSize='sm' color={muted}>
@@ -55,15 +68,17 @@ export default function CertificateTimeline({
   }
 
   if (error) {
-    return (
-      <Text fontSize='sm' color='red.400'>
+    return wrapContent(
+      <Text fontSize='sm' color={dashboard.state.danger}>
         {error}
       </Text>
     );
   }
 
   if (!jobs || jobs.length === 0) {
-    return (
+    if (hideWhenEmpty) return null;
+
+    return wrapContent(
       <Text fontSize='sm' color={muted}>
         No certificate jobs recorded yet.
       </Text>
@@ -76,10 +91,25 @@ export default function CertificateTimeline({
     noun: 'jobs',
   });
 
-  return (
+  return wrapContent(
     <VStack align='stretch' spacing={1}>
       {jobs.map(job => {
         const isOpen = expandedId === job.id;
+        const expandedContent = (
+          <Box
+            mt={1}
+            mb={2}
+            ml={compact ? 1 : 5}
+            pl={3}
+            py={2}
+            borderLeftWidth='2px'
+            borderColor={border}
+            bg={compact ? 'transparent' : expandedBg}
+            borderRadius={compact ? 0 : 'md'}
+          >
+            <EvidenceTimeline jobId={job.id} compact={compact} embedded />
+          </Box>
+        );
         return (
           <Box key={job.id} borderColor={border}>
             <HStack
@@ -88,7 +118,7 @@ export default function CertificateTimeline({
               w='full'
               textAlign='left'
               spacing={2}
-              px={2}
+              px={compact ? 0 : 2}
               py={2}
               borderRadius='md'
               _hover={{ bg: rowHoverBg }}
@@ -116,21 +146,15 @@ export default function CertificateTimeline({
                 {formatRelativeDateTime(job.createdAt)}
               </Text>
             </HStack>
-            <Collapse in={isOpen} animateOpacity>
-              <Box
-                mt={1}
-                mb={2}
-                ml={5}
-                pl={3}
-                py={2}
-                borderLeftWidth='2px'
-                borderColor={border}
-                bg={expandedBg}
-                borderRadius='md'
-              >
-                {isOpen ? <EvidenceTimeline jobId={job.id} /> : null}
-              </Box>
-            </Collapse>
+            {compact ? (
+              isOpen ? (
+                expandedContent
+              ) : null
+            ) : (
+              <Collapse in={isOpen} animateOpacity>
+                {isOpen ? expandedContent : null}
+              </Collapse>
+            )}
           </Box>
         );
       })}

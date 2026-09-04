@@ -7,6 +7,7 @@ const {
   parsePublicCertificateMaterial,
 } = require("./parser");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
+const { resolveListSort } = require("./listSorting");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID =
@@ -1424,11 +1425,59 @@ const MANAGED_CERTIFICATE_LIST_FROM = `
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id`;
 
+const MANAGED_CERTIFICATE_SORTS = Object.freeze({
+  certificate:
+    "COALESCE(NULLIF(mc.common_name, ''), NULLIF((mc.subject_alt_names)[1], ''), NULLIF(mc.source_ref, ''), mc.id::text)",
+  status: "mc.status",
+  expiry: "mc.not_after",
+  keyLocality: `CASE
+    WHEN mc.key_mode = 'external-unknown' AND NULLIF(mc.key_reference, '') IS NOT NULL
+      THEN CASE
+        WHEN CHAR_LENGTH(mc.key_reference) > 48
+          THEN LEFT(mc.key_reference, 45) || '...'
+        ELSE mc.key_reference
+      END
+    ELSE CASE mc.key_mode
+    WHEN 'agent-local' THEN 'Agent-local'
+    WHEN 'proxy-agent-local' THEN 'Proxy agent-local'
+    WHEN 'cert-manager-managed' THEN 'cert-manager (Kubernetes)'
+    WHEN 'appliance-managed' THEN 'Appliance'
+    WHEN 'hsm-managed' THEN 'HSM'
+    WHEN 'vault-managed' THEN 'Vault'
+    WHEN 'os-store-managed' THEN 'OS store'
+    WHEN 'external-unknown' THEN 'External (unknown)'
+    ELSE COALESCE(mc.key_mode, 'Not recorded')
+    END
+  END`,
+  source: `CASE mc.source
+    WHEN 'manual' THEN 'Manual'
+    WHEN 'api' THEN 'API'
+    WHEN 'import' THEN 'Imported'
+    WHEN 'domain_checker' THEN 'Domain checker'
+    WHEN 'endpoint_monitor' THEN 'Endpoint monitor'
+    WHEN 'integration' THEN 'Integration'
+    WHEN 'auto_sync' THEN 'Auto sync'
+    WHEN 'cert_manager' THEN 'cert-manager'
+    WHEN 'agent_filesystem' THEN 'Agent (filesystem)'
+    WHEN 'agent_windows' THEN 'Agent (Windows)'
+    WHEN 'agent_issuance' THEN 'Agent (issuance)'
+    ELSE COALESCE(mc.source, 'Unknown')
+  END`,
+});
+
 async function listManagedCertificates(options = {}) {
   const db = options.client || pool;
   const normalizedLimit = normalizeLimit(options.limit);
   const normalizedOffset = normalizeOffset(options.offset);
   const { where, params } = managedCertificateFilterSql(options);
+  const orderBy = resolveListSort({
+    sort: options.sort,
+    direction: options.direction,
+    allowlist: MANAGED_CERTIFICATE_SORTS,
+    defaultOrderBy:
+      "mc.not_after ASC NULLS LAST, mc.created_at DESC, mc.id ASC",
+    tieBreaker: "mc.id ASC",
+  });
 
   const totalResult = await db.query(
     `SELECT COUNT(*)::int AS total${MANAGED_CERTIFICATE_LIST_FROM}
@@ -1440,7 +1489,7 @@ async function listManagedCertificates(options = {}) {
   const result = await db.query(
     `SELECT mc.*${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE ${where}
-      ORDER BY mc.not_after ASC NULLS LAST, mc.created_at DESC, mc.id ASC
+      ORDER BY ${orderBy}
       LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
     pageParams,
   );

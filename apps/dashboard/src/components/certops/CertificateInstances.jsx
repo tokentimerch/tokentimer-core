@@ -45,7 +45,7 @@ function instanceTimestamp(instance) {
  * than a misleading 'offline'.
  */
 function connectivityDescriptor(instance) {
-  const agent = instance.agent;
+  const { agent } = instance;
   if (!agent) {
     return {
       label: 'Unknown',
@@ -120,34 +120,56 @@ function groupByTarget(instances) {
   });
 }
 
-// Cells stay single-line (no wrapping) so rows keep a consistent height, but
-// unlike noOfLines/isTruncated they never clip text with an ellipsis - a
-// long, unbroken value (e.g. a winstore://... key reference) instead makes
-// the table itself wider than its container. TableContainer below scopes the
-// resulting horizontal scrollbar to just this table (see the modal's Grid
-// using minmax(0, 1fr) tracks so that overflow can't bubble up further).
-const NOWRAP_CELL = { whiteSpace: 'nowrap' };
+// Keep rows compact while letting the full value remain available through the
+// native title tooltip. The fixed table layout prevents one long deployment
+// reference from forcing horizontal scrolling on desktop.
+const TRUNCATED_CELL = {
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
+function agentLabel(instance) {
+  return (
+    instance.agent?.name ||
+    instance.agent?.hostname ||
+    instance.agent?.agentId ||
+    '--'
+  );
+}
 
 function InstanceRow({ instance, border, muted, indent = false }) {
   const connectivity = connectivityDescriptor(instance);
   return (
     <Tr>
       <Td borderColor={border} pl={indent ? 8 : undefined}>
-        <Text fontSize='sm' sx={NOWRAP_CELL} color={indent ? muted : undefined}>
+        <Text
+          fontSize='sm'
+          sx={TRUNCATED_CELL}
+          color={indent ? muted : undefined}
+          title={targetLabel(instance)}
+        >
           {targetLabel(instance)}
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+        <Text
+          fontSize='sm'
+          color={muted}
+          sx={TRUNCATED_CELL}
+          title={locationKindLabel(instance.locationKind, instance)}
+        >
           {locationKindLabel(instance.locationKind, instance)}
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-          {instance.agent?.name ||
-            instance.agent?.hostname ||
-            instance.agent?.agentId ||
-            '--'}
+        <Text
+          fontSize='sm'
+          color={muted}
+          sx={TRUNCATED_CELL}
+          title={agentLabel(instance)}
+        >
+          {agentLabel(instance)}
         </Text>
       </Td>
       <Td borderColor={border}>
@@ -238,16 +260,33 @@ export default function CertificateInstances({ instances, available, error }) {
   }
 
   return (
-    <TableContainer>
-      <Table size='sm' variant='simple'>
+    <TableContainer overflowX='auto'>
+      <Table
+        size='sm'
+        variant='simple'
+        minW='760px'
+        sx={{ tableLayout: 'fixed' }}
+      >
         <Thead>
           <Tr>
-            <Th whiteSpace='nowrap'>Location</Th>
-            <Th whiteSpace='nowrap'>Type</Th>
-            <Th whiteSpace='nowrap'>Agent</Th>
-            <Th whiteSpace='nowrap'>Connectivity</Th>
-            <Th whiteSpace='nowrap'>Last observed</Th>
-            <Th whiteSpace='nowrap'>Certificate state</Th>
+            <Th whiteSpace='nowrap' w='28%'>
+              Location
+            </Th>
+            <Th whiteSpace='nowrap' w='14%'>
+              Type
+            </Th>
+            <Th whiteSpace='nowrap' w='15%'>
+              Agent
+            </Th>
+            <Th whiteSpace='nowrap' w='15%'>
+              Connectivity
+            </Th>
+            <Th whiteSpace='nowrap' w='14%'>
+              Last observed
+            </Th>
+            <Th whiteSpace='nowrap' w='14%'>
+              State
+            </Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -257,21 +296,32 @@ export default function CertificateInstances({ instances, available, error }) {
               <Fragment key={key}>
                 <Tr>
                   <Td borderColor={border}>
-                    <Text fontSize='sm' sx={NOWRAP_CELL}>
+                    <Text
+                      fontSize='sm'
+                      sx={TRUNCATED_CELL}
+                      title={targetLabel(current)}
+                    >
                       {targetLabel(current)}
                     </Text>
                   </Td>
                   <Td borderColor={border}>
-                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
+                    <Text
+                      fontSize='sm'
+                      color={muted}
+                      sx={TRUNCATED_CELL}
+                      title={locationKindLabel(current.locationKind, current)}
+                    >
                       {locationKindLabel(current.locationKind, current)}
                     </Text>
                   </Td>
                   <Td borderColor={border}>
-                    <Text fontSize='sm' color={muted} sx={NOWRAP_CELL}>
-                      {current.agent?.name ||
-                        current.agent?.hostname ||
-                        current.agent?.agentId ||
-                        '--'}
+                    <Text
+                      fontSize='sm'
+                      color={muted}
+                      sx={TRUNCATED_CELL}
+                      title={agentLabel(current)}
+                    >
+                      {agentLabel(current)}
                     </Text>
                   </Td>
                   <Td borderColor={border}>

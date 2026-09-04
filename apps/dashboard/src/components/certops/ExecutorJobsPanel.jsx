@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
+  Badge,
   Box,
   Button,
   Collapse,
@@ -8,7 +9,6 @@ import {
   Text,
   Tooltip,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import CopyableId from '../CopyableId.jsx';
@@ -20,8 +20,8 @@ import { approveJob, rejectJob } from './certopsJobsApi.js';
 import {
   formatDateTime,
   formatRelativeDateTime,
+  jobListAdvisory,
   jobOperationLabel,
-  reconciliationAdvisoryText,
   subjectTypeLabel,
   truncateId,
 } from './certopsJobsFormat';
@@ -78,6 +78,21 @@ function approvalDecisionErrorMessage(err, decision) {
   );
 }
 
+function JobReasonChip({ advisory }) {
+  if (!advisory) return null;
+  return (
+    <Badge
+      colorScheme={advisory.tone}
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+    >
+      {advisory.label}
+    </Badge>
+  );
+}
+
 /**
  * Executor-reported job list with expandable evidence timelines.
  * Read-only surface backed by the workspace job/log/evidence APIs, plus a
@@ -90,9 +105,9 @@ function approvalDecisionErrorMessage(err, decision) {
  * caused the pause.
  */
 export default function ExecutorJobsPanel({ certOpsPaused = false }) {
-  const { muted, border } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const { muted, border, dashboard } = useDashboardTheme();
+  const rowHoverBg = dashboard.table.rowHover;
+  const expandedBg = dashboard.bg.nested;
   const canManage = useCertOpsCanManage();
   const { agents } = useCertOpsAgents();
   const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
@@ -213,7 +228,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
       {loading && jobs.length === 0 ? (
         <DashboardState type='loading' title='Loading executor jobs...' />
       ) : error ? (
-        <Text fontSize='sm' color='red.400'>
+        <Text fontSize='sm' color={dashboard.state.danger}>
           {error}
         </Text>
       ) : jobs.length === 0 ? (
@@ -257,15 +272,17 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
               agentsById
             );
             const subject = job.subjectId
-              ? `${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId}`
+              ? `${subjectTypeLabel(job.subjectType) || 'Subject'}: ${truncateId(job.subjectId)}`
               : job.source
                 ? `Source: ${job.source}`
                 : '';
+            const advisory = jobListAdvisory(job);
+            const targetLine = [agentLabel, subject]
+              .filter(Boolean)
+              .join(' · ');
             return (
               <Box key={job.id} borderColor={border}>
-                <HStack
-                  w='full'
-                  spacing={2}
+                <Box
                   px={2}
                   py={2}
                   borderRadius='md'
@@ -288,111 +305,106 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     }
                   }}
                 >
-                  <Icon
-                    as={isOpen ? ChevronDown : ChevronRight}
-                    boxSize={3.5}
-                    color={muted}
-                    flexShrink={0}
-                  />
-                  <Text
-                    fontSize='sm'
-                    fontWeight='medium'
-                    flexShrink={0}
-                    noOfLines={1}
+                  <HStack
+                    w='full'
+                    spacing={2}
+                    align='center'
+                    flexWrap={{ base: 'wrap', md: 'nowrap' }}
                   >
-                    {jobOperationLabel(job.operation)}
-                  </Text>
-                  <Box
-                    flexShrink={0}
-                    onClick={event => event.stopPropagation()}
-                  >
-                    <CopyableId id={job.id} display={truncateId(job.id)} />
-                  </Box>
-                  <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
-                    {[agentLabel, subject].filter(Boolean).join(' · ')}
-                  </Text>
-                  {stalledByPause ? (
-                    <Text fontSize='xs' color={muted} flexShrink={0}>
-                      Not executable while paused
-                    </Text>
-                  ) : null}
-                  <VStack align='flex-start' spacing={0} flexShrink={0}>
-                    <JobStatusBadge status={job.status} />
-                    {job.needsOperatorReconciliation ? (
-                      job.errorMessage ? (
-                        <Text
-                          fontSize='xs'
-                          color='red.500'
-                          noOfLines={2}
-                          maxW='280px'
-                          title={job.errorMessage}
-                        >
-                          {job.errorMessage}
-                        </Text>
-                      ) : (
-                        <Text
-                          fontSize='xs'
-                          color='orange.600'
-                          noOfLines={2}
-                          maxW='280px'
-                          title={reconciliationAdvisoryText(
-                            job.reconciliationReason
-                          )}
-                        >
-                          {reconciliationAdvisoryText(job.reconciliationReason)}
-                        </Text>
-                      )
-                    ) : null}
-                  </VStack>
-                  {job.approvedByUserId ? (
-                    <Tooltip
-                      label={`Approved by user ${job.approvedByUserId}${
-                        job.approvedAt
-                          ? ` at ${formatDateTime(job.approvedAt)}`
-                          : ''
-                      }`}
+                    <Icon
+                      as={isOpen ? ChevronDown : ChevronRight}
+                      boxSize={3.5}
+                      color={muted}
+                      flexShrink={0}
+                    />
+                    <Text
+                      fontSize='sm'
+                      fontWeight='medium'
+                      flexShrink={0}
+                      noOfLines={1}
                     >
-                      <Text fontSize='xs' color={muted} flexShrink={0}>
-                        Approved
-                      </Text>
-                    </Tooltip>
-                  ) : null}
-                  <Text
-                    fontSize='xs'
-                    color={muted}
-                    flexShrink={0}
-                    title={formatDateTime(job.createdAt)}
-                  >
-                    {formatRelativeDateTime(job.createdAt)}
-                  </Text>
-                  {canManage && awaitingApproval ? (
-                    <HStack
-                      spacing={1}
+                      {jobOperationLabel(job.operation)}
+                    </Text>
+                    <Box
                       flexShrink={0}
                       onClick={event => event.stopPropagation()}
                     >
-                      <Button
-                        size='xs'
-                        colorScheme='green'
-                        onClick={() =>
-                          setDecisionTarget({ job, decision: 'approve' })
-                        }
+                      <CopyableId id={job.id} display={truncateId(job.id)} />
+                    </Box>
+                    <Box flex='1' minW={0} />
+                    {stalledByPause ? (
+                      <Text fontSize='xs' color={muted} flexShrink={0}>
+                        Not executable while paused
+                      </Text>
+                    ) : null}
+                    <JobStatusBadge status={job.status} />
+                    {job.approvedByUserId ? (
+                      <Tooltip
+                        label={`Approved by user ${job.approvedByUserId}${
+                          job.approvedAt
+                            ? ` at ${formatDateTime(job.approvedAt)}`
+                            : ''
+                        }`}
                       >
-                        Approve
-                      </Button>
-                      <Button
-                        size='xs'
-                        colorScheme='red'
-                        variant='outline'
-                        onClick={() =>
-                          setDecisionTarget({ job, decision: 'reject' })
-                        }
+                        <Text fontSize='xs' color={muted} flexShrink={0}>
+                          Approved
+                        </Text>
+                      </Tooltip>
+                    ) : null}
+                    <Text
+                      fontSize='xs'
+                      color={muted}
+                      flexShrink={0}
+                      title={formatDateTime(job.createdAt)}
+                    >
+                      {formatRelativeDateTime(job.createdAt)}
+                    </Text>
+                    {canManage && awaitingApproval ? (
+                      <HStack
+                        spacing={1}
+                        flexShrink={0}
+                        onClick={event => event.stopPropagation()}
                       >
-                        Reject
-                      </Button>
-                    </HStack>
+                        <Button
+                          size='xs'
+                          colorScheme='green'
+                          onClick={() =>
+                            setDecisionTarget({ job, decision: 'approve' })
+                          }
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size='xs'
+                          colorScheme='red'
+                          variant='outline'
+                          onClick={() =>
+                            setDecisionTarget({ job, decision: 'reject' })
+                          }
+                        >
+                          Reject
+                        </Button>
+                      </HStack>
+                    ) : null}
+                  </HStack>
+                  {targetLine ? (
+                    <Text
+                      ml={6}
+                      mt={1}
+                      fontSize='xs'
+                      color={muted}
+                      noOfLines={1}
+                      title={targetLine}
+                    >
+                      {targetLine}
+                    </Text>
                   ) : null}
-                </HStack>
+                  {!isOpen && advisory ? (
+                    <Box ml={6} mt={1}>
+                      <JobReasonChip advisory={advisory} />
+                    </Box>
+                  ) : null}
+                </Box>
                 <Collapse in={isOpen} animateOpacity>
                   <Box
                     mt={1}
@@ -409,6 +421,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                       <EvidenceTimeline
                         jobId={job.id}
                         refreshToken={timelineRefreshToken}
+                        embedded
                       />
                     ) : null}
                   </Box>

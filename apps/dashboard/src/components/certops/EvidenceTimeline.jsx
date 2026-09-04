@@ -6,17 +6,22 @@ import {
   Icon,
   IconButton,
   Link,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   Spinner,
   Text,
   Tooltip,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   AlertTriangle,
   CheckCircle2,
   Circle,
   FileSearch,
+  MoreHorizontal,
   Play,
   Shield,
   X,
@@ -33,6 +38,8 @@ import {
   formatDateTime,
   hasRedactionMarkers,
   jobOperationLabel,
+  pendingReasonLabel,
+  sameOperatorMessage,
   subjectTypeLabel,
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
@@ -150,9 +157,14 @@ function mergeTimelineItems(logEntries, evidence) {
   });
 }
 
-function TimelineItem({ item, attemptLabel }) {
-  const { muted, border } = useDashboardTheme();
-  const dotBg = useColorModeValue('white', 'gray.800');
+function TimelineItem({
+  item,
+  attemptLabel,
+  compact = false,
+  hideDetail = false,
+}) {
+  const { muted, border, dashboard } = useDashboardTheme();
+  const dotBg = dashboard.bg.panel;
   const isEvidence = item.kind === 'evidence';
   const { entry } = item;
   const type = isEvidence ? entry.evidenceType : entry.eventType;
@@ -224,16 +236,30 @@ function TimelineItem({ item, attemptLabel }) {
           ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
-        {isEvidence && entry.subjectId ? (
+        {!compact && isEvidence && entry.subjectId ? (
           <CopyableId
             id={entry.subjectId}
             label={subjectTypeLabel(entry.subjectType) || 'Subject'}
             size='xs'
           />
-        ) : detail ? (
-          <Text fontSize='sm' color={muted} noOfLines={3}>
+        ) : !hideDetail && detail ? (
+          <Text fontSize='sm' color={muted}>
             {detail}
           </Text>
+        ) : null}
+        {compact && isEvidence && entry.subjectId ? (
+          <Box as='details' fontSize='xs' color={muted}>
+            <Text as='summary' cursor='pointer' w='fit-content'>
+              Evidence subject
+            </Text>
+            <Box mt={1}>
+              <CopyableId
+                id={entry.subjectId}
+                label={subjectTypeLabel(entry.subjectType) || 'Subject'}
+                size='xs'
+              />
+            </Box>
+          </Box>
         ) : null}
         {decidedByUserId ? (
           <CopyableId id={decidedByUserId} label='Decided by user' size='xs' />
@@ -251,10 +277,18 @@ function TimelineItem({ item, attemptLabel }) {
  *
  * @param {{ jobId: string, onClose?: function, refreshToken?: * }} props
  */
-export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
-  const { muted, border } = useDashboardTheme();
-  const failureBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.28)');
-  const failureBorder = useColorModeValue('red.200', 'red.700');
+export default function EvidenceTimeline({
+  jobId,
+  onClose,
+  refreshToken,
+  compact = false,
+  embedded = false,
+}) {
+  const { muted, border, dashboard } = useDashboardTheme();
+  const failureBg = dashboard.callout.dangerSurface;
+  const failureBorder = dashboard.callout.dangerBorder;
+  const waitingBg = dashboard.callout.warningSurface;
+  const waitingBorder = dashboard.callout.warningBorder;
   const { agents } = useCertOpsAgents();
   const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
   const {
@@ -277,7 +311,7 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
 
   if (error) {
     return (
-      <Text fontSize='sm' color='red.400'>
+      <Text fontSize='sm' color={dashboard.state.danger}>
         {error}
       </Text>
     );
@@ -314,103 +348,239 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
     <VStack align='stretch' spacing={3}>
       <HStack justify='space-between' align='start' spacing={3}>
         <VStack align='stretch' spacing={1}>
-          <HStack spacing={2} flexWrap='wrap'>
-            <Text fontSize='sm' fontWeight='bold'>
-              {jobOperationLabel(job.operation)}
-            </Text>
-            <JobStatusBadge status={job.status} />
-            {job.source ? (
-              <Badge variant='outline' textTransform='none' fontSize='2xs'>
-                {job.source}
-              </Badge>
-            ) : null}
-            {job.id ? (
+          {embedded && !compact ? (
+            job.id ? (
               <Link
                 as={RouterLink}
                 to={`/audit?q=${encodeURIComponent(job.id)}`}
                 fontSize='xs'
-                color='blue.400'
+                color={dashboard.accent.interactiveForeground}
               >
                 View audit log
               </Link>
-            ) : null}
-          </HStack>
-          <HStack spacing={3} flexWrap='wrap'>
-            {job.id ? <CopyableId id={job.id} label='Job ID' /> : null}
-            {job.subjectId ? (
-              <CopyableId
-                id={job.subjectId}
-                label={subjectTypeLabel(job.subjectType) || 'Subject'}
-              />
-            ) : null}
-            {job.claimId ? (
-              <CopyableId id={job.claimId} label='Claim ID' />
-            ) : null}
-            {job.claimedByAgentId ? (
-              <CopyableId
-                id={job.claimedByAgentId}
-                label='Claimed by agent'
-                display={
-                  formatAgentLabel(job.claimedByAgentId, agentsById) !==
-                  String(job.claimedByAgentId)
-                    ? formatAgentLabel(job.claimedByAgentId, agentsById)
-                    : undefined
-                }
-              />
-            ) : null}
-            {job.assignedAgentId &&
-            job.assignedAgentId !== job.claimedByAgentId ? (
-              <CopyableId
-                id={job.assignedAgentId}
-                label='Assigned agent'
-                display={
-                  formatAgentLabel(job.assignedAgentId, agentsById) !==
-                  String(job.assignedAgentId)
-                    ? formatAgentLabel(job.assignedAgentId, agentsById)
-                    : undefined
-                }
-              />
-            ) : null}
-            {job.claimedByControllerClusterId ? (
-              <CopyableId
-                id={job.claimedByControllerClusterId}
-                label='Claimed by controller'
-              />
-            ) : null}
-            {job.claimedByAgentSigningKeyId ? (
-              <CopyableId
-                id={job.claimedByAgentSigningKeyId}
-                label="Agent's pinned signing key"
-              />
-            ) : null}
-            {job.approvedByUserId ? (
-              <CopyableId id={job.approvedByUserId} label='Approved by user' />
-            ) : null}
-          </HStack>
-          {job.claimId ||
-          job.leaseExpiresAt ||
-          job.attemptCount ||
-          job.approvedAt ? (
-            <HStack spacing={3} flexWrap='wrap'>
-              {job.leaseExpiresAt ? (
-                <Text fontSize='xs' color={muted}>
-                  Lease expires {formatDateTime(job.leaseExpiresAt)}
-                </Text>
+            ) : null
+          ) : (
+            <HStack spacing={2} flexWrap='wrap'>
+              {!compact ? (
+                <>
+                  <Text fontSize='sm' fontWeight='bold'>
+                    {jobOperationLabel(job.operation)}
+                  </Text>
+                  <JobStatusBadge status={job.status} />
+                </>
               ) : null}
-              {typeof job.attemptCount === 'number' ? (
-                <Text fontSize='xs' color={muted}>
-                  Attempt {job.attemptCount}
-                  {typeof job.maxAttempts === 'number'
-                    ? ` of ${job.maxAttempts}`
-                    : ''}
-                </Text>
+              {!compact && job.source ? (
+                <Badge variant='outline' textTransform='none' fontSize='2xs'>
+                  {job.source}
+                </Badge>
               ) : null}
-              {job.approvedAt ? (
-                <Text fontSize='xs' color={muted}>
-                  Approved {formatDateTime(job.approvedAt)}
-                </Text>
+              {job.id ? (
+                <Link
+                  as={RouterLink}
+                  to={`/audit?q=${encodeURIComponent(job.id)}`}
+                  fontSize='xs'
+                  color={dashboard.accent.interactiveForeground}
+                >
+                  View audit log
+                </Link>
+              ) : null}
+              {compact ? (
+                <Popover placement='bottom-end' isLazy>
+                  <PopoverTrigger>
+                    <IconButton
+                      aria-label='Job metadata'
+                      title='Job metadata'
+                      icon={<Icon as={MoreHorizontal} boxSize={4} />}
+                      size='xs'
+                      variant='ghost'
+                    />
+                  </PopoverTrigger>
+                  <PopoverContent
+                    w='min(340px, calc(100vw - 32px))'
+                    borderColor={border}
+                  >
+                    <PopoverArrow />
+                    <PopoverBody>
+                      <VStack align='stretch' spacing={2}>
+                        {job.source ? (
+                          <Text fontSize='xs'>
+                            Executor source: {job.source}
+                          </Text>
+                        ) : null}
+                        {job.id ? (
+                          <CopyableId id={job.id} label='Job ID' />
+                        ) : null}
+                        {job.subjectId ? (
+                          <CopyableId
+                            id={job.subjectId}
+                            label={
+                              subjectTypeLabel(job.subjectType) || 'Subject'
+                            }
+                          />
+                        ) : null}
+                        {job.claimId ? (
+                          <CopyableId id={job.claimId} label='Claim ID' />
+                        ) : null}
+                        {job.claimedByAgentId ? (
+                          <CopyableId
+                            id={job.claimedByAgentId}
+                            label='Claimed by agent'
+                            display={
+                              formatAgentLabel(
+                                job.claimedByAgentId,
+                                agentsById
+                              ) !== String(job.claimedByAgentId)
+                                ? formatAgentLabel(
+                                    job.claimedByAgentId,
+                                    agentsById
+                                  )
+                                : undefined
+                            }
+                          />
+                        ) : null}
+                        {job.assignedAgentId &&
+                        job.assignedAgentId !== job.claimedByAgentId ? (
+                          <CopyableId
+                            id={job.assignedAgentId}
+                            label='Assigned agent'
+                            display={
+                              formatAgentLabel(
+                                job.assignedAgentId,
+                                agentsById
+                              ) !== String(job.assignedAgentId)
+                                ? formatAgentLabel(
+                                    job.assignedAgentId,
+                                    agentsById
+                                  )
+                                : undefined
+                            }
+                          />
+                        ) : null}
+                        {job.claimedByControllerClusterId ? (
+                          <CopyableId
+                            id={job.claimedByControllerClusterId}
+                            label='Claimed by controller'
+                          />
+                        ) : null}
+                        {job.claimedByAgentSigningKeyId ? (
+                          <CopyableId
+                            id={job.claimedByAgentSigningKeyId}
+                            label="Agent's pinned signing key"
+                          />
+                        ) : null}
+                        {job.approvedByUserId ? (
+                          <CopyableId
+                            id={job.approvedByUserId}
+                            label='Approved by user'
+                          />
+                        ) : null}
+                        {job.leaseExpiresAt ? (
+                          <Text fontSize='xs'>
+                            Lease expires {formatDateTime(job.leaseExpiresAt)}
+                          </Text>
+                        ) : null}
+                        {typeof job.attemptCount === 'number' ? (
+                          <Text fontSize='xs'>
+                            Attempt {job.attemptCount}
+                            {typeof job.maxAttempts === 'number'
+                              ? ` of ${job.maxAttempts}`
+                              : ''}
+                          </Text>
+                        ) : null}
+                        {job.approvedAt ? (
+                          <Text fontSize='xs'>
+                            Approved {formatDateTime(job.approvedAt)}
+                          </Text>
+                        ) : null}
+                      </VStack>
+                    </PopoverBody>
+                  </PopoverContent>
+                </Popover>
               ) : null}
             </HStack>
+          )}
+          {!compact ? (
+            <>
+              <HStack spacing={3} flexWrap='wrap'>
+                {!embedded && job.id ? (
+                  <CopyableId id={job.id} label='Job ID' />
+                ) : null}
+                {!embedded && job.subjectId ? (
+                  <CopyableId
+                    id={job.subjectId}
+                    label={subjectTypeLabel(job.subjectType) || 'Subject'}
+                  />
+                ) : null}
+                {job.claimId ? (
+                  <CopyableId id={job.claimId} label='Claim ID' />
+                ) : null}
+                {job.claimedByAgentId ? (
+                  <CopyableId
+                    id={job.claimedByAgentId}
+                    label='Claimed by agent'
+                    display={
+                      formatAgentLabel(job.claimedByAgentId, agentsById) !==
+                      String(job.claimedByAgentId)
+                        ? formatAgentLabel(job.claimedByAgentId, agentsById)
+                        : undefined
+                    }
+                  />
+                ) : null}
+                {job.assignedAgentId &&
+                job.assignedAgentId !== job.claimedByAgentId ? (
+                  <CopyableId
+                    id={job.assignedAgentId}
+                    label='Assigned agent'
+                    display={
+                      formatAgentLabel(job.assignedAgentId, agentsById) !==
+                      String(job.assignedAgentId)
+                        ? formatAgentLabel(job.assignedAgentId, agentsById)
+                        : undefined
+                    }
+                  />
+                ) : null}
+                {job.claimedByControllerClusterId ? (
+                  <CopyableId
+                    id={job.claimedByControllerClusterId}
+                    label='Claimed by controller'
+                  />
+                ) : null}
+                {job.claimedByAgentSigningKeyId ? (
+                  <CopyableId
+                    id={job.claimedByAgentSigningKeyId}
+                    label="Agent's pinned signing key"
+                  />
+                ) : null}
+                {job.approvedByUserId ? (
+                  <CopyableId
+                    id={job.approvedByUserId}
+                    label='Approved by user'
+                  />
+                ) : null}
+              </HStack>
+              {job.leaseExpiresAt || job.attemptCount || job.approvedAt ? (
+                <HStack spacing={3} flexWrap='wrap'>
+                  {job.leaseExpiresAt ? (
+                    <Text fontSize='xs' color={muted}>
+                      Lease expires {formatDateTime(job.leaseExpiresAt)}
+                    </Text>
+                  ) : null}
+                  {typeof job.attemptCount === 'number' ? (
+                    <Text fontSize='xs' color={muted}>
+                      Attempt {job.attemptCount}
+                      {typeof job.maxAttempts === 'number'
+                        ? ` of ${job.maxAttempts}`
+                        : ''}
+                    </Text>
+                  ) : null}
+                  {job.approvedAt ? (
+                    <Text fontSize='xs' color={muted}>
+                      Approved {formatDateTime(job.approvedAt)}
+                    </Text>
+                  ) : null}
+                </HStack>
+              ) : null}
+            </>
           ) : null}
         </VStack>
         {typeof onClose === 'function' ? (
@@ -433,7 +603,12 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
           px={3}
           py={2}
         >
-          <Text fontSize='xs' fontWeight='semibold' color='red.400' mb={1}>
+          <Text
+            fontSize='xs'
+            fontWeight='semibold'
+            color={dashboard.state.danger}
+            mb={1}
+          >
             Failure reason
           </Text>
           {job.errorCode ? (
@@ -446,6 +621,27 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
               {job.errorMessage}
             </Text>
           ) : null}
+        </Box>
+      ) : job.pendingReason?.message ? (
+        <Box
+          bg={waitingBg}
+          borderWidth='1px'
+          borderColor={waitingBorder}
+          borderRadius='md'
+          px={3}
+          py={2}
+        >
+          <Text
+            fontSize='xs'
+            fontWeight='semibold'
+            color={dashboard.callout.warningText}
+            mb={1}
+          >
+            {pendingReasonLabel(job.pendingReason) || 'Why this is waiting'}
+          </Text>
+          <Text fontSize='sm' color={muted}>
+            {job.pendingReason.message}
+          </Text>
         </Box>
       ) : null}
 
@@ -472,11 +668,20 @@ export default function EvidenceTimeline({ jobId, onClose, refreshToken }) {
                   : `Attempt ${startedCount}`;
               }
             }
+            const logMessage =
+              item.kind === 'log'
+                ? item.entry.message || item.entry.status || ''
+                : '';
+            const hideDetail =
+              sameOperatorMessage(logMessage, job.errorMessage) ||
+              sameOperatorMessage(logMessage, job.pendingReason?.message);
             return (
               <TimelineItem
                 key={item.id}
                 item={item}
                 attemptLabel={attemptLabel}
+                compact={compact}
+                hideDetail={hideDetail}
               />
             );
           })}

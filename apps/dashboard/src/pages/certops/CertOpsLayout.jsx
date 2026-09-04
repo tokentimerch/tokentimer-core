@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { Box, HStack, useColorModeValue } from '@chakra-ui/react';
+import { Box, HStack } from '@chakra-ui/react';
 import DashboardShell from '../../components/DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../../components/SEO.jsx';
@@ -31,14 +31,11 @@ const CERTOPS_TABS = [
  * control would duplicate the navigation for assistive technology.
  */
 function CertOpsSubNav() {
-  const { border, muted } = useDashboardTheme();
-  const activeBg = useColorModeValue('blue.500', 'blue.400');
-  const hoverBg = useColorModeValue('gray.100', 'whiteAlpha.100');
-  const surface = useColorModeValue('white', 'transparent');
-  const edgeFade = useColorModeValue(
-    'linear(to-r, transparent, white)',
-    'linear(to-r, transparent, gray.900)'
-  );
+  const { border, muted, surface, dashboard } = useDashboardTheme();
+  const activeBg = dashboard.accent.interactiveSurface;
+  const activeColor = dashboard.accent.navActive;
+  const hoverBg = dashboard.bg.panelHover;
+  const edgeFade = `linear(to-r, transparent, ${surface})`;
 
   return (
     <Box position='relative' mb={3}>
@@ -63,17 +60,17 @@ function CertOpsSubNav() {
             key={tab.to}
             as={NavLink}
             to={tab.to}
-            px={3}
+            px={{ base: 1.5, sm: 3 }}
             py={1.5}
             flexShrink={0}
             whiteSpace='nowrap'
-            fontSize='sm'
+            fontSize={{ base: '2xs', sm: 'sm' }}
             fontWeight='medium'
             color={muted}
             borderLeftWidth={index === 0 ? 0 : '1px'}
             borderColor={border}
             _hover={{ bg: hoverBg, textDecoration: 'none' }}
-            _activeLink={{ bg: activeBg, color: 'white' }}
+            _activeLink={{ bg: activeBg, color: activeColor }}
             _focusVisible={{
               boxShadow: 'outline',
               zIndex: 1,

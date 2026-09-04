@@ -161,7 +161,7 @@ export default function DeployAgentModal({
 }) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
-  const { muted } = useDashboardThemeColors();
+  const { muted, dashboard } = useDashboardThemeColors();
   const {
     overlayProps,
     headerProps,
@@ -462,7 +462,7 @@ export default function DeployAgentModal({
                       )
                     }
                     cursor='pointer'
-                    color='blue.500'
+                    color={dashboard.accent.interactiveForeground}
                     textDecoration='underline'
                     isExternal
                   >

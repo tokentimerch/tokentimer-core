@@ -15,10 +15,10 @@ import {
   Spinner,
   Stack,
   Text,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import DashboardPagination from '../DashboardPagination.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import {
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
@@ -82,10 +82,9 @@ export default function ApiTokenList() {
   const [revoking, setRevoking] = useState(false);
   const revokeCancelRef = useRef(null);
 
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const border = useColorModeValue('gray.200', 'gray.700');
-  const rowBg = useColorModeValue('gray.50', 'gray.800');
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
+  const { muted, border, dashboard } = useDashboardThemeColors();
+  const rowBg = dashboard.bg.nested;
+  const titleColor = dashboard.text.primary;
 
   if (enabled !== true) return null;
 

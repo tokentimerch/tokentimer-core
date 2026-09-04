@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -176,9 +176,13 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText(/\{.*apiKey.*\}/)).not.toBeInTheDocument();
 
     // Never leaks the actual secret values anywhere in the rendered output.
-    expect(screen.queryByText(/sk_live_should_never_render/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/sk_live_should_never_render/)
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/super-secret-password/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/ttagent_should_never_render/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/ttagent_should_never_render/)
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/do-not-leak-me/)).not.toBeInTheDocument();
   });
 
@@ -218,7 +222,11 @@ describe('EvidenceTimeline', () => {
       .getAllByText(/^(Job started|Validation passed|Job completed)$/)
       .map(node => node.textContent);
     const titles = matches.filter((text, index) => text !== matches[index - 1]);
-    expect(titles).toEqual(['Job started', 'Validation passed', 'Job completed']);
+    expect(titles).toEqual([
+      'Job started',
+      'Validation passed',
+      'Job completed',
+    ]);
   });
 
   it('renders distinguishable content for different event and evidence types', () => {
@@ -269,7 +277,9 @@ describe('EvidenceTimeline', () => {
           id: 'ev-1',
           evidenceType: 'deployment.updated',
           observedAt: '2026-01-01T00:00:00.000Z',
-          metadata: { summary: 'Certificate my-cert created in namespace tokentimer' },
+          metadata: {
+            summary: 'Certificate my-cert created in namespace tokentimer',
+          },
         },
       ],
       loading: false,
@@ -573,6 +583,78 @@ describe('EvidenceTimeline', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not repeat the failure message on a job.failed log that says the same thing', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        status: 'failed',
+        errorCode: 'CERTOPS_RENEW_TIMEOUT',
+        errorMessage: 'Executor did not respond in time.',
+      }),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.failed',
+          message: 'Executor did not respond in time.',
+          createdAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getAllByText('Executor did not respond in time.')
+    ).toHaveLength(1);
+    expect(screen.getByText('Job failed')).toBeInTheDocument();
+  });
+
+  it('renders a waiting explanation once for a pending job', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        status: 'pending',
+        pendingReason: {
+          code: 'agent_offline',
+          message:
+            'The assigned agent is offline and cannot claim this job until it heartbeats again.',
+        },
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Agent offline')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'The assigned agent is offline and cannot claim this job until it heartbeats again.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Failure reason')).not.toBeInTheDocument();
+  });
+
+  it('does not repeat the job title in embedded mode', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ operation: 'distribute-trust' }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
+
+    expect(screen.queryByText('Distribute trust')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'View audit log' })
+    ).toBeInTheDocument();
+  });
+
   it('does not render a failure reason block for a successful job', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
@@ -600,6 +682,34 @@ describe('EvidenceTimeline', () => {
 
     const link = screen.getByRole('link', { name: 'View audit log' });
     expect(link).toHaveAttribute('href', '/audit?q=job-abc-123');
+  });
+
+  it('keeps job and executor identifiers in a secondary metadata action in compact mode', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        id: 'job-compact-123',
+        claimId: 'claim-compact-123',
+        claimedByAgentId: 'agent-compact-123',
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-compact-123' compact />);
+
+    expect(
+      screen.getByRole('link', { name: 'View audit log' })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Job ID')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
+
+    expect(screen.getByText('Job ID')).toBeInTheDocument();
+    expect(screen.getByText('Claim ID')).toBeInTheDocument();
+    expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
   });
 
   it('renders the close button with an accessible name when onClose is provided', () => {

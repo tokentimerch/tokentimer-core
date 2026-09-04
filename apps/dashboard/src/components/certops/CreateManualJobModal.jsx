@@ -29,6 +29,7 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import {
   CERTOPS_JOB_OPERATIONS,
   CERTOPS_SUBJECT_TYPES,
@@ -304,6 +305,7 @@ export default function CreateManualJobModal({
     outlineButtonProps,
     primaryButtonProps,
   } = useDashboardModalProps();
+  const { dashboard } = useDashboardThemeColors();
   const { workspaceId } = useWorkspace();
   const { agents } = useCertOpsAgents();
   const { clusters: controllerClusters } = useCertOpsControllerClusters();
@@ -842,7 +844,7 @@ export default function CreateManualJobModal({
                           agent,
                           trustOp.operation
                         )
-                          ? ' \u2014 no distribute-trust capability declared'
+                          ? '; no distribute-trust capability declared'
                           : ''}
                       </option>
                     ))}
@@ -860,13 +862,13 @@ export default function CreateManualJobModal({
                       const agent = agents.find(a => a.id === row.agentId);
                       return (
                         <option key={row.id} value={row.id}>
-                          {`${row.owner} — ${agent ? agentSelectLabel(agent) : row.host} (${row.store})`}
+                          {`${row.owner}: ${agent ? agentSelectLabel(agent) : row.host} (${row.store})`}
                           {agent &&
                           agentMissingDeclaredCapability(
                             agent,
                             trustOp.operation
                           )
-                            ? ' \u2014 no revoke-trust capability declared'
+                            ? '; no revoke-trust capability declared'
                             : ''}
                         </option>
                       );
@@ -957,7 +959,11 @@ export default function CreateManualJobModal({
                     />
                   )}
                   <FormHelperText
-                    color={trustNewOwnerCollision ? 'orange.500' : undefined}
+                    color={
+                      trustNewOwnerCollision
+                        ? dashboard.state.warning
+                        : undefined
+                    }
                   >
                     {trustNewOwnerCollision
                       ? `Close to existing owner "${trustNewOwnerCollision}" (case differs only). Reference counting is exact-match, so this would create a separate, dangling reference. Consider reusing the existing owner instead.`
@@ -1511,8 +1517,7 @@ export default function CreateManualJobModal({
                   <Checkbox
                     size='sm'
                     isChecked={
-                      requiresApproval ||
-                      certOpsRequireApprovalAlways === true
+                      requiresApproval || certOpsRequireApprovalAlways === true
                     }
                     isDisabled={certOpsRequireApprovalAlways === true}
                     onChange={event =>
@@ -1546,7 +1551,8 @@ export default function CreateManualJobModal({
           </Button>
           <Button
             {...primaryButtonProps}
-            ml={3}
+            ml={{ base: 0, md: 3 }}
+            mt={{ base: 2, md: 0 }}
             onClick={handleSubmit}
             isDisabled={!canSubmit}
             isLoading={submitting}

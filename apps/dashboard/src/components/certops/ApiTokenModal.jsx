@@ -415,7 +415,8 @@ export default function ApiTokenModal({
           {!plaintextToken ? (
             <Button
               {...primaryButtonProps}
-              ml={3}
+              ml={{ base: 0, md: 3 }}
+              mt={{ base: 2, md: 0 }}
               onClick={handleCreate}
               isDisabled={!canSubmit}
               isLoading={creating}

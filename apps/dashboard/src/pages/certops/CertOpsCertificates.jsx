@@ -3,7 +3,9 @@ import {
   Badge,
   Box,
   Button,
+  Flex,
   HStack,
+  IconButton,
   Select,
   Table,
   TableContainer,
@@ -14,11 +16,13 @@ import {
   Thead,
   Tooltip,
   Tr,
+  VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { Archive } from 'lucide-react';
+import { Archive, CalendarClock, MoreVertical, Unlink } from 'lucide-react';
 import CopyableId from '../../components/CopyableId.jsx';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
+import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
 import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
@@ -53,6 +57,11 @@ import {
 } from '../../components/DashboardPrimitives';
 import DashboardPagination from '../../components/DashboardPagination.jsx';
 import {
+  CertOpsSortableHeader,
+  CertOpsTruncatedText,
+  nextCertOpsTableSort,
+} from '../../components/certops/CertOpsResponsiveTable.jsx';
+import {
   CERTOPS_CERTIFICATE_FILTERS,
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
@@ -70,6 +79,31 @@ function certificateDisplayName(certificate) {
   return certificate?.sourceRef || certificate?.id || 'Unnamed certificate';
 }
 
+const CERTIFICATE_TABLE_COLUMNS = [
+  { key: 'certificate', label: 'Certificate' },
+  { key: 'status', label: 'Status' },
+  { key: 'expiry', label: 'Expiry' },
+  { key: 'renewal', label: 'Renewal', sortable: false },
+  { key: 'keyLocality', label: 'Key locality' },
+  { key: 'source', label: 'Source' },
+];
+
+function MobileFieldLabel({ children, color }) {
+  return (
+    <Text
+      display={{ base: 'block', lg: 'none' }}
+      mb={1}
+      fontSize='2xs'
+      fontWeight='bold'
+      color={color}
+      textTransform='uppercase'
+      letterSpacing='0.08em'
+    >
+      {children}
+    </Text>
+  );
+}
+
 /**
  * Shows the state of an in-flight or resolved "Set up automatic renewal"
  * intent underneath the steady-state renewal badge. Renders nothing for the
@@ -80,7 +114,7 @@ function RenewalSetupStatus({ renewalSetup, onRetry, retrying, canManage }) {
   const descriptor = renewalSetupDescriptor(renewalSetup);
   if (!descriptor) return null;
   return (
-    <HStack spacing={1} mt={1}>
+    <HStack spacing={1}>
       <Tooltip
         label={descriptor.message}
         hasArrow
@@ -179,8 +213,50 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
  * the total and pagination stay correct for whichever population is shown.
  */
 export default function CertOpsCertificates() {
-  const { muted } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const { muted, dashboard } = useDashboardTheme();
+  const rowHoverBg = dashboard.table.rowHover;
+  const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
+  const tableHeadColor = useColorModeValue(
+    'gray.600',
+    'rgba(148, 163, 184, 0.92)'
+  );
+  const tableCellColor = useColorModeValue(
+    'gray.800',
+    'rgba(226, 232, 240, 0.94)'
+  );
+  const actionColor = useColorModeValue('gray.600', 'rgba(203, 213, 225, 0.9)');
+  const actionHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
+  const actionFocusShadow = useColorModeValue(
+    '0 0 0 2px rgba(37, 99, 235, 0.28)',
+    '0 0 0 2px rgba(96, 165, 250, 0.34)'
+  );
+  const mobileCardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');
+  const mobileCardBorder = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.2)'
+  );
+  const mobileMetaBg = useColorModeValue(
+    'rgba(248, 250, 252, 0.86)',
+    'rgba(2, 6, 23, 0.22)'
+  );
+  const mobileActionBorder = useColorModeValue(
+    'gray.100',
+    'rgba(148, 163, 184, 0.14)'
+  );
+  const actionButtonProps = {
+    size: 'sm',
+    variant: 'ghost',
+    color: actionColor,
+    borderRadius: 'md',
+    transition:
+      'background 140ms ease, color 140ms ease, box-shadow 140ms ease',
+    _hover: { bg: actionHoverBg },
+    _active: { bg: actionHoverBg },
+    _focusVisible: {
+      bg: actionHoverBg,
+      boxShadow: actionFocusShadow,
+    },
+  };
   const canManage = useCertOpsCanManage();
   const { workspaceId } = useWorkspace();
   const {
@@ -198,6 +274,7 @@ export default function CertOpsCertificates() {
   // An explicit status pick is more precise than the coarse retired toggle;
   // let it through even if that status happens to be revoked/decommissioned.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
+  const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
 
   const { certificates, pagination, loading, error, refresh, enabled } =
     useCertOpsCertificates({
@@ -206,6 +283,8 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
+      sort: sort.key,
+      direction: sort.direction,
     });
 
   const [retireTarget, setRetireTarget] = useState(null);
@@ -214,7 +293,10 @@ export default function CertOpsCertificates() {
   const [detailsTarget, setDetailsTarget] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);
-
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
   const retiredCount = useRetiredCertificateCount({
     workspaceId,
     enabled,
@@ -397,20 +479,73 @@ export default function CertOpsCertificates() {
         )
       ) : (
         <Box>
-          <TableContainer>
-            <Table size='sm' variant='simple'>
-              <Thead>
+          {pagination ? (
+            <Flex
+              align={{ base: 'stretch', md: 'center' }}
+              justify='space-between'
+              direction={{ base: 'column', lg: 'row' }}
+              gap={3}
+              mb={4}
+            >
+              <Text color={muted} fontSize='sm' whiteSpace='nowrap'>
+                {pagination.total} visible
+              </Text>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='certificates'
+                onChange={setPage}
+              />
+            </Flex>
+          ) : null}
+          <TableContainer
+            overflowX={{ base: 'visible', lg: 'auto' }}
+            whiteSpace={{ base: 'normal', lg: 'nowrap' }}
+          >
+            <Table
+              size='sm'
+              variant='simple'
+              display={{ base: 'block', lg: 'table' }}
+              sx={{
+                'thead th': {
+                  color: tableHeadColor,
+                  background: tableHeadBg,
+                  fontSize: '0.72rem',
+                  fontWeight: 'bold',
+                  letterSpacing: 0,
+                  textTransform: 'none',
+                  paddingTop: '0.55rem',
+                  paddingBottom: '0.55rem',
+                },
+                'tbody td': {
+                  color: tableCellColor,
+                },
+              }}
+            >
+              <Thead display={{ base: 'none', lg: 'table-header-group' }}>
                 <Tr>
-                  <Th>Certificate</Th>
-                  <Th>Status</Th>
-                  <Th>Expiry</Th>
-                  <Th>Renewal</Th>
-                  <Th>Key locality</Th>
-                  <Th>Source</Th>
+                  {CERTIFICATE_TABLE_COLUMNS.map(column =>
+                    column.sortable === false ? (
+                      <Th key={column.key}>{column.label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={column.key}
+                        label={column.label}
+                        sortKey={column.key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                   <Th textAlign='right'>Actions</Th>
                 </Tr>
               </Thead>
-              <Tbody>
+              <Tbody
+                display={{ base: 'grid', lg: 'table-row-group' }}
+                gap={{ base: 3, lg: 0 }}
+              >
                 {certificates.map(certificate => {
                   const expiry = expiryDescriptor(certificate.notAfter);
                   const sans = Array.isArray(certificate.subjectAltNames)
@@ -419,11 +554,38 @@ export default function CertOpsCertificates() {
                   const extraSans = Math.max(0, sans.length - 1);
                   const retired = isRetiredStatus(certificate.status);
                   return (
-                    <Tr key={certificate.id} _hover={{ bg: rowHoverBg }}>
-                      <Td maxW='260px'>
-                        <Text fontSize='sm' fontWeight='semibold' noOfLines={1}>
-                          {certificateDisplayName(certificate)}
-                        </Text>
+                    <Tr
+                      key={certificate.id}
+                      data-certificate-mobile-card
+                      display={{ base: 'grid', lg: 'table-row' }}
+                      gridTemplateColumns={{
+                        base: 'repeat(2, minmax(0, 1fr))',
+                      }}
+                      bg={{ base: mobileCardBg, lg: 'transparent' }}
+                      borderWidth={{ base: '1px', lg: 0 }}
+                      borderStyle='solid'
+                      borderColor={mobileCardBorder}
+                      borderRadius={{ base: 'md', lg: 0 }}
+                      overflow='hidden'
+                      boxShadow={{
+                        base: '0 14px 32px rgba(0, 0, 0, 0.18)',
+                        lg: 'none',
+                      }}
+                      _hover={{ bg: rowHoverBg }}
+                    >
+                      <Td
+                        maxW={{ base: 'none', lg: '260px' }}
+                        gridColumn={{ base: '1 / -1', lg: 'auto' }}
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 3.5, lg: '0.55rem' }}
+                        borderBottomWidth={{ base: '1px', lg: '1px' }}
+                        borderColor={mobileActionBorder}
+                      >
+                        <CertOpsTruncatedText
+                          value={certificateDisplayName(certificate)}
+                          fontSize='sm'
+                          fontWeight='medium'
+                        />
                         <HStack spacing={2}>
                           <CopyableId
                             id={certificate.id}
@@ -440,7 +602,15 @@ export default function CertOpsCertificates() {
                           ) : null}
                         </HStack>
                       </Td>
-                      <Td>
+                      <Td
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Status
+                        </MobileFieldLabel>
                         <Badge
                           colorScheme={statusScheme(certificate.status)}
                           variant='subtle'
@@ -465,7 +635,15 @@ export default function CertOpsCertificates() {
                           </Tooltip>
                         ) : null}
                       </Td>
-                      <Td>
+                      <Td
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Expiry
+                        </MobileFieldLabel>
                         <Box>
                           <Badge
                             colorScheme={expiry.scheme}
@@ -479,36 +657,152 @@ export default function CertOpsCertificates() {
                           </Text>
                         </Box>
                       </Td>
-                      <Td>
-                        <RenewalBadge renewal={certificate.renewal} />
-                        <RenewalSetupStatus
-                          renewalSetup={certificate.renewalSetup}
-                          onRetry={() => handleRetryRenewalSetup(certificate)}
-                          retrying={retryingId === certificate.id}
-                          canManage={canManage}
-                        />
+                      <Td
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Renewal
+                        </MobileFieldLabel>
+                        <VStack align='flex-start' spacing={1}>
+                          <RenewalBadge renewal={certificate.renewal} />
+                          <RenewalPathBadge certificate={certificate} />
+                          <RenewalSetupStatus
+                            renewalSetup={certificate.renewalSetup}
+                            onRetry={() => handleRetryRenewalSetup(certificate)}
+                            retrying={retryingId === certificate.id}
+                            canManage={canManage}
+                          />
+                        </VStack>
                       </Td>
-                      <Td>
+                      <Td
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Key locality
+                        </MobileFieldLabel>
                         <KeyLocalityBadge
                           keyMode={certificate.keyMode}
                           keyReference={certificate.keyReference}
                         />
                       </Td>
-                      <Td>
+                      <Td
+                        gridColumn={{ base: '1 / -1', lg: 'auto' }}
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Source
+                        </MobileFieldLabel>
                         <Text fontSize='sm'>
                           {sourceLabel(certificate.source)}
                         </Text>
                       </Td>
                       {canManage ? (
-                        <Td textAlign='right'>
+                        <Td
+                          gridColumn={{ base: '1 / -1', lg: 'auto' }}
+                          px={{ base: 0, lg: 4 }}
+                          py={{ base: 0, lg: '0.55rem' }}
+                          textAlign='right'
+                          borderTopWidth={{ base: '1px', lg: 0 }}
+                          borderBottomWidth={{ base: 0, lg: '1px' }}
+                          borderColor={mobileActionBorder}
+                        >
                           <HStack
-                            spacing={1}
+                            spacing={{ base: 0, lg: 1 }}
                             justify='flex-end'
-                            flexWrap='wrap'
+                            align='stretch'
+                            flexWrap={{ base: 'nowrap', lg: 'wrap' }}
+                            sx={{
+                              '@media screen and (max-width: 61.99em)': {
+                                '& > .chakra-button': {
+                                  flex: '1',
+                                  minWidth: 0,
+                                  height: '38px',
+                                  borderRadius: 0,
+                                },
+                              },
+                            }}
                           >
-                            <Button
-                              size='xs'
-                              variant='ghost'
+                            <Tooltip label='Details'>
+                              <IconButton
+                                {...actionButtonProps}
+                                aria-label='Details'
+                                icon={<MoreVertical size={16} />}
+                                isDisabled={!certificate.tokenId}
+                                title={
+                                  certificate.tokenId
+                                    ? undefined
+                                    : 'No linked token to show'
+                                }
+                                onClick={() => setDetailsTarget(certificate)}
+                              />
+                            </Tooltip>
+                            {!retired ? (
+                              <>
+                                {certificate.renewal?.profileId ? (
+                                  <Tooltip label='Detach renewal profile'>
+                                    <IconButton
+                                      {...actionButtonProps}
+                                      aria-label='Detach'
+                                      icon={<Unlink size={16} />}
+                                      onClick={() =>
+                                        setDetachTarget(certificate)
+                                      }
+                                    />
+                                  </Tooltip>
+                                ) : certificate.renewal?.state ===
+                                    RENEWAL_STATES.notConfigured &&
+                                  certificate.renewalSetup?.state !==
+                                    RENEWAL_SETUP_STATES.waiting ? (
+                                  <Tooltip label='Set up renewal'>
+                                    <IconButton
+                                      {...actionButtonProps}
+                                      aria-label='Set up renewal'
+                                      icon={<CalendarClock size={16} />}
+                                      onClick={() =>
+                                        setSetupTarget(certificate)
+                                      }
+                                    />
+                                  </Tooltip>
+                                ) : null}
+                                <Tooltip label='Retire'>
+                                  <IconButton
+                                    {...actionButtonProps}
+                                    aria-label='Retire'
+                                    icon={<Archive size={16} />}
+                                    onClick={() => setRetireTarget(certificate)}
+                                  />
+                                </Tooltip>
+                              </>
+                            ) : null}
+                          </HStack>
+                        </Td>
+                      ) : (
+                        <Td
+                          gridColumn={{ base: '1 / -1', lg: 'auto' }}
+                          px={{ base: 0, lg: 4 }}
+                          py={{ base: 0, lg: '0.55rem' }}
+                          textAlign='right'
+                          borderTopWidth={{ base: '1px', lg: 0 }}
+                          borderBottomWidth={{ base: 0, lg: '1px' }}
+                          borderColor={mobileActionBorder}
+                        >
+                          <Tooltip label='Details'>
+                            <IconButton
+                              {...actionButtonProps}
+                              aria-label='Details'
+                              icon={<MoreVertical size={16} />}
+                              w={{ base: '100%', lg: '32px' }}
+                              h={{ base: '38px', lg: '32px' }}
+                              borderRadius={{ base: 0, lg: 'md' }}
                               isDisabled={!certificate.tokenId}
                               title={
                                 certificate.tokenId
@@ -516,59 +810,8 @@ export default function CertOpsCertificates() {
                                   : 'No linked token to show'
                               }
                               onClick={() => setDetailsTarget(certificate)}
-                            >
-                              Details
-                            </Button>
-                            {!retired ? (
-                              <>
-                                {certificate.renewal?.profileId ? (
-                                  <Button
-                                    size='xs'
-                                    variant='outline'
-                                    onClick={() => setDetachTarget(certificate)}
-                                  >
-                                    Detach
-                                  </Button>
-                                ) : certificate.renewal?.state ===
-                                    RENEWAL_STATES.notConfigured &&
-                                  certificate.renewalSetup?.state !==
-                                    RENEWAL_SETUP_STATES.waiting ? (
-                                  <Button
-                                    size='xs'
-                                    colorScheme='blue'
-                                    variant='outline'
-                                    onClick={() => setSetupTarget(certificate)}
-                                  >
-                                    Set up renewal
-                                  </Button>
-                                ) : null}
-                                <Button
-                                  size='xs'
-                                  colorScheme='red'
-                                  variant='outline'
-                                  onClick={() => setRetireTarget(certificate)}
-                                >
-                                  Retire
-                                </Button>
-                              </>
-                            ) : null}
-                          </HStack>
-                        </Td>
-                      ) : (
-                        <Td textAlign='right'>
-                          <Button
-                            size='xs'
-                            variant='ghost'
-                            isDisabled={!certificate.tokenId}
-                            title={
-                              certificate.tokenId
-                                ? undefined
-                                : 'No linked token to show'
-                            }
-                            onClick={() => setDetailsTarget(certificate)}
-                          >
-                            Details
-                          </Button>
+                            />
+                          </Tooltip>
                         </Td>
                       )}
                     </Tr>
@@ -577,18 +820,6 @@ export default function CertOpsCertificates() {
               </Tbody>
             </Table>
           </TableContainer>
-          {pagination ? (
-            <Box mt={2}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='certificates'
-                onChange={setPage}
-              />
-            </Box>
-          ) : null}
         </Box>
       )}
 

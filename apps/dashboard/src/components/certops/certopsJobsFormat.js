@@ -109,6 +109,78 @@ export function reconciliationAdvisoryText(reason) {
   return `This job's side effects could not be confirmed and need manual review${suffix}.`;
 }
 
+const PENDING_REASON_LABELS = {
+  operation_unsupported: 'Agent cannot run this job',
+  agent_retired: 'Agent retired',
+  compatibility_blocked: 'Agent incompatible',
+  trust_anchor_deploy_capability_unavailable: 'No trust-anchor support',
+  agent_offline: 'Agent offline',
+  assigned_agent_missing: 'Assigned agent gone',
+  awaiting_claim: 'Waiting for an agent',
+  awaiting_progress: 'Waiting for progress',
+};
+
+const STALE_REASON_LABELS = {
+  reconciliation_stale_no_job: 'No job to track',
+  reconciliation_stale_job_pending_approval: 'Waiting on approval',
+  reconciliation_stale_job_approved: 'Never claimed after approval',
+  reconciliation_stale_job_pending: 'Claim timed out',
+  reconciliation_stale_job_claimed: 'Claimed, never started',
+  reconciliation_stale_job_running: 'Running too long',
+};
+
+/** One-line scan label for a pendingReason code. Full sentence stays in `message`. */
+export function pendingReasonLabel(reason) {
+  if (!reason) return '';
+  const code = typeof reason === 'string' ? reason : reason.code;
+  if (code && PENDING_REASON_LABELS[code]) return PENDING_REASON_LABELS[code];
+  const message = typeof reason === 'object' ? reason.message : '';
+  return message || (code ? String(code) : '');
+}
+
+/** One-line scan label for a staleReason code. Full sentence stays in `message`. */
+export function staleReasonLabel(reason) {
+  if (!reason) return '';
+  const code = typeof reason === 'string' ? reason : reason.code;
+  if (code && STALE_REASON_LABELS[code]) return STALE_REASON_LABELS[code];
+  const message = typeof reason === 'object' ? reason.message : '';
+  return message || (code ? String(code) : '');
+}
+
+/**
+ * Closed-row chip for a job list. Short complete label; `detail` is the
+ * expanded-timeline copy. Ordinary failed jobs stay quiet here.
+ */
+export function jobListAdvisory(job) {
+  if (!job) return null;
+  if (job.needsOperatorReconciliation) {
+    return {
+      label: 'Needs review',
+      detail:
+        job.errorMessage ||
+        reconciliationAdvisoryText(job.reconciliationReason),
+      tone: 'red',
+    };
+  }
+  if (job.pendingReason?.code || job.pendingReason?.message) {
+    const label = pendingReasonLabel(job.pendingReason);
+    return {
+      label,
+      detail: job.pendingReason.message || label,
+      tone: 'orange',
+    };
+  }
+  return null;
+}
+
+/** True when two operator-facing strings are the same explanation. */
+export function sameOperatorMessage(left, right) {
+  const a = typeof left === 'string' ? left.trim() : '';
+  const b = typeof right === 'string' ? right.trim() : '';
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 export function eventTypeLabel(eventType) {
   const key = String(eventType || '');
   return EVENT_TYPE_LABELS[key] || (eventType ? String(eventType) : 'Event');

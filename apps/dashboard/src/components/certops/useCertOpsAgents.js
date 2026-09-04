@@ -14,7 +14,7 @@ import { useCertOpsCanManage, useCertOpsEnabled } from './useCertOps.js';
  * @param {number} [externalRefreshSignal] - Optional value from a sibling
  *   component (e.g. DeployAgentModal's onAgentRegistered callback); changing
  *   it triggers an immediate refetch, without waiting for the internal poll.
- * @param {{ limit?: number, offset?: number }} [page] - Page position. Omitting
+ * @param {{ limit?: number, offset?: number, sort?: string, direction?: 'asc'|'desc' }} [page] - Page position. Omitting
  *   `limit` asks for the whole fleet, which is what a caller using the list as
  *   a lookup source wants; a caller rendering a page control passes one.
  * @returns {{ enabled: boolean|null, agents: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
@@ -23,7 +23,7 @@ export function useCertOpsAgents(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
-  const { limit, offset = 0 } = page;
+  const { limit, offset = 0, sort, direction } = page;
   const [agents, setAgents] = useState([]);
   // Null, not a zeroed envelope: an absent pagination block means "no answer
   // from the server yet", which must stay distinguishable from a real
@@ -51,7 +51,12 @@ export function useCertOpsAgents(externalRefreshSignal, page = {}) {
     setLoading(true);
     setError('');
 
-    listAgents(workspaceId, { limit, offset, signal: controller.signal })
+    listAgents(workspaceId, {
+      limit,
+      offset,
+      ...(sort ? { sort, direction } : {}),
+      signal: controller.signal,
+    })
       .then(data => {
         if (!cancelled) {
           setAgents(Array.isArray(data?.items) ? data.items : []);
@@ -84,6 +89,8 @@ export function useCertOpsAgents(externalRefreshSignal, page = {}) {
     externalRefreshSignal,
     limit,
     offset,
+    sort,
+    direction,
   ]);
 
   return { enabled, agents, pagination, loading, error, refresh };

@@ -22,6 +22,7 @@ const {
 const {
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
+const { attachJobPendingReasons } = require("./jobPendingReason");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -2013,13 +2014,21 @@ async function createCertificateJob(options) {
   }
 }
 
-function getCertificateJobById(options) {
+async function getCertificateJobById(options) {
   const db = options.client || pool;
-  return getJobById(
+  const job = await getJobById(
     db,
     normalizeWorkspaceId(options.workspaceId),
     normalizeRequiredId(options.jobId),
   );
+  if (!job) return null;
+  const [decorated] = await attachJobPendingReasons({
+    db,
+    workspaceId: job.workspaceId,
+    jobs: [job],
+    env: options.env,
+  });
+  return decorated;
 }
 
 /**
@@ -2163,8 +2172,15 @@ async function listCertificateJobs(options) {
     params,
   );
 
+  const items = await attachJobPendingReasons({
+    db,
+    workspaceId,
+    jobs: result.rows.map(jobFromRow),
+    env: options.env,
+  });
+
   return {
-    items: result.rows.map(jobFromRow),
+    items,
     pagination: {
       limit,
       offset,

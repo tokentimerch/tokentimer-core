@@ -53,6 +53,9 @@ describe('WorkspaceKillSwitchPanel', () => {
     expect(
       screen.getByRole('button', { name: 'Pause certificate operations' })
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Require approval before every new job/)
+    ).not.toBeInTheDocument();
   });
 
   it('shows a Paused badge and a Resume action once paused', () => {
@@ -106,7 +109,10 @@ describe('WorkspaceKillSwitchPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
 
     await waitFor(() => {
-      expect(setPaused).toHaveBeenCalledWith(true, 'rotating a compromised key');
+      expect(setPaused).toHaveBeenCalledWith(
+        true,
+        'rotating a compromised key'
+      );
     });
   });
 
@@ -139,5 +145,4 @@ describe('WorkspaceKillSwitchPanel', () => {
 
     expect(screen.getByText('Internal error')).toBeInTheDocument();
   });
-
 });
