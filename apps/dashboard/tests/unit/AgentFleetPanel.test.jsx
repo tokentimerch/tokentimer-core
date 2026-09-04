@@ -211,7 +211,7 @@ describe('AgentFleetPanel', () => {
     expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
   });
 
-  it('preserves the server page order without offering page-local sorting', () => {
+  it('preserves server order, sorts through the hook, and leaves derived status static', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     const agents = sampleAgents().slice(0, 2);
     agents[0].name = 'zulu-agent';
@@ -223,7 +223,7 @@ describe('AgentFleetPanel', () => {
       })
     );
 
-    renderWithProviders(<AgentFleetPanel />);
+    renderWithProviders(<AgentFleetPanel />, ['/?agentOffset=20']);
 
     const first = screen.getByText('zulu-agent');
     const second = screen.getByText('alpha-agent');
@@ -231,8 +231,28 @@ describe('AgentFleetPanel', () => {
       first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     expect(
-      screen.queryByRole('button', { name: /Sort by/i })
+      screen.queryByRole('button', { name: 'Sort by Status' })
     ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Agent' }));
+    await waitFor(() => {
+      expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+        limit: 20,
+        offset: 0,
+        sort: 'agent',
+        direction: 'asc',
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Agent' }));
+    await waitFor(() => {
+      expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+        limit: 20,
+        offset: 0,
+        sort: 'agent',
+        direction: 'desc',
+      });
+    });
   });
 
   it('renders a friendly OS label from the raw platform, and unknown/missing values safely', () => {

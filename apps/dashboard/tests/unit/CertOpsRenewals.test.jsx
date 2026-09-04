@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -192,14 +198,75 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('app.example.com')).toBeInTheDocument();
   });
 
-  it('does not offer page-local sorting for either paginated table', async () => {
+  it('offers exact server sorts and leaves derived upcoming auto-renew static', async () => {
     renderPage();
 
     expect(await screen.findByText('Upcoming renewals')).toBeInTheDocument();
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
+    const [upcomingTable, profilesTable] = screen.getAllByRole('table');
     expect(
-      screen.queryByRole('button', { name: /Sort by/i })
+      within(upcomingTable).getByRole('button', {
+        name: 'Sort by Certificate',
+      })
+    ).toBeInTheDocument();
+    expect(
+      within(upcomingTable).queryByRole('button', {
+        name: 'Sort by Auto-renew',
+      })
     ).not.toBeInTheDocument();
+    expect(
+      within(profilesTable).getByRole('button', {
+        name: 'Sort by Auto-renew',
+      })
+    ).toBeInTheDocument();
+  });
+
+  it('resets each list offset and requests ascending and descending server sorts', async () => {
+    renderPage(['/certops/renewals?scheduleOffset=20&profileOffset=20']);
+
+    await screen.findByText('Upcoming renewals');
+    const [, profilesTable] = screen.getAllByRole('table');
+    fireEvent.click(
+      within(screen.getAllByRole('table')[0]).getByRole('button', {
+        name: 'Sort by Certificate',
+      })
+    );
+    await waitFor(() => {
+      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          offset: 0,
+          sort: 'certificate',
+          direction: 'asc',
+        })
+      );
+    });
+
+    fireEvent.click(
+      within(screen.getAllByRole('table')[0]).getByRole('button', {
+        name: 'Sort by Certificate',
+      })
+    );
+    await waitFor(() => {
+      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({ direction: 'desc' })
+      );
+    });
+
+    fireEvent.click(
+      within(profilesTable).getByRole('button', { name: 'Sort by Profile' })
+    );
+    await waitFor(() => {
+      expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({
+          offset: 0,
+          sort: 'profile',
+          direction: 'asc',
+        })
+      );
+    });
   });
 
   it('says a certificate is already in its renewal window rather than showing a past date', async () => {

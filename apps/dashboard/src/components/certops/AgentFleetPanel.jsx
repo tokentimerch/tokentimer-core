@@ -55,7 +55,9 @@ import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
   CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
   CertOpsTruncatedText,
+  nextCertOpsTableSort,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 
@@ -140,6 +142,7 @@ const AGENT_COLUMNS = [
   ['signingKey', 'Signing key'],
   ['lastHeartbeat', 'Last heartbeat'],
 ];
+const AGENT_NON_SORTABLE_COLUMNS = new Set(['status']);
 
 /** Clock offsets beyond this are flagged as drifted in the fleet table. */
 const CLOCK_DRIFT_WARN_MS = 5000;
@@ -551,11 +554,16 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'agent',
   });
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
   // The fleet list is unbounded server-side unless a limit is sent. Now that
   // this table has a page control, sending one is safe: every row past the
   // first page is reachable.
   const { enabled, agents, pagination, loading, error, refresh } =
-    useCertOpsAgents(refreshSignal, { limit, offset });
+    useCertOpsAgents(refreshSignal, {
+      limit,
+      offset,
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+    });
 
   const [retireTarget, setRetireTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
@@ -573,6 +581,9 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
       'thead th': {
         ...tableStyles.tableProps.sx['thead th'],
         px: 2,
+      },
+      'thead th button': {
+        px: 0,
       },
       'tbody td': {
         ...tableStyles.tableProps.sx['tbody td'],
@@ -597,6 +608,10 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     px: { base: 3, lg: 2 },
     py: { base: 2, lg: '0.45rem' },
     verticalAlign: 'top',
+  };
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
   };
   if (enabled !== true) return null;
 
@@ -698,9 +713,19 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
             <Table {...agentTableProps}>
               <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  {AGENT_COLUMNS.map(([key, label]) => (
-                    <Th key={key}>{label}</Th>
-                  ))}
+                  {AGENT_COLUMNS.map(([key, label]) =>
+                    AGENT_NON_SORTABLE_COLUMNS.has(key) ? (
+                      <Th key={key}>{label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={key}
+                        label={label}
+                        sortKey={key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                   {canManage ? <Th textAlign='right'>Actions</Th> : null}
                 </Tr>
               </Thead>

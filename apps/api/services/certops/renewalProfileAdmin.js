@@ -49,6 +49,7 @@ const {
 } = require("./renewalScheduler");
 const { isAgentDeployableKeyMode } = require("./jobs");
 const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
+const { resolveListSort } = require("./listSorting");
 
 const CERTOPS_PROFILE_NOT_FOUND = "CERTOPS_PROFILE_NOT_FOUND";
 const CERTOPS_PROFILE_INVALID = "CERTOPS_PROFILE_INVALID";
@@ -209,14 +210,42 @@ const PROFILE_SELECT = `
     FROM certificate_profiles cp
 `;
 
+const RENEWAL_PROFILE_SORTS = Object.freeze({
+  profile: "cp.name",
+  certificates: "certificate_count",
+  autoRenew: `CASE
+    WHEN LOWER(COALESCE(cp.status, '')) IN ('disabled', 'archived') THEN 0
+    ELSE 1
+  END`,
+  leadTime: "cp.renew_before_days",
+  key: `CASE
+    WHEN NULLIF(cp.public_metadata->'renewalProfile'->>'keyAlgorithm', '') IS NULL
+      THEN '--'
+    ELSE CONCAT_WS(
+      ' ',
+      UPPER(cp.public_metadata->'renewalProfile'->>'keyAlgorithm'),
+      NULLIF(cp.public_metadata->'renewalProfile'->>'keySize', '')
+    )
+  END`,
+});
+
 async function listRenewalProfiles({
   db = pool,
   workspaceId,
   limit,
   offset,
+  sort,
+  direction,
 } = {}) {
   const safeLimit = normalizeLimit(limit);
   const safeOffset = normalizeOffset(offset);
+  const orderBy = resolveListSort({
+    sort,
+    direction,
+    allowlist: RENEWAL_PROFILE_SORTS,
+    defaultOrderBy: "cp.name ASC, cp.id ASC",
+    tieBreaker: "cp.id ASC",
+  });
 
   const totalResult = await db.query(
     "SELECT COUNT(*)::int AS total FROM certificate_profiles WHERE workspace_id = $1",
@@ -225,7 +254,7 @@ async function listRenewalProfiles({
   const result = await db.query(
     `${PROFILE_SELECT}
       WHERE cp.workspace_id = $1
-      ORDER BY cp.name ASC
+      ORDER BY ${orderBy}
       LIMIT $2 OFFSET $3`,
     [workspaceId, safeLimit, safeOffset],
   );
@@ -572,12 +601,29 @@ async function listUpcomingRenewals({
   limit,
   offset,
   thresholdDays,
+  sort,
+  direction,
 } = {}) {
   const safeLimit = normalizeLimit(limit);
   const safeOffset = normalizeOffset(offset);
   const renewableStatusFilter = NON_RENEWABLE_CERTIFICATE_STATUSES.map(
     (status) => `'${status}'`,
   ).join(", ");
+  const renewsFromExpression =
+    "mc.not_after - (COALESCE(cp.renew_before_days, $2) || ' days')::interval";
+  const orderBy = resolveListSort({
+    sort,
+    direction,
+    allowlist: {
+      certificate: "mc.common_name",
+      expires: "mc.not_after",
+      renewalWindow: renewsFromExpression,
+      lastAttempt: "last_renew_job_status",
+    },
+    defaultOrderBy:
+      "mc.not_after ASC NULLS LAST, mc.common_name ASC, mc.id ASC",
+    tieBreaker: "mc.id ASC",
+  });
 
   const result = await db.query(
     `SELECT mc.id,
@@ -610,7 +656,7 @@ async function listUpcomingRenewals({
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.workspace_id = $1
         AND mc.status NOT IN (${renewableStatusFilter})
-      ORDER BY mc.not_after ASC NULLS LAST, mc.common_name ASC
+      ORDER BY ${orderBy}
       LIMIT $3 OFFSET $4`,
     [workspaceId, String(thresholdDays), safeLimit, safeOffset],
   );

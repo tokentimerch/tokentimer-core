@@ -50,7 +50,9 @@ import {
 import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
 import {
   CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
   CertOpsTruncatedText,
+  nextCertOpsTableSort,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 
@@ -233,8 +235,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'profile',
   });
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
   const { profiles, pagination, loading, error, refresh } =
-    useCertOpsRenewalProfiles(refreshSignal, { limit, offset });
+    useCertOpsRenewalProfiles(refreshSignal, {
+      limit,
+      offset,
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+    });
   const {
     saving,
     error: saveError,
@@ -247,6 +254,10 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
   const tableStyles = useCertOpsResponsiveTableStyles();
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
   // The panel token is deliberately translucent, so it cannot serve as the
   // backdrop for a pinned cell: scrolled columns show through it. This is an
   // opaque approximation of the same surface.
@@ -366,7 +377,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {PROFILE_COLUMNS.map(([key, label]) => (
-                    <Th key={key}>{label}</Th>
+                    <CertOpsSortableHeader
+                      key={key}
+                      label={label}
+                      sortKey={key}
+                      sort={sort}
+                      onSort={handleSort}
+                    />
                   ))}
                   <Th textAlign='right' {...stickyActions}>
                     Actions

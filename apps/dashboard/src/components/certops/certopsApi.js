@@ -20,12 +20,23 @@ function workspaceBase(workspaceId) {
  */
 export async function listCertificates(
   workspaceId,
-  { limit = 50, offset = 0, status, source, excludeRetired, signal } = {}
+  {
+    limit = 50,
+    offset = 0,
+    status,
+    source,
+    excludeRetired,
+    sort,
+    direction,
+    signal,
+  } = {}
 ) {
   const params = { limit, offset };
   if (status) params.status = status;
   if (source) params.source = source;
   if (excludeRetired !== undefined) params.excludeRetired = excludeRetired;
+  if (sort) params.sort = sort;
+  if (direction) params.direction = direction;
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/certificates`,
     {

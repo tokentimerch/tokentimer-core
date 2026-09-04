@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Badge,
   Box,
@@ -25,7 +26,9 @@ import {
 import JobStatusBadge from './JobStatusBadge.jsx';
 import {
   CertOpsMobileFieldLabel,
+  CertOpsSortableHeader,
   CertOpsTruncatedText,
+  nextCertOpsTableSort,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
@@ -88,6 +91,7 @@ const RENEWAL_COLUMNS = [
   ['autoRenew', 'Auto-renew'],
   ['lastAttempt', 'Last attempt'],
 ];
+const NON_SORTABLE_RENEWAL_COLUMNS = new Set(['autoRenew']);
 
 function blockedDescriptor(reason) {
   return BLOCKED_REASONS[reason] || BLOCKED_FALLBACK;
@@ -140,14 +144,23 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
   const { limit, offset, setPage } = useCertOpsListUrlState({
     scope: 'schedule',
   });
+  const [sort, setSort] = useState({ key: null, direction: 'asc' });
   const { renewals, pagination, loading, error } = useCertOpsUpcomingRenewals(
     refreshSignal,
-    { limit, offset }
+    {
+      limit,
+      offset,
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+    }
   );
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
   const tableStyles = useCertOpsResponsiveTableStyles();
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
 
   const switchedOff = renewals.filter(
     item => item.blockedReason === 'auto_renew_disabled'
@@ -240,9 +253,19 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
             <Table {...tableStyles.tableProps}>
               <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  {RENEWAL_COLUMNS.map(([key, label]) => (
-                    <Th key={key}>{label}</Th>
-                  ))}
+                  {RENEWAL_COLUMNS.map(([key, label]) =>
+                    NON_SORTABLE_RENEWAL_COLUMNS.has(key) ? (
+                      <Th key={key}>{label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={key}
+                        label={label}
+                        sortKey={key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                 </Tr>
               </Thead>
               <Tbody {...tableStyles.tbodyProps}>

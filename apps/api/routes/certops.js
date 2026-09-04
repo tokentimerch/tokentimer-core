@@ -21,6 +21,9 @@ const {
 } = require("../middleware/require-workspace-certops-active");
 const { authorize, can, hasAtLeastRole } = require("../services/rbac");
 const {
+  CERTOPS_LIST_SORT_INVALID,
+} = require("../services/certops/listSorting");
+const {
   CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
@@ -341,6 +344,13 @@ function writeOptionsFromRequest(req, source) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === CERTOPS_LIST_SORT_INVALID) {
+    return res.status(400).json({
+      error: err.message,
+      code: CERTOPS_LIST_SORT_INVALID,
+    });
+  }
+
   if (err?.code === CERTOPS_DISABLED) {
     return res.status(404).json(NOT_FOUND_RESPONSE);
   }
@@ -1993,6 +2003,8 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        sort: req.query.sort,
+        direction: req.query.direction,
       });
       let impactCounts = new Map();
       try {
@@ -3166,6 +3178,8 @@ router.get(
         renewalDisabled: req.query.renewalDisabled,
         keyNotAgentDeployable: req.query.keyNotAgentDeployable,
         excludeRetired: req.query.excludeRetired,
+        sort: req.query.sort,
+        direction: req.query.direction,
       });
       return res.json({
         ...result,
@@ -3181,7 +3195,8 @@ router.get(
       if (
         err?.code === CERTOPS_CERTIFICATE_STATUS_INVALID ||
         err?.code === CERTOPS_CERTIFICATE_SOURCE_INVALID ||
-        err?.code === CERTOPS_CERTIFICATE_FILTER_INVALID
+        err?.code === CERTOPS_CERTIFICATE_FILTER_INVALID ||
+        err?.code === CERTOPS_LIST_SORT_INVALID
       ) {
         return res.status(400).json({ error: err.message, code: err.code });
       }
@@ -3234,6 +3249,8 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        sort: req.query.sort,
+        direction: req.query.direction,
       });
       return res.json(result);
     } catch (err) {
@@ -3265,6 +3282,8 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        sort: req.query.sort,
+        direction: req.query.direction,
         thresholdDays: resolveRenewalThresholdDays(process.env),
       });
       return res.json(result);

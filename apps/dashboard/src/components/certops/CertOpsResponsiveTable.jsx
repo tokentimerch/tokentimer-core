@@ -1,4 +1,67 @@
-import { Text, Tooltip, useColorModeValue } from '@chakra-ui/react';
+import { Button, Text, Th, Tooltip, useColorModeValue } from '@chakra-ui/react';
+
+const SORT_HEADER_BUTTON_PROPS = {
+  variant: 'ghost',
+  size: 'xs',
+  px: 1,
+  h: '24px',
+  minH: '24px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  lineHeight: '1',
+  whiteSpace: 'nowrap',
+  color: 'rgba(148, 163, 184, 0.95)',
+  _hover: {
+    bg: 'rgba(30, 41, 59, 0.72)',
+    color: 'white',
+  },
+};
+
+export function CertOpsSortableHeader({ label, sortKey, sort, onSort }) {
+  const isActive = sort?.key === sortKey;
+  return (
+    <Th
+      aria-sort={
+        isActive
+          ? sort.direction === 'asc'
+            ? 'ascending'
+            : 'descending'
+          : 'none'
+      }
+    >
+      <Button
+        {...SORT_HEADER_BUTTON_PROPS}
+        onClick={() => onSort(sortKey)}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        <Text
+          as='span'
+          display='inline-block'
+          minW='30px'
+          ml={2}
+          fontSize='10px'
+          lineHeight='1'
+          textAlign='left'
+          color='rgba(147, 197, 253, 0.96)'
+          visibility={isActive ? 'visible' : 'hidden'}
+          aria-hidden={!isActive}
+        >
+          {isActive && sort.direction === 'desc' ? 'Desc' : 'Asc'}
+        </Text>
+      </Button>
+    </Th>
+  );
+}
+
+export function nextCertOpsTableSort(current, key) {
+  return {
+    key,
+    direction:
+      current?.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  };
+}
 
 export function CertOpsMobileFieldLabel({ children, color }) {
   return (

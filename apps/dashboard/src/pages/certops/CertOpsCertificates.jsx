@@ -54,7 +54,11 @@ import {
   DashboardState,
 } from '../../components/DashboardPrimitives';
 import DashboardPagination from '../../components/DashboardPagination.jsx';
-import { CertOpsTruncatedText } from '../../components/certops/CertOpsResponsiveTable.jsx';
+import {
+  CertOpsSortableHeader,
+  CertOpsTruncatedText,
+  nextCertOpsTableSort,
+} from '../../components/certops/CertOpsResponsiveTable.jsx';
 import {
   CERTOPS_CERTIFICATE_FILTERS,
   CERTOPS_PAGE_SIZE_OPTIONS,
@@ -77,7 +81,7 @@ const CERTIFICATE_TABLE_COLUMNS = [
   { key: 'certificate', label: 'Certificate' },
   { key: 'status', label: 'Status' },
   { key: 'expiry', label: 'Expiry' },
-  { key: 'renewal', label: 'Renewal' },
+  { key: 'renewal', label: 'Renewal', sortable: false },
   { key: 'keyLocality', label: 'Key locality' },
   { key: 'source', label: 'Source' },
 ];
@@ -268,6 +272,7 @@ export default function CertOpsCertificates() {
   // An explicit status pick is more precise than the coarse retired toggle;
   // let it through even if that status happens to be revoked/decommissioned.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
+  const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
 
   const { certificates, pagination, loading, error, refresh, enabled } =
     useCertOpsCertificates({
@@ -276,6 +281,8 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
+      sort: sort.key,
+      direction: sort.direction,
     });
 
   const [retireTarget, setRetireTarget] = useState(null);
@@ -284,6 +291,10 @@ export default function CertOpsCertificates() {
   const [detailsTarget, setDetailsTarget] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);
+  const handleSort = key => {
+    setSort(current => nextCertOpsTableSort(current, key));
+    setPage({ offset: 0 });
+  };
   const retiredCount = useRetiredCertificateCount({
     workspaceId,
     enabled,
@@ -513,9 +524,19 @@ export default function CertOpsCertificates() {
             >
               <Thead display={{ base: 'none', lg: 'table-header-group' }}>
                 <Tr>
-                  {CERTIFICATE_TABLE_COLUMNS.map(column => (
-                    <Th key={column.key}>{column.label}</Th>
-                  ))}
+                  {CERTIFICATE_TABLE_COLUMNS.map(column =>
+                    column.sortable === false ? (
+                      <Th key={column.key}>{column.label}</Th>
+                    ) : (
+                      <CertOpsSortableHeader
+                        key={column.key}
+                        label={column.label}
+                        sortKey={column.key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    )
+                  )}
                   <Th textAlign='right'>Actions</Th>
                 </Tr>
               </Thead>

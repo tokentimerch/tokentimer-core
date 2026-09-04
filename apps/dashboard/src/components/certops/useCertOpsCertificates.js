@@ -9,13 +9,21 @@ import { useCertOpsEnabled } from './useCertOps.js';
  * Gated on workspaceId and `certops.enabled === true` (same pattern as
  * useCertOpsJobs). Re-fetches when any filter or page position changes.
  *
- * @param {{ limit?: number, offset?: number, status?: string, source?: string, excludeRetired?: boolean }} [filters]
+ * @param {{ limit?: number, offset?: number, status?: string, source?: string, excludeRetired?: boolean, sort?: string, direction?: 'asc'|'desc' }} [filters]
  * @returns {{ enabled: boolean|null, certificates: object[], pagination: { limit: number, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsCertificates(filters = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
-  const { limit = 20, offset = 0, status, source, excludeRetired } = filters;
+  const {
+    limit = 20,
+    offset = 0,
+    status,
+    source,
+    excludeRetired,
+    sort,
+    direction,
+  } = filters;
 
   const [certificates, setCertificates] = useState([]);
   const [pagination, setPagination] = useState(null);
@@ -47,6 +55,8 @@ export function useCertOpsCertificates(filters = {}) {
       status,
       source,
       excludeRetired,
+      sort,
+      direction,
       signal: controller.signal,
     })
       .then(data => {
@@ -82,6 +92,8 @@ export function useCertOpsCertificates(filters = {}) {
     status,
     source,
     excludeRetired,
+    sort,
+    direction,
   ]);
 
   return { enabled, certificates, pagination, loading, error, refresh };

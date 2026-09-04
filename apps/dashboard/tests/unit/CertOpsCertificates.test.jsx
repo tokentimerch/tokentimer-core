@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -160,7 +166,7 @@ describe('CertOpsCertificates list states', () => {
     expect(screen.getByText('No auto-renewal')).toBeInTheDocument();
   });
 
-  it('preserves the server page order without offering page-local sorting', () => {
+  it('preserves the server page order and leaves derived renewal state non-sortable', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
@@ -186,9 +192,41 @@ describe('CertOpsCertificates list states', () => {
     expect(
       first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
-    expect(
-      screen.queryByRole('button', { name: /Sort by/i })
-    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sort by Expiry')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Sort by Renewal')).not.toBeInTheDocument();
+  });
+
+  it('requests ascending and descending server sorts and resets the offset', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [certificate()],
+        pagination: { limit: 20, offset: 20, total: 100 },
+      })
+    );
+
+    renderPage(['/?offset=20']);
+
+    fireEvent.click(screen.getByLabelText('Sort by Certificate'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'certificate',
+          direction: 'asc',
+        })
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText('Sort by Certificate'));
+    await waitFor(() => {
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          sort: 'certificate',
+          direction: 'desc',
+        })
+      );
+    });
   });
 
   it('places dashboard-style pagination above the table and uses icon actions', () => {
