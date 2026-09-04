@@ -276,14 +276,14 @@ const TRUST_JOB_INELIGIBLE_MESSAGE_BY_REASON = Object.freeze({
   agent_retired:
     "This agent has been retired and can no longer be assigned any job.",
   compatibility_blocked:
-    "This agent's build/protocol version is outside the range this " +
+    "This agent's build or protocol version is outside what this " +
     "control plane accepts and can never claim a job until it is " +
     "upgraded.",
   operation_unsupported:
     "This agent has not declared distribute-trust/revoke-trust support " +
     "the last time it claimed a job (most commonly because it is running " +
-    "in observe-only mode - no execution block, or execution.enabled is " +
-    "not true, in its config.json - though a brand-new agent that has " +
+    "in observe-only mode: no execution block, or execution.enabled is " +
+    "not true, in its config.json, though a brand-new agent that has " +
     "simply not polled for a job yet looks identical here). If this " +
     "persists, check the agent's config.json and logs.",
   trust_anchor_deploy_capability_unavailable:

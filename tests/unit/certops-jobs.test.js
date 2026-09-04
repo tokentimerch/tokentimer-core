@@ -285,6 +285,10 @@ function createMemoryClient(options = {}) {
         };
       }
 
+      if (normalizedSql.includes("FROM certops_agents")) {
+        return { rows: [] };
+      }
+
       throw new Error(`Unexpected query: ${normalizedSql}`);
     },
   };

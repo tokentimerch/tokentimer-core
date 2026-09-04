@@ -14,10 +14,8 @@ import {
   ModalHeader,
   ModalOverlay,
   Spinner,
-  Switch,
   Text,
   Textarea,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   DashboardModalDescription,
@@ -26,7 +24,8 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
-import { showError, showSuccess } from '../../utils/toast.js';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
+import { showSuccess } from '../../utils/toast.js';
 import {
   useCertOpsIsWorkspaceAdmin,
   useCertOpsWorkspaceKillSwitch,
@@ -166,25 +165,19 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  * Rendered as a compact banner above every CertOps tab. While operations are
  * active it stays a single quiet line: a banner that shouts on the happy path
  * stops being read, and the one state that matters is the paused one.
+ * The always-require-approval policy lives on the Settings tab, not here.
  * `onPausedChange` lets the layout share the resolved state with the tabs
  * instead of every tab refetching the same setting.
  */
 export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
-  const {
-    certOpsPaused,
-    certOpsRequireApprovalAlways,
-    loading,
-    error,
-    saving,
-    setPaused,
-    setRequireApprovalAlways,
-  } = useCertOpsWorkspaceKillSwitch();
+  const { certOpsPaused, loading, error, saving, setPaused } =
+    useCertOpsWorkspaceKillSwitch();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const quietBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const quietBorder = useColorModeValue('gray.200', 'whiteAlpha.300');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const quietBg = dashboard.bg.field;
+  const quietBorder = dashboard.border.subtle;
 
   useEffect(() => {
     onPausedChange?.({ certOpsPaused, loading, error });
@@ -199,23 +192,6 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
         : 'Certificate operations resumed for this workspace'
     );
     setConfirmOpen(false);
-  };
-
-  const handleApprovalPolicyToggle = async event => {
-    const next = event.target.checked;
-    try {
-      await setRequireApprovalAlways(next);
-      showSuccess(
-        next
-          ? 'Every new job in this workspace now requires approval'
-          : 'Jobs in this workspace no longer require approval by default'
-      );
-    } catch (err) {
-      showError(
-        err?.response?.data?.error ||
-          'Could not update the approval policy. Please try again.'
-      );
-    }
   };
 
   const resolved = !loading && !error && certOpsPaused !== undefined;
@@ -250,48 +226,6 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
     />
   );
 
-  // Independent of the pause/resume state above: this policy forces every
-  // new job to pending_approval regardless of the per-job checkbox, so it
-  // is surfaced as its own row rather than folded into the pause banner.
-  const approvalPolicyRow = resolved ? (
-    <HStack
-      spacing={3}
-      align='center'
-      mt={2}
-      px={3}
-      py={1.5}
-      bg={quietBg}
-      borderWidth='1px'
-      borderColor={quietBorder}
-      borderRadius='md'
-    >
-      <Text fontSize='xs' color={muted} flex='1'>
-        Require approval before every new job can run, regardless of the
-        per-job setting.
-      </Text>
-      {isAdmin ? (
-        <Switch
-          size='sm'
-          isChecked={certOpsRequireApprovalAlways === true}
-          isDisabled={saving}
-          onChange={handleApprovalPolicyToggle}
-          aria-label='Require approval for every new job'
-        />
-      ) : (
-        <Badge
-          colorScheme={certOpsRequireApprovalAlways ? 'purple' : 'gray'}
-          variant='subtle'
-          textTransform='none'
-          fontWeight='medium'
-          fontSize='xs'
-          flexShrink={0}
-        >
-          {certOpsRequireApprovalAlways ? 'Always required' : 'Not required'}
-        </Badge>
-      )}
-    </HStack>
-  ) : null;
-
   if (error) {
     return (
       <Box mb={3}>
@@ -304,7 +238,14 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
   if (certOpsPaused) {
     return (
       <Box mb={3}>
-        <Alert status='warning' borderRadius='md' variant='left-accent'>
+        <Alert
+          status='warning'
+          borderRadius='md'
+          variant='left-accent'
+          bg={dashboard.callout.warningSurface}
+          borderColor={dashboard.callout.warningBorder}
+          color={dashboard.callout.warningText}
+        >
           <AlertIcon />
           <Box
             flex='1'
@@ -339,7 +280,6 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
             </Box>
           </Box>
         </Alert>
-        {approvalPolicyRow}
         {confirmModal}
       </Box>
     );
@@ -376,7 +316,6 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
           {actionOrNote}
         </HStack>
       </Box>
-      {approvalPolicyRow}
       {confirmModal}
     </Box>
   );

@@ -16,11 +16,13 @@ import {
   Thead,
   Tooltip,
   Tr,
+  VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
 import { Archive, CalendarClock, MoreVertical, Unlink } from 'lucide-react';
 import CopyableId from '../../components/CopyableId.jsx';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
+import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
 import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
@@ -112,7 +114,7 @@ function RenewalSetupStatus({ renewalSetup, onRetry, retrying, canManage }) {
   const descriptor = renewalSetupDescriptor(renewalSetup);
   if (!descriptor) return null;
   return (
-    <HStack spacing={1} mt={1}>
+    <HStack spacing={1}>
       <Tooltip
         label={descriptor.message}
         hasArrow
@@ -211,8 +213,8 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
  * the total and pagination stay correct for whichever population is shown.
  */
 export default function CertOpsCertificates() {
-  const { muted } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'rgba(30, 41, 59, 0.45)');
+  const { muted, dashboard } = useDashboardTheme();
+  const rowHoverBg = dashboard.table.rowHover;
   const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
   const tableHeadColor = useColorModeValue(
     'gray.600',
@@ -664,13 +666,16 @@ export default function CertOpsCertificates() {
                         <MobileFieldLabel color={muted}>
                           Renewal
                         </MobileFieldLabel>
-                        <RenewalBadge renewal={certificate.renewal} />
-                        <RenewalSetupStatus
-                          renewalSetup={certificate.renewalSetup}
-                          onRetry={() => handleRetryRenewalSetup(certificate)}
-                          retrying={retryingId === certificate.id}
-                          canManage={canManage}
-                        />
+                        <VStack align='flex-start' spacing={1}>
+                          <RenewalBadge renewal={certificate.renewal} />
+                          <RenewalPathBadge certificate={certificate} />
+                          <RenewalSetupStatus
+                            renewalSetup={certificate.renewalSetup}
+                            onRetry={() => handleRetryRenewalSetup(certificate)}
+                            retrying={retryingId === certificate.id}
+                            canManage={canManage}
+                          />
+                        </VStack>
                       </Td>
                       <Td
                         px={{ base: 3.5, lg: 4 }}

@@ -36,6 +36,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_PAGE_SIZE_OPTIONS,
@@ -153,7 +154,7 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
 function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   const [value, setValue] = useState(String(profile.renewBeforeDays ?? ''));
   const [editing, setEditing] = useState(false);
-  const muted = useColorModeValue('gray.600', 'gray.400');
+  const { muted, dashboard } = useDashboardThemeColors();
 
   useEffect(() => {
     setValue(String(profile.renewBeforeDays ?? ''));
@@ -219,7 +220,7 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
           Cancel
         </Button>
       </HStack>
-      <Text fontSize='xs' color={valid ? muted : 'red.400'}>
+      <Text fontSize='xs' color={valid ? muted : dashboard.state.danger}>
         {valid
           ? 'Days before expiry to start renewing.'
           : 'Enter a whole number of days between 1 and 365.'}
@@ -251,8 +252,8 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
 
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const muted = useColorModeValue('gray.600', 'gray.400');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
   const tableStyles = useCertOpsResponsiveTableStyles();
   const handleSort = key => {
     setSort(current => nextCertOpsTableSort(current, key));

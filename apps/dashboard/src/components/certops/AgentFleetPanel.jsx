@@ -30,7 +30,6 @@ import {
   Th,
   Thead,
   Tr,
-  useColorModeValue,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -46,6 +45,7 @@ import {
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
@@ -197,20 +197,29 @@ const COMPATIBILITY_LABEL = {
   blocked: 'Blocked',
 };
 
+/** Dummy reject-ceilings (major.999.999) are not operator-useful; hide them. */
+function isUnboundedVersionCeiling(version) {
+  return typeof version === 'string' && /^\d+\.999\.999$/.test(version);
+}
+
 /** Version/protocol compatibility chip; 'blocked' is a hard stop (agentJobEligibility.js
  *  rejects every claim from this agent with compatibility_blocked). */
 function AgentCompatibilityBadge({ compatibilityState, compatibilityRange }) {
   const key = String(compatibilityState || '').toLowerCase();
   const range = compatibilityRange || {};
-  const rangeText =
-    `agent ${range.minAgentVersion || '?'}-${range.maxAgentVersion || '?'}, ` +
-    `protocol ${range.minProtocolVersion || '?'}-${range.maxProtocolVersion || '?'}`;
-  const title =
-    key === 'blocked'
-      ? `Outside the accepted range (${rangeText}). This agent cannot claim any job until it is upgraded.`
-      : key === 'outdated'
-        ? `Within the accepted range (${rangeText}) but more than one minor version behind the latest known build. Upgrade when convenient; it can still claim jobs.`
-        : `Within the accepted range (${rangeText}).`;
+  const minAgent = range.minAgentVersion || 'unknown';
+  const minProtocol = range.minProtocolVersion || 'unknown';
+  const hasRealMax =
+    range.maxAgentVersion && !isUnboundedVersionCeiling(range.maxAgentVersion);
+  let title = 'This agent meets the versions this control plane accepts.';
+  if (key === 'blocked') {
+    title = hasRealMax
+      ? `This agent is outside the versions this control plane accepts (agent ${minAgent} to ${range.maxAgentVersion}, protocol ${minProtocol} and above). It cannot claim any job until it is upgraded.`
+      : `This agent is below the minimum this control plane accepts (agent ${minAgent}, protocol ${minProtocol}). It cannot claim any job until it is upgraded.`;
+  } else if (key === 'outdated') {
+    title =
+      'This agent can still claim jobs, but it is more than one minor version behind the latest known build. Upgrade when convenient.';
+  }
   return (
     <Badge
       colorScheme={COMPATIBILITY_SCHEME[key] || 'gray'}
@@ -633,11 +642,11 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const [retireTarget, setRetireTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
 
-  const muted = useColorModeValue('gray.600', 'gray.400');
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const infoBg = useColorModeValue('blue.50', 'blue.900');
-  const infoBorder = useColorModeValue('blue.200', 'blue.700');
-  const infoText = useColorModeValue('blue.800', 'blue.100');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
+  const infoBg = dashboard.accent.interactiveSurface;
+  const infoBorder = dashboard.accent.interactiveBorder;
+  const infoText = dashboard.accent.interactiveForeground;
   const tableStyles = useCertOpsResponsiveTableStyles();
   const agentTableProps = {
     ...tableStyles.tableProps,
@@ -837,7 +846,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                           ) && agent.dependentAutoRenewCertificateCount > 0 ? (
                             <Text
                               fontSize='xs'
-                              color='orange.600'
+                              color={dashboard.state.warning}
                               title='Auto-renew certificates whose renewal path currently depends on this agent'
                             >
                               {agent.dependentAutoRenewCertificateCount}{' '}

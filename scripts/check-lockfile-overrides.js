@@ -33,11 +33,11 @@ const REQUIRED_PINS = {
   postcss: { "*": "8.5.26" },
   nanoid: { "*": "3.3.18" },
   "@babel/core": { "*": "7.29.6" },
-  qs: { "*": "6.15.2" },
+  qs: { "*": "6.16.0" },
   "ip-address": { "*": "10.4.0" },
   "form-data": { "*": "4.0.6" },
   ws: { "*": "8.21.0" },
-  "fast-uri": { "*": "3.1.5" },
+  "fast-uri": { "*": "3.1.7" },
 };
 
 function fail(message) {

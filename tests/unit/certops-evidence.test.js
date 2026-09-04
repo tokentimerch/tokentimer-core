@@ -50,6 +50,13 @@ function createMemoryClient() {
       const normalizedSql = sql.replace(/\s+/g, " ");
       queryLog.push({ sql: normalizedSql, params });
 
+      if (
+        normalizedSql.includes("FROM workspaces") &&
+        normalizedSql.includes("certops_require_approval_always")
+      ) {
+        return { rows: [{ certops_require_approval_always: false }] };
+      }
+
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
         const createdAt = now();
         const row = {

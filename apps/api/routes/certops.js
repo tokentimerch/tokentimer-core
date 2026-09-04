@@ -1350,6 +1350,12 @@ function jobSummary(job) {
     requestedByApiTokenId: job.requestedByApiTokenId,
     approvedByUserId: job.approvedByUserId,
     approvedAt: job.approvedAt,
+    assignedAgentId: job.assignedAgentId ?? null,
+    claimedByAgentId: job.claimedByAgentId ?? null,
+    needsOperatorReconciliation: job.needsOperatorReconciliation === true,
+    reconciliationReason: job.reconciliationReason ?? null,
+    errorMessage: job.errorMessage ?? null,
+    pendingReason: job.pendingReason ?? null,
   };
 }
 

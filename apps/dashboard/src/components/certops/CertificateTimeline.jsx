@@ -7,7 +7,6 @@ import {
   Spinner,
   Text,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
@@ -35,9 +34,9 @@ export default function CertificateTimeline({
   hideWhenEmpty = false,
   renderContainer,
 }) {
-  const { muted, border } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const { muted, border, dashboard } = useDashboardTheme();
+  const rowHoverBg = dashboard.table.rowHover;
+  const expandedBg = dashboard.bg.nested;
   const { enabled, jobs, pagination, loading, error } = useCertOpsJobs({
     subjectType,
     subjectId,
@@ -70,7 +69,7 @@ export default function CertificateTimeline({
 
   if (error) {
     return wrapContent(
-      <Text fontSize='sm' color='red.400'>
+      <Text fontSize='sm' color={dashboard.state.danger}>
         {error}
       </Text>
     );
@@ -108,7 +107,7 @@ export default function CertificateTimeline({
             bg={compact ? 'transparent' : expandedBg}
             borderRadius={compact ? 0 : 'md'}
           >
-            <EvidenceTimeline jobId={job.id} compact={compact} />
+            <EvidenceTimeline jobId={job.id} compact={compact} embedded />
           </Box>
         );
         return (

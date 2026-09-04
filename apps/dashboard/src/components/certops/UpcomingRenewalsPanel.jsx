@@ -15,9 +15,9 @@ import {
   Thead,
   Tooltip,
   Tr,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
   CERTOPS_PAGE_SIZE_OPTIONS,
@@ -193,8 +193,8 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
     }
   );
 
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
-  const muted = useColorModeValue('gray.600', 'gray.400');
+  const { muted, dashboard } = useDashboardThemeColors();
+  const titleColor = dashboard.text.primary;
   const tableStyles = useCertOpsResponsiveTableStyles();
   const handleSort = key => {
     setSort(current => nextCertOpsTableSort(current, key));
@@ -237,13 +237,23 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 
       {!loading && !error && warning ? (
-        <Text fontSize='sm' color='orange.400' mb={3} fontWeight='medium'>
+        <Text
+          fontSize='sm'
+          color={dashboard.state.warning}
+          mb={3}
+          fontWeight='medium'
+        >
           {warning}
         </Text>
       ) : null}
 
       {!loading && !error && deferredNotice ? (
-        <Text fontSize='sm' color='blue.400' mb={3} fontWeight='medium'>
+        <Text
+          fontSize='sm'
+          color={dashboard.accent.interactiveForeground}
+          mb={3}
+          fontWeight='medium'
+        >
           {deferredNotice}
         </Text>
       ) : null}

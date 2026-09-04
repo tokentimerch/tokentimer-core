@@ -3,10 +3,14 @@ import { describe, it, expect } from 'vitest';
 import {
   eventTypeLabel,
   hasRedactionMarkers,
+  jobListAdvisory,
   jobStatusLabel,
   jobStatusScheme,
+  pendingReasonLabel,
   reconciliationAdvisoryText,
+  staleReasonLabel,
   redactionCount,
+  sameOperatorMessage,
 } from '../../src/components/certops/certopsJobsFormat';
 
 describe('jobStatusLabel / jobStatusScheme', () => {
@@ -47,13 +51,70 @@ describe('reconciliationAdvisoryText', () => {
   });
 });
 
+describe('pendingReasonLabel / jobListAdvisory', () => {
+  it('maps known pending codes to a short scan label', () => {
+    expect(
+      pendingReasonLabel({
+        code: 'operation_unsupported',
+        message: 'The assigned agent has declared support for issue, deploy.',
+      })
+    ).toBe('Agent cannot run this job');
+    expect(
+      staleReasonLabel({
+        code: 'reconciliation_stale_job_pending',
+        message:
+          'The job for this change has been waiting to be claimed by the target agent for too long.',
+      })
+    ).toBe('Claim timed out');
+  });
+
+  it('shows Needs review on the closed row and keeps the full text as detail', () => {
+    expect(
+      jobListAdvisory({
+        needsOperatorReconciliation: true,
+        errorMessage: 'Lease expired after renew; side effects unknown',
+      })
+    ).toEqual({
+      label: 'Needs review',
+      detail: 'Lease expired after renew; side effects unknown',
+      tone: 'red',
+    });
+  });
+
+  it('does not surface an ordinary failed job on the closed row', () => {
+    expect(
+      jobListAdvisory({
+        status: 'failed',
+        needsOperatorReconciliation: false,
+        errorMessage: 'Deploy target rejected the certificate',
+      })
+    ).toBeNull();
+  });
+});
+
+describe('sameOperatorMessage', () => {
+  it('treats identical or contained strings as the same explanation', () => {
+    expect(
+      sameOperatorMessage(
+        'Executor did not respond in time.',
+        'Executor did not respond in time.'
+      )
+    ).toBe(true);
+    expect(
+      sameOperatorMessage(
+        'Job failed: Executor did not respond in time.',
+        'Executor did not respond in time.'
+      )
+    ).toBe(true);
+    expect(sameOperatorMessage('offline', 'agent retired')).toBe(false);
+  });
+});
+
 describe('eventTypeLabel', () => {
   it('labels the approval decision event types', () => {
     expect(eventTypeLabel('approval.granted')).toBe('Approval granted');
     expect(eventTypeLabel('approval.rejected')).toBe('Approval rejected');
-    expect(eventTypeLabel('approval.invalidated')).toBe(
-      'Approval invalidated'
-    );
+    expect(eventTypeLabel('approval.invalidated')).toBe('Approval invalidated');
   });
 
   it('falls back to the raw type string for an unmapped event type', () => {

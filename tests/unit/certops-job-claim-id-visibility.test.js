@@ -128,6 +128,28 @@ describe("CertOps job projection approval attribution", () => {
     assert.equal(detail.approvedAt, "2026-01-01T00:05:00.000Z");
   });
 
+  it("jobSummary carries assignedAgentId, pendingReason, and reconciliation fields for the jobs list", () => {
+    const listed = jobSummary(
+      claimedJob({
+        status: "pending",
+        assignedAgentId: "agent-row-1",
+        claimedByAgentId: null,
+        needsOperatorReconciliation: false,
+        reconciliationReason: null,
+        errorMessage: null,
+        pendingReason: {
+          code: "awaiting_claim",
+          message: "Waiting for the assigned agent to poll and claim this job.",
+        },
+      }),
+    );
+
+    assert.equal(listed.assignedAgentId, "agent-row-1");
+    assert.equal(listed.pendingReason.code, "awaiting_claim");
+    assert.equal(listed.needsOperatorReconciliation, false);
+    assert.equal(listed.errorMessage, null);
+  });
+
   it("jobDetail on a job with null approval fields surfaces them as null, not undefined", () => {
     const detail = jobDetail(
       claimedJob({

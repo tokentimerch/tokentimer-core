@@ -255,6 +255,30 @@ describe('CertOpsCertificates list states', () => {
     });
   });
 
+  it('shows the renewal-path badge when the server reports an ineligible pinned agent', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            renewalPathState: 'unavailable',
+            renewalPathReason: 'assigned_agent_ineligible',
+            renewalPathSummary:
+              'The agent assigned to renew this certificate has declared support for issue, deploy, but not for renew.',
+          }),
+        ],
+      })
+    );
+
+    renderPage();
+
+    expect(screen.getByText('Renewal path unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        /declared support for issue, deploy, but not for renew/
+      )
+    ).toBeInTheDocument();
+  });
+
   it('shows an error message distinct from the loading and empty states', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({ error: 'Could not load the managed certificate inventory.' })

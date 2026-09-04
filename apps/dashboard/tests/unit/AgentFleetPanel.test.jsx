@@ -412,7 +412,7 @@ describe('AgentFleetPanel', () => {
     expect(screen.queryByText('Drift (alert)')).not.toBeInTheDocument();
   });
 
-  it('renders a Compatibility column reflecting compatible/outdated/blocked state with the accepted range in the tooltip', () => {
+  it('renders a Compatibility column reflecting compatible/outdated/blocked state without dumping dummy version ceilings', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(
       agentsState({ agents: sampleAgents() })
@@ -429,7 +429,12 @@ describe('AgentFleetPanel', () => {
     expect(blockedBadge).toBeInTheDocument();
     expect(blockedBadge).toHaveAttribute(
       'title',
-      expect.stringContaining('agent 0.1.0-99.999.999, protocol 1.0.0-1.999.999')
+      expect.stringContaining('below the minimum this control plane accepts')
+    );
+    expect(blockedBadge.getAttribute('title')).not.toContain('99.999.999');
+    expect(screen.getByText('Compatible')).toHaveAttribute(
+      'title',
+      'This agent meets the versions this control plane accepts.'
     );
   });
 

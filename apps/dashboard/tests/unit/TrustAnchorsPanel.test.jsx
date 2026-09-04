@@ -36,6 +36,15 @@ vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
   useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsCanManage: () => true,
+  useCertOpsEnabled: () => true,
+  useCertOpsIsWorkspaceAdmin: () => true,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsRequireApprovalAlways: false,
+  }),
+}));
+
 vi.mock('../../src/components/certops/certopsTrustAnchorsApi.js', async () => {
   const actual = await vi.importActual(
     '../../src/components/certops/certopsTrustAnchorsApi.js'
@@ -248,11 +257,12 @@ describe('TrustAnchorsPanel', () => {
 
     expect(screen.getByText('Pending install')).toBeInTheDocument();
     expect(screen.getByText('Needs attention')).toBeInTheDocument();
+    expect(screen.getByText('Claim timed out')).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Check the agent's connectivity/heartbeat, then retry manually."
       )
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText('reconciliation_stale_job_pending')
     ).not.toBeInTheDocument();
@@ -551,11 +561,12 @@ describe('TrustAnchorsPanel', () => {
     renderPanel();
     fireEvent.click(screen.getByText('Internal Root CA'));
 
+    expect(screen.getByText('Agent retired')).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         'This agent has been retired and can no longer be assigned any job.'
       )
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it('prefers a real lastError over pendingReason when both are present on a row', () => {

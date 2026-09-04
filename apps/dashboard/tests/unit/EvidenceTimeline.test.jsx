@@ -583,6 +583,78 @@ describe('EvidenceTimeline', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not repeat the failure message on a job.failed log that says the same thing', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        status: 'failed',
+        errorCode: 'CERTOPS_RENEW_TIMEOUT',
+        errorMessage: 'Executor did not respond in time.',
+      }),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.failed',
+          message: 'Executor did not respond in time.',
+          createdAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getAllByText('Executor did not respond in time.')
+    ).toHaveLength(1);
+    expect(screen.getByText('Job failed')).toBeInTheDocument();
+  });
+
+  it('renders a waiting explanation once for a pending job', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        status: 'pending',
+        pendingReason: {
+          code: 'agent_offline',
+          message:
+            'The assigned agent is offline and cannot claim this job until it heartbeats again.',
+        },
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Agent offline')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'The assigned agent is offline and cannot claim this job until it heartbeats again.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Failure reason')).not.toBeInTheDocument();
+  });
+
+  it('does not repeat the job title in embedded mode', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({ operation: 'distribute-trust' }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
+
+    expect(screen.queryByText('Distribute trust')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'View audit log' })
+    ).toBeInTheDocument();
+  });
+
   it('does not render a failure reason block for a successful job', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),

@@ -835,9 +835,10 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
 
     renderPanel();
 
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(
-      screen.getByText(/could not be confirmed and need manual review/)
-    ).toBeInTheDocument();
+      screen.queryByText(/could not be confirmed and need manual review/)
+    ).not.toBeInTheDocument();
   });
 
   it('prefers a real errorMessage over the reconciliation advisory line', () => {
@@ -855,9 +856,10 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
 
     renderPanel();
 
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(
-      screen.getByText('Lease expired after renew; side effects unknown')
-    ).toBeInTheDocument();
+      screen.queryByText('Lease expired after renew; side effects unknown')
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/could not be confirmed and need manual review/)
     ).not.toBeInTheDocument();
@@ -870,6 +872,32 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
 
     expect(
       screen.queryByText(/could not be confirmed and need manual review/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows pendingReason on a pending job that does not need reconciliation', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          job({
+            status: 'pending',
+            pendingReason: {
+              code: 'operation_unsupported',
+              message:
+                'The assigned agent has declared support for issue, deploy, but not for distribute-trust.',
+            },
+          }),
+        ],
+      })
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Agent cannot run this job')).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        /declared support for issue, deploy, but not for distribute-trust/
+      )
     ).not.toBeInTheDocument();
   });
 

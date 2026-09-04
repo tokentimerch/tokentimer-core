@@ -31,17 +31,22 @@ overrides:
   # GHSA-4x5r-pxfx-6jf8: arbitrary source map file read via sourceMappingURL
   # comment when compiling untrusted input; fixed 7.29.6.
   "@babel/core": 7.29.6
-  qs: 6.15.2
+  # GHSA-x5fp-wj9c-mxmx (arrayLimit bypass on bracket-key comma parse) and
+  # GHSA-4mjr-xmp4-gh2g (stringify throw on attacker-controlled isBuffer),
+  # both fixed in 6.16.0. express/body-parser pull qs transitively.
+  qs: 6.16.0
   ip-address: 10.4.0
   form-data: 4.0.6
   ws: 8.21.0
   # Low-severity DoS when an invalid limit silently disables size enforcement
   # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
   body-parser: 2.3.0
-  # AJV pulls fast-uri; pin past GHSA-q3j6-qgpj-74h6 / GHSA-v39h-62p7-jpjc /
-  # GHSA-4c8g-83qw-93j6 / GHSA-v2hh-gcrm-f6hx / GHSA-7p8r-x3mc-p8w7 (path
-  # traversal + host confusion, including backslash-authority confusion).
-  fast-uri: 3.1.5
+  # AJV pulls fast-uri. 3.1.5 left four later host-confusion / SSRF
+  # advisories open (GHSA-5jgf-p345-68v8 / GHSA-f65p-4m7j-42xc /
+  # GHSA-fph4-wmhf-6fwf / GHSA-jqff-g426-hqxp); 3.1.6 patched them and
+  # 3.1.7 is the current 3.x follow-up. Stay on 3.x so AJV's declared
+  # range is not jumped to 4.x by the override.
+  fast-uri: 3.1.7
 
 allowBuilds:
   esbuild: true

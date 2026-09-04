@@ -154,12 +154,15 @@ export default function CertificateTokenDetailModal({
             {loading ? (
               <>
                 <Spinner size='sm' />
-                <Text fontSize='sm' color='dashboard.modal.muted'>
+                <Text fontSize='sm' color={modalTokens.muted}>
                   Loading token details…
                 </Text>
               </>
             ) : (
-              <Text fontSize='sm' color='red.500'>
+              <Text
+                fontSize='sm'
+                color={error ? modalTokens.danger : modalTokens.muted}
+              >
                 {error || 'This certificate has no linked token yet.'}
               </Text>
             )}
