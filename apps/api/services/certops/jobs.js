@@ -1610,6 +1610,27 @@ async function ensureJobExists(db, workspaceId, jobId) {
   }
 }
 
+/**
+ * Authoritative read of workspaces.certops_require_approval_always.
+ * DB true always wins; an explicit caller hint of true is OR'd for
+ * transitional callers/tests that already resolved the column under a lock.
+ * An explicit false cannot override a true DB value.
+ */
+async function resolveWorkspaceRequiresApprovalAlways(
+  db,
+  workspaceId,
+  explicitOption,
+) {
+  const result = await db.query(
+    `SELECT certops_require_approval_always
+       FROM workspaces
+      WHERE id = $1`,
+    [workspaceId],
+  );
+  const fromDb = result.rows[0]?.certops_require_approval_always === true;
+  return fromDb || explicitOption === true;
+}
+
 async function createCertificateJob(options) {
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
@@ -1659,15 +1680,20 @@ async function createCertificateJob(options) {
   // default initial status; an explicit conflicting status is rejected so a
   // caller cannot both request a gate and bypass it.
   const perJobRequiresApproval = options.requiresApproval === true;
-  // Workspace-wide override (certops_require_approval_always): callers that
-  // already hold the workspace lock (lockWorkspaceForCertOpsSideEffect) pass
-  // the current column value through here. It wins over whatever the caller
-  // requested, including an explicit status, because it is not a per-job
-  // opt-in the caller can negotiate around. protocol_smoke is exempt by the
-  // same by-construction exclusion as every other approval-flow concept.
+  // Workspace-wide override (certops_require_approval_always) is read here,
+  // not trusted from the caller alone: omitting workspaceRequiresApprovalAlways
+  // must not bypass a policy that is on. Callers that already hold the
+  // workspace lock may still pass the column value as a hint; an explicit
+  // true is OR'd in, but an explicit false cannot override a true DB value.
+  // protocol_smoke is exempt by the same by-construction exclusion as every
+  // other approval-flow concept.
   const workspaceForcesApproval =
-    options.workspaceRequiresApprovalAlways === true &&
-    operation !== "protocol_smoke";
+    operation !== "protocol_smoke" &&
+    (await resolveWorkspaceRequiresApprovalAlways(
+      db,
+      workspaceId,
+      options.workspaceRequiresApprovalAlways,
+    ));
   const requiresApproval = perJobRequiresApproval || workspaceForcesApproval;
   if (
     perJobRequiresApproval &&
