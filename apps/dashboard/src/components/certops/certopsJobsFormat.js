@@ -173,6 +173,14 @@ export function jobListAdvisory(job) {
   return null;
 }
 
+/** Operator-facing user label: display name, then the raw id if none. */
+export function userFacingName(userId, displayName) {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  if (name) return name;
+  if (userId == null || userId === '') return '';
+  return String(userId);
+}
+
 /** True when two operator-facing strings are the same explanation. */
 export function sameOperatorMessage(left, right) {
   const a = typeof left === 'string' ? left.trim() : '';

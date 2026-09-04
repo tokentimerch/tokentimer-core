@@ -6,12 +6,14 @@ import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportVaultForm from '../../src/components/imports/ImportVaultForm.jsx';
 import ImportAWSForm from '../../src/components/imports/ImportAWSForm.jsx';
+import ImportGCPForm from '../../src/components/imports/ImportGCPForm.jsx';
 
 const {
   vaultScanMock,
   vaultImportMock,
   awsDetectRegionsMock,
   awsScanMock,
+  gcpScanMock,
   integrationImportMock,
   checkDuplicatesMock,
 } = vi.hoisted(() => ({
@@ -19,6 +21,7 @@ const {
   vaultImportMock: vi.fn(),
   awsDetectRegionsMock: vi.fn(),
   awsScanMock: vi.fn(),
+  gcpScanMock: vi.fn(),
   integrationImportMock: vi.fn(),
   checkDuplicatesMock: vi.fn(),
 }));
@@ -54,6 +57,9 @@ vi.mock('../../src/utils/apiClient', async () => {
     awsAPI: {
       detectRegions: awsDetectRegionsMock,
       scan: awsScanMock,
+    },
+    gcpAPI: {
+      scan: gcpScanMock,
     },
     integrationAPI: {
       checkDuplicates: checkDuplicatesMock,
@@ -250,5 +256,101 @@ describe('Dashboard import forms', () => {
 
     await waitFor(() => expect(integrationImportMock).toHaveBeenCalledTimes(1));
     expect(onImportComplete).toHaveBeenCalled();
+  });
+
+  it('ImportGCPForm scans secrets by default and can scan certificates only', async () => {
+    const onError = vi.fn();
+    const onScanSuccess = vi.fn();
+    gcpScanMock.mockResolvedValue({
+      items: [{ name: 'secret-1', location: 'gcp:proj/secrets/secret-1' }],
+      summary: [{ type: 'secrets', found: 1 }],
+      scan_id: 'scan-1',
+    });
+
+    renderWithProviders(
+      <ImportGCPForm
+        workspaceId='ws-gcp'
+        onImportComplete={vi.fn()}
+        onError={onError}
+        onScanSuccess={onScanSuccess}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='gcp-token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByText(/Scans GCP Secret Manager and SSL certificates/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('gcloud auth print-access-token')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Scan certificates too/i)
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Secrets' })).toBeChecked();
+    expect(
+      screen.getByRole('checkbox', { name: 'Certificates' })
+    ).not.toBeChecked();
+
+    fireEvent.change(screen.getByPlaceholderText('my-project-123'), {
+      target: { value: 'my-project' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('gcp-token'), {
+      target: { value: 'ya29.token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() => expect(gcpScanMock).toHaveBeenCalledTimes(1));
+    expect(gcpScanMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: { secrets: true, certificates: false },
+      })
+    );
+    expect(onScanSuccess).toHaveBeenCalledWith('gcp');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Secrets' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Certificates' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() => expect(gcpScanMock).toHaveBeenCalledTimes(2));
+    expect(gcpScanMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        include: { secrets: false, certificates: true },
+      })
+    );
+  });
+
+  it('ImportGCPForm refuses to scan when neither secrets nor certificates is selected', async () => {
+    const onError = vi.fn();
+    renderWithProviders(
+      <ImportGCPForm
+        workspaceId='ws-gcp'
+        onImportComplete={vi.fn()}
+        onError={onError}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='gcp-token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Secrets' }));
+    expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+    expect(gcpScanMock).not.toHaveBeenCalled();
   });
 });

@@ -116,9 +116,7 @@ export function DashboardDetailsSummary({ items = [] }) {
             borderRightWidth={{
               base: 0,
               sm:
-                index % 2 === 0 && index < visibleItems.length - 1
-                  ? '1px'
-                  : 0,
+                index % 2 === 0 && index < visibleItems.length - 1 ? '1px' : 0,
               lg: index < visibleItems.length - 1 ? '1px' : 0,
             }}
             borderBottomWidth={{

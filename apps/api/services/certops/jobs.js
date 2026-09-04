@@ -23,6 +23,7 @@ const {
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
 const { attachJobPendingReasons } = require("./jobPendingReason");
+const { attachUserDisplayNames } = require("./userDisplayNames");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -2022,11 +2023,17 @@ async function getCertificateJobById(options) {
     normalizeRequiredId(options.jobId),
   );
   if (!job) return null;
-  const [decorated] = await attachJobPendingReasons({
+  const [withPending] = await attachJobPendingReasons({
     db,
     workspaceId: job.workspaceId,
     jobs: [job],
     env: options.env,
+  });
+  const [decorated] = await attachUserDisplayNames({
+    db,
+    records: [withPending],
+    idKey: "approvedByUserId",
+    nameKey: "approvedByDisplayName",
   });
   return decorated;
 }
@@ -2172,11 +2179,17 @@ async function listCertificateJobs(options) {
     params,
   );
 
-  const items = await attachJobPendingReasons({
+  const withPending = await attachJobPendingReasons({
     db,
     workspaceId,
     jobs: result.rows.map(jobFromRow),
     env: options.env,
+  });
+  const items = await attachUserDisplayNames({
+    db,
+    records: withPending,
+    idKey: "approvedByUserId",
+    nameKey: "approvedByDisplayName",
   });
 
   return {
@@ -2370,8 +2383,15 @@ async function listCertificateJobLog(options) {
     [workspaceId, jobId, limit, offset],
   );
 
+  const items = await attachUserDisplayNames({
+    db,
+    records: result.rows.map(jobLogFromRow),
+    idKey: "createdByUserId",
+    nameKey: "createdByDisplayName",
+  });
+
   return {
-    items: result.rows.map(jobLogFromRow),
+    items,
     pagination: { limit, offset },
   };
 }

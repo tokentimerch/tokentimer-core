@@ -41,6 +41,7 @@ import {
   pendingReasonLabel,
   sameOperatorMessage,
   subjectTypeLabel,
+  userFacingName,
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
@@ -49,6 +50,19 @@ import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
+
+function ApprovedByLine({ job, color }) {
+  const name = userFacingName(
+    job?.approvedByUserId,
+    job?.approvedByDisplayName
+  );
+  if (!name) return null;
+  return (
+    <Text fontSize='xs' color={color}>
+      Approved by {name}
+    </Text>
+  );
+}
 
 function RedactionBadge() {
   return (
@@ -186,10 +200,10 @@ function TimelineItem({
   const detail = isEvidence
     ? metadataSummary || subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
-  const decidedByUserId =
+  const decidedByName =
     !isEvidence && (type === 'approval.granted' || type === 'approval.rejected')
-      ? entry.createdByUserId
-      : null;
+      ? userFacingName(entry.createdByUserId, entry.createdByDisplayName)
+      : '';
 
   return (
     <Box position='relative' pl={6} pb={4} _last={{ pb: 0 }}>
@@ -261,8 +275,10 @@ function TimelineItem({
             </Box>
           </Box>
         ) : null}
-        {decidedByUserId ? (
-          <CopyableId id={decidedByUserId} label='Decided by user' size='xs' />
+        {decidedByName ? (
+          <Text fontSize='xs' color={muted}>
+            Decided by {decidedByName}
+          </Text>
         ) : null}
         <Text fontSize='xs' color={muted}>
           {timestamp}
@@ -468,12 +484,7 @@ export default function EvidenceTimeline({
                             label="Agent's pinned signing key"
                           />
                         ) : null}
-                        {job.approvedByUserId ? (
-                          <CopyableId
-                            id={job.approvedByUserId}
-                            label='Approved by user'
-                          />
-                        ) : null}
+                        <ApprovedByLine job={job} />
                         {job.leaseExpiresAt ? (
                           <Text fontSize='xs'>
                             Lease expires {formatDateTime(job.leaseExpiresAt)}
@@ -551,12 +562,7 @@ export default function EvidenceTimeline({
                     label="Agent's pinned signing key"
                   />
                 ) : null}
-                {job.approvedByUserId ? (
-                  <CopyableId
-                    id={job.approvedByUserId}
-                    label='Approved by user'
-                  />
-                ) : null}
+                <ApprovedByLine job={job} color={muted} />
               </HStack>
               {job.leaseExpiresAt || job.attemptCount || job.approvedAt ? (
                 <HStack spacing={3} flexWrap='wrap'>

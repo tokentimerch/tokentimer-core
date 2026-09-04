@@ -24,6 +24,7 @@ import {
   jobOperationLabel,
   subjectTypeLabel,
   truncateId,
+  userFacingName,
 } from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsJobs } from './useCertOpsJobs.js';
@@ -340,7 +341,10 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     <JobStatusBadge status={job.status} />
                     {job.approvedByUserId ? (
                       <Tooltip
-                        label={`Approved by user ${job.approvedByUserId}${
+                        label={`Approved by ${userFacingName(
+                          job.approvedByUserId,
+                          job.approvedByDisplayName
+                        )}${
                           job.approvedAt
                             ? ` at ${formatDateTime(job.approvedAt)}`
                             : ''

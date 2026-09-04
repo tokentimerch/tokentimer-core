@@ -99,7 +99,22 @@ describe("CertOps job projection approval attribution", () => {
     );
 
     assert.equal(approved.approvedByUserId, "user-42");
+    assert.equal(approved.approvedByDisplayName, null);
     assert.equal(approved.approvedAt, "2026-01-01T00:05:00.000Z");
+  });
+
+  it("jobSummary carries approvedByDisplayName when the service resolved one", () => {
+    const approved = jobSummary(
+      claimedJob({
+        status: "approved",
+        approvedByUserId: 9,
+        approvedByDisplayName: "Alice Admin",
+        approvedAt: "2026-01-01T00:05:00.000Z",
+      }),
+    );
+
+    assert.equal(approved.approvedByUserId, 9);
+    assert.equal(approved.approvedByDisplayName, "Alice Admin");
   });
 
   it("jobSummary surfaces null approvedByUserId/approvedAt rather than dropping the keys", () => {
@@ -112,6 +127,7 @@ describe("CertOps job projection approval attribution", () => {
     );
 
     assert.equal(pending.approvedByUserId, null);
+    assert.equal(pending.approvedByDisplayName, null);
     assert.equal(pending.approvedAt, null);
   });
 
@@ -125,6 +141,7 @@ describe("CertOps job projection approval attribution", () => {
     );
 
     assert.equal(detail.approvedByUserId, "user-42");
+    assert.equal(detail.approvedByDisplayName, null);
     assert.equal(detail.approvedAt, "2026-01-01T00:05:00.000Z");
   });
 
@@ -160,6 +177,7 @@ describe("CertOps job projection approval attribution", () => {
     );
 
     assert.equal(detail.approvedByUserId, null);
+    assert.equal(detail.approvedByDisplayName, null);
     assert.equal(detail.approvedAt, null);
   });
 });
