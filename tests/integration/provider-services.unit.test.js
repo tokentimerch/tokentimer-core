@@ -924,5 +924,503 @@ describe("Provider service unit coverage", () => {
         complete: true,
       });
     });
+
+    it("discovers Certificate Manager and Compute Engine SSL certificates", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return {
+            data: {
+              certificates: [
+                {
+                  name: "projects/proj/locations/global/certificates/cm-cert",
+                  expireTime: "2030-01-01T00:00:00Z",
+                  createTime: "2025-01-01T00:00:00Z",
+                  sanDnsnames: ["example.com"],
+                  managed: { state: "ACTIVE" },
+                },
+              ],
+            },
+          };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: {
+                  sslCertificates: [
+                    {
+                      name: "lb-ssl-cert",
+                      expireTime: "2031-02-02T00:00:00Z",
+                      creationTimestamp: "2025-02-02T00:00:00Z",
+                      subjectAlternativeNames: ["lb.example.com"],
+                    },
+                  ],
+                },
+              },
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const cmItem = result.items.find(
+        (i) => i.sourceKind === "gcp-certificate-manager-cert",
+      );
+      expect(cmItem).to.include({
+        sourceObjectId: "cm-cert",
+        category: "cert",
+        type: "ssl_cert",
+        expiration: "2030-01-01",
+      });
+      expect(cmItem.dimensions).to.deep.equal({ location: "global" });
+
+      const computeItem = result.items.find(
+        (i) => i.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(computeItem).to.include({
+        // No selfLink in this fixture -- falls back to "<scope>/<name>".
+        sourceObjectId: "global/lb-ssl-cert",
+        name: "lb-ssl-cert",
+        category: "cert",
+        type: "ssl_cert",
+        expiration: "2031-02-02",
+      });
+      expect(computeItem.dimensions).to.deep.equal({ location: "global" });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        found: 1,
+        complete: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 1,
+        complete: true,
+      });
+    });
+
+    it("reports an empty complete sub-scope for both cert kinds when the project has none", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: {} } };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      expect(result.items).to.have.length(0);
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+    });
+
+    it("marks a cert sub-scope incomplete on API error without failing the whole scan", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          const err = new Error("denied");
+          err.response = {
+            status: 403,
+            data: { error: "PERMISSION_DENIED" },
+          };
+          throw err;
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: {} } };
+        }
+        return {
+          data: { secrets: [{ name: "projects/proj/secrets/only-secret" }] },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: true, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        complete: false,
+        status: 403,
+      });
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 0,
+        complete: true,
+      });
+      // A failed cert sub-scope must not sink the secrets sub-scope or the
+      // overall scan when items were still found elsewhere.
+      expect(result.items.some((i) => i.sourceKind === "gcp-secret-manager"))
+        .to.equal(true);
+    });
+
+    it("discovers both regional and global Compute Engine SSL certificates via aggregatedList", async () => {
+      let requestedUrl = null;
+      const axiosMock = async (config) => {
+        requestedUrl = String(config.url || "");
+        return {
+          data: {
+            items: {
+              global: {
+                sslCertificates: [
+                  {
+                    name: "global-cert",
+                    expireTime: "2030-06-01T00:00:00Z",
+                    creationTimestamp: "2025-01-01T00:00:00Z",
+                    subjectAlternativeNames: ["global.example.com"],
+                  },
+                ],
+              },
+              "regions/us-central1": {
+                sslCertificates: [
+                  {
+                    name: "regional-cert",
+                    expireTime: "2030-07-01T00:00:00Z",
+                    creationTimestamp: "2025-01-02T00:00:00Z",
+                    subjectAlternativeNames: ["regional.example.com"],
+                    region:
+                      "https://www.googleapis.com/compute/v1/projects/proj/regions/us-central1",
+                  },
+                ],
+              },
+            },
+          },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp._test.listComputeSslCertificates({
+        projectId: "proj",
+        accessToken: "token",
+      });
+
+      expect(requestedUrl).to.include("/aggregated/sslCertificates");
+      expect(result.truncated).to.equal(false);
+      const names = result.items.map((i) => i.name).sort();
+      expect(names).to.deep.equal(["global-cert", "regional-cert"]);
+      const globalCert = result.items.find((i) => i.name === "global-cert");
+      const regionalCert = result.items.find(
+        (i) => i.name === "regional-cert",
+      );
+      expect(globalCert.scope).to.equal("global");
+      expect(regionalCert.scope).to.equal("regions/us-central1");
+    });
+
+    it("keeps same-named Compute SSL certificates in different scopes distinct, each with its own scope in dimensions", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: {
+                  sslCertificates: [
+                    {
+                      name: "foo",
+                      expireTime: "2030-06-01T00:00:00Z",
+                      creationTimestamp: "2025-01-01T00:00:00Z",
+                    },
+                  ],
+                },
+                "regions/us-central1": {
+                  sslCertificates: [
+                    {
+                      name: "foo",
+                      expireTime: "2030-07-01T00:00:00Z",
+                      creationTimestamp: "2025-01-02T00:00:00Z",
+                    },
+                  ],
+                },
+              },
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const sslCertItems = result.items.filter(
+        (i) => i.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(sslCertItems).to.have.length(2);
+
+      const ids = sslCertItems.map((i) => i.sourceObjectId);
+      // Same bare name in two scopes must not collapse into one identity --
+      // dedup keys on (scan_id, source_kind, source_object_id).
+      expect(new Set(ids).size).to.equal(2);
+
+      const globalItem = sslCertItems.find((i) => i.region === null);
+      const regionalItem = sslCertItems.find(
+        (i) => i.region === "us-central1",
+      );
+      expect(globalItem.dimensions).to.deep.equal({ location: "global" });
+      expect(regionalItem.dimensions).to.deep.equal({
+        location: "us-central1",
+      });
+      expect(globalItem.sourceObjectId).to.not.equal(
+        regionalItem.sourceObjectId,
+      );
+    });
+
+    it("marks the Compute SSL cert sub-scope incomplete when aggregatedList reports unreachable scopes, so cleanup does not run", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: {
+                  sslCertificates: [
+                    {
+                      name: "global-cert",
+                      expireTime: "2030-06-01T00:00:00Z",
+                      creationTimestamp: "2025-01-01T00:00:00Z",
+                    },
+                  ],
+                },
+              },
+              unreachables: ["regions/us-east1"],
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      // A region aggregatedList could not enumerate is missing from items,
+      // not confirmed empty -- cleanup must be skipped for this pass.
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        found: 1,
+        complete: false,
+        truncated: true,
+      });
+      expect(byKind["gcp-compute-ssl-cert"].unreachableScopes).to.deep.equal([
+        "regions/us-east1",
+      ]);
+      // The reachable global certificate was still listed -- only the
+      // sub-scope's completeness flag is affected, not the found items.
+      expect(
+        result.items.some(
+          (i) =>
+            i.sourceKind === "gcp-compute-ssl-cert" &&
+            i.name === "global-cert",
+        ),
+      ).to.equal(true);
+    });
+
+    it("exposes unreachables from the raw aggregatedList response on listComputeSslCertificates", async () => {
+      const axiosMock = async () => ({
+        data: {
+          items: {
+            global: {
+              sslCertificates: [{ name: "global-cert" }],
+            },
+          },
+          unreachables: ["regions/us-east1", "regions/us-east1"],
+        },
+      });
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp._test.listComputeSslCertificates({
+        projectId: "proj",
+        accessToken: "token",
+      });
+
+      expect(result.unreachable).to.deep.equal(["regions/us-east1"]);
+    });
+
+    it("marks a cert sub-scope errored (not complete-empty) on a 404 from Certificate Manager", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          const err = new Error("not found");
+          err.response = {
+            status: 404,
+            data: { error: "API_NOT_ENABLED" },
+          };
+          throw err;
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: {} } };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      // A 404 must never be treated as "confirmed zero certificates" --
+      // this sub-scope must be reported incomplete so cleanup skips it
+      // instead of deleting every previously-imported certificate of this
+      // kind.
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        complete: false,
+        status: 404,
+      });
+      expect(
+        result.items.some(
+          (i) => i.sourceKind === "gcp-certificate-manager-cert",
+        ),
+      ).to.equal(false);
+    });
+
+    it("marks a cert sub-scope errored (not complete-empty) on a 404 from Compute SSL certificates", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          const err = new Error("not found");
+          err.response = {
+            status: 404,
+            data: { error: "API_NOT_ENABLED" },
+          };
+          throw err;
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(byKind["gcp-compute-ssl-cert"]).to.include({
+        complete: false,
+        status: 404,
+      });
+      expect(
+        result.items.some((i) => i.sourceKind === "gcp-compute-ssl-cert"),
+      ).to.equal(false);
+    });
+
+    it("marks a cert kind incomplete (not complete) when the shared maxItems budget truncates it, even though its own listing wasn't truncated", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          // Only one certificate, well within any per-kind page/pagination
+          // limit -- listCertificateManagerCertificates's own `truncated`
+          // must be false here. Any incompleteness must come purely from
+          // scanGCP's shared items[]/maxItems budget already being spent
+          // by secrets.
+          return {
+            data: {
+              certificates: [
+                {
+                  name: "projects/proj/locations/global/certificates/cm-cert-1",
+                  expireTime: "2030-01-01T00:00:00Z",
+                },
+              ],
+            },
+          };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return { data: { items: {} } };
+        }
+        return {
+          data: {
+            secrets: [
+              { name: "projects/proj/secrets/only-secret" },
+            ],
+          },
+        };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      // The one secret consumes the entire shared budget before the
+      // certificate kinds get a turn, so the cert-manager kind is cut
+      // short by the budget alone, not by its own pagination/page cap.
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: true, certificates: true },
+        maxItems: 1,
+      });
+
+      const byKind = Object.fromEntries(
+        result.summary.map((s) => [s.sourceKind, s]),
+      );
+      expect(result.items.length).to.equal(1);
+      expect(result.items[0].sourceKind).to.equal("gcp-secret-manager");
+      expect(byKind["gcp-certificate-manager-cert"]).to.include({
+        found: 0,
+        truncated: true,
+        complete: false,
+      });
+    });
   });
 });

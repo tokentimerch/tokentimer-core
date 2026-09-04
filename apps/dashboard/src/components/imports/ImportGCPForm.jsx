@@ -93,6 +93,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [scanCertificates, setScanCertificates] = React.useState(false);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
@@ -124,6 +125,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         workspaceId,
         projectId: gcpProjectId,
         accessToken: gcpAccessToken,
+        include: { secrets: true, certificates: scanCertificates },
         maxItems: 2000,
       });
       const items = Array.isArray(res?.items) ? res.items : [];
@@ -209,7 +211,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
       scanParams: {
         projectId: gcpProjectId,
-        include: { secrets: true },
+        include: { secrets: true, certificates: scanCertificates },
       },
     }),
   }));
@@ -218,11 +220,14 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     <VStack align='stretch' spacing={3}>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
-          Scans GCP Secret Manager for secrets with expiration dates. Paste an
-          access token from Cloud Shell (`gcloud auth print-access-token`), not
-          a JSON key. Grant Secret Manager Viewer on the project; Secret
-          Accessor cannot list secrets. Token is used for this scan and not
-          stored. If auto-sync is enabled, the token is stored encrypted.
+          Scans GCP Secret Manager for secrets with expiration dates, and
+          optionally Certificate Manager and Compute Engine SSL certificates.
+          Paste an access token from Cloud Shell (`gcloud auth
+          print-access-token`), not a JSON key. Grant Secret Manager Viewer on
+          the project; for certificate scanning also grant Certificate Manager
+          Viewer and Compute Viewer. Secret Accessor cannot list secrets. Token
+          is used for this scan and not stored. If auto-sync is enabled, the
+          token is stored encrypted.
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
@@ -231,7 +236,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             textDecoration='underline'
             isExternal
           >
-            Learn more about importing from GCP Secret Manager →
+            Learn more about importing from GCP →
           </ChakraLink>
         </Text>
       </Box>
@@ -275,13 +280,21 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>
           <Checkbox
+            isChecked={scanCertificates}
+            onChange={e => setScanCertificates(e.target.checked)}
+            size='sm'
+          >
+            Scan certificates too (Certificate Manager and Compute Engine SSL
+            certificates)
+          </Checkbox>
+          <Checkbox
             isChecked={cleanupObsolete}
             onChange={e => setCleanupObsolete(e.target.checked)}
             size='sm'
             colorScheme='red'
             isDisabled={!lastScanId}
           >
-            Remove previously imported secrets no longer found at the source
+            Remove previously imported items no longer found at the source
           </Checkbox>
           {!lastScanId ? (
             <Text fontSize='xs' color={helpTextColor} pl={6}>
@@ -301,7 +314,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           ) : null}
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes previously imported secrets from this GCP project that no
+              Deletes previously imported items from this GCP project that no
               longer appear anywhere in this scan's results, regardless of which
               items you select for import below. This cannot be undone.
             </Text>
