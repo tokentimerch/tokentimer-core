@@ -393,6 +393,23 @@ function getApiLimiter() {
   };
 }
 
+// Defense-in-depth endpoint cap for CSRF token generation (CWE-400/770).
+// Uses in-process storage — aggregate limit scales with number of API processes.
+// Cluster-wide enforcement is provided by the application's existing infra layer.
+function createCsrfTokenLimiter({ windowMs, max } = {}) {
+  return rateLimit({
+    windowMs: windowMs ?? intEnv("CSRF_TOKEN_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+    max: max ?? intEnv("CSRF_TOKEN_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 60),
+    message: "Too many CSRF token requests, please try again later.",
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: false,
+    keyGenerator: (req) => resolveClientIp(req) || ipKeyGenerator(req),
+  });
+}
+
+const csrfTokenLimiter = createCsrfTokenLimiter();
+
 const noRateLimit = (req, res, next) => next();
 
 /**
@@ -444,6 +461,8 @@ module.exports = {
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
+  csrfTokenLimiter,
+  createCsrfTokenLimiter,
   noRateLimit,
   applyGlobalRateLimit,
   normalizeEmail,
