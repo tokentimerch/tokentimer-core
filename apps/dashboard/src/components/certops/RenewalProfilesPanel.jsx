@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Badge,
   Box,
@@ -50,10 +50,7 @@ import {
 import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
 import {
   CertOpsMobileFieldLabel,
-  CertOpsSortableHeader,
   CertOpsTruncatedText,
-  nextCertOpsTableSort,
-  sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 
@@ -90,24 +87,6 @@ const PROFILE_COLUMNS = [
   ['leadTime', 'Lead time'],
   ['key', 'Key'],
 ];
-
-function profileSortValue(profile, key) {
-  if (key === 'profile') return profile.name || '';
-  if (key === 'certificates') return Number(profile.certificateCount || 0);
-  if (key === 'autoRenew') return profile.autoRenewEnabled ? 1 : 0;
-  if (key === 'leadTime') {
-    return profile.renewBeforeDays == null
-      ? null
-      : Number(profile.renewBeforeDays);
-  }
-  if (key === 'key') {
-    const renewal = profile.renewalProfile || {};
-    return renewal.keyAlgorithm
-      ? `${renewal.keyAlgorithm} ${renewal.keySize || ''}`.trim()
-      : '';
-  }
-  return '';
-}
 
 /**
  * Confirmation for switching automatic renewal off.
@@ -268,11 +247,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
   const tableStyles = useCertOpsResponsiveTableStyles();
-  const [sort, setSort] = useState({ key: null, direction: 'asc' });
-  const sortedProfiles = useMemo(
-    () => sortCertOpsTableRows(profiles, sort, profileSortValue),
-    [profiles, sort]
-  );
   // The panel token is deliberately translucent, so it cannot serve as the
   // backdrop for a pinned cell: scrolled columns show through it. This is an
   // opaque approximation of the same surface.
@@ -392,17 +366,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {PROFILE_COLUMNS.map(([key, label]) => (
-                    <CertOpsSortableHeader
-                      key={key}
-                      label={label}
-                      sortKey={key}
-                      sort={sort}
-                      onSort={sortKey =>
-                        setSort(current =>
-                          nextCertOpsTableSort(current, sortKey)
-                        )
-                      }
-                    />
+                    <Th key={key}>{label}</Th>
                   ))}
                   <Th textAlign='right' {...stickyActions}>
                     Actions
@@ -410,7 +374,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                 </Tr>
               </Thead>
               <Tbody {...tableStyles.tbodyProps}>
-                {sortedProfiles.map(profile => {
+                {profiles.map(profile => {
                   const badge = statusBadge(profile);
                   const renewal = profile.renewalProfile || {};
                   const rowSaving = saving === profile.id;

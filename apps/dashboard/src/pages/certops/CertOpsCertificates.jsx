@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Badge,
   Box,
@@ -39,8 +39,6 @@ import {
   expiryDescriptor,
   formatDate,
   isRetiredStatus,
-  keyModeLabel,
-  renewalDescriptor,
   renewalSetupDescriptor,
   sourceLabel,
   statusLabel,
@@ -83,76 +81,6 @@ const CERTIFICATE_TABLE_COLUMNS = [
   { key: 'keyLocality', label: 'Key locality' },
   { key: 'source', label: 'Source' },
 ];
-
-const SORT_HEADER_BUTTON_PROPS = {
-  variant: 'ghost',
-  size: 'xs',
-  px: 1,
-  h: '24px',
-  minH: '24px',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'flex-start',
-  lineHeight: '1',
-  whiteSpace: 'nowrap',
-  color: 'rgba(148, 163, 184, 0.95)',
-  _hover: {
-    bg: 'rgba(30, 41, 59, 0.72)',
-    color: 'white',
-  },
-};
-
-function CertificateSortableHeader({ column, sort, onSort }) {
-  const isActive = sort.key === column.key;
-  return (
-    <Th
-      aria-sort={
-        isActive
-          ? sort.direction === 'asc'
-            ? 'ascending'
-            : 'descending'
-          : 'none'
-      }
-    >
-      <Button
-        {...SORT_HEADER_BUTTON_PROPS}
-        onClick={() => onSort(column.key)}
-        aria-label={`Sort by ${column.label}`}
-      >
-        {column.label}
-        <Text
-          as='span'
-          display='inline-block'
-          minW='30px'
-          ml={2}
-          fontSize='10px'
-          lineHeight='1'
-          textAlign='left'
-          color='rgba(147, 197, 253, 0.96)'
-          visibility={isActive ? 'visible' : 'hidden'}
-          aria-hidden={!isActive}
-        >
-          {isActive && sort.direction === 'desc' ? 'Desc' : 'Asc'}
-        </Text>
-      </Button>
-    </Th>
-  );
-}
-
-function certificateSortValue(certificate, key) {
-  if (key === 'certificate') return certificateDisplayName(certificate);
-  if (key === 'status') return statusLabel(certificate.status);
-  if (key === 'expiry') {
-    const timestamp = Date.parse(certificate.notAfter);
-    return Number.isNaN(timestamp) ? null : timestamp;
-  }
-  if (key === 'renewal') {
-    return renewalDescriptor(certificate.renewal).label;
-  }
-  if (key === 'keyLocality') return keyModeLabel(certificate.keyMode);
-  if (key === 'source') return sourceLabel(certificate.source);
-  return '';
-}
 
 function MobileFieldLabel({ children, color }) {
   return (
@@ -356,35 +284,6 @@ export default function CertOpsCertificates() {
   const [detailsTarget, setDetailsTarget] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);
-  const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
-
-  const sortedCertificates = useMemo(() => {
-    const direction = sort.direction === 'asc' ? 1 : -1;
-    return certificates.slice().sort((left, right) => {
-      const leftValue = certificateSortValue(left, sort.key);
-      const rightValue = certificateSortValue(right, sort.key);
-      if (leftValue === null) return rightValue === null ? 0 : 1;
-      if (rightValue === null) return -1;
-      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-        return (leftValue - rightValue) * direction;
-      }
-      return (
-        String(leftValue).localeCompare(String(rightValue), undefined, {
-          numeric: true,
-          sensitivity: 'base',
-        }) * direction
-      );
-    });
-  }, [certificates, sort]);
-
-  const handleSort = key => {
-    setSort(current => ({
-      key,
-      direction:
-        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
-    }));
-  };
-
   const retiredCount = useRetiredCertificateCount({
     workspaceId,
     enabled,
@@ -615,12 +514,7 @@ export default function CertOpsCertificates() {
               <Thead display={{ base: 'none', lg: 'table-header-group' }}>
                 <Tr>
                   {CERTIFICATE_TABLE_COLUMNS.map(column => (
-                    <CertificateSortableHeader
-                      key={column.key}
-                      column={column}
-                      sort={sort}
-                      onSort={handleSort}
-                    />
+                    <Th key={column.key}>{column.label}</Th>
                   ))}
                   <Th textAlign='right'>Actions</Th>
                 </Tr>
@@ -629,7 +523,7 @@ export default function CertOpsCertificates() {
                 display={{ base: 'grid', lg: 'table-row-group' }}
                 gap={{ base: 3, lg: 0 }}
               >
-                {sortedCertificates.map(certificate => {
+                {certificates.map(certificate => {
                   const expiry = expiryDescriptor(certificate.notAfter);
                   const sans = Array.isArray(certificate.subjectAltNames)
                     ? certificate.subjectAltNames

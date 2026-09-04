@@ -211,6 +211,30 @@ describe('AgentFleetPanel', () => {
     expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
   });
 
+  it('preserves the server page order without offering page-local sorting', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents().slice(0, 2);
+    agents[0].name = 'zulu-agent';
+    agents[1].name = 'alpha-agent';
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({
+        agents,
+        pagination: { limit: 20, offset: 20, total: 100 },
+      })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    const first = screen.getByText('zulu-agent');
+    const second = screen.getByText('alpha-agent');
+    expect(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: /Sort by/i })
+    ).not.toBeInTheDocument();
+  });
+
   it('renders a friendly OS label from the raw platform, and unknown/missing values safely', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(
@@ -247,7 +271,9 @@ describe('AgentFleetPanel', () => {
 
     renderWithProviders(<AgentFleetPanel />);
 
-    expect(screen.getByText(/3 auto-renew certificates affected/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/3 auto-renew certificates affected/)
+    ).toBeInTheDocument();
   });
 
   it('hides the affected-certificates hint for an active agent or a zero count', () => {
@@ -258,7 +284,9 @@ describe('AgentFleetPanel', () => {
 
     renderWithProviders(<AgentFleetPanel />);
 
-    expect(screen.queryByText(/auto-renew certificate/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/auto-renew certificate/)
+    ).not.toBeInTheDocument();
   });
 
   it('shows a Stale badge instead of Active when livenessState says the heartbeat is overdue (sweep has not yet caught up)', () => {
@@ -530,7 +558,11 @@ describe('AgentFleetPanel', () => {
       agentsState({ agents: sampleAgents(), refresh })
     );
     updateAgentAlertSettingsMock.mockResolvedValue({
-      agent: { id: 'row-1', downtimeAlertsEnabled: false, contactGroupId: 'g1' },
+      agent: {
+        id: 'row-1',
+        downtimeAlertsEnabled: false,
+        contactGroupId: 'g1',
+      },
     });
 
     renderWithProviders(<AgentFleetPanel />);
@@ -538,7 +570,9 @@ describe('AgentFleetPanel', () => {
     fireEvent.click(
       screen.getAllByRole('button', { name: 'Edit alerting' })[0]
     );
-    expect(await screen.findByText(/Downtime alert settings for/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Downtime alert settings for/)
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
@@ -548,9 +582,7 @@ describe('AgentFleetPanel', () => {
     ).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByText(
-        'Alert when this agent has not been seen for 10 minutes'
-      )
+      screen.getByText('Alert when this agent has not been seen for 10 minutes')
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

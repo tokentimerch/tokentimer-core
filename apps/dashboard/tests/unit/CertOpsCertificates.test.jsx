@@ -160,6 +160,37 @@ describe('CertOpsCertificates list states', () => {
     expect(screen.getByText('No auto-renewal')).toBeInTheDocument();
   });
 
+  it('preserves the server page order without offering page-local sorting', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            id: 'cert-zulu',
+            commonName: 'zulu.example.test',
+            notAfter: '2099-12-31T00:00:00.000Z',
+          }),
+          certificate({
+            id: 'cert-alpha',
+            commonName: 'alpha.example.test',
+            notAfter: '2027-01-01T00:00:00.000Z',
+          }),
+        ],
+        pagination: { limit: 20, offset: 20, total: 100 },
+      })
+    );
+
+    renderPage();
+
+    const first = screen.getByText('zulu.example.test');
+    const second = screen.getByText('alpha.example.test');
+    expect(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: /Sort by/i })
+    ).not.toBeInTheDocument();
+  });
+
   it('places dashboard-style pagination above the table and uses icon actions', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({

@@ -1,4 +1,3 @@
-import { useMemo, useState } from 'react';
 import {
   Badge,
   Box,
@@ -11,6 +10,7 @@ import {
   Tbody,
   Td,
   Text,
+  Th,
   Thead,
   Tooltip,
   Tr,
@@ -25,10 +25,7 @@ import {
 import JobStatusBadge from './JobStatusBadge.jsx';
 import {
   CertOpsMobileFieldLabel,
-  CertOpsSortableHeader,
   CertOpsTruncatedText,
-  nextCertOpsTableSort,
-  sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
@@ -92,21 +89,6 @@ const RENEWAL_COLUMNS = [
   ['lastAttempt', 'Last attempt'],
 ];
 
-function renewalSortValue(item, key) {
-  if (key === 'certificate') return item.commonName || '';
-  if (key === 'expires') {
-    const value = Date.parse(item.notAfter);
-    return Number.isNaN(value) ? null : value;
-  }
-  if (key === 'renewalWindow') {
-    const value = Date.parse(item.renewsFrom);
-    return Number.isNaN(value) ? null : value;
-  }
-  if (key === 'autoRenew') return item.autoRenewEnabled ? 1 : 0;
-  if (key === 'lastAttempt') return item.lastRenewJobStatus || '';
-  return '';
-}
-
 function blockedDescriptor(reason) {
   return BLOCKED_REASONS[reason] || BLOCKED_FALLBACK;
 }
@@ -166,11 +148,6 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
   const tableStyles = useCertOpsResponsiveTableStyles();
-  const [sort, setSort] = useState({ key: null, direction: 'asc' });
-  const sortedRenewals = useMemo(
-    () => sortCertOpsTableRows(renewals, sort, renewalSortValue),
-    [renewals, sort]
-  );
 
   const switchedOff = renewals.filter(
     item => item.blockedReason === 'auto_renew_disabled'
@@ -264,22 +241,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {RENEWAL_COLUMNS.map(([key, label]) => (
-                    <CertOpsSortableHeader
-                      key={key}
-                      label={label}
-                      sortKey={key}
-                      sort={sort}
-                      onSort={sortKey =>
-                        setSort(current =>
-                          nextCertOpsTableSort(current, sortKey)
-                        )
-                      }
-                    />
+                    <Th key={key}>{label}</Th>
                   ))}
                 </Tr>
               </Thead>
               <Tbody {...tableStyles.tbodyProps}>
-                {sortedRenewals.map(item => {
+                {renewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
                   return (
                     <Tr key={item.certificateId} {...tableStyles.rowProps}>

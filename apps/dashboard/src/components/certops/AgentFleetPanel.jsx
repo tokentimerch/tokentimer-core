@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -55,10 +55,7 @@ import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
   CertOpsMobileFieldLabel,
-  CertOpsSortableHeader,
   CertOpsTruncatedText,
-  nextCertOpsTableSort,
-  sortCertOpsTableRows,
   useCertOpsResponsiveTableStyles,
 } from './CertOpsResponsiveTable.jsx';
 
@@ -144,37 +141,6 @@ const AGENT_COLUMNS = [
   ['lastHeartbeat', 'Last heartbeat'],
 ];
 
-function agentSortValue(agent, key) {
-  if (key === 'agent') return agent.name || agent.hostname || '';
-  if (key === 'os') return platformLabel(agent.platform);
-  if (key === 'status') {
-    const status = String(displayAgentStatus(agent) || '').toLowerCase();
-    return AGENT_STATUS_LABEL[status] || status;
-  }
-  if (key === 'version') return agent.agentVersion || '';
-  if (key === 'protocol') {
-    return agent.protocolVersion == null ? null : Number(agent.protocolVersion);
-  }
-  if (key === 'clockDrift') {
-    return agent.clockOffsetMs == null ? null : Number(agent.clockOffsetMs);
-  }
-  if (key === 'ntp') {
-    return agent.ntpSynced == null ? null : agent.ntpSynced ? 1 : 0;
-  }
-  if (key === 'execution') {
-    return Array.isArray(agent.supportedOperations) &&
-      agent.supportedOperations.length > 0
-      ? 1
-      : 0;
-  }
-  if (key === 'signingKey') return agent.pinnedSigningKeyId || '';
-  if (key === 'lastHeartbeat') {
-    const value = Date.parse(agent.lastSeenAt);
-    return Number.isNaN(value) ? null : value;
-  }
-  return '';
-}
-
 /** Clock offsets beyond this are flagged as drifted in the fleet table. */
 const CLOCK_DRIFT_WARN_MS = 5000;
 
@@ -220,7 +186,9 @@ function NtpBadge({ ntpSynced }) {
  * caveat explicit rather than asserting a diagnosis this field can't prove.
  */
 function ExecutionCapabilityBadge({ supportedOperations }) {
-  const declared = Array.isArray(supportedOperations) ? supportedOperations : [];
+  const declared = Array.isArray(supportedOperations)
+    ? supportedOperations
+    : [];
   if (declared.length > 0) {
     return (
       <Badge
@@ -606,9 +574,6 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
         ...tableStyles.tableProps.sx['thead th'],
         px: 2,
       },
-      'thead th button': {
-        px: 0,
-      },
       'tbody td': {
         ...tableStyles.tableProps.sx['tbody td'],
         verticalAlign: 'top',
@@ -633,12 +598,6 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     py: { base: 2, lg: '0.45rem' },
     verticalAlign: 'top',
   };
-  const [sort, setSort] = useState({ key: null, direction: 'asc' });
-  const sortedAgents = useMemo(
-    () => sortCertOpsTableRows(agents, sort, agentSortValue),
-    [agents, sort]
-  );
-
   if (enabled !== true) return null;
 
   const handleRetire = async ({ force, reason }) => {
@@ -740,23 +699,13 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
               <Thead {...tableStyles.theadProps}>
                 <Tr>
                   {AGENT_COLUMNS.map(([key, label]) => (
-                    <CertOpsSortableHeader
-                      key={key}
-                      label={label}
-                      sortKey={key}
-                      sort={sort}
-                      onSort={sortKey =>
-                        setSort(current =>
-                          nextCertOpsTableSort(current, sortKey)
-                        )
-                      }
-                    />
+                    <Th key={key}>{label}</Th>
                   ))}
                   {canManage ? <Th textAlign='right'>Actions</Th> : null}
                 </Tr>
               </Thead>
               <Tbody {...tableStyles.tbodyProps}>
-                {sortedAgents.map(agent => {
+                {agents.map(agent => {
                   const status = String(agent.status || '').toLowerCase();
                   return (
                     <Tr key={agent.id} {...tableStyles.rowProps}>

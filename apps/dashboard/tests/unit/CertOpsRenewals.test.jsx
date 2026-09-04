@@ -192,6 +192,16 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('app.example.com')).toBeInTheDocument();
   });
 
+  it('does not offer page-local sorting for either paginated table', async () => {
+    renderPage();
+
+    expect(await screen.findByText('Upcoming renewals')).toBeInTheDocument();
+    expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Sort by/i })
+    ).not.toBeInTheDocument();
+  });
+
   it('says a certificate is already in its renewal window rather than showing a past date', async () => {
     // A renewsFrom in the past means the scheduler is acting on it now. Showing
     // a stale date would read as "nothing happening until then".
