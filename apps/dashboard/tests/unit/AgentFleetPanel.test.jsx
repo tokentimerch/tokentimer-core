@@ -102,11 +102,19 @@ function sampleAgents() {
       agentVersion: '1.2.3',
       protocolVersion: 2,
       clockOffsetMs: 120,
+      clockDriftState: 'ok',
       ntpSynced: true,
       pinnedSigningKeyId: 'ttsk_0123456789abcdef',
       lastSeenAt: new Date(Date.now() - 60000).toISOString(),
       downtimeAlertsEnabled: true,
       contactGroupId: null,
+      compatibilityState: 'compatible',
+      compatibilityRange: {
+        minAgentVersion: '0.1.0',
+        maxAgentVersion: '99.999.999',
+        minProtocolVersion: '1.0.0',
+        maxProtocolVersion: '1.999.999',
+      },
     },
     {
       id: 'row-2',
@@ -118,12 +126,20 @@ function sampleAgents() {
       agentVersion: '1.2.0',
       protocolVersion: 1,
       clockOffsetMs: -8200,
+      clockDriftState: 'warn',
       ntpSynced: false,
       pinnedSigningKeyId: null,
       lastSeenAt: new Date(Date.now() - 3600000).toISOString(),
       downtimeAlertsEnabled: true,
       contactGroupId: 'g1',
       dependentAutoRenewCertificateCount: 3,
+      compatibilityState: 'outdated',
+      compatibilityRange: {
+        minAgentVersion: '0.1.0',
+        maxAgentVersion: '99.999.999',
+        minProtocolVersion: '1.0.0',
+        maxProtocolVersion: '1.999.999',
+      },
     },
     {
       id: 'row-3',
@@ -135,12 +151,20 @@ function sampleAgents() {
       agentVersion: '1.0.0',
       protocolVersion: null,
       clockOffsetMs: null,
+      clockDriftState: null,
       ntpSynced: null,
       pinnedSigningKeyId: null,
       lastSeenAt: null,
       retiredAt: new Date().toISOString(),
       downtimeAlertsEnabled: true,
       contactGroupId: null,
+      compatibilityState: 'blocked',
+      compatibilityRange: {
+        minAgentVersion: '0.1.0',
+        maxAgentVersion: '99.999.999',
+        minProtocolVersion: '1.0.0',
+        maxProtocolVersion: '1.999.999',
+      },
     },
   ];
 }
@@ -299,13 +323,66 @@ describe('AgentFleetPanel', () => {
     expect(within(rows).getByText('2')).toBeInTheDocument();
     expect(within(rows).getByText('1')).toBeInTheDocument();
 
-    // Signed offsets; only the |offset| > 5000ms row is flagged.
+    // Signed offsets, and the badge driven by clockDriftState, not by
+    // recomputing from the raw offset.
     expect(screen.getByText('+120 ms')).toBeInTheDocument();
     expect(screen.getByText('-8200 ms')).toBeInTheDocument();
     expect(screen.getAllByText('Drift')).toHaveLength(1);
 
     // Unknown protocol/offset render as placeholders on the retired row.
     expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('drives the clock drift badge from clockDriftState, not the raw offset magnitude', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    // Under the old hardcoded 5000ms threshold this offset would not have
+    // flagged at all; the alert tier must still render because the
+    // server-computed field, not the offset, drives the badge.
+    agents[0].clockOffsetMs = 4000;
+    agents[0].clockDriftState = 'alert';
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.getByText('Drift (alert)')).toBeInTheDocument();
+  });
+
+  it('shows no drift badge for a nonzero offset the server has classified as ok', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    agents[0].clockOffsetMs = 4500;
+    agents[0].clockDriftState = 'ok';
+    // Row 2's clockDriftState defaults to 'warn'; clear it so this test only
+    // asserts on row 1's ok-with-nonzero-offset case.
+    agents[1].clockDriftState = 'ok';
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.queryByText('Drift')).not.toBeInTheDocument();
+    expect(screen.queryByText('Drift (alert)')).not.toBeInTheDocument();
+  });
+
+  it('renders a Compatibility column reflecting compatible/outdated/blocked state with the accepted range in the tooltip', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('columnheader', { name: 'Compatibility' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Compatible')).toBeInTheDocument();
+    expect(screen.getByText('Outdated')).toBeInTheDocument();
+    const blockedBadge = screen.getByText('Blocked');
+    expect(blockedBadge).toBeInTheDocument();
+    expect(blockedBadge).toHaveAttribute(
+      'title',
+      expect.stringContaining('agent 0.1.0-99.999.999, protocol 1.0.0-1.999.999')
+    );
   });
 
   it('renders NTP sync state and pinned signing key columns', () => {

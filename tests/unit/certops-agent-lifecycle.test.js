@@ -525,6 +525,12 @@ describe("CertOps agents list route", () => {
       // default "latest known" reference for the outdated heuristic), so
       // it is compatible, not outdated.
       compatibilityState: "compatible",
+      compatibilityRange: {
+        minAgentVersion: "0.1.0",
+        maxAgentVersion: "99.999.999",
+        minProtocolVersion: "1.0.0",
+        maxProtocolVersion: "1.999.999",
+      },
       clockDriftState: "ok",
       clockDriftMs: 25,
       livenessState: "stale",
@@ -830,6 +836,39 @@ describe("agentRegistry service internals", () => {
     assert.deepEqual(fresh.targetSelectors, []);
     assert.deepEqual(fresh.commandProfiles, []);
     assert.deepEqual(fresh.dnsProviders, []);
+  });
+
+  it("agentMetadataFromRow's compatibilityRange tracks env overrides, not a hardcoded default", () => {
+    const metadata = agentRegistry._test.agentMetadataFromRow(agentRow(), {
+      CERTOPS_AGENT_MIN_AGENT_VERSION: "2.0.0",
+      CERTOPS_AGENT_MAX_AGENT_VERSION: "3.0.0",
+      CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "2.0.0",
+      CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "2.999.999",
+    });
+    assert.deepEqual(metadata.compatibilityRange, {
+      minAgentVersion: "2.0.0",
+      maxAgentVersion: "3.0.0",
+      minProtocolVersion: "2.0.0",
+      maxProtocolVersion: "2.999.999",
+    });
+  });
+
+  it("agentMetadataFromRow's compatibilityState still classifies compatible/outdated/blocked correctly", () => {
+    const compatible = agentRegistry._test.agentMetadataFromRow(
+      agentRow({ agent_version: "1.2.3", protocol_version: "1.0.0" }),
+    );
+    assert.equal(compatible.compatibilityState, "compatible");
+
+    const blocked = agentRegistry._test.agentMetadataFromRow(
+      agentRow({ agent_version: "0.0.1", protocol_version: "1.0.0" }),
+    );
+    assert.equal(blocked.compatibilityState, "blocked");
+
+    const outdated = agentRegistry._test.agentMetadataFromRow(
+      agentRow({ agent_version: "1.2.3", protocol_version: "1.0.0" }),
+      { CERTOPS_AGENT_LATEST_KNOWN_VERSION: "3.0.0" },
+    );
+    assert.equal(outdated.compatibilityState, "outdated");
   });
 
   it("normalizeRequiredRetireReason trims and enforces bounds", () => {
