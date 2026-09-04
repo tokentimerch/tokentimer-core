@@ -11,6 +11,7 @@ import {
   staleReasonLabel,
   redactionCount,
   sameOperatorMessage,
+  userFacingName,
 } from '../../src/components/certops/certopsJobsFormat';
 
 describe('jobStatusLabel / jobStatusScheme', () => {
@@ -187,5 +188,18 @@ describe('redactionCount', () => {
     expect(redactionCount({})).toBe(0);
     expect(redactionCount({ redaction: { applied: true } })).toBe(0);
     expect(redactionCount(null)).toBe(0);
+  });
+});
+
+describe('userFacingName', () => {
+  it('prefers a display name over the raw user id', () => {
+    expect(userFacingName(9, 'Alice Admin')).toBe('Alice Admin');
+    expect(userFacingName('user-42', '  Bob  ')).toBe('Bob');
+  });
+
+  it('falls back to the user id when no display name is available', () => {
+    expect(userFacingName(9, null)).toBe('9');
+    expect(userFacingName('user-42', '   ')).toBe('user-42');
+    expect(userFacingName(null, null)).toBe('');
   });
 });

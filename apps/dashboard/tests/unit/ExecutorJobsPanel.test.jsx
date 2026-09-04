@@ -550,7 +550,8 @@ describe('ExecutorJobsPanel approvals', () => {
         jobs: [
           job({
             status: 'succeeded',
-            approvedByUserId: 'user-42',
+            approvedByUserId: 9,
+            approvedByDisplayName: 'Alice Admin',
             approvedAt: '2026-01-05T00:00:00.000Z',
           }),
         ],

@@ -69,8 +69,8 @@ Total skips found: 63
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 392 | rejects an unknown contactGroupId with 400 and leaves the real agent row unchanged | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 406 | rejects an empty body with 400 (at least one of downtimeAlertsEnabled/contactGroupId is required) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 420 | a real downtimeAlertsEnabled=false set via the route is actually honored by the worker cron down-alert sweep | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/integration/certops-workspace-kill-switch-api.test.js` | 347 | rejects internal worker credentials from reading or changing settings | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/integration/certops-workspace-kill-switch-api.test.js` | 388 | rejects worker settings key material before the session-user denial | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/integration/certops-workspace-kill-switch-api.test.js` | 537 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/integration/certops-workspace-kill-switch-api.test.js` | 599 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/integration/certops-workspace-kill-switch-api.test.js` | 729 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-workspace-kill-switch-api.test.js` | 482 | rejects internal worker credentials from reading or changing settings | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-workspace-kill-switch-api.test.js` | 523 | rejects worker settings key material before the session-user denial | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-workspace-kill-switch-api.test.js` | 672 | keeps a same-request idempotent manual-job replay to one audit | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-workspace-kill-switch-api.test.js` | 774 | keeps machine event and evidence ingestion available for pre-existing work while paused | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/integration/certops-workspace-kill-switch-api.test.js` | 904 | serializes real PostgreSQL pause and manual-job races in both commit orders | dynamic (this.skip() / t.skip()) | `no-host` |

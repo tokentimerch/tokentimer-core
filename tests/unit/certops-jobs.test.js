@@ -50,6 +50,9 @@ function createMemoryClient(options = {}) {
   let nextLog = 1;
   let tick = 0;
   const now = () => new Date(Date.UTC(2026, 5, 30, 0, tick++, 0));
+  const users = new Map(
+    (options.users || []).map((user) => [Number(user.id), user]),
+  );
   const workspaces = new Map([
     [
       WORKSPACE_A,
@@ -289,6 +292,20 @@ function createMemoryClient(options = {}) {
         return { rows: [] };
       }
 
+      if (normalizedSql.includes("FROM users")) {
+        const ids = Array.isArray(params[0]) ? params[0] : [];
+        return {
+          rows: ids
+            .map((id) => users.get(Number(id)))
+            .filter(Boolean)
+            .map((user) => ({
+              id: user.id,
+              display_name: user.displayName,
+              email: user.email,
+            })),
+        };
+      }
+
       throw new Error(`Unexpected query: ${normalizedSql}`);
     },
   };
@@ -406,6 +423,52 @@ describe("CertOps jobs service", () => {
     assert.deepEqual(listA.items.map((item) => item.id), [job.id]);
     assert.equal(listB.items.some((item) => item.id === job.id), false);
     assert.equal(listA.pagination.total, 1);
+  });
+
+  it("attaches the approver display name on get, list, and job-log entries", async () => {
+    const client = createMemoryClient({
+      users: [
+        { id: 9, displayName: "Alice Admin", email: "alice@example.com" },
+      ],
+    });
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { certificateId: "cert-1" },
+    });
+    const row = client.jobs.find((entry) => entry.id === job.id);
+    row.approved_by_user_id = 9;
+
+    const fetched = await getCertificateJobById({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+    });
+    assert.equal(fetched.approvedByUserId, 9);
+    assert.equal(fetched.approvedByDisplayName, "Alice Admin");
+
+    const listed = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+    });
+    assert.equal(listed.items[0].approvedByDisplayName, "Alice Admin");
+
+    await appendCertificateJobLog({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      eventType: "approval.granted",
+      createdByUserId: 9,
+    });
+    const logs = await listCertificateJobLog({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+    });
+    assert.equal(logs.items[0].createdByDisplayName, "Alice Admin");
   });
 
   it("counts the filtered set rather than the page", async () => {
@@ -2345,6 +2408,10 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
           return { rows: [row] };
         }
 
+        if (normalizedSql.includes("FROM users")) {
+          return { rows: [] };
+        }
+
         throw new Error(`Unhandled query in ownership test client: ${normalizedSql}`);
       },
     };
@@ -2781,6 +2848,10 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
           };
           jobs.push(row);
           return { rows: [row] };
+        }
+
+        if (normalizedSql.includes("FROM users")) {
+          return { rows: [] };
         }
 
         throw new Error(

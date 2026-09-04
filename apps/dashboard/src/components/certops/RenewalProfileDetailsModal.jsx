@@ -132,7 +132,9 @@ export default function RenewalProfileDetailsModal({
                     textTransform='none'
                     fontWeight='medium'
                   >
-                    {profile.autoRenewEnabled ? 'Auto-renews' : 'Auto-renew off'}
+                    {profile.autoRenewEnabled
+                      ? 'Auto-renews'
+                      : 'Auto-renew off'}
                   </Badge>
                 ) : null}
                 {profile.derived ? (
@@ -161,10 +163,7 @@ export default function RenewalProfileDetailsModal({
               icon={Info}
             >
               {renderField('Certificates using it', profile.certificateCount)}
-              {renderField(
-                'Auto-renew',
-                boolLabel(profile.autoRenewEnabled)
-              )}
+              {renderField('Auto-renew', boolLabel(profile.autoRenewEnabled))}
               {renderField('Lead time', leadTime)}
               {renderField('Status', profile.status)}
               {renderField('Derived', boolLabel(profile.derived))}

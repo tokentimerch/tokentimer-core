@@ -1349,6 +1349,7 @@ function jobSummary(job) {
     requestedByUserId: job.requestedByUserId,
     requestedByApiTokenId: job.requestedByApiTokenId,
     approvedByUserId: job.approvedByUserId,
+    approvedByDisplayName: job.approvedByDisplayName ?? null,
     approvedAt: job.approvedAt,
     assignedAgentId: job.assignedAgentId ?? null,
     claimedByAgentId: job.claimedByAgentId ?? null,
@@ -1396,6 +1397,7 @@ function jobLogEntry(entry) {
     message: entry.message,
     metadata: entry.metadata || {},
     createdByUserId: entry.createdByUserId,
+    createdByDisplayName: entry.createdByDisplayName ?? null,
     createdByApiTokenId: entry.createdByApiTokenId,
     createdAt: entry.createdAt,
   };

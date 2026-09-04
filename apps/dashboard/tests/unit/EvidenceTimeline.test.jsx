@@ -36,6 +36,11 @@ function renderWithProviders(ui) {
   );
 }
 
+/** Date line is `Approved ${formatDateTime(...)}`; locale may start with a month name. */
+function approvedAtLine(content) {
+  return /^Approved /.test(content) && !content.startsWith('Approved by');
+}
+
 function baseJob(overrides = {}) {
   return {
     id: 'job-1',
@@ -429,7 +434,27 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
   });
 
-  it('shows the "Approved by user" chip and an "Approved" date line when the job carries approval attribution', () => {
+  it('shows "Approved by" with the display name and an "Approved" date line', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        approvedByUserId: 9,
+        approvedByDisplayName: 'Alice Admin',
+        approvedAt: '2026-01-05T00:00:00.000Z',
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Approved by Alice Admin')).toBeInTheDocument();
+    expect(screen.queryByText('9')).not.toBeInTheDocument();
+    expect(screen.getByText(approvedAtLine)).toBeInTheDocument();
+  });
+
+  it('falls back to the user id when no display name is available', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({
         approvedByUserId: 'user-42',
@@ -443,9 +468,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(screen.getByText('Approved by user')).toBeInTheDocument();
-    expect(screen.getByText('user-42')).toBeInTheDocument();
-    expect(screen.getByText(/^Approved \d/)).toBeInTheDocument();
+    expect(screen.getByText('Approved by user-42')).toBeInTheDocument();
   });
 
   it('hides the "Approved by user" chip and date line when the job has no approval attribution', () => {
@@ -459,8 +482,8 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(screen.queryByText('Approved by user')).not.toBeInTheDocument();
-    expect(screen.queryByText(/^Approved \d/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Approved by/)).not.toBeInTheDocument();
+    expect(screen.queryByText(approvedAtLine)).not.toBeInTheDocument();
   });
 
   it('renders friendly labels for approval.granted, approval.rejected, and approval.invalidated log entries', () => {
@@ -497,7 +520,7 @@ describe('EvidenceTimeline', () => {
     expect(screen.getByText('Approval invalidated')).toBeInTheDocument();
   });
 
-  it('shows a "Decided by user" line with the approver\'s id for an approval.granted entry', () => {
+  it('shows a "Decided by" line with the approver\'s display name for an approval.granted entry', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
       logEntries: [
@@ -505,7 +528,8 @@ describe('EvidenceTimeline', () => {
           id: 'log-1',
           eventType: 'approval.granted',
           createdAt: '2026-01-01T00:00:00.000Z',
-          createdByUserId: 'user-42',
+          createdByUserId: 9,
+          createdByDisplayName: 'Alice Admin',
         },
       ],
       evidence: [],
@@ -515,11 +539,11 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(screen.getByText('Decided by user')).toBeInTheDocument();
-    expect(screen.getByText('user-42')).toBeInTheDocument();
+    expect(screen.getByText('Decided by Alice Admin')).toBeInTheDocument();
+    expect(screen.queryByText('9')).not.toBeInTheDocument();
   });
 
-  it('shows a "Decided by user" line with the rejecter\'s id for an approval.rejected entry', () => {
+  it('shows a "Decided by" line with the rejecter\'s display name for an approval.rejected entry', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
       logEntries: [
@@ -527,7 +551,8 @@ describe('EvidenceTimeline', () => {
           id: 'log-1',
           eventType: 'approval.rejected',
           createdAt: '2026-01-01T00:00:00.000Z',
-          createdByUserId: 'user-99',
+          createdByUserId: 11,
+          createdByDisplayName: 'Bob Reviewer',
         },
       ],
       evidence: [],
@@ -537,8 +562,8 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(screen.getByText('Decided by user')).toBeInTheDocument();
-    expect(screen.getByText('user-99')).toBeInTheDocument();
+    expect(screen.getByText('Decided by Bob Reviewer')).toBeInTheDocument();
+    expect(screen.queryByText('11')).not.toBeInTheDocument();
   });
 
   it('does not show a "Decided by user" line for an approval.invalidated entry (system-detected, no human actor)', () => {
@@ -558,7 +583,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(screen.queryByText('Decided by user')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Decided by/)).not.toBeInTheDocument();
   });
 
   it('renders the failure reason for a failed job', () => {

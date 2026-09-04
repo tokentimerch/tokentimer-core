@@ -11,6 +11,7 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
+  Code,
   Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
@@ -93,6 +94,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [scanSecrets, setScanSecrets] = React.useState(true);
   const [scanCertificates, setScanCertificates] = React.useState(false);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
@@ -115,6 +117,10 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       onError && onError('GCP access token is required');
       return;
     }
+    if (!scanSecrets && !scanCertificates) {
+      onError && onError('Select secrets, certificates, or both.');
+      return;
+    }
 
     onError && onError(null);
     setIsScanning(true);
@@ -125,7 +131,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         workspaceId,
         projectId: gcpProjectId,
         accessToken: gcpAccessToken,
-        include: { secrets: true, certificates: scanCertificates },
+        include: { secrets: scanSecrets, certificates: scanCertificates },
         maxItems: 2000,
       });
       const items = Array.isArray(res?.items) ? res.items : [];
@@ -211,7 +217,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
       credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
       scanParams: {
         projectId: gcpProjectId,
-        include: { secrets: true, certificates: scanCertificates },
+        include: { secrets: scanSecrets, certificates: scanCertificates },
       },
     }),
   }));
@@ -220,14 +226,12 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     <VStack align='stretch' spacing={3}>
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
-          Scans GCP Secret Manager for secrets with expiration dates, and
-          optionally Certificate Manager and Compute Engine SSL certificates.
-          Paste an access token from Cloud Shell (`gcloud auth
-          print-access-token`), not a JSON key. Grant Secret Manager Viewer on
-          the project; for certificate scanning also grant Certificate Manager
-          Viewer and Compute Viewer. Secret Accessor cannot list secrets. Token
-          is used for this scan and not stored. If auto-sync is enabled, the
-          token is stored encrypted.
+          Scans GCP Secret Manager and SSL certificates. Token is used for
+          scanning and stored encrypted if auto-sync is enabled.
+        </Text>
+        <Text fontSize='xs' color={helpTextColor} mt={1}>
+          Get token from Cloud Shell:{' '}
+          <Code fontSize='xs'>gcloud auth print-access-token</Code>
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
@@ -258,7 +262,9 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           <InputGroup>
             <Input
               type={showSecret ? 'text' : 'password'}
-              placeholder={autoSyncTokenPlaceholder || 'Paste OAuth2 token'}
+              placeholder={
+                autoSyncTokenPlaceholder || 'gcloud auth print-access-token'
+              }
               value={gcpAccessToken}
               onChange={e => setGcpAccessToken(e.target.value)}
             />
@@ -273,19 +279,30 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
             </InputRightElement>
           </InputGroup>
         </Box>
-        <Button colorScheme='blue' onClick={doGcpScan} isLoading={isScanning}>
+        <Button
+          colorScheme='blue'
+          onClick={doGcpScan}
+          isLoading={isScanning}
+          isDisabled={!scanSecrets && !scanCertificates}
+        >
           Scan
         </Button>
       </HStack>
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>
           <Checkbox
+            isChecked={scanSecrets}
+            onChange={e => setScanSecrets(e.target.checked)}
+            size='sm'
+          >
+            Secrets
+          </Checkbox>
+          <Checkbox
             isChecked={scanCertificates}
             onChange={e => setScanCertificates(e.target.checked)}
             size='sm'
           >
-            Scan certificates too (Certificate Manager and Compute Engine SSL
-            certificates)
+            Certificates
           </Checkbox>
           <Checkbox
             isChecked={cleanupObsolete}
