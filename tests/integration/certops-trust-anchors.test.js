@@ -463,6 +463,32 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
     expect(String(installation.last_job_id)).to.equal(String(job.id));
   });
 
+  it("forces pending_approval when the workspace requires approval for every job, even though this caller never sets requiresApproval", async () => {
+    const anchor = await createFreshAnchor();
+    const agent = await createAgent();
+    const key = `dist-workspace-approval-${crypto.randomUUID()}`;
+
+    await TestUtils.execQuery(
+      `UPDATE workspaces SET certops_require_approval_always = TRUE WHERE id = $1`,
+      [workspaceId],
+    );
+
+    let job;
+    try {
+      const outcome = await createTrustJob(
+        distributeOptions({ anchor, agent, idempotencyKey: key }),
+      );
+      job = await getJobRow(outcome.job.id);
+    } finally {
+      await TestUtils.execQuery(
+        `UPDATE workspaces SET certops_require_approval_always = FALSE WHERE id = $1`,
+        [workspaceId],
+      );
+    }
+
+    expect(job.status).to.equal("pending_approval");
+  });
+
   it("replays the same idempotencyKey and returns the same job and generation", async () => {
     const anchor = await createFreshAnchor();
     const agent = await createAgent();

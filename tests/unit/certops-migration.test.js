@@ -1646,7 +1646,28 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 50);
+    assert.equal(sorted[sorted.length - 1], 51);
+  });
+});
+
+describe("migration 51 workspace approval policy", () => {
+  const migration = migrations.find((entry) => entry.version === 51);
+
+  it("exists with the expected name", () => {
+    assert.ok(migration);
+    assert.equal(migration.name, "certops_workspace_approval_policy");
+  });
+
+  it("adds certops_require_approval_always defaulted safely off, mirroring certops_paused", () => {
+    assert.match(
+      migration.sql,
+      /ALTER TABLE workspaces\s+ADD COLUMN IF NOT EXISTS certops_require_approval_always BOOLEAN NOT NULL DEFAULT FALSE/,
+    );
+  });
+
+  it("uses only additive DDL (no DROP TABLE/DROP COLUMN)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+    assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 });
 

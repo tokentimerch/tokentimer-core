@@ -47,7 +47,10 @@ import {
 } from './certopsJobsFormat';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { useCertOpsControllerClusters } from './useCertOpsControllerClusters.js';
-import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
+import {
+  useCertOpsIsWorkspaceAdmin,
+  useCertOpsWorkspaceKillSwitch,
+} from './useCertOps.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -305,6 +308,7 @@ export default function CreateManualJobModal({
   const { agents } = useCertOpsAgents();
   const { clusters: controllerClusters } = useCertOpsControllerClusters();
   const isWorkspaceAdmin = useCertOpsIsWorkspaceAdmin();
+  const { certOpsRequireApprovalAlways } = useCertOpsWorkspaceKillSwitch();
   const isTrustOp = Boolean(trustOp?.anchorId);
   const isDistributeTrust = trustOp?.operation === 'distribute-trust';
   const [operation, setOperation] = useState('');
@@ -761,12 +765,14 @@ export default function CreateManualJobModal({
           ? buildFieldsPayload()
           : JSON.parse(payloadText || '{}');
       if (Object.keys(payload).length) body.payload = payload;
-      if (requiresApproval) body.requiresApproval = true;
+      const effectiveRequiresApproval =
+        requiresApproval || certOpsRequireApprovalAlways === true;
+      if (effectiveRequiresApproval) body.requiresApproval = true;
       const { job } = await createJob(workspaceId, body);
       showSuccess(
         'Job created',
         job?.id
-          ? requiresApproval
+          ? effectiveRequiresApproval
             ? `Job ID: ${truncateId(job.id)} (awaiting approval)`
             : `Job ID: ${truncateId(job.id)}`
           : undefined
@@ -992,7 +998,10 @@ export default function CreateManualJobModal({
               <FormControl>
                 <Checkbox
                   size='sm'
-                  isChecked={requiresApproval}
+                  isChecked={
+                    requiresApproval || certOpsRequireApprovalAlways === true
+                  }
+                  isDisabled={certOpsRequireApprovalAlways === true}
                   onChange={event => setRequiresApproval(event.target.checked)}
                 >
                   <Text as='span' fontSize='sm'>
@@ -1000,9 +1009,12 @@ export default function CreateManualJobModal({
                   </Text>
                 </Checkbox>
                 <FormHelperText>
-                  The job starts at &quot;Pending approval&quot; instead of
-                  claimable; an authorized workspace member other than you must
-                  approve it before an agent can pick it up.
+                  {certOpsRequireApprovalAlways
+                    ? 'Your workspace requires approval for all jobs.'
+                    : 'The job starts at "Pending approval" instead of ' +
+                      'claimable; an authorized workspace member other ' +
+                      'than you must approve it before an agent can pick ' +
+                      'it up.'}
                 </FormHelperText>
               </FormControl>
             </VStack>
@@ -1498,7 +1510,11 @@ export default function CreateManualJobModal({
                 <FormControl>
                   <Checkbox
                     size='sm'
-                    isChecked={requiresApproval}
+                    isChecked={
+                      requiresApproval ||
+                      certOpsRequireApprovalAlways === true
+                    }
+                    isDisabled={certOpsRequireApprovalAlways === true}
                     onChange={event =>
                       setRequiresApproval(event.target.checked)
                     }
@@ -1508,10 +1524,12 @@ export default function CreateManualJobModal({
                     </Text>
                   </Checkbox>
                   <FormHelperText>
-                    The job starts at &quot;Pending approval&quot; instead of
-                    claimable; an authorized workspace member other than you
-                    must approve it from this page before an agent can pick it
-                    up.
+                    {certOpsRequireApprovalAlways
+                      ? 'Your workspace requires approval for all jobs.'
+                      : 'The job starts at "Pending approval" instead of ' +
+                        'claimable; an authorized workspace member other ' +
+                        'than you must approve it from this page before ' +
+                        'an agent can pick it up.'}
                   </FormHelperText>
                 </FormControl>
               )}

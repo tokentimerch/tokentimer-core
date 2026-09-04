@@ -359,7 +359,7 @@ async function createRenewalJobForCertificate({
     // Kill-switch gate inside the same transaction as the insert. Paused or
     // globally disabled workspaces throw here; the caller converts that into
     // a skip, never an error.
-    await lockWorkspaceForCertOpsSideEffect({
+    const workspace = await lockWorkspaceForCertOpsSideEffect({
       client,
       workspaceId: certificate.workspace_id,
       env,
@@ -380,6 +380,8 @@ async function createRenewalJobForCertificate({
       ),
       payload,
       env,
+      workspaceRequiresApprovalAlways:
+        workspace.certops_require_approval_always === true,
       returnOutcome: true,
     });
 

@@ -1256,7 +1256,11 @@ async function runCreateTrustJob(client, params) {
     env,
   } = params;
 
-  await lockWorkspaceForCertOpsSideEffect({ client, workspaceId, env });
+  const workspace = await lockWorkspaceForCertOpsSideEffect({
+    client,
+    workspaceId,
+    env,
+  });
 
   // The anchor is locked first so its status and routing columns can't
   // change under us while the installation row and job are written.
@@ -1625,6 +1629,8 @@ async function runCreateTrustJob(client, params) {
     assignedAgentId: agentId,
     executorKind: "agent",
     requiresApproval,
+    workspaceRequiresApprovalAlways:
+      workspace.certops_require_approval_always === true,
     requestedByUserId,
     requestedByApiTokenId,
     source,

@@ -1610,6 +1610,27 @@ async function ensureJobExists(db, workspaceId, jobId) {
   }
 }
 
+/**
+ * Authoritative read of workspaces.certops_require_approval_always.
+ * DB true always wins; an explicit caller hint of true is OR'd for
+ * transitional callers/tests that already resolved the column under a lock.
+ * An explicit false cannot override a true DB value.
+ */
+async function resolveWorkspaceRequiresApprovalAlways(
+  db,
+  workspaceId,
+  explicitOption,
+) {
+  const result = await db.query(
+    `SELECT certops_require_approval_always
+       FROM workspaces
+      WHERE id = $1`,
+    [workspaceId],
+  );
+  const fromDb = result.rows[0]?.certops_require_approval_always === true;
+  return fromDb || explicitOption === true;
+}
+
 async function createCertificateJob(options) {
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
@@ -1658,9 +1679,24 @@ async function createCertificateJob(options) {
   // services/certops/jobApprovals.approveJob. The flag only chooses the
   // default initial status; an explicit conflicting status is rejected so a
   // caller cannot both request a gate and bypass it.
-  const requiresApproval = options.requiresApproval === true;
+  const perJobRequiresApproval = options.requiresApproval === true;
+  // Workspace-wide override (certops_require_approval_always) is read here,
+  // not trusted from the caller alone: omitting workspaceRequiresApprovalAlways
+  // must not bypass a policy that is on. Callers that already hold the
+  // workspace lock may still pass the column value as a hint; an explicit
+  // true is OR'd in, but an explicit false cannot override a true DB value.
+  // protocol_smoke is exempt by the same by-construction exclusion as every
+  // other approval-flow concept.
+  const workspaceForcesApproval =
+    operation !== "protocol_smoke" &&
+    (await resolveWorkspaceRequiresApprovalAlways(
+      db,
+      workspaceId,
+      options.workspaceRequiresApprovalAlways,
+    ));
+  const requiresApproval = perJobRequiresApproval || workspaceForcesApproval;
   if (
-    requiresApproval &&
+    perJobRequiresApproval &&
     options.status !== undefined &&
     options.status !== null &&
     options.status !== "pending_approval"
@@ -1671,7 +1707,7 @@ async function createCertificateJob(options) {
     );
   }
   const status = normalizeEnum(
-    options.status,
+    workspaceForcesApproval ? "pending_approval" : options.status,
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",

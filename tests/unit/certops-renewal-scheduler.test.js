@@ -127,6 +127,7 @@ function createSchedulerPool({
   dueRows = [],
   inFlightRows = [],
   pausedWorkspaces = new Set(),
+  requireApprovalAlwaysWorkspaces = new Set(),
   autoRenewDisabledCount = 0,
 } = {}) {
   const clients = [];
@@ -167,12 +168,19 @@ function createSchedulerPool({
           if (normalized.includes("pg_advisory_unlock")) {
             return { rows: [{ pg_advisory_unlock: true }] };
           }
-          if (normalized.startsWith("SELECT id, certops_paused FROM workspaces")) {
+          if (
+            normalized.startsWith(
+              "SELECT id, certops_paused, certops_require_approval_always FROM workspaces",
+            )
+          ) {
             return {
               rows: [
                 {
                   id: params[0],
                   certops_paused: pausedWorkspaces.has(params[0]),
+                  certops_require_approval_always: requireApprovalAlwaysWorkspaces.has(
+                    params[0],
+                  ),
                 },
               ],
             };
@@ -369,7 +377,9 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(sqls[0], "BEGIN");
     assert.ok(
       sqls.some((sql) =>
-        sql.startsWith("SELECT id, certops_paused FROM workspaces"),
+        sql.startsWith(
+          "SELECT id, certops_paused, certops_require_approval_always FROM workspaces",
+        ),
       ),
     );
     assert.strictEqual(sqls.at(-1), "COMMIT");
@@ -836,5 +846,41 @@ describe("certops renewal scheduler", () => {
       createdJobs.map((job) => job.subjectId),
       ["cert-first"],
     );
+  });
+
+  it("forces the automation renew job to pending_approval when the workspace's approval policy is on", async () => {
+    const pool = createSchedulerPool({
+      dueRows: [dueCertificate({ workspace_id: "ws-approval" })],
+      requireApprovalAlwaysWorkspaces: new Set(["ws-approval"]),
+    });
+    const createdJobs = [];
+
+    const summary = await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      jobCreator: async (options) => {
+        createdJobs.push(options);
+        return { job: { id: "job-1" }, created: true };
+      },
+    });
+
+    assert.strictEqual(summary.created, 1);
+    assert.strictEqual(createdJobs[0].workspaceRequiresApprovalAlways, true);
+  });
+
+  it("leaves workspaceRequiresApprovalAlways false when the workspace policy is off", async () => {
+    const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
+    const createdJobs = [];
+
+    await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      jobCreator: async (options) => {
+        createdJobs.push(options);
+        return { job: { id: "job-1" }, created: true };
+      },
+    });
+
+    assert.strictEqual(createdJobs[0].workspaceRequiresApprovalAlways, false);
   });
 });

@@ -57,6 +57,9 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
   useCertOpsEnabled: () => true,
   useCertOpsIsWorkspaceAdmin: () => false,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsRequireApprovalAlways: false,
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
