@@ -49,6 +49,26 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     return inserted.rows[0].id;
   }
 
+  async function insertUnhealthyEndpointMonitor(tokenId) {
+    const inserted = await TestUtils.execQuery(
+      `INSERT INTO domain_monitors (
+         workspace_id, url, token_id, health_check_enabled, check_interval,
+         last_health_status, previous_health_status, consecutive_failures,
+         alert_after_failures, last_health_check_at, created_by
+       )
+       VALUES ($1, $2, $3, TRUE, 'hourly',
+               'unhealthy', 'healthy', 2, 1, NOW(), $4)
+       RETURNING id`,
+      [
+        workspaceId,
+        `https://retired-endpoint-${crypto.randomUUID()}.example`,
+        tokenId,
+        user.id,
+      ],
+    );
+    return inserted.rows[0].id;
+  }
+
   async function insertRenewalJob(certificateId) {
     const inserted = await TestUtils.execQuery(
       `INSERT INTO certificate_jobs (
@@ -129,6 +149,49 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     throw new Error(
       `Timed out waiting for alert ${id}: ${JSON.stringify(row || null)}`,
     );
+  }
+
+  async function waitForSuccessfulEmailDelivery(alertId, timeoutMs = 20000) {
+    const started = Date.now();
+    let alertRow;
+    let logRows = [];
+    while (Date.now() - started < timeoutMs) {
+      const alert = await TestUtils.execQuery(
+        "SELECT id, status, error_message FROM alert_queue WHERE id = $1",
+        [alertId],
+      );
+      alertRow = alert.rows[0];
+      const log = await TestUtils.execQuery(
+        `SELECT channel, status, error_message
+           FROM alert_delivery_log
+          WHERE alert_queue_id = $1 AND channel = 'email'`,
+        [alertId],
+      );
+      logRows = log.rows;
+      const discarded = /revoked or decommissioned|endpoint recovered before threshold/i.test(
+        String(alertRow?.error_message || ""),
+      );
+      if (
+        alertRow?.status === "sent" &&
+        !discarded &&
+        logRows.some((row) => row.status === "success")
+      ) {
+        return { alert: alertRow, log: logRows };
+      }
+      await TestUtils.wait(250);
+    }
+    throw new Error(
+      `Timed out waiting for successful email delivery of ${alertId}: alert=${JSON.stringify(alertRow || null)} log=${JSON.stringify(logRows)}`,
+    );
+  }
+
+  async function runDeliveryWorker() {
+    await TestUtils.runNode("node", ["src/delivery-worker.js"], "apps/worker", {
+      ...process.env,
+      NODE_ENV: "test",
+      SMTP_HOST: process.env.SMTP_HOST || "localhost",
+      SMTP_PORT: process.env.SMTP_PORT || "1025",
+    });
   }
 
   before(async () => {
@@ -279,6 +342,68 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     ).to.equal(true);
   });
 
+  it("delivers endpoint-health after the last shared-token sibling is retired", async () => {
+    const tokenId = await createExpiringToken(
+      `endpoint-after-retire-${Date.now()}`,
+      alertGroupId,
+    );
+    const certA = await insertManagedCertificate(tokenId, "endpoint-a");
+    const certB = await insertManagedCertificate(tokenId, "endpoint-b");
+    const monitorId = await insertUnhealthyEndpointMonitor(tokenId);
+
+    await insertAlert({
+      tokenId,
+      alertKey: `token_expiry:${tokenId}:poswin:7`,
+      status: "pending",
+      dueOffsetDays: 2,
+    });
+    const endpoint = await insertAlert({
+      tokenId,
+      alertKey: `endpoint_health:${monitorId}:down`,
+      status: "pending",
+      dueOffsetDays: 2,
+    });
+
+    await retireCertificate(certA, "revoked");
+    await retireCertificate(certB, "decommissioned");
+
+    const tokenAfter = await TestUtils.execQuery(
+      "SELECT cert_lifecycle_status FROM tokens WHERE id = $1",
+      [tokenId],
+    );
+    expect(tokenAfter.rows[0].cert_lifecycle_status).to.equal("decommissioned");
+
+    const afterRetire = await alertRows(tokenId);
+    expect(
+      afterRetire.some((row) => row.alert_key.startsWith("token_expiry:")),
+    ).to.equal(false);
+    expect(
+      afterRetire.some(
+        (row) =>
+          row.alert_key === `endpoint_health:${monitorId}:down` &&
+          row.status === "pending",
+      ),
+    ).to.equal(true);
+
+    await TestUtils.execQuery(
+      "UPDATE alert_queue SET due_date = CURRENT_DATE WHERE id = $1",
+      [endpoint.id],
+    );
+
+    await runDeliveryWorker();
+
+    const delivered = await waitForSuccessfulEmailDelivery(endpoint.id);
+    expect(delivered.alert.status).to.equal("sent");
+    expect(String(delivered.alert.error_message || "")).to.not.match(
+      /revoked or decommissioned/i,
+    );
+    expect(
+      delivered.log.some(
+        (row) => row.channel === "email" && row.status === "success",
+      ),
+    ).to.equal(true);
+  });
+
   it("does not enqueue expiry alerts for a fully retired token, and still enqueues a live one", async () => {
     const liveTokenId = await createExpiringToken(
       `live-discovery-${Date.now()}`,
@@ -338,7 +463,7 @@ describe("Retired certificate alerts against PostgreSQL", function () {
       status: "pending",
     });
 
-    await TestUtils.runNode("node", ["src/delivery-worker.js"], "apps/worker");
+    await runDeliveryWorker();
 
     const leftoverAfter = await waitForAlert(
       leftover.id,
