@@ -380,7 +380,17 @@ describe('CertOpsCertificates retire action', () => {
     });
     expect(dialog).toBeInTheDocument();
     expect(
-      screen.getByText('Alerting will be disabled for this certificate.')
+      screen.getByText(
+        /Renewal-failure alerts for this certificate will stop/i
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Expiry alerts stop only when no other live certificate remains/i
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Endpoint monitoring continues/i)
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));

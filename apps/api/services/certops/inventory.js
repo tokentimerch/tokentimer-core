@@ -8,6 +8,11 @@ const {
 } = require("./parser");
 const { containsPrivateKeyMaterial, containsGenericSecretMaterial } = require("../../utils/secretMaterial");
 const { resolveListSort } = require("./listSorting");
+const {
+  CERT_RENEWAL_FAILED_ALERT_PREFIX,
+  RETIRED_CERT_UNSENT_ALERT_STATUSES,
+  TOKEN_EXPIRY_ALERT_PREFIX,
+} = require("../../src/shared/retiredCertificateAlerts");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID =
@@ -1702,25 +1707,65 @@ async function writeRetireAudit(client, options, certificate, status, reason) {
   );
 }
 
-/**
- * Drop undelivered expiry and renewal-failure alerts for a just-retired
- * token. Sent rows stay so a later re-queue cannot re-fire an already-sent
- * threshold window.
- */
-async function suppressPendingRetiredCertificateAlerts(client, { tokenId }) {
-  if (!tokenId) return { deleted: 0, reason: "no_token" };
-
-  const deleted = await client.query(
-    `DELETE FROM alert_queue
-      WHERE token_id = $1
-        AND status IN ('pending', 'failed', 'partial', 'blocked')
-        AND (
-          alert_key LIKE 'token_expiry:%'
-          OR alert_key LIKE 'cert_renewal_failed:%'
-        )`,
-    [tokenId],
+function unsentRetiredAlertStatusSql() {
+  return RETIRED_CERT_UNSENT_ALERT_STATUSES.map((status) => `'${status}'`).join(
+    ", ",
   );
-  return { deleted: deleted.rowCount || 0 };
+}
+
+/**
+ * Drop undelivered alerts that no longer apply after a retire.
+ *
+ * Renewal-failure rows are keyed to the job's managed-certificate subject, so
+ * they are deleted for this certificate even when a live sibling still shares
+ * the token. Expiry rows are token-wide and are deleted only when the caller
+ * sets suppressTokenExpiry (no live sibling remains). Sent rows stay so a
+ * later re-queue cannot re-fire an already-sent threshold window.
+ */
+async function suppressPendingRetiredCertificateAlerts(
+  client,
+  {
+    tokenId = null,
+    certificateId = null,
+    workspaceId = null,
+    suppressTokenExpiry = false,
+  } = {},
+) {
+  const unsentSql = unsentRetiredAlertStatusSql();
+  let deleted = 0;
+
+  if (certificateId) {
+    const renewalParams = [certificateId];
+    let workspaceClause = "";
+    if (workspaceId) {
+      workspaceClause = "AND cj.workspace_id = $2";
+      renewalParams.push(workspaceId);
+    }
+    const renewal = await client.query(
+      `DELETE FROM alert_queue aq
+         USING certificate_jobs cj
+        WHERE aq.alert_key = '${CERT_RENEWAL_FAILED_ALERT_PREFIX}' || cj.id::text
+          AND cj.subject_type = 'managed_certificate'
+          AND cj.subject_id = $1::text
+          ${workspaceClause}
+          AND aq.status IN (${unsentSql})`,
+      renewalParams,
+    );
+    deleted += renewal.rowCount || 0;
+  }
+
+  if (suppressTokenExpiry && tokenId) {
+    const expiry = await client.query(
+      `DELETE FROM alert_queue
+        WHERE token_id = $1
+          AND status IN (${unsentSql})
+          AND alert_key LIKE '${TOKEN_EXPIRY_ALERT_PREFIX}%'`,
+      [tokenId],
+    );
+    deleted += expiry.rowCount || 0;
+  }
+
+  return { deleted };
 }
 
 async function retireManagedCertificate(clientOrPool, options) {
@@ -1770,6 +1815,7 @@ async function retireManagedCertificate(clientOrPool, options) {
       ],
     );
 
+    let suppressTokenExpiry = false;
     if (certificate.token_id) {
       // Interim model: several managed certificates may reference the same
       // token. Only mirror a terminal lifecycle status onto the shared token
@@ -1799,11 +1845,16 @@ async function retireManagedCertificate(clientOrPool, options) {
               AND id = $3`,
           [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
         );
-        await suppressPendingRetiredCertificateAlerts(client, {
-          tokenId: certificate.token_id,
-        });
+        suppressTokenExpiry = true;
       }
     }
+
+    await suppressPendingRetiredCertificateAlerts(client, {
+      tokenId: certificate.token_id,
+      certificateId: resolved.options.certificateId,
+      workspaceId: resolved.options.workspaceId,
+      suppressTokenExpiry,
+    });
 
     await writeRetireAudit(
       client,

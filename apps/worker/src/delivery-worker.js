@@ -32,8 +32,8 @@ import {
   getWebhookNames,
 } from "./shared/contactGroups.js";
 import {
-  isRetiredCertificateSuppressedAlertKey,
-  shouldSkipRetiredCertificateAlert,
+  parseCertRenewalFailedJobId,
+  shouldDiscardRetiredCertificateAlert,
 } from "./shared/retiredCertificateAlerts.js";
 
 function safeJoinList(value) {
@@ -1190,9 +1190,29 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
       try {
 
+      let jobCertificateStatus = null;
+      const renewalFailedJobId = parseCertRenewalFailedJobId(alert.alert_key);
+      if (renewalFailedJobId) {
+        const certRes = await client.query(
+          `SELECT mc.status
+             FROM certificate_jobs cj
+             JOIN managed_certificates mc
+               ON mc.workspace_id = cj.workspace_id
+              AND cj.subject_id = mc.id::text
+            WHERE cj.id = $1
+              AND cj.subject_type = 'managed_certificate'
+            LIMIT 1`,
+          [renewalFailedJobId],
+        );
+        jobCertificateStatus = certRes.rows[0]?.status ?? null;
+      }
+
       if (
-        isRetiredCertificateSuppressedAlertKey(alert.alert_key) &&
-        shouldSkipRetiredCertificateAlert(alert.cert_lifecycle_status)
+        shouldDiscardRetiredCertificateAlert({
+          alertKey: alert.alert_key,
+          tokenLifecycleStatus: alert.cert_lifecycle_status,
+          jobCertificateStatus,
+        })
       ) {
         const discardRes = await client.query(
           `UPDATE alert_queue
@@ -1212,6 +1232,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             alertId: alert.id,
             alertKey: alert.alert_key,
             certLifecycleStatus: alert.cert_lifecycle_status,
+            jobCertificateStatus,
           });
         }
         continue;

@@ -162,7 +162,9 @@ export default function RetireCertificateModal({
             <Alert status='warning' borderRadius='12px'>
               <AlertIcon />
               <AlertDescription fontSize='sm'>
-                Alerting will be disabled for this certificate.
+                Renewal-failure alerts for this certificate will stop. Expiry
+                alerts stop only when no other live certificate remains on this
+                asset. Endpoint monitoring continues.
               </AlertDescription>
             </Alert>
 
