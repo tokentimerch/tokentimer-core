@@ -204,6 +204,27 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
     assert.equal(outcome.reason, "no_managed_certificate_subject");
   });
 
+  it("skips retired certificates", async () => {
+    const { state, client } = createMockClient(
+      happyPathHandler({
+        managedCert: {
+          rows: [{ id: "cert-1", token_id: 77, status: "revoked" }],
+        },
+      }),
+    );
+    const outcome = await queueCertRenewalFailedAlert({
+      client,
+      job: renewJob(),
+      workspaceId: WORKSPACE_A,
+    });
+    assert.equal(outcome.queued, false);
+    assert.equal(outcome.reason, "certificate_retired");
+    assert.equal(
+      state.queries.some((q) => q.text.includes("INSERT INTO alert_queue")),
+      false,
+    );
+  });
+
   it("skips when no admin recipient exists", async () => {
     const { client } = createMockClient(
       happyPathHandler({ membership: { rows: [] } }),

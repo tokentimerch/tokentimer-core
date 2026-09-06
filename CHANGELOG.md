@@ -24,6 +24,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Retiring a certificate as revoked or decommissioned now stops expiry alerts for that certificate.** Pending expiry and renewal-failure alerts are dropped, new ones are not queued, and weekly digests omit the token. Endpoint-down alerts are unchanged.
 - **A certificate whose renewal is pinned to a real, non-retired agent that can't currently claim the job (a version/protocol compatibility block, or a declared-capability mismatch) reported the generic "no agent is currently associated with this certificate's renewal" instead of naming the pinned agent's actual problem.** The renewal-path health check now reports a distinct `assigned_agent_ineligible` reason. When the agent declared other operations (for example issue and deploy) but not renew, the summary names those operations and says this is not a renew path. The Certificates inventory now shows that badge next to the renewal state, including on a certificate that is not yet profiled but already has a deployed agent assigned.
 - The fleet table's clock drift badge ignored `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS`/`CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` and always flagged drift past its own hardcoded 5 second threshold regardless of an operator's configured values. It now reads the server-computed drift state and shows a distinct badge once drift passes the alert threshold, not just the warn threshold.
 

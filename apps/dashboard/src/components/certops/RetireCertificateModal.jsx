@@ -159,6 +159,13 @@ export default function RetireCertificateModal({
               </Stack>
             </RadioGroup>
 
+            <Alert status='warning' borderRadius='12px'>
+              <AlertIcon />
+              <AlertDescription fontSize='sm'>
+                Alerting will be disabled for this certificate.
+              </AlertDescription>
+            </Alert>
+
             <Textarea
               value={reason}
               onChange={event => setReason(event.target.value)}

@@ -20,6 +20,7 @@ import {
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
+import { shouldSkipRetiredCertificateAlert } from "./shared/retiredCertificateAlerts.js";
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -111,7 +112,8 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
          COALESCE(ws.webhooks_alerts_enabled, wsf.webhooks_alerts_enabled, wjj.webhooks_alerts_enabled, FALSE) AS webhooks_alerts_enabled,
          COALESCE(ws.delivery_window_start, wsf.delivery_window_start, wjj.delivery_window_start) AS delivery_window_start,
          COALESCE(ws.delivery_window_end, wsf.delivery_window_end, wjj.delivery_window_end) AS delivery_window_end,
-         COALESCE(ws.delivery_window_tz, wsf.delivery_window_tz, wjj.delivery_window_tz) AS delivery_window_tz
+         COALESCE(ws.delivery_window_tz, wsf.delivery_window_tz, wjj.delivery_window_tz) AS delivery_window_tz,
+         t.cert_lifecycle_status
        FROM tokens t
        LEFT JOIN workspaces w ON w.id = t.workspace_id
        LEFT JOIN LATERAL (
@@ -150,6 +152,21 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
 
     for (const t of tokens) {
       scanned++;
+      if (
+        shouldSkipRetiredCertificateAlert(t.cert_lifecycle_status)
+      ) {
+        skipped++;
+        logger.info(
+          JSON.stringify({
+            level: "INFO",
+            message: "skipping-retired-certificate-alert",
+            token_id: t.token_id,
+            token_name: t.token_name,
+            cert_lifecycle_status: t.cert_lifecycle_status,
+          }),
+        );
+        continue;
+      }
       const days = computeDaysLeft(t.expiration);
 
       // Parse workspace-specific thresholds, with optional contact-group override

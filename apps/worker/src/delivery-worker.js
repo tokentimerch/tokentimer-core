@@ -31,6 +31,10 @@ import {
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
+import {
+  isRetiredCertificateSuppressedAlertKey,
+  shouldSkipRetiredCertificateAlert,
+} from "./shared/retiredCertificateAlerts.js";
 
 function safeJoinList(value) {
   if (!value) return null;
@@ -1094,6 +1098,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          t.key_size, t.algorithm, t.license_type, t.vendor, t.cost, 
          t.renewal_url, t.renewal_date::date AS renewal_date, t.contacts, 
          t.description, t.notes,
+         t.cert_lifecycle_status,
          COALESCE(t.contact_group_id, ca.contact_group_id) AS contact_group_id,
          COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
@@ -1184,6 +1189,33 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       }
 
       try {
+
+      if (
+        isRetiredCertificateSuppressedAlertKey(alert.alert_key) &&
+        shouldSkipRetiredCertificateAlert(alert.cert_lifecycle_status)
+      ) {
+        const discardRes = await client.query(
+          `UPDATE alert_queue
+              SET status = 'sent', last_attempt = NOW(),
+                  error_message = 'Discarded: certificate revoked or decommissioned',
+                  next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
+            WHERE id = $1 AND delivery_claim_id = $2`,
+          [alert.id, claimId],
+        );
+        if (discardRes.rowCount === 0) {
+          logger.warn(
+            "Skipped retired-certificate-alert discard: another worker took ownership",
+            { alertId: alert.id },
+          );
+        } else {
+          logger.info("Discarded alert for retired certificate", {
+            alertId: alert.id,
+            alertKey: alert.alert_key,
+            certLifecycleStatus: alert.cert_lifecycle_status,
+          });
+        }
+        continue;
+      }
 
       // For endpoint health "down" alerts, defer until consecutive_failures >= alert_after_failures.
       // The endpoint-check-worker queues the alert on the first state transition; we wait

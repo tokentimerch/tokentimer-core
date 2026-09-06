@@ -1702,6 +1702,27 @@ async function writeRetireAudit(client, options, certificate, status, reason) {
   );
 }
 
+/**
+ * Drop undelivered expiry and renewal-failure alerts for a just-retired
+ * token. Sent rows stay so a later re-queue cannot re-fire an already-sent
+ * threshold window.
+ */
+async function suppressPendingRetiredCertificateAlerts(client, { tokenId }) {
+  if (!tokenId) return { deleted: 0, reason: "no_token" };
+
+  const deleted = await client.query(
+    `DELETE FROM alert_queue
+      WHERE token_id = $1
+        AND status IN ('pending', 'failed', 'partial', 'blocked')
+        AND (
+          alert_key LIKE 'token_expiry:%'
+          OR alert_key LIKE 'cert_renewal_failed:%'
+        )`,
+    [tokenId],
+  );
+  return { deleted: deleted.rowCount || 0 };
+}
+
 async function retireManagedCertificate(clientOrPool, options) {
   const resolved = resolveRetireArgs(clientOrPool, options);
   const normalizedStatus = normalizeRetireStatus(resolved.options.status);
@@ -1778,6 +1799,9 @@ async function retireManagedCertificate(clientOrPool, options) {
               AND id = $3`,
           [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
         );
+        await suppressPendingRetiredCertificateAlerts(client, {
+          tokenId: certificate.token_id,
+        });
       }
     }
 
@@ -1920,6 +1944,7 @@ module.exports = {
   normalizeLimit,
   normalizeOffset,
   retireManagedCertificate,
+  suppressPendingRetiredCertificateAlerts,
   toInstanceRecord,
   toInventoryRecord,
   toTargetRecord,

@@ -379,6 +379,9 @@ describe('CertOpsCertificates retire action', () => {
       name: /Retire certificate/,
     });
     expect(dialog).toBeInTheDocument();
+    expect(
+      screen.getByText('Alerting will be disabled for this certificate.')
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 

@@ -30,6 +30,9 @@ const { pool } = require("../../db/database");
 const {
   RENEWAL_ALERTING_OPERATIONS,
 } = require("./renewalAlertPolicy");
+const {
+  shouldSkipRetiredCertificateAlert,
+} = require("../../src/shared/retiredCertificateAlerts");
 
 // Contact-group eligibility helpers. These mirror
 // apps/worker/src/shared/contactGroups.js exactly; that module is ESM and
@@ -150,7 +153,7 @@ async function queueCertRenewalFailedAlert({
 
   // Anchor token: the linked token row of the subject managed certificate.
   const certRes = await client.query(
-    `SELECT id, token_id
+    `SELECT id, token_id, status
        FROM managed_certificates
       WHERE id = $1
         AND workspace_id = $2
@@ -160,6 +163,10 @@ async function queueCertRenewalFailedAlert({
   const cert = certRes.rows[0] || null;
   if (!cert) return { queued: false, reason: "managed_certificate_not_found" };
   if (!cert.token_id) return { queued: false, reason: "no_linked_token" };
+
+  if (shouldSkipRetiredCertificateAlert(cert.status)) {
+    return { queued: false, reason: "certificate_retired" };
+  }
   const tokenId = cert.token_id;
 
   const alertKey = certRenewalFailedAlertKey(resolvedJobId);

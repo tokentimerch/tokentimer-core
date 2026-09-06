@@ -31,6 +31,7 @@ describe("Alert Settings API", function () {
     expect(res.body).to.have.property("alert_thresholds");
     expect(res.body).to.have.property("webhook_urls");
     expect(res.body).to.have.property("plan");
+    expect(res.body).to.not.have.property("retired_certificate_alerts_enabled");
   });
 
   it("PUT /api/v1/workspaces/:id/alert-settings validates threshold ranges", async () => {
