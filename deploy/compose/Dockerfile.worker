@@ -27,6 +27,8 @@ COPY packages ./packages
 COPY apps/worker ./apps/worker
 # CertOps monitor bridge for endpoint-check-worker (token-linked inventory sync).
 COPY apps/api/services/certops ./apps/api/services/certops
+# renewalFailureAlerts (and other certops services) require this shared helper.
+COPY apps/api/src/shared/retiredCertificateAlerts.js ./apps/api/src/shared/retiredCertificateAlerts.js
 COPY apps/api/services/audit.js ./apps/api/services/audit.js
 COPY apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY apps/api/utils/logger.js ./apps/api/utils/logger.js
