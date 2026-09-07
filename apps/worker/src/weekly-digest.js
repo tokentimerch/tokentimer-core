@@ -554,6 +554,10 @@ export async function weeklyDigestJob() {
              AND (t.contact_group_id = $2 OR (t.contact_group_id IS NULL AND $2 = $3))
              AND t.expiration IS NOT NULL
              AND t.expiration BETWEEN CURRENT_DATE AND CURRENT_DATE + ($4::integer)
+             AND (
+               t.cert_lifecycle_status IS NULL
+               OR t.cert_lifecycle_status NOT IN ('revoked', 'decommissioned')
+             )
            ORDER BY t.expiration ASC`,
           [
             ws.workspace_id,

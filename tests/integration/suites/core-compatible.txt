@@ -112,6 +112,7 @@ tests/integration/auto-sync.test.js
 tests/integration/auto-sync-import.test.js
 tests/integration/import-cleanup-scan-lifecycle.test.js
 tests/integration/weekly-digest-worker.integration.test.js
+tests/integration/retired-certificate-alerts.integration.test.js
 
 # Audit
 tests/integration/audit-filtering.test.js

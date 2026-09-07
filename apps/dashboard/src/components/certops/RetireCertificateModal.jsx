@@ -159,6 +159,15 @@ export default function RetireCertificateModal({
               </Stack>
             </RadioGroup>
 
+            <Alert status='warning' borderRadius='12px'>
+              <AlertIcon />
+              <AlertDescription fontSize='sm'>
+                Renewal-failure alerts for this certificate will stop. Expiry
+                alerts stop only when no other live certificate remains on this
+                asset. Endpoint monitoring continues.
+              </AlertDescription>
+            </Alert>
+
             <Textarea
               value={reason}
               onChange={event => setReason(event.target.value)}
