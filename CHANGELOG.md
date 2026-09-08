@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-08
+
 ### Added
 
 - CertOps inventory tables (certificates, agents, upcoming renewals, and renewal profiles) now sort on the server and collapse to stacked cards on a narrow screen. Opening a certificate opens a dedicated details modal instead of the generic token inspector.
