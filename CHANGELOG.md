@@ -33,6 +33,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 
 - Transitive `qs` is pinned to 6.16.0 (from 6.15.2), clearing [GHSA-x5fp-wj9c-mxmx](https://github.com/advisories/GHSA-x5fp-wj9c-mxmx) and [GHSA-4mjr-xmp4-gh2g](https://github.com/advisories/GHSA-4mjr-xmp4-gh2g). Transitive `fast-uri` is pinned to 3.1.7 (from 3.1.5), clearing the later host-confusion and SSRF advisories on that 3.x line ([GHSA-5jgf-p345-68v8](https://github.com/advisories/GHSA-5jgf-p345-68v8), [GHSA-f65p-4m7j-42xc](https://github.com/advisories/GHSA-f65p-4m7j-42xc), [GHSA-fph4-wmhf-6fwf](https://github.com/advisories/GHSA-fph4-wmhf-6fwf), [GHSA-jqff-g426-hqxp](https://github.com/advisories/GHSA-jqff-g426-hqxp)). No operator action beyond the usual image rebuild.
+- The `subfinder` binary in the API image is compiled against `golang.org/x/crypto` 0.56.0 (from 0.55.0), clearing [GO-2026-6354](https://pkg.go.dev/vuln/GO-2026-6354) / CVE-2026-78662 and [GO-2026-6355](https://pkg.go.dev/vuln/GO-2026-6355) / CVE-2026-56855. Both are High SSH-channel DoS findings. TokenTimer does not run an SSH server, so the path is not reachable; the pin moves so image scans stay clean. **Operator action:** rebuild the API image.
 
 ## [0.14.2] - 2026-09-01
 
