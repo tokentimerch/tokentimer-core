@@ -32,7 +32,7 @@
     "@tokentimer/node-compat": "workspace:*",
     "@tokentimer/webhook-safety": "workspace:*",
     "axios": "1.18.0",
-    "nodemailer": "9.0.1",
+    "nodemailer": "9.1.1",
     "pg": "8.18.0",
     "prom-client": "15.1.3",
     "winston": "3.19.0"
