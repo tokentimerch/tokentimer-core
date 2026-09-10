@@ -210,6 +210,19 @@ the shared detector scans every outbound envelope.
   There is no create and no delete: a profile exists because an issuance produced
   it. Every write revalidates through `validateRenewalProfile`, the same gate the
   scheduler admits on. See ADR-0010 A1.2 and A1.3.
+- **Workspace Job approval** - `certOpsRequireApprovalAlways` on
+  `GET`/`PUT /api/v1/workspaces/:id/certops/settings`. When on, every new job
+  starts at `pending_approval`: dashboard, machine API tokens, bulk renew,
+  scheduled renewal, and trust-anchor distribute or revoke. Fail-closed: the
+  per-job `requiresApproval` checkbox cannot override it, and an explicit
+  `false` from a caller cannot override a true workspace column. Off by
+  default. Not an env var; workspace admins toggle it from the CertOps
+  Settings tab (**Job approval** panel). Turning it on or off is audited
+  (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
+  `CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED`), same as the pause/resume kill
+  switch. A request that sets both this flag and `certOpsPaused` together
+  applies them as one transaction. Pause still blocks dispatch of already
+  approved jobs; this setting only forces new jobs to wait for approval.
 - **Renewal alert policy** - the single source of truth for whether a terminal
   job transition notifies anyone
   (`apps/api/services/certops/renewalAlertPolicy.js`, imported by both
@@ -223,7 +236,9 @@ the shared detector scans every outbound envelope.
   agent-reported refusals and human approval rejections share the statuses
   `rejected`/`blocked`, and only the former is actionable. Dry runs never alert.
   `orphaned_unknown_effect` always alerts at high priority. Every decision
-  records a reason, skips included. See ADR-0009.
+  records a reason, skips included. Retiring a certificate as `revoked` or
+  `decommissioned` also stops expiry and renewal-failure alerts for it (see
+  **Certificate removal**). See ADR-0009.
 - **CertOps outbox** - `certops_outbox` (migration 35), the transactional outbox
   for side effects that must survive the transaction that decided them. The
   deciding transaction records the intent as a plain local INSERT with no
@@ -244,6 +259,10 @@ the shared detector scans every outbound envelope.
   summary (picked up by later sweeps), while manual and bulk creation
   reserve against the same per-workspace/per-CA counter inside the creating
   transaction and fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`.
+  Certificates waiting on this cap show a distinct **At CA capacity**
+  badge and a separate, non-alarming notice in Upcoming renewals, instead
+  of looking like a healthy auto-renewing certificate. The wait clears
+  automatically once earlier renewals for that CA finish.
 - **Agent-deployable key custody** - only `key_mode` `agent-local` or
   `proxy-agent-local` can carry an agent-executed
   `issue`/`renew`/`deploy`/`reload`/`revoke` job. A certificate that was
@@ -274,7 +293,15 @@ the shared detector scans every outbound envelope.
   defaults to the discovering agent at creation time
   (`resolveManagedCertificateJobDefaults`), pinning host-specific work to
   the host that actually holds the files. An explicit `assignedAgentId`
-  always wins.
+  always wins. When renewal is pinned to a real, non-retired agent that
+  cannot currently claim the job (a version/protocol compatibility block,
+  or a declared-capability mismatch), the renewal-path health check
+  reports `assigned_agent_ineligible` rather than the generic "no agent is
+  currently associated with this certificate's renewal". When the agent
+  declared other operations (for example issue and deploy) but not renew,
+  the summary names those operations. The Certificates inventory shows that
+  badge next to the renewal state, including on a certificate that is not
+  yet profiled but already has a deployed agent assigned.
 - **Bulk renew** - `POST .../certops/jobs/bulk-renew`: many certificates
   through the same creation path as single renew (validation, approval
   gates, kill switch identical) with a per-item partial-failure envelope.
@@ -300,9 +327,11 @@ rather than adding a parallel inventory page. See ADR-0006.
   approvals, kill switch), not a second certificate list. It ships
   `/certops/operations` (the workspace kill switch toggle at the top; the
   executor jobs panel with a manager-only "Create manual job" dialog,
-  including a "require approval" checkbox, and inline Approve/Reject
+  including a "require approval" checkbox that locks on while
+  `certOpsRequireApprovalAlways` is set, and inline Approve/Reject
   actions on jobs sitting at `pending_approval`; evidence timelines; machine
-  API tokens; the Deploy-an-agent panel with the show-once bootstrap token
+  API tokens and the **Job approval** panel on `/certops/settings`; the
+  Deploy-an-agent panel with the show-once bootstrap token
   and install command; and the Agent fleet panel with status/heartbeat/retire)
   mounted via the `/certops/*` splat route. No nav entry: it is
   reached from the Control Center certificate-operations panel footer link
@@ -315,7 +344,12 @@ Removing a tracked certificate is retire-first, not row delete. See ADR-0007.
 
 - **Retire** - `POST .../certops/certificates/:certId/retire` with
   `revoked` or `decommissioned`; rows, instances, and evidence preserved;
-  linked token lifecycle status mirrors the certificate.
+  linked token lifecycle status mirrors the certificate. Retiring also stops
+  expiry and renewal-failure alerts for that certificate: pending
+  renewal-failure alerts are dropped immediately; pending expiry alerts are
+  dropped once no live sibling remains on the shared token. New ones are
+  not queued, and weekly digests omit a token whose lifecycle is retired.
+  Endpoint-down alerts are unchanged.
 - **Hard purge** - only for manually created cert tokens not backed by a
   `managed_certificate`; managed-backed certs route to Retire from the token
   surface.
@@ -329,15 +363,22 @@ routes and UI are hidden, so feature code can ship dark, Cloud can run staged
 per-workspace previews, and Enterprise enables it deliberately. Edition, plan,
 and license gating apply on top once the flag is on.
 
-The explicit exception is the workspace kill-switch settings surface:
+The explicit exception is the workspace settings surface:
 `GET` and `PUT /api/v1/workspaces/:id/certops/settings` remain available while
 the global rollout is disabled, so incident controls can be inspected and
-staged. The stored workspace pause state is independent of the global flag;
-effective operational activity remains
-`certOpsActive = certOpsEnabled && !certOpsPaused`.
-The settings surface is human session-only: internal worker bearer credentials
-cannot read, pause, or resume a workspace. Private-key material remains
-rejected before the session-user and role checks on its body-bearing `PUT`.
+staged. That surface carries both the pause kill switch (`certOpsPaused`)
+and Job approval (`certOpsRequireApprovalAlways`). The stored workspace pause
+state is independent of the global flag; effective operational activity
+remains `certOpsActive = certOpsEnabled && !certOpsPaused`.
+`certOpsRequireApprovalAlways` is independent of pause: turning it on does
+not halt dispatch of already-approved jobs; it only forces every new job to
+start at `pending_approval`. It is fail-closed (the per-job checkbox cannot
+turn it off) and is not an env var; admins toggle it from the CertOps
+Settings tab. A request that sets both flags together applies them as one
+transaction. The settings surface is human session-only: internal worker
+bearer credentials cannot read, pause, resume, or change Job approval.
+Private-key material remains rejected before the session-user and role
+checks on its body-bearing `PUT`.
 
 For the controller, pause blocks new provision intent and command delivery but deliberately
 does not block passive controller observations or the established executor

@@ -17,6 +17,9 @@ goes stale.
 Machine tokens are scoped API keys for non-human callers (scripts, CI jobs,
 certbot/ACME hooks). Create one from the dashboard: workspace manager or
 admin role, `/certops/settings` page (Settings tab), "Machine API tokens" panel.
+The same Settings tab holds the **Job approval** workspace setting
+(`certOpsRequireApprovalAlways`); that is not an env var. See
+`docs/CONFIGURATION.md`.
 
 - Format: `ttx_<id>_<secret>` (`apps/api/services/certops/apiTokens.js`).
 - The plaintext token is shown exactly once, in the create-token response.
