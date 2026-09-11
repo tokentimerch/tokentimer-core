@@ -11,8 +11,24 @@ overrides:
   path-to-regexp: 8.4.0
   yaml: 1.10.3
   # Quadratic CPU consumption in !!omap resolution (CVE-2026-59870 /
-  # GHSA-5p4m-2wfm-xmqj), fixed 4.3.1. Pin exact per repo policy.
-  js-yaml: 4.3.1
+  # GHSA-5p4m-2wfm-xmqj), fixed 4.3.1. GHSA-2883-xcg3-v3hh (merge-key CPU
+  # DoS) is fixed in 4.3.2. Pin exact per repo policy.
+  js-yaml: 4.3.2
+  # GHSA-2x7j-588g-ccc2 (addressparser CPU DoS, High) plus 9.1.0 Mediums
+  # GHSA-8m3c-c648-2xjj / GHSA-cc9r-2j5m-2m83 / GHSA-wmmp-3585-3rmp.
+  nodemailer: 9.1.1
+  # GHSA-rgj7-g3m4-5g8c: libheif issues in sharp < 0.35.4.
+  sharp: 0.35.4
+  # GHSA-82fw-gwwq-j7x9: @vitest/mocker redirect mock path traversal; fixed 4.1.11.
+  vitest: 4.1.11
+  "@vitest/mocker": 4.1.11
+  # GHSA-c83g-rgw3-j3cx (unbounded memory) and GHSA-73wf-gq98-2v4g
+  # (uncaught crash / prototype write); both fixed 4.28.7.
+  browserslist: 4.28.7
+  # GHSA-w5vr-8v7q-w6rv: process termination on invalid input; fixed 2.11.0.
+  baseline-browser-mapping: 2.11.0
+  # GHSA-p498-v437-472g: recursive copy follows symlinked files; fixed 0.16.8.
+  "@humanfs/node": 0.16.8
   rollup: 4.60.0
   flatted: 3.4.2
   serialize-javascript: 7.0.5
