@@ -30,6 +30,10 @@ describe("CertOps Kubernetes controller wiring", () => {
     const apiDetectorShim = read("apps/api/utils/secretMaterial.js");
     expect(dockerfile).to.include("FROM node:22.23.2-alpine3.23");
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
+    expect(dockerfile).to.include(
+      "rm -rf /app/apps/k8s-controller/node_modules /app/packages/log-scrub/node_modules",
+    );
+    expect(dockerfile).to.include('test "$js_yaml_store" = "js-yaml@4.3.2"');
     expect(dockerfile).to.include("corepack disable");
     expect(dockerfile).to.include("/usr/local/lib/node_modules/corepack");
     expect(dockerfile).to.include("/usr/local/lib/node_modules/npm");
