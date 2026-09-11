@@ -1,6 +1,8 @@
 # Configuration Reference
 
-Complete environment variables reference for TokenTimer Core.
+Environment variables for TokenTimer Core, plus one CertOps workspace
+setting that is not an env var (`certOpsRequireApprovalAlways`; see
+[Job approval](#certops-job-approval)).
 
 Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from compose/examples where applicable.
 
@@ -247,10 +249,32 @@ a NetworkPolicy that blocks the proxy it was just told to use). See
 | `CERTOPS_AGENT_LATEST_KNOWN_VERSION` | Reference agent build version used only to compute the `outdated` fleet label (more than one minor behind this value, but still inside the min/max window above). Defaults to the version of the agent package this server actually ships (`packages/agent/package.json`), so it tracks every release automatically; override only if the API is intentionally serving a different agent build than the one bundled with it. | shipped agent package version | API |
 | `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` | Absolute clock-offset thresholds used to compute fleet `clockDriftState` (`warn`/`alert`). | `5000` / `30000` | API |
 | `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. This is the fleet-wide default; a certificate whose renewal profile sets `certificate_profiles.renew_before_days` uses that value instead (`COALESCE(renew_before_days, <this>)`). Editing the profile from the Renewal automation page (`/certops/renewals`) is the supported way to give one certificate a longer runway than the rest of the fleet. A profile whose `status` is `disabled` or `archived` is excluded from renewal entirely regardless of this value. | `30` | API + Worker |
-| `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. | `5` | API + Worker |
+| `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. Certificates waiting on this cap show a distinct **At CA capacity** badge and a separate, non-alarming notice in Upcoming renewals, instead of looking like a healthy auto-renewing certificate. The wait clears automatically once earlier renewals for that CA finish. | `5` | API + Worker |
 | `CERTOPS_JOB_LEASE_SECONDS` | How long an agent's claim on a job stays valid before it must be renewed. Raise this if legitimate renewals routinely take longer. | `900` | API |
 | `CERTOPS_LEASE_HARD_GRACE_MS` | Extra time a still-heartbeating agent gets before its expired-lease job is judged. | `3600000` (1 hour) | API + Worker |
 | `CERTOPS_AGENT_REQUIRE_SIGNED_AGENT_ID` | Agent-side flag governing only the compatibility decoder's tolerance for a signed job whose `agentId` is **missing** entirely (ADR-0012 decision 3). It has zero effect on a job whose `agentId` is present but does not match this agent's own id: a mismatch always fails closed, regardless of this flag's value, and is logged/counted as a distinct mismatch-observability event an operator can alert on (never conflated with the generic "signature verification failed" log line). It also has zero effect on the control-plane producer schema, which requires `agentId` unconditionally. By default (`true`), a signed job missing `agentId` fails closed with a distinct incompatibility error rather than a generic verification failure. Set to `false` (env var or config.json) as a **temporary rollback** only while this agent still talks to a control plane that has not finished emitting `agentId` on every signed dispatch; while overridden, the decoder tolerates absence and proceeds. The `agent-id-binding-v1` capability is advertised only from this flag's effective runtime value, never from its compiled-in default: overriding to `false` withdraws the capability on the agent's next heartbeat, and removing the override (or setting it back to `true`) restores it on the next heartbeat after that, with no agent restart required either way. **Sunset:** this flag and the absence-tolerant decoder branch it gates are a temporary rollout bridge, not a permanent option, and are expected to be removed entirely in a later release once no fleet still needs the override back to `false`. | `true` | Agent |
+
+### Job approval {#certops-job-approval}
+
+Workspace admins can require approval before every new job runs, regardless
+of the per-job checkbox. This is a workspace setting, not an env var.
+Fail-closed: the server reads `workspaces.certops_require_approval_always`
+at job creation, so omitting `requiresApproval` or passing `false` cannot
+bypass it.
+
+| Setting | Description | Default | Scope |
+| ------- | ----------- | ------- | ----- |
+| `certOpsRequireApprovalAlways` | When on, every new certificate job starts `pending_approval`, including dashboard, machine API tokens, bulk renew, scheduled renewal, and trust-anchor distribute/revoke. The per-job approval checkbox cannot override it. | `false` | Workspace |
+
+Toggle it from **CertOps Settings** under **Job approval** (badges
+**Always required** / **Not required**; switch text **Require approval
+before every new job can run, regardless of the per-job setting.**), or via
+`GET`/`PUT /api/v1/workspaces/:id/certops/settings` (admin-only for the
+`PUT`). It shares that endpoint with the pause/resume kill switch: a
+request that sets both together applies them as one transaction, so a
+failure partway through leaves neither changed. Enabling or disabling it is
+audited (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
+`CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED`).
 
 ### CertOps maintenance sweeps (worker)
 

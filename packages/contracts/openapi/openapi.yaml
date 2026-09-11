@@ -1638,13 +1638,25 @@ paths:
   /api/v1/integrations/gcp/scan:
     post:
       tags: [Integrations]
-      summary: Scan GCP resources for credentials and expirations
+      summary: Scan GCP Secret Manager, Certificate Manager, and Compute Engine SSL certificates
+      description: >-
+        Lists Secret Manager secrets when `include.secrets` is true (the
+        default) and, when `include.certificates` is true, Certificate
+        Manager certificates at `locations/global` plus Compute Engine
+        `sslCertificates` (global and every reachable region). Paste a
+        short-lived `gcloud auth print-access-token` value, not a
+        service-account JSON key. Roles on a service account apply only if
+        that account is impersonated. A failed sub-scan names the Google
+        reason (API not enabled, missing permission, or wrong identity)
+        instead of a bare HTTP 403. Incomplete certificate kinds are
+        reported incomplete so obsolete-item cleanup cannot delete tokens
+        the scan never fully enumerated.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/GcpScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -4140,10 +4152,11 @@ paths:
   /api/v1/workspaces/{id}/certops/settings:
     get:
       tags: [CertOps]
-      summary: Get workspace CertOps pause state
+      summary: Get workspace CertOps settings
       operationId: getCertOpsWorkspaceSettings
       description: >-
-        Returns the workspace-local CertOps kill-switch state and the effective
+        Returns the workspace-local CertOps kill-switch state, the Job
+        approval policy (`certOpsRequireApprovalAlways`), and the effective
         side-effect availability. All authorized workspace members may read it.
         This is a human cookie/session-authenticated workspace surface; internal
         worker bearer credentials are not accepted.
@@ -4156,7 +4169,7 @@ paths:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
         "200":
-          description: Workspace CertOps pause state
+          description: Workspace CertOps pause and Job approval state
           content:
             application/json:
               schema:
@@ -4171,15 +4184,21 @@ paths:
           $ref: "#/components/responses/InternalError"
     put:
       tags: [CertOps]
-      summary: Pause or resume new CertOps work for a workspace
+      summary: Update workspace CertOps pause or Job approval settings
       operationId: updateCertOpsWorkspaceSettings
       description: >-
-        Changes only the workspace-local kill switch and remains available
-        while the deployment-wide rollout flag is disabled. Requires a human
+        Changes the workspace-local kill switch and/or the Job approval
+        policy (`certOpsRequireApprovalAlways`) and remains available while
+        the deployment-wide rollout flag is disabled. Requires a human
         cookie/session-authenticated workspace admin; internal worker bearer
-        credentials are not accepted. A paused workspace rejects new manual jobs and future dispatch or
-        provision side effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory,
-        status, audit, evidence, and existing-work reporting remain available.
+        credentials are not accepted. At least one of `certOpsPaused` or
+        `certOpsRequireApprovalAlways` is required. Setting both in one
+        request applies them as a single transaction. A paused workspace
+        rejects new manual jobs and future dispatch or provision side
+        effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory, status, audit,
+        evidence, and existing-work reporting remain available. While Job
+        approval is on, every new job starts `pending_approval`, including
+        trust-anchor distribute or revoke.
       security:
         - cookieAuth: []
       parameters:
@@ -4192,13 +4211,13 @@ paths:
               $ref: "#/components/schemas/CertOpsWorkspacePauseUpdateRequest"
       responses:
         "200":
-          description: Stored workspace CertOps pause state
+          description: Stored workspace CertOps pause and Job approval state
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CertOpsWorkspacePauseState"
         "400":
-          description: Pause state or reason is invalid
+          description: Pause state, Job approval policy, or reason is invalid
           content:
             application/json:
               schema:
@@ -4208,6 +4227,10 @@ paths:
                   value:
                     error: CertOps workspace pause request is invalid
                     code: CERTOPS_WORKSPACE_PAUSE_STATE_INVALID
+                invalidApprovalPolicy:
+                  value:
+                    error: requireApprovalAlways must be a boolean
+                    code: CERTOPS_WORKSPACE_APPROVAL_POLICY_STATE_INVALID
                 invalidReason:
                   value:
                     error: CertOps workspace pause request is invalid
@@ -8125,11 +8148,22 @@ components:
     CertOpsWorkspacePauseUpdateRequest:
       type: object
       additionalProperties: false
-      required: [certOpsPaused]
+      minProperties: 1
+      description: >-
+        At least one of `certOpsPaused` or `certOpsRequireApprovalAlways`
+        is required. Setting both applies them in one transaction.
       properties:
         certOpsPaused:
           type: boolean
           description: True prevents new CertOps side effects in this workspace only.
+        certOpsRequireApprovalAlways:
+          type: boolean
+          description: >-
+            When true, every new job starts `pending_approval`, including
+            dashboard, machine API tokens, bulk renew, scheduled renewal,
+            and trust-anchor distribute or revoke. The per-job approval
+            checkbox cannot override it. Maps to the dashboard Job
+            approval switch.
         reason:
           type: string
           maxLength: 500
@@ -8137,7 +8171,12 @@ components:
     CertOpsWorkspacePauseState:
       type: object
       additionalProperties: false
-      required: [workspaceId, certOpsPaused, certOpsEnabled, certOpsActive]
+      required:
+        - workspaceId
+        - certOpsPaused
+        - certOpsEnabled
+        - certOpsActive
+        - certOpsRequireApprovalAlways
       properties:
         workspaceId:
           type: string
@@ -8151,6 +8190,12 @@ components:
         certOpsActive:
           type: boolean
           description: True only when certOpsEnabled is true and certOpsPaused is false.
+        certOpsRequireApprovalAlways:
+          type: boolean
+          description: >-
+            True when Job approval is on for this workspace. Every new job
+            starts `pending_approval` until a different workspace manager
+            approves it.
         changed:
           type: boolean
           description: Present on updates; false means the requested state already existed and no transition audit was written.
@@ -9397,6 +9442,69 @@ components:
         credentials:
           type: object
           additionalProperties: true
+    GcpScanRequest:
+      type: object
+      additionalProperties: false
+      required: [projectId, accessToken]
+      properties:
+        projectId:
+          type: string
+          maxLength: 200
+          description: GCP project id to scan.
+        accessToken:
+          type: string
+          maxLength: 5000
+          description: >-
+            Short-lived OAuth access token from
+            `gcloud auth print-access-token`. Impersonate a service
+            account with `--impersonate-service-account=SA_EMAIL`. Do
+            not send a service-account JSON key.
+        include:
+          type: object
+          additionalProperties: false
+          description: >-
+            Which resource kinds to list. Secrets default on;
+            certificates default off.
+          properties:
+            secrets:
+              type: boolean
+              default: true
+              description: List Secret Manager secrets.
+            certificates:
+              type: boolean
+              default: false
+              description: >-
+                List Certificate Manager certificates at
+                `locations/global` and Compute Engine `sslCertificates`
+                (global and every reachable region).
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          type: array
+          maxItems: 50
+          description: >-
+            Ordered include/exclude rules applied to scan results before
+            import. Exclude rules always win; when include rules exist,
+            only matching items are kept.
+          items:
+            type: object
+            required: [action, matchType, field, value]
+            properties:
+              action:
+                type: string
+                enum: [include, exclude]
+              matchType:
+                type: string
+                enum: [regex, exact]
+              field:
+                type: string
+                enum: [name, description, location]
+              value:
+                type: string
+                maxLength: 500
     VaultScanRequest:
       type: object
       required: [address, token]
@@ -9470,6 +9578,36 @@ components:
           items:
             type: object
             additionalProperties: true
+        summary:
+          type: array
+          description: >-
+            Per-kind scan status. A kind with `complete: false` was
+            truncated, hit an API error, or could not reach every
+            Compute region; obsolete-item cleanup skips incomplete
+            kinds.
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              type:
+                type: string
+              sourceKind:
+                type: string
+              complete:
+                type: boolean
+              truncated:
+                type: boolean
+              error:
+                type: string
+                description: Provider-formatted reason when the sub-scan failed.
+              status:
+                type: integer
+        scan_id:
+          type: string
+          format: uuid
+          description: >-
+            Persisted scan id used by import cleanup. Omitted if
+            persistence failed.
         quota:
           type: object
           additionalProperties: true

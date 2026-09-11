@@ -467,6 +467,13 @@ Consequences:
   Check the fleet panel first when a job appears stuck.
 - Jobs pinned to a retired/rebuilt host never run. Pass an explicit
   `assignedAgentId`, or let the replacement agent rediscover the certificate.
+- A job pinned to a live, non-retired agent that cannot currently claim it
+  (a version/protocol compatibility block, or a declared-capability mismatch)
+  also stays unclaimed. The Certificates inventory shows this as
+  `assigned_agent_ineligible` next to the renewal state, rather than the
+  generic "no agent is currently associated with this certificate's renewal".
+  When the agent declared other operations (for example issue and deploy)
+  but not renew, the summary names those operations.
 - Certificates with no agent key custody are rejected at creation instead
   (`409 CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE`, see
   `AGENT_DEPLOYABLE_KEY_MODES`), rather than being dispatched to an agent
