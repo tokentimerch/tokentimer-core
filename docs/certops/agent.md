@@ -1100,13 +1100,12 @@ certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
 ```
 
 On win32, the hook string is instead `"<node.exe path>" "<hookPath>" present`
-/ `... cleanup` — certbot invokes the hook string through a shell, and a
+/ `... cleanup`. Certbot invokes the hook string through a shell, and a
 bare `.js` path has no useful Windows file association, so the node
-executable must be named explicitly (2026-08-05 real-host finding; also
-note that Certbot itself dropped official Windows support in February 2024,
-so this format matters mainly for `acmeKind: "acme.sh"` deployments run
-under Git Bash, and for anyone still running a self-built/unsupported
-Windows certbot).
+executable must be named explicitly. Certbot dropped official Windows
+support in February 2024, so this format matters mainly for
+`acmeKind: "acme.sh"` deployments run under Git Bash, and for anyone
+still running a self-built or unsupported Windows certbot.
 
 For acme.sh, `--dns` takes the shipped dnsapi hook **name** (`dns_certops`),
 not an absolute path — acme.sh sources `dnsapi/dns_certops.sh` from its own
