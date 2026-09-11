@@ -99,4 +99,17 @@ if (problems.length > 0) {
   fail(`${problems.length} security override pin(s) not honored by pnpm-lock.yaml`);
 }
 
+const controllerDockerfilePath = path.join(repoRoot, "apps/k8s-controller/Dockerfile");
+if (!fs.existsSync(controllerDockerfilePath)) {
+  fail("apps/k8s-controller/Dockerfile not found");
+}
+const jsYamlPin = REQUIRED_PINS["js-yaml"]["*"];
+const controllerDockerfile = fs.readFileSync(controllerDockerfilePath, "utf8");
+const controllerJsYamlAssert = `test "$js_yaml_store" = "js-yaml@${jsYamlPin}"`;
+if (!controllerDockerfile.includes(controllerJsYamlAssert)) {
+  fail(
+    `apps/k8s-controller/Dockerfile must assert ${controllerJsYamlAssert}; Grype catalogs leftover js-yaml store entries in that image`,
+  );
+}
+
 console.log(`check-lockfile-overrides: ok (${checked} resolved version(s) checked against required pins)`);
