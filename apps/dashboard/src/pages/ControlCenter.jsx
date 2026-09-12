@@ -67,6 +67,7 @@ import {
 } from '../hooks/useControlCenterStats';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { formatDate, API_ENDPOINTS } from '../utils/apiClient';
+import { formatProviderLabel } from '../utils/formatProviderLabel.js';
 
 const EMPTY_BUCKETS = Object.freeze({});
 const EMPTY_LIST = Object.freeze([]);
@@ -181,14 +182,6 @@ function friendlyErrorMessage(errorMsg) {
   if (msg.includes('MAX_ATTEMPTS')) return 'Max retry attempts exceeded';
   if (msg.includes('NO_CONTACTS_DEFINED')) return 'No contacts configured';
   return msg;
-}
-
-function formatProviderLabel(provider) {
-  if (!provider) return 'Unknown';
-  return String(provider)
-    .split(/[-_]/g, ' ')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
 }
 
 function getPrivilegeLevelBadge(level) {
