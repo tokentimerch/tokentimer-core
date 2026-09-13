@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Control Center Auto-sync rows now show the integration name** (GitHub, Azure KV, and the other import providers) instead of a blank title above the schedule.
+
 ## [0.15.0] - 2026-09-08
 
 ### Added

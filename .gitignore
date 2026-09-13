@@ -75,7 +75,8 @@ package-lock.json
 # Misc
 .cache/
 .parcel-cache/
-.grepai/
+graphify-out/
+.graphifyignore
 
 # Reports
 reports/
