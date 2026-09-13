@@ -1,217 +1,154 @@
-# TokenTimer Core -- Codebase Roadmap
+# TokenTimer Core -- Roadmap
 
-Engineering health and quality targets, tracked alongside the
-[feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
-These items are worked on in parallel with feature development and may
-ship in any release -- version numbers below are targets, not hard gates.
+Last reviewed: 2026-09-13 against main `e19dd661` (0.15.0).
 
-Last updated: 2026-08-04
+This page is the repository milestone index: what Core takes next, what must
+land before v1.0.0 so that release is a stable product, and what v1.0.0
+itself changes for compatibility. Customer-facing feature cards and voting
+live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
+Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
+criteria, and evidence live in the linked GitHub issues.
 
----
+**Now** is the next release-candidate scope. **Before v1.0.0** is 0.x work
+asked by pilot operators; it is a prerequisite for calling v1.0.0 stable,
+not a substitute for the RBAC contract below. **v1.0.0** is the
+compatibility-stable major: explicit ownership plus compatible upgrades.
+Review this page in each release PR; move shipped outcomes into the
+changelog.
 
-## v0.1.0 (March 2026) -- Foundation release
-
-### Architecture
-
-- [x] Full extraction from tokentimer-cloud into standalone, agnostic core
-- [x] Variant composition model (core -> cloud / enterprise overlay via staging)
-- [x] Contract catalog and integrity checks (contracts.manifest.json, packages/contracts)
-- [x] Shared config package (packages/config) for cross-component settings
-- [x] OpenAPI 3.0 specification with Swagger UI
-
-### Deployment
-
-- [x] Helm chart published to GHCR OCI registry (minimal, full-test, external-db examples)
-- [x] Docker Compose stacks for development, production, and testing
-- [x] CloudNativePG integration with auto-generated credentials and backup support
-- [x] Per-component network policies, ServiceMonitor, and PrometheusRules
-- [x] Production-hardened Dockerfiles (non-root, read-only root filesystem)
-
-### Core features
-
-- [x] Token lifecycle with multi-provider imports (Vault, GitHub, GitLab, AWS, Azure, GCP, Azure AD)
-- [x] Five-stage alert pipeline with multi-channel delivery (email, WhatsApp, Slack, Discord, Teams, PagerDuty, generic webhooks)
-- [x] Endpoint SSL/HTTP monitoring with automated alerting
-- [x] Multi-workspace RBAC (admin, workspace_manager, viewer) with invitation system
-- [x] Local auth with TOTP 2FA, email verification, and password reset
-- [x] Admin system settings UI for SMTP and Twilio configuration
-- [x] Audit log with GDPR data export and right-to-be-forgotten
-
-### Testing and CI
-
-- [x] 530 integration tests passing (100% on Docker Compose and on live k8s)
-- [x] Contract tests for API surface, OpenAPI conformance, and schema validation
-- [x] GitHub Actions pipeline: lint, audit, test, build, publish (Docker + Helm)
+CertOps keeps zero control-plane private-key custody (CI-enforced) and does
+not change the role model. Inventory, executor reporting, the Kubernetes
+controller, agent renewal, signed dispatch, Windows/IIS execution, and
+trust-anchor reconciliation have shipped; see [CHANGELOG.md](CHANGELOG.md)
+and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0.
+Airgap operator packages, proxy-agents, appliance connectors, and
+compliance reporting are not deliverables of this repository.
 
 ---
 
-## CertOps program (certificate lifecycle orchestration)
+## Now -- next release candidate
 
-Engineering milestones for the CertOps feature set (decisions under
-`docs/adr/`). CertOps adds actions and services only -- it never changes the
-role model, preserving the v1.0.0 RBAC breaking-change reservation below.
-Zero private-key custody is a structural invariant: the control plane
-rejects key material at every write surface (CI-enforced).
-
-- [x] **Visibility**: managed certificate inventory (`managed_certificates`,
-  `certificate_instances`), public-PEM import with private-key rejection and
-  Unicode/homograph identity safety, endpoint-monitor bridge (monitor-source
-  identity), retire-first lifecycle, key-locality display, `CERTOPS_ENABLED`
-  fail-closed rollout flag. No new dashboard route (enriches Tokens /
-  Control Center / token detail).
-- [x] **External execution reporting**: machine API tokens (scoped,
-  hashed, show-once), executor event/evidence ingestion with idempotent
-  `eventId`, owner-scoped delivery leases, secret redaction, evidence size caps,
-  per-token rate limiting, `/certops/*` orchestration UI (jobs, timeline, audit
-  deep links).
-- [x] **cert-manager**: Kubernetes controller, observe + basic provision mode.
-- [x] **Agent**: registration, heartbeat, job polling, replay protection,
-  agent-local command allowlists.
-- [x] **Agent-side renewal**: ACME (RFC 8555), filesystem deploy, reload
-  helpers, basic rollback. Key generation happens only on the agent, never on
-  the control plane.
-- [x] **Signed-dispatch pipeline hardening**: dual-format (v1/v2 exact-byte)
-  signed job dispatch with a capability-freshness window, required `agentId`
-  binding on signed payloads, and isolated diagnostic agents
-  (`protocol_smoke`) so an operator can verify the signed-dispatch pipeline
-  without ever letting a diagnostic run claim real certificate work. Node-free
-  Bash and PowerShell reference clients ship alongside the Node agent.
-  Windows/IIS target descriptor columns and validation also shipped as part
-  of this wave. See ADR-0012.
-- [x] **Windows execution surface**: IIS certificate-binding and Windows
-  certificate-store deployment targets driven end to end, CNG-native
-  (non-exportable) key custody, ACL-protected agent credentials, and
-  superseded-material retention. Verified end to end against real Windows
-  Server hosts (a real CNG store, a real IIS binding, a real ACME order).
-  See ADR-0012.
-- [x] **Trust-anchor ownership reconciliation (0.14.0)**: CA
-  root/intermediate distribution to and revocation from agent hosts, with
-  reference-counted ownership so removal never deletes material TokenTimer
-  did not install. Control plane, agent executor (Windows, Debian/Ubuntu,
-  RHEL/Fedora), and reconciliation sweep are implemented and real-host
-  verified on all three platforms; `trust-anchor-deploy-v1` is qualified.
-  See ADR-0012.
-- [ ] **Consolidation guards** (non-blocking, lands incrementally):
-  shared SSRF egress module, versioned encryption envelopes, audit hash chain,
-  enum/type-drift and control-plane-keygen CI guards.
-
-Approval gates, renewal-failure alerts, and DNS-01 wave 1/2 provider coverage
-shipped in core as part of the milestones above. Remaining later phases
-(issuer integrations, proxy-agents, appliance connectors, compliance
-reporting) are enterprise-led; see
-`tokentimer-enterprise/docs/ENTERPRISE_ROADMAP.md`.
+- **Restore the last workspace after sign-in**
+  ([#224](https://github.com/tokentimerch/tokentimer-core/issues/224)).
+  Account-scoped preference through email, 2FA, and Google OAuth. An
+  explicit workspace in the URL wins. If that workspace is gone or the
+  account cannot access it, fall back to another workspace the user can
+  open. Never restore another account's choice.
+- **Document Azure Key Vault, Entra, and Vault token-auth limitations
+  and confirm follow-on requirements**
+  ([#225](https://github.com/tokentimerch/tokentimer-core/issues/225)).
+  Current import paths take a bearer or static token. CertOps Azure DNS
+  client-credential auth is a different surface. Record which method
+  operators actually need. Azure client credentials ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228))
+  and Vault AppRole ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229))
+  are already scoped before v1.0.0; this issue only records the method,
+  it does not ship those implementations.
+- **Show alert eligibility separately from delivery**
+  ([#226](https://github.com/tokentimerch/tokentimer-core/issues/226)).
+  Extend existing inventory and Control Center views: outside threshold /
+  due / suppressed versus queued / sent / failed. Explain
+  expired-at-import and negative thresholds.
+- **Make existing CI quality gates dependable**
+  ([#227](https://github.com/tokentimerch/tokentimer-core/issues/227)).
+  No contributor PR-triggered Actions. Tighten the existing
+  push/dispatch pipeline. Post-merge CI is not a pre-merge gate;
+  document how maintainers verify before merge, and require successful
+  CI on the release commit before publishing.
 
 ---
 
-## Near-term
+## Before v1.0.0 -- operator-stable product
 
-### Testing
+These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
+called stable while they are open. Authentication implementations stay
+gated on [#225](https://github.com/tokentimerch/tokentimer-core/issues/225)
+recording the method; they are no longer unscoped Next work.
 
-- [ ] Frontend line coverage from 10% to 25% (apiClient.js, Workspaces.jsx, Account.jsx)
-- [x] Unit tests for `emailService.js` (`tests/integration/email-service.unit.test.js`)
-- [x] Contract / unit coverage for `planLimits.js` (`tests/contract/limits-policy.test.js`, `core-services.unit.test.js`)
-- [ ] Unit tests for `rbac.js`
-- [ ] Unit tests for worker shared logic (`thresholds.js`, `contactGroups.js`)
-- [ ] Helm test hook for post-install smoke test (GET /health)
-- [ ] Make frontend coverage job fail CI (currently continue-on-error: true)
-- [ ] Relocate `*.unit.test.js` files from `tests/integration/` into `tests/unit/` (in progress: 2 files moved; 18 `*.unit.test.js` still under `tests/integration/`)
-
-### CI / supply chain
-
-- [x] Restore container image scanning with Grype (Trivy remains disabled; CI pins Grype v0.112.0, `--fail-on high --only-fixed`, `.grype.yaml` ignore list)
-- [ ] Upload SARIF results to GitHub Code Scanning when GHAS is available (Grype emits SARIF and CI uploads scan artifacts today; Security tab upload still commented pending GHAS)
-
-### Observability
-
-- [ ] Request correlation ID middleware (x-request-id in Winston logs)
-
-### Backend
-
-- [ ] Wire offline mode / outbound allowlist into API and workers (scaffolded in packages/config but not consumed)
-- [ ] Consolidate webhook allowlist logic (constants.js inline vs packages/config/network.js)
-
-### Frontend
-
-- [ ] Replace swallowed catch blocks with toast errors or logging (30+ instances)
-
-### Documentation
-
-- [x] CONTRIBUTING.md with contributor workflow and local dev setup
-
----
-
-## Mid-term
-
-### Infrastructure
-
-- [ ] Split squashed migrations into numbered files (001_initial.sql, 002_alert_queue.sql, ...)
-- [ ] Enable CodeQL / SAST scanning in CI
-- [ ] Expand Artillery performance tests (more endpoints, scheduled runs, regression budgets)
-
-### Code quality
-
-- [ ] Migrate react-query to @tanstack/react-query v5
-- [ ] Standardize ESLint to flat config across all packages
-- [ ] Add Prettier config for API and Worker code (dashboard-only today)
-- [ ] Separate co-located unit tests from tests/integration/ into tests/unit/ (in progress; see Near-term Testing)
-- [ ] Progressively enable jsx-a11y rules (currently disabled in dashboard eslint config)
-
----
-
-## Long-term
-
-### Type safety
-
-- [ ] Gradual TypeScript: @ts-check on critical API services (rbac, planLimits, emailService)
-- [ ] Convert packages/config to TypeScript
-
-### Supply chain / security
-
-- [ ] Container image signing (Cosign) in release workflow
-- [ ] OpenAPI versioning policy for v2 API paths
-
-### Frontend
-
-- [ ] Structured frontend logging with error boundary context
-- [ ] Internationalization (i18n) support (currently hardcoded to en-US)
+- **Azure client-credential authentication** for inventory import and
+  auto-sync
+  ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228)).
+- **Vault AppRole authentication** for inventory import and auto-sync
+  ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
+  Kubernetes auth is a different method and stays out of scope unless
+  operators confirm AppRole is insufficient.
+- **Multiple auto-sync configurations per provider in a workspace**
+  ([#71](https://github.com/tokentimerch/tokentimer-core/issues/71)).
+  Two GitLab instances (or two Vaults) in one workspace, without a
+  major-version requirement unless an API break is identified. Existing
+  single-config workspaces must keep working. One configuration's
+  failure or cleanup must not affect another's assets.
+- **Multiple contact groups per asset**
+  ([#230](https://github.com/tokentimerch/tokentimer-core/issues/230)).
+- **Optional notification for already-expired imports**
+  ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231)).
+  Quiet historical imports remain the default.
+- **CertOps CSR import and signed-certificate import**
+  ([#245](https://github.com/tokentimerch/tokentimer-core/issues/245)).
+  Public CSR/PEM and metadata only. Private-key packages stay rejected.
+- **Shared outbound policy**
+  ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
+  Wire offline mode and outbound allowlists into API and worker egress.
+  Independent of the already-shipped integration redirect and pagination
+  checks. Issuer CA/ACME/DNS egress in #246 must reuse this policy.
+- **CertOps issuer connectors and revocation jobs**
+  ([#246](https://github.com/tokentimerch/tokentimer-core/issues/246)).
+  Core ACME, step-ca, and webhook issuers. CA-backed revoke,
+  replace-compromised, decommission, and verify-revocation. Encrypted
+  issuer credentials fail closed if the key is missing.
+- **Operational diagnostics**
+  ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
+  Correlation identifiers across API and workers; production error
+  reporting with secret scrubbing.
 
 ---
 
 ## v1.0.0 -- RBAC and role model cleanup
 
-Target release for breaking or structural RBAC changes deferred from the 0.6.x
-shared Default workspace work. See also `docs/AUTHENTICATION.md` (system admin vs
-workspace owner).
+Target release for breaking or structural authorization changes
+deferred from 0.x, after the Before v1.0.0 product work above. See
+[docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) (system admin vs
+workspace owner). Completion is a safe, explicit ownership contract plus
+compatible upgrades. It is not a coverage percentage, a TypeScript
+rewrite, or internationalization.
 
-### Workspace roles
+Per-user personal default already exists. v1.0.0 adds a separate
+**installation-default** marker. Do not conflate the two.
 
-- [ ] **Multiple workspace owners** -- allow more than one `admin` membership per
-  workspace (promote/demote co-owners from **Workspaces → Members**, demote or
-  transfer ownership safely, sole-owner guards on account deletion). Today only
-  the workspace creator gets `admin`; the API rejects invites and role changes
-  to `admin`.
-- [ ] `is_installation_default` column on workspaces (explicit Default workspace
-  marker instead of name matching).
-- [ ] Remove `created_by` implicit-owner fallbacks in `rbac.js` once co-owner
-  management exists.
-
-### Attribution and APIs
-
-- [ ] Alert, usage, audit, transfer-tokens, and weekly-digest attribution aligned
-  with the cleaned role model (system admin vs workspace owner vs manager).
-- [ ] OpenAPI role model cleanup (`admin` vs system admin naming, documented
-  grants).
+- **Multiple workspace owners** with a transactional final-owner
+  invariant
+  ([#239](https://github.com/tokentimerch/tokentimer-core/issues/239)).
+- **Explicit installation-default workspace marker**
+  ([#240](https://github.com/tokentimerch/tokentimer-core/issues/240)).
+- **Remove implicit creator-based authorization** after memberships are
+  backfilled
+  ([#241](https://github.com/tokentimerch/tokentimer-core/issues/241)).
+- **Align alert, usage, audit, transfer, and digest attribution**
+  ([#242](https://github.com/tokentimerch/tokentimer-core/issues/242)).
+- **Publish a permission matrix** and update OpenAPI, UI terminology,
+  and auth docs together
+  ([#243](https://github.com/tokentimerch/tokentimer-core/issues/243)).
+- **Prove fresh install and supported 0.x upgrades**, including recovery
+  limits and overlay consumers
+  ([#244](https://github.com/tokentimerch/tokentimer-core/issues/244)).
+  Helm post-install smoke
+  ([#234](https://github.com/tokentimerch/tokentimer-core/issues/234))
+  is part of this proof, not a separate product feature.
 
 ---
 
-## Metrics
+## Later -- evaluate against a concrete need
 
-| Metric | Current | Near-term target | Long-term target |
-|---|---|---|---|
-| Backend line coverage | ~50% | 55% | 65% |
-| Frontend line coverage | 10.9% | 25% | 40% |
-| API unit test files | 20 (`tests/unit/` + `tests/integration/*.unit.test.js`) | 5+ (done) | 10+ |
-| Swallowed catches (frontend) | 30+ | 10 | 0 |
-| Integration tests (Docker + k8s) | 530/530 | 530/530 | 530/530 |
-| Helm chart examples validated | 3/3 | 3/3 | 3/3 |
-| jsx-a11y rules enabled | 0 | 5+ | all |
+Performance tests with regression budgets
+([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));
+SAST and verified SARIF ingestion
+([#236](https://github.com/tokentimerch/tokentimer-core/issues/236));
+release image signing and verification instructions
+([#237](https://github.com/tokentimerch/tokentimer-core/issues/237));
+targeted dashboard and test maintainability
+([#238](https://github.com/tokentimerch/tokentimer-core/issues/238)).
+TanStack Query v5; incremental type checking on changed security-critical
+services and the shared config package; internationalization; an API v2
+compatibility policy before any v2 paths. CertOps follow-ons such as CT
+log discovery, orphaned-certificate detection, and extra issuance or
+key-custody modes need a scoped issue and a concrete operator need
+before they are scheduled.

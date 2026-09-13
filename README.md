@@ -76,7 +76,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
-| [ROADMAP.md](ROADMAP.md) | Engineering roadmap and metrics |
+| [ROADMAP.md](ROADMAP.md) | Engineering roadmap |
 | [https://tokentimer.ch/docs](https://tokentimer.ch/docs) | Online user docs (self-hosted and cloud; Certificates at [/docs/certificates](https://tokentimer.ch/docs/certificates)) |
 
 **Worker deployment:** Docker Compose runs one worker type per container. The
