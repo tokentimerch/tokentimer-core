@@ -71,8 +71,6 @@ recording the method; they are no longer unscoped Next work.
   ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
   Kubernetes auth is a different method and stays out of scope unless
   operators confirm AppRole is insufficient.
-- **Filter rules on every import provider**
-  ([#86](https://github.com/tokentimerch/tokentimer-core/issues/86)).
 - **Multiple auto-sync configurations per provider in a workspace**
   ([#71](https://github.com/tokentimerch/tokentimer-core/issues/71)).
   Two GitLab instances (or two Vaults) in one workspace, without a
