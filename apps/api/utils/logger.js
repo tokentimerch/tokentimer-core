@@ -192,9 +192,18 @@ logger.error = (...args) => {
   return origError(...args);
 };
 
+/** Reconstruct a class name so logs never copy fields off a tainted Error. */
+function safeErrorName(error) {
+  if (error instanceof TypeError) return "TypeError";
+  if (error instanceof RangeError) return "RangeError";
+  if (error instanceof SyntaxError) return "SyntaxError";
+  return "Error";
+}
+
 module.exports = {
   logger,
   resolveClientIp,
+  safeErrorName,
   buildOrderedLogRecord,
   redactSensitiveFields,
   scrubLogString,

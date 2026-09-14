@@ -20,8 +20,7 @@ import {
   Checkbox,
   useColorModeValue,
 } from '@chakra-ui/react';
-import axios from 'axios';
-import { API_BASE_URL } from '../utils/apiClient.js';
+import apiClient from '../utils/apiClient.js';
 
 function ResetPassword() {
   const navigate = useNavigate();
@@ -72,13 +71,9 @@ function ResetPassword() {
     }
     setIsLoading(true);
     try {
-      const response = await axios.post(
-        `${API_BASE_URL}/auth/request-password-reset`,
-        {
-          email,
-        },
-        { withCredentials: true }
-      );
+      const response = await apiClient.post('/auth/request-password-reset', {
+        email,
+      });
 
       setMessage(response.data.message);
       setStep('reset');
@@ -117,15 +112,11 @@ function ResetPassword() {
     }
     setIsLoading(true);
     try {
-      const response = await axios.post(
-        `${API_BASE_URL}/auth/reset-password`,
-        {
-          token,
-          newPassword,
-          resetTwoFactor,
-        },
-        { withCredentials: true }
-      );
+      const response = await apiClient.post('/auth/reset-password', {
+        token,
+        newPassword,
+        resetTwoFactor,
+      });
 
       setMessage(response.data.message);
       // Redirect to login after successful reset

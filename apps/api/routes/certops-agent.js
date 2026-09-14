@@ -29,7 +29,7 @@ const {
 const {
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
-const { logger } = require("../utils/logger");
+const { logger, safeErrorName } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const {
   assertNoPrivateKeyMaterial,
@@ -362,8 +362,7 @@ function handleAgentRouteError(res, error) {
       });
     default:
       logger.error("CertOps agent route failed", {
-        code: error?.code || null,
-        errorName: error?.name || null,
+        errorName: safeErrorName(error),
         routeFamily: "agent-protocol",
       });
       return res.status(500).json({

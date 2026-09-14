@@ -275,7 +275,7 @@ The actual, non-configurable behavior is:
 | Behavior | Actual value | Where |
 |---|---|---|
 | Session cookie lifetime | 2 hours, `rolling` (renewed on activity) | `apps/api/session-cookie-options.js` |
-| CSRF protection | Always on (double-submit cookie), with a fixed exempt list for machine-token routes | `apps/api/index.js`, `apps/api/middleware/csrf-exempt.js` |
+| CSRF protection | Always on outside tests (double-submit cookie on `/api` and `/auth`), with a fixed exempt list for logout, worker-to-API, and machine-token routes | `apps/api/index.js`, `apps/api/middleware/csrf-exempt.js` |
 | Local email/password auth | Always available | `apps/api/routes/auth.js` |
 | Two-factor (TOTP) | Always available, opt-in per user | `apps/api/routes/auth.js` |
 | Password rules | Fixed 5 rules, see [Password requirements](#password-requirements) | `apps/api/routes/auth.js` |

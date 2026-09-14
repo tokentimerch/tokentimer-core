@@ -18,6 +18,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Swagger UI and the OpenAPI spec file are covered by the API rate limiter.
 - Invite and contact email checks reject quoted local parts, raw internationalized domains (use punycode `xn--`), ASCII/Unicode whitespace including NBSP, control characters, and extra text around the address. Ordinary plus-addressing and leading/trailing ASCII trim still work.
 - Import filter regex rules reject overlapping quantified alternatives such as `(a|aa)+`. Remaining patterns must finish a 50ms match probe at save (validation error on timeout). Each match also runs under that 50ms budget; a timeout or unsafe pattern fails closed (exclude drops the item, include does not keep it).
+- CSRF double-submit checks run on every mutating `/api` and `/auth` route except logout, worker-to-API calls, and CertOps machine-token paths. Contacts, WhatsApp test send, contact-group reassignment, and alert-queue retry were previously mounted before the middleware. Login, register, password reset, and 2FA verify now require the `X-CSRF-Token` header the dashboard already sends. CSRF is on in development as well as production; `NODE_ENV=test` still skips it.
+- CertOps agent and executor unexpected-500 logs record a stable route family, not the thrown error's `code` or `name`.
 
 ### Fixed
 

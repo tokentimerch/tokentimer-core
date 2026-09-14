@@ -8,6 +8,7 @@ const {
   buildOrderedLogRecord,
   redactSensitiveFields,
   scrubLogString,
+  safeErrorName,
 } = require(path.resolve(__dirname, "../../apps/api/utils/logger.js"));
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
@@ -227,5 +228,15 @@ describe("logger content-based redaction", () => {
     assert.equal(scrubLogString("ok"), "ok");
     assert.equal(scrubLogString("certificate renew succeeded"), "certificate renew succeeded");
     assert.equal(scrubLogString(""), "");
+  });
+
+  it("safeErrorName returns built-in class names without copying error fields", () => {
+    assert.equal(safeErrorName(new TypeError("nope")), "TypeError");
+    assert.equal(safeErrorName(new RangeError("nope")), "RangeError");
+    assert.equal(safeErrorName(new SyntaxError("nope")), "SyntaxError");
+    const envShaped = new Error("CERTOPS_API_TOKEN_SCOPE_DENIED");
+    envShaped.code = "CERTOPS_API_TOKEN_SCOPE_DENIED";
+    envShaped.name = "CERTOPS_API_TOKEN_SCOPE_DENIED";
+    assert.equal(safeErrorName(envShaped), "Error");
   });
 });
