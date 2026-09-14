@@ -6,8 +6,17 @@
 #   go                      nested modules under packages/agent/
 #   javascript-typescript   API, dashboard, worker, k8s-controller
 #
-# checkout is SHA-pinned (repo convention). codeql-action stays on the
-# major tag so GitHub can ship CodeQL CLI updates.
+# Go cannot use autobuild: there is no root go.mod, and
+# windows-service-host is entirely //go:build windows, so a Linux
+# autobuild compiles nothing. Manual go build with GOOS=windows is
+# required for that module.
+#
+# GitHub stores at most 100 related locations per alert. A JS query that
+# finds more still lands in the Security tab; extra locations are dropped.
+# That cap cannot be raised from this workflow.
+#
+# checkout / setup-go are SHA-pinned (repo convention). codeql-action
+# stays on the major tag so GitHub can ship CodeQL CLI updates.
 
 name: "CodeQL Advanced"
 
@@ -34,7 +43,7 @@ jobs:
           - language: actions
             build-mode: none
           - language: go
-            build-mode: autobuild
+            build-mode: manual
           - language: javascript-typescript
             build-mode: none
 
@@ -42,22 +51,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.0"
+          cache: false
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
-      - name: Run manual build steps
+      - name: Build Go modules for CodeQL
         if: matrix.build-mode == 'manual'
         shell: bash
         run: |
-          echo 'If you are using a "manual" build mode for one or more of the' \
-            'languages you are analyzing, replace this with the commands to build' \
-            'your code, for example:'
-          echo '  make bootstrap'
-          echo '  make release'
-          exit 1
+          set -euo pipefail
+          # Nested modules, no root go.mod. Autobuild never compiled them.
+          # windows-service-host is entirely //go:build windows.
+          (
+            cd packages/agent/windows-service-host
+            GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/tokentimer-agent-host.exe .
+          )
+          (
+            cd packages/agent/reference/verifier
+            CGO_ENABLED=0 go build -o /tmp/tokentimer-verify .
+          )
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
