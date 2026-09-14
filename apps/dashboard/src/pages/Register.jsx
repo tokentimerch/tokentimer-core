@@ -20,6 +20,7 @@ import {
 import SEO from '../components/SEO.jsx';
 import { API_BASE_URL } from '../utils/apiClient.js';
 import { getLogoPath } from '../utils/logoUtils.js';
+import { isValidEmail } from '../utils/emailAddress.js';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -48,10 +49,7 @@ export default function Register() {
   const validate = () => {
     const nextErrors = {};
     if (!token) nextErrors.general = 'Invitation token is missing or invalid.';
-    if (
-      !form.email.trim() ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
-    ) {
+    if (!form.email.trim() || !isValidEmail(form.email)) {
       nextErrors.email = 'Valid email is required';
     }
     if (!form.first_name.trim())

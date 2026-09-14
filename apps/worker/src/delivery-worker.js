@@ -22,6 +22,7 @@ import { sendWhatsApp } from "./notify/whatsapp.js";
 import { postJson, formatPayload } from "./notify/webhooks.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
+import emailAddress from "../../../packages/email-address/index.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
 import { sanitizeWhatsAppTemplateVars } from "./shared/whatsappTemplateVars.js";
 import {
@@ -36,6 +37,8 @@ import {
   shouldDiscardRetiredCertificateAlert,
 } from "./shared/retiredCertificateAlerts.js";
 import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
+
+const { isValidEmail } = emailAddress;
 
 export { detectWebhookProviderKind };
 
@@ -1496,7 +1499,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       return "";
                     }
                   })
-                  .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+                  .filter((e) => isValidEmail(e));
               }
             } catch (_err) {
               logger.debug("Non-critical operation failed", {
@@ -1507,7 +1510,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
             // Dedupe recipients
             const trimmed = Array.from(new Set(recipients)).filter((e) =>
-              /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e),
+              isValidEmail(e),
             );
 
             if (trimmed.length === 0) {

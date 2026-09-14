@@ -6,6 +6,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { logger } = require("../utils/logger.js");
+const { stripHtmlToText } = require("../utils/emailAddress");
 const systemSettings = require("./systemSettings");
 
 // Pool reference for system settings resolver (set via setPool)
@@ -70,16 +71,6 @@ const emailConfig = {
 // Standard email footer (uses configurable support email)
 function getEmailFooterText() {
   return `Please do not reply to this email. If you have any questions, contact ${getSupportEmail()}.`;
-}
-
-function stripHtmlToText(html) {
-  let current = String(html || "");
-  let previous;
-  do {
-    previous = current;
-    current = current.replace(/<[^<>]*>/g, "");
-  } while (current !== previous);
-  return current;
 }
 
 // Cache for logo buffer to avoid fetching it on every email

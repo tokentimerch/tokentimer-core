@@ -2,7 +2,10 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  getApiLimiter,
+  getTwilioWebhookLimiter,
+} = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
   loadWorkspace,
@@ -343,7 +346,7 @@ router.post(
 // codeql[js/missing-rate-limiting]
 router.post(
   "/webhooks/twilio/whatsapp/status",
-  getApiLimiter(),
+  getTwilioWebhookLimiter(),
   async (req, res) => {
     try {
       const token =

@@ -13,7 +13,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.
 - Webhook provider auto-detect matches Discord, Office 365, and PagerDuty by hostname suffix, so hosts such as `notdiscord.com` are no longer treated as Discord.
-- The Twilio WhatsApp status webhook and contact-group reassignment route now share the API rate limiter with other routes.
+- Webhook test and delivery refuse HTTP 3xx redirects and connect only to DNS addresses that already passed the private-IP check (TLS SNI and the Host header still use the original hostname).
+- The Twilio WhatsApp status webhook uses its own limiter (`TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS`, default 60s; `TWILIO_WEBHOOK_RATE_LIMIT_MAX`, default 1200 in production) instead of the plan API limiter. Contact-group reassignment still shares the API limiter. **Operator guidance:** if provider callbacks return 429, raise `TWILIO_WEBHOOK_RATE_LIMIT_MAX`.
 - Swagger UI and the OpenAPI spec file are covered by the API rate limiter.
 - Invite and contact email checks reject values with spaces or extra text around the address.
 

@@ -5,6 +5,9 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "url";
 import { logger } from "../logger.js";
 import { pool } from "../db.js";
+import emailAddress from "../../../../packages/email-address/index.js";
+
+const { stripHtmlToText } = emailAddress;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -132,16 +135,6 @@ function getSupportEmail() {
 
 function getEmailFooterText() {
   return `Please do not reply to this email. If you have any questions, contact ${getSupportEmail()}.`;
-}
-
-function stripHtmlToText(html) {
-  let current = String(html || "");
-  let previous;
-  do {
-    previous = current;
-    current = current.replace(/<[^<>]*>/g, "");
-  } while (current !== previous);
-  return current;
 }
 
 // Get logo URL for emails

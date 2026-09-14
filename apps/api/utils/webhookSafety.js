@@ -15,10 +15,25 @@ const {
   getWebhookProviderHosts,
   allowAllWebhookHosts,
   webhookHostAllowed,
+  WebhookRequestError,
 } = shared;
 
 async function validateResolvedIP(hostname, options = {}) {
   return await shared.validateResolvedIP(hostname, {
+    ...options,
+    onBlocked(info) {
+      logger.warn("SSRF_BLOCKED", {
+        hostname: info.hostname,
+        resolvedIP: info.resolvedIP,
+        reason: "Resolved to private/reserved IP",
+      });
+      if (typeof options.onBlocked === "function") options.onBlocked(info);
+    },
+  });
+}
+
+async function postWebhook(url, options = {}) {
+  return await shared.postWebhook(url, {
     ...options,
     onBlocked(info) {
       logger.warn("SSRF_BLOCKED", {
@@ -40,4 +55,6 @@ module.exports = {
   getWebhookProviderHosts,
   allowAllWebhookHosts,
   webhookHostAllowed,
+  postWebhook,
+  WebhookRequestError,
 };

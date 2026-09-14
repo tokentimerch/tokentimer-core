@@ -410,6 +410,51 @@ function getDomainCheckerLookupLimiter() {
   return domainCheckerLookupLimiter;
 }
 
+const twilioWebhookLimiter = rateLimit({
+  windowMs: intEnv("TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS", 60 * 1000),
+  max: intEnv(
+    "TWILIO_WEBHOOK_RATE_LIMIT_MAX",
+    isDevOrTest ? 10000 : 1200,
+  ),
+  message: "Too many Twilio webhook callbacks, please try again later.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: (req) => {
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
+    return `twilio-webhook:${ip}`;
+  },
+  handler: (req, res) => {
+    const windowMs = intEnv("TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS", 60 * 1000);
+    const fallbackRetrySec = Math.max(1, Math.ceil(windowMs / 1000));
+    const resetTime = req.rateLimit?.resetTime;
+    const retryAfterSeconds =
+      resetTime instanceof Date
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : fallbackRetrySec;
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "twilio_whatsapp_status",
+      ip: resolveClientIp(req),
+      userAgent: req.get("User-Agent"),
+      retryAfterSeconds,
+    });
+    res.set("Retry-After", String(retryAfterSeconds));
+    res.status(429).json({
+      error: "Too many Twilio webhook callbacks, please try again later.",
+      code: "TWILIO_WEBHOOK_RATE_LIMITED",
+      retry_after_seconds: retryAfterSeconds,
+    });
+  },
+});
+
+let resolvedTwilioWebhookLimiter;
+function getTwilioWebhookLimiter() {
+  if (!resolvedTwilioWebhookLimiter) {
+    resolvedTwilioWebhookLimiter = twilioWebhookLimiter;
+  }
+  return resolvedTwilioWebhookLimiter;
+}
+
 /**
  * Apply global rate limit unless path is auth/session or user is authenticated.
  * @param {import("express").Request} req
@@ -441,6 +486,7 @@ module.exports = {
   emailVerificationLimiter,
   planAwareApiLimiter,
   getApiLimiter,
+  getTwilioWebhookLimiter,
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
