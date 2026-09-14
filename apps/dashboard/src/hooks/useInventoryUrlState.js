@@ -166,6 +166,28 @@ export function getClearAllFiltersPatch() {
 }
 
 /**
+ * Whether this path's query string is the asset inventory's.
+ *
+ * @param {string | null | undefined} pathname
+ * @returns {boolean}
+ */
+export function isInventoryDashboardPath(pathname) {
+  const path = String(pathname || '');
+  return path === '/dashboard' || path === '/dashboard/';
+}
+
+/**
+ * Drop inventory list filters and token deep-links when switching workspace.
+ * Sort and mode stay; those are presentation, not a slice of the old workspace.
+ *
+ * @param {URLSearchParams} params
+ */
+export function clearInventoryFiltersForWorkspaceSwitch(params) {
+  applyInventoryUrlPatch(params, getClearAllFiltersPatch());
+  params.delete('token-id');
+}
+
+/**
  * Resolve a section token to a display label.
  *
  * @param {string} section

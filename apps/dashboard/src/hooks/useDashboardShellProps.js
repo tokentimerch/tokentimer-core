@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { useDashboardTheme } from './useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
+import {
+  pickAccessibleWorkspace,
+  readLastWorkspaceId,
+  writeLastWorkspaceId,
+} from '../utils/lastWorkspacePreference.js';
 
 function buildSessionIdentity(session) {
   const sessionName =
@@ -49,6 +54,10 @@ export function useDashboardShellProps({
 }) {
   const location = useLocation();
   const { workspaceId, selectWorkspace } = useWorkspace();
+  const dashboardSelectionIdRef = useRef(workspaceId);
+  useEffect(() => {
+    if (workspaceId) dashboardSelectionIdRef.current = workspaceId;
+  }, [workspaceId]);
   const theme = useDashboardTheme();
   const { pageBg, surface, text, muted, border, borderStrong, inputBg } = theme;
 
@@ -90,18 +99,15 @@ export function useDashboardShellProps({
         const ws = await workspaceAPI.list(50, 0);
         if (cancelled) return;
         const items = ws?.items || [];
-        let desiredId = workspaceId || null;
-        if (!desiredId) {
-          try {
-            desiredId = localStorage.getItem('tt_last_workspace_id') || null;
-          } catch (_) {
-            desiredId = null;
-          }
-        }
-        const selected =
-          (desiredId && items.find(w => w.id === desiredId)) ||
-          items[0] ||
-          null;
+        const chosenId = pickAccessibleWorkspace({
+          urlWorkspaceId:
+            dashboardSelectionIdRef.current || workspaceId || null,
+          lastWorkspaceId: readLastWorkspaceId(session?.id),
+          workspaces: items,
+        });
+        const selected = chosenId
+          ? items.find(w => String(w.id) === String(chosenId)) || null
+          : null;
 
         setDashboardWorkspaces(items);
         setDashboardWorkspace(selected);
@@ -134,6 +140,7 @@ export function useDashboardShellProps({
   const handleDashboardWorkspaceSelect = useCallback(
     workspace => {
       if (!workspace?.id) return;
+      dashboardSelectionIdRef.current = String(workspace.id);
       setDashboardWorkspace(workspace);
       const role = String(workspace?.role || '').toLowerCase();
       setDashboardCanSeeManagerNav(
@@ -141,13 +148,10 @@ export function useDashboardShellProps({
       );
       try {
         selectWorkspace(workspace.id);
-        localStorage.setItem('tt_last_workspace_id', workspace.id);
-      } catch (_) {}
-      try {
-        window.dispatchEvent(new CustomEvent('tt:workspaces-updated'));
+        writeLastWorkspaceId(session?.id, workspace.id);
       } catch (_) {}
     },
-    [selectWorkspace, isSystemAdmin]
+    [selectWorkspace, isSystemAdmin, session?.id]
   );
 
   const activeWorkspace = useWorkspaceOverrides

@@ -154,6 +154,12 @@ const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
 import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import {
+  pickAccessibleWorkspace,
+  readLastWorkspaceId,
+  readSessionLastWorkspaceId,
+  writeLastWorkspaceId,
+} from './utils/lastWorkspacePreference.js';
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -1439,10 +1445,8 @@ function App() {
     try {
       const search = new URLSearchParams(window.location.search);
       if (!search.get('workspace')) {
-        try {
-          const last = localStorage.getItem('tt_last_workspace_id');
-          if (last) search.set('workspace', last);
-        } catch (_) {}
+        const last = readSessionLastWorkspaceId();
+        if (last) search.set('workspace', last);
       }
       const q = search.toString();
       navigate(q ? `/dashboard?${q}` : '/dashboard');
@@ -2410,7 +2414,7 @@ function App() {
                     />
                   </div>
                 ) : (
-                  <WorkspaceProvider>
+                  <WorkspaceProvider accountId={session?.id}>
                     <Suspense
                       fallback={
                         <Flex align='center' justify='center' minH='60vh'>
@@ -3249,6 +3253,10 @@ function DashboardView({
     navigate('/account');
   }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
+  const dashboardSelectionIdRef = useRef(workspaceId);
+  useEffect(() => {
+    if (workspaceId) dashboardSelectionIdRef.current = workspaceId;
+  }, [workspaceId]);
 
   // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
   // to gate deletion of managed cert tokens and to hide retired certs by default.
@@ -3444,18 +3452,15 @@ function DashboardView({
         const roles = items.map(w => String(w.role || '').toLowerCase());
         const managerAny =
           roles.includes('admin') || roles.includes('workspace_manager');
-        let desiredId = workspaceId || null;
-        if (!desiredId) {
-          try {
-            desiredId = localStorage.getItem('tt_last_workspace_id') || null;
-          } catch (_) {
-            desiredId = null;
-          }
-        }
-        const selected =
-          (desiredId && items.find(w => w.id === desiredId)) ||
-          items[0] ||
-          null;
+        const chosenId = pickAccessibleWorkspace({
+          urlWorkspaceId:
+            dashboardSelectionIdRef.current || workspaceId || null,
+          lastWorkspaceId: readLastWorkspaceId(_session?.id),
+          workspaces: items,
+        });
+        const selected = chosenId
+          ? items.find(w => String(w.id) === String(chosenId)) || null
+          : null;
 
         setDashboardWorkspaces(items);
         setDashboardWorkspace(selected);
@@ -3484,13 +3489,11 @@ function DashboardView({
 
   const handleDashboardWorkspaceSelect = workspace => {
     if (!workspace?.id) return;
+    dashboardSelectionIdRef.current = String(workspace.id);
     setDashboardWorkspace(workspace);
     try {
       selectWorkspace(workspace.id);
-      localStorage.setItem('tt_last_workspace_id', workspace.id);
-    } catch (_) {}
-    try {
-      window.dispatchEvent(new CustomEvent('tt:workspaces-updated'));
+      writeLastWorkspaceId(_session?.id, workspace.id);
     } catch (_) {}
   };
 

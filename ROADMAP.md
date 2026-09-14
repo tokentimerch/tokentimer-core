@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-13 against main `e19dd661` (0.15.0).
+Last reviewed: 2026-09-14 against main `78219e2d` (0.15.0).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -28,12 +28,6 @@ compliance reporting are not deliverables of this repository.
 
 ## Now -- next release candidate
 
-- **Restore the last workspace after sign-in**
-  ([#224](https://github.com/tokentimerch/tokentimer-core/issues/224)).
-  Account-scoped preference through email, 2FA, and Google OAuth. An
-  explicit workspace in the URL wins. If that workspace is gone or the
-  account cannot access it, fall back to another workspace the user can
-  open. Never restore another account's choice.
 - **Document Azure Key Vault, Entra, and Vault token-auth limitations
   and confirm follow-on requirements**
   ([#225](https://github.com/tokentimerch/tokentimer-core/issues/225)).

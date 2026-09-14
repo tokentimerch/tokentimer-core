@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   applyInventoryUrlPatch,
   categoriesEqual,
+  clearInventoryFiltersForWorkspaceSwitch,
   getActiveFilterSummaryLabels,
   getClearAllFiltersPatch,
   hasActiveInventoryFilters,
+  isInventoryDashboardPath,
   normalizeCategories,
   parseInventoryUrlState,
 } from '../../src/hooks/useInventoryUrlState.js';
@@ -45,6 +47,30 @@ describe('useInventoryUrlState helpers', () => {
     expect(params.get('status')).toBeNull();
     expect(params.get('offset')).toBeNull();
     expect(params.get('sort')).toBe('name');
+  });
+
+  it('treats /dashboard as the inventory route', () => {
+    expect(isInventoryDashboardPath('/dashboard')).toBe(true);
+    expect(isInventoryDashboardPath('/dashboard/')).toBe(true);
+    expect(isInventoryDashboardPath('/control-center')).toBe(false);
+  });
+
+  it('clears list filters and token deep-links but keeps sort and mode', () => {
+    const params = new URLSearchParams(
+      'workspace=ws-a&section=prod&status=critical&q=acme&category=cert&offset=20&sort=name&mode=certs&token-id=99'
+    );
+
+    clearInventoryFiltersForWorkspaceSwitch(params);
+
+    expect(params.get('workspace')).toBe('ws-a');
+    expect(params.get('section')).toBeNull();
+    expect(params.get('status')).toBeNull();
+    expect(params.get('q')).toBeNull();
+    expect(params.getAll('category')).toEqual([]);
+    expect(params.get('offset')).toBeNull();
+    expect(params.get('token-id')).toBeNull();
+    expect(params.get('sort')).toBe('name');
+    expect(params.get('mode')).toBe('certs');
   });
 
   it('builds active filter summary labels', () => {
