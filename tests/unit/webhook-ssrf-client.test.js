@@ -2,11 +2,8 @@
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert");
-const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
-const os = require("node:os");
-const path = require("node:path");
 const { postWebhook, WebhookRequestError } = require("../../packages/webhook-safety");
 const {
   hostMatchesNoProxy,
@@ -36,7 +33,6 @@ afterEach(() => {
   process.env.NODE_ENV = ORIGINAL_NODE_ENV;
   delete process.env.WEBHOOK_ALLOW_PRIVATE_IPS;
   delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
-  delete process.env.NODE_EXTRA_CA_CERTS;
   clearProxyEnv();
 });
 
@@ -564,6 +560,7 @@ describe("postWebhook SSRF client", () => {
   });
 
   it("matches NO_PROXY wildcards and host:port entries", () => {
+    assert.strictEqual(hostMatchesNoProxy("foo.example.com", "*"), true);
     assert.strictEqual(hostMatchesNoProxy("foo.example.com", "*.example.com"), true);
     assert.strictEqual(hostMatchesNoProxy("example.com", "*.example.com"), true);
     assert.strictEqual(hostMatchesNoProxy("evil.com", "*.example.com"), false);
@@ -716,7 +713,7 @@ describe("postWebhook SSRF client", () => {
     }
   });
 
-  it("completes HTTPS CONNECT with SNI and Host when NODE_EXTRA_CA_CERTS trusts the leaf", async () => {
+  it("completes HTTPS CONNECT with SNI and Host when the fixture CA is trusted", async () => {
     process.env.NODE_ENV = "test";
     delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
     const hostname = "sni-ok.example";
@@ -740,16 +737,13 @@ describe("postWebhook SSRF client", () => {
     const proxy = createForwardProxy();
     const proxyPort = await proxy.listen();
     process.env.HTTPS_PROXY = `http://127.0.0.1:${proxyPort}`;
-    const caDir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-webhook-ca-"));
-    const caPath = path.join(caDir, "ca.pem");
-    fs.writeFileSync(caPath, certPem);
-    process.env.NODE_EXTRA_CA_CERTS = caPath;
     try {
       const result = await postWebhook(
         `https://${hostname}:${originPort}/hook`,
         {
           body: { ping: true },
           proxyMode: "always",
+          ca: certPem,
           lookupAll: async () => [{ address: "127.0.0.1", family: 4 }],
         },
       );
@@ -764,7 +758,6 @@ describe("postWebhook SSRF client", () => {
     } finally {
       await proxy.close();
       await close(origin);
-      fs.rmSync(caDir, { recursive: true, force: true });
     }
   });
 

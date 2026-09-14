@@ -1,6 +1,5 @@
 "use strict";
 
-const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const tls = require("node:tls");
@@ -247,24 +246,15 @@ function timeoutError(timeoutMs) {
   });
 }
 
-function extraCaBundle() {
-  const extraPath = process.env.NODE_EXTRA_CA_CERTS;
-  if (!extraPath) return null;
-  try {
-    const extra = fs.readFileSync(extraPath, "utf8");
-    return extra.trim() ? extra : null;
-  } catch (_err) {
-    return null;
+function tlsTrustOptions(extraCa) {
+  const opts = { rejectUnauthorized: true };
+  if (extraCa) {
+    // Opt-in only. Passing `ca` replaces Node's default store, so production
+    // delivery never sets this. Tests pass a fixture leaf to prove SNI/Host
+    // without turning verification off.
+    opts.ca = [...tls.rootCertificates, extraCa];
   }
-}
-
-function tlsTrustOptions() {
-  const extra = extraCaBundle();
-  if (!extra) return { rejectUnauthorized: true };
-  return {
-    rejectUnauthorized: true,
-    ca: [...tls.rootCertificates, extra],
-  };
+  return opts;
 }
 
 const RETRYABLE_CONNECT_CODES = new Set([
@@ -403,6 +393,7 @@ function sendPinnedRequest({
   extraHeaders,
   timeoutMs,
   signal,
+  extraCa,
 }) {
   const lib = url.protocol === "https:" ? https : http;
   const agent = new lib.Agent({
@@ -452,7 +443,7 @@ function sendPinnedRequest({
         },
         timeout: timeoutMs,
         ...(url.protocol === "https:"
-          ? { servername: url.hostname, ...tlsTrustOptions() }
+          ? { servername: url.hostname, ...tlsTrustOptions(extraCa) }
           : {}),
       },
       (res) => collectResponse(req, res, finish),
@@ -472,6 +463,7 @@ function sendProxiedRequest({
   extraHeaders,
   timeoutMs,
   signal,
+  extraCa,
 }) {
   const headers = {
     Host: buildHostHeader(url),
@@ -565,7 +557,7 @@ function sendProxiedRequest({
       tlsSocket = tls.connect({
         socket,
         servername: url.hostname,
-        ...tlsTrustOptions(),
+        ...tlsTrustOptions(extraCa),
       });
       tlsSocket.setTimeout(timeoutMs);
       tlsSocket.once("timeout", () => {
@@ -733,6 +725,7 @@ function createPostWebhook(policy) {
       }
 
       const bodyBuffer = encodeBody(options.body);
+      const extraCa = options.ca;
       const extraHeaders = options.headers || {};
       const candidates = orderPinnedAddresses(addresses);
 
@@ -745,6 +738,7 @@ function createPostWebhook(policy) {
               proxyUrl,
               bodyBuffer,
               extraHeaders,
+              extraCa,
               timeoutMs: deadline.remainingMs(),
               signal: deadline.signal,
             })
@@ -754,6 +748,7 @@ function createPostWebhook(policy) {
               pinned,
               bodyBuffer,
               extraHeaders,
+              extraCa,
               timeoutMs: deadline.remainingMs(),
               signal: deadline.signal,
             });

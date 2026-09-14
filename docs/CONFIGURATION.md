@@ -207,8 +207,9 @@ Webhook delivery does not hand the destination hostname to the proxy to
 resolve. The process looks the name up locally, applies the private-IP
 check, then asks the proxy to connect to that IP. TLS SNI and the HTTP
 `Host` header still carry the original hostname, and certificate
-verification stays on (including `NODE_EXTRA_CA_CERTS` when set). If
-private-IP enforcement is on and DNS fails, the webhook is blocked. Set
+verification stays on (`rejectUnauthorized` is not disabled). Extra CAs
+come from Node's normal `NODE_EXTRA_CA_CERTS` handling at process start.
+If private-IP enforcement is on and DNS fails, the webhook is blocked. Set
 `WEBHOOK_ALLOW_PRIVATE_IPS=true` only when you trust the proxy (or the
 destination network) to filter private targets, including names this
 process cannot resolve. The proxy still sees the destination IP and can
