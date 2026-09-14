@@ -557,15 +557,17 @@ function AnchorInstallationsBody({
   );
 }
 
+const TRUST_ANCHOR_ADMIN_ONLY =
+  'Only workspace admins can create and manage trust anchors.';
+
 /**
  * Trust-anchor management panel (0.14.1): approve/retire CA certificates as
  * workspace trust anchors, and drive distribute-trust/revoke-trust jobs
  * against them through CreateManualJobModal's narrower trustOp mode.
  *
- * Gated on workspace admin, matching the certops.trust_anchor.manage bar
- * every trust-anchor route enforces server-side; non-admins see nothing
- * here (same pattern as the workspace kill switch), rather than a 403
- * banner for a surface they can't act on anyway.
+ * Writes stay workspace-admin only (`certops.trust_anchor.manage`). Managers
+ * and viewers still see the panel title and why they cannot act, matching
+ * the kill switch and job-approval copy, instead of an empty card.
  */
 export default function TrustAnchorsPanel() {
   const { workspaceId } = useWorkspace();
@@ -582,7 +584,43 @@ export default function TrustAnchorsPanel() {
   const infoBorder = dashboard.accent.interactiveBorder;
   const infoText = dashboard.accent.interactiveForeground;
 
-  if (enabled !== true || !isAdmin) return null;
+  const aboutTrustAnchors = (
+    <Alert
+      status='info'
+      variant='subtle'
+      borderRadius='md'
+      bg={infoBg}
+      border='1px solid'
+      borderColor={infoBorder}
+      py={2}
+      px={3}
+      w='100%'
+    >
+      <AlertIcon boxSize={4} />
+      <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
+        A trust anchor is a CA certificate approved for distribution to
+        agent-managed OS trust stores. Retiring an anchor stops new
+        distribute-trust jobs; it does not remove anything already installed on
+        a host.
+      </AlertDescription>
+    </Alert>
+  );
+
+  if (enabled === false) return null;
+
+  if (!isAdmin) {
+    return (
+      <Stack spacing={4} align='stretch'>
+        <Text fontSize='md' fontWeight='bold' color={titleColor}>
+          Trust anchors
+        </Text>
+        {aboutTrustAnchors}
+        <Text fontSize='xs' color={muted}>
+          {TRUST_ANCHOR_ADMIN_ONLY}
+        </Text>
+      </Stack>
+    );
+  }
 
   return (
     <Stack spacing={4} align='stretch'>
@@ -600,25 +638,7 @@ export default function TrustAnchorsPanel() {
         </DashboardActionButton>
       </HStack>
 
-      <Alert
-        status='info'
-        variant='subtle'
-        borderRadius='md'
-        bg={infoBg}
-        border='1px solid'
-        borderColor={infoBorder}
-        py={2}
-        px={3}
-        w='100%'
-      >
-        <AlertIcon boxSize={4} />
-        <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
-          A trust anchor is a CA certificate approved for distribution to
-          agent-managed OS trust stores. Retiring an anchor stops new
-          distribute-trust jobs; it does not remove anything already installed
-          on a host.
-        </AlertDescription>
-      </Alert>
+      {aboutTrustAnchors}
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 
