@@ -282,19 +282,7 @@ function mountExpressSession(cookie) {
   );
 }
 
-if (sessionCookieOptions.secure) {
-  mountExpressSession({
-    ...sessionCookieOptions,
-    httpOnly: true,
-    secure: true,
-  });
-} else {
-  mountExpressSession({
-    ...sessionCookieOptions,
-    httpOnly: true,
-    secure: false,
-  });
-}
+mountExpressSession(expressSessionCookie);
 
 // Ensure Passport is only initialized once
 if (!app._passportInitialized) {
@@ -608,9 +596,10 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
     return process.env.SESSION_SECRET;
   },
   cookieName: csrfCookieName,
-  cookieOptions: sessionCookieOptions.secure
-    ? { ...expressSessionCookie, httpOnly: true, path: "/", secure: true }
-    : { ...expressSessionCookie, httpOnly: true, path: "/", secure: false },
+  cookieOptions: {
+    ...expressSessionCookie,
+    path: "/",
+  },
   getTokenFromRequest: (req) => req.headers["x-csrf-token"],
 });
 
