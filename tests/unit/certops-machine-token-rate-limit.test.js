@@ -560,4 +560,59 @@ describe("CertOps machine-token rate limiter", () => {
     const afterWindow = await runMiddleware(middleware, createRequest());
     assert.equal(afterWindow.nextCalled, true);
   });
+
+  it("logs IP and path workspace on 429 without reading apiToken.workspaceId", () => {
+    const req = createRequest({
+      workspaceId: WORKSPACE_A,
+      params: { workspaceId: WORKSPACE_B },
+      ip: "198.51.100.9",
+    });
+    const meta = _test.machineTokenRateLimitLogMeta(req, {
+      preAuth: false,
+      options: {},
+      retryAfter: 12,
+    });
+    assert.equal(meta.workspaceId, WORKSPACE_B);
+    assert.equal(meta.ip, "198.51.100.9");
+    assert.equal(meta.phase, "post_auth");
+    assert.equal(meta.type, "certops_machine_token");
+    assert.equal(meta.retryAfterSeconds, 12);
+  });
+
+  it("does not copy apiToken.workspaceId into 429 log metadata", () => {
+    const req = createRequest({
+      workspaceId: WORKSPACE_A,
+      params: {},
+      ip: "203.0.113.7",
+    });
+    const meta = _test.machineTokenRateLimitLogMeta(req, {
+      preAuth: false,
+      options: {},
+      retryAfter: 60,
+    });
+    assert.equal(meta.workspaceId, "workspace-unknown");
+    assert.equal(meta.ip, "203.0.113.7");
+  });
+
+  it("uses the path workspace for pre-auth 429 logs", () => {
+    const req = createRequest({
+      params: { workspaceId: WORKSPACE_B },
+      ip: "203.0.113.7",
+    });
+    const meta = _test.machineTokenRateLimitLogMeta(req, {
+      preAuth: true,
+      options: {},
+      retryAfter: 60,
+    });
+    assert.equal(meta.workspaceId, WORKSPACE_B);
+    assert.equal(meta.phase, "pre_auth");
+    assert.equal(meta.ip, "203.0.113.7");
+  });
+
+  it("does not throw when 429 log options are omitted", () => {
+    const meta = _test.machineTokenRateLimitLogMeta(createRequest());
+    assert.equal(meta.workspaceId, "workspace-unknown");
+    assert.equal(meta.ip, "203.0.113.7");
+    assert.equal(meta.phase, "post_auth");
+  });
 });

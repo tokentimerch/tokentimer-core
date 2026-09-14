@@ -85,6 +85,11 @@ const HOSTNAME_PATTERN =
  * passed to certreq INF/argv, so it must stay in a safe, boring alphabet. */
 const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
+/** Windows-convention thumbprint: 40 hex chars, case-insensitive on input
+ * (Windows tooling emits either case; this module's own output is always
+ * uppercase via computeSha1ThumbprintFromPem). */
+const THUMBPRINT_PATTERN = /^[0-9A-Fa-f]{40}$/;
+
 /** Every container buildContainerName produces starts with this literal
  * prefix. isAgentOwnedContainerName uses it to distinguish a container THIS
  * agent created from one a human operator or another tool created directly
@@ -507,7 +512,13 @@ function computeSha1ThumbprintFromPem(certPem) {
   const der = pemToDer(certPem, /CERTIFICATE/);
   // Windows store thumbprints are SHA-1 of the DER. Read Node's own
   // X509Certificate fingerprint instead of hashing peer bytes again.
-  const thumbprint = String(new crypto.X509Certificate(der).fingerprint || "")
+  let fingerprint;
+  try {
+    fingerprint = new crypto.X509Certificate(der).fingerprint;
+  } catch {
+    throw buildError("certificate PEM did not parse as X.509");
+  }
+  const thumbprint = String(fingerprint || "")
     .replace(/:/g, "")
     .toUpperCase();
   if (!THUMBPRINT_PATTERN.test(thumbprint)) {
@@ -1128,11 +1139,6 @@ function acquireStoreLock(stateDir, storeName) {
     },
   };
 }
-
-/** Windows-convention thumbprint: 40 hex chars, case-insensitive on input
- * (Windows tooling emits either case; this module's own output is always
- * uppercase via computeSha1ThumbprintFromPem). */
-const THUMBPRINT_PATTERN = /^[0-9A-Fa-f]{40}$/;
 
 /**
  * Removes a superseded certificate from the machine store and deletes its
