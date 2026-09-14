@@ -5,6 +5,7 @@ import {
 } from './toast.js';
 import { logger } from './logger.js';
 import { resetIdentity } from './analytics.js';
+import { clearSessionLastWorkspaceId } from './lastWorkspacePreference.js';
 
 // Tracks whether the frontend has ever observed a logged-in session. A 401
 // should only trigger the "session expired" toast + redirect when the user
@@ -585,6 +586,7 @@ export const authAPI = {
     } finally {
       hasObservedLoggedInSession = false;
       resetCsrfToken();
+      clearSessionLastWorkspaceId();
     }
   },
 
