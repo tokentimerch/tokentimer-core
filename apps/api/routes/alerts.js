@@ -2076,7 +2076,11 @@ router.get(
             .json({ error: "Forbidden", code: "FORBIDDEN" });
         rows = await pool.query(
           `SELECT aq.id, aq.token_id, aq.threshold_days, aq.due_date, aq.status, aq.attempts, aq.error_message, aq.channels, aq.created_at, aq.updated_at,
-              aq.next_attempt_at, aq.attempts_email, aq.attempts_webhooks, aq.attempts_whatsapp,
+              aq.last_attempt, aq.next_attempt_at, aq.attempts_email, aq.attempts_webhooks, aq.attempts_whatsapp,
+              (SELECT l.id FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_id,
+              (SELECT l.status FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_status,
+              (SELECT l.channel FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_channel,
+              (SELECT l.sent_at FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_at,
               -- channel-specific last errors
               (SELECT l.error_message FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id AND l.channel='email' ORDER BY l.sent_at DESC LIMIT 1) AS last_error_email,
               (SELECT l.error_message FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id AND l.channel='webhooks' ORDER BY l.sent_at DESC LIMIT 1) AS last_error_webhooks,
@@ -2094,7 +2098,11 @@ router.get(
         // Legacy/user-scoped queue
         rows = await pool.query(
           `SELECT aq.id, aq.token_id, aq.threshold_days, aq.due_date, aq.status, aq.attempts, aq.error_message, aq.channels, aq.created_at, aq.updated_at,
-              aq.next_attempt_at, aq.attempts_email, aq.attempts_webhooks, aq.attempts_whatsapp,
+              aq.last_attempt, aq.next_attempt_at, aq.attempts_email, aq.attempts_webhooks, aq.attempts_whatsapp,
+              (SELECT l.id FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_id,
+              (SELECT l.status FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_status,
+              (SELECT l.channel FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_channel,
+              (SELECT l.sent_at FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id ORDER BY l.sent_at DESC, l.id DESC LIMIT 1) AS latest_attempt_at,
               -- channel-specific last errors
               (SELECT l.error_message FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id AND l.channel='email' ORDER BY l.sent_at DESC LIMIT 1) AS last_error_email,
               (SELECT l.error_message FROM alert_delivery_log l WHERE l.alert_queue_id = aq.id AND l.channel='webhooks' ORDER BY l.sent_at DESC LIMIT 1) AS last_error_webhooks,

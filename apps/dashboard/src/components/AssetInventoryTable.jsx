@@ -36,6 +36,10 @@ import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
 import { isRetiredStatus } from './certops/certopsFormat';
 import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
+import {
+  AlertEligibilityBadge,
+  eligibilityExplanation,
+} from './AlertStateDisplay.jsx';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
@@ -499,10 +503,20 @@ function StatusBadge({ token, getStatusMeta }) {
   // "provisioning" or "renewing".
   const managedStatusIsRedundant =
     managed?.status && String(managed.status).toLowerCase() === status.key;
+  const eligibility = token.alert_state?.eligibility;
 
   return (
     <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
+      {eligibility ? (
+        <Tooltip
+          label={`Alert eligibility: ${eligibilityExplanation(eligibility)}`}
+        >
+          <Box as='span' display='inline-flex'>
+            <AlertEligibilityBadge status={eligibility.status} />
+          </Box>
+        </Tooltip>
+      ) : null}
       {managed?.status &&
       !isRetiredStatus(managed.status) &&
       !managedStatusIsRedundant ? (
@@ -979,12 +993,27 @@ function AssetInventoryMobileCard({
                 </Text>
               ) : null}
               <Box mt={2}>
-                <StatusPill
-                  status={status}
-                  styles={statusStyles}
-                  minW='96px'
-                  justify='center'
-                />
+                <HStack spacing={2} flexWrap='wrap'>
+                  <StatusPill
+                    status={status}
+                    styles={statusStyles}
+                    minW='96px'
+                    justify='center'
+                  />
+                  {token.alert_state?.eligibility ? (
+                    <Tooltip
+                      label={`Alert eligibility: ${eligibilityExplanation(
+                        token.alert_state.eligibility
+                      )}`}
+                    >
+                      <Box as='span' display='inline-flex'>
+                        <AlertEligibilityBadge
+                          status={token.alert_state.eligibility.status}
+                        />
+                      </Box>
+                    </Tooltip>
+                  ) : null}
+                </HStack>
               </Box>
             </Box>
           </HStack>

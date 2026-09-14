@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -204,6 +210,37 @@ describe('TokenDetailModal', () => {
     expect(
       screen.getByText('You have read-only access to this asset.')
     ).toBeInTheDocument();
+  });
+
+  it('shows alert eligibility independently from delivery in inventory details', () => {
+    renderModal({
+      ...baseToken,
+      alert_state: {
+        eligibility: {
+          status: 'suppressed',
+          reason: 'stale_import_threshold',
+          effective_threshold: 7,
+          days_until_expiry: 5,
+          eligible_channels: ['email'],
+        },
+        delivery: {
+          status: 'sent',
+          latest_attempt: {
+            attempted_at: '2026-09-12T08:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    const alerting = within(
+      screen.getByRole('region', { name: 'Alert eligibility and delivery' })
+    );
+    expect(alerting.getByText('Suppressed')).toBeInTheDocument();
+    expect(
+      alerting.getByText(/stale catch-up is suppressed/)
+    ).toBeInTheDocument();
+    expect(alerting.getByText('Sent')).toBeInTheDocument();
+    expect(alerting.getByText('The alert was delivered.')).toBeInTheDocument();
   });
 
   it('omits unavailable rows and sections in read mode without hiding edit fields', () => {

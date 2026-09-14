@@ -30,6 +30,7 @@ import {
   DashboardModalSectionHeading,
 } from './DashboardModalDetails.jsx';
 import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
+import AlertStateDisplay from './AlertStateDisplay.jsx';
 import {
   createTokenEditData,
   createTokenUpdatePayload,
@@ -451,6 +452,13 @@ function TokenDetailModal({
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
           <DashboardModalDetailsGrid>
+            <AlertStateDisplay
+              alertState={token.alert_state}
+              tokenName={token.name}
+              tokenId={token.id}
+              canViewAudit={!isViewer}
+              gridColumn='1 / -1'
+            />
             {hasBasicInformation ? (
               <DashboardModalDataSection
                 title='Basic information'

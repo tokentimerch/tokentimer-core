@@ -23,6 +23,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [error, setError] = useState('');
   const [unauthorized, setUnauthorized] = useState(false);
   const [queue, setQueue] = useState([]);
+  const [eligibilityAssets, setEligibilityAssets] = useState([]);
   const [stats, setStats] = useState({ byChannel: [], monthUsage: 0 });
   const [orgStats, setOrgStats] = useState({ monthUsage: 0 });
   const [orgWorkspaceCount, setOrgWorkspaceCount] = useState(0);
@@ -231,6 +232,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
           setOrgTokenCount(orgPlanData.tokenCount || 0);
 
           const workspaceTokens = tokensRes?.items || [];
+          setEligibilityAssets(
+            workspaceTokens.filter(token => token.alert_state?.eligibility)
+          );
           setWorkspaceTokenCount(workspaceTokens.length);
           setWorkspaceMemberCount(
             Array.isArray(membersRes?.items) ? membersRes.items.length : 0
@@ -255,6 +259,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
             setOrgTokenCount(0);
           }
           setQueue([]);
+          setEligibilityAssets([]);
           setStats({ byChannel: [], monthUsage: 0 });
           setWorkspaceTokenCount(0);
           setWorkspaceMemberCount(0);
@@ -323,6 +328,19 @@ export function useControlCenterData(initialWorkspaceId = '') {
     [queue]
   );
 
+  const eligibilitySummary = useMemo(
+    () =>
+      eligibilityAssets.reduce(
+        (summary, token) => {
+          const status = token.alert_state?.eligibility?.status;
+          if (status) summary[status] = (summary[status] || 0) + 1;
+          return summary;
+        },
+        { outside_threshold: 0, due: 0, suppressed: 0 }
+      ),
+    [eligibilityAssets]
+  );
+
   const atLimit =
     (planInfo?.alertLimitMonth || 0) > 0 &&
     (stats?.monthUsage || 0) >= (planInfo?.alertLimitMonth || 0);
@@ -373,6 +391,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
     partial,
     noEligibleAccess,
     queue,
+    eligibilityAssets,
+    eligibilitySummary,
     stats,
     orgStats,
     orgWorkspaceCount,

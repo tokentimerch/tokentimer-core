@@ -10,6 +10,10 @@ const {
 const Token = require("../db/models/Token");
 const { requireNotViewer } = require("../services/rbac");
 const { sanitizeForLogging } = require("../utils/sanitize");
+const {
+  enrichTokenWithAlertState,
+  enrichTokensWithAlertState,
+} = require("../services/alertEligibility");
 
 const router = require("express").Router();
 
@@ -221,7 +225,9 @@ router.get(
       LIMIT $${p} OFFSET $${p + 1}
     `;
       const itemsRes = await pool.query(itemsSql, [...params, limit, offset]);
-      const items = itemsRes.rows.map((t) => Token.convertNumericFields(t));
+      const items = await enrichTokensWithAlertState(
+        itemsRes.rows.map((t) => Token.convertNumericFields(t)),
+      );
 
       // 2. Fetch total count and facets in a single optimized query using CTEs
       const statsSql = `
@@ -309,7 +315,7 @@ router.get(
           .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
       }
 
-      res.json(token);
+      res.json(await enrichTokenWithAlertState(token));
     } catch (error) {
       logger.error("Error fetching token:", {
         error: error.message,
@@ -598,7 +604,9 @@ router.post(
           tokenId: updatedToken.id,
           userId: req.user.id,
         });
-        return res.status(200).json(updatedToken);
+        return res
+          .status(200)
+          .json(await enrichTokenWithAlertState(updatedToken));
       }
 
       logger.info("Creating token with data:", {
@@ -691,7 +699,7 @@ router.post(
         type: token.type,
         category: token.category,
       });
-      res.status(201).json(token);
+      res.status(201).json(await enrichTokenWithAlertState(token));
     } catch (error) {
       logger.error("Token creation error:", error.message);
       logger.error("Token creation error stack:", error.stack);
@@ -1344,7 +1352,7 @@ router.put(
           error: _err.message,
         });
       }
-      res.json(updatedToken);
+      res.json(await enrichTokenWithAlertState(updatedToken));
     } catch (error) {
       logger.error("Error updating token:", {
         error: error.message,

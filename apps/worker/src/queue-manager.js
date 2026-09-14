@@ -8,19 +8,9 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { logger } from "./logger.js";
-import {
-  computeDaysLeft,
-  findThresholdWindow,
-  isStaleImportThreshold,
-} from "./shared/thresholds.js";
-import {
-  resolveContactGroup,
-  hasEmailContacts,
-  hasWhatsAppContacts,
-  hasWebhookNames,
-  getWebhookNames,
-} from "./shared/contactGroups.js";
-import { shouldSkipRetiredCertificateAlert } from "./shared/retiredCertificateAlerts.js";
+import alertEligibility from "@tokentimer/alert-eligibility";
+
+const { evaluateAlertEligibility } = alertEligibility;
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -152,9 +142,11 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
 
     for (const t of tokens) {
       scanned++;
-      if (
-        shouldSkipRetiredCertificateAlert(t.cert_lifecycle_status)
-      ) {
+      const eligibility = evaluateAlertEligibility(t, {
+        defaultThresholds: DEFAULT_THRESHOLDS,
+      });
+
+      if (eligibility.reason === "retired_certificate") {
         skipped++;
         logger.info(
           JSON.stringify({
@@ -167,56 +159,15 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         );
         continue;
       }
-      const days = computeDaysLeft(t.expiration);
-
-      // Parse workspace-specific thresholds, with optional contact-group override
-      let userThresholds = DEFAULT_THRESHOLDS;
-      try {
-        if (Array.isArray(t.alert_thresholds)) {
-          userThresholds = t.alert_thresholds.filter((n) => Number.isFinite(n));
-        }
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
-
-      // Resolve contact group early and apply any thresholds override BEFORE selecting the threshold window
-      const resolvedGroup = resolveContactGroup({
-        contactGroups: t.contact_groups,
-        contactGroupId: t.contact_group_id,
-        defaultContactGroupId: t.default_contact_group_id,
-      });
-
-      try {
-        if (
-          resolvedGroup &&
-          Array.isArray(resolvedGroup.thresholds) &&
-          resolvedGroup.thresholds.length > 0
-        ) {
-          const norm = resolvedGroup.thresholds
-            .map((n) => Number(n))
-            .filter((n) => Number.isFinite(n) && n >= -365 && n <= 730);
-          if (norm.length > 0) userThresholds = norm;
-        }
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
-
-      // Determine which threshold window has been reached using effective thresholds
-      const thresholdResult = findThresholdWindow(days, userThresholds);
-      if (!thresholdResult) {
+      const days = eligibility.days_until_expiry;
+      if (eligibility.status === "outside_threshold") {
         continue; // No threshold reached
       }
-      const { thresholdReached, negativeWindow } = thresholdResult;
+      const thresholdReached = eligibility.effective_threshold;
+      const negativeWindow = eligibility.threshold_type === "post_expiry";
 
       // For imported tokens, we avoid "catch-up" alerts for thresholds already passed before the import.
-      if (
-        isStaleImportThreshold(
-          t.imported_at,
-          t.expiration,
-          thresholdReached,
-          negativeWindow,
-        )
-      ) {
+      if (eligibility.reason === "stale_import_threshold") {
         skipped++;
         logger.info(
           JSON.stringify({
@@ -240,38 +191,9 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         ? `token_expiry:${t.token_id}:negwin:${thresholdReached}`
         : `token_expiry:${t.token_id}:poswin:${thresholdReached}`;
 
-      // Determine available channels: resolve recipients via contact groups when available
-      const channels = [];
-
-      // Email eligibility: contact group must have email_contact_ids
-      const wsEmailEnabled = t.ws_email_alerts_enabled !== false;
-      if (wsEmailEnabled && hasEmailContacts(resolvedGroup)) {
-        channels.push("email");
-      }
-
-      // Webhooks: when a contact group explicitly selects webhook name(s)
-      {
-        const webhooks = Array.isArray(t.webhook_urls) ? t.webhook_urls : [];
-        let hasWebhook = false;
-        if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
-          // Ensure at least one named webhook exists in workspace settings
-          try {
-            const names = getWebhookNames(resolvedGroup);
-            const filtered = webhooks.filter((w) =>
-              names.includes(String(w.name || "").trim()),
-            );
-            hasWebhook = filtered.length > 0;
-          } catch (_) {
-            hasWebhook = true;
-          }
-        }
-        if (hasWebhook) channels.push("webhooks");
-      }
-
-      // WhatsApp eligibility: require selected group to have whatsapp_contact_ids
-      if (hasWhatsAppContacts(resolvedGroup)) {
-        channels.push("whatsapp");
-      }
+      // Recipient/channel eligibility is evaluated by the same deterministic
+      // helper exposed through the API.
+      const channels = eligibility.eligible_channels;
 
       // Check if alert already exists for this window
       const existingRes = await client.query(
@@ -383,7 +305,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       }
 
       // Do not queue if no channels are eligible
-      if (!Array.isArray(channels) || channels.length === 0) {
+      if (eligibility.reason === "no_eligible_channels") {
         skipped++;
         // Optional: write an audit for visibility that alert was not queued
         try {

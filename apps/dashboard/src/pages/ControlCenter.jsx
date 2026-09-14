@@ -60,6 +60,7 @@ import {
 import SEO from '../components/SEO.jsx';
 import TruncatedText from '../components/TruncatedText';
 import { resolveCategoryVisual } from '../components/AssetInventoryTable';
+import { AlertEligibilityOverview } from '../components/AlertStateDisplay.jsx';
 import { useControlCenterData } from '../hooks/useControlCenterData';
 import {
   useControlCenterStats,
@@ -1822,6 +1823,61 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                   </SimpleGrid>
                 ) : null}
               </SectionState>
+
+              {alertData.eligibleWorkspaces.length > 0 ? (
+                <ControlCenterPanel
+                  title='Alert eligibility (workspace)'
+                  description='Current asset eligibility, evaluated independently from delivery state'
+                  mb={4}
+                >
+                  <SectionState
+                    status={
+                      alertSectionStatus === 'ready'
+                        ? 'ready'
+                        : alertSectionStatus
+                    }
+                    error={alertData.error}
+                    emptyTitle='No asset eligibility data'
+                    emptyDetail='Eligibility appears when assets are available in the selected workspace.'
+                    unauthorizedDetail='Alert eligibility requires access to the selected workspace.'
+                  >
+                    <VStack align='stretch' spacing={4}>
+                      <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3}>
+                        <ControlStatCard
+                          label='Outside threshold'
+                          value={
+                            alertData.eligibilitySummary.outside_threshold || 0
+                          }
+                          help='Not currently due'
+                        />
+                        <ControlStatCard
+                          label='Due'
+                          value={alertData.eligibilitySummary.due || 0}
+                          help='Eligible to generate an alert'
+                        />
+                        <ControlStatCard
+                          label='Suppressed'
+                          value={alertData.eligibilitySummary.suppressed || 0}
+                          help='Threshold reached but intentionally quiet'
+                        />
+                      </SimpleGrid>
+                      <Alert status='info' variant='left-accent'>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Eligibility explains whether an asset should generate
+                          an alert now. Delivery separately shows what happened
+                          after an alert was queued, including windows, retries,
+                          and limits.
+                        </AlertDescription>
+                      </Alert>
+                      <AlertEligibilityOverview
+                        tokens={alertData.eligibilityAssets}
+                        workspaceId={alertData.selectedWorkspaceId}
+                      />
+                    </VStack>
+                  </SectionState>
+                </ControlCenterPanel>
+              ) : null}
 
               {alertData.eligibleWorkspaces.length > 0 ? (
                 <ControlCenterPanel

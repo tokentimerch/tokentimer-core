@@ -9390,6 +9390,8 @@ components:
         updated_at:
           type: string
           format: date-time
+        alert_state:
+          $ref: "#/components/schemas/AlertState"
       example:
         id: 142
         workspace_id: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
@@ -9399,6 +9401,121 @@ components:
         expiresAt: "2027-12-31"
         created_at: "2026-03-13T18:00:00.000Z"
         updated_at: "2026-03-13T18:00:00.000Z"
+    AlertState:
+      type: object
+      required: [eligibility, delivery]
+      properties:
+        eligibility:
+          $ref: "#/components/schemas/AlertEligibility"
+        delivery:
+          allOf:
+            - $ref: "#/components/schemas/AlertDeliveryState"
+          nullable: true
+    AlertEligibility:
+      type: object
+      required:
+        - status
+        - reason
+        - days_until_expiry
+        - effective_thresholds
+        - eligible_channels
+        - metadata
+      properties:
+        status:
+          type: string
+          enum: [outside_threshold, due, suppressed]
+        reason:
+          type: string
+          enum:
+            - threshold_not_reached
+            - threshold_reached
+            - post_expiry_threshold_not_configured
+            - stale_import_threshold
+            - retired_certificate
+            - no_eligible_channels
+            - invalid_expiration
+        days_until_expiry:
+          type: integer
+          nullable: true
+        effective_threshold:
+          type: integer
+          nullable: true
+        effective_thresholds:
+          type: array
+          items:
+            type: integer
+        threshold_type:
+          type: string
+          enum: [pre_expiry, expiry_day, post_expiry]
+          nullable: true
+        threshold_date:
+          type: string
+          format: date
+          nullable: true
+        next_evaluation_at:
+          type: string
+          format: date
+          nullable: true
+        next_threshold:
+          type: integer
+          nullable: true
+        eligible_channels:
+          type: array
+          items:
+            type: string
+            enum: [email, webhooks, whatsapp]
+        contact_group_id:
+          type: string
+          nullable: true
+        contact_group_name:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+    AlertDeliveryState:
+      type: object
+      required: [alert_id, status, channels, attempts]
+      properties:
+        alert_id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, sent, failed, blocked, limit_exceeded, partial]
+        reason:
+          type: string
+          enum:
+            - delivery_window
+            - monthly_plan_limit
+            - max_attempts
+            - retry_scheduled
+          nullable: true
+        threshold_days:
+          type: integer
+        due_date:
+          type: string
+          format: date
+        channels:
+          type: array
+          items:
+            type: string
+        attempts:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        latest_attempt:
+          type: object
+          nullable: true
+          additionalProperties: true
     AuditEvent:
       type: object
       properties:
