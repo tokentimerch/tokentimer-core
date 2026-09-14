@@ -28,7 +28,12 @@ COPY --chown=tokentimer:tokentimer apps/api/services/certops/parser.js ./apps/ap
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/identitySafety.js ./apps/api/services/certops/identitySafety.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/controllerObservationLimits.js ./apps/api/services/certops/controllerObservationLimits.js
 
-RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller... \
+# CI may install the Core workspace before this image build. COPY does not
+# delete leaked node_modules, and Grype catalogs every remaining store entry.
+RUN rm -rf /app/apps/k8s-controller/node_modules /app/packages/log-scrub/node_modules \
+    && pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller... \
+    && js_yaml_store="$(find /app/node_modules/.pnpm -maxdepth 1 -type d -name 'js-yaml@*' | sed 's|.*/||' | sort)" \
+    && test "$js_yaml_store" = "js-yaml@4.3.2" \
     && rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc \
     && corepack disable \
     && rm -rf /root/.cache/node/corepack /root/.cache/pnpm /root/.local/share/pnpm \
