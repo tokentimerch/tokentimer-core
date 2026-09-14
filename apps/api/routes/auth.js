@@ -28,6 +28,7 @@ const {
   sendPasswordResetEmail,
 } = require("../services/emailService");
 const { isValidEmail } = require("../utils/emailAddress");
+const { APP_URL } = require("../config/constants");
 const _otplib = require("otplib");
 const generateSecret =
   _otplib.generateSecret ||

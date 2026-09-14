@@ -3425,13 +3425,16 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
     socket.on("secureConnect", () => {
       try {
         const peerCert = socket.getPeerCertificate();
-        if (!peerCert || !peerCert.raw) {
+        // Node's fingerprint is SHA-1 of the DER, the same identifier
+        // Windows store / netsh sslcert uses. Read it from TLS rather
+        // than hashing peerCert.raw again.
+        const thumbprint = String(peerCert?.fingerprint || "")
+          .replace(/:/g, "")
+          .toUpperCase();
+        if (!/^[0-9A-F]{40}$/.test(thumbprint)) {
           settle(null);
           return;
         }
-        // Windows store / netsh sslcert identity is SHA-1.
-        // codeql[js/weak-cryptographic-algorithm]
-        const thumbprint = crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase();
         settle(thumbprint);
       } catch {
         settle(null);
