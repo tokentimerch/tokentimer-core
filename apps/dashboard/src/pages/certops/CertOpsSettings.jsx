@@ -79,6 +79,11 @@ function JobApprovalPolicyPanel() {
           </Badge>
         )}
       </HStack>
+      {!isAdmin ? (
+        <Text fontSize='xs' color={muted} mt={2}>
+          Only workspace admins can enable or disable job approval.
+        </Text>
+      ) : null}
     </DashboardPanel>
   );
 }

@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **CertOps admin-only controls stay visible for managers and viewers.** Trust anchors on the Agents tab keep their title and say that only workspace admins can create and manage them, instead of an empty card. Job approval on Settings says only workspace admins can enable or disable it.
 - **After sign-in, the dashboard returns to the last workspace that account can still open.** Email and 2FA keep the preference, and a later OAuth landing on `/dashboard` uses the same restore. A workspace in the URL still wins. If that workspace was deleted, frozen, or the account no longer belongs to it, another accessible workspace is used. Switching accounts in the same browser does not restore the previous account's workspace. Switching workspace on the asset inventory also clears section, status, search, and category filters so the previous workspace's view does not carry over.
 - **Control Center Auto-sync rows now show the integration name** (GitHub, Azure KV, and the other import providers) instead of a blank title above the schedule.
 

@@ -131,18 +131,29 @@ describe('TrustAnchorsPanel', () => {
     });
   });
 
-  it('renders nothing while disabled or for a non-admin', () => {
+  it('renders nothing while CertOps is disabled', () => {
     useCertOpsTrustAnchorsMock.mockReturnValue(
       anchorsState({ enabled: false })
     );
-    const { container: disabledContainer } = renderPanel();
-    expect(disabledContainer.textContent).toBe('');
+    const { container } = renderPanel();
+    expect(container.textContent).toBe('');
+  });
 
+  it('keeps the panel visible for a non-admin and names the admin-only bar', () => {
     useCertOpsTrustAnchorsMock.mockReturnValue(
       anchorsState({ isAdmin: false })
     );
-    const { container: nonAdminContainer } = renderPanel();
-    expect(nonAdminContainer.textContent).toBe('');
+    renderPanel();
+
+    expect(screen.getByText('Trust anchors')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Only workspace admins can create and manage trust anchors.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve a trust anchor' })
+    ).not.toBeInTheDocument();
   });
 
   it('shows an empty state pointing to the approve action', () => {
