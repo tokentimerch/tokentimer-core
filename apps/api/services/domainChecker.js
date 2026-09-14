@@ -16,13 +16,13 @@ const DEFAULT_TLS_TIMEOUT_MS = 5000;
 const activeLookups = new Map();
 
 function normalizeRootDomain(input) {
-  const value = String(input || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/^\*\./, "")
-    .replace(/\.$/, "");
+  let value = String(input || "").trim().toLowerCase();
+  if (value.startsWith("https://")) value = value.slice("https://".length);
+  else if (value.startsWith("http://")) value = value.slice("http://".length);
+  const slash = value.indexOf("/");
+  if (slash !== -1) value = value.slice(0, slash);
+  if (value.startsWith("*.")) value = value.slice(2);
+  if (value.endsWith(".")) value = value.slice(0, -1);
 
   if (!value || value.length > 253) return null;
   if (!/^[a-z0-9.-]+$/.test(value)) return null;
@@ -180,6 +180,8 @@ async function fetchHostnameCertificate(hostname, options = {}) {
         host: normalizedHostname,
         port: 443,
         servername: normalizedHostname,
+        // Probe only: expired or privately-issued certs must still be readable.
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
         timeout: timeoutMs,
       },

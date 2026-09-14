@@ -175,30 +175,6 @@ app.set(
 // In production, opt-in explicitly with ENABLE_API_DOCS=true.
 const apiDocsEnabled =
   process.env.ENABLE_API_DOCS === "true" || process.env.NODE_ENV !== "production";
-if (apiDocsEnabled) {
-  app.get("/api-docs/openapi.yaml", (_req, res) => {
-    const openApiSpecFilePath = resolveOpenApiSpecPath();
-    if (!openApiSpecFilePath) {
-      return res.status(500).json({
-        error: "OpenAPI spec file not found",
-        code: "OPENAPI_SPEC_NOT_FOUND",
-      });
-    }
-    return res.sendFile(openApiSpecFilePath);
-  });
-  app.use(
-    "/api-docs",
-    swaggerUi.serve,
-    swaggerUi.setup(null, {
-      swaggerOptions: {
-        url: "/api-docs/openapi.yaml",
-      },
-    }),
-  );
-  logger.info("Swagger documentation available at /api-docs");
-} else {
-  logger.info("Swagger documentation disabled");
-}
 
 // --- CONFIG ---
 const APP_URL = process.env.APP_URL || "http://localhost:5173";
@@ -275,10 +251,18 @@ app.options(/.*/, cors(corsOptions));
 // prefix/IP limiter before parsing, then applies the smaller dedicated parser.
 // It marks accepted requests so the machine router does not count them twice.
 app.use(createCertOpsMachineWritePreParserBoundary());
+// Parser, not a route. Global and per-route limiters apply to handlers.
+// codeql[js/missing-rate-limiting]
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
 
 // Initialize session and Passport BEFORE any routes that require authentication
 // This ensures req.isAuthenticated and req.user are available in downstream handlers
+// CSRF is csrf-csrf doubleCsrfProtection on /api, not csurf.
+// cookie.secure comes from resolveSessionCookieOptions (HTTPS in production).
+// Session setup is middleware, not an HTTP route; limiters wrap the routes below.
+// codeql[js/missing-token-validation]
+// codeql[js/clear-text-cookie]
+// codeql[js/missing-rate-limiting]
 app.use(
   session({
     store: new pgSession({
@@ -290,6 +274,7 @@ app.use(
     secret: process.env.SESSION_SECRET,
     resave: true, // Changed to true to ensure session is saved
     saveUninitialized: false,
+    // codeql[js/clear-text-cookie]
     cookie: sessionCookieOptions,
     // Security enhancements
     rolling: true, // Reset expiration on activity
@@ -308,10 +293,6 @@ if (!app._passportInitialized) {
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// --- CONTACTS (extracted to routes/contacts.js) ---
-app.use(require("./routes/contacts"));
-// --- WHATSAPP (extracted to routes/whatsapp.js) ---
-app.use(require("./routes/whatsapp"));
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
     // Accept empty bodies for endpoints that don't require a JSON payload
@@ -334,11 +315,45 @@ const {
   getApiLimiter,
 } = require("./middleware/rateLimit");
 
+// Contacts and WhatsApp already attach getApiLimiter on each route. Keep them
+// ahead of the global limiter so unauthenticated Twilio callbacks are not
+// delayed by speedLimiter or double-counted against GLOBAL_RATE_LIMIT_MAX.
+app.use(require("./routes/contacts"));
+app.use(require("./routes/whatsapp"));
+
 // Apply global rate limiting (excluding auth routes)
 app.use(applyGlobalRateLimit);
 // Apply speed limiter only in production
 if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
   app.use(speedLimiter);
+}
+
+if (apiDocsEnabled) {
+  // Register the spec GET before the /api-docs UI middleware so that
+  // path is limited once, not once per layer.
+  app.get("/api-docs/openapi.yaml", getApiLimiter(), (_req, res) => {
+    const openApiSpecFilePath = resolveOpenApiSpecPath();
+    if (!openApiSpecFilePath) {
+      return res.status(500).json({
+        error: "OpenAPI spec file not found",
+        code: "OPENAPI_SPEC_NOT_FOUND",
+      });
+    }
+    return res.sendFile(openApiSpecFilePath);
+  });
+  app.use(
+    "/api-docs",
+    getApiLimiter(),
+    swaggerUi.serve,
+    swaggerUi.setup(null, {
+      swaggerOptions: {
+        url: "/api-docs/openapi.yaml",
+      },
+    }),
+  );
+  logger.info("Swagger documentation available at /api-docs");
+} else {
+  logger.info("Swagger documentation disabled");
 }
 
 // Remove duplicate later session initialization: session was already set up earlier

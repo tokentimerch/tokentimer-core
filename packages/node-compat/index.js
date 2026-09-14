@@ -33,9 +33,9 @@ function parseNodeVersion(versionString) {
  * or 24.0.0+, not on any 23.x release.
  *
  * Native node:http/node:https (and the --use-env-proxy CLI flag) need a
- * later 24.5.0+ floor instead; see isNodeHttpProxySupported() below. The
- * worker uses axios, which reads HTTP_PROXY/HTTPS_PROXY itself regardless
- * of Node version, so that later floor doesn't gate anything here.
+ * later 24.5.0+ floor instead; see isNodeHttpProxySupported() below. Worker
+ * webhook delivery honors HTTP_PROXY/HTTPS_PROXY itself regardless of Node
+ * version, so that later floor doesn't gate anything here.
  *
  * @param {string} [nodeVersion] - Defaults to process.version; accepts an
  *   explicit version string so this is unit-testable without mocking
@@ -55,9 +55,9 @@ function isNodeUseEnvProxySupported(nodeVersion = process.version) {
  * --use-env-proxy CLI flag) honor NODE_USE_ENV_PROXY=1. Needs 22.21.0+ or
  * 24.5.0+, a later floor than isNodeUseEnvProxySupported() above since raw
  * http/https proxy support landed five months after fetch-only support in
- * the 24.x line. Not currently consulted by TokenTimer's own code (the API
- * uses fetch, the worker uses axios); exported for any future consumer that
- * adds a raw http.request()/https.request()-based outbound call.
+ * the 24.x line. TokenTimer's webhook client implements proxy env itself
+ * rather than relying on this native floor; exported for any other consumer
+ * that wants to know whether raw http.request() would honor the flag.
  *
  * @param {string} [nodeVersion]
  * @returns {boolean}

@@ -49,6 +49,16 @@ describe("Workspaces lifecycle and membership integration", function () {
     }
   });
 
+  it("rejects an invite email with spaces or extra text", async () => {
+    const res = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/members`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ email: "not an email @ example.com", role: "viewer" })
+      .expect(400);
+    expect(res.body.code).to.equal("VALIDATION_ERROR");
+    expect(res.body.error).to.match(/email/i);
+  });
+
   it("invite lifecycle: create and resend invitation for existing user", async () => {
     const createInvite = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/members`)

@@ -5,8 +5,14 @@ const {
   tryParseDate,
   formatDateYmd,
   CREDENTIALED_AXIOS_REDIRECTS,
+  joinIntegrationApiUrl,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+
+function isGitLabDotComHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "gitlab.com" || host === "www.gitlab.com";
+}
 
 async function gitlabRequest({
   baseUrl,
@@ -16,7 +22,10 @@ async function gitlabRequest({
   params = {},
   timeout = 120000, // Default 120s for regular requests (after initial connection)
 }) {
-  const url = new URL(path.startsWith("/") ? path : `/${path}`, baseUrl);
+  const url = joinIntegrationApiUrl(
+    baseUrl,
+    path.startsWith("/") ? path : `/${path}`,
+  );
   const headers = {
     "PRIVATE-TOKEN": token,
     "Content-Type": "application/json",
@@ -25,7 +34,7 @@ async function gitlabRequest({
 
   const config = {
     method,
-    url: url.toString(),
+    url,
     headers,
     params: method === "GET" ? params : undefined,
     data: method !== "GET" ? params : undefined,
@@ -463,13 +472,20 @@ async function scanGitLab({
 
   // Normalize baseUrl
   const normalizedUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  const isGitLabCloud = normalizedUrl.toLowerCase().includes("gitlab.com");
+  let parsedGitlab;
+  try {
+    parsedGitlab = new URL(normalizedUrl);
+  } catch {
+    throw new Error("Invalid baseUrl format");
+  }
+  const gitlabHost = parsedGitlab.hostname.toLowerCase();
+  const isGitLabCloud = isGitLabDotComHost(gitlabHost);
 
   // The host anchors every GitLab token's provenance (see
   // sourceIdentity.js) so that two self-hosted GitLab instances with
   // colliding numeric user/project/group ids can never cross-delete each
   // other's tokens.
-  const host = new URL(normalizedUrl).host;
+  const host = parsedGitlab.host;
 
   logger.info("Starting GitLab scan", {
     baseUrl: baseUrl.replace(/\/\/[^@]+@/, "//***@"),
@@ -1587,6 +1603,7 @@ async function scanGitLab({
 
 module.exports = {
   scanGitLab,
+  isGitLabDotComHost,
 };
 
 // Test-only exports for unit coverage of helpers

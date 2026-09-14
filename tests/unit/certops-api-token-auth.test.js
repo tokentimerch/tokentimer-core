@@ -590,6 +590,22 @@ describe("CertOps API token auth middleware", () => {
       ok: true,
       rawToken: RAW_TOKEN,
     });
+    assert.deepEqual(
+      bearerTokenFromRequest(
+        createRequest({ authorization: `Bearer\t${RAW_TOKEN}` }),
+      ),
+      { ok: true, rawToken: RAW_TOKEN },
+    );
+    assert.deepEqual(
+      bearerTokenFromRequest(createRequest({ authorization: "Bearer" })),
+      { ok: false },
+    );
+    assert.deepEqual(
+      bearerTokenFromRequest(
+        createRequest({ authorization: `Bearer ${RAW_TOKEN} ` }),
+      ),
+      { ok: true, rawToken: RAW_TOKEN },
+    );
     assert.equal(workspaceIdFromRequest(req), WORKSPACE_A);
     assert.deepEqual(
       safeApiTokenIdentity(successfulValidation().token),

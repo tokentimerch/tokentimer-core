@@ -43,12 +43,28 @@ function requireFreshFromCandidates(candidates, stubs = {}) {
   );
 }
 
-function loadConstantsWith(parseLimitsImpl, loggerImpl = { debug() {} }) {
+function loadWebhookSafetyWithPost(postWebhook) {
+  const shared = require("../../packages/webhook-safety");
+  return {
+    shouldEnforcePrivateIpCheck: shared.shouldEnforcePrivateIpCheck,
+    validateResolvedIP: shared.validateResolvedIP,
+    webhookHostAllowed: shared.webhookHostAllowed,
+    postWebhook,
+    WebhookRequestError: shared.WebhookRequestError,
+  };
+}
+
+function loadConstantsWith(
+  parseLimitsImpl,
+  loggerImpl = { debug() {} },
+  extraStubs = {},
+) {
   return requireFreshFromCandidates(
     ["../../apps/api/config/constants", "../../apps/saas/config/constants"],
     {
       "../services/planLimits": { parseLimits: parseLimitsImpl },
       "../utils/logger": { logger: loggerImpl },
+      ...extraStubs,
     },
   );
 }
@@ -82,18 +98,15 @@ function loadWorkspaceWith(
 
 describe("Core services unit coverage", () => {
   describe("config/constants", () => {
-    const originalFetch = global.fetch;
     const originalPlanTokenLimits = process.env.PLAN_TOKEN_LIMITS;
     const originalPlanAlertLimits = process.env.PLAN_ALERT_LIMITS;
 
     beforeEach(() => {
-      global.fetch = originalFetch;
       process.env.PLAN_TOKEN_LIMITS = originalPlanTokenLimits;
       process.env.PLAN_ALERT_LIMITS = originalPlanAlertLimits;
     });
 
     after(() => {
-      global.fetch = originalFetch;
       process.env.PLAN_TOKEN_LIMITS = originalPlanTokenLimits;
       process.env.PLAN_ALERT_LIMITS = originalPlanAlertLimits;
     });
@@ -144,23 +157,20 @@ describe("Core services unit coverage", () => {
     });
 
     it("handles successful Slack and Discord responses", async () => {
-      const constants = loadConstantsWith((raw, defaults) => defaults);
-
-      global.fetch = async (url, options) => {
-        const parsed = JSON.parse(options.body);
+      const postWebhook = async (url, options) => {
+        const parsed = options.body;
         if (String(url).includes("slack")) {
           expect(parsed).to.have.property("text");
-          return {
-            status: 200,
-            text: async () => "ok",
-          };
+          return { status: 200, bodyText: "ok" };
         }
         expect(parsed).to.have.property("content");
-        return {
-          status: 204,
-          text: async () => "",
-        };
+        return { status: 204, bodyText: "" };
       };
+      const constants = loadConstantsWith(
+        (raw, defaults) => defaults,
+        { debug() {} },
+        { "../utils/webhookSafety": loadWebhookSafetyWithPost(postWebhook) },
+      );
 
       const slackRes = await constants.testWebhookUrl(
         "https://hooks.slack.com/services/test",
@@ -176,23 +186,23 @@ describe("Core services unit coverage", () => {
     });
 
     it("handles Teams and PagerDuty failure/success payload mapping", async () => {
-      const constants = loadConstantsWith((raw, defaults) => defaults);
       const validKey = "A".repeat(32);
       const calls = [];
-
-      global.fetch = async (url, options) => {
+      const postWebhook = async (url, options) => {
         calls.push({ url, options });
         if (String(url).includes("office.com")) {
-          return {
-            status: 500,
-            text: async () => "boom",
-          };
+          return { status: 500, bodyText: "boom" };
         }
         return {
           status: 202,
-          text: async () => JSON.stringify({ status: "success" }),
+          bodyText: JSON.stringify({ status: "success" }),
         };
       };
+      const constants = loadConstantsWith(
+        (raw, defaults) => defaults,
+        { debug() {} },
+        { "../utils/webhookSafety": loadWebhookSafetyWithPost(postWebhook) },
+      );
 
       const teamsRes = await constants.testWebhookUrl(
         "https://outlook.office.com/webhook/test",
@@ -211,11 +221,16 @@ describe("Core services unit coverage", () => {
     });
 
     it("accepts a Power Automate / Logic Apps host for kind=teams", async () => {
-      const constants = loadConstantsWith((raw, defaults) => defaults);
-      global.fetch = async () => ({
-        status: 200,
-        text: async () => "",
-      });
+      const constants = loadConstantsWith(
+        (raw, defaults) => defaults,
+        { debug() {} },
+        {
+          "../utils/webhookSafety": loadWebhookSafetyWithPost(async () => ({
+            status: 200,
+            bodyText: "",
+          })),
+        },
+      );
 
       const res = await constants.testWebhookUrl(
         "https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke",
@@ -228,11 +243,16 @@ describe("Core services unit coverage", () => {
       const original = process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
       process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "hooks.custom-extra.example.com";
       try {
-        const constants = loadConstantsWith((raw, defaults) => defaults);
-        global.fetch = async () => ({
-          status: 200,
-          text: async () => "ok",
-        });
+        const constants = loadConstantsWith(
+          (raw, defaults) => defaults,
+          { debug() {} },
+          {
+            "../utils/webhookSafety": loadWebhookSafetyWithPost(async () => ({
+              status: 200,
+              bodyText: "ok",
+            })),
+          },
+        );
 
         const allowed = await constants.testWebhookUrl(
           "https://hooks.custom-extra.example.com/webhook",
@@ -253,12 +273,18 @@ describe("Core services unit coverage", () => {
     });
 
     it("returns timeout message on AbortError", async () => {
-      const constants = loadConstantsWith((raw, defaults) => defaults);
-      global.fetch = async () => {
-        const err = new Error("aborted");
-        err.name = "AbortError";
-        throw err;
-      };
+      const constants = loadConstantsWith(
+        (raw, defaults) => defaults,
+        { debug() {} },
+        {
+          "../utils/webhookSafety": loadWebhookSafetyWithPost(async () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            err.code = "WEBHOOK_TIMEOUT";
+            throw err;
+          }),
+        },
+      );
       const res = await constants.testWebhookUrl(
         "https://any.local/hook",
         "generic",

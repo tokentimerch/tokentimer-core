@@ -198,9 +198,10 @@ an incomplete configuration and SMTP is reported as not configured. With no
 ## Proxy
 
 Corporate proxy support for outbound HTTP(S) calls: the API's `fetch`/undici
-calls (e.g. the webhook Test button, OAuth/SAML callbacks) and the worker's
-`axios` calls (which already honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on
-any Node version; `NODE_USE_ENV_PROXY` only changes `fetch`/undici behavior).
+calls (OAuth/SAML callbacks, and the webhook Test button when
+`NODE_USE_ENV_PROXY=1`) and worker webhook delivery (which honors
+`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on any Node version, the same way
+`axios` did before the shared webhook client).
 
 The table below is the variable **inside the container**, which is what Node
 actually reads. Docker Compose sources each one from a dedicated,
@@ -209,13 +210,13 @@ actually reads. Docker Compose sources each one from a dedicated,
 rather than the bare name, so a corporate shell's own ambient `HTTP_PROXY` (or
 `NODE_USE_ENV_PROXY`) can never silently apply to your containers. Set
 `TOKENTIMER_USE_ENV_PROXY=1` whenever you set the proxy URLs in `.env`, or the
-API's `fetch` stays unproxied (the Test button keeps failing) while the
-worker's `axios` still proxies real delivery -- exactly the half-on state
-this release fixes.
+API's `fetch` stays unproxied (the Test button keeps failing) while worker
+webhook delivery still proxies -- exactly the half-on state this release
+fixes.
 
 | Variable              | Description                                                                     | Default value | Scope       |
 | --------------------- | -------------------------------------------------------------------------------- | -------------- | ----------- |
-| `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. On an unsupported Node version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (`axios` keeps working regardless of Node version). Compose sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` alongside this variable to silence Node's own `EnvHttpProxyAgent is experimental` warning. Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
+| `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici (and the webhook Test button) honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. On an unsupported Node version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (worker webhook delivery keeps working regardless of Node version). Compose sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` alongside this variable to silence Node's own `EnvHttpProxyAgent is experimental` warning. Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
 | `HTTP_PROXY`           | Proxy URL for plain HTTP destinations, e.g. `http://user:pass@proxy:3128`. Compose input: `TOKENTIMER_HTTP_PROXY`. | `unset`        | API, worker |
 | `HTTPS_PROXY`          | Proxy URL for HTTPS destinations. Compose input: `TOKENTIMER_HTTPS_PROXY`.        | `unset`        | API, worker |
 | `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |

@@ -399,6 +399,10 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             value={gitlabBaseUrl}
             onChange={e => setGitlabBaseUrl(e.target.value)}
           />
+          <Text fontSize='xs' color={helpTextColor} mt={1}>
+            Self-hosted GitLab can include a path, for example
+            https://git.example.com/gitlab
+          </Text>
         </Box>
         <Box minW='320px'>
           <Text fontSize='sm' mb={1}>

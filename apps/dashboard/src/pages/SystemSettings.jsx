@@ -37,6 +37,7 @@ import { SETTINGS_SECTION_GAP } from '../styles/dashboardLayout';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
+import { isValidEmail } from '../utils/emailAddress.js';
 
 /**
  * Admin-only System Settings page.
@@ -162,7 +163,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
 
   async function handleTestSmtp() {
     const email = testEmail.trim();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!isValidEmail(email)) {
       showWarning('Enter a valid email address for the test');
       return;
     }

@@ -90,6 +90,7 @@ services:
     restart: "no"
     volumes:
       - ../../apps/api:/app/apps/api
+      - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/api/node_modules
       - ../../.coverage/v8-api:/tmp/v8-coverage
@@ -118,6 +119,7 @@ services:
     restart: "no"
     volumes:
       - ../../apps/worker:/app/apps/worker
+      - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
       - ../../.coverage/v8-worker-endpoint:/tmp/v8-coverage
@@ -149,6 +151,7 @@ services:
     restart: "no"
     volumes:
       - ../../apps/worker:/app/apps/worker
+      - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
       - ../../.coverage/v8-worker-sync:/tmp/v8-coverage
@@ -187,6 +190,7 @@ services:
     restart: "no"
     volumes:
       - ../../apps/worker:/app/apps/worker
+      - ../../packages:/app/packages
       - /app/node_modules
       - /app/apps/worker/node_modules
       - ../../.coverage/v8-worker-delivery:/tmp/v8-coverage

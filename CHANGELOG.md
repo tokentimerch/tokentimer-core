@@ -9,11 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.
+- Webhook provider auto-detect matches Discord, Office 365, and PagerDuty by hostname suffix, so hosts such as `notdiscord.com` are no longer treated as Discord.
+- Webhook test and delivery refuse HTTP 3xx redirects and connect only to DNS addresses that already passed the private-IP check (TLS SNI and the Host header still use the original hostname). Worker delivery still honors `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` without `NODE_USE_ENV_PROXY`; the Test button honors them when `NODE_USE_ENV_PROXY=1`, matching `fetch`.
+- The Twilio WhatsApp status webhook uses its own limiter (`TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS`, default 60s; `TWILIO_WEBHOOK_RATE_LIMIT_MAX`, default 1200 in production) instead of the plan API limiter. Contact-group reassignment still shares the API limiter. **Operator guidance:** if provider callbacks return 429, raise `TWILIO_WEBHOOK_RATE_LIMIT_MAX`.
+- Swagger UI and the OpenAPI spec file are covered by the API rate limiter.
+- Invite and contact email checks reject values with spaces or extra text around the address.
+
 ### Fixed
 
 - **CertOps admin-only controls stay visible for managers and viewers.** Trust anchors on the Agents tab keep their title and say that only workspace admins can create and manage them, instead of an empty card. Job approval on Settings says only workspace admins can enable or disable it.
 - **After sign-in, the dashboard returns to the last workspace that account can still open.** Email and 2FA keep the preference, and a later OAuth landing on `/dashboard` uses the same restore. A workspace in the URL still wins. If that workspace was deleted, frozen, or the account no longer belongs to it, another accessible workspace is used. Switching accounts in the same browser does not restore the previous account's workspace. Switching workspace on the asset inventory also clears section, status, search, and category filters so the previous workspace's view does not carry over.
 - **Control Center Auto-sync rows now show the integration name** (GitHub, Azure KV, and the other import providers) instead of a blank title above the schedule.
+- **GitLab and GitHub scans keep a path on the instance URL.** A GitLab relative URL root such as `https://git.example.com/gitlab`, and GitHub Enterprise `https://ghe.example.com/api/v3`, is no longer dropped, so API calls go under that prefix instead of at the domain root.
 
 ## [0.15.0] - 2026-09-08
 

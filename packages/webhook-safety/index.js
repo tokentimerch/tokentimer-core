@@ -414,6 +414,14 @@ function webhookHostAllowed(hostname) {
   return allowList.some((entry) => hostMatchesEntry(host, entry));
 }
 
+const { createPostWebhook, WebhookRequestError } = require("./request");
+
+const postWebhook = createPostWebhook({
+  isPrivateOrReservedIP,
+  shouldEnforcePrivateIpCheck,
+  canonicalizeHost,
+});
+
 module.exports = {
   isPrivateOrReservedIP,
   allowPrivateWebhookIPs,
@@ -423,4 +431,6 @@ module.exports = {
   getWebhookProviderHosts,
   allowAllWebhookHosts,
   webhookHostAllowed,
+  postWebhook,
+  WebhookRequestError,
 };

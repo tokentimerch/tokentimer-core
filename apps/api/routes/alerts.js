@@ -10,11 +10,8 @@ const {
   requireWorkspaceMembership,
 } = require("../services/rbac");
 const { testWebhookUrl } = require("../config/constants");
-const {
-  shouldEnforcePrivateIpCheck,
-  validateResolvedIP,
-  webhookHostAllowed,
-} = require("../utils/webhookSafety");
+const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
+const { isValidEmail } = require("../utils/emailAddress");
 const systemSettings = require("../services/systemSettings");
 const {
   sendEmail,
@@ -359,7 +356,7 @@ router.post(
     try {
       const { email } = req.body || {};
       const recipient =
-        email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())
+        email && isValidEmail(String(email).trim())
           ? String(email).trim()
           : req.user.email;
       if (!(await isSMTPConfiguredAsync())) {
@@ -1169,7 +1166,7 @@ router.put(
                                 .trim()
                                 .toLowerCase(),
                             )
-                            .filter((e) => /.+@.+\..+/.test(e));
+                            .filter((e) => isValidEmail(e));
                         }
                       } catch (_err) {
                         logger.debug("Non-critical operation failed", {
@@ -1725,22 +1722,6 @@ router.post(
         }
       }
 
-      // SSRF protection aligned with worker delivery (apps/worker notify):
-      // block private/reserved destinations unless the self-hosted escape
-      // hatch WEBHOOK_ALLOW_PRIVATE_IPS=true is set. Without this check the
-      // Test button could succeed while real alert delivery is blocked.
-      // Runs after the provider allowlist so provider kinds keep returning
-      // WEBHOOK_HOST_NOT_ALLOWED for non-allowlisted hosts.
-      if (shouldEnforcePrivateIpCheck()) {
-        const ipSafe = await validateResolvedIP(target.hostname);
-        if (!ipSafe) {
-          return res.status(400).json({
-            error: `Webhook blocked: ${target.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
-            code: "WEBHOOK_PRIVATE_IP_BLOCKED",
-          });
-        }
-      }
-
       const testTokenData = {
         token_id: "test",
         name: "Test Token",
@@ -1934,28 +1915,15 @@ router.post(
         }
       }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
       try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
+        const { status, bodyText: rawText } = await postWebhook(url, {
+          body: payload,
+          timeoutMs: 5000,
         });
-        clearTimeout(timeout);
-        // Set cooldown after attempt regardless of outcome
         global.__testWebhookCooldown.set(
           userKey,
           Date.now() + intEnv("TEST_WEBHOOK_COOLDOWN_MS", 5000),
         );
-        const { status } = resp;
-        let rawText = "";
-        try {
-          rawText = await resp.text();
-        } catch (_) {
-          rawText = "";
-        }
 
         // Provider-specific validation
         const k = String(kind || "generic").toLowerCase();
@@ -2013,17 +1981,40 @@ router.post(
         }
         return fail(`Webhook responded ${status}: ${rawText}`);
       } catch (e) {
-        clearTimeout(timeout);
-        // Provide friendlier messages for common network failures
-        const msg = String(e && e.message ? e.message : "").toLowerCase();
-        if (e.name === "AbortError") {
+        const skipCooldown =
+          e.code === "WEBHOOK_PRIVATE_IP_BLOCKED" ||
+          e.code === "WEBHOOK_DNS_UNRESOLVED" ||
+          e.code === "WEBHOOK_INVALID_URL" ||
+          e.code === "WEBHOOK_INVALID_SCHEME";
+        if (!skipCooldown) {
+          global.__testWebhookCooldown.set(
+            userKey,
+            Date.now() + intEnv("TEST_WEBHOOK_COOLDOWN_MS", 5000),
+          );
+        }
+        if (e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
+          return res.status(400).json({
+            error: e.message,
+            code: "WEBHOOK_PRIVATE_IP_BLOCKED",
+          });
+        }
+        if (e.code === "WEBHOOK_REDIRECT_REFUSED") {
+          return res.status(400).json({
+            error: e.message,
+            code: "WEBHOOK_REDIRECT_REFUSED",
+          });
+        }
+        if (e.name === "AbortError" || e.code === "WEBHOOK_TIMEOUT") {
           return res.status(504).json({
             error:
               "Timed out connecting to the webhook endpoint (5s). Please verify the URL is reachable and try again.",
             code: "WEBHOOK_TIMEOUT",
           });
         }
-        if (msg.includes("fetch failed") || msg.includes("system error")) {
+        if (
+          e.code === "WEBHOOK_UNREACHABLE" ||
+          e.code === "WEBHOOK_DNS_UNRESOLVED"
+        ) {
           return res.status(502).json({
             error:
               "Could not connect to the webhook endpoint. The URL may be invalid or unreachable from the server. Please verify the URL and network access.",

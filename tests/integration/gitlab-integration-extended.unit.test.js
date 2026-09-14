@@ -519,5 +519,92 @@ describe("GitLab integration helper coverage", () => {
     expect(sshKey.sourceKind).to.equal("gitlab-ssh-key");
     expect(sshKey.sourceObjectId).to.equal("55");
   });
+
+  it("keeps a GitLab relative URL root on API requests", async () => {
+    const seen = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async (config) => {
+        seen.push(new URL(config.url).pathname);
+        return { data: { id: 1 } };
+      },
+    });
+    await gitlab._test.gitlabRequest({
+      baseUrl: "https://test.com/gitlab",
+      token: "token",
+      path: "/api/v4/user",
+    });
+    expect(seen).to.deep.equal(["/gitlab/api/v4/user"]);
+  });
+
+  it("prefixes every GitLab scan request with the instance relative URL root", async () => {
+    const seen = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async (config) => {
+        const { pathname } = new URL(config.url);
+        seen.push(pathname);
+        const apiPath = pathname.replace(/^\/gitlab(?=\/)/, "");
+        if (apiPath === "/api/v4/user") {
+          return { data: { id: 1, username: "alice", is_admin: false } };
+        }
+        if (apiPath === "/api/v4/user/keys") {
+          return { data: [{ id: 55, title: "laptop" }] };
+        }
+        return { data: [] };
+      },
+    });
+    const result = await gitlab.scanGitLab({
+      baseUrl: "https://test.com/gitlab",
+      token: "token",
+      include: { tokens: false, keys: true },
+      filters: {
+        includePATs: false,
+        includeProjectTokens: false,
+        includeGroupTokens: false,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: true,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+    expect(seen.length).to.be.greaterThan(1);
+    expect(seen.every((pathname) => pathname.startsWith("/gitlab/"))).to.equal(
+      true,
+    );
+    expect(seen).to.include("/gitlab/api/v4/user");
+    expect(seen).to.include("/gitlab/api/v4/user/keys");
+    expect(seen).to.not.include("/api/v4/user");
+    expect(result.host).to.equal("test.com");
+  });
+
+  it("does not treat a gitlab.com query string as GitLab.com", async () => {
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async (config) => {
+        const { pathname } = new URL(config.url);
+        if (pathname === "/api/v4/user") {
+          return { data: { id: 1, username: "alice", is_admin: false } };
+        }
+        return { data: [] };
+      },
+    });
+    const result = await gitlab.scanGitLab({
+      baseUrl: "https://evil.com/?x=gitlab.com",
+      token: "token",
+      include: { tokens: false, keys: false },
+      filters: {
+        includePATs: false,
+        includeProjectTokens: false,
+        includeGroupTokens: false,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: false,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+    expect(result.host).to.equal("evil.com");
+  });
 });
 

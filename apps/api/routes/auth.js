@@ -27,6 +27,7 @@ const {
   sendVerificationEmail,
   sendPasswordResetEmail,
 } = require("../services/emailService");
+const { isValidEmail } = require("../utils/emailAddress");
 const { APP_URL } = require("../config/constants");
 const _otplib = require("otplib");
 const generateSecret =
@@ -404,7 +405,7 @@ router.post(
           code: "INVITE_TOKEN_REQUIRED",
         });
       }
-      if (!/.+@.+\..+/.test(email)) {
+      if (!isValidEmail(email)) {
         return res.status(400).json({
           error: "Valid email is required",
           code: "VALIDATION_ERROR",

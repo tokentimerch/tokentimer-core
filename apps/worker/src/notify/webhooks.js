@@ -1,4 +1,3 @@
-import axios from "axios";
 import webhookSafety from "@tokentimer/webhook-safety";
 import { cDeniedHost } from "../metrics.js";
 import { logger } from "../logger.js";
@@ -6,18 +5,6 @@ import { logger } from "../logger.js";
 export const allowPrivateWebhookIPs = webhookSafety.allowPrivateWebhookIPs;
 export const shouldEnforcePrivateIpCheck =
   webhookSafety.shouldEnforcePrivateIpCheck;
-
-async function validateResolvedIP(hostname) {
-  return await webhookSafety.validateResolvedIP(hostname, {
-    onBlocked({ hostname: blockedHost, resolvedIP }) {
-      logger.warn("SSRF_BLOCKED", {
-        hostname: blockedHost,
-        resolvedIP,
-        reason: "Resolved to private/reserved IP",
-      });
-    },
-  });
-}
 
 function normalizeSeverity(raw) {
   const s = String(raw || "").toLowerCase();
@@ -109,19 +96,6 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       throw new Error("Webhook host not allowed for provider");
     }
 
-    // SSRF protection: verify resolved IP is not private/reserved.
-    // Self-hosted deployments can opt out via WEBHOOK_ALLOW_PRIVATE_IPS=true
-    // to deliver alerts to targets on internal networks (e.g. RocketChat).
-    if (shouldEnforcePrivateIpCheck()) {
-      const ipSafe = await validateResolvedIP(url.hostname);
-      if (!ipSafe) {
-        return {
-          success: false,
-          error: `Webhook blocked: ${url.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
-        };
-      }
-    }
-
     // In test mode, short-circuit network calls for deterministic outcomes
     if (process.env.NODE_ENV === "test") {
       if (
@@ -141,48 +115,50 @@ export async function postJson(webhookUrl, body, kind = "generic") {
         return { success: true, status: 200 };
       }
     }
-    const res = await axios.post(webhookUrl, body, {
-      timeout: 5000,
-      headers: { "Content-Type": "application/json" },
+    const result = await webhookSafety.postWebhook(webhookUrl, {
+      body,
+      timeoutMs: 5000,
+      // axios always read HTTP(S)_PROXY; keep that regardless of NODE_USE_ENV_PROXY.
+      proxyMode: "always",
+      onBlocked({ hostname, resolvedIP }) {
+        logger.warn("SSRF_BLOCKED", {
+          hostname,
+          resolvedIP,
+          reason: "Resolved to private/reserved IP",
+        });
+      },
     });
     // Provider-specific success validation
     if (lowerKind === "pagerduty") {
-      const data = res.data;
+      let data = result.bodyText;
+      try {
+        data = JSON.parse(result.bodyText || "{}");
+      } catch (_err) {
+        logger.debug("Parse failed", { error: _err.message });
+      }
       const ok =
-        res.status >= 200 &&
-        res.status < 300 &&
+        result.status >= 200 &&
+        result.status < 300 &&
         data &&
         String(data.status || "").toLowerCase() === "success";
       return ok
-        ? { success: true, status: res.status }
+        ? { success: true, status: result.status }
         : {
             success: false,
-            error: `PagerDuty responded ${res.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
+            error: `PagerDuty responded ${result.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
           };
     }
     return {
-      success: res.status >= 200 && res.status < 300,
-      status: res.status,
+      success: result.status >= 200 && result.status < 300,
+      status: result.status,
     };
   } catch (e) {
-    // Provide detailed error context when possible
-    if (e.response) {
-      const status = e.response.status;
-      let body = "";
-      try {
-        if (typeof e.response.data === "string") body = e.response.data;
-        else if (e.response.data) body = JSON.stringify(e.response.data);
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
-      const msg = body ? `HTTP ${status}: ${body}` : `HTTP ${status}`;
-      return { success: false, error: msg };
+    if (e && e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {
+      return { success: false, error: e.message };
     }
-    if (e.request) {
-      return {
-        success: false,
-        error: "No response received from webhook endpoint",
-      };
+    if (e && e.status) {
+      const msg = e.message || `HTTP ${e.status}`;
+      return { success: false, error: msg };
     }
     return { success: false, error: e.message };
   }

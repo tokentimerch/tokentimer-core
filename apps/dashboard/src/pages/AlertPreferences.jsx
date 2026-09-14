@@ -112,16 +112,7 @@ import {
   TOUR_MOCK_CONTACT_GROUPS,
   TOUR_MOCK_WORKSPACE_CONTACTS,
 } from '../constants/tourMockData.js';
-
-function isValidEmail(email) {
-  if (!email || typeof email !== 'string') return false;
-  const trimmed = email.trim();
-  // Check for spaces
-  if (trimmed.includes(' ')) return false;
-  // RFC 5322 compliant regex (simplified but checks for valid format)
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(trimmed);
-}
+import { isValidEmail } from '../utils/emailAddress.js';
 
 function normalizeContactPhoneE164(raw) {
   const phoneNorm = String(raw || '').trim();
@@ -1784,7 +1775,15 @@ export default function AlertPreferences({
     } else {
       // Workspace-level cap on number of groups
       if (next.length >= groupCap) return;
-      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      if (
+        typeof crypto === 'undefined' ||
+        typeof crypto.getRandomValues !== 'function'
+      ) {
+        throw new Error('Secure random is unavailable');
+      }
+      const idBytes = new Uint8Array(8);
+      crypto.getRandomValues(idBytes);
+      const id = `${Date.now()}_${Array.from(idBytes, b => b.toString(16).padStart(2, '0')).join('')}`;
       // Compute thresholds override for new group: only persist if different from workspace defaults
       const newGroup = {
         id,

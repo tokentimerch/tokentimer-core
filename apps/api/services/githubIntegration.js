@@ -1,8 +1,26 @@
 "use strict";
 
 const axios = require("axios");
-const { CREDENTIALED_AXIOS_REDIRECTS } = require("./integrationUtils");
+const {
+  CREDENTIALED_AXIOS_REDIRECTS,
+  joinIntegrationApiUrl,
+} = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+
+function resolveGitHubApiBase(normalizedUrl) {
+  let parsedBase;
+  try {
+    parsedBase = new URL(normalizedUrl);
+  } catch {
+    throw new Error("Invalid baseUrl format");
+  }
+  const githubHost = parsedBase.hostname.toLowerCase();
+  if (githubHost === "api.github.com") return normalizedUrl;
+  if (githubHost === "github.com" || githubHost === "www.github.com") {
+    return "https://api.github.com";
+  }
+  return normalizedUrl;
+}
 
 async function githubRequest({
   baseUrl,
@@ -12,7 +30,10 @@ async function githubRequest({
   params = {},
   timeout = 120000, // Default 120s for regular requests (after initial connection)
 }) {
-  const url = new URL(path.startsWith("/") ? path : `/${path}`, baseUrl);
+  const url = joinIntegrationApiUrl(
+    baseUrl,
+    path.startsWith("/") ? path : `/${path}`,
+  );
   const headers = {
     Authorization: `token ${token}`,
     Accept: "application/vnd.github.v3+json",
@@ -21,7 +42,7 @@ async function githubRequest({
 
   const config = {
     method,
-    url: url.toString(),
+    url,
     headers,
     params: method === "GET" ? params : undefined,
     data: method !== "GET" ? params : undefined,
@@ -235,6 +256,11 @@ async function scanGitHub({
     throw new Error("maxItems must be between 1 and 2000");
   }
 
+  const normalizedUrl = baseUrl.endsWith("/")
+    ? baseUrl.slice(0, -1)
+    : baseUrl;
+  const apiBase = resolveGitHubApiBase(normalizedUrl);
+
   logger.info("Starting GitHub scan", { maxItems });
 
   const items = [];
@@ -243,17 +269,6 @@ async function scanGitHub({
   let ghUser = null;
 
   try {
-    // Normalize baseUrl (default to github.com if not provided)
-    const normalizedUrl = baseUrl.endsWith("/")
-      ? baseUrl.slice(0, -1)
-      : baseUrl;
-    const apiBase = normalizedUrl.includes("api.github.com")
-      ? normalizedUrl
-      : normalizedUrl === "https://github.com" ||
-          normalizedUrl === "http://github.com"
-        ? "https://api.github.com"
-        : normalizedUrl;
-
     // The host anchors every GitHub token's provenance (see
     // sourceIdentity.js) so that two GitHub Enterprise instances with
     // colliding user/repo ids can never cross-delete each other's tokens.
@@ -666,6 +681,7 @@ async function scanGitHub({
 
 module.exports = {
   scanGitHub,
+  resolveGitHubApiBase,
 };
 
 // Test-only exports for unit coverage of helpers

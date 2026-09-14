@@ -6,6 +6,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { logger } = require("../utils/logger.js");
+const { stripHtmlToText } = require("../utils/emailAddress");
 const systemSettings = require("./systemSettings");
 
 // Pool reference for system settings resolver (set via setPool)
@@ -327,11 +328,11 @@ ${title || "TokenTimer"}
 
 ${greeting || ""}
 
-${content.replace(/<[^>]*>/g, "").replace(/\n\s*\n/g, "\n\n")}
+${stripHtmlToText(content).replace(/\n\s*\n/g, "\n\n")}
 
 ${buttonText && buttonUrl ? `${buttonText}: ${buttonUrl}` : ""}
 
-${footerNote ? footerNote.replace(/<[^>]*>/g, "") : ""}
+${footerNote ? stripHtmlToText(footerNote) : ""}
 
 TokenTimer
 ${getEmailFooterText()}

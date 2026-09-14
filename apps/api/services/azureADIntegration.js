@@ -321,13 +321,6 @@ async function scanAzureAD({
             break;
           }
 
-          logger.debug("Azure AD app credentials", {
-            appId: app.appId,
-            displayName: app.displayName,
-            passwordCredsCount: app.passwordCredentials?.length || 0,
-            keyCredsCount: app.keyCredentials?.length || 0,
-          });
-
           // Process passwordCredentials (client secrets)
           for (const cred of app.passwordCredentials || []) {
             if (items.length >= maxItems) break;

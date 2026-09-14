@@ -2,7 +2,10 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  getApiLimiter,
+  getTwilioWebhookLimiter,
+} = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
   loadWorkspace,
@@ -340,31 +343,35 @@ router.post(
 );
 
 // Twilio WhatsApp delivery status webhook
-router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
-  try {
-    const token =
-      process.env.TWILIO_AUTH_TOKEN ||
-      (await systemSettings.getSettingValue(pool, "twilio_auth_token")) ||
-      "";
-    if (!token)
-      return res
-        .status(500)
-        .json({ error: "Twilio not configured", code: "INTERNAL_ERROR" });
-    if (!verifyTwilioSignature(req, token))
-      return res
-        .status(403)
-        .json({ error: "Invalid signature", code: "FORBIDDEN" });
+// codeql[js/missing-rate-limiting]
+router.post(
+  "/webhooks/twilio/whatsapp/status",
+  getTwilioWebhookLimiter(),
+  async (req, res) => {
+    try {
+      const token =
+        process.env.TWILIO_AUTH_TOKEN ||
+        (await systemSettings.getSettingValue(pool, "twilio_auth_token")) ||
+        "";
+      if (!token)
+        return res
+          .status(500)
+          .json({ error: "Twilio not configured", code: "INTERNAL_ERROR" });
+      if (!verifyTwilioSignature(req, token))
+        return res
+          .status(403)
+          .json({ error: "Invalid signature", code: "FORBIDDEN" });
 
-    const messageSid = String(
-      req.body?.MessageSid || req.body?.SmsSid || "",
-    ).trim();
-    const messageStatus = String(req.body?.MessageStatus || "").trim();
-    const errorCode =
-      req.body?.ErrorCode != null ? String(req.body.ErrorCode) : null;
-    if (!messageSid) return res.status(200).end();
+      const messageSid = String(
+        req.body?.MessageSid || req.body?.SmsSid || "",
+      ).trim();
+      const messageStatus = String(req.body?.MessageStatus || "").trim();
+      const errorCode =
+        req.body?.ErrorCode != null ? String(req.body.ErrorCode) : null;
+      if (!messageSid) return res.status(200).end();
 
-    await pool.query(
-      `UPDATE alert_delivery_log
+      await pool.query(
+        `UPDATE alert_delivery_log
          SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{status}', to_jsonb($2::text), true)
        WHERE id IN (
          SELECT id FROM alert_delivery_log
@@ -372,11 +379,11 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
           ORDER BY sent_at DESC
           LIMIT 1
        )`,
-      [messageSid, messageStatus || "unknown"],
-    );
-    if (errorCode) {
-      await pool.query(
-        `UPDATE alert_delivery_log
+        [messageSid, messageStatus || "unknown"],
+      );
+      if (errorCode) {
+        await pool.query(
+          `UPDATE alert_delivery_log
            SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{errorCode}', to_jsonb($2::text), true)
          WHERE id IN (
            SELECT id FROM alert_delivery_log
@@ -384,15 +391,16 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
             ORDER BY sent_at DESC
             LIMIT 1
          )`,
-        [messageSid, errorCode],
-      );
+          [messageSid, errorCode],
+        );
+      }
+      return res.status(200).end();
+    } catch (e) {
+      logger.warn("twilio-whatsapp-status-webhook", { error: e.message });
+      return res.status(200).end();
     }
-    return res.status(200).end();
-  } catch (e) {
-    logger.warn("twilio-whatsapp-status-webhook", { error: e.message });
-    return res.status(200).end();
-  }
-});
+  },
+);
 
 // Enforce workspace membership and write restrictions for all workspace routes
 
@@ -400,8 +408,10 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
 // POST /api/v1/workspaces/:id/tokens/reassign-contact-group
 // Body: { from_group_id, to_group_id }
 // Auth: admin or workspace_manager
+// codeql[js/missing-rate-limiting]
 router.post(
   "/api/v1/workspaces/:id/tokens/reassign-contact-group",
+  getApiLimiter(),
   loadWorkspace,
   requireWorkspaceMembership,
   authorize("workspace.update"),
