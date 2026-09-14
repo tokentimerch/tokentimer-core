@@ -35,6 +35,8 @@ async function validateResolvedIP(hostname, options = {}) {
 async function postWebhook(url, options = {}) {
   return await shared.postWebhook(url, {
     ...options,
+    // Match fetch: only honor HTTP(S)_PROXY when NODE_USE_ENV_PROXY is set.
+    proxyMode: options.proxyMode || "node-flag",
     onBlocked(info) {
       logger.warn("SSRF_BLOCKED", {
         hostname: info.hostname,

@@ -1,10 +1,9 @@
 "use strict";
 
 // Spawned as a fresh child process, mirroring fetch-probe.js. Uses .mjs
-// because it imports the worker's real ESM webhook sender (axios honors
-// proxy env vars regardless of NODE_USE_ENV_PROXY, but bootstrap-time env
-// still matters for parity with the fetch probe and to keep both probes
-// spawned identically).
+// because it imports the worker's real ESM webhook sender (postWebhook
+// honors proxy env vars regardless of NODE_USE_ENV_PROXY, matching the
+// previous axios contract).
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 

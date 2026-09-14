@@ -3429,11 +3429,10 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
           settle(null);
           return;
         }
-        settle(
-          // Windows store / netsh sslcert identity is SHA-1.
-          // codeql[js/weak-cryptographic-algorithm]
-          crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase(),
-        );
+        // Windows store / netsh sslcert identity is SHA-1.
+        // codeql[js/weak-cryptographic-algorithm]
+        const thumbprint = crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase();
+        settle(thumbprint);
       } catch {
         settle(null);
       }

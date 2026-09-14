@@ -1,16 +1,30 @@
 "use strict";
 
-const { describe, it, afterEach } = require("node:test");
+const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert");
 const http = require("node:http");
 const { postWebhook, WebhookRequestError } = require("../../packages/webhook-safety");
+const { createForwardProxy } = require("../../scripts/proxy-smoke/fixtures");
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+
+function clearProxyEnv() {
+  delete process.env.HTTP_PROXY;
+  delete process.env.http_proxy;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.https_proxy;
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  delete process.env.NODE_USE_ENV_PROXY;
+}
+
+beforeEach(clearProxyEnv);
 
 afterEach(() => {
   process.env.NODE_ENV = ORIGINAL_NODE_ENV;
   delete process.env.WEBHOOK_ALLOW_PRIVATE_IPS;
   delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+  clearProxyEnv();
 });
 
 function listen(server, host = "127.0.0.1") {
@@ -194,6 +208,183 @@ describe("postWebhook SSRF client", () => {
       });
       assert.strictEqual(result.status, 204);
     } finally {
+      await close(origin);
+    }
+  });
+
+  it("sends HTTP via the proxy as an absolute-URI request", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+
+    const origin = http.createServer((req, res) => {
+      assert.strictEqual(req.method, "POST");
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy();
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      const result = await postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+        body: { ping: true },
+        proxyMode: "always",
+      });
+      assert.strictEqual(result.status, 200);
+      assert.ok(proxy.wasConnectedTo("127.0.0.1"));
+    } finally {
+      await proxy.close();
+      await close(origin);
+    }
+  });
+
+  it("reaches a DNS-unresolved host when a proxy aliases it", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy({
+      hostAliases: {
+        "proxy-smoke-unreachable.invalid": {
+          host: "127.0.0.1",
+          port: originPort,
+        },
+      },
+    });
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      const result = await postWebhook(
+        `http://proxy-smoke-unreachable.invalid:${originPort}/hook`,
+        {
+          body: {},
+          proxyMode: "always",
+          lookupAll: async () => [],
+        },
+      );
+      assert.strictEqual(result.status, 200);
+      assert.ok(proxy.wasConnectedTo("proxy-smoke-unreachable.invalid"));
+    } finally {
+      await proxy.close();
+      await close(origin);
+    }
+  });
+
+  it("skips the proxy when NO_PROXY matches the destination host", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy();
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    process.env.NO_PROXY = "127.0.0.1";
+    try {
+      const result = await postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+        body: {},
+        proxyMode: "always",
+      });
+      assert.strictEqual(result.status, 204);
+      assert.strictEqual(proxy.wasConnectedTo("127.0.0.1"), false);
+    } finally {
+      await proxy.close();
+      await close(origin);
+    }
+  });
+
+  it("does not proxy in node-flag mode unless NODE_USE_ENV_PROXY is set", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+    delete process.env.NODE_USE_ENV_PROXY;
+
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy();
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      const result = await postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+        body: {},
+        proxyMode: "node-flag",
+      });
+      assert.strictEqual(result.status, 200);
+      assert.strictEqual(proxy.wasConnectedTo("127.0.0.1"), false);
+
+      process.env.NODE_USE_ENV_PROXY = "1";
+      const proxied = await postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+        body: {},
+        proxyMode: "node-flag",
+      });
+      assert.strictEqual(proxied.status, 200);
+      assert.ok(proxy.wasConnectedTo("127.0.0.1"));
+    } finally {
+      await proxy.close();
+      await close(origin);
+    }
+  });
+
+  it("blocks a private destination before contacting the proxy", async () => {
+    process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK = "true";
+    delete process.env.WEBHOOK_ALLOW_PRIVATE_IPS;
+
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy();
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      await assert.rejects(
+        () =>
+          postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+            body: {},
+            proxyMode: "always",
+          }),
+        (err) => err && err.code === "WEBHOOK_PRIVATE_IP_BLOCKED",
+      );
+      assert.strictEqual(proxy.wasConnectedTo("127.0.0.1"), false);
+    } finally {
+      await proxy.close();
+      await close(origin);
+    }
+  });
+
+  it("refuses redirects when the response arrived through a proxy", async () => {
+    process.env.NODE_ENV = "test";
+    delete process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK;
+
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: "http://169.254.169.254/" });
+      res.end();
+    });
+    const originPort = await listen(origin);
+    const proxy = createForwardProxy();
+    const proxyPort = await proxy.listen();
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      await assert.rejects(
+        () =>
+          postWebhook(`http://127.0.0.1:${originPort}/hook`, {
+            body: {},
+            proxyMode: "always",
+          }),
+        (err) => err && err.code === "WEBHOOK_REDIRECT_REFUSED",
+      );
+    } finally {
+      await proxy.close();
       await close(origin);
     }
   });

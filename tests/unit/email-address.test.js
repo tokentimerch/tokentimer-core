@@ -39,6 +39,14 @@ describe("isValidEmail", () => {
       assert.strictEqual(isValidEmail(value), false);
     });
   }
+
+  it("rejects a long no-dot local-part without backtracking", () => {
+    const adversarial = `${"a".repeat(20000)}@${"b".repeat(20000)}`;
+    const started = process.hrtime.bigint();
+    assert.strictEqual(isValidEmail(adversarial), false);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(elapsedMs < 250, `isValidEmail took ${elapsedMs}ms`);
+  });
 });
 
 describe("stripHtmlToText", () => {

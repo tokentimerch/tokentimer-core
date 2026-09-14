@@ -118,6 +118,8 @@ export async function postJson(webhookUrl, body, kind = "generic") {
     const result = await webhookSafety.postWebhook(webhookUrl, {
       body,
       timeoutMs: 5000,
+      // axios always read HTTP(S)_PROXY; keep that regardless of NODE_USE_ENV_PROXY.
+      proxyMode: "always",
       onBlocked({ hostname, resolvedIP }) {
         logger.warn("SSRF_BLOCKED", {
           hostname,
