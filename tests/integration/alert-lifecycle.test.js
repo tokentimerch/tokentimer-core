@@ -1,0 +1,275 @@
+const crypto = require("crypto");
+const { Client } = require("pg");
+const { expect, request, TestEnvironment, TestUtils } = require("./setup");
+
+const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+
+describe("Alert lifecycle APIs", function () {
+  this.timeout(120000);
+
+  let client;
+  let owner;
+  let manager;
+  let viewer;
+  let outsider;
+  let workspaceA;
+  let workspaceB;
+  let tokenA;
+  let tokenB;
+  let staleToken;
+  let retiredToken;
+  let alertA;
+
+  before(async () => {
+    await TestEnvironment.setup();
+    client = new Client({
+      user: process.env.DB_USER || "tokentimer",
+      host: process.env.DB_HOST || "localhost",
+      database: process.env.DB_NAME || "tokentimer",
+      password: process.env.DB_PASSWORD || "password",
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+      ssl: false,
+    });
+    await client.connect();
+
+    owner = await TestUtils.createAuthenticatedUser();
+    manager = await TestUtils.createAuthenticatedUser();
+    viewer = await TestUtils.createAuthenticatedUser();
+    outsider = await TestUtils.createAuthenticatedUser();
+    workspaceA = crypto.randomUUID();
+    workspaceB = crypto.randomUUID();
+
+    await client.query(
+      `INSERT INTO workspaces (id, name, plan, created_by)
+       VALUES ($1, 'Lifecycle A', 'oss', $3), ($2, 'Lifecycle B', 'oss', $3)`,
+      [workspaceA, workspaceB, owner.user.id],
+    );
+    await client.query(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       VALUES ($1, $4, 'admin', $1),
+              ($2, $4, 'workspace_manager', $1),
+              ($3, $4, 'viewer', $1)`,
+      [owner.user.id, manager.user.id, viewer.user.id, workspaceA],
+    );
+
+    const insertToken = async (workspaceId, name, overrides = {}) => {
+      const result = await client.query(
+        `INSERT INTO tokens (
+           user_id, workspace_id, created_by, name, expiration, imported_at,
+           type, category, cert_lifecycle_status
+         ) VALUES ($1, $2, $1, $3, $4, $5, 'api_key', $6, $7)
+         RETURNING id`,
+        [
+          owner.user.id,
+          workspaceId,
+          name,
+          overrides.expiration || "2026-09-20",
+          overrides.importedAt || "2026-09-01T00:00:00.000Z",
+          overrides.category || "general",
+          overrides.lifecycle || null,
+        ],
+      );
+      return result.rows[0].id;
+    };
+
+    tokenA = await insertToken(workspaceA, "Lifecycle production cert");
+    tokenB = await insertToken(workspaceB, "Other workspace secret");
+    staleToken = await insertToken(workspaceA, "Current stale import", {
+      expiration: "2026-09-15",
+      importedAt: "2026-09-14T00:00:00.000Z",
+    });
+    retiredToken = await insertToken(workspaceA, "Current retired cert", {
+      category: "cert",
+      lifecycle: "revoked",
+    });
+
+    const queueA = await client.query(
+      `INSERT INTO alert_queue (
+         user_id, token_id, alert_key, threshold_days, due_date, channels,
+         status, created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, 7, DATE '2026-09-13', '["email"]', 'sent',
+         TIMESTAMP '2026-09-13 08:03:00', TIMESTAMP '2026-09-13 08:05:00'
+       ) RETURNING id`,
+      [owner.user.id, tokenA, `lifecycle-a-${crypto.randomUUID()}`],
+    );
+    alertA = queueA.rows[0].id;
+    await client.query(
+      `INSERT INTO alert_delivery_log (
+         alert_queue_id, user_id, token_id, workspace_id, channel, status,
+         sent_at, error_message
+       ) VALUES
+         ($1, $2, $3, $4, 'email', 'failed', TIMESTAMP '2026-09-13 08:04:00',
+          'ops@example.test failed at https://hooks.example.test/private token=secret-value'),
+         ($1, $2, $3, $4, 'email', 'success', TIMESTAMP '2026-09-13 08:05:00', NULL)`,
+      [alertA, owner.user.id, tokenA, workspaceA],
+    );
+    await client.query(
+      `INSERT INTO audit_events (
+         subject_user_id, action, target_type, target_id, workspace_id,
+         occurred_at, metadata
+       ) VALUES
+         ($1, 'ALERT_SENT', 'token', $2, $3, TIMESTAMP '2026-09-13 08:05:00',
+          '{"days":7}'),
+         ($1, 'ALERT_RETRY_SCHEDULED', 'token', $2, $3,
+          TIMESTAMP '2026-09-13 08:04:30',
+          '{"days":7,"next_attempt_at":"2026-09-13T08:05:00.000Z","channels_to_retry":["email"]}')`,
+      [owner.user.id, tokenA, workspaceA],
+    );
+
+    const queueB = await client.query(
+      `INSERT INTO alert_queue (
+         user_id, token_id, alert_key, threshold_days, due_date, channels,
+         status, created_at, updated_at
+       ) VALUES ($1, $2, $3, 7, CURRENT_DATE, '["email"]', 'failed', NOW(), NOW())
+       RETURNING id`,
+      [owner.user.id, tokenB, `lifecycle-b-${crypto.randomUUID()}`],
+    );
+    await client.query(
+      `INSERT INTO alert_delivery_log (
+         alert_queue_id, user_id, token_id, workspace_id, channel, status,
+         error_message
+       ) VALUES ($1, $2, $3, $4, 'email', 'failed', 'must not leak')`,
+      [queueB.rows[0].id, owner.user.id, tokenB, workspaceB],
+    );
+  });
+
+  after(async () => {
+    try {
+      const tokenIds = [tokenA, tokenB, staleToken, retiredToken].filter(
+        Boolean,
+      );
+      if (tokenIds.length > 0) {
+        await client.query(
+          "DELETE FROM audit_events WHERE target_id = ANY($1::int[])",
+          [tokenIds],
+        );
+        await client.query(
+          "DELETE FROM alert_delivery_log WHERE token_id = ANY($1::int[])",
+          [tokenIds],
+        );
+        await client.query("DELETE FROM tokens WHERE id = ANY($1::int[])", [
+          tokenIds,
+        ]);
+      }
+      await client.query(
+        "DELETE FROM audit_events WHERE workspace_id = ANY($1::uuid[])",
+        [[workspaceA, workspaceB].filter(Boolean)],
+      );
+      await client.query("DELETE FROM workspaces WHERE id = ANY($1::uuid[])", [
+        [workspaceA, workspaceB].filter(Boolean),
+      ]);
+      for (const user of [owner, manager, viewer, outsider]) {
+        if (user?.email && user?.cookie) {
+          await TestUtils.cleanupTestUser(user.email, user.cookie);
+        }
+      }
+    } finally {
+      await client.end();
+    }
+  });
+
+  it("returns an ordered, redacted token timeline without duplicate sent events", async () => {
+    const response = await request(BASE)
+      .get(`/api/tokens/${tokenA}/alert-timeline?limit=20&offset=0`)
+      .set("Cookie", viewer.cookie)
+      .expect(200);
+
+    expect(response.body.items).to.be.an("array");
+    expect(response.body.items.map((item) => item.type)).to.include.members([
+      "threshold_reached",
+      "alert_queued",
+      "delivery_failed",
+      "retry_scheduled",
+      "delivery_succeeded",
+    ]);
+    expect(
+      response.body.items.filter((item) => item.type === "delivery_succeeded"),
+    ).to.have.length(1);
+    expect(JSON.stringify(response.body)).not.to.match(
+      /ops@example\.test|hooks\.example\.test|secret-value/,
+    );
+    const times = response.body.items.map((item) =>
+      new Date(item.occurred_at).getTime(),
+    );
+    expect(times).to.deep.equal([...times].sort((a, b) => b - a));
+  });
+
+  it("allows viewer token reads without granting retry mutation access", async () => {
+    await request(BASE)
+      .get(`/api/tokens/${tokenA}/alert-timeline`)
+      .set("Cookie", viewer.cookie)
+      .expect(200);
+    await request(BASE)
+      .post(`/api/alert-queue/${alertA}/retry`)
+      .set("Cookie", viewer.cookie)
+      .send({ channel: "email" })
+      .expect(404);
+    await request(BASE)
+      .post("/api/alert-queue/requeue")
+      .set("Cookie", viewer.cookie)
+      .send({ workspace_id: workspaceA })
+      .expect(403);
+  });
+
+  it("hides token history from non-members", async () => {
+    await request(BASE)
+      .get(`/api/tokens/${tokenA}/alert-timeline`)
+      .set("Cookie", outsider.cookie)
+      .expect(404);
+  });
+
+  it("does not fabricate history from current stale-import or retired eligibility", async () => {
+    for (const tokenId of [staleToken, retiredToken]) {
+      const response = await request(BASE)
+        .get(`/api/tokens/${tokenId}/alert-timeline`)
+        .set("Cookie", viewer.cookie)
+        .expect(200);
+      expect(response.body.items).to.deep.equal([]);
+    }
+  });
+
+  it("enforces Control Center RBAC and workspace isolation", async () => {
+    const path = `/api/v1/workspaces/${workspaceA}/control-center/alert-activity`;
+    const managerResponse = await request(BASE)
+      .get(path)
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    expect(managerResponse.body.items).to.not.be.empty;
+    expect(
+      managerResponse.body.items.every(
+        (item) => item.workspace_id === workspaceA,
+      ),
+    ).to.equal(true);
+    expect(JSON.stringify(managerResponse.body)).not.to.include(
+      "Other workspace secret",
+    );
+
+    await request(BASE).get(path).set("Cookie", viewer.cookie).expect(403);
+    await request(BASE).get(path).set("Cookie", outsider.cookie).expect(403);
+  });
+
+  it("paginates recent workspace activity newest-first", async () => {
+    const first = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=2&offset=0`,
+      )
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    expect(first.body.items).to.have.length(2);
+    expect(first.body.pagination).to.include({
+      limit: 2,
+      offset: 0,
+      hasMore: true,
+    });
+
+    const second = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=2&offset=2`,
+      )
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    expect(second.body.items).to.not.be.empty;
+    expect(second.body.items[0].id).not.to.equal(first.body.items[0].id);
+  });
+});

@@ -14,6 +14,7 @@ const {
   enrichTokenWithAlertState,
   enrichTokensWithAlertState,
 } = require("../services/alertEligibility");
+const { fetchAlertLifecycle } = require("../services/alertLifecycle");
 
 const router = require("express").Router();
 
@@ -88,6 +89,17 @@ async function isManagedBackedCertificateToken(token) {
     [token.workspace_id, token.id],
   );
   return result.rowCount > 0;
+}
+
+async function canReadToken(token, userId) {
+  if (token.workspace_id) {
+    const membership = await pool.query(
+      "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+      [token.workspace_id, userId],
+    );
+    return membership.rowCount > 0;
+  }
+  return token.user_id === userId;
 }
 
 // --- TOKEN MANAGEMENT ROUTES ---
@@ -283,6 +295,52 @@ router.get(
   },
 );
 
+// Get a token's persisted alert history. This deliberately shares the normal
+// token-read authorization path, including viewer access, and remains read-only.
+router.get(
+  "/api/tokens/:id/alert-timeline",
+  getTestApiLimiter(),
+  requireAuth,
+  async (req, res) => {
+    try {
+      const tokenId = parseInt(req.params.id, 10);
+      const token = Number.isInteger(tokenId)
+        ? await Token.findById(tokenId)
+        : null;
+
+      if (!token) {
+        return res
+          .status(404)
+          .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
+      }
+
+      if (!(await canReadToken(token, req.user.id))) {
+        return res
+          .status(404)
+          .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
+      }
+
+      return res.json(
+        await fetchAlertLifecycle({
+          tokenId,
+          limit: req.query.limit,
+          offset: req.query.offset,
+        }),
+      );
+    } catch (error) {
+      logger.error("Error fetching token alert timeline", {
+        error: error.message,
+        tokenId: req.params?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch alert timeline",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 // Get specific token by ID
 router.get(
   "/api/tokens/:id",
@@ -300,16 +358,7 @@ router.get(
       }
 
       // Ensure user can only access tokens in their workspaces (or legacy own)
-      if (token.workspace_id) {
-        const m = await pool.query(
-          "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
-          [token.workspace_id, req.user.id],
-        );
-        if (m.rowCount === 0)
-          return res
-            .status(404)
-            .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
-      } else if (token.user_id !== req.user.id) {
+      if (!(await canReadToken(token, req.user.id))) {
         return res
           .status(404)
           .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });

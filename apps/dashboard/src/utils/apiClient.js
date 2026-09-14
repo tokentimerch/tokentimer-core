@@ -487,6 +487,7 @@ export const API_ENDPOINTS = {
   CREATE_TOKEN: '/api/tokens',
   UPDATE_TOKEN: id => `/api/tokens/${id}`,
   DELETE_TOKEN: id => `/api/tokens/${id}`,
+  TOKEN_ALERT_TIMELINE: id => `/api/tokens/${id}/alert-timeline`,
 
   // Alerts
   ALERT_QUEUE: '/api/alert-queue',
@@ -517,6 +518,8 @@ export const API_ENDPOINTS = {
     `/api/v1/workspaces/${id}/control-center/never-expires`,
   WORKSPACE_CONTROL_CENTER_PRIVILEGE_HIGHLIGHTS: id =>
     `/api/v1/workspaces/${id}/control-center/privilege-highlights`,
+  WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY: id =>
+    `/api/v1/workspaces/${id}/control-center/alert-activity`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>
@@ -748,6 +751,18 @@ export const tokenAPI = {
   getToken: async id => {
     try {
       const response = await apiClient.get(`${API_ENDPOINTS.GET_TOKENS}/${id}`);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  },
+
+  getAlertTimeline: async (id, limit = 20, offset = 0) => {
+    try {
+      const response = await apiClient.get(
+        API_ENDPOINTS.TOKEN_ALERT_TIMELINE(id),
+        { params: { limit, offset } }
+      );
       return response.data;
     } catch (error) {
       throw new Error(handleApiError(error));

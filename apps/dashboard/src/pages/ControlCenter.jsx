@@ -61,6 +61,7 @@ import SEO from '../components/SEO.jsx';
 import TruncatedText from '../components/TruncatedText';
 import { resolveCategoryVisual } from '../components/AssetInventoryTable';
 import { AlertEligibilityOverview } from '../components/AlertStateDisplay.jsx';
+import { AlertLifecycleEventRow } from '../components/AlertLifecycleTimeline.jsx';
 import { useControlCenterData } from '../hooks/useControlCenterData';
 import {
   useControlCenterStats,
@@ -980,6 +981,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
 
   const assetStats = useControlCenterStats();
   const alertData = useControlCenterData();
+  const alertActivity = alertData.alertActivity || EMPTY_LIST;
 
   const selectedWorkspace = useMemo(
     () =>
@@ -1184,6 +1186,16 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
             : alertData.partial
               ? 'partial'
               : 'ready';
+
+  const alertActivityStatus = alertData.alertActivityLoading
+    ? 'loading'
+    : alertData.alertActivityError
+      ? alertActivity.length > 0
+        ? 'partial'
+        : 'error'
+      : alertActivity.length === 0
+        ? 'empty'
+        : 'ready';
 
   const handleRefreshAll = () => {
     assetStats.refetch();
@@ -1875,6 +1887,42 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                         workspaceId={alertData.selectedWorkspaceId}
                       />
                     </VStack>
+                  </SectionState>
+                </ControlCenterPanel>
+              ) : null}
+
+              {alertData.eligibleWorkspaces.length > 0 ? (
+                <ControlCenterPanel
+                  title='Recent alert activity'
+                  description='Newest alert lifecycle events across workspace assets'
+                  mb={4}
+                >
+                  <SectionState
+                    status={alertActivityStatus}
+                    error={alertData.alertActivityError}
+                    emptyTitle='No alert activity yet'
+                    emptyDetail='Threshold, queue, delivery, and retry events will appear here.'
+                    unauthorizedDetail='Recent alert activity requires manager or admin access.'
+                  >
+                    <InsightListShell
+                      emptyMessage='No alert activity yet.'
+                      onLoadMore={alertData.loadMoreAlertActivity}
+                      hasMore={alertData.alertActivityHasMore}
+                      isLoadingMore={alertData.alertActivityLoadingMore}
+                    >
+                      {alertActivity.length > 0
+                        ? alertActivity.map(event => (
+                            <Box key={event.id} px={3}>
+                              <AlertLifecycleEventRow
+                                event={event}
+                                showAsset
+                                workspaceId={alertData.selectedWorkspaceId}
+                                relativeTime
+                              />
+                            </Box>
+                          ))
+                        : null}
+                    </InsightListShell>
                   </SectionState>
                 </ControlCenterPanel>
               ) : null}

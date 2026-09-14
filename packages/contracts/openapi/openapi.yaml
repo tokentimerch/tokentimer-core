@@ -1015,6 +1015,31 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/tokens/{id}/alert-timeline:
+    get:
+      tags: [Tokens]
+      summary: Get token alert lifecycle history
+      operationId: getTokenAlertTimeline
+      description: >-
+        Returns persisted and queue-backed alert lifecycle events newest-first.
+        Authorization matches normal token read access, including workspace
+        viewers. Current alert eligibility and future scheduling remain in the
+        token's alert_state snapshot and are not reconstructed as history.
+      parameters:
+        - $ref: "#/components/parameters/tokenIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated alert lifecycle events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertLifecyclePage"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/tokens/bulk:
     put:
       tags: [Tokens]
@@ -2380,6 +2405,30 @@ paths:
                     type: integer
                   hasMore:
                     type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/alert-activity:
+    get:
+      tags: [Workspaces]
+      summary: Paginated recent alert lifecycle activity
+      operationId: getControlCenterAlertActivity
+      description: >-
+        Returns alert lifecycle events newest-first across the selected
+        workspace. Requires workspace admin or workspace manager role, matching
+        the other Control Center endpoints.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated workspace alert activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertLifecyclePage"
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
@@ -9411,6 +9460,110 @@ components:
           allOf:
             - $ref: "#/components/schemas/AlertDeliveryState"
           nullable: true
+    AlertLifecyclePage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertLifecycleEvent"
+        pagination:
+          type: object
+          required: [limit, offset, hasMore]
+          properties:
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+            offset:
+              type: integer
+              minimum: 0
+            hasMore:
+              type: boolean
+    AlertLifecycleEvent:
+      type: object
+      required:
+        - id
+        - type
+        - occurred_at
+        - token_id
+        - token_name
+        - workspace_id
+        - alert_id
+        - threshold_days
+        - channel
+        - status
+        - reason
+        - error_message
+        - metadata
+        - source
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - threshold_reached
+            - alert_queued
+            - alert_not_queued
+            - delivery_deferred
+            - delivery_attempted
+            - delivery_failed
+            - delivery_succeeded
+            - delivery_partial
+            - delivery_blocked
+            - retry_scheduled
+            - alert_requeued
+        occurred_at:
+          type: string
+          format: date-time
+        token_id:
+          type: integer
+          nullable: true
+        token_name:
+          type: string
+          nullable: true
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+        alert_id:
+          type: integer
+          nullable: true
+        threshold_days:
+          type: integer
+          nullable: true
+        channel:
+          type: string
+          enum: [email, webhooks, whatsapp]
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: false
+          properties:
+            channels:
+              type: array
+              items:
+                type: string
+                enum: [email, webhooks, whatsapp]
+            next_attempt_at:
+              type: string
+              format: date-time
+            updated_count:
+              type: integer
+        source:
+          type: string
+          enum: [alert_queue, alert_delivery_log, audit_events, derived_from_alert_queue]
     AlertEligibility:
       type: object
       required:

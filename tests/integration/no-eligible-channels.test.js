@@ -47,12 +47,18 @@ describe("No Eligible Channels → Do Not Queue", function () {
     try {
       // Clean up all test data
       if (wsId) {
-        await client.query(`DELETE FROM alert_queue WHERE workspace_id = $1`, [
-          wsId,
-        ]);
         await client.query(
-          `DELETE FROM audit_events WHERE target_id IN (SELECT id FROM tokens WHERE workspace_id = $1)`,
+          `DELETE FROM alert_queue
+            WHERE token_id IN (SELECT id FROM tokens WHERE workspace_id = $1)`,
           [wsId],
+        );
+        await client.query(
+          `DELETE FROM audit_events
+            WHERE workspace_id = $1
+               OR subject_user_id = $2
+               OR actor_user_id = $2
+               OR target_id IN (SELECT id FROM tokens WHERE workspace_id = $1)`,
+          [wsId, user.id],
         );
         await client.query(`DELETE FROM tokens WHERE workspace_id = $1`, [
           wsId,
@@ -101,6 +107,7 @@ describe("No Eligible Channels → Do Not Queue", function () {
 
     // Run discovery
     await TestUtils.runNode("node", ["src/queue-manager.js"], "apps/worker");
+    await TestUtils.runNode("node", ["src/queue-manager.js"], "apps/worker");
 
     // Verify no alert queued
     const rows = await client.query(
@@ -108,5 +115,16 @@ describe("No Eligible Channels → Do Not Queue", function () {
       [user.id],
     );
     expect(rows.rowCount).to.equal(0);
+
+    const auditRows = await client.query(
+      `SELECT metadata
+         FROM audit_events
+        WHERE target_type = 'token'
+          AND target_id = $1
+          AND action = 'ALERT_NOT_QUEUED_NO_CHANNEL'`,
+      [tokenRes.rows[0].id],
+    );
+    expect(auditRows.rowCount).to.equal(1);
+    expect(auditRows.rows[0].metadata.threshold).to.equal(0);
   });
 });

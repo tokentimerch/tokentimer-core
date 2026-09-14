@@ -949,12 +949,13 @@ async function writeAudit(
     targetType = "token",
     targetId,
     channel = null,
+    workspaceId = null,
     metadata = {},
   },
 ) {
   await client.query(
-    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [
       actorUserId,
       subjectUserId,
@@ -963,6 +964,7 @@ async function writeAudit(
       targetId,
       channel,
       metadata,
+      workspaceId,
     ],
   );
 }
@@ -1361,6 +1363,26 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 "Skipped out-of-window deferral: another worker took ownership",
                 { alertId: alert.id },
               );
+            } else if (alert.error_message !== "OUT_OF_WINDOW") {
+              try {
+                await writeAudit(client, {
+                  subjectUserId: alert.user_id,
+                  action: "ALERT_DELIVERY_DEFERRED",
+                  targetId: alert.token_id,
+                  workspaceId: alert.workspace_id,
+                  metadata: {
+                    reason: "delivery_window",
+                    threshold: alert.threshold_days,
+                    next_attempt_at: ts.toISOString(),
+                    workspace_name: alert.workspace_name,
+                    token_name: alert.name,
+                  },
+                });
+              } catch (_auditErr) {
+                logger.debug("Non-critical operation failed", {
+                  error: _auditErr.message,
+                });
+              }
             }
             // Do not count this as a failure; simply defer
             continue;

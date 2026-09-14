@@ -10,6 +10,7 @@ import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
 
 const ELIGIBLE_ROLES = new Set(['admin', 'workspace_manager']);
+const ALERT_ACTIVITY_PAGE_SIZE = 12;
 
 /**
  * Load alert queue, delivery stats, and workspace context for Control Center.
@@ -46,6 +47,12 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [workspaceTokenCount, setWorkspaceTokenCount] = useState(0);
   const [retryHintDate, setRetryHintDate] = useState(null);
   const [partial, setPartial] = useState(false);
+  const [alertActivity, setAlertActivity] = useState([]);
+  const [alertActivityLoading, setAlertActivityLoading] = useState(false);
+  const [alertActivityLoadingMore, setAlertActivityLoadingMore] =
+    useState(false);
+  const [alertActivityError, setAlertActivityError] = useState('');
+  const [alertActivityHasMore, setAlertActivityHasMore] = useState(false);
 
   const lastLoadedRef = useRef('');
   const loadGenerationRef = useRef(0);
@@ -62,6 +69,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
         setError('');
         setUnauthorized(false);
         setPartial(false);
+        setAlertActivityLoading(true);
+        setAlertActivityError('');
 
         const wsRes = await apiClient.get(
           '/api/v1/workspaces?limit=100&offset=0'
@@ -143,6 +152,29 @@ export function useControlCenterData(initialWorkspaceId = '') {
                 .get('/api/organization/usage')
                 .catch(() => ({ data: { monthUsage: 0 } }))
             : Promise.resolve({ data: { monthUsage: 0 } });
+          const alertActivityPromise = effectiveWorkspaceId
+            ? apiClient
+                .get(
+                  API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY(
+                    effectiveWorkspaceId
+                  ),
+                  { params: { limit: ALERT_ACTIVITY_PAGE_SIZE, offset: 0 } }
+                )
+                .then(response => ({ data: response.data, error: null }))
+                .catch(activityError => ({
+                  data: null,
+                  error:
+                    activityError?.response?.data?.error ||
+                    activityError?.message ||
+                    'Failed to load recent alert activity',
+                }))
+            : Promise.resolve({
+                data: {
+                  items: [],
+                  pagination: { hasMore: false },
+                },
+                error: null,
+              });
 
           const [
             queueRes,
@@ -152,6 +184,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
             tokensRes,
             membersRes,
             orgRes,
+            activityResult,
           ] = await Promise.all([
             queuePromise,
             statsPromise,
@@ -160,6 +193,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
             tokensPromise,
             membersPromise,
             orgUsagePromise,
+            alertActivityPromise,
           ]);
 
           if (generation !== loadGenerationRef.current) return;
@@ -239,6 +273,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
           setWorkspaceMemberCount(
             Array.isArray(membersRes?.items) ? membersRes.items.length : 0
           );
+          setAlertActivity(activityResult.data?.items || []);
+          setAlertActivityHasMore(
+            Boolean(activityResult.data?.pagination?.hasMore)
+          );
+          setAlertActivityError(activityResult.error || '');
 
           const now = new Date();
           setRetryHintDate(new Date(now.getFullYear(), now.getMonth() + 1, 1));
@@ -265,6 +304,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
           setWorkspaceMemberCount(0);
           setOrgStats({ monthUsage: 0 });
           setOrgTokenCount(0);
+          setAlertActivity([]);
+          setAlertActivityHasMore(false);
+          setAlertActivityError('');
         }
       } catch (err) {
         if (generation !== loadGenerationRef.current) return;
@@ -287,6 +329,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
         if (generation === loadGenerationRef.current) {
           setLoading(false);
           setRefreshing(false);
+          setAlertActivityLoading(false);
         }
       }
     },
@@ -373,6 +416,47 @@ export function useControlCenterData(initialWorkspaceId = '') {
     }
   }, [loadData, selectedWorkspaceId]);
 
+  const loadMoreAlertActivity = useCallback(async () => {
+    if (
+      !selectedWorkspaceId ||
+      !alertActivityHasMore ||
+      alertActivityLoadingMore
+    ) {
+      return;
+    }
+    setAlertActivityLoadingMore(true);
+    setAlertActivityError('');
+    try {
+      const response = await apiClient.get(
+        API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY(
+          selectedWorkspaceId
+        ),
+        {
+          params: {
+            limit: ALERT_ACTIVITY_PAGE_SIZE,
+            offset: alertActivity.length,
+          },
+        }
+      );
+      const page = response?.data || {};
+      setAlertActivity(current => [...current, ...(page.items || [])]);
+      setAlertActivityHasMore(Boolean(page.pagination?.hasMore));
+    } catch (activityError) {
+      setAlertActivityError(
+        activityError?.response?.data?.error ||
+          activityError?.message ||
+          'Failed to load recent alert activity'
+      );
+    } finally {
+      setAlertActivityLoadingMore(false);
+    }
+  }, [
+    alertActivity.length,
+    alertActivityHasMore,
+    alertActivityLoadingMore,
+    selectedWorkspaceId,
+  ]);
+
   const handleSetSelectedWorkspaceId = useCallback(
     id => {
       setSelectedWorkspaceId(id);
@@ -413,5 +497,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
     requeueAlerts,
     loadData,
     refresh,
+    alertActivity,
+    alertActivityLoading,
+    alertActivityLoadingMore,
+    alertActivityError,
+    alertActivityHasMore,
+    loadMoreAlertActivity,
   };
 }

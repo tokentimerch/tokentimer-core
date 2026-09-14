@@ -93,6 +93,10 @@ function thresholdDateUtc(expiration, threshold) {
   return expirationDay - threshold * DAY_MS;
 }
 
+function formatThresholdDate(expiration, threshold) {
+  return formatUtcDay(thresholdDateUtc(expiration, threshold));
+}
+
 function isStaleImportThreshold(
   importedAt,
   expiration,
@@ -430,6 +434,7 @@ module.exports = {
   TOKEN_EXPIRY_ALERT_PREFIX,
   CERT_RENEWAL_FAILED_ALERT_PREFIX,
   computeDaysLeft,
+  formatThresholdDate,
   findThresholdWindow,
   isStaleImportThreshold,
   resolveContactGroup,

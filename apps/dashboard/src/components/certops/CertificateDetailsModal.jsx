@@ -45,6 +45,7 @@ import {
   createTokenUpdatePayload,
 } from '../tokenDetailForm.js';
 import AlertStateDisplay from '../AlertStateDisplay.jsx';
+import AlertLifecycleTimeline from '../AlertLifecycleTimeline.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
@@ -644,6 +645,12 @@ export default function CertificateDetailsModal({
             tokenName={token.name}
             tokenId={token.id}
             canViewAudit={!isViewer}
+            mb={4}
+          />
+          <AlertLifecycleTimeline
+            tokenId={token.id}
+            alertState={token.alert_state}
+            enabled={isOpen}
             mb={4}
           />
 

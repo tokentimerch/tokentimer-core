@@ -31,6 +31,7 @@ import {
 } from './DashboardModalDetails.jsx';
 import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
 import AlertStateDisplay from './AlertStateDisplay.jsx';
+import AlertLifecycleTimeline from './AlertLifecycleTimeline.jsx';
 import {
   createTokenEditData,
   createTokenUpdatePayload,
@@ -457,6 +458,12 @@ function TokenDetailModal({
               tokenName={token.name}
               tokenId={token.id}
               canViewAudit={!isViewer}
+              gridColumn='1 / -1'
+            />
+            <AlertLifecycleTimeline
+              tokenId={token.id}
+              alertState={token.alert_state}
+              enabled={isOpen}
               gridColumn='1 / -1'
             />
             {hasBasicInformation ? (

@@ -26,12 +26,40 @@ async function writeAudit(
     targetType = "token",
     targetId,
     channel = null,
+    workspaceId = null,
+    dedupeThreshold = null,
     metadata = {},
   },
 ) {
+  if (dedupeThreshold !== null) {
+    return client.query(
+      `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id)
+       SELECT $1::integer,$2::integer,$3::varchar(64),$4::varchar(64),
+              $5::integer,$6::varchar(16),$7::jsonb,$8::uuid
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM audit_events
+           WHERE action = $3::varchar(64)
+             AND target_type = $4::varchar(64)
+             AND target_id = $5::integer
+             AND metadata->>'threshold' = $9
+        )`,
+      [
+        actorUserId,
+        subjectUserId,
+        action,
+        targetType,
+        targetId,
+        channel,
+        metadata,
+        workspaceId,
+        String(dedupeThreshold),
+      ],
+    );
+  }
   await client.query(
-    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [
       actorUserId,
       subjectUserId,
@@ -40,6 +68,7 @@ async function writeAudit(
       targetId,
       channel,
       metadata,
+      workspaceId,
     ],
   );
 }
@@ -307,7 +336,8 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       // Do not queue if no channels are eligible
       if (eligibility.reason === "no_eligible_channels") {
         skipped++;
-        // Optional: write an audit for visibility that alert was not queued
+        // Persist this transition once per token/threshold. Discovery runs
+        // frequently, so an unconditional audit would create fake activity.
         try {
           const contactGroupId =
             t.contact_group_id || t.default_contact_group_id || null;
@@ -322,8 +352,12 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
             subjectUserId: t.user_id,
             action: "ALERT_NOT_QUEUED_NO_CHANNEL",
             targetId: t.token_id,
+            workspaceId: t.workspace_id,
+            dedupeThreshold: thresholdReached,
             metadata: {
               reason: "NO_ELIGIBLE_CHANNEL",
+              threshold: thresholdReached,
+              alert_key: alertKey,
               workspace_name: t.workspace_name,
               token_name: t.token_name,
               contact_group_id: contactGroupId,
@@ -366,6 +400,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         subjectUserId: ownerUserId,
         action: "ALERT_QUEUED",
         targetId: t.token_id,
+        workspaceId: t.workspace_id,
         metadata: {
           daysUntil: days,
           threshold: thresholdReached,
