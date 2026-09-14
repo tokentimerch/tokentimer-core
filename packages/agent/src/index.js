@@ -70,7 +70,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const tls = require("node:tls");
-const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,

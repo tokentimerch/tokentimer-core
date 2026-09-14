@@ -1,5 +1,4 @@
 const { TestUtils, request, expect } = require("./test-server");
-const { logger } = require("./logger");
 const { testDataManager } = require("./test-data-manager");
 
 describe("Token Update Validation Integration Tests", () => {
@@ -7,10 +6,9 @@ describe("Token Update Validation Integration Tests", () => {
   let session;
   let testToken;
 
-  // Helper function to create a fresh token for each test
   async function createTestToken(session, overrides = {}) {
     const tokenData = {
-      name: "Test Certificate",
+      name: `Test Certificate ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: "ssl_cert",
       category: "cert",
       expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
@@ -23,53 +21,23 @@ describe("Token Update Validation Integration Tests", () => {
       ...overrides,
     };
 
-    logger.info(
-      "Creating test token with data:",
-      JSON.stringify(tokenData, null, 2),
-    );
-
     const response = await request("http://localhost:4000")
       .post("/api/tokens")
       .set("Cookie", session.cookie)
-      .send(tokenData)
+      .send({ ...tokenData, workspace_id: session.workspaceId })
       .expect(201);
 
-    logger.info("Token created successfully:", response.body.id);
     return response.body;
   }
 
   before(async () => {
-    try {
-      // Create a verified test user
-      testUser = await TestUtils.createVerifiedTestUser();
-      logger.info("Token update validation test user created:", testUser.email);
-
-      // Login the test user
-      session = await TestUtils.loginTestUser(
-        testUser.email,
-        "SecureTest123!@#",
-      );
-      logger.info("Token update validation test user logged in successfully");
-
-      // Create a test token for update tests
-      testToken = await createTestToken(session);
-      logger.info(
-        "Test token created for update validation tests:",
-        testToken ? testToken.id : "FAILED",
-      );
-      logger.info("Full testToken object:", JSON.stringify(testToken, null, 2));
-      if (!testToken) {
-        logger.info("Failed to create test token");
-        throw new Error("Test token creation failed");
-      }
-    } catch (error) {
-      logger.info(
-        "Failed to create or login token update validation test user:",
-        error.message,
-      );
-      session = { cookie: null };
-      testToken = null;
-    }
+    testUser = await TestUtils.createVerifiedTestUser();
+    session = await TestUtils.loginTestUser(
+      testUser.email,
+      "SecureTest123!@#",
+    );
+    session.workspaceId = await TestUtils.ensureTestWorkspace(session.cookie);
+    testToken = await createTestToken(session);
   });
 
   after(async () => {
@@ -78,12 +46,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Update Field Name Consistency", () => {
     it("should accept expiresAt field name in updates", async () => {
-      if (!session.cookie) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
-      // Create a fresh token for this test
       const tokenData = {
         name: "Test Certificate for ExpiresAt",
         type: "ssl_cert",
@@ -99,7 +61,7 @@ describe("Token Update Validation Integration Tests", () => {
       const createResponse = await request("http://localhost:4000")
         .post("/api/tokens")
         .set("Cookie", session.cookie)
-        .send(tokenData)
+        .send({ ...tokenData, workspace_id: session.workspaceId })
         .expect(201);
 
       const freshToken = createResponse.body;
@@ -120,11 +82,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should accept expiration field name in updates", async () => {
-      if (!session.cookie) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const freshToken = await createTestToken(session);
 
       const updateData = {
@@ -143,11 +100,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should preserve date-only expiresAt updates without timezone drift", async () => {
-      if (!session.cookie) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const freshToken = await createTestToken(session, {
         name: "Timezone Stable Date Token",
       });
@@ -165,11 +117,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Update Date Validation", () => {
     it("should reject update with invalid date format", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         expiresAt: "invalid-date",
       };
@@ -187,11 +134,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should reject update with past date", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000)
           .toISOString()
@@ -211,11 +153,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should allow editing an expired token when its expiration date is unchanged", async () => {
-      if (!session.cookie || !testUser) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const workspaceResult = await TestUtils.execQuery(
         `SELECT workspace_id FROM workspace_memberships WHERE user_id = $1 LIMIT 1`,
         [testUser.id],
@@ -251,11 +188,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Update Field Validation", () => {
     it("should reject update with name too short", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         name: "ab",
       };
@@ -273,11 +205,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should reject update with name too long", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         name: "a".repeat(101),
       };
@@ -295,11 +222,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should reject update with invalid category", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         category: "invalid_category",
       };
@@ -315,11 +237,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should reject update with invalid type for category", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         type: "api_key",
         category: "cert",
@@ -338,11 +255,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Update Category-Specific Validation", () => {
     it("should accept certificate update with empty domains", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         domains: [],
       };
@@ -353,15 +265,10 @@ describe("Token Update Validation Integration Tests", () => {
         .send(updateData)
         .expect(200);
 
-      expect(response.body.domains).to.be.null; // Empty domains should be converted to null
+      expect(response.body.domains).to.be.null;
     });
 
     it("should accept certificate update with empty issuer", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         issuer: "",
       };
@@ -372,22 +279,20 @@ describe("Token Update Validation Integration Tests", () => {
         .send(updateData)
         .expect(200);
 
-      expect(response.body.issuer).to.be.null; // Empty issuer should be converted to null
+      expect(response.body.issuer).to.be.null;
     });
 
     it("should accept license update without vendor", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
+      const licenseToken = await createTestToken(session, {
+        name: "License Without Vendor",
+      });
       const updateData = {
         category: "license",
         type: "software_license",
       };
 
       const response = await request("http://localhost:4000")
-        .put(`/api/tokens/${testToken.id}`)
+        .put(`/api/tokens/${licenseToken.id}`)
         .set("Cookie", session.cookie)
         .send(updateData)
         .expect(200);
@@ -399,11 +304,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Valid Token Updates", () => {
     it("should update token name successfully", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         name: "Updated Certificate Name",
       };
@@ -418,11 +318,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should update token expiration successfully", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const newExpiration = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
         .toISOString()
         .split("T")[0];
@@ -440,11 +335,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should update token domains successfully", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         domains: ["example.com", "www.example.com", "api.example.com"],
       };
@@ -463,11 +353,9 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should update token to license category successfully", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
+      const licenseToken = await createTestToken(session, {
+        name: "Software License Source",
+      });
       const updateData = {
         name: "Software License",
         type: "software_license",
@@ -479,7 +367,7 @@ describe("Token Update Validation Integration Tests", () => {
       };
 
       const response = await request("http://localhost:4000")
-        .put(`/api/tokens/${testToken.id}`)
+        .put(`/api/tokens/${licenseToken.id}`)
         .set("Cookie", session.cookie)
         .send(updateData)
         .expect(200);
@@ -493,11 +381,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Subject Field Update Tests", () => {
     it("should update subject field for certificate", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const updateData = {
         subject: "CN=updated.example.com, O=Updated Corp, C=US",
       };
@@ -514,16 +397,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should clear subject field when set to empty string", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info(
-          "Skipping authenticated test due to login failure or missing testToken",
-        );
-        logger.info("testToken:", testToken);
-        return;
-      }
-
-      logger.info("Updating token with ID:", testToken.id);
-
       const updateData = {
         subject: "",
       };
@@ -538,11 +411,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should update subject field for all certificate types", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const certificateTypes = [
         "ssl_cert",
         "tls_cert",
@@ -551,7 +419,6 @@ describe("Token Update Validation Integration Tests", () => {
       ];
 
       for (const certType of certificateTypes) {
-        // Create a new token for each type
         const createData = {
           name: `Update Test ${certType}`,
           type: certType,
@@ -567,7 +434,7 @@ describe("Token Update Validation Integration Tests", () => {
         const createResponse = await request("http://localhost:4000")
           .post("/api/tokens")
           .set("Cookie", session.cookie)
-          .send(createData)
+          .send({ ...createData, workspace_id: session.workspaceId })
           .expect(201);
 
         const tokenId = createResponse.body.id;
@@ -587,11 +454,6 @@ describe("Token Update Validation Integration Tests", () => {
 
   describe("Partial Updates", () => {
     it("should allow partial updates without affecting other fields", async () => {
-      if (!session.cookie) {
-        logger.info("Skipping authenticated test due to login failure");
-        return;
-      }
-
       const freshToken = await createTestToken(session);
       const originalName = freshToken.name;
       const originalDomains = freshToken.domains;
@@ -613,13 +475,6 @@ describe("Token Update Validation Integration Tests", () => {
     });
 
     it("should update new fields (privileges, last_used, section array)", async () => {
-      if (!session.cookie || !testToken) {
-        logger.info(
-          "Skipping authenticated test due to login failure or missing test token",
-        );
-        return;
-      }
-
       const lastUsed = new Date().toISOString();
       const updateData = {
         privileges: "read:only, write:restricted",
