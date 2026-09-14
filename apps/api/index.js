@@ -24,7 +24,6 @@ setTwilioPool(pool);
 const swaggerJsdoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
 const client = require("prom-client");
-const { doubleCsrf } = require("csrf-csrf");
 const { logger, resolveClientIp } = require("./utils/logger.js");
 const { isNodeUseEnvProxySupported } = require("@tokentimer/node-compat");
 
@@ -42,10 +41,7 @@ const {
   requireWorkspaceMembership,
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
-const {
-  createCsrfExemptMiddleware,
-  isCertOpsMachineTokenCsrfExemptPath,
-} = require("./middleware/csrf-exempt");
+const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -182,20 +178,12 @@ const isProductionEnvironment =
   (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
 const {
   resolveSessionCookieOptions,
-  resolveCsrfCookieName,
   buildCorsOrigins,
   resolveProductionSecure,
 } = require("./session-cookie-options.js");
 const allowInsecureLocalProdCookie =
   isProductionEnvironment && !resolveProductionSecure(process.env);
 const sessionCookieOptions = resolveSessionCookieOptions(process.env);
-const csrfCookieName = resolveCsrfCookieName(
-  process.env,
-  sessionCookieOptions,
-);
-const expressSessionCookie = sessionCookieOptions.secure
-  ? { ...sessionCookieOptions, httpOnly: true, secure: true }
-  : { ...sessionCookieOptions, httpOnly: true, secure: false };
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -309,28 +297,10 @@ if (!app._passportInitialized) {
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// Double-submit CSRF (csrf-csrf) immediately after the cookie parser so every
-// later mutating /api and /auth route is guarded, including contacts, WhatsApp
-// test send, alert-queue retry, login, and register. Tests skip enforcement;
-// development does not.
-const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
-  getSecret: () => {
-    if (!process.env.SESSION_SECRET) {
-      throw new Error("SESSION_SECRET environment variable is required");
-    }
-    return process.env.SESSION_SECRET;
-  },
-  cookieName: csrfCookieName,
-  cookieOptions: sessionCookieOptions.secure
-    ? { ...expressSessionCookie, httpOnly: true, path: "/", secure: true }
-    : { ...expressSessionCookie, httpOnly: true, path: "/", secure: false },
-  getTokenFromRequest: (req) => req.headers["x-csrf-token"],
-});
-
-const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
-  allowPath: isCertOpsMachineTokenCsrfExemptPath,
-  skip: (process.env.NODE_ENV || "").trim().toLowerCase() === "test",
-});
+// Double-submit CSRF immediately after the cookie parser so later mutating
+// /api and /auth routes are guarded. Tests skip enforcement; development
+// does not. Login, 2FA verify, and resend-verification also list this
+// middleware on the route so it sits in the same setup as those handlers.
 app.use("/api", csrfExempt);
 app.use("/auth", csrfExempt);
 

@@ -775,4 +775,27 @@ describe("CertOps machine-token CSRF exemption", () => {
     assert.equal(protectedCalls, 1);
     assert.equal(req.csrfHeaderMatchesCookie, true);
   });
+
+  it("lists CSRF middleware on session-using /auth write routes", () => {
+    const authRouter = require(
+      path.resolve(__dirname, "../../apps/api/routes/auth.js"),
+    );
+    const { csrfExempt: authCsrf } = require(
+      path.resolve(__dirname, "../../apps/api/middleware/csrf.js"),
+    );
+    for (const routePath of [
+      "/auth/login",
+      "/auth/verify-2fa",
+      "/auth/resend-verification",
+    ]) {
+      const layer = authRouter.stack.find(
+        (entry) => entry.route && entry.route.path === routePath,
+      );
+      assert.ok(layer, `missing ${routePath}`);
+      assert.ok(
+        layer.route.stack.some((step) => step.handle === authCsrf),
+        `${routePath} should run csrfExempt`,
+      );
+    }
+  });
 });
