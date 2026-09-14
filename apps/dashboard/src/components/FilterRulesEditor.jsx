@@ -14,9 +14,11 @@ import { FiPlus, FiTrash2 } from 'react-icons/fi';
 const MAX_RULES = 50;
 
 // ReDoS hardening (issue #69 follow-up): mirrors the same heuristic used
-// server-side in importFilterRules.js so the UI can reject an obviously
-// unsafe pattern immediately, instead of only finding out on server
-// round-trip. Keep this logically identical to the server-side check.
+// server-side in importFilterRules.js so the UI can reject nested
+// quantifiers and overlapping quantified alternatives immediately. Keep
+// this logically identical to the server-side check. The server also runs
+// a timed match probe at save and budgets each match; the browser cannot
+// interrupt a running regex.
 const MAX_REGEX_QUANTIFIERS = 10;
 const MAX_REGEX_GROUPS = 10;
 
@@ -32,6 +34,80 @@ export function parseRegexValue(value) {
     return { pattern: match[1], flags: match[2] };
   }
   return { pattern: src, flags: '' };
+}
+
+function splitTopLevelAlternatives(body) {
+  const alts = [];
+  let start = 0;
+  let depth = 0;
+  let inClass = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (inClass) {
+      if (ch === ']') inClass = false;
+      continue;
+    }
+    if (ch === '[') {
+      inClass = true;
+      continue;
+    }
+    if (ch === '(') {
+      depth += 1;
+      continue;
+    }
+    if (ch === ')') {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (ch === '|' && depth === 0) {
+      alts.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  alts.push(body.slice(start));
+  return alts;
+}
+
+function literalPrefix(alt) {
+  let out = '';
+  for (let i = 0; i < alt.length; i++) {
+    const ch = alt[i];
+    if (ch === '\\') {
+      if (i + 1 >= alt.length) break;
+      out += alt[i + 1];
+      i += 1;
+      continue;
+    }
+    if ('()[]{}.*+?|^$'.includes(ch)) break;
+    out += ch;
+  }
+  return out;
+}
+
+function hasOverlappingAlternatives(body) {
+  const alts = splitTopLevelAlternatives(body);
+  if (alts.length < 2) return false;
+  const prefixes = alts.map(literalPrefix).filter(Boolean);
+  for (let i = 0; i < prefixes.length; i++) {
+    for (let j = 0; j < prefixes.length; j++) {
+      if (i === j) continue;
+      const a = prefixes[i];
+      const b = prefixes[j];
+      if (a === b || b.startsWith(a) || a.startsWith(b)) return true;
+    }
+  }
+  return false;
+}
+
+function groupBodyStart(src, openParenIndex) {
+  if (src[openParenIndex + 1] === '?' && src[openParenIndex + 2] === ':') {
+    return openParenIndex + 3;
+  }
+  return openParenIndex + 1;
 }
 
 export function findUnsafeRegexReason(pattern) {
@@ -73,13 +149,19 @@ export function findUnsafeRegexReason(pattern) {
       continue;
     }
     if (ch === '(') {
-      groupStack.push({ hasQuantifier: false });
+      groupStack.push({
+        hasQuantifier: false,
+        bodyStart: groupBodyStart(src, i),
+      });
       groupCount++;
       i++;
       continue;
     }
     if (ch === ')') {
-      const closed = groupStack.pop() || { hasQuantifier: false };
+      const closed = groupStack.pop() || {
+        hasQuantifier: false,
+        bodyStart: i,
+      };
       let quantifiesGroup = false;
       const next = src[i + 1];
       if (next === '*' || next === '+') {
@@ -91,6 +173,12 @@ export function findUnsafeRegexReason(pattern) {
       if (quantifiesGroup) quantifierCount++;
       if (closed.hasQuantifier && quantifiesGroup) {
         return 'nested quantifiers detected';
+      }
+      if (
+        quantifiesGroup &&
+        hasOverlappingAlternatives(src.slice(closed.bodyStart, i))
+      ) {
+        return 'overlapping alternatives detected';
       }
       if (groupStack.length > 0 && (closed.hasQuantifier || quantifiesGroup)) {
         groupStack[groupStack.length - 1].hasQuantifier = true;

@@ -13,10 +13,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.
 - Webhook provider auto-detect matches Discord, Office 365, and PagerDuty by hostname suffix, so hosts such as `notdiscord.com` are no longer treated as Discord.
-- Webhook test and delivery refuse HTTP 3xx redirects and connect only to DNS addresses that already passed the private-IP check (TLS SNI and the Host header still use the original hostname). Worker delivery still honors `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` without `NODE_USE_ENV_PROXY`; the Test button honors them when `NODE_USE_ENV_PROXY=1`, matching `fetch`.
+- Webhook test and delivery refuse HTTP 3xx redirects. The client resolves the destination itself, blocks private/reserved answers, and connects (directly or through `HTTP_PROXY`/`HTTPS_PROXY`) to those IPs. TLS SNI and the Host header still use the original hostname. Direct delivery retries another already-validated address only when the hop never accepted the POST (`ECONNREFUSED` and similar). The 5s budget covers DNS, connect, CONNECT, TLS, and reading the body. **Operator guidance:** if private-IP enforcement is on (production default) and local DNS fails, delivery is blocked instead of letting the proxy resolve the name. Trust the proxy to filter destinations only when `WEBHOOK_ALLOW_PRIVATE_IPS=true`. Worker delivery honors proxy env without `NODE_USE_ENV_PROXY`; the Test button needs `NODE_USE_ENV_PROXY=1`. `NO_PROXY` accepts `*.example.com` and `host:port`.
 - The Twilio WhatsApp status webhook uses its own limiter (`TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS`, default 60s; `TWILIO_WEBHOOK_RATE_LIMIT_MAX`, default 1200 in production) instead of the plan API limiter. Contact-group reassignment still shares the API limiter. **Operator guidance:** if provider callbacks return 429, raise `TWILIO_WEBHOOK_RATE_LIMIT_MAX`.
 - Swagger UI and the OpenAPI spec file are covered by the API rate limiter.
-- Invite and contact email checks reject values with spaces or extra text around the address.
+- Invite and contact email checks reject quoted local parts, raw internationalized domains (use punycode `xn--`), ASCII/Unicode whitespace including NBSP, control characters, and extra text around the address. Ordinary plus-addressing and leading/trailing ASCII trim still work.
+- Import filter regex rules reject overlapping quantified alternatives such as `(a|aa)+`. Remaining patterns must finish a 50ms match probe at save (validation error on timeout). Each match also runs under that 50ms budget; a timeout or unsafe pattern fails closed (exclude drops the item, include does not keep it).
 
 ### Fixed
 

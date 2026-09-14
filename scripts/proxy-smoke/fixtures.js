@@ -60,7 +60,13 @@ function createForwardProxy({ hostAliases = {} } = {}) {
     }
 
     const targetPort = target.port ? Number(target.port) : 80;
-    connections.push({ host: target.hostname, port: targetPort, via: "http" });
+    connections.push({
+      host: target.hostname,
+      port: targetPort,
+      via: "http",
+      proxyAuthorization: req.headers["proxy-authorization"] || "",
+      hostHeader: req.headers.host || "",
+    });
     const resolved = resolveTarget(target.hostname, targetPort);
 
     const upstreamReq = http.request(
@@ -87,7 +93,13 @@ function createForwardProxy({ hostAliases = {} } = {}) {
     const lastColon = req.url.lastIndexOf(":");
     const hostname = lastColon === -1 ? req.url : req.url.slice(0, lastColon);
     const targetPort = lastColon === -1 ? 443 : Number(req.url.slice(lastColon + 1));
-    connections.push({ host: hostname, port: targetPort, via: "connect" });
+    connections.push({
+      host: hostname,
+      port: targetPort,
+      via: "connect",
+      proxyAuthorization: req.headers["proxy-authorization"] || "",
+      hostHeader: req.headers.host || "",
+    });
     const resolved = resolveTarget(hostname, targetPort);
 
     const upstreamSocket = net.connect(resolved.port, resolved.host, () => {

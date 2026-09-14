@@ -21,17 +21,24 @@
 const MAX_RULES = 50;
 const MAX_VALUE_LENGTH = 500;
 
-// ReDoS hardening (security review, issue #69 follow-up): the regex is
-// compiled and run server-side, once per scanned item, and can be re-run
-// unattended by the auto-sync worker on a cron schedule against
-// attacker-influenced content (item names/descriptions from a shared
-// GitLab/GitHub org). Node's regex engine is synchronous and not
-// preemptible, so a catastrophic-backtracking pattern can hang the whole
-// process. These limits are a pragmatic, dependency-free mitigation, not a
-// full static ReDoS analyzer.
+// ReDoS hardening: Node's regex engine is synchronous and not
+// preemptible, so a catastrophic-backtracking pattern can hang the process.
+// Nested quantifiers and overlapping quantified alternatives are rejected
+// statically. Remaining patterns must complete a match probe within
+// DEFAULT_BUDGET_MS; a timeout at match time fails closed (exclude the
+// item for exclude rules, do not keep it for include rules). Lookaheads
+// and backreferences are allowed only when they stay inside that budget.
 const MAX_MATCH_INPUT_LENGTH = 2000;
 const MAX_REGEX_QUANTIFIERS = 10;
 const MAX_REGEX_GROUPS = 10;
+
+const {
+  DEFAULT_BUDGET_MS,
+  regexExceedsMatchBudget,
+  regexTestBounded,
+} = require("./regexMatchBudget");
+
+const regexBudgetCache = new Map();
 
 const VALID_ACTIONS = new Set(["include", "exclude"]);
 const VALID_MATCH_TYPES = new Set(["regex", "exact"]);
@@ -66,13 +73,89 @@ function parseRegexValue(value) {
  * quantifiers and groups in a single pattern.
  *
  * This is intentionally a pragmatic heuristic (similar in spirit to
- * `safe-regex`), not a complete ReDoS static analyzer. It will not catch
- * every catastrophic pattern, but it blocks the common nested-quantifier
- * shapes without adding a new dependency.
+ * `safe-regex`), not a complete ReDoS static analyzer. Overlapping
+ * quantified alternatives such as `(a|aa)+` are rejected here; remaining
+ * patterns still have to finish a match probe within DEFAULT_BUDGET_MS
+ * (see regexMatchBudget.js). Lookaheads and backreferences are allowed
+ * only when they stay inside that budget.
  *
  * Returns a short human-readable reason string when the pattern looks
  * unsafe, otherwise null.
  */
+function splitTopLevelAlternatives(body) {
+  const alts = [];
+  let start = 0;
+  let depth = 0;
+  let inClass = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+    if (inClass) {
+      if (ch === "]") inClass = false;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+      continue;
+    }
+    if (ch === "(") {
+      depth += 1;
+      continue;
+    }
+    if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (ch === "|" && depth === 0) {
+      alts.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  alts.push(body.slice(start));
+  return alts;
+}
+
+function literalPrefix(alt) {
+  let out = "";
+  for (let i = 0; i < alt.length; i++) {
+    const ch = alt[i];
+    if (ch === "\\") {
+      if (i + 1 >= alt.length) break;
+      out += alt[i + 1];
+      i += 1;
+      continue;
+    }
+    if ("()[]{}.*+?|^$".includes(ch)) break;
+    out += ch;
+  }
+  return out;
+}
+
+function hasOverlappingAlternatives(body) {
+  const alts = splitTopLevelAlternatives(body);
+  if (alts.length < 2) return false;
+  const prefixes = alts.map(literalPrefix).filter(Boolean);
+  for (let i = 0; i < prefixes.length; i++) {
+    for (let j = 0; j < prefixes.length; j++) {
+      if (i === j) continue;
+      const a = prefixes[i];
+      const b = prefixes[j];
+      if (a === b || b.startsWith(a) || a.startsWith(b)) return true;
+    }
+  }
+  return false;
+}
+
+function groupBodyStart(src, openParenIndex) {
+  if (src[openParenIndex + 1] === "?" && src[openParenIndex + 2] === ":") {
+    return openParenIndex + 3;
+  }
+  return openParenIndex + 1;
+}
+
 function findUnsafeRegexReason(pattern) {
   const src = typeof pattern === "string" ? pattern : "";
   let inClass = false;
@@ -114,13 +197,19 @@ function findUnsafeRegexReason(pattern) {
       continue;
     }
     if (ch === "(") {
-      groupStack.push({ hasQuantifier: false });
+      groupStack.push({
+        hasQuantifier: false,
+        bodyStart: groupBodyStart(src, i),
+      });
       groupCount++;
       i++;
       continue;
     }
     if (ch === ")") {
-      const closed = groupStack.pop() || { hasQuantifier: false };
+      const closed = groupStack.pop() || {
+        hasQuantifier: false,
+        bodyStart: i,
+      };
       let quantifiesGroup = false;
       const next = src[i + 1];
       if (next === "*" || next === "+") {
@@ -132,6 +221,12 @@ function findUnsafeRegexReason(pattern) {
       if (quantifiesGroup) quantifierCount++;
       if (closed.hasQuantifier && quantifiesGroup) {
         return "nested quantifiers detected";
+      }
+      if (
+        quantifiesGroup &&
+        hasOverlappingAlternatives(src.slice(closed.bodyStart, i))
+      ) {
+        return "overlapping alternatives detected";
       }
       if (
         groupStack.length > 0 &&
@@ -221,6 +316,9 @@ function validateFilterRules(rules) {
       if (unsafeReason) {
         return `${label}.value is a potentially unsafe regular expression pattern (${unsafeReason})`;
       }
+      if (regexExceedsMatchBudget(pattern, flags)) {
+        return `${label}.value is a potentially unsafe regular expression pattern (exceeded ${DEFAULT_BUDGET_MS}ms match budget)`;
+      }
     }
   }
   return null;
@@ -264,23 +362,38 @@ function ruleMatches(rule, item) {
     return value === rule.value;
   }
   // Bound the worst-case input size regex backtracking can run against.
-  // Combined with the static nested-quantifier heuristic in
-  // validateFilterRules, this keeps even an unanticipated bad pattern's
-  // runtime tractable, since catastrophic backtracking cost scales with
-  // input length.
+  // Combined with the static nested-quantifier / overlapping-alternation
+  // heuristic and a timed match probe, this keeps even an unanticipated
+  // bad pattern's runtime tractable.
   const boundedValue =
     value.length > MAX_MATCH_INPUT_LENGTH
       ? value.slice(0, MAX_MATCH_INPUT_LENGTH)
       : value;
   try {
     const { pattern, flags } = parseRegexValue(rule.value);
-    // Same validated pattern as validateFilterRules; input length is bounded.
-    // codeql[js/regex-injection]
-    return new RegExp(pattern, flags).test(boundedValue);
+    if (!patternIsWithinMatchBudget(pattern, flags)) {
+      // Fail closed: an exclude that we cannot bound drops the item;
+      // an include that we cannot bound does not keep it.
+      return rule.action === "exclude";
+    }
+    const result = regexTestBounded(pattern, flags, boundedValue);
+    if (result.timedOut || result.error) {
+      regexBudgetCache.set(`${flags}\n${pattern}`, false);
+      return rule.action === "exclude";
+    }
+    return result.match;
   } catch (_e) {
-    // Invalid patterns are rejected at validation time; treat as no match.
-    return false;
+    return rule.action === "exclude";
   }
+}
+
+function patternIsWithinMatchBudget(pattern, flags) {
+  if (findUnsafeRegexReason(pattern)) return false;
+  const key = `${flags}\n${pattern}`;
+  if (regexBudgetCache.has(key)) return regexBudgetCache.get(key);
+  const ok = !regexExceedsMatchBudget(pattern, flags);
+  regexBudgetCache.set(key, ok);
+  return ok;
 }
 
 /**

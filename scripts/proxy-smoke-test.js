@@ -194,9 +194,12 @@ async function main() {
         PROXY_SMOKE_TARGET_URL: httpsTargetUrl,
       }),
     );
+    // CONNECT is pinned to the locally resolved IP, not the hostname.
     record(
       "worker webhook client: HTTPS target reached via CONNECT tunnel (proxies regardless of NODE_USE_ENV_PROXY)",
-      axiosHttps.ok === true && proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      axiosHttps.ok === true &&
+        (proxy.wasConnectedTo("127.0.0.1") || proxy.wasConnectedTo("::1")) &&
+        !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
       JSON.stringify(axiosHttps),
     );
 
@@ -229,7 +232,7 @@ async function main() {
     );
     record(
       "fetch + NO_PROXY: bypasses the proxy entirely (direct connection, nothing recorded)",
-      fetchNoProxy.ok === true && !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      fetchNoProxy.ok === true && proxy.connections.length === 0,
       JSON.stringify(fetchNoProxy),
     );
 
@@ -246,7 +249,7 @@ async function main() {
     );
     record(
       "worker webhook client + NO_PROXY: bypasses the proxy entirely (direct connection, nothing recorded)",
-      axiosNoProxy.ok === true && !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      axiosNoProxy.ok === true && proxy.connections.length === 0,
       JSON.stringify(axiosNoProxy),
     );
 
