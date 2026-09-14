@@ -1,5 +1,6 @@
 # CodeQL Advanced setup for GitHub code scanning.
-# Default queries. Do not add pull_request: Core CI is push-only.
+# Default queries. Product CI (ci.yml) stays push-only; this workflow also
+# runs on pull requests targeting main so new alerts show on the PR.
 #
 # Languages match this repo:
 #   actions                 GitHub Actions workflows
@@ -22,6 +23,8 @@ name: "CodeQL Advanced"
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
