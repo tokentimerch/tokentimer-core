@@ -85,6 +85,11 @@ recording the method; they are no longer unscoped Next work.
 - **CertOps CSR import and signed-certificate import**
   ([#245](https://github.com/tokentimerch/tokentimer-core/issues/245)).
   Public CSR/PEM and metadata only. Private-key packages stay rejected.
+- **CertOps destinations: store issued material and distribute it**
+  ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
+  Name filesystem, IIS, or customer Vault locations on a certificate.
+  One issuance can deploy to those destinations. The control plane
+  never stores private keys. Shared-key Vault mode is explicit opt-in.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.
@@ -149,6 +154,5 @@ targeted dashboard and test maintainability
 TanStack Query v5; incremental type checking on changed security-critical
 services and the shared config package; internationalization; an API v2
 compatibility policy before any v2 paths. CertOps follow-ons such as CT
-log discovery, orphaned-certificate detection, and extra issuance or
-key-custody modes need a scoped issue and a concrete operator need
-before they are scheduled.
+log discovery and orphaned-certificate detection need a scoped issue and
+a concrete operator need before they are scheduled.
