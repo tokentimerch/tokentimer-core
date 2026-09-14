@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const tls = require("node:tls");
@@ -7,6 +8,7 @@ const dns = require("node:dns/promises");
 const { isIP } = require("node:net");
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const DEFAULT_TIMEOUT_MS = 5000;
 
 class WebhookRequestError extends Error {
   constructor(message, { code, status } = {}) {
@@ -20,6 +22,11 @@ class WebhookRequestError extends Error {
 
 function timeoutMessage(timeoutMs) {
   return `Timed out (${Math.max(1, Math.round(timeoutMs / 1000))}s)`;
+}
+
+function destinationPort(url) {
+  if (url.port) return Number(url.port);
+  return url.protocol === "https:" ? 443 : 80;
 }
 
 function buildHostHeader(url) {
@@ -36,12 +43,19 @@ function connectAuthority(hostname, port) {
   return `${host}:${port}`;
 }
 
-function pickPinnedAddress(addresses) {
-  const v4 = addresses.find((row) => Number(row.family) === 4);
-  if (v4) return { address: v4.address, family: 4 };
-  const first = addresses[0];
-  const family = Number(first.family) || isIP(first.address);
-  return { address: first.address, family };
+function orderPinnedAddresses(addresses) {
+  const rows = normalizeLookupRows(addresses);
+  const v4 = [];
+  const rest = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const key = `${row.family}/${row.address}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (row.family === 4) v4.push(row);
+    else rest.push(row);
+  }
+  return [...v4, ...rest];
 }
 
 function normalizeLookupRows(rows) {
@@ -95,20 +109,57 @@ function envFlag(name) {
   return value === "1" || value === "true" || value === "yes";
 }
 
-function hostMatchesNoProxy(hostname, noProxyRaw) {
+function parseNoProxyEntry(raw) {
+  let entry = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!entry) return null;
+  if (entry === "*") return { all: true };
+  if (entry.startsWith("*.")) entry = entry.slice(1);
+
+  let host = entry;
+  let port = null;
+  if (entry.startsWith("[")) {
+    const close = entry.indexOf("]");
+    if (close !== -1) {
+      host = entry.slice(1, close);
+      if (entry[close + 1] === ":" && /^\d+$/.test(entry.slice(close + 2))) {
+        port = Number(entry.slice(close + 2));
+      }
+    }
+  } else {
+    const colon = entry.lastIndexOf(":");
+    if (colon !== -1 && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = Number(entry.slice(colon + 1));
+    }
+  }
+  return { host, port };
+}
+
+function hostMatchesNoProxy(hostname, noProxyRaw, destPort) {
   if (!noProxyRaw) return false;
   const host = String(hostname || "")
     .trim()
     .toLowerCase();
   if (!host) return false;
+  const dest =
+    destPort == null || destPort === "" ? null : Number(destPort);
   const entries = String(noProxyRaw)
     .split(/[\s,]+/)
-    .map((entry) => entry.trim().toLowerCase())
+    .map(parseNoProxyEntry)
     .filter(Boolean);
   for (const entry of entries) {
-    if (entry === "*") return true;
-    const suffix = entry.startsWith(".") ? entry : `.${entry}`;
-    if (host === entry || host.endsWith(suffix)) return true;
+    if (entry.all) return true;
+    if (entry.port != null && dest !== entry.port) continue;
+    const needle = entry.host;
+    if (!needle) continue;
+    if (needle.startsWith(".")) {
+      const bare = needle.slice(1);
+      if (host === bare || host.endsWith(needle)) return true;
+      continue;
+    }
+    if (host === needle || host.endsWith(`.${needle}`)) return true;
   }
   return false;
 }
@@ -149,74 +200,171 @@ function resolveOutboundProxy(url, proxyMode = "always") {
       code: "WEBHOOK_UNREACHABLE",
     });
   }
-  if (hostMatchesNoProxy(url.hostname, firstEnv(["NO_PROXY", "no_proxy"]))) {
+  if (
+    hostMatchesNoProxy(
+      url.hostname,
+      firstEnv(["NO_PROXY", "no_proxy"]),
+      destinationPort(url),
+    )
+  ) {
     return null;
   }
   return proxyUrl;
 }
 
+function createDeadline(timeoutMs, externalSignal) {
+  const controller = new AbortController();
+  const started = Date.now();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let onExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else {
+      onExternalAbort = () => controller.abort();
+      externalSignal.addEventListener("abort", onExternalAbort, {
+        once: true,
+      });
+    }
+  }
+  return {
+    signal: controller.signal,
+    remainingMs() {
+      // http.ClientRequest treats timeout 0 as unlimited; keep a 1ms floor.
+      return Math.max(1, timeoutMs - (Date.now() - started));
+    },
+    dispose() {
+      clearTimeout(timer);
+      if (externalSignal && onExternalAbort) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
+    },
+  };
+}
+
+function timeoutError(timeoutMs) {
+  return new WebhookRequestError(timeoutMessage(timeoutMs), {
+    code: "WEBHOOK_TIMEOUT",
+  });
+}
+
+function extraCaBundle() {
+  const extraPath = process.env.NODE_EXTRA_CA_CERTS;
+  if (!extraPath) return null;
+  try {
+    const extra = fs.readFileSync(extraPath, "utf8");
+    return extra.trim() ? extra : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function tlsTrustOptions() {
+  const extra = extraCaBundle();
+  if (!extra) return { rejectUnauthorized: true };
+  return {
+    rejectUnauthorized: true,
+    ca: [...tls.rootCertificates, extra],
+  };
+}
+
+const RETRYABLE_CONNECT_CODES = new Set([
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EADDRNOTAVAIL",
+]);
+
+function wrapUnreachable(err) {
+  if (err instanceof WebhookRequestError) return err;
+  const wrapped = new WebhookRequestError(
+    (err && err.message) || "Webhook unreachable",
+    { code: "WEBHOOK_UNREACHABLE" },
+  );
+  if (err && err.code) wrapped.causeCode = err.code;
+  return wrapped;
+}
+
+function isRetryableConnectFailure(err) {
+  if (!err) return false;
+  if (err.retryConnect) return true;
+  if (
+    err.code === "WEBHOOK_REDIRECT_REFUSED" ||
+    err.code === "WEBHOOK_TIMEOUT" ||
+    err.code === "WEBHOOK_PRIVATE_IP_BLOCKED" ||
+    err.code === "WEBHOOK_DNS_UNRESOLVED" ||
+    err.code === "WEBHOOK_INVALID_URL" ||
+    err.code === "WEBHOOK_INVALID_SCHEME"
+  ) {
+    return false;
+  }
+  const cause = err.causeCode || err.code;
+  return RETRYABLE_CONNECT_CODES.has(cause);
+}
+
+function attachAbort(target, signal, onAbort) {
+  if (!signal || !target) return () => {};
+  if (signal.aborted) {
+    try {
+      target.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+    onAbort();
+    return () => {};
+  }
+  const listener = () => {
+    try {
+      target.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+    onAbort();
+  };
+  signal.addEventListener("abort", listener, { once: true });
+  return () => signal.removeEventListener("abort", listener);
+}
+
 function attachCommonRequestHandlers(req, { timeoutMs, signal, finish }) {
   req.on("timeout", () => {
     req.destroy();
-    finish(
-      "reject",
-      new WebhookRequestError(timeoutMessage(timeoutMs), {
-        code: "WEBHOOK_TIMEOUT",
-      }),
-    );
+    finish("reject", timeoutError(timeoutMs));
   });
 
   req.on("error", (err) => {
     if (err && (err.code === "ABORT_ERR" || err.code === "WEBHOOK_TIMEOUT")) {
-      finish(
-        "reject",
-        new WebhookRequestError(timeoutMessage(timeoutMs), {
-          code: "WEBHOOK_TIMEOUT",
-        }),
-      );
+      finish("reject", timeoutError(timeoutMs));
       return;
     }
     if (err instanceof WebhookRequestError) {
       finish("reject", err);
       return;
     }
-    finish(
-      "reject",
-      new WebhookRequestError(err.message || "Webhook unreachable", {
-        code: "WEBHOOK_UNREACHABLE",
-      }),
-    );
+    finish("reject", wrapUnreachable(err));
   });
 
-  if (!signal) return;
-  if (signal.aborted) {
-    req.destroy();
-    finish(
-      "reject",
-      new WebhookRequestError(timeoutMessage(timeoutMs), {
-        code: "WEBHOOK_TIMEOUT",
-      }),
-    );
-    return;
-  }
-  signal.addEventListener(
-    "abort",
-    () => {
-      req.destroy();
-    },
-    { once: true },
-  );
+  attachAbort(req, signal, () => finish("reject", timeoutError(timeoutMs)));
 }
 
 function collectResponse(req, res, finish) {
   const chunks = [];
   let size = 0;
+  const fail = (err) => {
+    try {
+      req.destroy();
+    } catch (_) {
+      /* ignore */
+    }
+    if (err && err.code === "WEBHOOK_TIMEOUT") {
+      finish("reject", err);
+      return;
+    }
+    finish("reject", wrapUnreachable(err));
+  };
+
   res.on("data", (chunk) => {
     size += chunk.length;
     if (size > MAX_RESPONSE_BYTES) {
-      req.destroy();
-      finish(
-        "reject",
+      fail(
         new WebhookRequestError("Webhook response too large", {
           code: "WEBHOOK_UNREACHABLE",
         }),
@@ -239,6 +387,11 @@ function collectResponse(req, res, finish) {
       return;
     }
     finish("resolve", { status, bodyText });
+  });
+  res.on("error", (err) => fail(err));
+  res.on("aborted", () => fail(new Error("Webhook response aborted")));
+  res.on("close", () => {
+    if (!res.complete) fail(new Error("Webhook response closed early"));
   });
 }
 
@@ -298,7 +451,9 @@ function sendPinnedRequest({
           ...extraHeaders,
         },
         timeout: timeoutMs,
-        ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
+        ...(url.protocol === "https:"
+          ? { servername: url.hostname, ...tlsTrustOptions() }
+          : {}),
       },
       (res) => collectResponse(req, res, finish),
     );
@@ -311,6 +466,7 @@ function sendPinnedRequest({
 function sendProxiedRequest({
   url,
   port,
+  pinned,
   proxyUrl,
   bodyBuffer,
   extraHeaders,
@@ -326,11 +482,14 @@ function sendProxiedRequest({
   const proxyAuth = proxyAuthorization(proxyUrl);
   if (proxyAuth) headers["Proxy-Authorization"] = proxyAuth;
 
+  const hopHost = pinned ? pinned.address : url.hostname;
+  const authority = connectAuthority(hopHost, port);
+
   if (url.protocol === "http:") {
     const proxyLib = proxyUrl.protocol === "https:" ? https : http;
     const proxyPort =
       Number(proxyUrl.port) || (proxyUrl.protocol === "https:" ? 443 : 80);
-    const absolutePath = `${url.protocol}//${buildHostHeader(url)}${url.pathname || "/"}${url.search || ""}`;
+    const absolutePath = `${url.protocol}//${authority}${url.pathname || "/"}${url.search || ""}`;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -362,15 +521,20 @@ function sendProxiedRequest({
   const proxyLib = proxyUrl.protocol === "https:" ? https : http;
   const proxyPort =
     Number(proxyUrl.port) || (proxyUrl.protocol === "https:" ? 443 : 80);
-  const authority = connectAuthority(url.hostname, port);
   const connectHeaders = { Host: authority };
   if (proxyAuth) connectHeaders["Proxy-Authorization"] = proxyAuth;
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let tlsSocket = null;
     const finish = (kind, value) => {
       if (settled) return;
       settled = true;
+      try {
+        if (tlsSocket) tlsSocket.destroy();
+      } catch (_) {
+        /* ignore */
+      }
       if (kind === "resolve") resolve(value);
       else reject(value);
     };
@@ -388,23 +552,29 @@ function sendProxiedRequest({
     connectReq.on("connect", (res, socket, head) => {
       if (res.statusCode !== 200) {
         socket.destroy();
-        finish(
-          "reject",
-          new WebhookRequestError(
-            `Proxy CONNECT failed (${res.statusCode || 0})`,
-            { code: "WEBHOOK_UNREACHABLE" },
-          ),
+        const connectErr = new WebhookRequestError(
+          `Proxy CONNECT failed (${res.statusCode || 0})`,
+          { code: "WEBHOOK_UNREACHABLE" },
         );
+        connectErr.retryConnect = true;
+        finish("reject", connectErr);
         return;
       }
       if (head && head.length) socket.unshift(head);
 
-      // TLS is terminated here; http.request then writes the POST on the
-      // already-encrypted socket so Node does not handshake a second time.
-      const tlsSocket = tls.connect({
+      tlsSocket = tls.connect({
         socket,
         servername: url.hostname,
+        ...tlsTrustOptions(),
       });
+      tlsSocket.setTimeout(timeoutMs);
+      tlsSocket.once("timeout", () => {
+        tlsSocket.destroy();
+        finish("reject", timeoutError(timeoutMs));
+      });
+      attachAbort(tlsSocket, signal, () =>
+        finish("reject", timeoutError(timeoutMs)),
+      );
       tlsSocket.once("secureConnect", () => {
         const req = http.request(
           {
@@ -429,18 +599,56 @@ function sendProxiedRequest({
         req.end(bodyBuffer);
       });
       tlsSocket.on("error", (err) => {
-        finish(
-          "reject",
-          new WebhookRequestError(err.message || "Webhook unreachable", {
-            code: "WEBHOOK_UNREACHABLE",
-          }),
-        );
+        finish("reject", wrapUnreachable(err));
       });
     });
 
     attachCommonRequestHandlers(connectReq, { timeoutMs, signal, finish });
     connectReq.end();
   });
+}
+
+async function lookupWithDeadline(lookupAll, host, deadline, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      lookupAll(host),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(timeoutError(timeoutMs));
+        }, deadline.remainingMs());
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendWithAddressFallback(
+  addresses,
+  sendOne,
+  deadline,
+  timeoutMs,
+) {
+  let lastError;
+  for (let i = 0; i < addresses.length; i += 1) {
+    if (deadline.signal.aborted) throw timeoutError(timeoutMs);
+    try {
+      return await sendOne(addresses[i]);
+    } catch (err) {
+      if (deadline.signal.aborted) throw timeoutError(timeoutMs);
+      if (!isRetryableConnectFailure(err) || i === addresses.length - 1) {
+        throw err;
+      }
+      lastError = err;
+    }
+  }
+  throw (
+    lastError ||
+    new WebhookRequestError("Webhook unreachable", {
+      code: "WEBHOOK_UNREACHABLE",
+    })
+  );
 }
 
 function createPostWebhook(policy) {
@@ -466,80 +674,103 @@ function createPostWebhook(policy) {
     }
 
     const host = canonicalizeHost(url.hostname);
-    const timeoutMs = Number(options.timeoutMs) || 5000;
+    const timeoutMs = Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS;
     const enforce = shouldEnforcePrivateIpCheck();
     const proxyMode = options.proxyMode || "always";
     const proxyUrl = resolveOutboundProxy(url, proxyMode);
-    let addresses;
-
-    if (isIP(host)) {
-      addresses = [{ address: host, family: isIP(host) }];
-    } else {
-      const lookupAll = options.lookupAll || defaultLookupAll;
-      try {
-        addresses = normalizeLookupRows(await lookupAll(host));
-      } catch (err) {
-        if (proxyUrl) {
-          addresses = [];
-        } else {
-          throw new WebhookRequestError(
-            err.message || `Failed to resolve ${host}`,
-            { code: "WEBHOOK_DNS_UNRESOLVED" },
-          );
-        }
-      }
-    }
-
-    if (!addresses.length && !proxyUrl) {
-      throw new WebhookRequestError(`Webhook blocked: ${host} did not resolve`, {
-        code: "WEBHOOK_DNS_UNRESOLVED",
-      });
-    }
-
-    if (enforce) {
-      for (const row of addresses) {
-        if (isPrivateOrReservedIP(row.address)) {
-          if (typeof options.onBlocked === "function") {
-            options.onBlocked({ hostname: host, resolvedIP: row.address });
-          }
-          throw new WebhookRequestError(
-            `Webhook blocked: ${host} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
-            { code: "WEBHOOK_PRIVATE_IP_BLOCKED" },
-          );
-        }
-      }
-    }
-
-    const bodyBuffer = encodeBody(options.body);
+    const deadline = createDeadline(timeoutMs, options.signal);
     const port = url.port
       ? Number(url.port)
       : url.protocol === "https:"
         ? 443
         : 80;
-    const extraHeaders = options.headers || {};
 
-    if (proxyUrl) {
-      return await sendProxiedRequest({
-        url,
-        port,
-        proxyUrl,
-        bodyBuffer,
-        extraHeaders,
+    try {
+      let addresses;
+
+      if (isIP(host)) {
+        addresses = [{ address: host, family: isIP(host) }];
+      } else {
+        const lookupAll = options.lookupAll || defaultLookupAll;
+        try {
+          addresses = normalizeLookupRows(
+            await lookupWithDeadline(lookupAll, host, deadline, timeoutMs),
+          );
+        } catch (err) {
+          if (err instanceof WebhookRequestError) throw err;
+          if (proxyUrl && !enforce) {
+            addresses = [];
+          } else {
+            throw new WebhookRequestError(
+              err.message || `Failed to resolve ${host}`,
+              { code: "WEBHOOK_DNS_UNRESOLVED" },
+            );
+          }
+        }
+      }
+
+      if (!addresses.length) {
+        if (enforce || !proxyUrl) {
+          throw new WebhookRequestError(
+            `Webhook blocked: ${host} did not resolve`,
+            { code: "WEBHOOK_DNS_UNRESOLVED" },
+          );
+        }
+      }
+
+      if (enforce) {
+        for (const row of addresses) {
+          if (isPrivateOrReservedIP(row.address)) {
+            if (typeof options.onBlocked === "function") {
+              options.onBlocked({ hostname: host, resolvedIP: row.address });
+            }
+            throw new WebhookRequestError(
+              `Webhook blocked: ${host} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
+              { code: "WEBHOOK_PRIVATE_IP_BLOCKED" },
+            );
+          }
+        }
+      }
+
+      const bodyBuffer = encodeBody(options.body);
+      const extraHeaders = options.headers || {};
+      const candidates = orderPinnedAddresses(addresses);
+
+      const sendOne = (pinned) =>
+        proxyUrl
+          ? sendProxiedRequest({
+              url,
+              port,
+              pinned,
+              proxyUrl,
+              bodyBuffer,
+              extraHeaders,
+              timeoutMs: deadline.remainingMs(),
+              signal: deadline.signal,
+            })
+          : sendPinnedRequest({
+              url,
+              port,
+              pinned,
+              bodyBuffer,
+              extraHeaders,
+              timeoutMs: deadline.remainingMs(),
+              signal: deadline.signal,
+            });
+
+      if (proxyUrl && candidates.length === 0) {
+        return await sendOne(null);
+      }
+
+      return await sendWithAddressFallback(
+        candidates,
+        sendOne,
+        deadline,
         timeoutMs,
-        signal: options.signal,
-      });
+      );
+    } finally {
+      deadline.dispose();
     }
-
-    const pinned = pickPinnedAddress(addresses);
-    return await sendPinnedRequest({
-      url,
-      port,
-      pinned,
-      bodyBuffer,
-      extraHeaders,
-      timeoutMs,
-      signal: options.signal,
-    });
   };
 }
 
@@ -548,4 +779,6 @@ module.exports = {
   createPostWebhook,
   resolveOutboundProxy,
   hostMatchesNoProxy,
+  orderPinnedAddresses,
+  destinationPort,
 };

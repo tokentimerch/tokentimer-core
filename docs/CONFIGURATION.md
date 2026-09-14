@@ -203,6 +203,17 @@ calls (OAuth/SAML callbacks, and the webhook Test button when
 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on any Node version, the same way
 `axios` did before the shared webhook client).
 
+Webhook delivery does not hand the destination hostname to the proxy to
+resolve. The process looks the name up locally, applies the private-IP
+check, then asks the proxy to connect to that IP. TLS SNI and the HTTP
+`Host` header still carry the original hostname, and certificate
+verification stays on (including `NODE_EXTRA_CA_CERTS` when set). If
+private-IP enforcement is on and DNS fails, the webhook is blocked. Set
+`WEBHOOK_ALLOW_PRIVATE_IPS=true` only when you trust the proxy (or the
+destination network) to filter private targets, including names this
+process cannot resolve. The proxy still sees the destination IP and can
+apply its own ACLs; it is not asked to re-resolve the hostname.
+
 The table below is the variable **inside the container**, which is what Node
 actually reads. Docker Compose sources each one from a dedicated,
 `TOKENTIMER_`-prefixed `.env` input (`TOKENTIMER_USE_ENV_PROXY`,
@@ -219,7 +230,7 @@ fixes.
 | `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici (and the webhook Test button) honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. On an unsupported Node version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (worker webhook delivery keeps working regardless of Node version). Compose sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` alongside this variable to silence Node's own `EnvHttpProxyAgent is experimental` warning. Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
 | `HTTP_PROXY`           | Proxy URL for plain HTTP destinations, e.g. `http://user:pass@proxy:3128`. Compose input: `TOKENTIMER_HTTP_PROXY`. | `unset`        | API, worker |
 | `HTTPS_PROXY`          | Proxy URL for HTTPS destinations. Compose input: `TOKENTIMER_HTTPS_PROXY`.        | `unset`        | API, worker |
-| `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |
+| `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Supports `*` (all hosts), suffix forms (`example.com`, `.example.com`, `*.example.com`), and `host:port` (bypass only on that port). Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |
 
 **Helm.** The chart does not accept plain-text proxy URLs as values (they
 commonly embed credentials). Set `config.useEnvProxy: true` plus

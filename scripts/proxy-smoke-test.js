@@ -194,9 +194,11 @@ async function main() {
         PROXY_SMOKE_TARGET_URL: httpsTargetUrl,
       }),
     );
+    // CONNECT is pinned to the locally resolved IP, not the hostname.
     record(
       "worker webhook client: HTTPS target reached via CONNECT tunnel (proxies regardless of NODE_USE_ENV_PROXY)",
-      axiosHttps.ok === true && proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      axiosHttps.ok === true &&
+        (proxy.wasConnectedTo("127.0.0.1") || proxy.wasConnectedTo("::1")),
       JSON.stringify(axiosHttps),
     );
 
