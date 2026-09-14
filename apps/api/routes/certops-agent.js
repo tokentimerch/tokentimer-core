@@ -363,7 +363,7 @@ function handleAgentRouteError(res, error) {
     default:
       logger.error("CertOps agent route failed", {
         code: error?.code || null,
-        message: error?.message,
+        errorName: error?.name || null,
       });
       return res.status(500).json({
         error: "CertOps agent request failed",

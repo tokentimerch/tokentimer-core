@@ -1838,10 +1838,9 @@ async function executorEventsHandler(req, res, options = {}) {
       }
     } catch (auditError) {
       logger.warn("CertOps executor audit write failed", {
-        error: auditError.message,
         code: auditError.code || null,
-        workspaceId: req.apiToken?.workspaceId || null,
-        apiTokenId: req.apiToken?.id || null,
+        errorName: auditError?.name || null,
+        routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
       });
     }
     const handled = handleExecutorEventError(res, error);
@@ -1850,8 +1849,7 @@ async function executorEventsHandler(req, res, options = {}) {
     logger.error("CertOps executor event ingestion failed", {
       errorName: error?.name || null,
       code: error.code || null,
-      workspaceId: req.apiToken?.workspaceId || null,
-      apiTokenId: req.apiToken?.id || null,
+      routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
     });
     return res.status(500).json({
       error: "Failed to ingest CertOps executor event",
@@ -2029,7 +2027,6 @@ async function controllerProvisioningCommandsHandler(req, res, options = {}) {
     if (response) return response;
     logger.error("CertOps controller provisioning command failed", {
       code: error?.code || null,
-      workspaceId: req.apiToken?.workspaceId || null,
       routeFamily: "controller-provisioning-commands",
     });
     return res.status(500).json({
@@ -2058,7 +2055,6 @@ async function controllerProvisioningMutationAuthorizationHandler(
     if (response) return response;
     logger.error("CertOps controller provisioning mutation authorization failed", {
       code: error?.code || null,
-      workspaceId: req.apiToken?.workspaceId || null,
       routeFamily: "controller-provisioning-commands",
     });
     return res.status(500).json({
@@ -2128,7 +2124,6 @@ async function controllerObservationsHandler(req, res, options = {}) {
     if (response) return response;
     logger.error("CertOps controller observation persistence failed", {
       code: error?.code || null,
-      workspaceId: req.apiToken?.workspaceId || null,
       routeFamily: "controller-observations",
     });
     return res.status(500).json({

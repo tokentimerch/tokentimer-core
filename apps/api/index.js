@@ -193,6 +193,9 @@ const csrfCookieName = resolveCsrfCookieName(
   process.env,
   sessionCookieOptions,
 );
+const expressSessionCookie = sessionCookieOptions.secure
+  ? { ...sessionCookieOptions, httpOnly: true, secure: true }
+  : { ...sessionCookieOptions, httpOnly: true, secure: false };
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -258,31 +261,40 @@ app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for l
 // Initialize session and Passport BEFORE any routes that require authentication
 // This ensures req.isAuthenticated and req.user are available in downstream handlers
 // CSRF is csrf-csrf doubleCsrfProtection on /api, not csurf.
-// cookie.secure comes from resolveSessionCookieOptions (HTTPS in production).
+// Production session cookies always set Secure; local HTTP cannot.
 // Session setup is middleware, not an HTTP route; limiters wrap the routes below.
-// codeql[js/missing-token-validation]
-// codeql[js/clear-text-cookie]
-// codeql[js/missing-rate-limiting]
-app.use(
-  session({
-    store: new pgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true, // Enable table creation if missing
+function mountExpressSession(cookie) {
+  app.use(
+    session({
+      store: new pgSession({
+        pool,
+        tableName: "session",
+        createTableIfMissing: true,
+      }),
+      name: "sessionId",
+      secret: process.env.SESSION_SECRET,
+      resave: true,
+      saveUninitialized: false,
+      cookie,
+      rolling: true,
+      genid: () => crypto.randomBytes(32).toString("hex"),
     }),
-    name: "sessionId",
-    secret: process.env.SESSION_SECRET,
-    resave: true, // Changed to true to ensure session is saved
-    saveUninitialized: false,
-    // codeql[js/clear-text-cookie]
-    cookie: sessionCookieOptions,
-    // Security enhancements
-    rolling: true, // Reset expiration on activity
-    genid: () => {
-      return crypto.randomBytes(32).toString("hex"); // Secure session ID generation
-    },
-  }),
-);
+  );
+}
+
+if (sessionCookieOptions.secure) {
+  mountExpressSession({
+    ...sessionCookieOptions,
+    httpOnly: true,
+    secure: true,
+  });
+} else {
+  mountExpressSession({
+    ...sessionCookieOptions,
+    httpOnly: true,
+    secure: false,
+  });
+}
 
 // Ensure Passport is only initialized once
 if (!app._passportInitialized) {
@@ -596,10 +608,9 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
     return process.env.SESSION_SECRET;
   },
   cookieName: csrfCookieName,
-  cookieOptions: {
-    ...sessionCookieOptions,
-    path: "/",
-  },
+  cookieOptions: sessionCookieOptions.secure
+    ? { ...expressSessionCookie, httpOnly: true, path: "/", secure: true }
+    : { ...expressSessionCookie, httpOnly: true, path: "/", secure: false },
   getTokenFromRequest: (req) => req.headers["x-csrf-token"],
 });
 

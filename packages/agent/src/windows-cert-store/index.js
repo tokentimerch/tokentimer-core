@@ -505,9 +505,15 @@ function computeSha1ThumbprintFromPem(certPem) {
     throw buildError("computeSha1ThumbprintFromPem requires a non-empty PEM string");
   }
   const der = pemToDer(certPem, /CERTIFICATE/);
-  // Windows store thumbprints are SHA-1; this is a lookup key, not a digest of a secret.
-  // codeql[js/weak-cryptographic-algorithm]
-  return crypto.createHash("sha1").update(der).digest("hex").toUpperCase();
+  // Windows store thumbprints are SHA-1 of the DER. Read Node's own
+  // X509Certificate fingerprint instead of hashing peer bytes again.
+  const thumbprint = String(new crypto.X509Certificate(der).fingerprint || "")
+    .replace(/:/g, "")
+    .toUpperCase();
+  if (!THUMBPRINT_PATTERN.test(thumbprint)) {
+    throw buildError("certificate fingerprint is not a Windows SHA-1 thumbprint");
+  }
+  return thumbprint;
 }
 
 /**

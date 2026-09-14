@@ -8,9 +8,8 @@
  * acme/acme.test.js), and the thumbprint/PEM-parsing logic is verified
  * against the real fixture certificate already committed for
  * verify/verify.test.js, cross-checked against node:crypto's own
- * X509Certificate.fingerprint so this module's independent sha1(DER)
- * computation cannot silently drift from what a real certificate parser
- * reports.
+ * X509Certificate.fingerprint so the Windows thumbprint cannot silently
+ * drift from what a real certificate parser reports.
  *
  * Real-host verification (real certreq.exe, a real CNG-backed
  * non-exportable key, a real CA response) is tracked separately as the
