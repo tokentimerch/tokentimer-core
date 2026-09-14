@@ -134,6 +134,16 @@ function getEmailFooterText() {
   return `Please do not reply to this email. If you have any questions, contact ${getSupportEmail()}.`;
 }
 
+function stripHtmlToText(html) {
+  let current = String(html || "");
+  let previous;
+  do {
+    previous = current;
+    current = current.replace(/<[^<>]*>/g, "");
+  } while (current !== previous);
+  return current;
+}
+
 // Get logo URL for emails
 function getLogoUrl() {
   const frontendUrl = process.env.APP_URL || "http://localhost:5173";
@@ -286,11 +296,11 @@ ${title || "TokenTimer"}
 
 ${greeting || ""}
 
-${content.replace(/<[^>]*>/g, "").replace(/\n\s*\n/g, "\n\n")}
+${stripHtmlToText(content).replace(/\n\s*\n/g, "\n\n")}
 
 ${buttonText && buttonUrl ? `${buttonText}: ${buttonUrl}` : ""}
 
-${footerNote ? footerNote.replace(/<[^>]*>/g, "") : ""}
+${footerNote ? stripHtmlToText(footerNote) : ""}
 
 TokenTimer
 ${getEmailFooterText()}

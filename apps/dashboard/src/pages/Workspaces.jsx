@@ -1000,7 +1000,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     onClick={async () => {
                       if (!currentWorkspace || !inviteEmail) return;
                       const email = inviteEmail.trim();
-                      if (!/.+@.+\..+/.test(email)) {
+                      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                         showWarning('Invalid email');
                         return;
                       }

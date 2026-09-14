@@ -211,6 +211,8 @@ function validateFilterRules(rules) {
     if (rule.matchType === "regex") {
       const { pattern, flags } = parseRegexValue(rule.value);
       try {
+        // Patterns are length-capped and rejected by findUnsafeRegexReason first.
+        // codeql[js/regex-injection]
         new RegExp(pattern, flags);
       } catch (e) {
         return `${label}.value is not a valid regular expression: ${e.message}`;
@@ -272,6 +274,8 @@ function ruleMatches(rule, item) {
       : value;
   try {
     const { pattern, flags } = parseRegexValue(rule.value);
+    // Same validated pattern as validateFilterRules; input length is bounded.
+    // codeql[js/regex-injection]
     return new RegExp(pattern, flags).test(boundedValue);
   } catch (_e) {
     // Invalid patterns are rejected at validation time; treat as no match.

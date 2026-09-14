@@ -76,7 +76,7 @@ router.post(
         phoneE164 = phoneNorm.startsWith("+") ? phoneNorm : `+${phoneNorm}`;
       }
       // Require at least a valid email or a valid phone
-      if (!phoneE164 && !/.+@.+\..+/.test(emailStr)) {
+      if (!phoneE164 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
         return res.status(400).json({
           error: "Provide at least a valid email or phone number",
           code: "VALIDATION_ERROR",
@@ -191,12 +191,12 @@ router.put(
           ? phoneNorm
           : `+${phoneNorm}`
         : null;
-      if (!phoneE164 && emailStr && !/.+@.+\..+/.test(emailStr)) {
+      if (!phoneE164 && emailStr && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
         return res
           .status(400)
           .json({ error: "Invalid email format", code: "VALIDATION_ERROR" });
       }
-      if (!phoneE164 && (!emailStr || !/.+@.+\..+/.test(emailStr))) {
+      if (!phoneE164 && (!emailStr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr))) {
         return res.status(400).json({
           error: "Provide at least a valid email or phone number",
           code: "VALIDATION_ERROR",

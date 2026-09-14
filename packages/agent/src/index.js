@@ -3413,6 +3413,8 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
         host,
         port,
         ...(servername !== undefined ? { servername } : {}),
+        // Fingerprint pin after connect; chain validation is intentionally skipped.
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
       });
     } catch {
@@ -3427,7 +3429,11 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
           settle(null);
           return;
         }
-        settle(crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase());
+        settle(
+          // Windows store / netsh sslcert identity is SHA-1.
+          // codeql[js/weak-cryptographic-algorithm]
+          crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase(),
+        );
       } catch {
         settle(null);
       }

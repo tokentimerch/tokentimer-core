@@ -3442,6 +3442,8 @@ router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Path id plus pagination; no secrets in the query string.
+  // codeql[js/sensitive-get-query]
   async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
       return res.status(404).json({
@@ -3454,7 +3456,10 @@ router.get(
       const result = await listCertificateInstances({
         workspaceId: req.workspace.id,
         certId: req.params.certId,
+        // Pagination only.
+        // codeql[js/sensitive-get-query]
         limit: req.query.limit,
+        // codeql[js/sensitive-get-query]
         offset: req.query.offset,
       });
 
@@ -3561,6 +3566,8 @@ router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Certificate id is a path parameter, not a secret query string.
+  // codeql[js/sensitive-get-query]
   async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
       return res.status(404).json({

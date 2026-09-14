@@ -43,6 +43,19 @@ describe("Workspace contacts CRUD", function () {
       .expect(200);
   });
 
+  it("rejects an email with spaces or extra text", async () => {
+    const res = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/contacts`)
+      .set("Cookie", cookie)
+      .send({
+        first_name: "Eve",
+        last_name: "Ops",
+        details: { email: "not an email @ example.com" },
+      })
+      .expect(400);
+    expect(res.body.code).to.equal("VALIDATION_ERROR");
+  });
+
   it("validates E.164 on update", async () => {
     const c = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/contacts`)

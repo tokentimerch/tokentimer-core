@@ -47,6 +47,8 @@ function fetchSSLCert(hostname, port = 443) {
         host: hostname,
         port,
         servername: hostname,
+        // Probe only: expired or privately-issued certs must still be readable.
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
         timeout: 15000,
       },
@@ -72,6 +74,8 @@ function checkHealth(url) {
   return new Promise((resolve) => {
     const req = client.get(
       url,
+      // Probe only: health of the monitored URL, not a trust decision.
+      // codeql[js/disabling-certificate-validation]
       { timeout: 15000, rejectUnauthorized: false },
       (response) => {
         const responseMs = Date.now() - startTime;

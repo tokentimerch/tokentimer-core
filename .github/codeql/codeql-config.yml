@@ -1,0 +1,12 @@
+name: TokenTimer Core
+
+# Test fixtures and one-off scripts trip hostname and regex queries
+# without being product surfaces. Production code stays in the default
+# query set.
+paths-ignore:
+  - "**/*.test.js"
+  - "**/*.test.cjs"
+  - "**/*.test.jsx"
+  - "**/tests/**"
+  - "**/testdata/**"
+  - "scripts/**"

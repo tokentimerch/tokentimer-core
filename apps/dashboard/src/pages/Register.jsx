@@ -48,7 +48,10 @@ export default function Register() {
   const validate = () => {
     const nextErrors = {};
     if (!token) nextErrors.general = 'Invitation token is missing or invalid.';
-    if (!form.email.trim() || !/.+@.+\..+/.test(form.email.trim())) {
+    if (
+      !form.email.trim() ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+    ) {
       nextErrors.email = 'Valid email is required';
     }
     if (!form.first_name.trim())

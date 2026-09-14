@@ -404,7 +404,7 @@ router.post(
           code: "INVITE_TOKEN_REQUIRED",
         });
       }
-      if (!/.+@.+\..+/.test(email)) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res.status(400).json({
           error: "Valid email is required",
           code: "VALIDATION_ERROR",

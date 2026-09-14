@@ -83,6 +83,31 @@ const CREDENTIALED_AXIOS_REDIRECTS = Object.freeze({
   },
 });
 
+/**
+ * Join an API path onto an integration base URL without dropping a
+ * path prefix. `new URL("/api/v4/user", "https://host/gitlab")` becomes
+ * `https://host/api/v4/user` because a leading slash is origin-relative.
+ * GitLab relative_url_root and GitHub Enterprise `/api/v3` need that
+ * prefix kept.
+ *
+ * @param {string} baseUrl
+ * @param {string} apiPath
+ * @returns {string}
+ */
+function joinIntegrationApiUrl(baseUrl, apiPath) {
+  const base = new URL(String(baseUrl));
+  let suffix = String(apiPath || "");
+  if (!suffix.startsWith("/")) suffix = `/${suffix}`;
+  if (suffix.startsWith("//")) {
+    throw new Error("API path must be a path, not a scheme-relative URL");
+  }
+  const prefix = base.pathname.replace(/\/+$/, "");
+  base.pathname = `${prefix}${suffix}`;
+  base.search = "";
+  base.hash = "";
+  return base.toString();
+}
+
 function isHttpRedirectStatus(status) {
   return (
     status === 301 ||
@@ -149,6 +174,7 @@ module.exports = {
   discoverExpiryFromObject,
   formatDateYmd,
   CREDENTIALED_AXIOS_REDIRECTS,
+  joinIntegrationApiUrl,
   isHttpRedirectStatus,
   assertSameOriginFollowUp,
 };

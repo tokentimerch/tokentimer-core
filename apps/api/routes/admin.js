@@ -1331,6 +1331,8 @@ router.post(
                 host: hostname,
                 port,
                 servername: hostname,
+                // Probe only: expired or privately-issued certs must still be readable.
+                // codeql[js/disabling-certificate-validation]
                 rejectUnauthorized: false,
                 timeout: 10000,
               },
@@ -1681,6 +1683,8 @@ router.post(
         const result = await new Promise((resolve, reject) => {
           const req = client.get(
             domain.url,
+            // Probe only: health of the monitored URL, not a trust decision.
+            // codeql[js/disabling-certificate-validation]
             { timeout: 15000, rejectUnauthorized: false },
             (response) => {
               resolve({ statusCode: response.statusCode });

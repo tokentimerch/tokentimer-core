@@ -63,6 +63,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Build Go modules for CodeQL
         if: matrix.build-mode == 'manual'

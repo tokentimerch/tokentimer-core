@@ -1552,6 +1552,8 @@ function jobCreationRequestFingerprint(value) {
     completedAt: value.completedAt ?? null,
     cancelledAt: value.cancelledAt ?? null,
   });
+  // Canonical request digest for idempotency, not a password KDF.
+  // codeql[js/insufficient-password-hash]
   return crypto
     .createHash("sha256")
     .update(JSON.stringify(canonicalRequest), "utf8")

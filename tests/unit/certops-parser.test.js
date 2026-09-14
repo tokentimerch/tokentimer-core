@@ -259,6 +259,27 @@ describe("CertOps public certificate parser", () => {
     );
   });
 
+  it("rejects a truncated PEM certificate block", () => {
+    assertParserCode(
+      "-----BEGIN CERTIFICATE-----\nMIIB\n",
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  });
+
+  it("rejects leftover text around otherwise valid PEM certificates", () => {
+    assertParserCode(
+      `not-a-cert\n${PUBLIC_LEAF_CERT}`,
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  });
+
+  it("rejects a truncated trailing PEM block after a valid certificate", () => {
+    assertParserCode(
+      `${PUBLIC_LEAF_CERT}\n-----BEGIN CERTIFICATE-----\nMIIB\n`,
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  });
+
   it("rejects PKCS#12/PFX-like binary input as key material", () => {
     const pfxLike = Buffer.from([0x30, 0x82, 0x01, 0x0a, 0x02, 0x01, 0x03]);
 

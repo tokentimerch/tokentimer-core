@@ -76,6 +76,8 @@ const TXT_TTL_SECONDS = 60;
  */
 function signOvhRequest({ applicationSecret, consumerKey, method, url, body, timestamp }) {
   const material = [applicationSecret, consumerKey, method, url, body, String(timestamp)].join("+");
+  // OVH API signatures are SHA-1 with a `$1$` prefix; the algorithm is the protocol.
+  // codeql[js/weak-cryptographic-algorithm]
   return `$1$${crypto.createHash("sha1").update(material).digest("hex")}`;
 }
 

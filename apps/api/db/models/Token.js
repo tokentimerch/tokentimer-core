@@ -204,14 +204,9 @@ const create = async (tokenData) => {
     // Convert numeric fields from strings to numbers
     return convertNumericFields(token);
   } catch (error) {
-    // Enhanced error logging for database operations
-    logger.error("create() database error:", {
+    logger.error("create() database error", {
       message: error.message,
-      code: error.code,
-      detail: error.detail,
-      hint: error.hint,
-      query,
-      values: values.map((v, i) => `$${i + 1}: ${v}`),
+      code: error.code || null,
     });
 
     // Re-throw the error for the API layer to handle

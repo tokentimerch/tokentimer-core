@@ -1169,7 +1169,7 @@ router.put(
                                 .trim()
                                 .toLowerCase(),
                             )
-                            .filter((e) => /.+@.+\..+/.test(e));
+                            .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
                         }
                       } catch (_err) {
                         logger.debug("Non-critical operation failed", {
@@ -1937,6 +1937,8 @@ router.post(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
       try {
+        // Host and private-IP gates above; CodeQL does not treat them as sanitizers.
+        // codeql[js/request-forgery]
         const resp = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

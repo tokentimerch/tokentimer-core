@@ -505,6 +505,8 @@ function computeSha1ThumbprintFromPem(certPem) {
     throw buildError("computeSha1ThumbprintFromPem requires a non-empty PEM string");
   }
   const der = pemToDer(certPem, /CERTIFICATE/);
+  // Windows store thumbprints are SHA-1; this is a lookup key, not a digest of a secret.
+  // codeql[js/weak-cryptographic-algorithm]
   return crypto.createHash("sha1").update(der).digest("hex").toUpperCase();
 }
 
@@ -518,13 +520,51 @@ function computeSha1ThumbprintFromPem(certPem) {
  * @returns {Buffer}
  */
 function pemToDer(pem, labelPattern) {
-  const match = pem.match(
-    /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]+?)-----END \1-----/,
-  );
-  if (!match || !labelPattern.test(match[1])) {
-    throw buildError(`input is not a recognizable PEM block matching ${labelPattern}`);
+  const beginPrefix = "-----BEGIN ";
+  const dashRun = "-----";
+  const start = pem.indexOf(beginPrefix);
+  if (start === -1) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
   }
-  const base64 = match[2].replace(/\s+/g, "");
+  const labelStart = start + beginPrefix.length;
+  const labelEnd = pem.indexOf(dashRun, labelStart);
+  if (labelEnd === -1 || labelEnd === labelStart) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const label = pem.slice(labelStart, labelEnd);
+  if (!labelPattern.test(label)) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const headerEnd = labelEnd + dashRun.length;
+  const endMarker = `-----END ${label}-----`;
+  const endAt = pem.indexOf(endMarker, headerEnd);
+  if (endAt === -1) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const body = pem.slice(headerEnd, endAt);
+  let base64 = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const code = body.charCodeAt(i);
+    // ASCII whitespace only (space, tab, LF, VT, FF, CR). Matches PEM `\s`.
+    if (
+      code !== 32 &&
+      code !== 9 &&
+      code !== 10 &&
+      code !== 11 &&
+      code !== 12 &&
+      code !== 13
+    ) {
+      base64 += body[i];
+    }
+  }
   return Buffer.from(base64, "base64");
 }
 

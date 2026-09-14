@@ -378,19 +378,19 @@ function getDiagnosticBootstrapLimiter() {
 let resolvedApiLimiter;
 /**
  * Returns the API rate-limit middleware (resolved once per process).
+ * First call freezes the NODE_ENV choice so callers receive the library
+ * instance CodeQL can see, not a wrapper.
  * @returns {import("express").RequestHandler}
  */
 function getApiLimiter() {
-  return function apiLimiterMiddleware(req, res, next) {
-    if (!resolvedApiLimiter) {
-      resolvedApiLimiter =
-        process.env.NODE_ENV === "development" ||
-        process.env.NODE_ENV === "test"
-          ? testApiLimiter
-          : planAwareApiLimiter;
-    }
-    return resolvedApiLimiter(req, res, next);
-  };
+  if (!resolvedApiLimiter) {
+    resolvedApiLimiter =
+      process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test"
+        ? testApiLimiter
+        : planAwareApiLimiter;
+  }
+  return resolvedApiLimiter;
 }
 
 const noRateLimit = (req, res, next) => next();

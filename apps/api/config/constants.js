@@ -93,6 +93,8 @@ async function testWebhookUrl(
     }
     const controller = new AbortController();
     const to = setTimeout(() => controller.abort(), 5000);
+    // Host and private-IP gates above; CodeQL does not treat them as sanitizers.
+    // codeql[js/request-forgery]
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

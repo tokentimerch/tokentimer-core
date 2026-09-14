@@ -536,7 +536,7 @@ router.post(
       }
       // Already normalized above
       // Basic email format validation to avoid downstream errors
-      if (!/.+@.+\..+/.test(normalizedEmail)) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
         return res
           .status(400)
           .json({ error: "Invalid email format", code: "VALIDATION_ERROR" });

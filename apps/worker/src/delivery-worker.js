@@ -35,6 +35,9 @@ import {
   parseCertRenewalFailedJobId,
   shouldDiscardRetiredCertificateAlert,
 } from "./shared/retiredCertificateAlerts.js";
+import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
+
+export { detectWebhookProviderKind };
 
 function safeJoinList(value) {
   if (!value) return null;
@@ -1493,7 +1496,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       return "";
                     }
                   })
-                  .filter((e) => /.+@.+\..+/.test(e));
+                  .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
               }
             } catch (_err) {
               logger.debug("Non-critical operation failed", {
@@ -1504,7 +1507,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
             // Dedupe recipients
             const trimmed = Array.from(new Set(recipients)).filter((e) =>
-              /.+@.+\..+/.test(e),
+              /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e),
             );
 
             if (trimmed.length === 0) {
@@ -1657,20 +1660,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 try {
                   const host = new URL(url).hostname.toLowerCase();
                   if (!wh?.kind || kind === "generic") {
-                    if (host === "hooks.slack.com") kind = "slack";
-                    else if (
-                      host.endsWith("discord.com") ||
-                      host.endsWith("discordapp.com")
-                    )
-                      kind = "discord";
-                    else if (
-                      host === "outlook.office.com" ||
-                      host === "webhook.office.com" ||
-                      host.endsWith("office365.com") ||
-                      host.endsWith(".office.com")
-                    )
-                      kind = "teams";
-                    else if (host.endsWith("pagerduty.com")) kind = "pagerduty";
+                    kind = detectWebhookProviderKind(host) || kind;
                   }
                 } catch (_err) {
                   logger.debug("Non-critical operation failed", {

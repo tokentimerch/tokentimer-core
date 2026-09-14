@@ -144,6 +144,18 @@ export const AccessibleButton = ({
   );
 };
 
+function randomHexId(byteLength) {
+  if (
+    typeof crypto === 'undefined' ||
+    typeof crypto.getRandomValues !== 'function'
+  ) {
+    throw new Error('Secure random is unavailable');
+  }
+  return Array.from(crypto.getRandomValues(new Uint8Array(byteLength)), b =>
+    b.toString(16).padStart(2, '0')
+  ).join('');
+}
+
 /**
  * Enhanced form field with proper labeling
  */
@@ -155,7 +167,7 @@ export const AccessibleFormField = ({
   children,
   ...props
 }) => {
-  const fieldId = id || `field-${Math.random().toString(36).substr(2, 9)}`;
+  const fieldId = id || `field-${randomHexId(8)}`;
   const errorId = `${fieldId}-error`;
   return (
     <Box {...props}>

@@ -225,6 +225,8 @@ function createRateLimitHandler({ windowMs, preAuth, options }) {
   return (req, res) => {
     const retryAfter = retryAfterSeconds(req, windowMs);
 
+    // Workspace UUID and client IP identify the limited caller, not a secret.
+    // codeql[js/clear-text-logging]
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "certops_machine_token",
       phase: preAuth ? "pre_auth" : "post_auth",

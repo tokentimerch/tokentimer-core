@@ -9,9 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.
+- Webhook provider auto-detect matches Discord, Office 365, and PagerDuty by hostname suffix, so hosts such as `notdiscord.com` are no longer treated as Discord.
+- The Twilio WhatsApp status webhook and contact-group reassignment route now share the API rate limiter with other routes.
+- Swagger UI and the OpenAPI spec file are covered by the API rate limiter.
+- Invite and contact email checks reject values with spaces or extra text around the address.
+
 ### Fixed
 
 - **Control Center Auto-sync rows now show the integration name** (GitHub, Azure KV, and the other import providers) instead of a blank title above the schedule.
+- **GitLab and GitHub scans keep a path on the instance URL.** A GitLab relative URL root such as `https://git.example.com/gitlab`, and GitHub Enterprise `https://ghe.example.com/api/v3`, is no longer dropped, so API calls go under that prefix instead of at the domain root.
 
 ## [0.15.0] - 2026-09-08
 
