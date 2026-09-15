@@ -88,6 +88,9 @@ const {
   onTrustJobTerminalTransition,
   TRUST_JOB_TERMINAL_NEGATIVE_STATUSES,
 } = require("./trustAnchors");
+const {
+  replaceAssetContactGroups,
+} = require("../../src/shared/replaceAssetContactGroups");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -535,6 +538,21 @@ async function registerAgent({
         CERTOPS_AGENT_REGISTRATION_CONFLICT,
       );
     }
+
+    // Join-table membership in the same transaction as the agent row.
+    // Singular contact_group_id stays as a lex-smallest mirror (ADR-0013).
+    const assignedIds = Array.isArray(bootstrapToken.contactGroupIds)
+      ? bootstrapToken.contactGroupIds
+      : bootstrapToken.contactGroupId
+        ? [String(bootstrapToken.contactGroupId)]
+        : [];
+    await replaceAssetContactGroups({
+      client,
+      kind: "agent",
+      assetId: row.id,
+      workspaceId: bootstrapToken.workspaceId,
+      ids: assignedIds,
+    });
 
     // Consume last so the token row update can reference the new agent row.
     const consumed = await consume({

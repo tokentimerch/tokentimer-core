@@ -68,6 +68,12 @@ describe("adoptOrCreateMonitorToken", () => {
           assert.strictEqual(params[9], "cg-1");
           return { rows: [{ id: 99 }] };
         }
+        if (
+          sql.includes("token_contact_groups") ||
+          (sql.includes("UPDATE tokens") && sql.includes("SET contact_group_id"))
+        ) {
+          return { rows: [] };
+        }
         throw new Error(`unexpected query: ${sql}`);
       },
     };

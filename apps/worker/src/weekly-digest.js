@@ -22,11 +22,25 @@ import {
   sanitizeWhatsAppTemplateVars,
   WHATSAPP_WEEKLY_DIGEST_TOKENS_LIST_MAX_LEN,
 } from "./shared/whatsappTemplateVars.js";
+import {
+  dedupeNormalizedDestinations,
+  getWebhookNames,
+  resolveContactGroupsForAsset,
+} from "./shared/contactGroups.js";
+import { loadAssignedGroupIdsForAssets } from "./shared/replaceAssetContactGroups.js";
+import {
+  invertDigestCandidates,
+  claimWeeklyDigestRecipient,
+  markWeeklyDigestRecipientSent,
+  weeklyDigestWhatsAppIdempotencyKey,
+} from "./shared/weeklyDigestRecipients.js";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173").replace(
   /\/$/,
   "",
 );
+
+const WEEKLY_DIGEST_CLAIM_LEASE_MS = 300000;
 
 function getWeekStartDate() {
   const now = new Date();
@@ -36,6 +50,52 @@ function getWeekStartDate() {
   monday.setUTCDate(now.getUTCDate() - diff);
   monday.setUTCHours(0, 0, 0, 0);
   return monday.toISOString().slice(0, 10);
+}
+
+function flagOn(value) {
+  return value === true || value === "true";
+}
+
+function isDigestEnabled(group) {
+  return (
+    flagOn(group && group.weekly_digest_email) ||
+    flagOn(group && group.weekly_digest_whatsapp) ||
+    flagOn(group && group.weekly_digest_webhooks)
+  );
+}
+
+function formatGroupNames(names) {
+  const list = Array.isArray(names) ? names : names ? [names] : [];
+  const unique = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const name = String(raw || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    unique.push(name);
+  }
+  return unique;
+}
+
+function contributingGroupNames(groupById, contributingGroupIds) {
+  const names = [];
+  for (const id of Array.isArray(contributingGroupIds)
+    ? contributingGroupIds
+    : []) {
+    const group = groupById.get(String(id));
+    if (group && group.name) names.push(group.name);
+  }
+  return formatGroupNames(names);
+}
+
+function contactDisplayName(contact) {
+  const firstName = String(
+    contact && contact.first_name ? contact.first_name : "",
+  ).trim();
+  const lastName = String(
+    contact && contact.last_name ? contact.last_name : "",
+  ).trim();
+  return [firstName, lastName].filter(Boolean).join(" ") || "User";
 }
 
 async function writeAudit(
@@ -84,12 +144,69 @@ function maskWebhookUrl(url) {
   }
 }
 
-function buildDigestEmailContent(tokens, groupName, workspaceName) {
+function isWithinDeliveryWindow(ws) {
+  let start = String(ws.delivery_window_start || "").trim();
+  let end = String(ws.delivery_window_end || "").trim();
+  const tzInput = String(ws.delivery_window_tz || "").trim();
+
+  if (!start && !end) {
+    start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
+    end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
+  }
+
+  if (!start || !end) {
+    return { inWindow: true, cur: null, start, end, tzInput };
+  }
+
+  const now = new Date();
+  let hh;
+  let mm;
+
+  if (tzInput) {
+    try {
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tzInput,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      const parts = fmt.formatToParts(now);
+      hh = parts.find((p) => p.type === "hour")?.value || "00";
+      mm = parts.find((p) => p.type === "minute")?.value || "00";
+    } catch (_err) {
+      hh = String(now.getUTCHours()).padStart(2, "0");
+      mm = String(now.getUTCMinutes()).padStart(2, "0");
+      if (tzInput) {
+        logger.warn(
+          `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
+        );
+      }
+    }
+  } else {
+    hh = String(now.getUTCHours()).padStart(2, "0");
+    mm = String(now.getUTCMinutes()).padStart(2, "0");
+  }
+
+  const cur = `${hh}:${mm}`;
+  const inWindow =
+    start <= end ? cur >= start && cur <= end : cur >= start || cur <= end;
+  return { inWindow, cur, start, end, tzInput };
+}
+
+function buildDigestEmailContent(
+  tokens,
+  contributingGroupNames,
+  workspaceName,
+) {
   const subject = `Weekly Digest: ${tokens.length} token(s) expiring soon in ${workspaceName}`;
+  const groupNames = formatGroupNames(contributingGroupNames);
 
   const lines = [];
-  lines.push(`Weekly Digest for Contact Group: ${groupName}`);
+  lines.push("Weekly Digest");
   lines.push(`Workspace: ${workspaceName}`);
+  if (groupNames.length > 0) {
+    lines.push(`Contact groups: ${groupNames.join(", ")}`);
+  }
   lines.push("");
   lines.push(`You have ${tokens.length} token(s) that are expiring soon:`);
   lines.push("");
@@ -111,14 +228,18 @@ function buildDigestEmailContent(tokens, groupName, workspaceName) {
 
   const text = lines.join("\n");
 
-  // Build HTML content for template
   const htmlContentLines = [];
   htmlContentLines.push(
-    `<h2 style="color: #1a202c; font-size: 20px; font-weight: 600; margin: 0 0 15px;">Weekly Digest for Contact Group: ${groupName}</h2>`,
+    '<h2 style="color: #1a202c; font-size: 20px; font-weight: 600; margin: 0 0 15px;">Weekly Digest</h2>',
   );
   htmlContentLines.push(
     `<p style="margin: 0 0 15px;"><strong>Workspace:</strong> ${workspaceName}</p>`,
   );
+  if (groupNames.length > 0) {
+    htmlContentLines.push(
+      `<p style="margin: 0 0 15px;"><strong>Contact groups:</strong> ${groupNames.join(", ")}</p>`,
+    );
+  }
   htmlContentLines.push(
     `<p style="margin: 0 0 15px;">You have <strong>${tokens.length}</strong> token(s) that are expiring soon:</p>`,
   );
@@ -148,7 +269,6 @@ function buildDigestEmailContent(tokens, groupName, workspaceName) {
   );
   const htmlContent = htmlContentLines.join("");
 
-  // Use the email template generator to wrap content in proper template
   const { html, text: templateText } = generateEmailTemplate({
     title: subject,
     content: htmlContent,
@@ -158,11 +278,18 @@ function buildDigestEmailContent(tokens, groupName, workspaceName) {
   return { subject, text: templateText, html };
 }
 
-function buildDigestWhatsAppText(tokens, groupName, workspaceName) {
+function buildDigestWhatsAppText(
+  tokens,
+  contributingGroupNames,
+  workspaceName,
+) {
+  const groupNames = formatGroupNames(contributingGroupNames);
   const lines = [];
   lines.push(`*Weekly Digest*`);
-  lines.push(`Group: ${groupName}`);
   lines.push(`Workspace: ${workspaceName}`);
+  if (groupNames.length > 0) {
+    lines.push(`Groups: ${groupNames.join(", ")}`);
+  }
   lines.push("");
   lines.push(`${tokens.length} token(s) expiring soon:`);
   lines.push("");
@@ -184,7 +311,17 @@ function buildDigestWhatsAppText(tokens, groupName, workspaceName) {
   return lines.join("\n");
 }
 
-function buildSlackDigestPayload(count, tokensList, groupName, workspaceName) {
+function buildSlackDigestPayload(
+  count,
+  tokensList,
+  contributingGroupNames,
+  workspaceName,
+) {
+  const groupNames = formatGroupNames(contributingGroupNames);
+  const groupLine =
+    groupNames.length > 0
+      ? `\n*Contact groups:* ${groupNames.join(", ")}`
+      : "";
   const blocks = [
     {
       type: "header",
@@ -198,13 +335,12 @@ function buildSlackDigestPayload(count, tokensList, groupName, workspaceName) {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Workspace:* ${workspaceName}\n*Contact Group:* ${groupName}`,
+        text: `*Workspace:* ${workspaceName}${groupLine}`,
       },
     },
     { type: "divider" },
   ];
 
-  // Add token list (max 10 for brevity)
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
     blocks.push({
@@ -263,12 +399,12 @@ function buildSlackDigestPayload(count, tokensList, groupName, workspaceName) {
 function buildDiscordDigestPayload(
   count,
   tokensList,
-  groupName,
+  contributingGroupNames,
   workspaceName,
 ) {
+  const groupNames = formatGroupNames(contributingGroupNames);
   const fields = [];
 
-  // Add token list (max 10)
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
     fields.push({
@@ -286,13 +422,18 @@ function buildDiscordDigestPayload(
     });
   }
 
+  const groupLine =
+    groupNames.length > 0
+      ? `\n**Contact groups:** ${groupNames.join(", ")}`
+      : "";
+
   return {
     content: `📊 **Weekly Digest: ${count} token(s) expiring soon**`,
     embeds: [
       {
-        title: `Weekly Digest for ${groupName}`,
+        title: "Weekly Digest",
         url: `${APP_URL}/dashboard`,
-        description: `**Workspace:** ${workspaceName}\n\nYou have **${count}** token(s) that are expiring soon:`,
+        description: `**Workspace:** ${workspaceName}${groupLine}\n\nYou have **${count}** token(s) that are expiring soon:`,
         color: 16776960, // Yellow
         fields,
         timestamp: new Date().toISOString(),
@@ -304,24 +445,34 @@ function buildDiscordDigestPayload(
   };
 }
 
-function buildTeamsDigestPayload(count, tokensList, groupName, workspaceName) {
+function buildTeamsDigestPayload(
+  count,
+  tokensList,
+  contributingGroupNames,
+  workspaceName,
+) {
+  const groupNames = formatGroupNames(contributingGroupNames);
   const facts = [
     { name: "📊 Workspace", value: workspaceName },
-    { name: "👥 Contact Group", value: groupName },
     { name: "🔢 Tokens Count", value: String(count) },
   ];
+  if (groupNames.length > 0) {
+    facts.splice(1, 0, {
+      name: "👥 Contact groups",
+      value: groupNames.join(", "),
+    });
+  }
 
   const sections = [
     {
       activityTitle: `📊 Weekly Digest: ${count} token(s) expiring soon`,
-      activitySubtitle: `${groupName} - ${workspaceName}`,
+      activitySubtitle: workspaceName,
       text: `You have **${count}** token(s) expiring soon. Review them below:`,
       facts,
       markdown: true,
     },
   ];
 
-  // Add token list (max 10)
   const displayTokens = tokensList.slice(0, 10);
   for (const t of displayTokens) {
     sections.push({
@@ -363,6 +514,281 @@ function buildTeamsDigestPayload(count, tokensList, groupName, workspaceName) {
   };
 }
 
+function buildGenericWebhookPayload({
+  tokens,
+  tokensList,
+  contributingGroupNames,
+  workspaceName,
+  weekStartDate,
+}) {
+  const groupNames = formatGroupNames(contributingGroupNames);
+  return {
+    type: "weekly_digest",
+    title: `Weekly Digest: ${tokens.length} token(s) expiring soon`,
+    workspace: workspaceName,
+    contact_groups: groupNames,
+    tokens_count: tokens.length,
+    tokens: tokensList,
+    week_start_date: weekStartDate,
+    timestamp: new Date().toISOString(),
+    url: `${APP_URL}/dashboard`,
+  };
+}
+
+function webhookTokensList(tokens) {
+  return tokens.slice(0, 20).map((t) => {
+    const days = computeDaysLeft(t.expiration);
+    return {
+      name: t.name,
+      type: t.type || "Unknown",
+      expiration: t.expiration
+        ? new Date(t.expiration).toISOString().slice(0, 10)
+        : "Unknown",
+      days_until: days,
+    };
+  });
+}
+
+function whatsappTokensListText(tokens) {
+  return tokens
+    .map((t) => {
+      const days = computeDaysLeft(t.expiration);
+      const expires = t.expiration
+        ? new Date(t.expiration).toISOString().slice(0, 10)
+        : "Unknown";
+      return `${t.name}: ${expires} (${days}d)`;
+    })
+    .join("; ");
+}
+
+function loadAssignedIdsByToken(client, workspaceId, tokens) {
+  const assetIds = [];
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    const tokenId = token.token_id ?? token.id;
+    if (tokenId == null) continue;
+    assetIds.push(Number(tokenId));
+  }
+  return loadAssignedGroupIdsForAssets({
+    client,
+    kind: "token",
+    assetIds,
+    workspaceId,
+  });
+}
+
+function isCandidateForGroup(
+  token,
+  groupId,
+  assignedByToken,
+  defaultGroupId,
+  contactGroups,
+) {
+  const assigned = assignedByToken.get(String(token.token_id ?? token.id));
+  const resolved = resolveContactGroupsForAsset({
+    contactGroups,
+    assignedIds: assigned,
+    defaultContactGroupId: defaultGroupId,
+  });
+  return resolved.some((group) => String(group.id) === String(groupId));
+}
+
+function emailsForGroup(group, contactsById) {
+  const ids = Array.isArray(group.email_contact_ids)
+    ? group.email_contact_ids
+    : [];
+  const emails = [];
+  for (const id of ids) {
+    const contact = contactsById.get(String(id));
+    const email = contact && contact.details && contact.details.email;
+    if (email) emails.push(email);
+  }
+  return dedupeNormalizedDestinations(emails, "email");
+}
+
+function phonesForGroup(group, contactsById) {
+  const ids = Array.isArray(group.whatsapp_contact_ids)
+    ? group.whatsapp_contact_ids
+    : [];
+  const phones = [];
+  for (const id of ids) {
+    const contact = contactsById.get(String(id));
+    if (contact && contact.phone_e164) phones.push(contact.phone_e164);
+  }
+  return dedupeNormalizedDestinations(phones, "phone");
+}
+
+function webhookUrlsForGroup(group, webhookUrls) {
+  const names = getWebhookNames(group);
+  const list = Array.isArray(webhookUrls) ? webhookUrls : [];
+  const urls = [];
+  for (const name of names) {
+    const wh = list.find((w) => w && w.name === name);
+    if (!wh || !wh.url) continue;
+    if (String(wh.kind || "generic").toLowerCase() === "pagerduty") continue;
+    urls.push(wh.url);
+  }
+  return dedupeNormalizedDestinations(urls, "webhook");
+}
+
+function indexWebhooksByUrl(webhookUrls) {
+  const map = new Map();
+  for (const wh of Array.isArray(webhookUrls) ? webhookUrls : []) {
+    if (!wh || !wh.url) continue;
+    const key = String(wh.url).trim();
+    if (!key || map.has(key)) continue;
+    map.set(key, wh);
+  }
+  return map;
+}
+
+async function deliverRecipientDigest({
+  row,
+  ws,
+  weekStartDate,
+  groupNames,
+  phoneNameByKey,
+  webhookByUrl,
+  weeklyDigestTemplateSid,
+}) {
+  const tokens = row.tokens;
+  if (row.channel === "email") {
+    const { subject, text, html } = buildDigestEmailContent(
+      tokens,
+      groupNames,
+      ws.workspace_name,
+    );
+    return sendEmailNotification({
+      to: row.recipientKey,
+      subject,
+      text,
+      html,
+    });
+  }
+
+  if (row.channel === "whatsapp") {
+    const recipientName = phoneNameByKey.get(row.recipientKey) || "User";
+    const idempotencyKey = weeklyDigestWhatsAppIdempotencyKey({
+      workspaceId: ws.workspace_id,
+      weekStartDate,
+      phone: row.recipientKey,
+    });
+    const contentSid = weeklyDigestTemplateSid;
+    if (contentSid) {
+      const contentVariables = sanitizeWhatsAppTemplateVars(
+        buildWeeklyDigestWhatsAppTemplateVariables({
+          recipientName,
+          workspaceName: ws.workspace_name,
+          contactGroupName:
+            groupNames.length > 0
+              ? groupNames.join(", ")
+              : ws.workspace_name,
+          tokensCount: tokens.length,
+          tokensListText: whatsappTokensListText(tokens),
+        }),
+        {
+          maxLens: {
+            tokens_list: WHATSAPP_WEEKLY_DIGEST_TOKENS_LIST_MAX_LEN,
+          },
+        },
+      );
+      return sendWhatsApp({
+        to: row.recipientKey,
+        contentSid,
+        contentVariables,
+        idempotencyKey,
+      });
+    }
+    return sendWhatsApp({
+      to: row.recipientKey,
+      body: buildDigestWhatsAppText(tokens, groupNames, ws.workspace_name),
+      idempotencyKey,
+    });
+  }
+
+  if (row.channel === "webhook") {
+    const wh = webhookByUrl.get(row.recipientKey) || {
+      url: row.recipientKey,
+      kind: "generic",
+    };
+    const kind = (wh.kind || "generic").toLowerCase();
+    const tokensList = webhookTokensList(tokens);
+    let payload;
+    if (kind === "slack") {
+      payload = buildSlackDigestPayload(
+        tokens.length,
+        tokensList,
+        groupNames,
+        ws.workspace_name,
+      );
+    } else if (kind === "discord") {
+      payload = buildDiscordDigestPayload(
+        tokens.length,
+        tokensList,
+        groupNames,
+        ws.workspace_name,
+      );
+    } else if (kind === "teams") {
+      payload = buildTeamsDigestPayload(
+        tokens.length,
+        tokensList,
+        groupNames,
+        ws.workspace_name,
+      );
+    } else {
+      payload = buildGenericWebhookPayload({
+        tokens,
+        tokensList,
+        contributingGroupNames: groupNames,
+        workspaceName: ws.workspace_name,
+        weekStartDate,
+      });
+    }
+
+    const res = await postJson(wh.url || row.recipientKey, payload, kind);
+    if (res.success) {
+      try {
+        logger.info(
+          JSON.stringify({
+            level: "INFO",
+            message: "webhook-send-succeeded",
+            kind,
+            url: maskWebhookUrl(wh.url || row.recipientKey),
+            tokens_count: tokens.length,
+            workspace: ws.workspace_name,
+            contact_groups: groupNames,
+          }),
+        );
+      } catch (_err) {
+        logger.debug("Non-critical operation failed", {
+          error: _err.message,
+        });
+      }
+    } else {
+      try {
+        logger.error(
+          JSON.stringify({
+            level: "ERROR",
+            message: "webhook-send-failed",
+            kind,
+            url: maskWebhookUrl(wh.url || row.recipientKey),
+            error: res.error || "Unknown error",
+            tokens_count: tokens.length,
+            workspace: ws.workspace_name,
+            contact_groups: groupNames,
+          }),
+        );
+      } catch (_err) {
+        logger.debug("Non-critical operation failed", {
+          error: _err.message,
+        });
+      }
+    }
+    return res;
+  }
+
+  return { success: false, error: `unknown digest channel: ${row.channel}` };
+}
+
 export async function weeklyDigestJob() {
   const startedAt = Date.now();
   let processed = 0,
@@ -382,7 +808,6 @@ export async function weeklyDigestJob() {
     }),
   );
 
-  // Set heartbeat
   try {
     gRunnerUp.labels("weekly-digest").set(1);
   } catch (_) {}
@@ -427,472 +852,272 @@ export async function weeklyDigestJob() {
       const contactGroups = ws.contact_groups || [];
       if (!Array.isArray(contactGroups)) continue;
 
-      for (const group of contactGroups) {
-        if (!group || !group.id || !group.name) continue;
+      const digestGroups = contactGroups.filter(
+        (group) => group && group.id != null && isDigestEnabled(group),
+      );
+      if (digestGroups.length === 0) continue;
 
-        const weeklyDigestEmail =
-          group.weekly_digest_email === true ||
-          group.weekly_digest_email === "true";
-        const weeklyDigestWhatsapp =
-          group.weekly_digest_whatsapp === true ||
-          group.weekly_digest_whatsapp === "true";
-        const weeklyDigestWebhooks =
-          group.weekly_digest_webhooks === true ||
-          group.weekly_digest_webhooks === "true";
+      try {
+        const window = isWithinDeliveryWindow(ws);
+        if (!window.inWindow) {
+          logger.info(
+            `Skipping weekly digest for workspace ${ws.workspace_id}: outside delivery window (${window.cur} not in ${window.start}-${window.end} ${window.tzInput || "UTC"})`,
+          );
+          skipped++;
+          continue;
+        }
+      } catch (err) {
+        logger.warn(
+          `Error checking delivery window for workspace ${ws.workspace_id}: ${err.message}`,
+        );
+      }
 
-        if (
-          !weeklyDigestEmail &&
-          !weeklyDigestWhatsapp &&
-          !weeklyDigestWebhooks
-        ) {
+      const thresholds = Array.isArray(ws.alert_thresholds)
+        ? ws.alert_thresholds
+        : [30, 14, 7, 1, 0];
+      const validThresholds = thresholds.filter((t) => t >= 1);
+      if (validThresholds.length === 0) {
+        logger.info(
+          `Skipping weekly digest for workspace ${ws.workspace_id}: no valid future thresholds (all thresholds are <= 0)`,
+        );
+        skipped++;
+        continue;
+      }
+      const maxThreshold = Math.max(...validThresholds);
+
+      const tokensRes = await client.query(
+        `SELECT 
+           t.id,
+           t.id AS token_id,
+           t.name,
+           t.type,
+           t.category,
+           t.expiration::date AS expiration,
+           t.location,
+           t.used_by,
+           t.issuer,
+           t.description
+         FROM tokens t
+         WHERE t.workspace_id = $1
+           AND t.expiration IS NOT NULL
+           AND t.expiration BETWEEN CURRENT_DATE AND CURRENT_DATE + ($2::integer)
+           AND (
+             t.cert_lifecycle_status IS NULL
+             OR t.cert_lifecycle_status NOT IN ('revoked', 'decommissioned')
+           )
+         ORDER BY t.expiration ASC`,
+        [ws.workspace_id, maxThreshold],
+      );
+
+      const tokens = tokensRes.rows;
+      if (tokens.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const defaultGroupId =
+        ws.default_contact_group_id != null &&
+        String(ws.default_contact_group_id).trim()
+          ? String(ws.default_contact_group_id)
+          : null;
+
+      const assignedByToken = await loadAssignedIdsByToken(
+        client,
+        ws.workspace_id,
+        tokens,
+      );
+
+      const contactIds = [];
+      const seenContactIds = new Set();
+      for (const group of digestGroups) {
+        const idLists = [
+          group.email_contact_ids,
+          group.whatsapp_contact_ids,
+        ];
+        for (const list of idLists) {
+          for (const id of Array.isArray(list) ? list : []) {
+            if (id == null) continue;
+            const key = String(id);
+            if (seenContactIds.has(key)) continue;
+            seenContactIds.add(key);
+            contactIds.push(id);
+          }
+        }
+      }
+
+      const contactsById = new Map();
+      const phoneNameByKey = new Map();
+      if (contactIds.length > 0) {
+        const contactsRes = await client.query(
+          `SELECT id, details, phone_e164, first_name, last_name
+             FROM workspace_contacts
+            WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+          [ws.workspace_id, contactIds],
+        );
+        for (const contact of contactsRes.rows) {
+          contactsById.set(String(contact.id), contact);
+          if (!contact.phone_e164) continue;
+          const phoneKey = String(contact.phone_e164).trim();
+          if (!phoneKey || phoneNameByKey.has(phoneKey)) continue;
+          phoneNameByKey.set(phoneKey, contactDisplayName(contact));
+        }
+      }
+
+      const webhookByUrl = indexWebhooksByUrl(ws.webhook_urls);
+      const groupById = new Map(
+        digestGroups.map((group) => [String(group.id), group]),
+      );
+      const groupCandidateCount = new Map();
+      const groupCandidates = [];
+
+      for (const group of digestGroups) {
+        const groupId = String(group.id);
+        const candidateTokens = tokens.filter((token) =>
+          isCandidateForGroup(
+            token,
+            groupId,
+            assignedByToken,
+            defaultGroupId,
+            ws.contact_groups,
+          ),
+        );
+        groupCandidateCount.set(groupId, candidateTokens.length);
+        if (candidateTokens.length === 0) continue;
+
+        groupCandidates.push({
+          group,
+          tokens: candidateTokens,
+          emails: emailsForGroup(group, contactsById),
+          phones: phonesForGroup(group, contactsById),
+          webhookUrls: webhookUrlsForGroup(group, ws.webhook_urls),
+        });
+      }
+
+      const inverted = invertDigestCandidates({ groupCandidates }).filter(
+        (row) => row && Array.isArray(row.tokens) && row.tokens.length > 0,
+      );
+
+      if (inverted.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const successfulGroupIds = new Set();
+      const groupChannelsSent = new Map();
+      const groupSuccessCount = new Map();
+
+      for (const row of inverted) {
+        processed++;
+        const claim = await claimWeeklyDigestRecipient(client, {
+          workspaceId: ws.workspace_id,
+          weekStartDate,
+          channel: row.channel,
+          recipientKey: row.recipientKey,
+          tokensCount: row.tokens.length,
+          leaseMs: WEEKLY_DIGEST_CLAIM_LEASE_MS,
+        });
+        if (!claim) {
+          skipped++;
           continue;
         }
 
-        // Check if we're within the workspace delivery window
-        try {
-          let start = String(ws.delivery_window_start || "").trim();
-          let end = String(ws.delivery_window_end || "").trim();
-          const tzInput = String(ws.delivery_window_tz || "").trim();
-
-          // Use default delivery window if not configured
-          if (!start && !end) {
-            start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
-            end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
-          }
-
-          if (start && end) {
-            const now = new Date();
-            let hh, mm;
-
-            if (tzInput) {
-              try {
-                const fmt = new Intl.DateTimeFormat("en-US", {
-                  timeZone: tzInput,
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                });
-                const parts = fmt.formatToParts(now);
-                hh = parts.find((p) => p.type === "hour")?.value || "00";
-                mm = parts.find((p) => p.type === "minute")?.value || "00";
-              } catch (_err) {
-                // Invalid timezone; fall back to UTC
-                hh = String(now.getUTCHours()).padStart(2, "0");
-                mm = String(now.getUTCMinutes()).padStart(2, "0");
-                if (tzInput) {
-                  logger.warn(
-                    `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
-                  );
-                }
-              }
-            } else {
-              // No timezone configured, use UTC
-              hh = String(now.getUTCHours()).padStart(2, "0");
-              mm = String(now.getUTCMinutes()).padStart(2, "0");
-            }
-
-            const cur = `${hh}:${mm}`;
-            const inWindow =
-              start <= end
-                ? cur >= start && cur <= end
-                : cur >= start || cur <= end;
-
-            if (!inWindow) {
-              logger.info(
-                `Skipping weekly digest for workspace ${ws.workspace_id}, group ${group.id}: outside delivery window (${cur} not in ${start}-${end} ${tzInput || "UTC"})`,
-              );
-              skipped++;
-              continue;
-            }
-          }
-        } catch (err) {
-          logger.warn(
-            `Error checking delivery window for workspace ${ws.workspace_id}: ${err.message}`,
-          );
-          // Continue anyway if delivery window check fails
-        }
-
-        processed++;
-
-        const alreadySentRes = await client.query(
-          `SELECT id FROM weekly_digest_log
-           WHERE workspace_id = $1 AND contact_group_id = $2 AND week_start_date = $3`,
-          [ws.workspace_id, group.id, weekStartDate],
+        const groupNames = contributingGroupNames(
+          groupById,
+          row.contributingGroupIds,
         );
 
-        if (alreadySentRes.rows.length > 0) {
-          skipped++;
-          continue;
-        }
-
-        const thresholds = Array.isArray(ws.alert_thresholds)
-          ? ws.alert_thresholds
-          : [30, 14, 7, 1, 0];
-        const validThresholds = thresholds.filter((t) => t >= 1);
-        if (validThresholds.length === 0) {
-          logger.info(
-            `Skipping weekly digest for workspace ${ws.workspace_id}, group ${group.id}: no valid future thresholds (all thresholds are <= 0)`,
+        let res;
+        try {
+          res = await deliverRecipientDigest({
+            row,
+            ws,
+            weekStartDate,
+            groupNames,
+            phoneNameByKey,
+            webhookByUrl,
+            weeklyDigestTemplateSid,
+          });
+        } catch (err) {
+          logger.error(
+            JSON.stringify({
+              level: "ERROR",
+              message: "weekly-digest-recipient-send-failed",
+              workspace: ws.workspace_id,
+              channel: row.channel,
+              error: err.message,
+            }),
           );
-          skipped++;
+          res = { success: false };
+        }
+
+        try {
+          cWeeklyDigestSent
+            .labels(row.channel, res && res.success ? "success" : "failure")
+            .inc();
+        } catch (_) {}
+
+        if (!res || !res.success) {
           continue;
         }
-        const maxThreshold = Math.max(...validThresholds);
 
-        const tokensRes = await client.query(
-          `SELECT 
-             t.id AS token_id,
-             t.name,
-             t.type,
-             t.category,
-             t.expiration::date AS expiration,
-             t.location,
-             t.used_by,
-             t.issuer,
-             t.description
-           FROM tokens t
-           WHERE t.workspace_id = $1
-             AND (t.contact_group_id = $2 OR (t.contact_group_id IS NULL AND $2 = $3))
-             AND t.expiration IS NOT NULL
-             AND t.expiration BETWEEN CURRENT_DATE AND CURRENT_DATE + ($4::integer)
-             AND (
-               t.cert_lifecycle_status IS NULL
-               OR t.cert_lifecycle_status NOT IN ('revoked', 'decommissioned')
-             )
-           ORDER BY t.expiration ASC`,
+        await markWeeklyDigestRecipientSent(client, {
+          workspaceId: ws.workspace_id,
+          weekStartDate,
+          channel: row.channel,
+          recipientKey: row.recipientKey,
+        });
+
+        sent++;
+        digestCount++;
+        totalTokensIncluded += row.tokens.length;
+
+        for (const gid of row.contributingGroupIds || []) {
+          const groupId = String(gid);
+          successfulGroupIds.add(groupId);
+          if (!groupChannelsSent.has(groupId)) {
+            groupChannelsSent.set(groupId, new Set());
+          }
+          groupChannelsSent.get(groupId).add(row.channel);
+          groupSuccessCount.set(
+            groupId,
+            (groupSuccessCount.get(groupId) || 0) + 1,
+          );
+        }
+      }
+
+      for (const groupId of successfulGroupIds) {
+        const group = groupById.get(groupId);
+        const channels = [...(groupChannelsSent.get(groupId) || [])];
+        await client.query(
+          `INSERT INTO weekly_digest_log (workspace_id, contact_group_id, week_start_date, tokens_count, channels, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (workspace_id, contact_group_id, week_start_date) DO NOTHING`,
           [
             ws.workspace_id,
-            group.id,
-            ws.default_contact_group_id,
-            maxThreshold,
+            groupId,
+            weekStartDate,
+            groupCandidateCount.get(groupId) || 0,
+            JSON.stringify(channels),
+            JSON.stringify({
+              sent_to_count: groupSuccessCount.get(groupId) || 0,
+            }),
           ],
         );
 
-        const tokens = tokensRes.rows;
-
-        if (tokens.length === 0) {
-          skipped++;
-          continue;
-        }
-
-        const channels = [];
-        const successfulChannels = new Set();
-        let successCount = 0;
-
-        // Track per-channel metrics for accurate reporting
-        const channelMetrics = {
-          email: { success: 0, failure: 0 },
-          whatsapp: { success: 0, failure: 0 },
-          webhook: { success: 0, failure: 0 },
-        };
-
-        if (weeklyDigestEmail) {
-          const emailContactIds = Array.isArray(group.email_contact_ids)
-            ? group.email_contact_ids
-            : [];
-
-          if (emailContactIds.length > 0) {
-            const contactsRes = await client.query(
-              `SELECT details FROM workspace_contacts
-               WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
-              [ws.workspace_id, emailContactIds],
-            );
-
-            const emails = contactsRes.rows
-              .map((c) => c.details?.email)
-              .filter(Boolean);
-
-            if (emails.length > 0) {
-              channels.push("email");
-              const { subject, text, html } = buildDigestEmailContent(
-                tokens,
-                group.name,
-                ws.workspace_name,
-              );
-
-              for (const email of emails) {
-                const res = await sendEmailNotification({
-                  to: email,
-                  subject,
-                  text,
-                  html,
-                });
-
-                if (res.success) {
-                  successCount++;
-                  successfulChannels.add("email");
-                  channelMetrics.email.success++;
-                } else {
-                  channelMetrics.email.failure++;
-                }
-              }
-            }
-          }
-        }
-
-        if (weeklyDigestWhatsapp) {
-          const whatsappContactIds = Array.isArray(group.whatsapp_contact_ids)
-            ? group.whatsapp_contact_ids
-            : [];
-
-          if (whatsappContactIds.length > 0) {
-            const contactsRes = await client.query(
-              `SELECT id, phone_e164, first_name, last_name FROM workspace_contacts
-               WHERE workspace_id = $1 AND id = ANY($2::uuid[]) AND phone_e164 IS NOT NULL`,
-              [ws.workspace_id, whatsappContactIds],
-            );
-
-            const contacts = contactsRes.rows.filter((c) => c.phone_e164);
-
-            if (contacts.length > 0) {
-              channels.push("whatsapp");
-
-              // Use Twilio Content Template if configured
-              const contentSid = weeklyDigestTemplateSid;
-
-              // Build tokens list for template (all tokens, single line with semicolon separator)
-              // Note: Twilio Content Templates don't support multiline values
-              const tokensList = tokens.map((t) => {
-                const days = computeDaysLeft(t.expiration);
-                const expires = t.expiration
-                  ? new Date(t.expiration).toISOString().slice(0, 10)
-                  : "Unknown";
-                return `${t.name}: ${expires} (${days}d)`;
-              });
-
-              const tokensListText = tokensList.join("; ");
-
-              for (const contact of contacts) {
-                const firstName = String(contact.first_name || "").trim();
-                const lastName = String(contact.last_name || "").trim();
-                const recipientName =
-                  [firstName, lastName].filter(Boolean).join(" ") || "User";
-                const idempotencyKey = `weekly-digest:${ws.workspace_id}:${group.id}:${weekStartDate}:${contact.phone_e164}`;
-
-                let res;
-                if (contentSid) {
-                  // WEEKLY_DIGEST template: five placeholders only (see DocsAlerts).
-                  const contentVariables = sanitizeWhatsAppTemplateVars(
-                    buildWeeklyDigestWhatsAppTemplateVariables({
-                      recipientName,
-                      workspaceName: ws.workspace_name,
-                      contactGroupName: group.name,
-                      tokensCount: tokens.length,
-                      tokensListText,
-                    }),
-                    {
-                      maxLens: {
-                        tokens_list: WHATSAPP_WEEKLY_DIGEST_TOKENS_LIST_MAX_LEN,
-                      },
-                    },
-                  );
-
-                  res = await sendWhatsApp({
-                    to: contact.phone_e164,
-                    contentSid,
-                    contentVariables,
-                    idempotencyKey,
-                  });
-                } else {
-                  // Fallback to plain text
-                  const body = buildDigestWhatsAppText(
-                    tokens,
-                    group.name,
-                    ws.workspace_name,
-                  );
-
-                  res = await sendWhatsApp({
-                    to: contact.phone_e164,
-                    body,
-                    idempotencyKey,
-                  });
-                }
-
-                if (res.success) {
-                  successCount++;
-                  successfulChannels.add("whatsapp");
-                  channelMetrics.whatsapp.success++;
-                } else {
-                  channelMetrics.whatsapp.failure++;
-                }
-              }
-            }
-          }
-        }
-
-        if (weeklyDigestWebhooks) {
-          const webhookNames = Array.isArray(group.webhook_names)
-            ? group.webhook_names
-            : [];
-          const webhookUrls = Array.isArray(ws.webhook_urls)
-            ? ws.webhook_urls
-            : [];
-
-          let webhookChannelPushed = false;
-
-          for (const whName of webhookNames) {
-            const wh = webhookUrls.find((w) => w.name === whName);
-            if (!wh || !wh.url) continue;
-
-            const kind = (wh.kind || "generic").toLowerCase();
-
-            // Skip PagerDuty - it's for incident alerting, not digest summaries
-            if (kind === "pagerduty") continue;
-
-            // Only push "webhook" channel once, even if multiple webhooks configured
-            if (!webhookChannelPushed) {
-              channels.push("webhook");
-              webhookChannelPushed = true;
-            }
-
-            const tokensList = tokens.slice(0, 20).map((t) => {
-              const days = computeDaysLeft(t.expiration);
-              return {
-                name: t.name,
-                type: t.type || "Unknown",
-                expiration: t.expiration
-                  ? new Date(t.expiration).toISOString().slice(0, 10)
-                  : "Unknown",
-                days_until: days,
-              };
-            });
-
-            // Build custom payload for weekly digest (not individual token alerts)
-            let payload;
-            if (kind === "slack") {
-              payload = buildSlackDigestPayload(
-                tokens.length,
-                tokensList,
-                group.name,
-                ws.workspace_name,
-              );
-            } else if (kind === "discord") {
-              payload = buildDiscordDigestPayload(
-                tokens.length,
-                tokensList,
-                group.name,
-                ws.workspace_name,
-              );
-            } else if (kind === "teams") {
-              payload = buildTeamsDigestPayload(
-                tokens.length,
-                tokensList,
-                group.name,
-                ws.workspace_name,
-              );
-            } else {
-              // Generic webhook
-              payload = {
-                type: "weekly_digest",
-                title: `Weekly Digest: ${tokens.length} token(s) expiring soon`,
-                workspace: ws.workspace_name,
-                contact_group: group.name,
-                tokens_count: tokens.length,
-                tokens: tokensList,
-                week_start_date: weekStartDate,
-                timestamp: new Date().toISOString(),
-                url: `${APP_URL}/dashboard`,
-              };
-            }
-
-            const res = await postJson(wh.url, payload, kind);
-
-            // Log webhook send result
-            if (res.success) {
-              successCount++;
-              successfulChannels.add("webhook");
-              channelMetrics.webhook.success++;
-              try {
-                logger.info(
-                  JSON.stringify({
-                    level: "INFO",
-                    message: "webhook-send-succeeded",
-                    kind,
-                    url: maskWebhookUrl(wh.url),
-                    tokens_count: tokens.length,
-                    workspace: ws.workspace_name,
-                    contact_group: group.name,
-                  }),
-                );
-              } catch (_err) {
-                logger.debug("Non-critical operation failed", {
-                  error: _err.message,
-                });
-              }
-            } else {
-              channelMetrics.webhook.failure++;
-              try {
-                logger.error(
-                  JSON.stringify({
-                    level: "ERROR",
-                    message: "webhook-send-failed",
-                    kind,
-                    url: maskWebhookUrl(wh.url),
-                    error: res.error || "Unknown error",
-                    tokens_count: tokens.length,
-                    workspace: ws.workspace_name,
-                    contact_group: group.name,
-                  }),
-                );
-              } catch (_err) {
-                logger.debug("Non-critical operation failed", {
-                  error: _err.message,
-                });
-              }
-            }
-          }
-        }
-
-        if (successCount > 0) {
-          sent++;
-          digestCount++;
-          totalTokensIncluded += tokens.length;
-
-          // Track metrics per channel (with accurate per-channel success/failure counts)
-          try {
-            for (const [channel, metrics] of Object.entries(channelMetrics)) {
-              if (metrics.success > 0) {
-                cWeeklyDigestSent
-                  .labels(channel, "success")
-                  .inc(metrics.success);
-              }
-              if (metrics.failure > 0) {
-                cWeeklyDigestSent
-                  .labels(channel, "failure")
-                  .inc(metrics.failure);
-              }
-            }
-          } catch (_) {}
-
-          await client.query(
-            `INSERT INTO weekly_digest_log (workspace_id, contact_group_id, week_start_date, tokens_count, channels, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              ws.workspace_id,
-              group.id,
-              weekStartDate,
-              tokens.length,
-              JSON.stringify(channels),
-              JSON.stringify({
-                sent_to_count: successCount,
-              }),
-            ],
-          );
-
-          await writeAudit(client, {
-            subjectUserId: ws.owner_user_id,
-            action: "WEEKLY_DIGEST_SENT",
-            targetType: "workspace",
-            targetId: null,
-            workspaceId: ws.workspace_id,
-            metadata: {
-              contact_group_id: group.id,
-              contact_group_name: group.name,
-              tokens_count: tokens.length,
-              channels,
-              week_start_date: weekStartDate,
-            },
-          });
-        }
+        await writeAudit(client, {
+          subjectUserId: ws.owner_user_id,
+          action: "WEEKLY_DIGEST_SENT",
+          targetType: "workspace",
+          targetId: null,
+          workspaceId: ws.workspace_id,
+          metadata: {
+            contact_group_id: groupId,
+            contact_group_name: group && group.name,
+            tokens_count: groupCandidateCount.get(groupId) || 0,
+            channels,
+            week_start_date: weekStartDate,
+          },
+        });
       }
     }
   });
@@ -900,19 +1125,17 @@ export async function weeklyDigestJob() {
   const durationMs = Date.now() - startedAt;
   const success = true;
 
-  // Update metrics
   try {
     gWeeklyDigestProcessed.set(processed);
     if (digestCount > 0) {
       gWeeklyDigestTokensIncluded.set(totalTokensIncluded / digestCount);
     }
-    gWeeklyDigestLastRun.set(Date.now() / 1000); // Unix timestamp in seconds
+    gWeeklyDigestLastRun.set(Date.now() / 1000);
     gWeeklyDigestLastRunSuccess.set(success ? 1 : 0);
   } catch (_err) {
     logger.warn("DB operation failed", { error: _err.message });
   }
 
-  // Track last digest send timestamp from DB (used by WeeklyDigestNoSendsWeek alert)
   try {
     await withClient(async (client) => {
       const res = await client.query(
@@ -925,7 +1148,6 @@ export async function weeklyDigestJob() {
     logger.debug("Non-critical operation failed", { error: _err.message });
   }
 
-  // Push metrics to Pushgateway
   try {
     await pushMetrics("weekly-digest");
   } catch (err) {

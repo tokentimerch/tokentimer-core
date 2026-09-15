@@ -103,6 +103,11 @@ import DashboardPagination from './components/DashboardPagination.jsx';
 import AssetInventoryTable, {
   resolveContactGroupLabel,
 } from './components/AssetInventoryTable.jsx';
+import ContactGroupCheckboxGroup from './components/ContactGroupCheckboxGroup.jsx';
+import {
+  canonicalContactGroupFields,
+  joinContactGroupIdsForExport,
+} from './utils/contactGroupAssignment.js';
 import {
   DashboardThemeProvider,
   useDashboardTheme,
@@ -748,7 +753,7 @@ function App() {
     domains: '',
     location: '',
     used_by: '',
-    contact_group_id: '',
+    contact_group_ids: [],
     issuer: '',
     serial_number: '',
     subject: '',
@@ -1694,10 +1699,9 @@ function App() {
         domains: domainsArray,
         location: formData.location.trim() || null,
         used_by: formData.used_by.trim() || null,
-        contact_group_id:
-          !isViewer && formData.contact_group_id
-            ? formData.contact_group_id
-            : null,
+        ...(isViewer
+          ? { contact_group_ids: [], contact_group_id: null }
+          : canonicalContactGroupFields(formData.contact_group_ids)),
         issuer: formData.issuer.trim() || null,
         serial_number: formData.serial_number.trim() || null,
         subject: formData.subject.trim() || null,
@@ -1744,6 +1748,7 @@ function App() {
         domains: '',
         location: '',
         used_by: '',
+        contact_group_ids: [],
         issuer: '',
         serial_number: '',
         subject: '',
@@ -1852,10 +1857,9 @@ function App() {
           domains: domainsArray,
           location: formData.location.trim() || null,
           used_by: formData.used_by.trim() || null,
-          contact_group_id:
-            !isViewer && formData.contact_group_id
-              ? formData.contact_group_id
-              : null,
+          ...(isViewer
+            ? { contact_group_ids: [], contact_group_id: null }
+            : canonicalContactGroupFields(formData.contact_group_ids)),
           issuer: formData.issuer.trim() || null,
           serial_number: formData.serial_number.trim() || null,
           subject: formData.subject.trim() || null,
@@ -1901,6 +1905,7 @@ function App() {
         domains: '',
         location: '',
         used_by: '',
+        contact_group_ids: [],
         issuer: '',
         serial_number: '',
         subject: '',
@@ -4222,6 +4227,7 @@ function DashboardView({
           'imported_at',
           'created_at',
           'contact_group_id',
+          'contact_group_ids',
         ];
         const rows = currentTokens.map(t => ({
           name: t.name ?? '',
@@ -4254,6 +4260,7 @@ function DashboardView({
           imported_at: t.imported_at ?? '',
           created_at: t.created_at ?? '',
           contact_group_id: t.contact_group_id ?? '',
+          contact_group_ids: joinContactGroupIdsForExport(t),
         }));
         const escape = v => {
           const s = String(v == null ? '' : v);
@@ -4306,6 +4313,7 @@ function DashboardView({
           imported_at: t.imported_at ?? '',
           created_at: t.created_at ?? '',
           contact_group_id: t.contact_group_id ?? '',
+          contact_group_ids: joinContactGroupIdsForExport(t),
         }));
         const header = [
           'name',
@@ -4334,6 +4342,7 @@ function DashboardView({
           'imported_at',
           'created_at',
           'contact_group_id',
+          'contact_group_ids',
         ];
         const ws = XLSX.utils.json_to_sheet(rows, { header });
         const wb = XLSX.utils.book_new();
@@ -5260,28 +5269,25 @@ function DashboardView({
                           </FormControl>
 
                           {/* Contact group selector - replaces per-token email override */}
-                          <FormControl>
-                            <FormLabel>Contact group (alerts)</FormLabel>
-                            <Select
-                              name='contact_group_id'
-                              value={formData.contact_group_id || ''}
-                              onChange={onInputChange}
+                          <FormControl as='fieldset'>
+                            <FormLabel as='legend'>
+                              Contact groups (alerts)
+                            </FormLabel>
+                            <ContactGroupCheckboxGroup
+                              contactGroups={contactGroups}
+                              value={formData.contact_group_ids}
+                              onChange={ids =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  contact_group_ids: ids,
+                                }))
+                              }
                               isDisabled={isViewer}
-                              bg={inputBg}
-                              borderColor={inputBorder}
-                            >
-                              <option value=''>Use workspace default</option>
-                              {Array.isArray(contactGroups) &&
-                                contactGroups.map(g => (
-                                  <option key={g.id} value={g.id}>
-                                    {g.name}
-                                  </option>
-                                ))}
-                            </Select>
+                            />
                             {isViewer ? (
                               <Text fontSize='xs' color={helpTextColor} mt={1}>
                                 Only workspace managers and admins can set
-                                per-token contact group.
+                                per-token contact groups.
                               </Text>
                             ) : null}
                           </FormControl>

@@ -64,6 +64,21 @@ function createMemoryClient() {
           created_by: params[5],
           created_at: new Date("2026-07-01T00:00:00.000Z"),
           updated_at: new Date("2026-07-01T00:00:00.000Z"),
+          downtime_alerts_enabled: params[6] ?? null,
+          contact_group_id: params[7] ?? null,
+          contact_group_ids: (() => {
+            const raw = params[8];
+            if (Array.isArray(raw)) return raw;
+            if (typeof raw === "string") {
+              try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+              } catch (_err) {
+                return [];
+              }
+            }
+            return [];
+          })(),
         };
         bootstrapRows.push(row);
         return { rows: [row] };
@@ -208,6 +223,51 @@ describe("CertOps agent bootstrap tokens", () => {
     );
     assert.equal(created.token.tokenHash, undefined);
     assert.equal(created.token.token_hash, undefined);
+  });
+
+  it("stores the full contactGroupIds set and a lex-smallest singular mirror", async () => {
+    const client = createMemoryClient();
+    const created = await createBootstrapToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Multi group bootstrap",
+      expiresAt: date(60_000),
+      createdBy: 7,
+      contactGroupIds: ["ops", "alerts", "ops"],
+    });
+
+    assert.deepEqual(created.token.contactGroupIds, ["alerts", "ops"]);
+    assert.equal(created.token.contactGroupId, "alerts");
+    assert.deepEqual(client.bootstrapRows[0].contact_group_ids, ["alerts", "ops"]);
+    assert.equal(client.bootstrapRows[0].contact_group_id, "alerts");
+  });
+
+  it("validateBootstrapToken returns the full contactGroupIds set", async () => {
+    const client = createMemoryClient();
+    const created = await createBootstrapToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Multi group consume",
+      expiresAt: date(60_000),
+      createdBy: 7,
+      contactGroupIds: ["ops", "alerts"],
+    });
+
+    const valid = await validateBootstrapToken({
+      client,
+      rawToken: created.plaintextToken,
+    });
+    assert.equal(valid.valid, true);
+    assert.deepEqual(valid.bootstrapToken.contactGroupIds, ["alerts", "ops"]);
+    assert.equal(valid.bootstrapToken.contactGroupId, "alerts");
+
+    const lookup = client.queries.find(
+      (query) =>
+        query.sql.includes("FROM certops_agent_bootstrap_tokens") &&
+        query.sql.includes("WHERE token_prefix = $1"),
+    );
+    assert.ok(lookup, "expected bootstrap consume lookup");
+    assert.match(lookup.sql, /contact_group_ids/);
   });
 
   it("round-trips parse of a generated bootstrap token", () => {

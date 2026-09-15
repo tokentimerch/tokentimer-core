@@ -77,10 +77,10 @@ function happyPathHandler(overrides = {}) {
             ],
           };
     }
-    if (sql.includes("FROM tokens")) {
-      return overrides.token !== undefined
-        ? overrides.token
-        : { rows: [{ contact_group_id: null }] };
+    if (sql.includes("FROM token_contact_groups")) {
+      return overrides.assignedGroups !== undefined
+        ? overrides.assignedGroups
+        : { rows: [] };
     }
     if (sql.includes("INSERT INTO alert_queue")) {
       return { rows: [], rowCount: 1 };
@@ -260,6 +260,47 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
     });
     assert.equal(outcome.queued, false);
     assert.equal(outcome.reason, "no_channels");
+  });
+
+  it("unions email and webhook channels across join-table groups", async () => {
+    const { state, client } = createMockClient(
+      happyPathHandler({
+        assignedGroups: {
+          rows: [
+            { contact_group_id: "g-email" },
+            { contact_group_id: "g-hook" },
+          ],
+        },
+        settings: {
+          rows: [
+            {
+              email_alerts_enabled: true,
+              contact_groups: [
+                { id: "g-email", email_contact_ids: ["c1"] },
+                { id: "g-hook", webhook_names: ["ops"] },
+              ],
+              default_contact_group_id: "g-email",
+              webhook_urls: [{ name: "ops" }],
+            },
+          ],
+        },
+      }),
+    );
+    const outcome = await queueCertRenewalFailedAlert({
+      client,
+      job: renewJob(),
+      workspaceId: WORKSPACE_A,
+    });
+    assert.equal(outcome.queued, true);
+    const membership = state.queries.find((q) =>
+      q.text.includes("FROM token_contact_groups"),
+    );
+    assert.ok(membership, "join-table membership lookup expected");
+    assert.deepEqual(membership.params, [77, WORKSPACE_A]);
+    const insert = state.queries.find((q) =>
+      q.text.includes("INSERT INTO alert_queue"),
+    );
+    assert.deepEqual(JSON.parse(insert.params[4]), ["email", "webhooks"]);
   });
 
   it("builds a stable alert key from the job id", () => {

@@ -9,6 +9,10 @@ const {
   CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   normalizeDowntimeAlertsEnabled,
 } = require("./agentAlertSettings");
+const {
+  canonicalLegacyContactGroupId,
+  normalizeAssignedGroupIds,
+} = require("../../src/shared/contactGroups");
 
 const CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID =
   "CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID";
@@ -70,7 +74,8 @@ const BOOTSTRAP_SAFE_SELECT_FIELDS = `
   created_at,
   updated_at,
   downtime_alerts_enabled,
-  contact_group_id
+  contact_group_id,
+  contact_group_ids
 `;
 
 function serviceError(message, code) {
@@ -284,8 +289,45 @@ function bootstrapTokenStatusFromRow(row) {
   return "active";
 }
 
+function parseJsonbIdList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_err) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function bootstrapMembershipFromRow(row) {
+  const fromJson = normalizeAssignedGroupIds(parseJsonbIdList(row?.contact_group_ids));
+  if (fromJson.length > 0) return fromJson;
+  const singular = row?.contact_group_id;
+  return singular && String(singular).trim()
+    ? normalizeAssignedGroupIds([String(singular)])
+    : [];
+}
+
+function normalizeBootstrapContactGroupIds(ids, singular) {
+  const source = Array.isArray(ids)
+    ? ids
+    : singular !== undefined && singular !== null && String(singular).trim() !== ""
+      ? [singular]
+      : [];
+  const out = [];
+  for (const raw of source) {
+    const id = normalizeOptionalContactGroupId(raw);
+    if (id) out.push(id);
+  }
+  return normalizeAssignedGroupIds(out);
+}
+
 function bootstrapTokenMetadataFromRow(row) {
   if (!row) return null;
+  const contactGroupIds = bootstrapMembershipFromRow(row);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -307,7 +349,8 @@ function bootstrapTokenMetadataFromRow(row) {
       row.downtime_alerts_enabled === null || row.downtime_alerts_enabled === undefined
         ? null
         : Boolean(row.downtime_alerts_enabled),
-    contactGroupId: row.contact_group_id || null,
+    contactGroupId: canonicalLegacyContactGroupId(contactGroupIds),
+    contactGroupIds,
   };
 }
 
@@ -343,7 +386,11 @@ async function createBootstrapToken(options) {
   const downtimeAlertsEnabled = normalizeOptionalAlertsEnabled(
     options.downtimeAlertsEnabled,
   );
-  const contactGroupId = normalizeOptionalContactGroupId(options.contactGroupId);
+  const contactGroupIds = normalizeBootstrapContactGroupIds(
+    options.contactGroupIds,
+    options.contactGroupId,
+  );
+  const contactGroupId = canonicalLegacyContactGroupId(contactGroupIds);
 
   for (let attempt = 1; attempt <= MAX_TOKEN_CREATE_ATTEMPTS; attempt += 1) {
     const plaintextToken = generateRawBootstrapToken();
@@ -361,9 +408,10 @@ async function createBootstrapToken(options) {
            expires_at,
            created_by,
            downtime_alerts_enabled,
-           contact_group_id
+           contact_group_id,
+           contact_group_ids
          )
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8)
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9::jsonb)
          RETURNING ${BOOTSTRAP_SAFE_SELECT_FIELDS}`,
         [
           workspaceId,
@@ -374,6 +422,7 @@ async function createBootstrapToken(options) {
           options.createdBy || null,
           downtimeAlertsEnabled,
           contactGroupId,
+          JSON.stringify(contactGroupIds),
         ],
       );
 
@@ -519,7 +568,8 @@ async function validateBootstrapToken(options) {
             created_at,
             updated_at,
             downtime_alerts_enabled,
-            contact_group_id
+            contact_group_id,
+            contact_group_ids
        FROM certops_agent_bootstrap_tokens
       WHERE token_prefix = $1
       LIMIT 1`,

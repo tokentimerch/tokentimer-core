@@ -14,11 +14,14 @@ import {
   isStaleImportThreshold,
 } from "./shared/thresholds.js";
 import {
-  resolveContactGroup,
+  resolveContactGroupsForAsset,
+  canonicalLegacyContactGroupId,
   hasEmailContacts,
   hasWhatsAppContacts,
   hasWebhookNames,
   getWebhookNames,
+  unionGroupsForThresholdWindow,
+  unionEffectiveThresholds,
 } from "./shared/contactGroups.js";
 import { shouldSkipRetiredCertificateAlert } from "./shared/retiredCertificateAlerts.js";
 
@@ -26,6 +29,54 @@ const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
   .map((s) => parseInt(s.trim(), 10))
   .filter((n) => Number.isFinite(n));
+
+function assignedIdsFromRow(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function channelsFromGroups(groups, { emailEnabled, webhookUrls }) {
+  const list = Array.isArray(groups) ? groups : [];
+  const channels = [];
+  if (emailEnabled && list.some(hasEmailContacts)) {
+    channels.push("email");
+  }
+
+  const webhooks = Array.isArray(webhookUrls) ? webhookUrls : [];
+  let hasWebhook = false;
+  try {
+    const names = new Set();
+    for (const group of list) {
+      if (!hasWebhookNames(group)) continue;
+      for (const name of getWebhookNames(group)) {
+        if (name) names.add(name);
+      }
+    }
+    if (names.size > 0) {
+      hasWebhook = webhooks.some((webhook) =>
+        names.has(String(webhook?.name || "").trim()),
+      );
+    }
+  } catch (_) {
+    hasWebhook = true;
+  }
+  if (hasWebhook) channels.push("webhooks");
+
+  if (list.some(hasWhatsAppContacts)) {
+    channels.push("whatsapp");
+  }
+  return channels;
+}
+
+function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
+  const contactGroupId =
+    canonicalLegacyContactGroupId(assignedIds) ||
+    (resolvedGroups[0] ? String(resolvedGroups[0].id) : null);
+  const groups = Array.isArray(contactGroups) ? contactGroups : [];
+  const contactGroupName = contactGroupId
+    ? groups.find((g) => String(g.id) === String(contactGroupId))?.name || null
+    : null;
+  return { contactGroupId, contactGroupName };
+}
 
 async function writeAudit(
   client,
@@ -100,8 +151,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
          COALESCE(t.workspace_id, wf.id, wj.id) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name,
          t.expiration::date AS expiration,
-         
-         t.contact_group_id,
+         COALESCE(assigned_groups.assigned_ids, ARRAY[]::text[]) AS assigned_ids,
          COALESCE(w.created_by, wf.created_by, wj.created_by, t.user_id) AS owner_user_id,
          u.email AS owner_email,
          COALESCE(ws.alert_thresholds, wsf.alert_thresholds, wjj.alert_thresholds) AS alert_thresholds,
@@ -135,6 +185,11 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
        LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
        LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
        LEFT JOIN users u ON u.id = COALESCE(w.created_by, wf.created_by, wj.created_by, t.user_id)
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(array_agg(tcg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
+         FROM token_contact_groups tcg
+         WHERE tcg.token_id = t.id AND tcg.workspace_id = t.workspace_id
+       ) assigned_groups ON TRUE
        WHERE t.expiration IS NOT NULL`,
     );
     const tokens = tokensRes.rows;
@@ -169,40 +224,39 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       }
       const days = computeDaysLeft(t.expiration);
 
-      // Parse workspace-specific thresholds, with optional contact-group override
-      let userThresholds = DEFAULT_THRESHOLDS;
+      let workspaceThresholds = DEFAULT_THRESHOLDS;
       try {
         if (Array.isArray(t.alert_thresholds)) {
-          userThresholds = t.alert_thresholds.filter((n) => Number.isFinite(n));
+          workspaceThresholds = t.alert_thresholds.filter((n) =>
+            Number.isFinite(n),
+          );
         }
       } catch (_err) {
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
 
-      // Resolve contact group early and apply any thresholds override BEFORE selecting the threshold window
-      const resolvedGroup = resolveContactGroup({
+      const assignedIds = assignedIdsFromRow(t.assigned_ids);
+      const resolvedGroups = resolveContactGroupsForAsset({
         contactGroups: t.contact_groups,
-        contactGroupId: t.contact_group_id,
+        assignedIds,
         defaultContactGroupId: t.default_contact_group_id,
       });
+      const { contactGroupId, contactGroupName } = contactGroupAuditFields(
+        assignedIds,
+        resolvedGroups,
+        t.contact_groups,
+      );
 
-      try {
-        if (
-          resolvedGroup &&
-          Array.isArray(resolvedGroup.thresholds) &&
-          resolvedGroup.thresholds.length > 0
-        ) {
-          const norm = resolvedGroup.thresholds
-            .map((n) => Number(n))
-            .filter((n) => Number.isFinite(n) && n >= -365 && n <= 730);
-          if (norm.length > 0) userThresholds = norm;
-        }
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
-
-      // Determine which threshold window has been reached using effective thresholds
-      const thresholdResult = findThresholdWindow(days, userThresholds);
+      const unionThresholds = unionEffectiveThresholds(
+        resolvedGroups,
+        workspaceThresholds,
+      );
+      // Empty membership still uses workspace thresholds so the existing
+      // NO_ELIGIBLE_CHANNEL path can fire once a window is reached.
+      const thresholdResult = findThresholdWindow(
+        days,
+        unionThresholds.length > 0 ? unionThresholds : workspaceThresholds,
+      );
       if (!thresholdResult) {
         continue; // No threshold reached
       }
@@ -240,38 +294,15 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         ? `token_expiry:${t.token_id}:negwin:${thresholdReached}`
         : `token_expiry:${t.token_id}:poswin:${thresholdReached}`;
 
-      // Determine available channels: resolve recipients via contact groups when available
-      const channels = [];
-
-      // Email eligibility: contact group must have email_contact_ids
-      const wsEmailEnabled = t.ws_email_alerts_enabled !== false;
-      if (wsEmailEnabled && hasEmailContacts(resolvedGroup)) {
-        channels.push("email");
-      }
-
-      // Webhooks: when a contact group explicitly selects webhook name(s)
-      {
-        const webhooks = Array.isArray(t.webhook_urls) ? t.webhook_urls : [];
-        let hasWebhook = false;
-        if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
-          // Ensure at least one named webhook exists in workspace settings
-          try {
-            const names = getWebhookNames(resolvedGroup);
-            const filtered = webhooks.filter((w) =>
-              names.includes(String(w.name || "").trim()),
-            );
-            hasWebhook = filtered.length > 0;
-          } catch (_) {
-            hasWebhook = true;
-          }
-        }
-        if (hasWebhook) channels.push("webhooks");
-      }
-
-      // WhatsApp eligibility: require selected group to have whatsapp_contact_ids
-      if (hasWhatsAppContacts(resolvedGroup)) {
-        channels.push("whatsapp");
-      }
+      const eligibleGroups = unionGroupsForThresholdWindow(
+        resolvedGroups,
+        workspaceThresholds,
+        thresholdReached,
+      );
+      const channels = channelsFromGroups(eligibleGroups, {
+        emailEnabled: t.ws_email_alerts_enabled !== false,
+        webhookUrls: t.webhook_urls,
+      });
 
       // Check if alert already exists for this window
       const existingRes = await client.query(
@@ -326,15 +357,6 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
               [JSON.stringify(nextChannels), existing.id],
             );
             try {
-              const contactGroupId =
-                t.contact_group_id || t.default_contact_group_id || null;
-              const groups = Array.isArray(t.contact_groups)
-                ? t.contact_groups
-                : [];
-              const contactGroupName = contactGroupId
-                ? groups.find((g) => String(g.id) === String(contactGroupId))
-                    ?.name || null
-                : null;
               await writeAudit(client, {
                 subjectUserId: t.user_id,
                 action: "ALERT_CHANNELS_UPDATED",
@@ -387,15 +409,6 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         skipped++;
         // Optional: write an audit for visibility that alert was not queued
         try {
-          const contactGroupId =
-            t.contact_group_id || t.default_contact_group_id || null;
-          const groups = Array.isArray(t.contact_groups)
-            ? t.contact_groups
-            : [];
-          const contactGroupName = contactGroupId
-            ? groups.find((g) => String(g.id) === String(contactGroupId))
-                ?.name || null
-            : null;
           await writeAudit(client, {
             subjectUserId: t.user_id,
             action: "ALERT_NOT_QUEUED_NO_CHANNEL",
@@ -433,13 +446,6 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       );
 
       queued++;
-      const contactGroupId =
-        t.contact_group_id || t.default_contact_group_id || null;
-      const groups = Array.isArray(t.contact_groups) ? t.contact_groups : [];
-      const contactGroupName = contactGroupId
-        ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
-          null
-        : null;
       await writeAudit(client, {
         subjectUserId: ownerUserId,
         action: "ALERT_QUEUED",

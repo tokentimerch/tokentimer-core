@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-14 against main `78219e2d` (0.15.0).
+Last reviewed: 2026-09-15 against main `35c5a843` (0.15.0).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -71,8 +71,6 @@ recording the method; they are no longer unscoped Next work.
   major-version requirement unless an API break is identified. Existing
   single-config workspaces must keep working. One configuration's
   failure or cleanup must not affect another's assets.
-- **Multiple contact groups per asset**
-  ([#230](https://github.com/tokentimerch/tokentimer-core/issues/230)).
 - **Optional notification for already-expired imports**
   ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231)).
   Quiet historical imports remain the default.

@@ -56,6 +56,12 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
 | [0012](0012-certops-windows-execution-surface-and-trust-anchors.md) | Windows execution surface, trust-anchor operations, signed-dispatch envelope, and CNG-vs-PFX custody | Accepted, amended 2026-08-03 |
 
+### Alerting
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0013](0013-multi-contact-groups-per-asset.md) | Multiple contact groups per asset | Accepted |
+
 ADR-0001 through ADR-0005 were authored as early skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to
 `Accepted` and their TODO markers are resolved. ADR-0006 and ADR-0007 record the
@@ -95,6 +101,13 @@ reconstruction), the trust-job schema shape, CNG-native-vs-PFX key custody on
 Windows, the Windows agent privilege and ACL model, and what stops a diagnostic
 protocol client from claiming real certificate work (a server-assigned
 `agent_kind`, not a client-declared capability).
+
+ADR-0013 is the first alerting ADR. It records how a token, certificate, or
+CertOps agent attaches to more than one contact group without duplicate
+delivery: additive join tables dual-written beside the existing singular
+columns, join-table membership as the source of truth for alert and digest
+readers, and a recipient-centric weekly digest. Stopping the singular-column
+writes is a follow-up, not this record.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

@@ -14,6 +14,13 @@ const {
 } = require("../services/rbac");
 const { maskPhone } = require("../utils/sanitize");
 const crypto = require("crypto");
+const {
+  replaceAssetContactGroups,
+  loadAssignedGroupIds,
+} = require("../src/shared/replaceAssetContactGroups");
+const {
+  membershipAfterContactGroupMove,
+} = require("../src/shared/contactGroups");
 
 const router = require("express").Router();
 
@@ -452,11 +459,81 @@ router.post(
           code: "VALIDATION_ERROR",
         });
 
-      const r = await pool.query(
-        `UPDATE tokens SET contact_group_id = $3, updated_at = NOW()
-         WHERE workspace_id = $1 AND contact_group_id = $2`,
-        [workspaceId, String(fromId), String(toId)],
-      );
+      const client = await pool.connect();
+      let updated = 0;
+      try {
+        await client.query("BEGIN");
+        const selectedTokens = await client.query(
+          `SELECT id FROM tokens
+            WHERE workspace_id = $1
+              AND (
+                contact_group_id = $2
+                OR EXISTS (
+                  SELECT 1 FROM token_contact_groups tcg
+                   WHERE tcg.token_id = tokens.id
+                     AND tcg.workspace_id = tokens.workspace_id
+                     AND tcg.contact_group_id = $2
+                )
+              )`,
+          [workspaceId, String(fromId)],
+        );
+        const selectedAgents = await client.query(
+          `SELECT id FROM certops_agents
+            WHERE workspace_id = $1
+              AND (
+                contact_group_id = $2
+                OR EXISTS (
+                  SELECT 1 FROM certops_agent_contact_groups acg
+                   WHERE acg.agent_id = certops_agents.id
+                     AND acg.workspace_id = certops_agents.workspace_id
+                     AND acg.contact_group_id = $2
+                )
+              )`,
+          [workspaceId, String(fromId)],
+        );
+        for (const row of selectedTokens.rows) {
+          const assigned = await loadAssignedGroupIds({
+            client,
+            kind: "token",
+            assetId: row.id,
+            workspaceId,
+          });
+          await replaceAssetContactGroups({
+            client,
+            kind: "token",
+            assetId: row.id,
+            workspaceId,
+            ids: membershipAfterContactGroupMove(assigned, fromId, toId),
+          });
+        }
+        for (const row of selectedAgents.rows) {
+          const assigned = await loadAssignedGroupIds({
+            client,
+            kind: "agent",
+            assetId: row.id,
+            workspaceId,
+          });
+          await replaceAssetContactGroups({
+            client,
+            kind: "agent",
+            assetId: row.id,
+            workspaceId,
+            ids: membershipAfterContactGroupMove(assigned, fromId, toId),
+          });
+        }
+        await client.query("COMMIT");
+        updated =
+          (selectedTokens.rowCount || 0) + (selectedAgents.rowCount || 0);
+      } catch (txErr) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_rollbackErr) {
+          /* connection may already be closed */
+        }
+        throw txErr;
+      } finally {
+        client.release();
+      }
       try {
         await writeAudit({
           actorUserId: req.user?.id || null,
@@ -468,13 +545,13 @@ router.post(
           metadata: {
             from_group_id: String(fromId),
             to_group_id: String(toId),
-            updated: r.rowCount,
+            updated,
           },
         });
       } catch (_err) {
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
-      return res.json({ updated: r.rowCount || 0 });
+      return res.json({ updated: updated || 0 });
     } catch (_e) {
       return res.status(500).json({
         error: "failed to reassign contact group",

@@ -3,6 +3,8 @@
  *
  * Shared functions for resolving contact groups from workspace settings,
  * handling fallbacks between token-level and workspace default groups.
+ *
+ * Keep in sync with apps/api/src/shared/contactGroups.js.
  */
 
 /**
@@ -124,10 +126,172 @@ function getWebhookNames(contactGroup) {
   return [];
 }
 
+const MIN_GROUP_THRESHOLD_DAYS = -365;
+const MAX_GROUP_THRESHOLD_DAYS = 730;
+
+function normalizeAssignedGroupIds(ids) {
+  if (!Array.isArray(ids)) return [];
+  const unique = [];
+  const seen = new Set();
+  for (const raw of ids) {
+    if (typeof raw !== "string") continue;
+    const id = raw.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  unique.sort();
+  return unique;
+}
+
+function canonicalLegacyContactGroupId(ids) {
+  const normalized = normalizeAssignedGroupIds(ids);
+  return normalized.length > 0 ? normalized[0] : null;
+}
+
+function resolveContactGroupsForAsset({
+  contactGroups,
+  assignedIds,
+  defaultContactGroupId,
+}) {
+  const groups = Array.isArray(contactGroups) ? contactGroups : [];
+
+  const findGroup = (id) => {
+    if (id == null) return null;
+    const pickId = String(id).trim();
+    if (!pickId) return null;
+    return groups.find((g) => g && String(g.id) === pickId) || null;
+  };
+
+  const resolveDefault = () => {
+    const fallback = findGroup(defaultContactGroupId);
+    return fallback ? [fallback] : [];
+  };
+
+  const assigned = normalizeAssignedGroupIds(assignedIds);
+  if (assigned.length === 0) {
+    return resolveDefault();
+  }
+
+  const resolved = [];
+  const seen = new Set();
+  for (const id of assigned) {
+    const group = findGroup(id);
+    if (!group) continue;
+    const gid = String(group.id);
+    if (seen.has(gid)) continue;
+    seen.add(gid);
+    resolved.push(group);
+  }
+
+  // All assigned ids missing from JSON: same as "no join rows" for routing.
+  if (resolved.length === 0) {
+    return resolveDefault();
+  }
+
+  resolved.sort((a, b) => {
+    const left = String(a.id);
+    const right = String(b.id);
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
+  return resolved;
+}
+
+function validGroupThresholds(values) {
+  if (!Array.isArray(values)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of values) {
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n) || n < MIN_GROUP_THRESHOLD_DAYS || n > MAX_GROUP_THRESHOLD_DAYS) {
+      continue;
+    }
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+function effectiveThresholds(group, workspaceThresholds) {
+  const fromGroup = validGroupThresholds(group && group.thresholds);
+  if (fromGroup.length > 0) return fromGroup;
+  return Array.isArray(workspaceThresholds) ? workspaceThresholds.slice() : [];
+}
+
+function groupFiresForWindow(group, workspaceThresholds, thresholdDays) {
+  const windowDays = Number(thresholdDays);
+  if (!Number.isFinite(windowDays)) return false;
+  return effectiveThresholds(group, workspaceThresholds).some(
+    (value) => Number(value) === windowDays,
+  );
+}
+
+function unionGroupsForThresholdWindow(groups, workspaceThresholds, thresholdDays) {
+  return (Array.isArray(groups) ? groups : []).filter((group) =>
+    groupFiresForWindow(group, workspaceThresholds, thresholdDays),
+  );
+}
+
+function unionEffectiveThresholds(groups, workspaceThresholds) {
+  const unionList = [];
+  const seen = new Set();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const threshold of effectiveThresholds(group, workspaceThresholds)) {
+      if (seen.has(threshold)) continue;
+      seen.add(threshold);
+      unionList.push(threshold);
+    }
+  }
+  return unionList;
+}
+
+function unionContactIds(groups, field) {
+  const ids = [];
+  const seen = new Set();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    const list = Array.isArray(group?.[field]) ? group[field] : [];
+    for (const raw of list) {
+      if (raw == null) continue;
+      const key = String(raw);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      ids.push(raw);
+    }
+  }
+  return ids;
+}
+
+function dedupeNormalizedDestinations(values, kind) {
+  const list = Array.isArray(values) ? values : [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of list) {
+    if (raw == null) continue;
+    let value = String(raw).trim();
+    if (kind === "email") value = value.toLowerCase();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
 export {
   resolveContactGroup,
   hasEmailContacts,
   hasWhatsAppContacts,
   hasWebhookNames,
   getWebhookNames,
+  canonicalLegacyContactGroupId,
+  normalizeAssignedGroupIds,
+  resolveContactGroupsForAsset,
+  effectiveThresholds,
+  groupFiresForWindow,
+  unionGroupsForThresholdWindow,
+  unionEffectiveThresholds,
+  unionContactIds,
+  dedupeNormalizedDestinations,
 };

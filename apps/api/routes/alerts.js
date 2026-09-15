@@ -27,6 +27,7 @@ const {
   normalizeAlertThresholdsList,
 } = require("../src/shared/alertThresholds");
 
+
 const router = require("express").Router();
 
 function intEnv(name, fallback) {
@@ -922,25 +923,85 @@ router.put(
         );
       }
 
-      // Clear stale contact_group_id on tokens that reference groups no longer in the updated array.
-      // This prevents delivery failures when a group is deleted but tokens still point to it.
+      // Drop stale join membership, recompute the singular mirror, and still
+      // null tokens whose leftover pointer names a deleted group.
       if (updatedGroupIds !== null) {
         try {
-          if (updatedGroupIds.length === 0) {
-            // All groups removed: clear every token's contact_group_id in this workspace
-            await pool.query(
-              `UPDATE tokens SET contact_group_id = NULL, updated_at = NOW()
-               WHERE workspace_id = $1 AND contact_group_id IS NOT NULL`,
+          const client = await pool.connect();
+          try {
+            await client.query("BEGIN");
+            if (updatedGroupIds.length === 0) {
+              await client.query(
+                `DELETE FROM token_contact_groups WHERE workspace_id = $1`,
+                [workspaceId],
+              );
+              await client.query(
+                `DELETE FROM certops_agent_contact_groups WHERE workspace_id = $1`,
+                [workspaceId],
+              );
+            } else {
+              await client.query(
+                `DELETE FROM token_contact_groups
+                  WHERE workspace_id = $1
+                    AND contact_group_id != ALL($2::text[])`,
+                [workspaceId, updatedGroupIds],
+              );
+              await client.query(
+                `DELETE FROM certops_agent_contact_groups
+                  WHERE workspace_id = $1
+                    AND contact_group_id != ALL($2::text[])`,
+                [workspaceId, updatedGroupIds],
+              );
+            }
+
+            await client.query(
+              `UPDATE tokens
+                  SET contact_group_id = (
+                    SELECT min(contact_group_id)
+                      FROM token_contact_groups tcg
+                     WHERE tcg.token_id = tokens.id
+                       AND tcg.workspace_id = tokens.workspace_id
+                  )
+                WHERE workspace_id = $1`,
               [workspaceId],
             );
-          } else {
-            await pool.query(
-              `UPDATE tokens SET contact_group_id = NULL, updated_at = NOW()
-               WHERE workspace_id = $1
-                 AND contact_group_id IS NOT NULL
-                 AND contact_group_id != ALL($2::text[])`,
-              [workspaceId, updatedGroupIds],
+            await client.query(
+              `UPDATE certops_agents
+                  SET contact_group_id = (
+                    SELECT min(contact_group_id)
+                      FROM certops_agent_contact_groups acg
+                     WHERE acg.agent_id = certops_agents.id
+                       AND acg.workspace_id = certops_agents.workspace_id
+                  )
+                WHERE workspace_id = $1`,
+              [workspaceId],
             );
+
+            if (updatedGroupIds.length === 0) {
+              await client.query(
+                `UPDATE tokens SET contact_group_id = NULL, updated_at = NOW()
+                 WHERE workspace_id = $1 AND contact_group_id IS NOT NULL`,
+                [workspaceId],
+              );
+            } else {
+              await client.query(
+                `UPDATE tokens SET contact_group_id = NULL, updated_at = NOW()
+                 WHERE workspace_id = $1
+                   AND contact_group_id IS NOT NULL
+                   AND contact_group_id != ALL($2::text[])`,
+                [workspaceId, updatedGroupIds],
+              );
+            }
+            await client.query("COMMIT");
+          } catch (txErr) {
+            try {
+              await client.query("ROLLBACK");
+            } catch (_rollbackErr) {
+              /* connection may already be closed */
+            }
+            throw txErr;
+          } finally {
+            client.release();
           }
         } catch (_err) {
           logger.warn("DB operation failed", { error: _err.message });

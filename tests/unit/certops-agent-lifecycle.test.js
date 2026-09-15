@@ -68,6 +68,21 @@ function createMemoryDb() {
           created_by: params[5],
           created_at: new Date("2026-07-01T00:00:00.000Z"),
           updated_at: new Date("2026-07-01T00:00:00.000Z"),
+          downtime_alerts_enabled: params[6] ?? null,
+          contact_group_id: params[7] ?? null,
+          contact_group_ids: (() => {
+            const raw = params[8];
+            if (Array.isArray(raw)) return raw;
+            if (typeof raw === "string") {
+              try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+              } catch (_err) {
+                return [];
+              }
+            }
+            return [];
+          })(),
         };
         bootstrapRows.push(row);
         return { rows: [row] };
@@ -244,6 +259,10 @@ function createMemoryDb() {
       if (normalized.includes("FROM managed_certificates mc")) {
         // This suite is not exercising renewal-path impact counts; keep the
         // agent-list route's enrichment a no-op here rather than throwing.
+        return { rows: [] };
+      }
+
+      if (normalized.includes("FROM certops_agent_contact_groups")) {
         return { rows: [] };
       }
 
@@ -510,6 +529,7 @@ describe("CertOps agents list route", () => {
       retireReason: null,
       downtimeAlertsEnabled: true,
       contactGroupId: null,
+      contactGroupIds: [],
       // Capability fields added for the agent-capability-visibility work:
       // agentRow() (this file's fixture) never sets these DB columns, so
       // they read back as their empty/null defaults - see
