@@ -11,6 +11,12 @@ const Token = require("../db/models/Token");
 const { requireNotViewer } = require("../services/rbac");
 const { sanitizeForLogging } = require("../utils/sanitize");
 const {
+  enrichTokenWithAlertState,
+  enrichTokenWithAlertStateBestEffort,
+  enrichTokensWithAlertState,
+} = require("../services/alertEligibility");
+const { fetchAlertLifecycle } = require("../services/alertLifecycle");
+const {
   interpretContactGroupWrite,
   normalizeAssignedGroupIds,
   canonicalLegacyContactGroupId,
@@ -181,6 +187,17 @@ async function isManagedBackedCertificateToken(token) {
   return result.rowCount > 0;
 }
 
+async function canReadToken(token, userId) {
+  if (token.workspace_id) {
+    const membership = await pool.query(
+      "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
+      [token.workspace_id, userId],
+    );
+    return membership.rowCount > 0;
+  }
+  return token.user_id === userId;
+}
+
 // --- TOKEN MANAGEMENT ROUTES ---
 
 // Get tokens (scoped by workspace membership). Optional ?workspace_id=...
@@ -316,7 +333,9 @@ router.get(
       LIMIT $${p} OFFSET $${p + 1}
     `;
       const itemsRes = await pool.query(itemsSql, [...params, limit, offset]);
-      const items = itemsRes.rows.map((t) => Token.convertNumericFields(t));
+      const items = await enrichTokensWithAlertState(
+        itemsRes.rows.map((t) => Token.convertNumericFields(t)),
+      );
       await attachContactGroupIdsToTokens(items);
 
       // 2. Fetch total count and facets in a single optimized query using CTEs
@@ -373,6 +392,52 @@ router.get(
   },
 );
 
+// Get a token's persisted alert history. This deliberately shares the normal
+// token-read authorization path, including viewer access, and remains read-only.
+router.get(
+  "/api/tokens/:id/alert-timeline",
+  getTestApiLimiter(),
+  requireAuth,
+  async (req, res) => {
+    try {
+      const tokenId = parseInt(req.params.id, 10);
+      const token = Number.isInteger(tokenId)
+        ? await Token.findById(tokenId)
+        : null;
+
+      if (!token) {
+        return res
+          .status(404)
+          .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
+      }
+
+      if (!(await canReadToken(token, req.user.id))) {
+        return res
+          .status(404)
+          .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
+      }
+
+      return res.json(
+        await fetchAlertLifecycle({
+          tokenId,
+          limit: req.query.limit,
+          offset: req.query.offset,
+        }),
+      );
+    } catch (error) {
+      logger.error("Error fetching token alert timeline", {
+        error: error.message,
+        tokenId: req.params?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch alert timeline",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 // Get specific token by ID
 router.get(
   "/api/tokens/:id",
@@ -390,23 +455,14 @@ router.get(
       }
 
       // Ensure user can only access tokens in their workspaces (or legacy own)
-      if (token.workspace_id) {
-        const m = await pool.query(
-          "SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2",
-          [token.workspace_id, req.user.id],
-        );
-        if (m.rowCount === 0)
-          return res
-            .status(404)
-            .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
-      } else if (token.user_id !== req.user.id) {
+      if (!(await canReadToken(token, req.user.id))) {
         return res
           .status(404)
           .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
       }
 
       await attachContactGroupIdsToTokens(token);
-      res.json(token);
+      res.json(await enrichTokenWithAlertState(token));
     } catch (error) {
       logger.error("Error fetching token:", {
         error: error.message,
@@ -708,7 +764,9 @@ router.post(
           tokenId: updatedToken.id,
           userId: req.user.id,
         });
-        return res.status(200).json(updatedToken);
+        return res
+          .status(200)
+          .json(await enrichTokenWithAlertStateBestEffort(updatedToken));
       }
 
       logger.info("Creating token with data:", {
@@ -792,7 +850,7 @@ router.post(
         category: token.category,
       });
       await attachContactGroupIdsToTokens(token);
-      res.status(201).json(token);
+      res.status(201).json(await enrichTokenWithAlertStateBestEffort(token));
     } catch (error) {
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);
@@ -1448,7 +1506,7 @@ router.put(
         });
       }
       await attachContactGroupIdsToTokens(updatedToken);
-      res.json(updatedToken);
+      res.json(await enrichTokenWithAlertStateBestEffort(updatedToken));
     } catch (error) {
       if (error?.code === "VALIDATION_ERROR") {
         return invalidContactGroupResponse(res);

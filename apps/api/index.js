@@ -470,7 +470,11 @@ app.post(
       });
     try {
       const r = await pool.query(
-        "SELECT * FROM alert_queue WHERE id = $1 AND user_id = $2",
+        `SELECT aq.*, COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id
+           FROM alert_queue aq
+           LEFT JOIN tokens t ON t.id = aq.token_id
+           LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+          WHERE aq.id = $1 AND aq.user_id = $2`,
         [alertId, req.user.id],
       );
       if (r.rows.length === 0)
@@ -591,8 +595,12 @@ app.post(
         targetType: "alert",
         targetId: alertId,
         channel,
-        workspaceId: null,
-        metadata: { reason: "user_initiated" },
+        workspaceId: alert.workspace_id,
+        metadata: {
+          reason: "user_initiated",
+          alert_id: alert.id,
+          alert_key: alert.alert_key,
+        },
       });
       return res.json({ success: true });
     } catch (err) {

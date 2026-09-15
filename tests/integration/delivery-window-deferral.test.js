@@ -101,5 +101,19 @@ describe("Delivery Window Deferral", function () {
 
     const status = after.rows[0]?.status;
     expect(status).to.not.equal("sent");
+
+    const audit = await TestUtils.execQuery(
+      `SELECT metadata
+         FROM audit_events
+        WHERE target_type = 'token'
+          AND target_id = $1
+          AND action = 'ALERT_DELIVERY_DEFERRED'
+        ORDER BY occurred_at DESC
+        LIMIT 1`,
+      [token.body.id],
+    );
+    expect(audit.rowCount).to.equal(1);
+    expect(audit.rows[0].metadata.reason).to.equal("delivery_window");
+    expect(audit.rows[0].metadata.next_attempt_at).to.be.a("string");
   });
 });

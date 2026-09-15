@@ -2352,10 +2352,13 @@ function App() {
   }, []);
 
   const updateTokenIdInUrl = useCallback(
-    tokenId => {
+    (tokenId, { clearAlertEvent = false } = {}) => {
       const search = new URLSearchParams(window.location.search);
       if (tokenId == null) {
         search.delete('token-id');
+        if (clearAlertEvent) {
+          search.delete('alert-event');
+        }
       } else {
         search.set('token-id', tokenId);
       }
@@ -2399,7 +2402,7 @@ function App() {
   const handleCloseTokenModal = () => {
     cancelPendingTokenUrlUpdate();
     setSelectedToken(null);
-    updateTokenIdInUrl(null);
+    updateTokenIdInUrl(null, { clearAlertEvent: true });
   };
 
   return (

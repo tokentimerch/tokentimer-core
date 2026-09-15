@@ -1022,6 +1022,31 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/tokens/{id}/alert-timeline:
+    get:
+      tags: [Tokens]
+      summary: Get token alert lifecycle history
+      operationId: getTokenAlertTimeline
+      description: >-
+        Returns persisted and queue-backed alert lifecycle events newest-first.
+        Authorization matches normal token read access, including workspace
+        viewers. Current alert eligibility and future scheduling remain in the
+        token's alert_state snapshot and are not reconstructed as history.
+      parameters:
+        - $ref: "#/components/parameters/tokenIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated alert lifecycle events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertLifecyclePage"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/tokens/bulk:
     put:
       tags: [Tokens]
@@ -2387,6 +2412,65 @@ paths:
                     type: integer
                   hasMore:
                     type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/alert-activity:
+    get:
+      tags: [Workspaces]
+      summary: Paginated recent alert lifecycle activity
+      operationId: getControlCenterAlertActivity
+      description: >-
+        Returns alert lifecycle events newest-first across the selected
+        workspace. Requires workspace admin or workspace manager role, matching
+        the other Control Center endpoints.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated workspace alert activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertLifecyclePage"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/alert-eligibility-summary:
+    get:
+      tags: [Workspaces]
+      summary: Workspace-wide alert eligibility counts
+      operationId: getControlCenterAlertEligibilitySummary
+      description: >-
+        Counts current eligibility across the entire workspace, independently
+        of the paginated asset table. Requires workspace admin or manager role.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Global workspace eligibility summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, counts]
+                properties:
+                  total:
+                    type: integer
+                  counts:
+                    type: object
+                    required: [outside_threshold, due, suppressed]
+                    properties:
+                      outside_threshold:
+                        type: integer
+                      due:
+                        type: integer
+                      suppressed:
+                        type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
@@ -9431,6 +9515,8 @@ components:
           items:
             type: string
           description: Assigned contact groups, sorted lexicographically. Empty when the asset uses the workspace default.
+        alert_state:
+          $ref: "#/components/schemas/AlertState"
       example:
         id: 142
         workspace_id: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
@@ -9440,6 +9526,230 @@ components:
         expiresAt: "2027-12-31"
         created_at: "2026-03-13T18:00:00.000Z"
         updated_at: "2026-03-13T18:00:00.000Z"
+    AlertState:
+      type: object
+      required: [eligibility, delivery]
+      properties:
+        eligibility:
+          $ref: "#/components/schemas/AlertEligibility"
+        delivery:
+          allOf:
+            - $ref: "#/components/schemas/AlertDeliveryState"
+          nullable: true
+    AlertLifecyclePage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertLifecycleEvent"
+        pagination:
+          type: object
+          required: [limit, offset, hasMore]
+          properties:
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+            offset:
+              type: integer
+              minimum: 0
+            hasMore:
+              type: boolean
+    AlertLifecycleEvent:
+      type: object
+      required:
+        - id
+        - type
+        - occurred_at
+        - token_id
+        - token_name
+        - workspace_id
+        - alert_id
+        - threshold_days
+        - channel
+        - status
+        - reason
+        - error_message
+        - metadata
+        - source
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - threshold_reached
+            - alert_queued
+            - alert_discarded
+            - alert_not_queued
+            - delivery_deferred
+            - delivery_attempted
+            - delivery_failed
+            - delivery_succeeded
+            - delivery_partial
+            - delivery_blocked
+            - retry_scheduled
+            - alert_requeued
+        occurred_at:
+          type: string
+          format: date-time
+        token_id:
+          type: integer
+          nullable: true
+        token_name:
+          type: string
+          nullable: true
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+        alert_id:
+          type: integer
+          nullable: true
+        threshold_days:
+          type: integer
+          nullable: true
+        channel:
+          type: string
+          enum: [email, webhooks, whatsapp]
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: false
+          properties:
+            channels:
+              type: array
+              items:
+                type: string
+                enum: [email, webhooks, whatsapp]
+            next_attempt_at:
+              type: string
+              format: date-time
+            updated_count:
+              type: integer
+        source:
+          type: string
+          enum: [alert_queue, alert_delivery_log, audit_events, derived_from_alert_queue]
+    AlertEligibility:
+      type: object
+      required:
+        - status
+        - reason
+        - days_until_expiry
+        - effective_thresholds
+        - eligible_channels
+        - metadata
+      properties:
+        status:
+          type: string
+          enum: [outside_threshold, due, suppressed]
+        reason:
+          type: string
+          enum:
+            - threshold_not_reached
+            - threshold_reached
+            - post_expiry_threshold_not_configured
+            - stale_import_threshold
+            - retired_certificate
+            - no_eligible_channels
+            - invalid_expiration
+        days_until_expiry:
+          type: integer
+          nullable: true
+        effective_threshold:
+          type: integer
+          nullable: true
+        effective_thresholds:
+          type: array
+          items:
+            type: integer
+        threshold_type:
+          type: string
+          enum: [pre_expiry, expiry_day, post_expiry]
+          nullable: true
+        threshold_date:
+          type: string
+          format: date
+          nullable: true
+        next_evaluation_at:
+          type: string
+          format: date
+          nullable: true
+        next_threshold:
+          type: integer
+          nullable: true
+        eligible_channels:
+          type: array
+          items:
+            type: string
+            enum: [email, webhooks, whatsapp]
+        contact_group_id:
+          type: string
+          nullable: true
+        contact_group_name:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+    AlertDeliveryState:
+      type: object
+      required: [alert_id, status, channels, attempts]
+      properties:
+        alert_id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, sent, sent_unverified, discarded, failed, blocked, limit_exceeded, partial]
+        reason:
+          type: string
+          enum:
+            - delivery_window
+            - monthly_plan_limit
+            - max_attempts
+            - retry_scheduled
+            - retired_certificate
+            - endpoint_recovered
+            - alert_discarded
+            - delivery_unverified
+          nullable: true
+        threshold_days:
+          type: integer
+        due_date:
+          type: string
+          format: date
+        channels:
+          type: array
+          items:
+            type: string
+        attempts:
+          type: integer
+        error_message:
+          type: string
+          nullable: true
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        latest_attempt:
+          type: object
+          nullable: true
+          additionalProperties: true
     AuditEvent:
       type: object
       properties:

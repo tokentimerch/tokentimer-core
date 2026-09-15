@@ -10,6 +10,45 @@ import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
 
 const ELIGIBLE_ROLES = new Set(['admin', 'workspace_manager']);
+const ALERT_ACTIVITY_PAGE_SIZE = 12;
+export const ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+const ELIGIBILITY_SUMMARY_FALLBACK_PAGE_SIZE = 500;
+
+async function loadEligibilitySummary(workspaceId) {
+  try {
+    const response = await apiClient.get(
+      API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ELIGIBILITY_SUMMARY(
+        workspaceId
+      ),
+      { _suppressLog: true }
+    );
+    return response.data;
+  } catch (summaryError) {
+    // A locally running API can lag behind the dashboard while the new route
+    // is being rolled out. Use the existing paginated token API in that case.
+    if (summaryError?.response?.status !== 404) throw summaryError;
+  }
+
+  const counts = { outside_threshold: 0, due: 0, suppressed: 0 };
+  let offset = 0;
+  let total = 0;
+  do {
+    const page = await tokenAPI.getTokens({
+      workspace_id: workspaceId,
+      limit: ELIGIBILITY_SUMMARY_FALLBACK_PAGE_SIZE,
+      offset,
+    });
+    const items = page.items || [];
+    total = page.total || 0;
+    for (const token of items) {
+      const status = token.alert_state?.eligibility?.status;
+      if (Object.hasOwn(counts, status)) counts[status]++;
+    }
+    offset += items.length;
+    if (items.length === 0) break;
+  } while (offset < total);
+  return { total, counts };
+}
 
 /**
  * Load alert queue, delivery stats, and workspace context for Control Center.
@@ -23,6 +62,19 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [error, setError] = useState('');
   const [unauthorized, setUnauthorized] = useState(false);
   const [queue, setQueue] = useState([]);
+  const [eligibilityAssets, setEligibilityAssets] = useState([]);
+  const [eligibilitySummary, setEligibilitySummary] = useState({
+    outside_threshold: 0,
+    due: 0,
+    suppressed: 0,
+  });
+  const [eligibilityTotal, setEligibilityTotal] = useState(0);
+  const [eligibilityWorkspaceId, setEligibilityWorkspaceId] = useState('');
+  const [eligibilityLimit, setEligibilityLimit] = useState(10);
+  const [eligibilityOffset, setEligibilityOffset] = useState(0);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
+  const [eligibilityError, setEligibilityError] = useState('');
+  const [eligibilityReloadTick, setEligibilityReloadTick] = useState(0);
   const [stats, setStats] = useState({ byChannel: [], monthUsage: 0 });
   const [orgStats, setOrgStats] = useState({ monthUsage: 0 });
   const [orgWorkspaceCount, setOrgWorkspaceCount] = useState(0);
@@ -45,13 +97,74 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [workspaceTokenCount, setWorkspaceTokenCount] = useState(0);
   const [retryHintDate, setRetryHintDate] = useState(null);
   const [partial, setPartial] = useState(false);
+  const [alertActivity, setAlertActivity] = useState([]);
+  const [alertActivityLoading, setAlertActivityLoading] = useState(false);
+  const [alertActivityLoadingMore, setAlertActivityLoadingMore] =
+    useState(false);
+  const [alertActivityError, setAlertActivityError] = useState('');
+  const [alertActivityHasMore, setAlertActivityHasMore] = useState(false);
 
   const lastLoadedRef = useRef('');
   const loadGenerationRef = useRef(0);
+  const eligibilityGenerationRef = useRef(0);
+
+  useEffect(() => {
+    const generation = ++eligibilityGenerationRef.current;
+    let active = true;
+    if (!eligibilityWorkspaceId) {
+      setEligibilityAssets([]);
+      setEligibilityLoading(false);
+      return;
+    }
+    setEligibilityLoading(true);
+    setEligibilityError('');
+    tokenAPI
+      .getTokens({
+        workspace_id: eligibilityWorkspaceId,
+        limit: eligibilityLimit,
+        offset: eligibilityOffset,
+      })
+      .then(page => {
+        if (!active || generation !== eligibilityGenerationRef.current) return;
+        const total = page.total || 0;
+        if (eligibilityOffset > 0 && eligibilityOffset >= total) {
+          setEligibilityOffset(
+            total > 0
+              ? Math.floor((total - 1) / eligibilityLimit) * eligibilityLimit
+              : 0
+          );
+          return;
+        }
+        setEligibilityAssets(
+          (page.items || []).filter(token => token.alert_state?.eligibility)
+        );
+        setEligibilityTotal(total);
+      })
+      .catch(pageError => {
+        if (!active || generation !== eligibilityGenerationRef.current) return;
+        setEligibilityError(
+          pageError?.message || 'Failed to load eligibility page'
+        );
+        setEligibilityAssets([]);
+      })
+      .finally(() => {
+        if (active && generation === eligibilityGenerationRef.current)
+          setEligibilityLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    eligibilityWorkspaceId,
+    eligibilityLimit,
+    eligibilityOffset,
+    eligibilityReloadTick,
+  ]);
 
   const loadData = useCallback(
     async (isRefresh = false) => {
       const generation = ++loadGenerationRef.current;
+      setAlertActivityLoadingMore(false);
       try {
         if (isRefresh) {
           setRefreshing(true);
@@ -61,6 +174,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
         setError('');
         setUnauthorized(false);
         setPartial(false);
+        setAlertActivityLoading(true);
+        setAlertActivityError('');
 
         const wsRes = await apiClient.get(
           '/api/v1/workspaces?limit=100&offset=0'
@@ -129,9 +244,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
                 .get(API_ENDPOINTS.ACCOUNT_PLAN)
                 .catch(() => ({ data: { tokenCount: 0 } }))
             : Promise.resolve({ data: { tokenCount: 0 } });
-          const tokensPromise = effectiveWorkspaceId
-            ? tokenAPI.getTokens({ workspace_id: effectiveWorkspaceId })
-            : tokenAPI.getTokens();
+          const eligibilitySummaryPromise = effectiveWorkspaceId
+            ? loadEligibilitySummary(effectiveWorkspaceId)
+            : Promise.resolve({ total: 0, counts: {} });
           const membersPromise = effectiveWorkspaceId
             ? workspaceAPI
                 .listMembers(effectiveWorkspaceId, 100, 0)
@@ -142,23 +257,48 @@ export function useControlCenterData(initialWorkspaceId = '') {
                 .get('/api/organization/usage')
                 .catch(() => ({ data: { monthUsage: 0 } }))
             : Promise.resolve({ data: { monthUsage: 0 } });
+          const alertActivityPromise = effectiveWorkspaceId
+            ? apiClient
+                .get(
+                  API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY(
+                    effectiveWorkspaceId
+                  ),
+                  { params: { limit: ALERT_ACTIVITY_PAGE_SIZE, offset: 0 } }
+                )
+                .then(response => ({ data: response.data, error: null }))
+                .catch(activityError => ({
+                  data: null,
+                  error:
+                    activityError?.response?.data?.error ||
+                    activityError?.message ||
+                    'Failed to load recent alert activity',
+                }))
+            : Promise.resolve({
+                data: {
+                  items: [],
+                  pagination: { hasMore: false },
+                },
+                error: null,
+              });
 
           const [
             queueRes,
             statsRes,
             planRes,
             orgPlanRes,
-            tokensRes,
+            eligibilitySummaryRes,
             membersRes,
             orgRes,
+            activityResult,
           ] = await Promise.all([
             queuePromise,
             statsPromise,
             planPromise,
             orgPlanPromise,
-            tokensPromise,
+            eligibilitySummaryPromise,
             membersPromise,
             orgUsagePromise,
+            alertActivityPromise,
           ]);
 
           if (generation !== loadGenerationRef.current) return;
@@ -230,11 +370,23 @@ export function useControlCenterData(initialWorkspaceId = '') {
           setOrgStats({ monthUsage: orgRes?.data?.monthUsage || 0 });
           setOrgTokenCount(orgPlanData.tokenCount || 0);
 
-          const workspaceTokens = tokensRes?.items || [];
-          setWorkspaceTokenCount(workspaceTokens.length);
+          const summaryData = eligibilitySummaryRes || {};
+          setEligibilitySummary({
+            outside_threshold: summaryData.counts?.outside_threshold || 0,
+            due: summaryData.counts?.due || 0,
+            suppressed: summaryData.counts?.suppressed || 0,
+          });
+          setWorkspaceTokenCount(summaryData.total || 0);
+          setEligibilityWorkspaceId(effectiveWorkspaceId);
+          setEligibilityReloadTick(tick => tick + 1);
           setWorkspaceMemberCount(
             Array.isArray(membersRes?.items) ? membersRes.items.length : 0
           );
+          setAlertActivity(activityResult.data?.items || []);
+          setAlertActivityHasMore(
+            Boolean(activityResult.data?.pagination?.hasMore)
+          );
+          setAlertActivityError(activityResult.error || '');
 
           const now = new Date();
           setRetryHintDate(new Date(now.getFullYear(), now.getMonth() + 1, 1));
@@ -255,11 +407,22 @@ export function useControlCenterData(initialWorkspaceId = '') {
             setOrgTokenCount(0);
           }
           setQueue([]);
+          setEligibilityAssets([]);
+          setEligibilityWorkspaceId('');
+          setEligibilitySummary({
+            outside_threshold: 0,
+            due: 0,
+            suppressed: 0,
+          });
+          setEligibilityTotal(0);
           setStats({ byChannel: [], monthUsage: 0 });
           setWorkspaceTokenCount(0);
           setWorkspaceMemberCount(0);
           setOrgStats({ monthUsage: 0 });
           setOrgTokenCount(0);
+          setAlertActivity([]);
+          setAlertActivityHasMore(false);
+          setAlertActivityError('');
         }
       } catch (err) {
         if (generation !== loadGenerationRef.current) return;
@@ -282,6 +445,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
         if (generation === loadGenerationRef.current) {
           setLoading(false);
           setRefreshing(false);
+          setAlertActivityLoading(false);
         }
       }
     },
@@ -294,6 +458,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
 
   useEffect(() => {
     if (workspaceId && workspaceId !== selectedWorkspaceId) {
+      setEligibilityOffset(0);
+      setEligibilityAssets([]);
+      setEligibilityTotal(0);
+      setEligibilitySummary({ outside_threshold: 0, due: 0, suppressed: 0 });
+      setEligibilityWorkspaceId('');
       setSelectedWorkspaceId(workspaceId);
     }
   }, [workspaceId, selectedWorkspaceId]);
@@ -322,6 +491,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
       }, {}),
     [queue]
   );
+
+  const changeEligibilityPage = useCallback(({ limit, offset }) => {
+    setEligibilityLimit(limit);
+    setEligibilityOffset(offset);
+  }, []);
 
   const atLimit =
     (planInfo?.alertLimitMonth || 0) > 0 &&
@@ -355,8 +529,61 @@ export function useControlCenterData(initialWorkspaceId = '') {
     }
   }, [loadData, selectedWorkspaceId]);
 
+  const loadMoreAlertActivity = useCallback(async () => {
+    if (
+      !selectedWorkspaceId ||
+      !alertActivityHasMore ||
+      alertActivityLoadingMore
+    ) {
+      return;
+    }
+    const generation = loadGenerationRef.current;
+    setAlertActivityLoadingMore(true);
+    setAlertActivityError('');
+    try {
+      const response = await apiClient.get(
+        API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY(
+          selectedWorkspaceId
+        ),
+        {
+          params: {
+            limit: ALERT_ACTIVITY_PAGE_SIZE,
+            offset: alertActivity.length,
+          },
+        }
+      );
+      if (generation !== loadGenerationRef.current) return;
+      const page = response?.data || {};
+      setAlertActivity(current => [...current, ...(page.items || [])]);
+      setAlertActivityHasMore(Boolean(page.pagination?.hasMore));
+    } catch (activityError) {
+      if (generation !== loadGenerationRef.current) return;
+      setAlertActivityError(
+        activityError?.response?.data?.error ||
+          activityError?.message ||
+          'Failed to load recent alert activity'
+      );
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setAlertActivityLoadingMore(false);
+      }
+    }
+  }, [
+    alertActivity.length,
+    alertActivityHasMore,
+    alertActivityLoadingMore,
+    selectedWorkspaceId,
+  ]);
+
   const handleSetSelectedWorkspaceId = useCallback(
     id => {
+      ++loadGenerationRef.current;
+      setAlertActivityLoadingMore(false);
+      setEligibilityOffset(0);
+      setEligibilityAssets([]);
+      setEligibilityTotal(0);
+      setEligibilitySummary({ outside_threshold: 0, due: 0, suppressed: 0 });
+      setEligibilityWorkspaceId('');
       setSelectedWorkspaceId(id);
       if (id) {
         selectWorkspace(id, { replace: true });
@@ -373,6 +600,14 @@ export function useControlCenterData(initialWorkspaceId = '') {
     partial,
     noEligibleAccess,
     queue,
+    eligibilityAssets,
+    eligibilitySummary,
+    eligibilityTotal,
+    eligibilityLimit,
+    eligibilityOffset,
+    eligibilityLoading,
+    eligibilityError,
+    changeEligibilityPage,
     stats,
     orgStats,
     orgWorkspaceCount,
@@ -393,5 +628,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
     requeueAlerts,
     loadData,
     refresh,
+    alertActivity,
+    alertActivityLoading,
+    alertActivityLoadingMore,
+    alertActivityError,
+    alertActivityHasMore,
+    loadMoreAlertActivity,
   };
 }

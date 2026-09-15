@@ -3804,6 +3804,26 @@ const migrations = [
          END;
     `,
   },
+  {
+    version: 55,
+    name: "latest_token_expiry_and_historical_enqueue_indexes",
+    sql: `
+      -- Matches the lateral latest-alert lookup used by /api/tokens and
+      -- /api/tokens/:id; non-expiry alert keys never enter this index.
+      CREATE INDEX IF NOT EXISTS idx_alert_queue_latest_token_expiry
+        ON alert_queue (token_id, created_at DESC, id DESC)
+        WHERE alert_key LIKE 'token_expiry:%';
+
+      -- Bounded lookup of enqueue provenance for historical workspace activity.
+      CREATE INDEX IF NOT EXISTS idx_audit_alert_queued_token_time
+        ON audit_events (target_id, occurred_at DESC)
+        WHERE action = 'ALERT_QUEUED' AND target_type = 'token';
+
+      CREATE INDEX IF NOT EXISTS idx_audit_alert_sent_token_time
+        ON audit_events (target_id, occurred_at DESC)
+        WHERE action = 'ALERT_SENT' AND target_type = 'token';
+    `,
+  },
 ];
 
 async function runMigrations() {
