@@ -1621,7 +1621,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureKeyVaultScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -1679,7 +1679,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureAdScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -9442,6 +9442,180 @@ components:
         credentials:
           type: object
           additionalProperties: true
+    AzureScanFilterRules:
+      type: array
+      maxItems: 50
+      description: >-
+        Ordered include/exclude rules applied to scan results before
+        import. Exclude rules always win; when include rules exist,
+        only matching items are kept.
+      items:
+        type: object
+        additionalProperties: false
+        required: [action, matchType, field, value]
+        properties:
+          action:
+            type: string
+            enum: [include, exclude]
+          matchType:
+            type: string
+            enum: [regex, exact]
+          field:
+            type: string
+            enum: [name, description, location]
+          value:
+            type: string
+            maxLength: 500
+    AzureKeyVaultScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureKeyVaultBearerScanRequest"
+        - $ref: "#/components/schemas/AzureKeyVaultClientCredentialsScanRequest"
+    AzureKeyVaultBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, token]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        token:
+          type: string
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: Optional. Omitted values default to token at runtime.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureKeyVaultClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, authMethod, tenantId, clientId, clientSecret]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          maxLength: 5000
+        clientSecret:
+          type: string
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureAdBearerScanRequest"
+        - $ref: "#/components/schemas/AzureAdClientCredentialsScanRequest"
+    AzureAdBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: Optional. Omitted values default to token at runtime.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [authMethod, tenantId, clientId, clientSecret]
+      properties:
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          maxLength: 5000
+        clientSecret:
+          type: string
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
     GcpScanRequest:
       type: object
       additionalProperties: false

@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Azure Key Vault and Entra inventory scans accept an Entra app** (tenant ID, client ID, client secret) in addition to a pasted access token. TokenTimer mints `vault.azure.net/.default` or `graph.microsoft.com/.default` from `login.microsoftonline.com/{tenant}/oauth2/v2.0/token`. Key Vault inventory lists metadata only, so Key Vault Reader is enough. Graph inventory recommends Application.Read.All. This is not CertOps Azure DNS (DNS Zone Contributor / ARM). **Operator guidance:** existing pasted-token auto-sync configs keep working; use Replace credentials to switch method or rotate a secret.
+
 ### Security
 
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.

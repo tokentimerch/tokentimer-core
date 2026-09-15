@@ -8,18 +8,19 @@ import {
   Button,
   Badge,
   Checkbox,
-  InputGroup,
-  InputRightElement,
-  IconButton,
-  Code,
   Link as ChakraLink,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import AzureInventoryAuthFields from './AzureInventoryAuthFields';
+import {
+  azureInventoryScanAuthPayload,
+  buildAzureInventoryCredentials,
+  validateAzureInventoryAuth,
+} from './azureInventoryAuth';
 
 function getAzureItemDetails(item) {
   const details = [];
@@ -77,6 +78,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     borderColor,
     helpTextColor,
     autoSyncTokenPlaceholder,
+    autoSyncManageMode = false,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
     isQuotaExceededError,
@@ -88,7 +90,12 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   ref
 ) {
   const [azureVaultUrl, setAzureVaultUrl] = React.useState('');
+  const [azureAuthMethod, setAzureAuthMethod] = React.useState('token');
   const [azureToken, setAzureToken] = React.useState('');
+  const [azureTenantId, setAzureTenantId] = React.useState('');
+  const [azureClientId, setAzureClientId] = React.useState('');
+  const [azureClientSecret, setAzureClientSecret] = React.useState('');
+  const [replacingCredentials, setReplacingCredentials] = React.useState(false);
   const [azureItems, setAzureItems] = React.useState([]);
   const [azureSummary, setAzureSummary] = React.useState([]);
   const [selectedRowsAzure, setSelectedRowsAzure] = React.useState(new Set());
@@ -110,12 +117,17 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       onError && onError('Please select a workspace first.');
       return;
     }
-    if (!azureVaultUrl || !azureVaultUrl.trim()) {
-      onError && onError('Azure Key Vault URL is required');
-      return;
-    }
-    if (!azureToken || !azureToken.trim()) {
-      onError && onError('Azure access token is required');
+    const authError = validateAzureInventoryAuth({
+      authMethod: azureAuthMethod,
+      token: azureToken,
+      tenantId: azureTenantId,
+      clientId: azureClientId,
+      clientSecret: azureClientSecret,
+      requireVaultUrl: true,
+      vaultUrl: azureVaultUrl,
+    });
+    if (authError) {
+      onError && onError(authError);
       return;
     }
 
@@ -124,11 +136,19 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     setAzureItems([]);
     setAzureSummary([]);
     try {
+      const credentials = buildAzureInventoryCredentials({
+        vaultUrl: azureVaultUrl,
+        authMethod: azureAuthMethod,
+        token: azureToken,
+        tenantId: azureTenantId,
+        clientId: azureClientId,
+        clientSecret: azureClientSecret,
+      });
       const res = await azureAPI.scan({
         workspaceId,
         vaultUrl: azureVaultUrl,
-        token: azureToken,
         maxItems: 2000,
+        ...azureInventoryScanAuthPayload(credentials),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureItems(items);
@@ -209,39 +229,48 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
     getSelectedCount: () => selectedRowsAzure.size,
-    getCredentials: () => ({
-      credentials: { vaultUrl: azureVaultUrl, token: azureToken },
-      scanParams: {
+    getCredentials: () => {
+      const scanParams = {
         vaultUrl: azureVaultUrl,
         include: { secrets: true, certificates: true, keys: true },
-      },
-    }),
+      };
+      if (autoSyncManageMode && !replacingCredentials) {
+        return { credentials: {}, scanParams };
+      }
+      const credentials = buildAzureInventoryCredentials({
+        vaultUrl: azureVaultUrl,
+        authMethod: azureAuthMethod,
+        token: azureToken,
+        tenantId: azureTenantId,
+        clientId: azureClientId,
+        clientSecret: azureClientSecret,
+      });
+      return { credentials, scanParams };
+    },
   }));
 
   return (
     <VStack align='stretch' spacing={3}>
-      <Box>
-        <Text fontSize='sm' color={helpTextColor}>
-          Scans Azure Key Vault for secrets, certificates, and keys. Token is
-          used for scanning and stored encrypted if auto-sync is enabled.
-        </Text>
-        <Text fontSize='xs' color={helpTextColor} mt={1}>
-          Get token from Azure CLI:{' '}
-          <Code fontSize='xs'>
-            az account get-access-token --resource https://vault.azure.net
-          </Code>
-        </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            href={IMPORT_DOCS.azureKeyVault}
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from Azure Key Vault →
-          </ChakraLink>
-        </Text>
-      </Box>
+      {!autoSyncManageMode ? (
+        <Box>
+          <Text fontSize='sm' color={helpTextColor}>
+            Scans Azure Key Vault for secrets, certificates, and keys. Inventory
+            uses list metadata only, so Key Vault Reader is enough. Pasted
+            tokens and Entra app client credentials are stored encrypted if
+            auto-sync is enabled.
+          </Text>
+          <Text fontSize='sm' mt={1}>
+            <ChakraLink
+              href={IMPORT_DOCS.azureKeyVault}
+              color='blue.500'
+              textDecoration='underline'
+              isExternal
+            >
+              Learn more about importing from Azure Key Vault →
+            </ChakraLink>
+          </Text>
+        </Box>
+      ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
         <Box minW='320px'>
           <Text fontSize='sm' mb={1}>
@@ -253,32 +282,48 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             onChange={e => setAzureVaultUrl(e.target.value)}
           />
         </Box>
-        <Box minW='320px'>
-          <Text fontSize='sm' mb={1}>
-            Access Token
-          </Text>
-          <InputGroup>
-            <Input
-              type={showSecret ? 'text' : 'password'}
-              placeholder={autoSyncTokenPlaceholder || 'Paste token'}
-              value={azureToken}
-              onChange={e => setAzureToken(e.target.value)}
-            />
-            <InputRightElement>
-              <IconButton
-                size='xs'
-                variant='ghost'
-                icon={showSecret ? <FiEyeOff /> : <FiEye />}
-                onClick={() => setShowSecret(!showSecret)}
-                aria-label={showSecret ? 'Hide' : 'Show'}
-              />
-            </InputRightElement>
-          </InputGroup>
-        </Box>
-        <Button colorScheme='blue' onClick={doAzureScan} isLoading={isScanning}>
-          Scan
-        </Button>
+        {!autoSyncManageMode ? (
+          <Button
+            colorScheme='blue'
+            onClick={doAzureScan}
+            isLoading={isScanning}
+          >
+            Scan
+          </Button>
+        ) : null}
       </HStack>
+      <AzureInventoryAuthFields
+        audienceHint={{
+          prefix: 'Get a vault token from Azure CLI:',
+          command:
+            'az account get-access-token --resource https://vault.azure.net',
+        }}
+        tokenPlaceholder={autoSyncTokenPlaceholder || 'Paste token'}
+        helpTextColor={helpTextColor}
+        authMethod={azureAuthMethod}
+        onAuthMethodChange={setAzureAuthMethod}
+        token={azureToken}
+        onTokenChange={setAzureToken}
+        tenantId={azureTenantId}
+        onTenantIdChange={setAzureTenantId}
+        clientId={azureClientId}
+        onClientIdChange={setAzureClientId}
+        clientSecret={azureClientSecret}
+        onClientSecretChange={setAzureClientSecret}
+        showSecret={showSecret}
+        onToggleSecret={() => setShowSecret(v => !v)}
+        autoSyncManageMode={autoSyncManageMode}
+        replacingCredentials={replacingCredentials}
+        onStartReplace={() => setReplacingCredentials(true)}
+        onCancelReplace={() => {
+          setReplacingCredentials(false);
+          setAzureToken('');
+          setAzureTenantId('');
+          setAzureClientId('');
+          setAzureClientSecret('');
+          setAzureAuthMethod('token');
+        }}
+      />
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>
           <Checkbox
@@ -314,7 +359,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           ) : null}
         </VStack>
       </Box>
-      {azureSummary.length > 0 && (
+      {!autoSyncManageMode && azureSummary.length > 0 && (
         <Box
           border='1px solid'
           borderColor={borderColor}
@@ -335,7 +380,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
           </VStack>
         </Box>
       )}
-      {azureItems.length > 0 && (
+      {!autoSyncManageMode && azureItems.length > 0 && (
         <>
           <IntegrationImportTable
             items={azureItems}

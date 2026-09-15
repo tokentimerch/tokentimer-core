@@ -24,6 +24,16 @@ const {
 } = require("../services/awsScanPersist");
 const { scanAzure } = require("../services/azureIntegration");
 const { scanAzureAD } = require("../services/azureADIntegration");
+const {
+  KEY_VAULT_SCOPE,
+  GRAPH_SCOPE,
+  resolveAzureScanAuth,
+  scrubAzureSecretsFromBody,
+} = require("../services/azureClientCredentials");
+const {
+  azureKeyVaultUserMessage,
+  azureAdUserMessage,
+} = require("../services/azureScanUserMessages");
 const { scanGCP } = require("../services/gcpIntegration");
 const { formatDateYmd } = require("../services/integrationUtils");
 const {
@@ -1559,14 +1569,23 @@ router.post(
     });
 
     try {
-      const { vaultUrl, token, include, maxItems, filterRules } =
-        req.body || {};
+      const {
+        vaultUrl,
+        token,
+        include,
+        maxItems,
+        filterRules,
+        authMethod,
+        tenantId,
+        clientId,
+        clientSecret,
+      } = req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
-      if (!vaultUrl || !token)
+      if (!vaultUrl)
         return res
           .status(400)
-          .json(withQuota({ error: "vaultUrl and token are required" }));
+          .json(withQuota({ error: "vaultUrl is required" }));
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError)
         return res.status(400).json(withQuota({ error: filterRulesError }));
@@ -1607,9 +1626,18 @@ router.post(
           .status(400)
           .json(withQuota({ error: "maxItems must be between 1 and 2000" }));
       }
+      const resolved = await resolveAzureScanAuth({
+        authMethod,
+        token,
+        tenantId,
+        clientId,
+        clientSecret,
+        scope: KEY_VAULT_SCOPE,
+      });
       const result = await scanAzure({
         vaultUrl,
-        token,
+        token: resolved.token,
+        authProvider: resolved.authProvider,
         include: {
           secrets:
             include && typeof include.secrets === "boolean"
@@ -1678,11 +1706,6 @@ router.post(
       } catch (_err) {
         logger.warn("Audit write failed", { error: _err.message });
       }
-      try {
-        if (req && req.body) delete req.body.token;
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
     } catch (e) {
       const errorRef = generateErrorReference();
       logger.error("Azure scan failed", {
@@ -1693,37 +1716,15 @@ router.post(
       });
 
       // Provide helpful error messages
-      let userMessage = "Azure Key Vault scan failed";
-      if (e?.status === 400) {
-        userMessage = `Invalid request: ${e?.message || "Bad Request"}. Check your Key Vault URL format (should be https://[name].vault.azure.net).`;
-      } else if (e?.status === 401) {
-        userMessage =
-          "Authentication failed. Token may be expired (Azure CLI tokens expire quickly) or invalid. Clear cache: az account clear && az login, then regenerate: az account get-access-token --resource https://vault.azure.net";
-      } else if (e?.status === 403) {
-        userMessage =
-          'Permission denied. Ensure your account has "Key Vault Secrets User", "Key Vault Certificates User", and "Key Vault Crypto User" roles on the vault.';
-      } else if (e?.status === 404) {
-        userMessage =
-          "Key Vault not found. Check the vault name and ensure it exists in your subscription.";
-      } else if (e?.status === 429) {
-        userMessage = "Azure rate limit exceeded. Wait a moment and try again.";
-      } else if (
-        e?.message?.includes("VaultNotFound") ||
-        e?.message?.includes("ResourceNotFound")
-      ) {
-        userMessage =
-          "Key Vault not found. Verify the vault URL and ensure you have access.";
-      } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
-        userMessage =
-          "Cannot connect to Azure. Check your vault URL and network connectivity.";
-      } else if (e?.message) {
-        userMessage = e.message;
-      } else {
-        // Unexpected error - provide reference code
-        userMessage = formatIntegrationError("Azure Key Vault", e, errorRef);
-      }
+      const userMessage = azureKeyVaultUserMessage(
+        e,
+        errorRef,
+        formatIntegrationError,
+      );
 
       res.status(e?.status || 502).json(withQuota({ error: userMessage }));
+    } finally {
+      scrubAzureSecretsFromBody(req.body);
     }
   },
 );
@@ -1931,21 +1932,21 @@ router.post(
     });
 
     try {
-      const { token, include, maxItems, filterRules } = req.body || {};
+      const {
+        token,
+        include,
+        maxItems,
+        filterRules,
+        authMethod,
+        tenantId,
+        clientId,
+        clientSecret,
+      } = req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
-      if (!token)
-        return res.status(400).json(withQuota({ error: "token is required" }));
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError)
         return res.status(400).json(withQuota({ error: filterRulesError }));
-      if (typeof token === "string" && token.length > 5000) {
-        return res
-          .status(400)
-          .json(
-            withQuota({ error: "token is too long (max 5000 characters)" }),
-          );
-      }
       if (
         maxItems !== undefined &&
         (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
@@ -1954,8 +1955,17 @@ router.post(
           .status(400)
           .json(withQuota({ error: "maxItems must be between 1 and 2000" }));
       }
-      const result = await scanAzureAD({
+      const resolved = await resolveAzureScanAuth({
+        authMethod,
         token,
+        tenantId,
+        clientId,
+        clientSecret,
+        scope: GRAPH_SCOPE,
+      });
+      const result = await scanAzureAD({
+        token: resolved.token,
+        authProvider: resolved.authProvider,
         include: {
           applications:
             include && typeof include.applications === "boolean"
@@ -2023,11 +2033,6 @@ router.post(
       } catch (_err) {
         logger.warn("Audit write failed", { error: _err.message });
       }
-      try {
-        if (req && req.body) delete req.body.token;
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
     } catch (e) {
       const errorRef = generateErrorReference();
       logger.error("Azure AD scan failed", {
@@ -2038,46 +2043,15 @@ router.post(
         userId: req?.user?.id,
       });
 
-      // Provide helpful error messages based on status code
-      let userMessage = "Azure AD scan failed";
-      if (e?.status === 400 || e?.graphError === "BadRequest") {
-        if (e?.message?.includes("Invalid version")) {
-          userMessage =
-            "Microsoft Graph API version error. This should not happen - please report this. Reference: ${errorRef}";
-        } else {
-          userMessage = `Invalid request: ${e?.message || "Bad Request"}. Ensure token is for Microsoft Graph API (resource: https://graph.microsoft.com).`;
-        }
-      } else if (
-        e?.status === 401 ||
-        e?.graphError === "InvalidAuthenticationToken"
-      ) {
-        userMessage =
-          "Authentication failed. Token may be expired (Azure CLI tokens expire quickly) or invalid. Clear cache: az account clear && az login, then regenerate.";
-      } else if (e?.status === 403 || e?.graphError === "Forbidden") {
-        userMessage =
-          'Permission denied. Token needs "Application.Read.All" or "Directory.Read.All" permission with admin consent granted in Azure Portal.';
-      } else if (e?.status === 404) {
-        userMessage =
-          "Microsoft Graph endpoint not found. Verify the token audience is correct.";
-      } else if (e?.status === 429 || e?.graphError === "TooManyRequests") {
-        userMessage =
-          "Microsoft Graph rate limit exceeded. Wait a moment and try again.";
-      } else if (
-        e?.message?.includes("CompactToken") ||
-        e?.message?.includes("audience")
-      ) {
-        userMessage = `Token audience mismatch: ${e?.message}. Token must be for https://graph.microsoft.com (not ARM or other resource).`;
-      } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
-        userMessage =
-          "Cannot connect to Microsoft Graph API. Check your network connectivity.";
-      } else if (e?.message) {
-        userMessage = e.message;
-      } else {
-        // Unexpected error - provide reference code
-        userMessage = formatIntegrationError("Azure AD", e, errorRef);
-      }
+      const userMessage = azureAdUserMessage(
+        e,
+        errorRef,
+        formatIntegrationError,
+      );
 
       res.status(e?.status || 502).json(withQuota({ error: userMessage }));
+    } finally {
+      scrubAzureSecretsFromBody(req.body);
     }
   },
 );

@@ -7,8 +7,40 @@ const {
   formatDateYmd,
   CREDENTIALED_AXIOS_REDIRECTS,
   assertSameOriginFollowUp,
+  throwIfAllScopesFailed,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+
+function wrapAzureError(error, method, path) {
+  if (error && error.status && String(error.message || "").startsWith("Azure Key Vault")) {
+    return error;
+  }
+  if (error && error.response) {
+    const err = new Error(
+      `Azure Key Vault ${method} ${path} ${error.response.status}`,
+    );
+    err.status = error.response.status;
+    err.body = error.response.data;
+    logger.warn("Azure Key Vault API request failed", {
+      method,
+      path,
+      status: error.response.status,
+    });
+    return err;
+  }
+  return error;
+}
+
+async function with401Retry(authProvider, token, run) {
+  try {
+    return await run(token);
+  } catch (error) {
+    if (error?.status !== 401 || !authProvider) throw error;
+    const next = await authProvider.refresh(token);
+    if (!next) throw error;
+    return await run(next);
+  }
+}
 
 async function azureRequest({
   vaultUrl,
@@ -16,49 +48,48 @@ async function azureRequest({
   method = "GET",
   path,
   apiVersion = "7.4",
+  authProvider,
 }) {
   const url = new URL(path.startsWith("/") ? path : `/${path}`, vaultUrl);
   url.searchParams.set("api-version", apiVersion);
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-
-  try {
-    const response = await axios({
-      method,
-      url: url.toString(),
-      headers,
-      timeout: 120000, // 120 second timeout (increased for up to 2000 items)
-      ...CREDENTIALED_AXIOS_REDIRECTS,
-    });
-    return response.data;
-  } catch (error) {
-    if (error.response) {
-      const err = new Error(
-        `Azure Key Vault ${method} ${path} ${error.response.status}`,
-      );
-      err.status = error.response.status;
-      err.body = error.response.data;
-      logger.warn("Azure Key Vault API request failed", {
+  const run = async (bearer) => {
+    try {
+      const response = await axios({
+        method,
+        url: url.toString(),
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 120000,
+        ...CREDENTIALED_AXIOS_REDIRECTS,
+      });
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        throw wrapAzureError(error, method, path);
+      }
+      logger.error("Azure Key Vault API request error", {
         method,
         path,
-        status: error.response.status,
+        error: error.message,
+        code: error.code,
       });
-      throw err;
+      throw error;
     }
-    logger.error("Azure Key Vault API request error", {
-      method,
-      path,
-      error: error.message,
-      code: error.code,
-    });
-    throw error;
-  }
+  };
+
+  return with401Retry(authProvider, token, run);
 }
 
-async function azureListPage({ vaultUrl, token, nextLink, defaultPath }) {
+async function azureListPage({
+  vaultUrl,
+  token,
+  nextLink,
+  defaultPath,
+  authProvider,
+}) {
   const url = nextLink
     ? assertSameOriginFollowUp(
         nextLink,
@@ -69,64 +100,83 @@ async function azureListPage({ vaultUrl, token, nextLink, defaultPath }) {
   url.searchParams.set("api-version", "7.4");
   if (!nextLink) url.searchParams.set("maxresults", "25");
 
-  const response = await axios({
-    method: "GET",
-    url: url.toString(),
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    timeout: 120000, // 120 second timeout (increased for up to 2000 items)
-    ...CREDENTIALED_AXIOS_REDIRECTS,
-  });
-  return response.data;
+  const run = async (bearer) => {
+    try {
+      const response = await axios({
+        method: "GET",
+        url: url.toString(),
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+        },
+        timeout: 120000,
+        ...CREDENTIALED_AXIOS_REDIRECTS,
+      });
+      return response.data;
+    } catch (error) {
+      throw wrapAzureError(error, "GET", defaultPath || nextLink || "/");
+    }
+  };
+
+  return with401Retry(authProvider, token, run);
 }
 
-async function listSecrets({ vaultUrl, token, maxItems = 500 }) {
-  const secrets = [];
+async function listCollection({
+  vaultUrl,
+  token,
+  authProvider,
+  defaultPath,
+  maxItems = 500,
+}) {
+  const collected = [];
   let nextLink = null;
   let pageCount = 0;
   const maxPages = 50;
-  // truncated tracks "there was more to see than we looked at" -- distinct
-  // from a 404/403 on the collection itself, which means "nothing here",
-  // not "couldn't finish". A truncated listing must never gate cleanup as
-  // if this source kind were fully enumerated.
   let truncated = false;
 
   do {
-    try {
-      const data = await azureListPage({
-        vaultUrl,
-        token,
-        nextLink,
-        defaultPath: "/secrets",
-      });
-      if (Array.isArray(data.value)) {
-        secrets.push(...data.value);
-      } else if (Array.isArray(data)) {
-        secrets.push(...data);
-      }
-
-      nextLink = data.nextLink || null;
-      pageCount++;
-
-      if (secrets.length >= maxItems || pageCount >= maxPages) {
-        truncated = Boolean(nextLink) || secrets.length > maxItems;
-        break;
-      }
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
+    const data = await azureListPage({
+      vaultUrl,
+      token,
+      authProvider,
+      nextLink,
+      defaultPath,
+    });
+    if (Array.isArray(data.value)) {
+      collected.push(...data.value);
+    } else if (Array.isArray(data)) {
+      collected.push(...data);
     }
-  } while (nextLink && secrets.length < maxItems);
 
-  return { items: secrets.slice(0, maxItems), truncated };
+    nextLink = data.nextLink || null;
+    pageCount++;
+
+    if (collected.length >= maxItems || pageCount >= maxPages) {
+      truncated = Boolean(nextLink) || collected.length > maxItems;
+      break;
+    }
+  } while (nextLink && collected.length < maxItems);
+
+  return { items: collected.slice(0, maxItems), truncated };
 }
 
-async function _getSecretVersions({ vaultUrl, token, secretName }) {
+async function listSecrets(opts) {
+  return listCollection({ ...opts, defaultPath: "/secrets" });
+}
+
+async function listCertificates(opts) {
+  return listCollection({ ...opts, defaultPath: "/certificates" });
+}
+
+async function listKeys(opts) {
+  return listCollection({ ...opts, defaultPath: "/keys" });
+}
+
+async function _getSecretVersions({ vaultUrl, token, secretName, authProvider }) {
   try {
     const data = await azureRequest({
       vaultUrl,
       token,
+      authProvider,
       method: "GET",
       path: `/secrets/${encodeURIComponent(secretName)}/versions`,
     });
@@ -137,59 +187,28 @@ async function _getSecretVersions({ vaultUrl, token, secretName }) {
   }
 }
 
-async function getSecret({ vaultUrl, token, secretName, version = null }) {
+async function getSecret({
+  vaultUrl,
+  token,
+  secretName,
+  version = null,
+  authProvider,
+}) {
   try {
     const path = version
       ? `/secrets/${encodeURIComponent(secretName)}/${encodeURIComponent(version)}`
       : `/secrets/${encodeURIComponent(secretName)}`;
-    const data = await azureRequest({
+    return await azureRequest({
       vaultUrl,
       token,
+      authProvider,
       method: "GET",
       path,
     });
-    return data;
   } catch (e) {
     if (e.status === 404 || e.status === 403) return null;
     throw e;
   }
-}
-
-async function listCertificates({ vaultUrl, token, maxItems = 500 }) {
-  const certificates = [];
-  let nextLink = null;
-  let pageCount = 0;
-  const maxPages = 50;
-  let truncated = false;
-
-  do {
-    try {
-      const data = await azureListPage({
-        vaultUrl,
-        token,
-        nextLink,
-        defaultPath: "/certificates",
-      });
-      if (Array.isArray(data.value)) {
-        certificates.push(...data.value);
-      } else if (Array.isArray(data)) {
-        certificates.push(...data);
-      }
-
-      nextLink = data.nextLink || null;
-      pageCount++;
-
-      if (certificates.length >= maxItems || pageCount >= maxPages) {
-        truncated = Boolean(nextLink) || certificates.length > maxItems;
-        break;
-      }
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
-    }
-  } while (nextLink && certificates.length < maxItems);
-
-  return { items: certificates.slice(0, maxItems), truncated };
 }
 
 async function getCertificate({
@@ -197,70 +216,62 @@ async function getCertificate({
   token,
   certificateName,
   version = null,
+  authProvider,
 }) {
   try {
     const path = version
       ? `/certificates/${encodeURIComponent(certificateName)}/${encodeURIComponent(version)}`
       : `/certificates/${encodeURIComponent(certificateName)}`;
-    const data = await azureRequest({
+    return await azureRequest({
       vaultUrl,
       token,
+      authProvider,
       method: "GET",
       path,
     });
-    return data;
   } catch (e) {
     if (e.status === 404 || e.status === 403) return null;
     throw e;
   }
 }
 
-async function listKeys({ vaultUrl, token, maxItems = 500 }) {
-  const keys = [];
-  let nextLink = null;
-  let pageCount = 0;
-  const maxPages = 50;
-  let truncated = false;
+function nameFromId(id, segment) {
+  const pathParts = id ? String(id).split("/").filter(Boolean) : [];
+  const index = pathParts.indexOf(segment);
+  return index >= 0 && pathParts[index + 1] ? pathParts[index + 1] : null;
+}
 
-  do {
-    try {
-      const data = await azureListPage({
-        vaultUrl,
-        token,
-        nextLink,
-        defaultPath: "/keys",
-      });
-      if (Array.isArray(data.value)) {
-        keys.push(...data.value);
-      } else if (Array.isArray(data)) {
-        keys.push(...data);
-      }
+function unixAttrIso(value) {
+  if (value == null) return null;
+  const d = new Date(Number(value) * 1000);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
 
-      nextLink = data.nextLink || null;
-      pageCount++;
+function unixExpYmd(value) {
+  if (value == null) return null;
+  const parsed = tryParseDate(new Date(Number(value) * 1000));
+  return parsed ? formatDateYmd(parsed) : null;
+}
 
-      if (keys.length >= maxItems || pageCount >= maxPages) {
-        truncated = Boolean(nextLink) || keys.length > maxItems;
-        break;
-      }
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
-    }
-  } while (nextLink && keys.length < maxItems);
-
-  return { items: keys.slice(0, maxItems), truncated };
+function failedScopeSummary(type, sourceKind, error) {
+  return {
+    type,
+    sourceKind,
+    error: error?.message || String(error),
+    status: error?.status,
+    complete: false,
+  };
 }
 
 async function scanAzure({
   vaultUrl,
   token,
+  authProvider,
   include = { secrets: true, certificates: true, keys: true },
   maxItems = 500,
 }) {
   if (!vaultUrl || !token) throw new Error("vaultUrl and token are required");
 
-  // Validate inputs
   if (typeof vaultUrl !== "string" || vaultUrl.length > 500) {
     throw new Error("Invalid vaultUrl format");
   }
@@ -275,134 +286,58 @@ async function scanAzure({
 
   const items = [];
   const summary = [];
+  const listOpts = { vaultUrl: null, token, authProvider, maxItems };
 
   try {
-    // Normalize vaultUrl
     const normalizedUrl = vaultUrl.endsWith("/")
       ? vaultUrl.slice(0, -1)
       : vaultUrl;
+    listOpts.vaultUrl = normalizedUrl;
 
-    // Scan Secrets
     if (include.secrets) {
       try {
         const { items: secretList, truncated: secretsTruncated } =
-          await listSecrets({
-            vaultUrl: normalizedUrl,
-            token,
-            maxItems,
-          });
+          await listSecrets(listOpts);
         logger.info("Azure secrets list retrieved", {
           count: secretList.length,
         });
 
-        // Deduplicate - Azure API may return multiple versions, keep only latest
         const seenSecrets = new Set();
-        const BATCH_SIZE = 10;
-        let describeFailedCount = 0;
         let secretsBudgetExhausted = false;
 
-        for (let i = 0; i < secretList.length; i += BATCH_SIZE) {
+        for (const secret of secretList) {
           if (items.length >= maxItems) {
-            // The shared cross-type item budget ran out before this
-            // sub-scope finished processing its own listed secrets --
-            // report incomplete even though listSecrets() itself paginated
-            // fine, since some listed secrets here were never even
-            // attempted.
             secretsBudgetExhausted = true;
             break;
           }
-          const batch = secretList.slice(i, i + BATCH_SIZE);
 
-          await Promise.all(
-            batch.map(async (secret) => {
-              if (items.length >= maxItems) return;
+          const secretName = nameFromId(secret.id, "secrets");
+          if (!secretName) {
+            logger.warn("Azure secret missing name", {
+              secretId: secret.id,
+            });
+            continue;
+          }
+          if (seenSecrets.has(secretName)) continue;
+          seenSecrets.add(secretName);
 
-              // Extract secret name from id URL (remove version if present)
-              // id format: "https://vault.vault.azure.net/secrets/secret-name" or
-              // "https://vault.vault.azure.net/secrets/secret-name/version-id"
-              const pathParts = secret.id
-                ? secret.id.split("/").filter(Boolean)
-                : [];
-              const secretsIndex = pathParts.indexOf("secrets");
-              const secretName =
-                secretsIndex >= 0 && pathParts[secretsIndex + 1]
-                  ? pathParts[secretsIndex + 1]
-                  : null;
+          if (secret.attributes?.enabled === false) {
+            logger.debug("Skipping disabled Azure secret", { secretName });
+            continue;
+          }
 
-              if (!secretName) {
-                logger.warn("Azure secret missing name", {
-                  secretId: secret.id,
-                });
-                return;
-              }
-
-              // Skip if we've already processed this secret
-              if (seenSecrets.has(secretName)) {
-                logger.debug(
-                  "Azure secret already processed (duplicate version)",
-                  {
-                    secretName,
-                  },
-                );
-                return;
-              }
-              seenSecrets.add(secretName);
-
-              // Get full secret details (latest version) to ensure we have expiration
-              let secretDetails;
-              try {
-                secretDetails = await getSecret({
-                  vaultUrl: normalizedUrl,
-                  token,
-                  secretName,
-                });
-              } catch (e) {
-                // A failed detail fetch means this secret's continued
-                // existence/expiration is unconfirmed -- count it so the
-                // "secrets" sub-scope is reported incomplete rather than
-                // silently treating the fetch failure as "not present".
-                describeFailedCount++;
-                logger.warn("Failed to get Azure secret details", {
-                  secretName,
-                  error: e.message,
-                });
-                return;
-              }
-
-              // Skip disabled secrets
-              if (secretDetails?.attributes?.enabled === false) {
-                logger.debug("Skipping disabled Azure secret", { secretName });
-                return;
-              }
-
-              const expiresAt = secretDetails?.attributes?.exp
-                ? tryParseDate(new Date(secretDetails.attributes.exp * 1000))
-                : secret.attributes?.exp
-                  ? tryParseDate(new Date(secret.attributes.exp * 1000))
-                  : null;
-
-              items.push({
-                source: "azure-key-vault-secret",
-                sourceKind: "azure-key-vault-secret",
-                sourceObjectId: secretName,
-                name: secretName,
-                category: "key_secret",
-                type: "secret",
-                expiration: expiresAt ? formatDateYmd(expiresAt) : null,
-                location: `azure:${normalizedUrl}/secrets/${secretName}`,
-                created_at: secretDetails?.attributes?.created
-                  ? new Date(
-                      secretDetails.attributes.created * 1000,
-                    ).toISOString()
-                  : null,
-                updated_at: secretDetails?.attributes?.updated
-                  ? new Date(
-                      secretDetails.attributes.updated * 1000,
-                    ).toISOString()
-                  : null,
-              });
-            }),
-          );
+          items.push({
+            source: "azure-key-vault-secret",
+            sourceKind: "azure-key-vault-secret",
+            sourceObjectId: secretName,
+            name: secretName,
+            category: "key_secret",
+            type: "secret",
+            expiration: unixExpYmd(secret.attributes?.exp),
+            location: `azure:${normalizedUrl}/secrets/${secretName}`,
+            created_at: unixAttrIso(secret.attributes?.created),
+            updated_at: unixAttrIso(secret.attributes?.updated),
+          });
         }
         const secretsFound = items.filter(
           (i) => i.source === "azure-key-vault-secret",
@@ -411,44 +346,30 @@ async function scanAzure({
           type: "secrets",
           sourceKind: "azure-key-vault-secret",
           found: secretsFound,
-          failedCount: describeFailedCount,
           truncated: secretsTruncated || secretsBudgetExhausted,
-          complete:
-            describeFailedCount === 0 &&
-            !secretsTruncated &&
-            !secretsBudgetExhausted,
+          complete: !secretsTruncated && !secretsBudgetExhausted,
         });
         logger.info("Azure secrets scan completed", {
           found: secretsFound,
         });
       } catch (e) {
         logger.error("Azure secrets scan failed", { error: e.message });
-        summary.push({
-          type: "secrets",
-          sourceKind: "azure-key-vault-secret",
-          error: e.message,
-          complete: false,
-        });
+        summary.push(
+          failedScopeSummary("secrets", "azure-key-vault-secret", e),
+        );
       }
     }
 
-    // Scan Certificates
     if (include.certificates) {
       try {
         const { items: certificateList, truncated: certsTruncated } =
-          await listCertificates({
-            vaultUrl: normalizedUrl,
-            token,
-            maxItems,
-          });
+          await listCertificates(listOpts);
         logger.info("Azure certificates list retrieved", {
           count: certificateList.length,
         });
 
-        // Deduplicate - keep only latest version of each certificate
         const seenCertificates = new Set();
         const BATCH_SIZE = 10;
-        let describeFailedCount = 0;
         let certsBudgetExhausted = false;
 
         for (let i = 0; i < certificateList.length; i += BATCH_SIZE) {
@@ -462,70 +383,38 @@ async function scanAzure({
             batch.map(async (cert) => {
               if (items.length >= maxItems) return;
 
-              // Extract certificate name from id URL (remove version if present)
-              // id format: "https://vault.vault.azure.net/certificates/cert-name" or with version
-              const pathParts = cert.id
-                ? cert.id.split("/").filter(Boolean)
-                : [];
-              const certificatesIndex = pathParts.indexOf("certificates");
-              const certName =
-                certificatesIndex >= 0 && pathParts[certificatesIndex + 1]
-                  ? pathParts[certificatesIndex + 1]
-                  : null;
-
+              const certName = nameFromId(cert.id, "certificates");
               if (!certName) {
                 logger.warn("Azure certificate missing name", {
                   certId: cert.id,
                 });
                 return;
               }
-
-              // Skip if we've already processed this certificate
-              if (seenCertificates.has(certName)) {
-                logger.debug(
-                  "Azure certificate already processed (duplicate version)",
-                  { certName },
-                );
-                return;
-              }
+              if (seenCertificates.has(certName)) return;
               seenCertificates.add(certName);
 
-              // Get full certificate details (latest version)
-              let certDetails;
-              try {
-                certDetails = await getCertificate({
-                  vaultUrl: normalizedUrl,
-                  token,
-                  certificateName: certName,
-                });
-              } catch (e) {
-                describeFailedCount++;
-                logger.warn("Failed to get Azure certificate details", {
-                  certName,
-                  error: e.message,
-                });
-                return;
-              }
-
-              // Skip disabled certificates
-              if (certDetails?.attributes?.enabled === false) {
+              if (cert.attributes?.enabled === false) {
                 logger.debug("Skipping disabled Azure certificate", {
                   certName,
                 });
                 return;
               }
 
-              const expiresAt = certDetails?.attributes?.exp
-                ? tryParseDate(new Date(certDetails.attributes.exp * 1000))
-                : cert.attributes?.exp
-                  ? tryParseDate(new Date(cert.attributes.exp * 1000))
-                  : null;
+              let certDetails = null;
+              try {
+                certDetails = await getCertificate({
+                  vaultUrl: normalizedUrl,
+                  token,
+                  authProvider,
+                  certificateName: certName,
+                });
+              } catch (e) {
+                logger.warn("Failed to get Azure certificate details", {
+                  certName,
+                  error: e.message,
+                });
+              }
 
-              // CertificateBundle has no top-level subject/issuer: the X.509
-              // subject lives in policy.x509_props.subject and the issuer name
-              // in policy.issuer.name ("Self", "Unknown", or a CA provider).
-              // The authoritative values come from the certificate itself,
-              // returned base64-DER-encoded in `cer`.
               let subject = certDetails?.policy?.x509_props?.subject || null;
               let issuer = certDetails?.policy?.issuer?.name || null;
               if (certDetails?.cer) {
@@ -550,20 +439,18 @@ async function scanAzure({
                 name: certName,
                 category: "cert",
                 type: "ssl_cert",
-                expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+                expiration: unixExpYmd(
+                  certDetails?.attributes?.exp ?? cert.attributes?.exp,
+                ),
                 location: `azure:${normalizedUrl}/certificates/${certName}`,
                 issuer: issuer,
                 subject: subject || certName,
-                created_at: certDetails?.attributes?.created
-                  ? new Date(
-                      certDetails.attributes.created * 1000,
-                    ).toISOString()
-                  : null,
-                updated_at: certDetails?.attributes?.updated
-                  ? new Date(
-                      certDetails.attributes.updated * 1000,
-                    ).toISOString()
-                  : null,
+                created_at: unixAttrIso(
+                  certDetails?.attributes?.created ?? cert.attributes?.created,
+                ),
+                updated_at: unixAttrIso(
+                  certDetails?.attributes?.updated ?? cert.attributes?.updated,
+                ),
               });
             }),
           );
@@ -575,38 +462,30 @@ async function scanAzure({
           type: "certificates",
           sourceKind: "azure-key-vault-certificate",
           found: certsFound,
-          failedCount: describeFailedCount,
           truncated: certsTruncated || certsBudgetExhausted,
-          complete:
-            describeFailedCount === 0 &&
-            !certsTruncated &&
-            !certsBudgetExhausted,
+          complete: !certsTruncated && !certsBudgetExhausted,
         });
         logger.info("Azure certificates scan completed", {
           found: certsFound,
         });
       } catch (e) {
         logger.error("Azure certificates scan failed", { error: e.message });
-        summary.push({
-          type: "certificates",
-          sourceKind: "azure-key-vault-certificate",
-          error: e.message,
-          complete: false,
-        });
+        summary.push(
+          failedScopeSummary(
+            "certificates",
+            "azure-key-vault-certificate",
+            e,
+          ),
+        );
       }
     }
 
-    // Scan Keys
     if (include.keys) {
       try {
-        const { items: keyList, truncated: keysTruncated } = await listKeys({
-          vaultUrl: normalizedUrl,
-          token,
-          maxItems,
-        });
+        const { items: keyList, truncated: keysTruncated } =
+          await listKeys(listOpts);
         logger.info("Azure keys list retrieved", { count: keyList.length });
 
-        // Deduplicate - keep only latest version of each key
         const seenKeys = new Set();
         let keysBudgetExhausted = false;
 
@@ -616,40 +495,19 @@ async function scanAzure({
             break;
           }
 
-          // Extract key name from identifier URL (remove version if present)
-          // The keys list API returns the identifier in `kid` (not `id`):
-          // "https://vault.vault.azure.net/keys/key-name" or with version
           const keyId = key.kid || key.id;
-          const pathParts = keyId ? keyId.split("/").filter(Boolean) : [];
-          const keysIndex = pathParts.indexOf("keys");
-          const keyName =
-            keysIndex >= 0 && pathParts[keysIndex + 1]
-              ? pathParts[keysIndex + 1]
-              : null;
-
+          const keyName = nameFromId(keyId, "keys");
           if (!keyName) {
             logger.warn("Azure key missing name", { keyId });
             continue;
           }
-
-          // Skip if we've already processed this key
-          if (seenKeys.has(keyName)) {
-            logger.debug("Azure key already processed (duplicate version)", {
-              keyName,
-            });
-            continue;
-          }
+          if (seenKeys.has(keyName)) continue;
           seenKeys.add(keyName);
 
-          // Skip disabled keys
           if (key.attributes?.enabled === false) {
             logger.debug("Skipping disabled Azure key", { keyName });
             continue;
           }
-
-          const expiresAt = key.attributes?.exp
-            ? tryParseDate(new Date(key.attributes.exp * 1000))
-            : null;
 
           items.push({
             source: "azure-key-vault-key",
@@ -658,17 +516,13 @@ async function scanAzure({
             name: keyName,
             category: "key_secret",
             type: "encryption_key",
-            expiration: expiresAt ? formatDateYmd(expiresAt) : null,
+            expiration: unixExpYmd(key.attributes?.exp),
             location: `azure:${normalizedUrl}/keys/${keyName}`,
             key_type: key.kty || null,
             key_size: key.key_size || null,
             algorithm: key.kty || null,
-            created_at: key.attributes?.created
-              ? new Date(key.attributes.created * 1000).toISOString()
-              : null,
-            updated_at: key.attributes?.updated
-              ? new Date(key.attributes.updated * 1000).toISOString()
-              : null,
+            created_at: unixAttrIso(key.attributes?.created),
+            updated_at: unixAttrIso(key.attributes?.updated),
           });
         }
         const keysFound = items.filter(
@@ -686,35 +540,20 @@ async function scanAzure({
         });
       } catch (e) {
         logger.error("Azure keys scan failed", { error: e.message });
-        summary.push({
-          type: "keys",
-          sourceKind: "azure-key-vault-key",
-          error: e.message,
-          complete: false,
-        });
+        summary.push(failedScopeSummary("keys", "azure-key-vault-key", e));
       }
     }
   } catch (e) {
     logger.error("Azure scan failed", { error: e.message });
-    summary.push({ type: "scan", error: e.message });
+    summary.push({
+      type: "scan",
+      error: e.message,
+      status: e.status,
+      complete: false,
+    });
   }
 
-  // If all scan types failed with authentication errors, throw instead of returning partial results
-  const allFailed = summary.every((s) => s.error);
-  const hasAuthError = summary.some(
-    (s) =>
-      s.error &&
-      (s.error.includes("401") ||
-        s.error.includes("403") ||
-        s.error.includes("Unauthorized") ||
-        s.error.includes("Forbidden")),
-  );
-
-  if (allFailed && hasAuthError && items.length === 0) {
-    const err = new Error("Authentication failed");
-    err.status = 401;
-    throw err;
-  }
+  throwIfAllScopesFailed(summary, items);
 
   logger.info("Azure scan completed", { itemsFound: items.length });
   return { items, summary };
@@ -724,14 +563,15 @@ module.exports = {
   scanAzure,
 };
 
-// Test-only exports for unit coverage of helpers
 if (process.env.NODE_ENV === "test") {
   module.exports._test = {
     azureRequest,
+    azureListPage,
     listSecrets,
     listCertificates,
     listKeys,
     getSecret,
     getCertificate,
+    _getSecretVersions,
   };
 }

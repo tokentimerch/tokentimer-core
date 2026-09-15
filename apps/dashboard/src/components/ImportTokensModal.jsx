@@ -28,12 +28,8 @@ import {
   Badge,
   Checkbox,
   Tooltip,
-  IconButton,
   useColorMode,
   Link as ChakraLink,
-  Code,
-  InputGroup,
-  InputRightElement,
   useDisclosure,
   Select,
   FormControl,
@@ -59,8 +55,6 @@ import {
   FiKey,
   FiUsers,
   FiAlertTriangle,
-  FiEye,
-  FiEyeOff,
 } from 'react-icons/fi';
 import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
@@ -72,6 +66,13 @@ import ImportAWSForm, {
   buildAwsAutoSyncPayload,
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
+import AzureInventoryAuthFields from './imports/AzureInventoryAuthFields';
+import {
+  azureInventoryCredentialsHaveSecrets,
+  azureInventoryScanAuthPayload,
+  buildAzureInventoryCredentials,
+  validateAzureInventoryAuth,
+} from './imports/azureInventoryAuth';
 import ImportGCPForm from './imports/ImportGCPForm';
 import { collapseScanSummaryByType } from './imports/collapseScanSummaryByType';
 import ImportCertificateForm from './certops/ImportCertificateForm.jsx';
@@ -980,7 +981,7 @@ export default function ImportTokensModal({
 
   // Azure integration state
   const [azureVaultUrl, setAzureVaultUrl] = React.useState('');
-  const [azureToken, _setAzureToken] = React.useState('');
+  const [_azureToken, _setAzureToken] = React.useState('');
   const [_azureItems, _setAzureItems] = React.useState([]);
   const [_azureSummary, _setAzureSummary] = React.useState([]);
   const [_selectedRowsAzure, setSelectedRowsAzure] = React.useState(new Set());
@@ -994,6 +995,12 @@ export default function ImportTokensModal({
 
   // Azure AD state
   const [azureADToken, setAzureADToken] = React.useState('');
+  const [azureADAuthMethod, setAzureADAuthMethod] = React.useState('token');
+  const [azureADTenantId, setAzureADTenantId] = React.useState('');
+  const [azureADClientId, setAzureADClientId] = React.useState('');
+  const [azureADClientSecret, setAzureADClientSecret] = React.useState('');
+  const [replacingAzureAdCredentials, setReplacingAzureAdCredentials] =
+    React.useState(false);
   const [azureADIncludeApps, setAzureADIncludeApps] = React.useState(true);
   const [azureADIncludeSPs, setAzureADIncludeSPs] = React.useState(true);
   const [azureADItems, setAzureADItems] = React.useState([]);
@@ -1303,10 +1310,7 @@ export default function ImportTokensModal({
       }
       case 'azure': {
         const formCreds = azureFormRef.current?.getCredentials();
-        credentials = formCreds?.credentials ?? {
-          vaultUrl: azureVaultUrl,
-          token: azureToken,
-        };
+        credentials = formCreds?.credentials ?? {};
         scanParams = formCreds?.scanParams ?? {
           vaultUrl: azureVaultUrl,
           include: { secrets: true, certificates: true, keys: true },
@@ -1314,13 +1318,23 @@ export default function ImportTokensModal({
         break;
       }
       case 'azure-ad':
-        credentials = { token: azureADToken };
         scanParams = {
           include: {
             applications: azureADIncludeApps,
             servicePrincipals: azureADIncludeSPs,
           },
         };
+        if (autoSyncManageMode && !replacingAzureAdCredentials) {
+          credentials = {};
+        } else {
+          credentials = buildAzureInventoryCredentials({
+            authMethod: azureADAuthMethod,
+            token: azureADToken,
+            tenantId: azureADTenantId,
+            clientId: azureADClientId,
+            clientSecret: azureADClientSecret,
+          });
+        }
         break;
       case 'gcp': {
         const formCreds = gcpFormRef.current?.getCredentials();
@@ -1368,10 +1382,13 @@ export default function ImportTokensModal({
       case 'github':
       case 'gitlab':
       case 'vault':
+      case 'gcp':
+        return Boolean(
+          String(credentials.token || credentials.accessToken || '').trim()
+        );
       case 'azure':
       case 'azure-ad':
-      case 'gcp':
-        return Boolean(String(credentials.token || '').trim());
+        return azureInventoryCredentialsHaveSecrets(credentials);
       case 'aws':
         return Boolean(
           String(
@@ -1416,7 +1433,8 @@ export default function ImportTokensModal({
     try {
       await apiClient.put(
         `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}`,
-        payload
+        payload,
+        { _suppressLog: true }
       );
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync`
@@ -1919,8 +1937,15 @@ export default function ImportTokensModal({
     }
 
     // Validate required fields BEFORE calling API to avoid consuming quota
-    if (!azureADToken || !azureADToken.trim()) {
-      setError('Azure AD access token is required');
+    const authError = validateAzureInventoryAuth({
+      authMethod: azureADAuthMethod,
+      token: azureADToken,
+      tenantId: azureADTenantId,
+      clientId: azureADClientId,
+      clientSecret: azureADClientSecret,
+    });
+    if (authError) {
+      setError(authError);
       return;
     }
 
@@ -1929,14 +1954,21 @@ export default function ImportTokensModal({
     setAzureADItems([]);
     setAzureADSummary([]);
     try {
+      const credentials = buildAzureInventoryCredentials({
+        authMethod: azureADAuthMethod,
+        token: azureADToken,
+        tenantId: azureADTenantId,
+        clientId: azureADClientId,
+        clientSecret: azureADClientSecret,
+      });
       const res = await azureADAPI.scan({
         workspaceId,
-        token: azureADToken,
         include: {
           applications: azureADIncludeApps,
           servicePrincipals: azureADIncludeSPs,
         },
         maxItems: 2000,
+        ...azureInventoryScanAuthPayload(credentials),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setAzureADItems(items);
@@ -2785,7 +2817,7 @@ export default function ImportTokensModal({
                 />
               ) : null}
 
-              {source === 'azure' && !autoSyncManageMode ? (
+              {source === 'azure' ? (
                 <ImportAzureForm
                   ref={azureFormRef}
                   workspaceId={workspaceId}
@@ -2804,6 +2836,7 @@ export default function ImportTokensModal({
                   borderColor={border}
                   helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
+                  autoSyncManageMode={autoSyncManageMode}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
                   isQuotaExceededError={isQuotaExceededError}
@@ -2841,62 +2874,67 @@ export default function ImportTokensModal({
                 />
               ) : null}
 
-              {source === 'azure-ad' && !autoSyncManageMode ? (
+              {source === 'azure-ad' ? (
                 <VStack align='stretch' spacing={3}>
-                  <Box>
-                    <Text fontSize='sm' color={muted}>
-                      Scans Azure AD for app registrations and service
-                      principals with expiring client secrets and certificates.
-                      Token is used for scanning and stored encrypted if
-                      auto-sync is enabled.
-                    </Text>
-                    <Text fontSize='sm' mt={1}>
-                      <ChakraLink
-                        href={IMPORT_DOCS.entraId}
-                        color='blue.500'
-                        textDecoration='underline'
-                        isExternal
-                      >
-                        Learn more about importing from Azure AD →
-                      </ChakraLink>
-                    </Text>
-                  </Box>
-                  <HStack spacing={3} align='flex-start' flexWrap='wrap'>
-                    <Box minW='380px'>
-                      <Text fontSize='sm' mb={1}>
-                        Microsoft Graph API Token
+                  {!autoSyncManageMode ? (
+                    <Box>
+                      <Text fontSize='sm' color={muted}>
+                        Scans Azure AD for app registrations and service
+                        principals with expiring client secrets and
+                        certificates. Pasted Graph tokens and Entra app client
+                        credentials are stored encrypted if auto-sync is
+                        enabled. Application.Read.All is the recommended Graph
+                        application permission.
                       </Text>
-                      <InputGroup>
-                        <Input
-                          type={showSecrets.azureAD ? 'text' : 'password'}
-                          placeholder={
-                            autoSyncTokenPlaceholder ||
-                            'Paste access token with Application.Read.All permission'
-                          }
-                          value={azureADToken}
-                          onChange={e => setAzureADToken(e.target.value)}
-                        />
-                        <InputRightElement>
-                          <IconButton
-                            size='xs'
-                            variant='ghost'
-                            icon={
-                              showSecrets.azureAD ? <FiEyeOff /> : <FiEye />
-                            }
-                            onClick={() => toggleSecret('azureAD')}
-                            aria-label={showSecrets.azureAD ? 'Hide' : 'Show'}
-                          />
-                        </InputRightElement>
-                      </InputGroup>
-                      <Text fontSize='xs' color={muted} mt={1}>
-                        Get token:{' '}
-                        <Code fontSize='xs'>
-                          az account get-access-token --resource
-                          https://graph.microsoft.com
-                        </Code>
+                      <Text fontSize='sm' mt={1}>
+                        <ChakraLink
+                          href={IMPORT_DOCS.entraId}
+                          color='blue.500'
+                          textDecoration='underline'
+                          isExternal
+                        >
+                          Learn more about importing from Azure AD →
+                        </ChakraLink>
                       </Text>
                     </Box>
-                    <VStack align='start' spacing={2} mt={6}>
+                  ) : null}
+                  <AzureInventoryAuthFields
+                    audienceHint={{
+                      prefix: 'Get a Graph token from Azure CLI:',
+                      command:
+                        'az account get-access-token --resource https://graph.microsoft.com',
+                    }}
+                    tokenPlaceholder={
+                      autoSyncTokenPlaceholder ||
+                      'Paste access token with Application.Read.All permission'
+                    }
+                    helpTextColor={muted}
+                    authMethod={azureADAuthMethod}
+                    onAuthMethodChange={setAzureADAuthMethod}
+                    token={azureADToken}
+                    onTokenChange={setAzureADToken}
+                    tenantId={azureADTenantId}
+                    onTenantIdChange={setAzureADTenantId}
+                    clientId={azureADClientId}
+                    onClientIdChange={setAzureADClientId}
+                    clientSecret={azureADClientSecret}
+                    onClientSecretChange={setAzureADClientSecret}
+                    showSecret={showSecrets.azureAD}
+                    onToggleSecret={() => toggleSecret('azureAD')}
+                    autoSyncManageMode={autoSyncManageMode}
+                    replacingCredentials={replacingAzureAdCredentials}
+                    onStartReplace={() => setReplacingAzureAdCredentials(true)}
+                    onCancelReplace={() => {
+                      setReplacingAzureAdCredentials(false);
+                      setAzureADToken('');
+                      setAzureADTenantId('');
+                      setAzureADClientId('');
+                      setAzureADClientSecret('');
+                      setAzureADAuthMethod('token');
+                    }}
+                  />
+                  <HStack spacing={3} align='flex-start' flexWrap='wrap'>
+                    <VStack align='start' spacing={2}>
                       <HStack>
                         <Switch
                           isChecked={azureADIncludeApps}
@@ -2916,14 +2954,16 @@ export default function ImportTokensModal({
                         <Text fontSize='sm'>Scan Service Principals</Text>
                       </HStack>
                     </VStack>
-                    <Button
-                      colorScheme='blue'
-                      onClick={doAzureADScan}
-                      isLoading={isScanning}
-                      alignSelf='flex-end'
-                    >
-                      Scan
-                    </Button>
+                    {!autoSyncManageMode ? (
+                      <Button
+                        colorScheme='blue'
+                        onClick={doAzureADScan}
+                        isLoading={isScanning}
+                        alignSelf='flex-end'
+                      >
+                        Scan
+                      </Button>
+                    ) : null}
                   </HStack>
                   <Box
                     border='1px solid'

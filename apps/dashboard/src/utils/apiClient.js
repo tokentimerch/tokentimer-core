@@ -14,6 +14,7 @@ import { clearSessionLastWorkspaceId } from './lastWorkspacePreference.js';
 let hasObservedLoggedInSession = false;
 
 import { resolveApiBaseUrl } from './resolveApiBaseUrl.js';
+import { sanitizeLogValue } from './sanitizeLogValue.js';
 
 export { resolveApiBaseUrl };
 export const API_BASE_URL = resolveApiBaseUrl();
@@ -127,7 +128,7 @@ apiClient.interceptors.request.use(
       logger.info(
         `🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`,
         {
-          data: config.data,
+          data: sanitizeLogValue(config.data),
           params: config.params,
           headers: config.headers,
           timeout: config.timeout, // Log timeout for debugging
@@ -1426,6 +1427,10 @@ export const azureAPI = {
     workspaceId,
     vaultUrl,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { secrets: true, certificates: true, keys: true },
     maxItems = 500,
   }) => {
@@ -1435,10 +1440,17 @@ export const azureAPI = {
     try {
       const payload = {
         vaultUrl,
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_SCAN(workspaceId),
         payload,
@@ -1501,6 +1513,10 @@ export const azureADAPI = {
   scan: async ({
     workspaceId,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { applications: true, servicePrincipals: true },
     maxItems = 500,
   }) => {
@@ -1509,10 +1525,17 @@ export const azureADAPI = {
     }
     try {
       const payload = {
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_AD_SCAN(workspaceId),
         payload,

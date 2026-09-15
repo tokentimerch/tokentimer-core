@@ -247,6 +247,31 @@ fails the render naming whichever is missing, rather than silently rendering
 a NetworkPolicy that blocks the proxy it was just told to use). See
 [`deploy/helm/README.md`](../deploy/helm/README.md) for details and examples.
 
+## Azure inventory authentication
+
+Azure Key Vault and Microsoft Entra (Azure AD) inventory scans accept either
+a pasted access token or an Entra app using the OAuth client-credentials
+flow. TokenTimer mints a token from
+`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`.
+
+| Surface | Audience / scope | Least privilege |
+| ------- | ---------------- | --------------- |
+| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret values. |
+| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission. Directory.Read.All also works and is broader than this inventory needs. |
+
+This is not CertOps Azure DNS. CertOps DNS-01 still uses its own Entra app
+with DNS Zone Contributor (and ARM) as documented in
+[`docs/certops/agent.md`](certops/agent.md). Do not reuse that app for
+inventory unless you intentionally want both roles on one identity.
+
+Pasted-token scans still work. Existing auto-sync configs keep their stored
+token until you use **Replace credentials**. Core scheduled auto-sync stays
+GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise
+capability.
+
+`AZURE_VAULT_ADDRESS_ALLOWLIST` still applies to Key Vault URLs for both
+auth methods.
+
 ## CertOps (certificate operations)
 
 | Variable           | Description                                                                                                                                                                                                                                                                                                                                 | Default value | Scope  |
