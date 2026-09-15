@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, beforeEach } = require("node:test");
+const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
@@ -250,6 +250,21 @@ const alertSettingsPath =
   "/api/v1/workspaces/:id/certops/agents/:agentId/alert-settings";
 
 describe("CertOps agent alert-settings route", () => {
+  let previousPluralWrites;
+
+  before(() => {
+    previousPluralWrites = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "true";
+  });
+
+  after(() => {
+    if (previousPluralWrites === undefined) {
+      delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    } else {
+      process.env.CONTACT_GROUP_PLURAL_WRITES = previousPluralWrites;
+    }
+  });
+
   it("updates downtimeAlertsEnabled and audits the change", async () => {
     const res = await invokeRoute("patch", alertSettingsPath, {
       params: { agentId: AGENT_ROW_ID },

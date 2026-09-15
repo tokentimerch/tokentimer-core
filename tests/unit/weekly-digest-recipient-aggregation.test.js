@@ -1,5 +1,9 @@
 "use strict";
 
+process.env.WEEKLY_DIGEST_RECIPIENT_KEY =
+  process.env.WEEKLY_DIGEST_RECIPIENT_KEY ||
+  "tokentimer-test-digest-recipient-key";
+
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");

@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -353,6 +353,21 @@ describe("membershipAfterContactGroupMove", () => {
 });
 
 describe("interpretContactGroupWrite", () => {
+  let previousPluralWrites;
+
+  before(() => {
+    previousPluralWrites = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "true";
+  });
+
+  after(() => {
+    if (previousPluralWrites === undefined) {
+      delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    } else {
+      process.env.CONTACT_GROUP_PLURAL_WRITES = previousPluralWrites;
+    }
+  });
+
   it("lets the plural field win when both are present", () => {
     assert.deepEqual(
       api.interpretContactGroupWrite({
