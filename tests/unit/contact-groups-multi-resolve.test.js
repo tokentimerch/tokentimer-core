@@ -445,6 +445,38 @@ describe("interpretContactGroupWrite", () => {
     );
   });
 
+  it("rejects a present non-string singular field instead of clearing", () => {
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: undefined,
+          contactGroupId: 123,
+          hasPlural: false,
+          hasSingular: true,
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        assert.match(err.message, /contact_group_id must be a string/);
+        return true;
+      },
+    );
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: undefined,
+          contactGroupId: ["ops"],
+          hasPlural: false,
+          hasSingular: true,
+          singularFieldName: "contactGroupId",
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        assert.match(err.message, /contactGroupId must be a string/);
+        return true;
+      },
+    );
+  });
+
   it("sets a single id from the singular field", () => {
     assert.deepEqual(
       api.interpretContactGroupWrite({

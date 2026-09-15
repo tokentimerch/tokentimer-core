@@ -1,4 +1,5 @@
 import { dedupeNormalizedDestinations } from "./contactGroups.js";
+import crypto from "node:crypto";
 
 const CLAIM_SQL = `INSERT INTO weekly_digest_recipient_log (
   workspace_id, week_start_date, channel, recipient_key, status, attempt_count, lease_expires_at, tokens_count, updated_at
@@ -16,6 +17,26 @@ WHERE weekly_digest_recipient_log.status <> 'sent'
     OR weekly_digest_recipient_log.lease_expires_at < NOW()
   )
 RETURNING *`;
+
+function digestRecipientHmacSecret() {
+  const dedicated = String(process.env.WEEKLY_DIGEST_RECIPIENT_KEY || "").trim();
+  if (dedicated) return dedicated;
+  const session = String(process.env.SESSION_SECRET || "").trim();
+  if (session) return session;
+  if (process.env.NODE_ENV === "test") {
+    return "tokentimer-test-digest-recipient-key";
+  }
+  throw new Error(
+    "WEEKLY_DIGEST_RECIPIENT_KEY or SESSION_SECRET is required to claim digest recipients",
+  );
+}
+
+function hashDigestRecipientKey(destination) {
+  return crypto
+    .createHmac("sha256", digestRecipientHmacSecret())
+    .update(String(destination ?? ""), "utf8")
+    .digest("hex");
+}
 
 function digestFlagOn(group, flag) {
   const value = group && group[flag];
@@ -137,7 +158,7 @@ async function claimWeeklyDigestRecipient(
     workspaceId,
     weekStartDate,
     channel,
-    recipientKey,
+    hashDigestRecipientKey(recipientKey),
     leaseMs,
     tokensCount,
   ]);
@@ -159,7 +180,7 @@ async function markWeeklyDigestRecipientSent(
         AND recipient_key = $4
         AND status = 'pending'
       RETURNING *`,
-    [workspaceId, weekStartDate, channel, recipientKey],
+    [workspaceId, weekStartDate, channel, hashDigestRecipientKey(recipientKey)],
   );
   return res.rows && res.rows[0] ? res.rows[0] : null;
 }
@@ -169,7 +190,7 @@ function weeklyDigestWhatsAppIdempotencyKey({
   weekStartDate,
   phone,
 }) {
-  return `weekly-digest:${workspaceId}:${weekStartDate}:whatsapp:${phone}`;
+  return `weekly-digest:${workspaceId}:${weekStartDate}:whatsapp:${hashDigestRecipientKey(phone)}`;
 }
 
 export {
@@ -178,4 +199,5 @@ export {
   claimWeeklyDigestRecipient,
   markWeeklyDigestRecipientSent,
   weeklyDigestWhatsAppIdempotencyKey,
+  hashDigestRecipientKey,
 };

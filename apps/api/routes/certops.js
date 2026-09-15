@@ -1891,6 +1891,7 @@ router.post(
             hasPlural: hasBodyField(req.body, "contactGroupIds"),
             hasSingular: hasBodyField(req.body, "contactGroupId"),
             pluralFieldName: "contactGroupIds",
+            singularFieldName: "contactGroupId",
           });
         } catch (err) {
           if (err?.code === "VALIDATION_ERROR") {
@@ -2273,6 +2274,7 @@ router.patch(
             hasPlural: hasBodyField(req.body, "contactGroupIds"),
             hasSingular: hasBodyField(req.body, "contactGroupId"),
             pluralFieldName: "contactGroupIds",
+            singularFieldName: "contactGroupId",
           });
         } catch (err) {
           if (err?.code === "VALIDATION_ERROR") {

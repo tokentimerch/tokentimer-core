@@ -283,6 +283,7 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - SESSION_SECRET=dev_session_secret_change_in_production
+      - WEEKLY_DIGEST_RECIPIENT_KEY=${WEEKLY_DIGEST_RECIPIENT_KEY:-}
       # SMTP (optional - configure here or via System Settings UI)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}

@@ -168,6 +168,9 @@ worker:
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
   env: {}
+  # Optional WEEKLY_DIGEST_RECIPIENT_KEY HMAC secret for digest skip keys.
+  # Falls back to SESSION_SECRET when unset. Rotating it re-sends already
+  # claimed recipients for the current week.
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []

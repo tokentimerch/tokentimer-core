@@ -3727,7 +3727,7 @@ const migrations = [
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         week_start_date DATE NOT NULL,
         channel TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp', 'webhook')),
-        recipient_key TEXT NOT NULL,
+        recipient_key TEXT NOT NULL, -- HMAC-SHA256 of destination, not the address or URL
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent')),
         attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
         lease_expires_at TIMESTAMPTZ NULL,

@@ -126,7 +126,7 @@ describe("Weekly digest worker integration", function () {
     expect(Number(firstRun.rows[0].tokens_count)).to.be.greaterThan(0);
 
     const firstClaim = await TestUtils.execQuery(
-      `SELECT status, channel, tokens_count
+      `SELECT status, channel, tokens_count, recipient_key
        FROM weekly_digest_recipient_log
        WHERE workspace_id = $1 AND week_start_date = $2`,
       [workspaceId, weekStart],
@@ -135,6 +135,8 @@ describe("Weekly digest worker integration", function () {
     expect(firstClaim.rows[0].status).to.equal("sent");
     expect(firstClaim.rows[0].channel).to.equal("email");
     expect(Number(firstClaim.rows[0].tokens_count)).to.be.greaterThan(0);
+    expect(firstClaim.rows[0].recipient_key).to.match(/^[a-f0-9]{64}$/);
+    expect(firstClaim.rows[0].recipient_key).to.not.equal(testUser.email);
 
     // Skip is the recipient claim row, not weekly_digest_log.
     await TestUtils.runNode(

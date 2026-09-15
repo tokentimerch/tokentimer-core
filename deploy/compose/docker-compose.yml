@@ -372,6 +372,7 @@ services:
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
+      WEEKLY_DIGEST_RECIPIENT_KEY: ${WEEKLY_DIGEST_RECIPIENT_KEY:-}
 
       # Delivery window (digest also respects it)
       DELIVERY_WINDOW_DEFAULT_START: ${DELIVERY_WINDOW_DEFAULT_START:-}

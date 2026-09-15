@@ -112,11 +112,13 @@ describe("weekly digest recipient aggregation", () => {
 
 describe("claimWeeklyDigestRecipient", () => {
   it("uses an atomic INSERT ON CONFLICT claim and returns the row when RETURNING wins", async () => {
-    const { claimWeeklyDigestRecipient } = await loadDigest();
+    const { claimWeeklyDigestRecipient, hashDigestRecipientKey } =
+      await loadDigest();
+    const hashed = hashDigestRecipientKey("alice@example.com");
     const claimed = {
       workspace_id: "ws-1",
       channel: "email",
-      recipient_key: "alice@example.com",
+      recipient_key: hashed,
       status: "pending",
     };
     const { state, client } = createMockClient(() => ({ rows: [claimed] }));
@@ -144,11 +146,13 @@ describe("claimWeeklyDigestRecipient", () => {
     );
     assert.match(sql, /lease_expires_at < NOW\(\)/);
     assert.match(sql, /RETURNING \*/);
+    assert.equal(hashed.length, 64);
+    assert.notEqual(hashed, "alice@example.com");
     assert.deepEqual(state.queries[0].params, [
       "ws-1",
       "2026-09-14",
       "email",
-      "alice@example.com",
+      hashed,
       60000,
       3,
     ]);
@@ -169,7 +173,8 @@ describe("claimWeeklyDigestRecipient", () => {
   });
 
   it("marks a pending row sent", async () => {
-    const { markWeeklyDigestRecipientSent } = await loadDigest();
+    const { markWeeklyDigestRecipientSent, hashDigestRecipientKey } =
+      await loadDigest();
     const { state, client } = createMockClient(() => ({
       rows: [{ status: "sent" }],
     }));
@@ -182,19 +187,33 @@ describe("claimWeeklyDigestRecipient", () => {
     assert.equal(row.status, "sent");
     assert.match(state.queries[0].text, /SET status = 'sent'/);
     assert.match(state.queries[0].text, /status = 'pending'/);
+    assert.equal(
+      state.queries[0].params[3],
+      hashDigestRecipientKey("alice@example.com"),
+    );
   });
 });
 
 describe("weeklyDigestWhatsAppIdempotencyKey", () => {
-  it("keys by workspace, week, and phone with no group id", async () => {
-    const { weeklyDigestWhatsAppIdempotencyKey } = await loadDigest();
+  it("keys by workspace, week, and hashed phone with no group id", async () => {
+    const { weeklyDigestWhatsAppIdempotencyKey, hashDigestRecipientKey } =
+      await loadDigest();
+    const hashed = hashDigestRecipientKey("+15551212");
     assert.equal(
       weeklyDigestWhatsAppIdempotencyKey({
         workspaceId: "ws-1",
         weekStartDate: "2026-09-14",
         phone: "+15551212",
       }),
-      "weekly-digest:ws-1:2026-09-14:whatsapp:+15551212",
+      `weekly-digest:ws-1:2026-09-14:whatsapp:${hashed}`,
+    );
+    assert.doesNotMatch(
+      weeklyDigestWhatsAppIdempotencyKey({
+        workspaceId: "ws-1",
+        weekStartDate: "2026-09-14",
+        phone: "+15551212",
+      }),
+      /\+15551212/,
     );
   });
 });

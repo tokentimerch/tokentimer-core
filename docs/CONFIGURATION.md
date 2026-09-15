@@ -115,6 +115,7 @@ the origins users and integrations actually use in the browser.
 | `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
+| `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
@@ -190,6 +191,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
 | `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
 | `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
+| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset (`true` only after every replica is this image) | `unset` (`true` in `NODE_ENV=test`) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |

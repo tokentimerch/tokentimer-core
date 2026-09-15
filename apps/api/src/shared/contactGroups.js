@@ -281,8 +281,12 @@ function channelsForDeliveryAttempt(
   return live.filter((channel) => queued.has(channel));
 }
 
-function invalidMembershipWriteError(fieldName) {
-  const err = new Error(`${fieldName} must be an array of strings`);
+function invalidMembershipWriteError(fieldName, { array = false } = {}) {
+  const err = new Error(
+    array
+      ? `${fieldName} must be an array of strings`
+      : `${fieldName} must be a string`,
+  );
   err.code = "VALIDATION_ERROR";
   return err;
 }
@@ -296,14 +300,15 @@ function interpretContactGroupWrite({
   hasPlural,
   hasSingular,
   pluralFieldName = "contact_group_ids",
+  singularFieldName = "contact_group_id",
 }) {
   if (hasPlural) {
     if (!Array.isArray(contactGroupIds)) {
-      throw invalidMembershipWriteError(pluralFieldName);
+      throw invalidMembershipWriteError(pluralFieldName, { array: true });
     }
     for (const raw of contactGroupIds) {
       if (typeof raw !== "string") {
-        throw invalidMembershipWriteError(pluralFieldName);
+        throw invalidMembershipWriteError(pluralFieldName, { array: true });
       }
     }
     const ids = normalizeAssignedGroupIds(contactGroupIds);
@@ -319,7 +324,13 @@ function interpretContactGroupWrite({
   if (!hasSingular) {
     return { action: "omit" };
   }
-  if (contactGroupId == null || String(contactGroupId).trim() === "") {
+  if (contactGroupId == null) {
+    return { action: "set", ids: [] };
+  }
+  if (typeof contactGroupId !== "string") {
+    throw invalidMembershipWriteError(singularFieldName);
+  }
+  if (contactGroupId.trim() === "") {
     return { action: "set", ids: [] };
   }
   return {
