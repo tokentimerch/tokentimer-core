@@ -1,5 +1,58 @@
 const { pool } = require("../database");
 const { logger } = require("../../utils/logger.js");
+const {
+  replaceAssetContactGroups,
+} = require("../../src/shared/replaceAssetContactGroups");
+const {
+  canonicalLegacyContactGroupId,
+  normalizeAssignedGroupIds,
+} = require("../../src/shared/contactGroups");
+
+async function withTokenClient(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackErr) {
+      // original error is the one to surface
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function membershipIdsFromSingular(contactGroupId) {
+  if (contactGroupId == null) return [];
+  const id = String(contactGroupId).trim();
+  return id ? [id] : [];
+}
+
+function resolveCreateMembershipIds(contactGroupIds, contactGroupId) {
+  if (Array.isArray(contactGroupIds)) return contactGroupIds;
+  return membershipIdsFromSingular(contactGroupId);
+}
+
+function resolveUpdateMembershipIds(contactGroupIds, contactGroupId) {
+  if (contactGroupIds !== undefined) {
+    return Array.isArray(contactGroupIds) ? contactGroupIds : [];
+  }
+  if (contactGroupId !== undefined) {
+    return membershipIdsFromSingular(contactGroupId);
+  }
+  return undefined;
+}
+
+function applyMembershipFields(token, ids) {
+  const normalized = normalizeAssignedGroupIds(ids);
+  token.contact_group_id = canonicalLegacyContactGroupId(normalized);
+  return token;
+}
 
 const DATE_ONLY_PATTERN = /^(\d{4}-\d{2}-\d{2})/;
 
@@ -113,6 +166,7 @@ const create = async (tokenData) => {
     used_by,
     section = null,
     contact_group_id = null,
+    contact_group_ids,
     issuer,
     serial_number,
     subject,
@@ -144,6 +198,12 @@ const create = async (tokenData) => {
     source_observed_at = null,
   } = tokenData;
 
+  const membershipIds = resolveCreateMembershipIds(
+    contact_group_ids,
+    contact_group_id,
+  );
+  const mirroredContactGroupId = canonicalLegacyContactGroupId(membershipIds);
+
   const query = `
     INSERT INTO tokens (
       user_id, workspace_id, created_by, name, expiration, type, category, domains, location, used_by, section, contact_group_id,
@@ -168,7 +228,7 @@ const create = async (tokenData) => {
     location,
     used_by,
     section,
-    contact_group_id,
+    mirroredContactGroupId,
     issuer,
     serial_number,
     subject,
@@ -198,11 +258,21 @@ const create = async (tokenData) => {
   ];
 
   try {
-    const result = await pool.query(query, values);
-    const token = result.rows[0];
-
-    // Convert numeric fields from strings to numbers
-    return convertNumericFields(token);
+    return await withTokenClient(async (client) => {
+      const result = await client.query(query, values);
+      const token = result.rows[0];
+      if (token && token.workspace_id) {
+        await replaceAssetContactGroups({
+          client,
+          kind: "token",
+          assetId: token.id,
+          workspaceId: token.workspace_id,
+          ids: membershipIds,
+        });
+        applyMembershipFields(token, membershipIds);
+      }
+      return convertNumericFields(token);
+    });
   } catch (error) {
     logger.error("create() database error", {
       message: error.message,
@@ -225,6 +295,7 @@ const update = async (id, tokenData) => {
     used_by,
     section,
     contact_group_id,
+    contact_group_ids,
     issuer,
     serial_number,
     subject,
@@ -251,6 +322,11 @@ const update = async (id, tokenData) => {
     source_object_id,
     source_observed_at,
   } = tokenData;
+
+  const membershipIds = resolveUpdateMembershipIds(
+    contact_group_ids,
+    contact_group_id,
+  );
 
   // Build dynamic query to only update provided fields
   const updateFields = [];
@@ -289,9 +365,9 @@ const update = async (id, tokenData) => {
     updateFields.push(`section = $${paramIndex++}`);
     values.push(section);
   }
-  if (contact_group_id !== undefined) {
+  if (membershipIds !== undefined) {
     updateFields.push(`contact_group_id = $${paramIndex++}`);
-    values.push(contact_group_id);
+    values.push(canonicalLegacyContactGroupId(membershipIds));
   }
   if (issuer !== undefined) {
     updateFields.push(`issuer = $${paramIndex++}`);
@@ -417,15 +493,32 @@ const update = async (id, tokenData) => {
   `;
 
   try {
-    const result = await pool.query(query, values);
-    const token = result.rows[0];
+    const runUpdate = async (db) => {
+      const result = await db.query(query, values);
+      const token = result.rows[0];
 
-    if (!token) {
-      throw new Error("Token not found or update failed");
+      if (!token) {
+        throw new Error("Token not found or update failed");
+      }
+
+      if (membershipIds !== undefined && token.workspace_id) {
+        await replaceAssetContactGroups({
+          client: db,
+          kind: "token",
+          assetId: token.id,
+          workspaceId: token.workspace_id,
+          ids: membershipIds,
+        });
+        applyMembershipFields(token, membershipIds);
+      }
+
+      return convertNumericFields(token);
+    };
+
+    if (membershipIds !== undefined) {
+      return await withTokenClient(runUpdate);
     }
-
-    // Convert numeric fields from strings to numbers
-    return convertNumericFields(token);
+    return await runUpdate(pool);
   } catch (error) {
     // Enhanced error logging for database operations
     logger.error("update() database error:", {

@@ -3656,6 +3656,109 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS certops_require_approval_always BOOLEAN NOT NULL DEFAULT FALSE;
     `,
   },
+  {
+    version: 52,
+    name: "multi_contact_groups_per_asset",
+    sql: `
+      -- Join tables are the many-to-many assignment. tokens.contact_group_id
+      -- and certops_agents.contact_group_id remain as compatibility mirrors
+      -- of the lex-smallest assigned id (not dropped). workspace_id is
+      -- stored on each assignment AND bound to the parent asset via a
+      -- composite FK so a row cannot point at an asset from another workspace.
+
+      -- Composite FK to tokens(workspace_id, id) needs a unique on that
+      -- pair. tokens.id is already unique (SERIAL PK); this helper unique
+      -- exists only so PostgreSQL can reference the pair.
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'uq_tokens_workspace_id'
+        ) THEN
+          ALTER TABLE tokens ADD CONSTRAINT uq_tokens_workspace_id UNIQUE (workspace_id, id);
+        END IF;
+      END
+      $$;
+
+      CREATE TABLE IF NOT EXISTS token_contact_groups (
+        token_id INTEGER NOT NULL,
+        workspace_id UUID NOT NULL,
+        contact_group_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (token_id, contact_group_id),
+        FOREIGN KEY (workspace_id, token_id) REFERENCES tokens(workspace_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_token_contact_groups_workspace_group
+        ON token_contact_groups(workspace_id, contact_group_id, token_id);
+
+      CREATE TABLE IF NOT EXISTS certops_agent_contact_groups (
+        agent_id UUID NOT NULL,
+        workspace_id UUID NOT NULL,
+        contact_group_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (agent_id, contact_group_id),
+        FOREIGN KEY (workspace_id, agent_id) REFERENCES certops_agents(workspace_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_contact_groups_workspace_group
+        ON certops_agent_contact_groups(workspace_id, contact_group_id, agent_id);
+
+      -- Existing singular assignments become join rows. Empty/NULL group
+      -- ids are not inserted (they are not a real assignment).
+      INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM tokens
+       WHERE contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> ''
+      ON CONFLICT DO NOTHING;
+
+      INSERT INTO certops_agent_contact_groups (agent_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM certops_agents
+       WHERE contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> ''
+      ON CONFLICT DO NOTHING;
+
+      -- Recipient log is the digest skip/claim key (one lease per
+      -- workspace/week/channel/recipient). weekly_digest_log stays as
+      -- optional per-group audit.
+      CREATE TABLE IF NOT EXISTS weekly_digest_recipient_log (
+        id BIGSERIAL PRIMARY KEY,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        week_start_date DATE NOT NULL,
+        channel TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp', 'webhook')),
+        recipient_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent')),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        lease_expires_at TIMESTAMPTZ NULL,
+        tokens_count INTEGER NOT NULL DEFAULT 0,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_weekly_digest_recipient_week_channel
+        ON weekly_digest_recipient_log(workspace_id, week_start_date, channel, recipient_key);
+      CREATE INDEX IF NOT EXISTS idx_weekly_digest_recipient_lease
+        ON weekly_digest_recipient_log(status, lease_expires_at)
+        WHERE status = 'pending';
+    `,
+  },
+  {
+    version: 53,
+    name: "bootstrap_contact_group_ids",
+    sql: `
+      -- Bootstrap tokens stay a single row (no join table). Carry the full
+      -- assigned set until registration copies it onto certops_agents.
+      -- contact_group_id remains the lex-smallest mirror.
+      ALTER TABLE certops_agent_bootstrap_tokens
+        ADD COLUMN IF NOT EXISTS contact_group_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+      UPDATE certops_agent_bootstrap_tokens
+         SET contact_group_ids = jsonb_build_array(contact_group_id)
+       WHERE contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> ''
+         AND contact_group_ids = '[]'::jsonb;
+    `,
+  },
 ];
 
 async function runMigrations() {

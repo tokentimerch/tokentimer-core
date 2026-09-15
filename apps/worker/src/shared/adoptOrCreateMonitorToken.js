@@ -1,3 +1,5 @@
+import { replaceAssetContactGroups } from "./replaceAssetContactGroups.js";
+
 function formatDateYmd(date) {
   if (!date) return null;
   const d = new Date(date);
@@ -47,5 +49,13 @@ export async function adoptOrCreateMonitorToken(client, {
       defaultContactGroupId,
     ],
   );
-  return tokenRes.rows[0].id;
+  const tokenId = tokenRes.rows[0].id;
+  await replaceAssetContactGroups({
+    client,
+    kind: "token",
+    assetId: tokenId,
+    workspaceId,
+    ids: defaultContactGroupId ? [String(defaultContactGroupId)] : [],
+  });
+  return tokenId;
 }

@@ -11,10 +11,7 @@ const certOpsRouter = require(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
 );
 const agentRegistry = require(
-  path.resolve(
-    __dirname,
-    "../../apps/api/services/certops/agentRegistry.js",
-  ),
+  path.resolve(__dirname, "../../apps/api/services/certops/agentRegistry.js"),
 );
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
@@ -68,6 +65,21 @@ function createMemoryDb() {
           created_by: params[5],
           created_at: new Date("2026-07-01T00:00:00.000Z"),
           updated_at: new Date("2026-07-01T00:00:00.000Z"),
+          downtime_alerts_enabled: params[6] ?? null,
+          contact_group_id: params[7] ?? null,
+          contact_group_ids: (() => {
+            const raw = params[8];
+            if (Array.isArray(raw)) return raw;
+            if (typeof raw === "string") {
+              try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+              } catch (_err) {
+                return [];
+              }
+            }
+            return [];
+          })(),
         };
         bootstrapRows.push(row);
         return { rows: [row] };
@@ -247,6 +259,10 @@ function createMemoryDb() {
         return { rows: [] };
       }
 
+      if (normalized.includes("FROM certops_agent_contact_groups")) {
+        return { rows: [] };
+      }
+
       if (
         normalized.includes("FROM certops_agents") &&
         normalized.includes("declared_target_selectors") &&
@@ -308,9 +324,7 @@ function responseRecorder() {
 function findRouteHandler(method, routePath) {
   const layer = certOpsRouter.stack.find(
     (item) =>
-      item.route &&
-      item.route.path === routePath &&
-      item.route.methods[method],
+      item.route && item.route.path === routePath && item.route.methods[method],
   );
   assert.ok(layer, `${method.toUpperCase()} ${routePath} route not registered`);
   const stack = layer.route.stack;
@@ -876,7 +890,15 @@ describe("agentRegistry service internals", () => {
       agentRegistry._test.normalizeRequiredRetireReason("  ok  "),
       "ok",
     );
-    for (const bad of [undefined, null, "", "  ", 5, "x".repeat(501), "a\u0001b"]) {
+    for (const bad of [
+      undefined,
+      null,
+      "",
+      "  ",
+      5,
+      "x".repeat(501),
+      "a\u0001b",
+    ]) {
       assert.throws(
         () => agentRegistry._test.normalizeRequiredRetireReason(bad),
         (err) => err.code === "CERTOPS_AGENT_RETIRE_REASON_INVALID",
@@ -884,7 +906,3 @@ describe("agentRegistry service internals", () => {
     }
   });
 });
-
-
-
-
