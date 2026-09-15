@@ -9,6 +9,7 @@ const {
   assertSameOriginFollowUp,
   throwIfAllScopesFailed,
 } = require("./integrationUtils");
+const { withCurrentTokenRetry } = require("./azureClientCredentials");
 const { logger } = require("../utils/logger");
 
 function wrapAzureError(error, method, path) {
@@ -29,17 +30,6 @@ function wrapAzureError(error, method, path) {
     return err;
   }
   return error;
-}
-
-async function with401Retry(authProvider, token, run) {
-  try {
-    return await run(token);
-  } catch (error) {
-    if (error?.status !== 401 || !authProvider) throw error;
-    const next = await authProvider.refresh(token);
-    if (!next) throw error;
-    return await run(next);
-  }
 }
 
 async function azureRequest({
@@ -80,7 +70,7 @@ async function azureRequest({
     }
   };
 
-  return with401Retry(authProvider, token, run);
+  return await withCurrentTokenRetry(authProvider, token, run);
 }
 
 async function azureListPage({
@@ -117,7 +107,7 @@ async function azureListPage({
     }
   };
 
-  return with401Retry(authProvider, token, run);
+  return await withCurrentTokenRetry(authProvider, token, run);
 }
 
 async function listCollection({

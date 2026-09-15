@@ -537,4 +537,46 @@ describe('Dashboard import forms', () => {
       vaultUrl: 'https://my-vault.vault.azure.net',
     });
   });
+
+  it('ImportAzureForm keeps Key Vault URL read-only until Replace credentials', () => {
+    const ref = React.createRef();
+    renderWithProviders(
+      <ImportAzureForm
+        ref={ref}
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='Paste token'
+        autoSyncManageMode
+        initialVaultUrl='https://old-vault.vault.azure.net'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    const vaultUrl = screen.getByPlaceholderText(
+      'https://my-vault.vault.azure.net'
+    );
+    expect(vaultUrl).toBeDisabled();
+    expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
+    expect(ref.current.validateReplacement()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace credentials' }));
+    expect(vaultUrl).not.toBeDisabled();
+    expect(ref.current.validateReplacement()).toBe('Access token is required');
+    fireEvent.change(vaultUrl, {
+      target: { value: 'https://new-vault.vault.azure.net' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel replace' }));
+    expect(vaultUrl).toBeDisabled();
+    expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
+    expect(ref.current.getCredentials().credentials).toEqual({});
+  });
 });

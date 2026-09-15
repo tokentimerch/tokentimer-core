@@ -129,8 +129,8 @@ apiClient.interceptors.request.use(
         `🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`,
         {
           data: sanitizeLogValue(config.data),
-          params: config.params,
-          headers: config.headers,
+          params: sanitizeLogValue(config.params),
+          headers: sanitizeLogValue(config.headers),
           timeout: config.timeout, // Log timeout for debugging
         }
       );
@@ -157,14 +157,14 @@ apiClient.interceptors.response.use(
           window.location.hostname.includes('127.0.0.1') ||
           window.location.hostname.includes('staging')));
 
-    if (shouldLog) {
+    if (shouldLog && !response.config?._suppressLog) {
       const duration = new Date() - response.config.metadata.startTime;
 
       logger.info(
         `✅ API Response: ${response.config.method?.toUpperCase()} ${response.config.url} (${duration}ms)`,
         {
           status: response.status,
-          data: response.data,
+          data: sanitizeLogValue(response.data),
         }
       );
     }
@@ -190,7 +190,7 @@ apiClient.interceptors.response.use(
         `❌ API Error: ${error.config?.method?.toUpperCase()} ${error.config?.url} (${duration}ms)`,
         {
           status: error.response?.status,
-          data: error.response?.data,
+          data: sanitizeLogValue(error.response?.data),
           message: error.message,
         }
       );

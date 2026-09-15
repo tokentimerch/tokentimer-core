@@ -9481,11 +9481,14 @@ components:
           maxLength: 500
         token:
           type: string
+          minLength: 1
           maxLength: 5000
         authMethod:
           type: string
           enum: [token]
-          description: Optional. Omitted values default to token at runtime.
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
         include:
           type: object
           additionalProperties: false
@@ -9520,13 +9523,16 @@ components:
           enum: [client_credentials]
         tenantId:
           type: string
+          minLength: 1
           maxLength: 5000
           description: Entra tenant GUID or tenant domain name.
         clientId:
           type: string
+          minLength: 1
           maxLength: 5000
         clientSecret:
           type: string
+          minLength: 1
           maxLength: 5000
         include:
           type: object
@@ -9559,11 +9565,14 @@ components:
       properties:
         token:
           type: string
+          minLength: 1
           maxLength: 5000
         authMethod:
           type: string
           enum: [token]
-          description: Optional. Omitted values default to token at runtime.
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
         include:
           type: object
           additionalProperties: false
@@ -9591,13 +9600,16 @@ components:
           enum: [client_credentials]
         tenantId:
           type: string
+          minLength: 1
           maxLength: 5000
           description: Entra tenant GUID or tenant domain name.
         clientId:
           type: string
+          minLength: 1
           maxLength: 5000
         clientSecret:
           type: string
+          minLength: 1
           maxLength: 5000
         include:
           type: object

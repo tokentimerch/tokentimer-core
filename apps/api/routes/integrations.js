@@ -1966,6 +1966,7 @@ router.post(
       const result = await scanAzureAD({
         token: resolved.token,
         authProvider: resolved.authProvider,
+        tenantId: resolved.tenantId,
         include: {
           applications:
             include && typeof include.applications === "boolean"

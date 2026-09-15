@@ -64,3 +64,29 @@ export function validateAzureInventoryAuth({
   if (!String(token || '').trim()) return 'Access token is required';
   return null;
 }
+
+export function azureVaultUrlLocked(manageMode, replacing) {
+  return Boolean(manageMode && !replacing);
+}
+
+export function azureReplacementAuthError({
+  replacing,
+  requireVaultUrl,
+  vaultUrl,
+  authMethod,
+  token,
+  tenantId,
+  clientId,
+  clientSecret,
+}) {
+  if (!replacing) return null;
+  return validateAzureInventoryAuth({
+    requireVaultUrl,
+    vaultUrl,
+    authMethod,
+    token,
+    tenantId,
+    clientId,
+    clientSecret,
+  });
+}

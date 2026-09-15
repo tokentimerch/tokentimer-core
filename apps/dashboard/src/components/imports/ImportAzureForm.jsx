@@ -18,6 +18,8 @@ import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import AzureInventoryAuthFields from './AzureInventoryAuthFields';
 import {
   azureInventoryScanAuthPayload,
+  azureReplacementAuthError,
+  azureVaultUrlLocked,
   buildAzureInventoryCredentials,
   validateAzureInventoryAuth,
 } from './azureInventoryAuth';
@@ -79,6 +81,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     helpTextColor,
     autoSyncTokenPlaceholder,
     autoSyncManageMode = false,
+    initialVaultUrl = '',
     updateQuotaFromResponse,
     refreshIntegrationQuota,
     isQuotaExceededError,
@@ -89,7 +92,12 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   },
   ref
 ) {
-  const [azureVaultUrl, setAzureVaultUrl] = React.useState('');
+  const [azureVaultUrl, setAzureVaultUrl] = React.useState(() =>
+    String(initialVaultUrl || '').trim()
+  );
+  const [persistedAzureVaultUrl, setPersistedAzureVaultUrl] = React.useState(
+    () => String(initialVaultUrl || '').trim()
+  );
   const [azureAuthMethod, setAzureAuthMethod] = React.useState('token');
   const [azureToken, setAzureToken] = React.useState('');
   const [azureTenantId, setAzureTenantId] = React.useState('');
@@ -111,6 +119,17 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAzure.size);
   }, [selectedRowsAzure.size, onSelectionChange]);
+
+  React.useEffect(() => {
+    const next = String(initialVaultUrl || '').trim();
+    if (!next) return;
+    setPersistedAzureVaultUrl(next);
+    setAzureVaultUrl(current =>
+      azureVaultUrlLocked(autoSyncManageMode, replacingCredentials)
+        ? next
+        : current || next
+    );
+  }, [initialVaultUrl, autoSyncManageMode, replacingCredentials]);
 
   const doAzureScan = async () => {
     if (!workspaceId) {
@@ -226,9 +245,33 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     }
   };
 
+  const clearAzureAuthFields = () => {
+    setAzureToken('');
+    setAzureTenantId('');
+    setAzureClientId('');
+    setAzureClientSecret('');
+    setAzureAuthMethod('token');
+  };
+
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
     getSelectedCount: () => selectedRowsAzure.size,
+    validateReplacement: () =>
+      azureReplacementAuthError({
+        replacing: replacingCredentials,
+        requireVaultUrl: true,
+        vaultUrl: azureVaultUrl,
+        authMethod: azureAuthMethod,
+        token: azureToken,
+        tenantId: azureTenantId,
+        clientId: azureClientId,
+        clientSecret: azureClientSecret,
+      }),
+    resetReplacement: () => {
+      setReplacingCredentials(false);
+      setPersistedAzureVaultUrl(azureVaultUrl);
+      clearAzureAuthFields();
+    },
     getCredentials: () => {
       const scanParams = {
         vaultUrl: azureVaultUrl,
@@ -280,6 +323,10 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             placeholder='https://my-vault.vault.azure.net'
             value={azureVaultUrl}
             onChange={e => setAzureVaultUrl(e.target.value)}
+            isDisabled={azureVaultUrlLocked(
+              autoSyncManageMode,
+              replacingCredentials
+            )}
           />
         </Box>
         {!autoSyncManageMode ? (
@@ -317,11 +364,8 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         onStartReplace={() => setReplacingCredentials(true)}
         onCancelReplace={() => {
           setReplacingCredentials(false);
-          setAzureToken('');
-          setAzureTenantId('');
-          setAzureClientId('');
-          setAzureClientSecret('');
-          setAzureAuthMethod('token');
+          setAzureVaultUrl(persistedAzureVaultUrl);
+          clearAzureAuthFields();
         }}
       />
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>

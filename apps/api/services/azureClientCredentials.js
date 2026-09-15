@@ -7,6 +7,8 @@ const MAX_FIELD_LENGTH = 5000;
 const KEY_VAULT_SCOPE = "https://vault.azure.net/.default";
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
 const ALLOWED_AUTH_METHODS = new Set(["token", "client_credentials"]);
+const TENANT_GUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 const AUTH_ERROR_MESSAGES = Object.freeze({
   90002: "Tenant not found. Check tenantId.",
@@ -32,7 +34,7 @@ function nonEmptyString(value, field, max = MAX_FIELD_LENGTH) {
 }
 
 function resolveAuthMethod(raw) {
-  if (raw === undefined || raw === null || raw === "") return "token";
+  if (raw === undefined) return "token";
   if (typeof raw !== "string" || !ALLOWED_AUTH_METHODS.has(raw)) {
     const err = new Error(
       'authMethod must be "token" or "client_credentials"',
@@ -41,6 +43,88 @@ function resolveAuthMethod(raw) {
     throw err;
   }
   return raw;
+}
+
+function canonicalTenantGuid(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return TENANT_GUID_RE.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+function tenantGuidFromLoginUrl(url) {
+  if (typeof url !== "string") return null;
+  const match = url.match(
+    /^https:\/\/login\.microsoftonline\.com\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\/|$)/i,
+  );
+  return match ? match[1].toLowerCase() : null;
+}
+
+function tenantGuidFromOpenIdConfig(body) {
+  if (!body || typeof body !== "object") return null;
+  return (
+    tenantGuidFromLoginUrl(body.issuer) ||
+    tenantGuidFromLoginUrl(body.token_endpoint)
+  );
+}
+
+async function timedJsonFetch(fetchFn, url, init, failedMessage) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TOKEN_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetchFn(url, {
+      ...init,
+      signal: controller.signal,
+      redirect: "error",
+    });
+  } catch (_e) {
+    const err = new Error(failedMessage);
+    err.status = 502;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let body = {};
+  try {
+    body = await response.json();
+  } catch (_e) {
+    body = {};
+  }
+  return { response, body };
+}
+
+async function resolveCanonicalTenantId(tenantId, fetchImpl) {
+  const raw = nonEmptyString(tenantId, "tenantId");
+  const already = canonicalTenantGuid(raw);
+  if (already) return already;
+
+  const fetchFn = fetchImpl || globalThis.fetch;
+  if (typeof fetchFn !== "function") {
+    const err = new Error("Azure tenant discovery request failed");
+    err.status = 502;
+    throw err;
+  }
+
+  const url = `${LOGIN_BASE_URL}/${encodeURIComponent(raw)}/v2.0/.well-known/openid-configuration`;
+  const { response, body } = await timedJsonFetch(
+    fetchFn,
+    url,
+    { method: "GET", headers: { Accept: "application/json" } },
+    "Azure tenant discovery request failed",
+  );
+  if (!response.ok) {
+    const err = new Error("Tenant not found. Check tenantId.");
+    err.status = 400;
+    throw err;
+  }
+  const guid = tenantGuidFromOpenIdConfig(body);
+  if (!guid) {
+    const err = new Error("Azure tenant discovery did not return a tenant id");
+    err.status = 502;
+    throw err;
+  }
+  return guid;
 }
 
 function numericErrorCodes(body) {
@@ -108,11 +192,10 @@ async function mintAccessToken({
   }
 
   const url = `${LOGIN_BASE_URL}/${encodeURIComponent(tid)}/oauth2/v2.0/token`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TOKEN_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetchFn(url, {
+  const { response, body } = await timedJsonFetch(
+    fetchFn,
+    url,
+    {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -121,23 +204,9 @@ async function mintAccessToken({
         client_secret: secret,
         scope: scope.trim(),
       }).toString(),
-      signal: controller.signal,
-      redirect: "error",
-    });
-  } catch (_e) {
-    const err = new Error("Azure token endpoint request failed");
-    err.status = 502;
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let body = {};
-  try {
-    body = await response.json();
-  } catch (_e) {
-    body = {};
-  }
+    },
+    "Azure token endpoint request failed",
+  );
 
   if (!response.ok) {
     throw createMappedAuthError(body);
@@ -202,6 +271,21 @@ function createClientCredentialsTokenProvider({
   };
 }
 
+async function withCurrentTokenRetry(authProvider, token, run) {
+  const bearer =
+    authProvider && typeof authProvider.getToken === "function"
+      ? await authProvider.getToken()
+      : token;
+  try {
+    return await run(bearer);
+  } catch (error) {
+    if (error?.status !== 401 || !authProvider) throw error;
+    const next = await authProvider.refresh(bearer);
+    if (!next || next === bearer) throw error;
+    return await run(next);
+  }
+}
+
 async function resolveAzureScanAuth({
   authMethod,
   token,
@@ -228,15 +312,19 @@ async function resolveAzureScanAuth({
     return { token: token.trim(), authProvider: undefined };
   }
 
-  const authProvider = createClientCredentialsTokenProvider({
+  const canonicalTenantId = await resolveCanonicalTenantId(
     tenantId,
+    fetchImpl,
+  );
+  const authProvider = createClientCredentialsTokenProvider({
+    tenantId: canonicalTenantId,
     clientId,
     clientSecret,
     scope,
     fetchImpl,
   });
   const minted = await authProvider.getToken();
-  return { token: minted, authProvider };
+  return { token: minted, authProvider, tenantId: canonicalTenantId };
 }
 
 function scrubAzureSecretsFromBody(body) {
@@ -249,11 +337,15 @@ module.exports = {
   KEY_VAULT_SCOPE,
   GRAPH_SCOPE,
   MAX_FIELD_LENGTH,
+  TENANT_GUID_RE,
   resolveAuthMethod,
+  canonicalTenantGuid,
+  resolveCanonicalTenantId,
   mapAzureAuthError,
   mintAccessToken,
   createBearerTokenProvider,
   createClientCredentialsTokenProvider,
+  withCurrentTokenRetry,
   resolveAzureScanAuth,
   scrubAzureSecretsFromBody,
 };

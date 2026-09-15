@@ -8,6 +8,10 @@ const {
   assertSameOriginFollowUp,
   throwIfAllScopesFailed,
 } = require("./integrationUtils");
+const {
+  canonicalTenantGuid,
+  withCurrentTokenRetry,
+} = require("./azureClientCredentials");
 const { logger } = require("../utils/logger");
 
 /**
@@ -137,13 +141,20 @@ async function graphRequest({
     }
   };
 
+  return await withCurrentTokenRetry(authProvider, token, run);
+}
+
+function decodeGraphTokenTid(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3) return null;
   try {
-    return await run(token);
-  } catch (error) {
-    if (error?.status !== 401 || !authProvider) throw error;
-    const next = await authProvider.refresh(token);
-    if (!next) throw error;
-    return await run(next);
+    const payload = JSON.parse(
+      Buffer.from(parts[1], "base64").toString("utf8"),
+    );
+    if (typeof payload?.tid !== "string" || !payload.tid.trim()) return null;
+    return canonicalTenantGuid(payload.tid) || payload.tid.trim();
+  } catch (_e) {
+    return null;
   }
 }
 
@@ -242,6 +253,7 @@ async function listServicePrincipals({ token, maxItems = 500, authProvider }) {
 async function scanAzureAD({
   token,
   authProvider,
+  tenantId: providedTenantId,
   include = { applications: true, servicePrincipals: true },
   maxItems = 500,
 }) {
@@ -259,47 +271,14 @@ async function scanAzureAD({
     throw new Error("maxItems must be between 1 and 2000");
   }
 
-  // Check if token looks like a valid JWT (has 3 parts separated by dots)
-  const tokenParts = cleanToken.split(".");
-  if (tokenParts.length !== 3) {
-    logger.warn("Azure AD token format check", {
-      tokenParts: tokenParts.length,
-      message: "Token does not appear to be a valid JWT (expected 3 parts)",
-    });
-  }
-
-  // Decode JWT to check claims (without verifying signature)
-  let tokenClaims = null;
-  try {
-    const payload = Buffer.from(tokenParts[1], "base64").toString("utf8");
-    tokenClaims = JSON.parse(payload);
-    logger.info("Azure AD token claims", {
-      aud: tokenClaims.aud,
-      iss: tokenClaims.iss,
-      exp: tokenClaims.exp
-        ? new Date(tokenClaims.exp * 1000).toISOString()
-        : null,
-      iat: tokenClaims.iat
-        ? new Date(tokenClaims.iat * 1000).toISOString()
-        : null,
-      nbf: tokenClaims.nbf
-        ? new Date(tokenClaims.nbf * 1000).toISOString()
-        : null,
-      now: new Date().toISOString(),
-      isExpired: tokenClaims.exp ? tokenClaims.exp * 1000 < Date.now() : null,
-    });
-  } catch (e) {
-    logger.warn("Failed to decode token claims", { error: e.message });
-  }
-
-  // The tenant id anchors every Azure AD token's provenance (see
-  // sourceIdentity.js); it comes from the token's own `tid` claim rather
-  // than a caller-supplied value, since a caller cannot be trusted to
-  // correctly attribute which tenant a given app registration belongs to.
-  const tenantId = tokenClaims?.tid || null;
+  // Client-credential scans carry the OpenID-canonical tenant GUID.
+  // Pasted Graph tokens are opaque; provenance then falls back to a tid
+  // claim only when the token happens to be a JWT the client can decode.
+  const tenantId =
+    canonicalTenantGuid(providedTenantId) || decodeGraphTokenTid(cleanToken);
   if (!tenantId) {
     const err = new Error(
-      "Azure AD token is missing a tenant id (tid claim); cannot safely attribute scan results",
+      "Azure AD scan is missing a tenant id; cannot safely attribute scan results",
     );
     err.status = 401;
     throw err;
@@ -309,9 +288,6 @@ async function scanAzureAD({
     maxItems,
     includeApps: include.applications,
     includeSPs: include.servicePrincipals,
-    tokenLength: cleanToken.length,
-    tokenParts: tokenParts.length,
-    tokenAudience: tokenClaims?.aud,
   });
 
   const items = [];

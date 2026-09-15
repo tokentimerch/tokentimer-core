@@ -70,6 +70,7 @@ import AzureInventoryAuthFields from './imports/AzureInventoryAuthFields';
 import {
   azureInventoryCredentialsHaveSecrets,
   azureInventoryScanAuthPayload,
+  azureReplacementAuthError,
   buildAzureInventoryCredentials,
   validateAzureInventoryAuth,
 } from './imports/azureInventoryAuth';
@@ -1416,6 +1417,27 @@ export default function ImportTokensModal({
 
   const handleSaveAutoSyncChanges = async () => {
     if (!workspaceId || !autoSyncConfig?.id) return;
+    if (source === 'azure') {
+      const replacementError = azureFormRef.current?.validateReplacement?.();
+      if (replacementError) {
+        showWarning(replacementError);
+        return;
+      }
+    }
+    if (source === 'azure-ad') {
+      const replacementError = azureReplacementAuthError({
+        replacing: replacingAzureAdCredentials,
+        authMethod: azureADAuthMethod,
+        token: azureADToken,
+        tenantId: azureADTenantId,
+        clientId: azureADClientId,
+        clientSecret: azureADClientSecret,
+      });
+      if (replacementError) {
+        showWarning(replacementError);
+        return;
+      }
+    }
     const { credentials, scanParams } = getAutoSyncCredentials();
     const payload = {
       frequency: enableSyncFrequency,
@@ -1441,6 +1463,17 @@ export default function ImportTokensModal({
       );
       const configs = res.data?.items || [];
       setAutoSyncConfig(configs.find(c => c.provider === source) || false);
+      if (source === 'azure') {
+        azureFormRef.current?.resetReplacement?.();
+      }
+      if (source === 'azure-ad' && replacingAzureAdCredentials) {
+        setReplacingAzureAdCredentials(false);
+        setAzureADToken('');
+        setAzureADTenantId('');
+        setAzureADClientId('');
+        setAzureADClientSecret('');
+        setAzureADAuthMethod('token');
+      }
       showSuccess(`Auto-sync settings updated for ${source}`);
     } catch (e) {
       showWarning(
@@ -2837,6 +2870,7 @@ export default function ImportTokensModal({
                   helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   autoSyncManageMode={autoSyncManageMode}
+                  initialVaultUrl={azureVaultUrl}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
                   isQuotaExceededError={isQuotaExceededError}

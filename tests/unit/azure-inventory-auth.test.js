@@ -201,6 +201,14 @@ describe("auto-sync credential validation", () => {
       validateAutoSyncCredentials("azure-ad", { token: "t" }),
       null,
     );
+    assert.match(
+      validateAutoSyncCredentials("azure-ad", { authMethod: "", token: "t" }),
+      /authMethod must be/,
+    );
+    assert.match(
+      validateAutoSyncCredentials("azure-ad", { authMethod: null, token: "t" }),
+      /authMethod must be/,
+    );
   });
 
   it("forwards client credentials, vaultUrl, include, maxItems, and filterRules", () => {
@@ -409,6 +417,7 @@ describe("Key Vault inventory from list attributes", () => {
     });
     let mint = 0;
     const authProvider = {
+      getToken: async () => "t1",
       refresh: async () => {
         mint += 1;
         return "t2";
@@ -439,6 +448,49 @@ describe("Key Vault inventory from list attributes", () => {
       (err) => err.status === 403,
     );
     assert.equal(forbiddenCalls.length, 1);
+  });
+
+  it("after a page-1 refresh, page 2's first request uses the cached token", async () => {
+    const calls = [];
+    let current = "t1";
+    const authProvider = {
+      getToken: async () => current,
+      refresh: async (failed) => {
+        if (failed === current) current = "t2";
+        return current;
+      },
+    };
+    const azure = requireWithMocks(resolveAzureIntegration(), {
+      axios: async (config) => {
+        const auth = String(config.headers.Authorization);
+        calls.push(auth);
+        if (auth === "Bearer t1") throw httpError(401);
+        const url = String(config.url);
+        if (!url.includes("skiptoken")) {
+          return {
+            data: {
+              value: [
+                { id: "https://vault.example.com/secrets/a" },
+              ],
+              nextLink:
+                "https://vault.example.com/secrets?api-version=7.4&$skiptoken=p2",
+            },
+          };
+        }
+        return {
+          data: {
+            value: [{ id: "https://vault.example.com/secrets/b" }],
+          },
+        };
+      },
+    });
+    const listed = await azure._test.listSecrets({
+      vaultUrl: "https://vault.example.com",
+      token: "t1",
+      authProvider,
+    });
+    assert.equal(listed.items.length, 2);
+    assert.deepEqual(calls, ["Bearer t1", "Bearer t2", "Bearer t2"]);
   });
 });
 
@@ -561,5 +613,224 @@ describe("Azure Key Vault OpenAPI scan request", () => {
       client,
       /required: \[vaultUrl, authMethod, tenantId, clientId, clientSecret\]/,
     );
+    assert.match(bearer, /minLength: 1/);
+    assert.match(client, /minLength: 1/);
   });
 });
+
+describe("authMethod contract", () => {
+  it("defaults only omitted authMethod to token and rejects empty or null", async () => {
+    assert.equal(azureCreds.resolveAuthMethod(undefined), "token");
+    await assert.rejects(
+      () => azureCreds.resolveAzureScanAuth({ authMethod: "", token: "t" }),
+      (err) => err.status === 400,
+    );
+    await assert.rejects(
+      () => azureCreds.resolveAzureScanAuth({ authMethod: null, token: "t" }),
+      (err) => err.status === 400,
+    );
+  });
+});
+
+describe("canonical tenant provenance", () => {
+  const TENANT_GUID = "11111111-1111-1111-1111-111111111111";
+
+  it("skips OpenID discovery when tenantId is already a GUID", async () => {
+    const urls = [];
+    const fetchImpl = async (url) => {
+      urls.push(String(url));
+      return { ok: true, json: async () => ({ access_token: "minted" }) };
+    };
+    const resolved = await azureCreds.resolveAzureScanAuth({
+      authMethod: "client_credentials",
+      tenantId: TENANT_GUID.toUpperCase(),
+      clientId: "cid",
+      clientSecret: "csec",
+      scope: azureCreds.GRAPH_SCOPE,
+      fetchImpl,
+    });
+    assert.equal(resolved.tenantId, TENANT_GUID);
+    assert.equal(resolved.token, "minted");
+    assert.equal(urls.length, 1);
+    assert.match(urls[0], new RegExp(`${TENANT_GUID}/oauth2/v2.0/token`, "i"));
+    assert.doesNotMatch(urls[0], /openid-configuration/);
+  });
+
+  it("discovers a tenant GUID from OpenID issuer before minting", async () => {
+    const urls = [];
+    const fetchImpl = async (url) => {
+      urls.push(String(url));
+      if (String(url).includes("openid-configuration")) {
+        return {
+          ok: true,
+          json: async () => ({
+            issuer: `https://login.microsoftonline.com/${TENANT_GUID}/v2.0`,
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ access_token: "minted" }) };
+    };
+    const resolved = await azureCreds.resolveAzureScanAuth({
+      authMethod: "client_credentials",
+      tenantId: "contoso.onmicrosoft.com",
+      clientId: "cid",
+      clientSecret: "csec",
+      scope: azureCreds.GRAPH_SCOPE,
+      fetchImpl,
+    });
+    assert.equal(resolved.tenantId, TENANT_GUID);
+    assert.match(urls[0], /contoso\.onmicrosoft\.com/);
+    assert.match(urls[0], /openid-configuration/);
+    assert.match(urls[1], new RegExp(`${TENANT_GUID}/oauth2/v2.0/token`));
+  });
+});
+
+describe("Entra scan tenant attribution", () => {
+  it("uses a provided GUID and does not require a JWT tid claim", async () => {
+    const azureAd = requireWithMocks(
+      path.resolve(__dirname, "../../apps/api/services/azureADIntegration.js"),
+      {
+        axios: async () => ({ data: { value: [] } }),
+      },
+    );
+    const result = await azureAd.scanAzureAD({
+      token: "opaque-graph-token",
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      include: { applications: true, servicePrincipals: false },
+    });
+    assert.equal(result.tenantId, "11111111-1111-1111-1111-111111111111");
+  });
+
+  it("rejects an opaque token when no canonical tenant GUID is provided", async () => {
+    const azureAd = requireWithMocks(
+      path.resolve(__dirname, "../../apps/api/services/azureADIntegration.js"),
+      {
+        axios: async () => ({ data: { value: [] } }),
+      },
+    );
+    await assert.rejects(
+      () => azureAd.scanAzureAD({ token: "opaque-graph-token" }),
+      (err) => err.status === 401,
+    );
+  });
+
+  it("after a Graph page-1 refresh, page 2's first request uses the cached token", async () => {
+    const calls = [];
+    let current = "t1";
+    const authProvider = {
+      getToken: async () => current,
+      refresh: async (failed) => {
+        if (failed === current) current = "t2";
+        return current;
+      },
+    };
+    const azureAd = requireWithMocks(
+      path.resolve(__dirname, "../../apps/api/services/azureADIntegration.js"),
+      {
+        axios: async (config) => {
+          const auth = String(config.headers.Authorization);
+          calls.push(auth);
+          if (auth === "Bearer t1") throw httpError(401);
+          const url = String(config.url);
+          if (!url.includes("skiptoken")) {
+            return {
+              data: {
+                value: [{ id: "app-1", displayName: "A", passwordCredentials: [], keyCredentials: [] }],
+                "@odata.nextLink":
+                  "https://graph.microsoft.com/v1.0/applications?$skiptoken=p2",
+              },
+            };
+          }
+          return {
+            data: {
+              value: [{ id: "app-2", displayName: "B", passwordCredentials: [], keyCredentials: [] }],
+            },
+          };
+        },
+      },
+    );
+    const listed = await azureAd._test.listApplications({
+      token: "t1",
+      authProvider,
+    });
+    assert.equal(listed.items.length, 2);
+    assert.deepEqual(calls, ["Bearer t1", "Bearer t2", "Bearer t2"]);
+  });
+});
+
+describe("Azure scan route wiring", () => {
+  const integrationsSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../apps/api/routes/integrations.js"),
+    "utf8",
+  );
+
+  it("Entra scan passes the canonical tenant GUID into scanAzureAD", () => {
+    assert.match(
+      integrationsSrc,
+      /scanAzureAD\(\{[\s\S]*tenantId:\s*resolved\.tenantId/,
+    );
+  });
+
+  it("scrubs secrets in finally on both Azure scan routes", () => {
+    assert.equal(
+      (integrationsSrc.match(/scrubAzureSecretsFromBody\(req\.body\)/g) || [])
+        .length,
+      2,
+    );
+  });
+
+  it("scrubs the request body after a thrown client-credential mint", async () => {
+    const body = {
+      authMethod: "client_credentials",
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      clientId: "cid",
+      clientSecret: "leaked-secret",
+      token: "pasted-token",
+    };
+    await assert.rejects(
+      () =>
+        azureCreds.resolveAzureScanAuth({
+          ...body,
+          scope: azureCreds.KEY_VAULT_SCOPE,
+          fetchImpl: async () => ({
+            ok: false,
+            json: async () => ({ error_codes: [7000215] }),
+          }),
+        }),
+      (err) => err.status === 401,
+    );
+    azureCreds.scrubAzureSecretsFromBody(body);
+    assert.equal(body.clientSecret, undefined);
+    assert.equal(body.token, undefined);
+  });
+
+  it("client-credential mint then Key Vault scan uses the minted token", async () => {
+    const auths = [];
+    const resolved = await azureCreds.resolveAzureScanAuth({
+      authMethod: "client_credentials",
+      tenantId: "11111111-1111-1111-1111-111111111111",
+      clientId: "cid",
+      clientSecret: "csec",
+      scope: azureCreds.KEY_VAULT_SCOPE,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ access_token: "minted-kv" }),
+      }),
+    });
+    const azure = requireWithMocks(resolveAzureIntegration(), {
+      axios: async (config) => {
+        auths.push(String(config.headers.Authorization));
+        return { data: { value: [] } };
+      },
+    });
+    await azure.scanAzure({
+      vaultUrl: "https://vault.example.com",
+      token: resolved.token,
+      authProvider: resolved.authProvider,
+      include: { secrets: true, certificates: false, keys: false },
+    });
+    assert.ok(auths.every((value) => value === "Bearer minted-kv"));
+    assert.equal(resolved.token, "minted-kv");
+  });
+});
+

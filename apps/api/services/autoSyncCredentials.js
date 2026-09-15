@@ -4,14 +4,17 @@ const ALLOWED_AUTH_METHODS = new Set(["token", "client_credentials"]);
 
 function requiredFieldsFor(provider, credentials) {
   const authMethod = credentials?.authMethod;
-  if (
-    authMethod !== undefined &&
-    authMethod !== null &&
-    authMethod !== "" &&
+  if (authMethod === undefined) {
+    // omitted authMethod stays legacy token mode
+  } else if (
+    typeof authMethod !== "string" ||
     !ALLOWED_AUTH_METHODS.has(authMethod)
   ) {
     return {
-      error: `Unknown authMethod "${authMethod}"`,
+      error:
+        typeof authMethod === "string" && authMethod !== ""
+          ? `Unknown authMethod "${authMethod}"`
+          : 'authMethod must be "token" or "client_credentials"',
     };
   }
   const method = authMethod || "token";
