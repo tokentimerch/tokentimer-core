@@ -22,7 +22,6 @@ import AlertLifecycleTimeline from './AlertLifecycleTimeline.jsx';
 export default function AlertingDetails({
   token,
   enabled = true,
-  canViewAudit = false,
   ...boxProps
 }) {
   const [searchParams] = useSearchParams();
@@ -129,7 +128,6 @@ export default function AlertingDetails({
               tokenName={token?.name}
               tokenId={token?.id}
               workspaceId={token?.workspace_id}
-              canViewAudit={canViewAudit}
               onViewLatestAttempt={handleViewLatestAttempt}
               showHeading={false}
               compact

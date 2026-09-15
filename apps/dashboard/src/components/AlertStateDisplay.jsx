@@ -311,7 +311,6 @@ export default function AlertStateDisplay({
   tokenName,
   tokenId,
   workspaceId,
-  canViewAudit = false,
   onViewLatestAttempt,
   showHeading = true,
   showUpcoming = false,
@@ -327,16 +326,45 @@ export default function AlertStateDisplay({
   const { eligibility, delivery } = alertState;
   const latestAttemptId = delivery?.latest_attempt?.id;
   const realAttempt = latestAttemptId ? delivery.latest_attempt : null;
-  const lastDeliveryAt =
-    realAttempt?.attempted_at || delivery?.last_attempt_at || null;
   const lastDeliveryChannel = formatChannelLabel(realAttempt?.channel);
   const channels = formatChannelsList(eligibility.eligible_channels);
   const currentThreshold = formatAlertThreshold(eligibility.effective_threshold);
+  const deliveryThreshold = formatAlertThreshold(delivery?.threshold_days);
+  const thresholdsDiffer =
+    deliveryThreshold != null &&
+    currentThreshold != null &&
+    Number(delivery.threshold_days) !== Number(eligibility.effective_threshold);
   const latestAttemptPath = buildAlertLifecycleEventPath({
     tokenId,
     attemptId: latestAttemptId,
     workspaceId,
   });
+
+  let attemptLine = null;
+  if (realAttempt) {
+    attemptLine = (
+      <Text color={muted} fontSize='xs'>
+        Last delivery
+        {lastDeliveryChannel ? `: ${lastDeliveryChannel}` : ''}
+        {' · '}
+        {formatDateTime(realAttempt.attempted_at)}
+      </Text>
+    );
+  } else if (delivery?.last_attempt_at) {
+    attemptLine = (
+      <Text color={muted} fontSize='xs'>
+        {delivery.status === 'discarded' ? 'Discarded' : 'Last queue attempt'}
+        {' · '}
+        {formatDateTime(delivery.last_attempt_at)}
+      </Text>
+    );
+  } else if (!delivery) {
+    attemptLine = (
+      <Text color={muted} fontSize='xs'>
+        No delivery yet
+      </Text>
+    );
+  }
 
   return (
     <Box
@@ -407,19 +435,13 @@ export default function AlertStateDisplay({
             </Text>
             <AlertDeliveryBadge status={delivery?.status} />
           </HStack>
-          {lastDeliveryAt ? (
+          {thresholdsDiffer ? (
             <Text color={muted} fontSize='xs'>
-              Last delivery
-              {lastDeliveryChannel ? `: ${lastDeliveryChannel}` : ''}
-              {' · '}
-              {formatDateTime(lastDeliveryAt)}
-            </Text>
-          ) : !delivery ? (
-            <Text color={muted} fontSize='xs'>
-              No delivery yet
+              Previous alert: {deliveryThreshold}
             </Text>
           ) : null}
-          {canViewAudit && realAttempt ? (
+          {attemptLine}
+          {realAttempt ? (
             onViewLatestAttempt ? (
               <Link
                 as='button'
@@ -484,7 +506,6 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
                 tokenName={token.name}
                 tokenId={token.id}
                 workspaceId={workspaceId}
-                canViewAudit
               />
             </Box>
           ))}

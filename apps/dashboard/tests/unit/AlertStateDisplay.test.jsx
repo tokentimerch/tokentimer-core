@@ -47,7 +47,7 @@ describe('AlertStateDisplay', () => {
           next_attempt_at: '2026-09-13T09:00:00.000Z',
         },
       },
-      { canViewAudit: true }
+      {}
     );
 
     const eligibility = within(screen.getByTestId('alert-eligibility'));
@@ -63,6 +63,9 @@ describe('AlertStateDisplay', () => {
     expect(delivery.getByText('Failed')).toBeInTheDocument();
     expect(delivery.getByText(/Last delivery: Email ·/)).toBeInTheDocument();
     expect(
+      delivery.queryByText(/Previous alert:/)
+    ).not.toBeInTheDocument();
+    expect(
       delivery.getByRole('link', { name: /View latest attempt/ })
     ).toHaveAttribute(
       'href',
@@ -73,6 +76,107 @@ describe('AlertStateDisplay', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Latest alert:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/attempt is scheduled/)).not.toBeInTheDocument();
+  });
+
+  it('labels delivery as a previous alert when thresholds differ', () => {
+    renderDisplay({
+      eligibility: {
+        status: 'due',
+        reason: 'threshold_reached',
+        effective_threshold: 7,
+        days_until_expiry: 5,
+      },
+      delivery: {
+        status: 'sent',
+        threshold_days: 14,
+        latest_attempt: {
+          id: 55,
+          channel: 'email',
+          attempted_at: '2026-09-01T08:00:00.000Z',
+        },
+      },
+    });
+    const delivery = within(screen.getByTestId('alert-delivery'));
+    expect(
+      delivery.getByText('Previous alert: 14 days before expiry')
+    ).toBeInTheDocument();
+    expect(delivery.getByText(/Last delivery: Email ·/)).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('alert-eligibility')).getByText(
+        'Current threshold: 7 days before expiry'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('omits Previous alert when delivery and eligibility thresholds match', () => {
+    renderDisplay({
+      eligibility: {
+        status: 'due',
+        effective_threshold: 0,
+        days_until_expiry: 0,
+      },
+      delivery: {
+        status: 'sent',
+        threshold_days: 0,
+        latest_attempt: {
+          id: 56,
+          channel: 'email',
+          attempted_at: '2026-09-15T08:00:00.000Z',
+        },
+      },
+    });
+    expect(screen.queryByText(/Previous alert:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Current threshold: Expiry day')).toBeInTheDocument();
+  });
+
+  it('calls queue timestamps Last queue attempt without a delivery-log id', () => {
+    renderDisplay({
+      eligibility: { status: 'due', effective_threshold: 7, days_until_expiry: 5 },
+      delivery: {
+        status: 'failed',
+        last_attempt_at: '2026-09-13T08:00:00.000Z',
+        latest_attempt: { id: null, attempted_at: '2026-09-13T08:00:00.000Z' },
+      },
+    });
+    const delivery = within(screen.getByTestId('alert-delivery'));
+    expect(delivery.getByText(/Last queue attempt ·/)).toBeInTheDocument();
+    expect(delivery.queryByText(/Last delivery/)).not.toBeInTheDocument();
+    expect(
+      delivery.queryByRole('link', { name: /View latest attempt/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('labels discarded queue dispositions without implying a send', () => {
+    renderDisplay({
+      eligibility: { status: 'due', effective_threshold: 7, days_until_expiry: 5 },
+      delivery: {
+        status: 'discarded',
+        reason: 'endpoint_recovered',
+        last_attempt_at: '2026-09-13T08:00:00.000Z',
+        latest_attempt: { id: null, attempted_at: '2026-09-13T08:00:00.000Z' },
+      },
+    });
+    const delivery = within(screen.getByTestId('alert-delivery'));
+    expect(delivery.getByText(/Discarded ·/)).toBeInTheDocument();
+    expect(delivery.queryByText(/Last delivery/)).not.toBeInTheDocument();
+    expect(delivery.queryByText(/Last queue attempt/)).not.toBeInTheDocument();
+  });
+
+  it('shows View latest attempt for readers with a real delivery-log id', () => {
+    renderDisplay({
+      eligibility: { status: 'due', effective_threshold: 7, days_until_expiry: 5 },
+      delivery: {
+        status: 'failed',
+        latest_attempt: {
+          id: 101,
+          channel: 'email',
+          attempted_at: '2026-09-13T08:00:00.000Z',
+        },
+      },
+    });
+    expect(
+      screen.getByRole('link', { name: /View latest attempt/ })
+    ).toBeInTheDocument();
   });
 
   it('lists upcoming thresholds and delivery retries in Upcoming', () => {

@@ -429,7 +429,7 @@ describe('TokenDetailModal', () => {
           },
         },
       },
-      {},
+      { isViewer: true },
       { initialEntries: ['/dashboard?token-id=17'] }
     );
 

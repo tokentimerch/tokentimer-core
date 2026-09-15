@@ -1063,7 +1063,6 @@ export default function CertificateDetailsModal({
             ) : null}
             <AlertingDetails
               token={token}
-              canViewAudit={!isViewer}
               enabled={isOpen}
             />
           </Box>

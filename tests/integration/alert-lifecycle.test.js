@@ -520,6 +520,66 @@ describe("Alert lifecycle APIs", function () {
     expect(emailB.successes).to.be.at.least(1);
   });
 
+  it("keeps deleted-token current-month deliveries on historical workspace_id", async () => {
+    const before = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceA })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    const doomed = await client.query(
+      `INSERT INTO tokens (
+         user_id, workspace_id, created_by, name, expiration, type, category
+       ) VALUES ($1, $2, $1, 'Doomed stats token', DATE '2026-10-01', 'api_key', 'general')
+       RETURNING id`,
+      [owner.user.id, workspaceA],
+    );
+    const doomedId = doomed.rows[0].id;
+    await client.query(
+      `INSERT INTO alert_delivery_log (
+         user_id, token_id, workspace_id, channel, status, sent_at
+       ) VALUES ($1, $2, $3, 'email', 'success', NOW())`,
+      [owner.user.id, doomedId, workspaceA],
+    );
+    await client.query("DELETE FROM tokens WHERE id=$1", [doomedId]);
+    const orphan = await client.query(
+      "SELECT token_id, workspace_id FROM alert_delivery_log WHERE token_id IS NULL AND workspace_id=$1 ORDER BY id DESC LIMIT 1",
+      [workspaceA],
+    );
+    expect(orphan.rows[0].workspace_id).to.equal(workspaceA);
+
+    const after = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceA })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(after.body.monthUsage).to.equal((before.body.monthUsage || 0) + 1);
+  });
+
+  it("counts tokenless agent-health style deliveries via persisted workspace_id", async () => {
+    const before = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceA })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    await client.query(
+      `INSERT INTO alert_delivery_log (
+         user_id, token_id, workspace_id, channel, status, sent_at
+       ) VALUES ($1, NULL, $2, 'email', 'success', NOW())`,
+      [owner.user.id, workspaceA],
+    );
+    const after = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceA })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(after.body.monthUsage).to.equal((before.body.monthUsage || 0) + 1);
+    const emailA = (after.body.byChannel || []).find(
+      (row) => String(row.channel).toLowerCase() === "email",
+    );
+    expect(emailA).to.exist;
+    expect(emailA.attempts).to.be.at.least(1);
+  });
+
   it("records a post-transfer manual retry against the alert and B workspace", async () => {
     await request(BASE)
       .post(`/api/alert-queue/${alertA}/retry`)

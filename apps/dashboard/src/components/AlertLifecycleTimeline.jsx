@@ -203,6 +203,13 @@ export function groupAlertLifecycleEvents(events) {
     );
     const reached = group.events.find(item => item.type === 'threshold_reached');
     group.reached_at = reached?.occurred_at || null;
+    // Threshold groups already show the crossing in the header; omit the
+    // duplicate threshold_reached child row. Keep all events for "Other".
+    if (group.threshold_days !== null) {
+      group.events = group.events.filter(
+        item => item.type !== 'threshold_reached'
+      );
+    }
   }
   return sorted;
 }
@@ -485,7 +492,7 @@ function ThresholdHistoryGroup({ group, focusedId }) {
           />
         ))}
       </VStack>
-      {group.events.length === 0 ? (
+      {group.events.length === 0 && !group.reached_at ? (
         <Text fontSize='sm' color={text}>
           No events
         </Text>

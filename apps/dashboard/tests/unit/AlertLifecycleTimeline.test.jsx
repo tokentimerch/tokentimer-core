@@ -89,7 +89,6 @@ describe('AlertLifecycleTimeline', () => {
           }}
           tokenName='Production key'
           tokenId={17}
-          canViewAudit={false}
         />
         <AlertUpcomingSection
           alertState={{
@@ -169,6 +168,9 @@ describe('AlertLifecycleTimeline', () => {
     expect(screen.getAllByText('30-day threshold')).toHaveLength(1);
     expect(screen.getByText(/^Reached /)).toBeInTheDocument();
     expect(screen.getAllByText(/^Reached /)).toHaveLength(1);
+    expect(screen.queryByText(/Threshold reached/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Alert queued ·/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Alert sent ·/)).toBeInTheDocument();
   });
 
   it('expands history rows with extra details only', async () => {
@@ -207,6 +209,34 @@ describe('AlertLifecycleTimeline', () => {
       event({ id: 'c', threshold_days: null, type: 'alert_requeued' }),
     ]);
     expect(groups.map(group => group.threshold_days)).toEqual([30, 7, null]);
+  });
+
+  it('omits threshold_reached child rows from threshold groups only', () => {
+    const groups = groupAlertLifecycleEvents([
+      event({
+        id: 'threshold:30',
+        type: 'threshold_reached',
+        threshold_days: 30,
+        occurred_at: '2026-09-07T00:00:00.000Z',
+      }),
+      event({
+        id: 'queue:30',
+        type: 'alert_queued',
+        threshold_days: 30,
+        occurred_at: '2026-09-07T01:00:00.000Z',
+      }),
+      event({
+        id: 'other:threshold',
+        type: 'threshold_reached',
+        threshold_days: null,
+        occurred_at: '2026-09-08T00:00:00.000Z',
+      }),
+    ]);
+    const thirty = groups.find(group => group.threshold_days === 30);
+    const other = groups.find(group => group.threshold_days === null);
+    expect(thirty.reached_at).toBe('2026-09-07T00:00:00.000Z');
+    expect(thirty.events.map(item => item.type)).toEqual(['alert_queued']);
+    expect(other.events.map(item => item.type)).toEqual(['threshold_reached']);
   });
 
   it('supports paginated load-more without replacing the current page', async () => {
@@ -289,14 +319,15 @@ describe('AlertLifecycleTimeline', () => {
     const eligibility = { status: 'due', reason: 'threshold_reached' };
     renderTimeline(<>
       <AlertStateDisplay alertState={{ eligibility, delivery: fallbackDelivery }}
-        tokenName='Production key' tokenId={17} canViewAudit />
+        tokenName='Production key' tokenId={17} />
       <AlertEligibilityOverview workspaceId='workspace-1' tokens={[{
         id: 17, name: 'Production key', alert_state: {
           eligibility, delivery: fallbackDelivery,
         },
       }]} />
     </>);
-    expect(screen.getAllByText(/Last delivery/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Last queue attempt/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Last delivery/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /View latest attempt/i }))
       .not.toBeInTheDocument();
   });
@@ -307,7 +338,7 @@ describe('AlertLifecycleTimeline', () => {
       delivery: { status: 'failed', latest_attempt: {
         id: 104, attempted_at: '2026-09-13T08:00:00Z', status: 'failed',
       } },
-    }} tokenName='Production key' tokenId={17} canViewAudit />);
+    }} tokenName='Production key' tokenId={17} />);
     expect(screen.getByRole('link', { name: /View latest attempt/i }))
       .toHaveAttribute(
         'href',

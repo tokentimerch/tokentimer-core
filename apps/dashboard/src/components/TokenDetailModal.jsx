@@ -822,7 +822,6 @@ function TokenDetailModal({
             )}
             <AlertingDetails
               token={token}
-              canViewAudit={!isViewer}
               enabled={isOpen}
               gridColumn='1 / -1'
               mt={4}
