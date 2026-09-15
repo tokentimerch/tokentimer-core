@@ -52,7 +52,7 @@ function requireWithMocks(modulePath, mocks) {
 }
 
 describe("Provider services extended unit coverage", () => {
-  it("azure listCertificates and listKeys return empty arrays on 404", async () => {
+  it("azure listCertificates and listKeys propagate collection 404", async () => {
     const axios404 = async () => {
       const err = new Error("not found");
       err.response = { status: 404, data: {} };
@@ -62,21 +62,31 @@ describe("Provider services extended unit coverage", () => {
     const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
       axios: axios404,
     });
-    const certs = await azure._test.listCertificates({
-      vaultUrl: "https://vault.example.com",
-      token: "token",
-      maxItems: 10,
-    });
-    const keys = await azure._test.listKeys({
-      vaultUrl: "https://vault.example.com",
-      token: "token",
-      maxItems: 10,
-    });
-    expect(certs.items).to.deep.equal([]);
-    expect(keys.items).to.deep.equal([]);
+    try {
+      await azure._test.listCertificates({
+        vaultUrl: "https://vault.example.com",
+        token: "token",
+        maxItems: 10,
+      });
+      throw new Error("expected listCertificates to throw");
+    } catch (e) {
+      if (e.message === "expected listCertificates to throw") throw e;
+      expect(e.status).to.equal(404);
+    }
+    try {
+      await azure._test.listKeys({
+        vaultUrl: "https://vault.example.com",
+        token: "token",
+        maxItems: 10,
+      });
+      throw new Error("expected listKeys to throw");
+    } catch (e) {
+      if (e.message === "expected listKeys to throw") throw e;
+      expect(e.status).to.equal(404);
+    }
   });
 
-  it("azure scan returns empty result when endpoints return 403/404-style failures", async () => {
+  it("azure scan throws 403 when every collection is forbidden", async () => {
     const axiosAuthError = async () => {
       const err = new Error("forbidden");
       err.response = { status: 403, data: {} };
@@ -85,14 +95,17 @@ describe("Provider services extended unit coverage", () => {
     const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
       axios: axiosAuthError,
     });
-    const out = await azure.scanAzure({
-      vaultUrl: "https://vault.example.com",
-      token: "token",
-      include: { secrets: true, certificates: true, keys: true },
-    });
-    expect(out).to.be.an("object");
-    expect(out.items).to.deep.equal([]);
-    expect(out.summary).to.be.an("array");
+    try {
+      await azure.scanAzure({
+        vaultUrl: "https://vault.example.com",
+        token: "token",
+        include: { secrets: true, certificates: true, keys: true },
+      });
+      throw new Error("expected scanAzure to throw");
+    } catch (e) {
+      if (e.message === "expected scanAzure to throw") throw e;
+      expect(e.status).to.equal(403);
+    }
   });
 
   it("azure AD paginates service principals via nextLink", async () => {

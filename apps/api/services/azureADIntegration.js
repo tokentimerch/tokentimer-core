@@ -6,7 +6,12 @@ const {
   formatDateYmd,
   CREDENTIALED_AXIOS_REDIRECTS,
   assertSameOriginFollowUp,
+  throwIfAllScopesFailed,
 } = require("./integrationUtils");
+const {
+  canonicalTenantGuid,
+  withCurrentTokenRetry,
+} = require("./azureClientCredentials");
 const { logger } = require("../utils/logger");
 
 /**
@@ -54,7 +59,13 @@ function pushCredentialKindSummaries(
   });
 }
 
-async function graphRequest({ token, method = "GET", path, params = {} }) {
+async function graphRequest({
+  token,
+  method = "GET",
+  path,
+  params = {},
+  authProvider,
+}) {
   // Accept absolute URLs as-is (Graph returns full URLs in @odata.nextLink,
   // whose path already contains /v1.0 - prepending the base again would
   // produce /v1.0/v1.0/... and break pagination with a 404). Absolute
@@ -78,58 +89,76 @@ async function graphRequest({ token, method = "GET", path, params = {} }) {
     }
   });
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
+  const run = async (bearer) => {
+    const headers = {
+      Authorization: `Bearer ${bearer}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
 
-  try {
-    const response = await axios({
-      method,
-      url: url.toString(),
-      headers,
-      timeout: 120000, // 120 second timeout (increased for up to 2000 items)
-      ...CREDENTIALED_AXIOS_REDIRECTS,
-    });
-    return response.data;
-  } catch (error) {
-    if (error.response) {
-      const errorMessage =
-        error.response.data?.error?.message ||
-        error.response.data?.error_description ||
-        JSON.stringify(error.response.data);
-      const errorCode =
-        error.response.data?.error?.code || error.response.data?.error;
+    try {
+      const response = await axios({
+        method,
+        url: url.toString(),
+        headers,
+        timeout: 120000,
+        ...CREDENTIALED_AXIOS_REDIRECTS,
+      });
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        const errorMessage =
+          error.response.data?.error?.message ||
+          error.response.data?.error_description ||
+          JSON.stringify(error.response.data);
+        const errorCode =
+          error.response.data?.error?.code || error.response.data?.error;
 
-      const err = new Error(
-        `Microsoft Graph ${method} ${path} ${error.response.status}: ${errorMessage}`,
-      );
-      err.status = error.response.status;
-      err.body = error.response.data;
-      err.graphError = errorCode;
+        const err = new Error(
+          `Microsoft Graph ${method} ${path} ${error.response.status}: ${errorMessage}`,
+        );
+        err.status = error.response.status;
+        err.body = error.response.data;
+        err.graphError = errorCode;
 
-      logger.warn("Microsoft Graph API request failed", {
+        logger.warn("Microsoft Graph API request failed", {
+          method,
+          path,
+          status: error.response.status,
+          errorCode,
+          errorMessage,
+          url: url.toString(),
+        });
+        throw err;
+      }
+      logger.error("Microsoft Graph API request error", {
         method,
         path,
-        status: error.response.status,
-        errorCode,
-        errorMessage,
-        url: url.toString(),
+        error: error.message,
+        code: error.code,
       });
-      throw err;
+      throw error;
     }
-    logger.error("Microsoft Graph API request error", {
-      method,
-      path,
-      error: error.message,
-      code: error.code,
-    });
-    throw error;
+  };
+
+  return await withCurrentTokenRetry(authProvider, token, run);
+}
+
+function decodeGraphTokenTid(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(parts[1], "base64").toString("utf8"),
+    );
+    if (typeof payload?.tid !== "string" || !payload.tid.trim()) return null;
+    return canonicalTenantGuid(payload.tid) || payload.tid.trim();
+  } catch (_e) {
+    return null;
   }
 }
 
-async function listApplications({ token, maxItems = 500 }) {
+async function listApplications({ token, maxItems = 500, authProvider }) {
   const apps = [];
   let nextLink = null;
   let pageCount = 0;
@@ -137,47 +166,45 @@ async function listApplications({ token, maxItems = 500 }) {
   let truncated = false;
 
   do {
-    try {
-      const path = "/applications";
-      let data;
+    const path = "/applications";
+    let data;
 
-      if (nextLink) {
-        // Microsoft Graph returns full URLs in @odata.nextLink; pass them
-        // through unchanged so the /v1.0 prefix is not duplicated.
-        data = await graphRequest({ token, method: "GET", path: nextLink });
-      } else {
-        // First page
-        data = await graphRequest({
-          token,
-          method: "GET",
-          path,
-          params: {
-            $top: 100,
-          },
-        });
-      }
+    if (nextLink) {
+      data = await graphRequest({
+        token,
+        authProvider,
+        method: "GET",
+        path: nextLink,
+      });
+    } else {
+      data = await graphRequest({
+        token,
+        authProvider,
+        method: "GET",
+        path,
+        params: {
+          $top: 100,
+        },
+      });
+    }
 
-      if (Array.isArray(data.value)) {
-        apps.push(...data.value);
-      }
+    if (Array.isArray(data.value)) {
+      apps.push(...data.value);
+    }
 
-      nextLink = data["@odata.nextLink"] || null;
-      pageCount++;
+    nextLink = data["@odata.nextLink"] || null;
+    pageCount++;
 
-      if (apps.length >= maxItems || pageCount >= maxPages) {
-        truncated = Boolean(nextLink) || apps.length > maxItems;
-        break;
-      }
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
+    if (apps.length >= maxItems || pageCount >= maxPages) {
+      truncated = Boolean(nextLink) || apps.length > maxItems;
+      break;
     }
   } while (nextLink && apps.length < maxItems);
 
   return { items: apps.slice(0, maxItems), truncated };
 }
 
-async function listServicePrincipals({ token, maxItems = 500 }) {
+async function listServicePrincipals({ token, maxItems = 500, authProvider }) {
   const sps = [];
   let nextLink = null;
   let pageCount = 0;
@@ -185,38 +212,38 @@ async function listServicePrincipals({ token, maxItems = 500 }) {
   let truncated = false;
 
   do {
-    try {
-      const path = "/servicePrincipals";
-      let data;
+    const path = "/servicePrincipals";
+    let data;
 
-      if (nextLink) {
-        // Pass @odata.nextLink through unchanged (see listApplications).
-        data = await graphRequest({ token, method: "GET", path: nextLink });
-      } else {
-        data = await graphRequest({
-          token,
-          method: "GET",
-          path,
-          params: {
-            $top: 100,
-          },
-        });
-      }
+    if (nextLink) {
+      data = await graphRequest({
+        token,
+        authProvider,
+        method: "GET",
+        path: nextLink,
+      });
+    } else {
+      data = await graphRequest({
+        token,
+        authProvider,
+        method: "GET",
+        path,
+        params: {
+          $top: 100,
+        },
+      });
+    }
 
-      if (Array.isArray(data.value)) {
-        sps.push(...data.value);
-      }
+    if (Array.isArray(data.value)) {
+      sps.push(...data.value);
+    }
 
-      nextLink = data["@odata.nextLink"] || null;
-      pageCount++;
+    nextLink = data["@odata.nextLink"] || null;
+    pageCount++;
 
-      if (sps.length >= maxItems || pageCount >= maxPages) {
-        truncated = Boolean(nextLink) || sps.length > maxItems;
-        break;
-      }
-    } catch (e) {
-      if (e.status === 404 || e.status === 403) break;
-      throw e;
+    if (sps.length >= maxItems || pageCount >= maxPages) {
+      truncated = Boolean(nextLink) || sps.length > maxItems;
+      break;
     }
   } while (nextLink && sps.length < maxItems);
 
@@ -225,6 +252,8 @@ async function listServicePrincipals({ token, maxItems = 500 }) {
 
 async function scanAzureAD({
   token,
+  authProvider,
+  tenantId: providedTenantId,
   include = { applications: true, servicePrincipals: true },
   maxItems = 500,
 }) {
@@ -242,47 +271,14 @@ async function scanAzureAD({
     throw new Error("maxItems must be between 1 and 2000");
   }
 
-  // Check if token looks like a valid JWT (has 3 parts separated by dots)
-  const tokenParts = cleanToken.split(".");
-  if (tokenParts.length !== 3) {
-    logger.warn("Azure AD token format check", {
-      tokenParts: tokenParts.length,
-      message: "Token does not appear to be a valid JWT (expected 3 parts)",
-    });
-  }
-
-  // Decode JWT to check claims (without verifying signature)
-  let tokenClaims = null;
-  try {
-    const payload = Buffer.from(tokenParts[1], "base64").toString("utf8");
-    tokenClaims = JSON.parse(payload);
-    logger.info("Azure AD token claims", {
-      aud: tokenClaims.aud,
-      iss: tokenClaims.iss,
-      exp: tokenClaims.exp
-        ? new Date(tokenClaims.exp * 1000).toISOString()
-        : null,
-      iat: tokenClaims.iat
-        ? new Date(tokenClaims.iat * 1000).toISOString()
-        : null,
-      nbf: tokenClaims.nbf
-        ? new Date(tokenClaims.nbf * 1000).toISOString()
-        : null,
-      now: new Date().toISOString(),
-      isExpired: tokenClaims.exp ? tokenClaims.exp * 1000 < Date.now() : null,
-    });
-  } catch (e) {
-    logger.warn("Failed to decode token claims", { error: e.message });
-  }
-
-  // The tenant id anchors every Azure AD token's provenance (see
-  // sourceIdentity.js); it comes from the token's own `tid` claim rather
-  // than a caller-supplied value, since a caller cannot be trusted to
-  // correctly attribute which tenant a given app registration belongs to.
-  const tenantId = tokenClaims?.tid || null;
+  // Client-credential scans carry the OpenID-canonical tenant GUID.
+  // Pasted Graph tokens are opaque; provenance then falls back to a tid
+  // claim only when the token happens to be a JWT the client can decode.
+  const tenantId =
+    canonicalTenantGuid(providedTenantId) || decodeGraphTokenTid(cleanToken);
   if (!tenantId) {
     const err = new Error(
-      "Azure AD token is missing a tenant id (tid claim); cannot safely attribute scan results",
+      "Azure AD scan is missing a tenant id; cannot safely attribute scan results",
     );
     err.status = 401;
     throw err;
@@ -292,10 +288,6 @@ async function scanAzureAD({
     maxItems,
     includeApps: include.applications,
     includeSPs: include.servicePrincipals,
-    tokenLength: cleanToken.length,
-    tokenParts: tokenParts.length,
-    tokenPrefix: cleanToken.substring(0, 30) + "...",
-    tokenAudience: tokenClaims?.aud,
   });
 
   const items = [];
@@ -306,7 +298,11 @@ async function scanAzureAD({
     if (include.applications) {
       try {
         const { items: apps, truncated: appsTruncated } =
-          await listApplications({ token: cleanToken, maxItems });
+          await listApplications({
+            token: cleanToken,
+            authProvider,
+            maxItems,
+          });
         let secretsCount = 0;
         let certsCount = 0;
         let appsBudgetExhausted = false;
@@ -403,12 +399,14 @@ async function scanAzureAD({
           type: "applications",
           sourceKind: "azure-ad-client-secret",
           error: e.message,
+          status: e.status,
           complete: false,
         });
         summary.push({
           type: "applications",
           sourceKind: "azure-ad-certificate",
           error: e.message,
+          status: e.status,
           complete: false,
         });
       }
@@ -420,6 +418,7 @@ async function scanAzureAD({
         const { items: sps, truncated: spsTruncated } =
           await listServicePrincipals({
             token: cleanToken,
+            authProvider,
             maxItems,
           });
         let secretsCount = 0;
@@ -515,37 +514,29 @@ async function scanAzureAD({
           type: "service_principals",
           sourceKind: "azure-ad-sp-secret",
           error: e.message,
+          status: e.status,
           complete: false,
         });
         summary.push({
           type: "service_principals",
           sourceKind: "azure-ad-sp-certificate",
           error: e.message,
+          status: e.status,
           complete: false,
         });
       }
     }
   } catch (e) {
     logger.error("Azure AD scan failed", { error: e.message });
-    summary.push({ type: "scan", error: e.message, complete: false });
+    summary.push({
+      type: "scan",
+      error: e.message,
+      status: e.status,
+      complete: false,
+    });
   }
 
-  // If all scan types failed with authentication errors, throw instead of returning partial results
-  const allFailed = summary.every((s) => s.error);
-  const hasAuthError = summary.some(
-    (s) =>
-      s.error &&
-      (s.error.includes("401") ||
-        s.error.includes("403") ||
-        s.error.includes("Unauthorized") ||
-        s.error.includes("Forbidden")),
-  );
-
-  if (allFailed && hasAuthError && items.length === 0) {
-    const err = new Error("Authentication failed");
-    err.status = 401;
-    throw err;
-  }
+  throwIfAllScopesFailed(summary, items);
 
   logger.info("Azure AD scan completed", {
     itemsFound: items.length,

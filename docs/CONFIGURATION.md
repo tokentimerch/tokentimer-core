@@ -195,41 +195,6 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
-## Azure Key Vault and Microsoft Entra inventory tokens
-
-Azure Key Vault and Microsoft Entra ID (Azure AD) inventory import take a
-**caller-supplied access token**. TokenTimer does not mint, refresh, or
-rotate it. When the token expires or is revoked, that scan fails; paste a
-new token to continue. Auto-sync, where offered, encrypts the same token
-and reuses it until it fails.
-
-This is the inventory-import surface
-(`POST /api/v1/integrations/azure/scan`,
-`POST /api/v1/integrations/azure-ad/scan`). It is **not** CertOps Azure
-DNS. The agent DNS-01 provider `azure-dns` uses an OAuth2
-client-credentials flow (`tenantId` / `clientId` / `clientSecret`; see
-[docs/certops/agent.md](certops/agent.md)). That flow does not
-authenticate Key Vault or Entra inventory scans.
-
-**Azure Key Vault.** Typical token:
-`az account get-access-token --resource https://vault.azure.net`.
-Azure CLI tokens are short-lived (about one hour). A 401 is treated as a
-failed scan ("token may be expired or invalid"). Service-principal /
-client-credential inventory auth is
-[#228](https://github.com/tokentimerch/tokentimer-core/issues/228).
-
-**Microsoft Entra ID.** Typical token:
-`az account get-access-token --resource https://graph.microsoft.com`.
-The audience must be Microsoft Graph. Typical scan permission is
-`Application.Read.All` or `Directory.Read.All` with admin consent. Graph
-is hardcoded to `https://graph.microsoft.com`; national clouds are out of
-scope here. Client-credential inventory auth is the same follow-on as Key
-Vault ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228)).
-
-Host allowlists (`VAULT_ADDRESS_ALLOWLIST`,
-`AZURE_VAULT_ADDRESS_ALLOWLIST`) restrict which hosts the API may
-contact. They do not change how authentication works.
-
 ## Vault AppRole authentication
 
 Inventory import can authenticate to Vault with a static token **or**
@@ -359,6 +324,35 @@ proxy. When `networkPolicy.enabled` and `config.useEnvProxy` are both `true`,
 fails the render naming whichever is missing, rather than silently rendering
 a NetworkPolicy that blocks the proxy it was just told to use). See
 [`deploy/helm/README.md`](../deploy/helm/README.md) for details and examples.
+
+## Azure inventory authentication
+
+Azure Key Vault and Microsoft Entra (Azure AD) inventory scans accept either
+a pasted access token or an Entra app using the OAuth client-credentials
+flow. TokenTimer mints a token from
+`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`.
+
+| Surface | Audience / scope | Least privilege |
+| ------- | ---------------- | --------------- |
+| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret values. |
+| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission. Directory.Read.All also works and is broader than this inventory needs. |
+
+This is not CertOps Azure DNS. CertOps DNS-01 still uses its own Entra app
+with DNS Zone Contributor (and ARM) as documented in
+[`docs/certops/agent.md`](certops/agent.md). Do not reuse that app for
+inventory unless you intentionally want both roles on one identity.
+Client-credential Entra scans attribute results to the tenant GUID from
+OpenID discovery (`/{tenant}/v2.0/.well-known/openid-configuration`); a
+tenant domain is canonicalized to that GUID before minting. Key Vault
+client-credential mint uses the tenant GUID or domain as supplied.
+
+Pasted-token scans still work. Existing auto-sync configs keep their stored
+token until you use **Replace credentials**. Core scheduled auto-sync stays
+GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise
+capability.
+
+`AZURE_VAULT_ADDRESS_ALLOWLIST` still applies to Key Vault URLs for both
+auth methods.
 
 ## CertOps (certificate operations)
 

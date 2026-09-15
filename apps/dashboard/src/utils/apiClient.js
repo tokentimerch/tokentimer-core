@@ -156,7 +156,7 @@ apiClient.interceptors.response.use(
           window.location.hostname.includes('127.0.0.1') ||
           window.location.hostname.includes('staging')));
 
-    if (shouldLog) {
+    if (shouldLog && !response.config?._suppressLog) {
       const duration = new Date() - response.config.metadata.startTime;
 
       logger.info(
@@ -1447,6 +1447,10 @@ export const azureAPI = {
     workspaceId,
     vaultUrl,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { secrets: true, certificates: true, keys: true },
     maxItems = 500,
   }) => {
@@ -1456,10 +1460,17 @@ export const azureAPI = {
     try {
       const payload = {
         vaultUrl,
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_SCAN(workspaceId),
         payload,
@@ -1522,6 +1533,10 @@ export const azureADAPI = {
   scan: async ({
     workspaceId,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { applications: true, servicePrincipals: true },
     maxItems = 500,
   }) => {
@@ -1530,10 +1545,17 @@ export const azureADAPI = {
     }
     try {
       const payload = {
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_AD_SCAN(workspaceId),
         payload,

@@ -47,13 +47,6 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **Azure client-credential authentication** for inventory import and
-  auto-sync
-  ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228)).
-  Remaining [#225](https://github.com/tokentimerch/tokentimer-core/issues/225)
-  work is this Azure/Entra client-credential path. Vault inventory auth
-  is AppRole
-  ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
 - **Vault AppRole auto-sync**
   ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
   Inventory import AppRole has shipped. Scheduled Vault AppRole is the

@@ -14,6 +14,9 @@ const {
 } = require("../services/rbac");
 const { formatDateYmd } = require("../services/integrationUtils");
 const {
+  validateAutoSyncCredentials,
+} = require("../services/autoSyncCredentials");
+const {
   getDomainCheckerDiscoveryMaxResults,
   getDomainCheckerImportMaxCertificates,
 } = require("../services/planLimits");
@@ -188,16 +191,6 @@ function computeNextSyncAt(frequency, scheduleTime, scheduleTz) {
   return candidate;
 }
 
-const REQUIRED_CRED_FIELDS = {
-  github: ["token"],
-  gitlab: ["token"],
-  aws: ["accessKeyId", "secretAccessKey"],
-  azure: ["token"],
-  "azure-ad": ["token"],
-  gcp: ["projectId", "accessToken"],
-  vault: ["address", "token"],
-};
-
 // Dashboard stores the checkbox in scan_params.cleanupObsolete and (now)
 // also sends cleanup_obsolete. Accept either so a config created from only
 // the nested flag still drives scheduled cleanup.
@@ -209,17 +202,6 @@ function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
       typeof scan_params === "object" &&
       scan_params.cleanupObsolete === true,
   );
-}
-
-function validateAutoSyncCredentials(provider, credentials) {
-  if (!credentials || typeof credentials !== "object") return null;
-  const required = REQUIRED_CRED_FIELDS[provider] || [];
-  const empty = required.filter((f) => !credentials[f]);
-  if (empty.length === 0) return null;
-  const detail = empty.map((f) =>
-    f in credentials ? `${f} (empty)` : `${f} (absent)`,
-  );
-  return `Missing required credential fields for ${provider}: ${detail.join(", ")}`;
 }
 
 // List auto-sync configs for a workspace

@@ -11,9 +11,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Azure Key Vault and Entra inventory scans accept an Entra app** (tenant ID, client ID, client secret) in addition to a pasted access token. TokenTimer mints `vault.azure.net/.default` or `graph.microsoft.com/.default` from `login.microsoftonline.com/{tenant}/oauth2/v2.0/token`. Client-credential Entra scans attribute inventory to the tenant GUID from OpenID discovery, not by decoding the Graph access token. Key Vault mints against the supplied tenant GUID or domain and does not call OpenID discovery. A discovery rate-limit or Microsoft outage is reported as such, not as a bad tenant. Key Vault inventory lists metadata only, so Key Vault Reader is enough. Graph inventory recommends Application.Read.All. This is not CertOps Azure DNS (DNS Zone Contributor / ARM). **Operator guidance:** existing pasted-token auto-sync configs keep working; use Replace credentials to switch method or rotate a secret.
 - Vault inventory import supports AppRole authentication (role ID / secret ID, optional custom auth mount, optional Vault namespace) alongside the existing static token. Client tokens refresh at 80% of `auth.lease_duration`. A downstream 403 is not retried as expiry. A failed AppRole refresh aborts the scan instead of becoming a partial result. Recurring use needs a reusable SecretID or external rotation; see `docs/CONFIGURATION.md` (Vault AppRole authentication).
 - A Vault scan that can list a mount but cannot read some objects reports `hasErrors` / `permissionDenied` on that mount. The import UI shows a warning, not a green success badge.
-- `docs/CONFIGURATION.md` now states that Azure Key Vault and Microsoft Entra inventory import still take a caller-supplied access token (no refresh). Client-credential inventory auth remains [#228](https://github.com/tokentimerch/tokentimer-core/issues/228). CertOps `azure-dns` is a different surface.
 
 ### Security
 
