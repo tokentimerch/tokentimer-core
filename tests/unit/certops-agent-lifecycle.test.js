@@ -524,6 +524,7 @@ describe("CertOps agents list route", () => {
       retireReason: null,
       downtimeAlertsEnabled: true,
       contactGroupId: null,
+      contactGroupIds: [],
       // Capability fields added for the agent-capability-visibility work:
       // agentRow() (this file's fixture) never sets these DB columns, so
       // they read back as their empty/null defaults - see

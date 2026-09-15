@@ -13,6 +13,12 @@ const {
   requireIntegrationQuota,
 } = require("../services/rbac");
 const Token = require("../db/models/Token");
+const { pool } = require("../db/database");
+const {
+  interpretContactGroupWrite,
+  canonicalLegacyContactGroupId,
+} = require("../src/shared/contactGroups");
+const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
 
 const { scanVault } = require("../services/vaultIntegration");
 const {
@@ -56,6 +62,38 @@ const {
 const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
+
+function hasBodyField(body, key) {
+  return Object.prototype.hasOwnProperty.call(body || {}, key);
+}
+
+function interpretImportContactGroups(body) {
+  return interpretContactGroupWrite({
+    contactGroupIds: body?.contact_group_ids,
+    contactGroupId: body?.contact_group_id,
+    hasPlural: hasBodyField(body, "contact_group_ids"),
+    hasSingular: hasBodyField(body, "contact_group_id"),
+  });
+}
+
+function invalidContactGroupResponse(res) {
+  return res.status(400).json({
+    error: "Invalid contact_group_id for workspace",
+    code: "VALIDATION_ERROR",
+  });
+}
+
+function assignTokenContactGroups(payload, membership, { isCreate }) {
+  if (membership.action === "set") {
+    payload.contact_group_ids = membership.ids;
+    payload.contact_group_id = canonicalLegacyContactGroupId(membership.ids);
+    return;
+  }
+  if (isCreate) {
+    payload.contact_group_ids = [];
+    payload.contact_group_id = null;
+  }
+}
 
 // Workspace membership and manager/admin role are required for every
 // workspace-scoped integration call. Quota is checked separately afterwards
@@ -482,10 +520,21 @@ router.post(
         items,
         default_category,
         default_type,
-        contact_group_id,
         cleanup,
         scan_id: scanId,
       } = req.body || {};
+      let membership;
+      try {
+        membership = interpretImportContactGroups(req.body || {});
+        if (membership.action === "set") {
+          await assertContactGroupIds(pool, workspaceId, membership.ids);
+        }
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
+        }
+        throw err;
+      }
       const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
       const cleanupError = validateCleanupRequest(effectiveCleanup);
       if (cleanupError) {
@@ -659,7 +708,6 @@ router.post(
             contacts: it?.contacts || null,
             description: it?.description || null,
             notes,
-            contact_group_id: contact_group_id || null,
             privileges,
             last_used: it?.last_used_at || it?.last_used || null,
             created_at: it?.created_at || null,
@@ -704,6 +752,9 @@ router.post(
           }
 
           if (existingToken) {
+            assignTokenContactGroups(tokenPayload, membership, {
+              isCreate: false,
+            });
             // Update existing token with new characteristics
             tok = await Token.update(existingToken.id, tokenPayload);
             updated.push(tok);
@@ -731,6 +782,9 @@ router.post(
               logger.warn("Audit write failed", { error: _err.message });
             }
           } else {
+            assignTokenContactGroups(tokenPayload, membership, {
+              isCreate: true,
+            });
             // Create new token
             tok = await Token.create({
               ...tokenPayload,
@@ -2154,11 +2208,22 @@ router.post(
         items,
         default_category,
         default_type,
-        contact_group_id,
         filterRules,
         cleanup,
         scan_id: scanId,
       } = req.body || {};
+      let membership;
+      try {
+        membership = interpretImportContactGroups(req.body || {});
+        if (membership.action === "set") {
+          await assertContactGroupIds(pool, workspaceId, membership.ids);
+        }
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
+        }
+        throw err;
+      }
       const effectiveCleanup = resolveEffectiveCleanup(cleanup, scanId);
       const cleanupError = validateCleanupRequest(effectiveCleanup);
       if (cleanupError) {
@@ -2598,7 +2663,6 @@ router.post(
               ? sanitizedDescription.substring(0, 10000)
               : null,
             notes: notes ? sanitizeText(notes).substring(0, 10000) : null,
-            contact_group_id: contact_group_id || null,
             privileges,
             last_used: parseIntegrationDate(it?.last_used_at || it?.last_used),
             created_at: parseIntegrationDate(it?.created_at),
@@ -2641,6 +2705,9 @@ router.post(
           }
 
           if (existingToken) {
+            assignTokenContactGroups(tokenPayload, membership, {
+              isCreate: false,
+            });
             // Update existing token with new characteristics
             tok = await Token.update(existingToken.id, tokenPayload);
             updated.push(tok);
@@ -2665,6 +2732,9 @@ router.post(
               logger.warn("Audit write failed", { error: _err.message });
             }
           } else {
+            assignTokenContactGroups(tokenPayload, membership, {
+              isCreate: true,
+            });
             // Create new token
             tok = await Token.create({
               ...tokenPayload,

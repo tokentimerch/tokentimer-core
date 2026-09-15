@@ -1,3 +1,8 @@
+import {
+  canonicalContactGroupFields,
+  hydrateContactGroupIds,
+} from '../utils/contactGroupAssignment.js';
+
 export function createTokenEditData(token) {
   return {
     name: token?.name || '',
@@ -24,7 +29,7 @@ export function createTokenEditData(token) {
     description: token?.description || '',
     notes: token?.notes || '',
     privileges: token?.privileges || '',
-    contact_group_id: token?.contact_group_id || '',
+    contact_group_ids: hydrateContactGroupIds(token),
   };
 }
 
@@ -100,6 +105,13 @@ export function createTokenUpdatePayload(editData, token) {
       payload[key] = null;
     }
   });
+
+  // Always send the plural list, including []. Omitting it on PUT means
+  // "leave the current assignment unchanged".
+  Object.assign(
+    payload,
+    canonicalContactGroupFields(payload.contact_group_ids)
+  );
 
   return payload;
 }

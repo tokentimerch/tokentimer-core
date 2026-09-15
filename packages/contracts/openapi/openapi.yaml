@@ -85,6 +85,13 @@ paths:
                     type: boolean
                   manualInvitesDisabled:
                     type: boolean
+                  contactGroupPluralWrites:
+                    type: boolean
+                    description: >
+                      When true, the dashboard may assign an asset to more than
+                      one contact group. Off until every API, worker, and
+                      dashboard replica is this release, then set
+                      CONTACT_GROUP_PLURAL_WRITES=true.
   /api/session:
     get:
       tags: [Session]
@@ -2556,6 +2563,13 @@ paths:
                   type: integer
                 contact_group_id:
                   type: string
+                  nullable: true
+                  description: Legacy single-group assignment. Ignored when contact_group_ids is present. Null or empty clears membership.
+                contact_group_ids:
+                  type: array
+                  items:
+                    type: string
+                  description: Assigned contact groups. Empty array uses the workspace default.
       responses:
         "201":
           description: Endpoint monitor created
@@ -2877,7 +2891,12 @@ paths:
                     contact_group_id:
                       type: string
                       nullable: true
-                      description: Contact group for alerts from the created monitors. Falls back to the workspace default if omitted.
+                      description: Legacy single-group assignment for created monitors. Ignored when contact_group_ids is present. Falls back to the workspace default if both are omitted.
+                    contact_group_ids:
+                      type: array
+                      items:
+                        type: string
+                      description: Assigned contact groups for created monitors. Empty array uses the workspace default.
       responses:
         "201":
           description: Import result with created and skipped rows
@@ -2951,7 +2970,7 @@ paths:
       tags: [Workspaces]
       summary: Reassign tokens between contact groups
       operationId: reassignTokenContactGroup
-      description: Moves token contact_group_id values from one group to another in the workspace.
+      description: Moves tokens and CertOps agents from one contact group to another. Other assigned groups on a multi-group asset are kept. The destination group is added; the source group is removed.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -5483,12 +5502,13 @@ paths:
       summary: Update a CertOps agent's downtime alert settings
       operationId: updateCertOpsAgentAlertSettings
       description: >-
-        Edits `downtimeAlertsEnabled` and/or `contactGroupId` for an already
-        registered agent. Both fields are independently optional: omit a
-        field to leave it unchanged, or send `contactGroupId: null` to
-        explicitly clear it back to "use the workspace default contact
-        group". At least one field is required. Recorded as a
-        CERTOPS_AGENT_ALERT_SETTINGS_UPDATED audit event.
+        Edits `downtimeAlertsEnabled`, `contactGroupId`, and/or
+        `contactGroupIds` for an already registered agent. Fields are
+        independently optional: omit a field to leave it unchanged.
+        `contactGroupIds` wins over `contactGroupId` when both are sent.
+        Send `contactGroupIds: []` or `contactGroupId: null` to clear
+        back to the workspace default. At least one field is required.
+        Recorded as a CERTOPS_AGENT_ALERT_SETTINGS_UPDATED audit event.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -5511,6 +5531,11 @@ paths:
                 contactGroupId:
                   type: string
                   nullable: true
+                contactGroupIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Assigned contact groups. Empty array uses the workspace default. Wins over contactGroupId when both are sent.
       responses:
         "200":
           description: Agent alert settings updated
@@ -5532,7 +5557,7 @@ paths:
               examples:
                 emptyBody:
                   value:
-                    error: At least one of downtimeAlertsEnabled or contactGroupId is required
+                    error: At least one of downtimeAlertsEnabled, contactGroupId, or contactGroupIds is required
                     code: CERTOPS_AGENT_ALERT_SETTINGS_EMPTY
                 invalidContactGroup:
                   value:
@@ -9348,7 +9373,14 @@ components:
           example: false
         contact_group_id:
           type: string
+          nullable: true
           example: "d7c5f1be-15f4-4b5b-9b49-f80f0d48d085"
+          description: Legacy single-group assignment. Ignored when contact_group_ids is present. Null or empty clears membership.
+        contact_group_ids:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups. Empty array uses the workspace default.
         description:
           type: string
           example: "Rotated quarterly by platform team"
@@ -9390,6 +9422,15 @@ components:
         updated_at:
           type: string
           format: date-time
+        contact_group_id:
+          type: string
+          nullable: true
+          description: Lexicographically smallest assigned group, or null when the asset uses the workspace default.
+        contact_group_ids:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups, sorted lexicographically. Empty when the asset uses the workspace default.
       example:
         id: 142
         workspace_id: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
@@ -9969,7 +10010,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group to copy onto the agent record created when this token is consumed. Null means "use the workspace default contact group".
+          description: Lexicographically smallest assigned group copied onto the agent at registration. Null when contactGroupIds is empty.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Contact groups copied onto the agent at registration. Empty array uses the workspace default.
     CertOpsAgentBootstrapTokenListResponse:
       type: object
       additionalProperties: false
@@ -10001,7 +10047,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group for the agent's downtime alerts. Validated against the workspace's configured contact groups; null uses the workspace default.
+          description: Legacy single-group assignment. Ignored when contactGroupIds is present. Null uses the workspace default.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Contact groups for the agent's downtime alerts. Empty array uses the workspace default.
     CertOpsAgentBootstrapTokenCreateResponse:
       type: object
       additionalProperties: false
@@ -10079,7 +10130,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group used for this agent's downtime alerts. Null means "use the workspace default contact group".
+          description: Lexicographically smallest assigned group, or null when the agent uses the workspace default.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups, sorted lexicographically. Empty when the agent uses the workspace default.
         dependentAutoRenewCertificateCount:
           type: integer
           minimum: 0

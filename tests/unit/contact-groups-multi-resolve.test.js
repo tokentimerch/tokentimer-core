@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -302,6 +302,34 @@ describe("worker ESM matches API CJS", () => {
         "email_contact_ids",
       ),
     );
+    assert.deepEqual(
+      worker.deliveryChannelsFromEligibleGroups(
+        [
+          {
+            email_contact_ids: ["u1"],
+            whatsapp_contact_ids: ["+1"],
+          },
+        ],
+        { alertKey: "expires:1:7" },
+      ),
+      api.deliveryChannelsFromEligibleGroups(
+        [
+          {
+            email_contact_ids: ["u1"],
+            whatsapp_contact_ids: ["+1"],
+          },
+        ],
+        { alertKey: "expires:1:7" },
+      ),
+    );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+      api.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+    );
   });
 });
 
@@ -325,6 +353,21 @@ describe("membershipAfterContactGroupMove", () => {
 });
 
 describe("interpretContactGroupWrite", () => {
+  let previousPluralWrites;
+
+  before(() => {
+    previousPluralWrites = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "true";
+  });
+
+  after(() => {
+    if (previousPluralWrites === undefined) {
+      delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    } else {
+      process.env.CONTACT_GROUP_PLURAL_WRITES = previousPluralWrites;
+    }
+  });
+
   it("lets the plural field win when both are present", () => {
     assert.deepEqual(
       api.interpretContactGroupWrite({
@@ -417,6 +460,38 @@ describe("interpretContactGroupWrite", () => {
     );
   });
 
+  it("rejects a present non-string singular field instead of clearing", () => {
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: undefined,
+          contactGroupId: 123,
+          hasPlural: false,
+          hasSingular: true,
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        assert.match(err.message, /contact_group_id must be a string/);
+        return true;
+      },
+    );
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: undefined,
+          contactGroupId: ["ops"],
+          hasPlural: false,
+          hasSingular: true,
+          singularFieldName: "contactGroupId",
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        assert.match(err.message, /contactGroupId must be a string/);
+        return true;
+      },
+    );
+  });
+
   it("sets a single id from the singular field", () => {
     assert.deepEqual(
       api.interpretContactGroupWrite({
@@ -427,6 +502,38 @@ describe("interpretContactGroupWrite", () => {
       }),
       { action: "set", ids: ["g1"] },
     );
+  });
+
+  it("rejects two-or-more ids when CONTACT_GROUP_PLURAL_WRITES is off", () => {
+    const previous = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "false";
+    try {
+      assert.equal(api.isContactGroupPluralWritesEnabled(), false);
+      assert.throws(
+        () =>
+          api.interpretContactGroupWrite({
+            contactGroupIds: ["a", "b"],
+            hasPlural: true,
+            hasSingular: false,
+          }),
+        (err) => {
+          assert.equal(err.code, "VALIDATION_ERROR");
+          assert.match(err.message, /CONTACT_GROUP_PLURAL_WRITES/);
+          return true;
+        },
+      );
+      assert.deepEqual(
+        api.interpretContactGroupWrite({
+          contactGroupIds: ["a"],
+          hasPlural: true,
+          hasSingular: false,
+        }),
+        { action: "set", ids: ["a"] },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+      else process.env.CONTACT_GROUP_PLURAL_WRITES = previous;
+    }
   });
 });
 
@@ -638,6 +745,81 @@ describe("queue union vs delivery re-filter", () => {
         14,
       ),
       [],
+    );
+  });
+});
+
+describe("deliveryChannelsFromEligibleGroups", () => {
+  const emailGroup = {
+    id: "email",
+    email_contact_ids: ["u1"],
+  };
+  const whatsappGroup = {
+    id: "wa",
+    whatsapp_contact_ids: ["+15551212"],
+  };
+
+  it("derives WhatsApp after a queued email-only snapshot would have dropped it", () => {
+    const queuedChannels = ["email"];
+    const live = api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+      alertKey: "expires:42:14",
+    });
+    assert.deepEqual(live, ["whatsapp"]);
+    assert.equal(queuedChannels.filter((ch) => live.includes(ch)).length, 0);
+  });
+
+  it("does not add WhatsApp for renewal or agent-health alerts", () => {
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+        alertKey: "cert_renewal_failed:99",
+      }),
+      [],
+    );
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+        alertKey: "agent_health:abc",
+      }),
+      [],
+    );
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([emailGroup, whatsappGroup], {
+        alertKey: "endpoint_health:7",
+      }),
+      ["email", "whatsapp"],
+    );
+  });
+});
+
+describe("channelsForDeliveryAttempt", () => {
+  it("on first send uses live channels even when the queue snapshot was email-only", async () => {
+    const worker = await loadWorkerContactGroups();
+    assert.deepEqual(
+      api.channelsForDeliveryAttempt(["whatsapp"], ["email"], {
+        isRetry: false,
+      }),
+      ["whatsapp"],
+    );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["whatsapp"], ["email"], {
+        isRetry: false,
+      }),
+      ["whatsapp"],
+    );
+  });
+
+  it("on retry sends only channels that both failed and are still live", async () => {
+    const worker = await loadWorkerContactGroups();
+    assert.deepEqual(
+      api.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+      ["webhooks"],
+    );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["email", "webhooks"], '["webhooks"]', {
+        isRetry: true,
+      }),
+      ["webhooks"],
     );
   });
 });

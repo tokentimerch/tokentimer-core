@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, beforeEach } = require("node:test");
+const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
@@ -67,9 +67,7 @@ function createMemoryDb() {
         return { rows: [] };
       }
 
-      if (
-        normalized.includes("SELECT contact_groups FROM workspace_settings")
-      ) {
+      if (normalized.includes("SELECT contact_groups FROM workspace_settings")) {
         return {
           rows: [{ contact_groups: workspaceSettings.contact_groups }],
           rowCount: 1,
@@ -118,11 +116,14 @@ function createMemoryDb() {
         const agentIds = Array.isArray(params[1]) ? params[1] : [params[1]];
         const idSet = new Set(agentIds.map((id) => String(id)));
         // loadAssignedGroupIds uses (agent_id, workspace_id)
-        if (normalized.includes("WHERE agent_id = $1 AND workspace_id = $2")) {
+        if (
+          normalized.includes("WHERE agent_id = $1 AND workspace_id = $2")
+        ) {
           const rows = agentContactGroups
             .filter(
               (row) =>
-                row.agent_id === params[0] && row.workspace_id === params[1],
+                row.agent_id === params[0] &&
+                row.workspace_id === params[1],
             )
             .map((row) => ({ contact_group_id: row.contact_group_id }));
           return { rows };
@@ -209,7 +210,9 @@ function responseRecorder() {
 function findRouteHandler(method, routePath) {
   const layer = certOpsRouter.stack.find(
     (item) =>
-      item.route && item.route.path === routePath && item.route.methods[method],
+      item.route &&
+      item.route.path === routePath &&
+      item.route.methods[method],
   );
   assert.ok(layer, `${method.toUpperCase()} ${routePath} route not registered`);
   const stack = layer.route.stack;
@@ -247,6 +250,21 @@ const alertSettingsPath =
   "/api/v1/workspaces/:id/certops/agents/:agentId/alert-settings";
 
 describe("CertOps agent alert-settings route", () => {
+  let previousPluralWrites;
+
+  before(() => {
+    previousPluralWrites = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "true";
+  });
+
+  after(() => {
+    if (previousPluralWrites === undefined) {
+      delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    } else {
+      process.env.CONTACT_GROUP_PLURAL_WRITES = previousPluralWrites;
+    }
+  });
+
   it("updates downtimeAlertsEnabled and audits the change", async () => {
     const res = await invokeRoute("patch", alertSettingsPath, {
       params: { agentId: AGENT_ROW_ID },
@@ -271,6 +289,7 @@ describe("CertOps agent alert-settings route", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1"]);
     assert.equal(db.agentRows[0].contact_group_id, "g1");
   });
 
@@ -357,5 +376,46 @@ describe("CertOps agent alert-settings route", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.agent.downtimeAlertsEnabled, true);
     assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1"]);
+  });
+
+  it("accepts contactGroupIds and returns them lex-sorted", async () => {
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupIds: ["g2", "g1", "g1"] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1", "g2"]);
+    assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.equal(db.agentRows[0].contact_group_id, "g1");
+  });
+
+  it("lets contactGroupIds win when both fields are present", async () => {
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupId: "g1", contactGroupIds: ["g2"] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g2"]);
+    assert.equal(res.body.agent.contactGroupId, "g2");
+  });
+
+  it("clears membership with contactGroupIds: []", async () => {
+    db.agentRows[0].contact_group_id = "g1";
+    db.agentContactGroups.push({
+      agent_id: AGENT_ROW_ID,
+      workspace_id: WORKSPACE_A,
+      contact_group_id: "g1",
+    });
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupIds: [] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, []);
+    assert.equal(res.body.agent.contactGroupId, null);
   });
 });

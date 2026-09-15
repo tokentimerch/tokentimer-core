@@ -350,17 +350,18 @@ function bootstrapTokenMetadataFromRow(row) {
         ? null
         : Boolean(row.downtime_alerts_enabled),
     contactGroupId: canonicalLegacyContactGroupId(contactGroupIds),
-    // Kept on the service object so registration can copy the full set.
-    // HTTP responses must use bootstrapTokenHttpMetadata (no plural field
-    // until the switch-reads release).
     contactGroupIds,
   };
 }
 
 function bootstrapTokenHttpMetadata(token) {
   if (!token) return null;
-  const { contactGroupIds: _contactGroupIds, ...http } = token;
-  return http;
+  return {
+    ...token,
+    contactGroupIds: Array.isArray(token.contactGroupIds)
+      ? [...token.contactGroupIds]
+      : [],
+  };
 }
 
 function agentMetadataFromRow(row) {

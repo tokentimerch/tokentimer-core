@@ -58,6 +58,11 @@ import {
 } from 'react-icons/fi';
 import IntegrationImportTable from './IntegrationImportTable';
 import BulkIntegrationAssignment from './BulkIntegrationAssignment';
+import {
+  canonicalContactGroupFields,
+  contactGroupFieldsForImportDefaults,
+  hydrateContactGroupIds,
+} from '../utils/contactGroupAssignment.js';
 import CopyableCodeBlock from './CopyableCodeBlock';
 import ImportVaultForm from './imports/ImportVaultForm';
 import ImportGitLabForm from './imports/ImportGitLabForm';
@@ -160,6 +165,19 @@ function coerceArray(value) {
   if (!str) return null;
   return str
     .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function coerceIdList(value) {
+  if (Array.isArray(value)) {
+    return value.map(v => String(v).trim()).filter(Boolean);
+  }
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+  return str
+    .split(/[;,]/)
     .map(v => v.trim())
     .filter(Boolean);
 }
@@ -289,7 +307,6 @@ function normalizeRow(raw) {
     contacts: pick('contacts', 'contact'),
     description: pick('description', 'desc', 'notes_short'),
     notes: pick('notes', 'notes_long'),
-    contact_group_id: pick('contact_group_id', 'contactgroup', 'groupid'),
     privileges: pick('privileges', 'scopes', 'permissions', 'rights'),
     last_used: coerceDateYmd(
       pick('last_used', 'lastused', 'last_used_at', 'lastusedat')
@@ -311,6 +328,21 @@ function normalizeRow(raw) {
   ) {
     row.renewal_date = null;
   }
+
+  const importedGroupIds = coerceIdList(
+    pick('contact_group_ids', 'contactgroupids')
+  );
+  const importedGroupId = pick('contact_group_id', 'contactgroup', 'groupid');
+  Object.assign(
+    row,
+    canonicalContactGroupFields(
+      importedGroupIds ||
+        (importedGroupId != null && String(importedGroupId).trim() !== ''
+          ? [importedGroupId]
+          : [])
+    )
+  );
+
   return row;
 }
 
@@ -455,13 +487,11 @@ async function importWithConcurrency(
         const raw = rows[currentIndex];
         const payload = normalizeRow(raw);
         payload.workspace_id = workspaceId;
-        if (
-          (payload.contact_group_id === undefined ||
-            payload.contact_group_id === null ||
-            String(payload.contact_group_id).trim() === '') &&
-          defaultGroupId
-        ) {
-          payload.contact_group_id = String(defaultGroupId);
+        const assigned = hydrateContactGroupIds(payload);
+        if (assigned.length === 0 && defaultGroupId) {
+          Object.assign(payload, canonicalContactGroupFields([defaultGroupId]));
+        } else {
+          Object.assign(payload, canonicalContactGroupFields(assigned));
         }
 
         running++;
@@ -909,7 +939,7 @@ export default function ImportTokensModal({
 
   // Shared bulk assignment state (used across all integrations)
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
 
   const [_selectedRowsVault, setSelectedRowsVault] = React.useState(new Set());
 
@@ -1608,7 +1638,7 @@ export default function ImportTokensModal({
   // Reset bulk section and integration count when source changes
   React.useEffect(() => {
     setBulkSection('');
-    setBulkContactGroupId('');
+    setBulkContactGroupIds([]);
     setIntegrationSelectedCount(0);
   }, [source]);
 
@@ -1629,7 +1659,7 @@ export default function ImportTokensModal({
     abortRef.current = null;
     // Reset bulk assignment state
     setBulkSection('');
-    setBulkContactGroupId('');
+    setBulkContactGroupIds([]);
     // Reset vault state
     setVaultAddress('');
     setVaultToken('');
@@ -2052,7 +2082,7 @@ export default function ImportTokensModal({
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          contact_group_id: bulkContactGroupId || null,
+          ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       const params = new URLSearchParams(window.location.search);
       const workspaceId = params.get('workspace');
@@ -2065,7 +2095,7 @@ export default function ImportTokensModal({
       await integrationAPI.import({
         workspaceId,
         items: selected,
-        defaults: {},
+        defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -3114,8 +3144,8 @@ export default function ImportTokensModal({
                     selectedCount={selectedRowsAzureAD.size}
                     section={bulkSection}
                     onSectionChange={setBulkSection}
-                    contactGroupId={bulkContactGroupId}
-                    onContactGroupChange={setBulkContactGroupId}
+                    contactGroupIds={bulkContactGroupIds}
+                    onContactGroupChange={setBulkContactGroupIds}
                     contactGroups={contactGroups}
                     borderColor={border}
                   />

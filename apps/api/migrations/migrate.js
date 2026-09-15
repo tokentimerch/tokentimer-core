@@ -3727,7 +3727,7 @@ const migrations = [
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         week_start_date DATE NOT NULL,
         channel TEXT NOT NULL CHECK (channel IN ('email', 'whatsapp', 'webhook')),
-        recipient_key TEXT NOT NULL,
+        recipient_key TEXT NOT NULL, -- HMAC-SHA256 of destination, not the address or URL
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent')),
         attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
         lease_expires_at TIMESTAMPTZ NULL,
@@ -3757,6 +3757,51 @@ const migrations = [
        WHERE contact_group_id IS NOT NULL
          AND btrim(contact_group_id) <> ''
          AND contact_group_ids = '[]'::jsonb;
+    `,
+  },
+  {
+    version: 54,
+    name: "rebuild_contact_group_join_from_singular",
+    sql: `
+      -- Switch-reads cutover: repair join drift from mixed dual-write and
+      -- singular-only writers before join membership is authoritative.
+      -- Still 0-or-1 rows per asset (plural writes start after migrate).
+      -- SHARE ROW EXCLUSIVE lets SELECTs continue and blocks join INSERT /
+      -- UPDATE / DELETE for the rebuild. Without it, a dual-write change
+      -- A->B can leave stale A: this DELETE of A is uncommitted, the writer
+      -- sets singular B then waits on that row, this INSERT still copies A,
+      -- commit, and the writer's DELETE (snapshot from before the insert)
+      -- never sees the new A. ON CONFLICT still covers a writer that
+      -- inserts after DELETE and before INSERT of the same membership.
+      LOCK TABLE
+        token_contact_groups,
+        certops_agent_contact_groups
+      IN SHARE ROW EXCLUSIVE MODE;
+
+      DELETE FROM token_contact_groups;
+      INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM tokens
+       WHERE workspace_id IS NOT NULL
+         AND contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> ''
+      ON CONFLICT (token_id, contact_group_id) DO NOTHING;
+
+      DELETE FROM certops_agent_contact_groups;
+      INSERT INTO certops_agent_contact_groups (agent_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM certops_agents
+       WHERE workspace_id IS NOT NULL
+         AND contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> ''
+      ON CONFLICT (agent_id, contact_group_id) DO NOTHING;
+
+      UPDATE certops_agent_bootstrap_tokens
+         SET contact_group_ids = CASE
+           WHEN contact_group_id IS NOT NULL AND btrim(contact_group_id) <> ''
+             THEN jsonb_build_array(contact_group_id)
+           ELSE '[]'::jsonb
+         END;
     `,
   },
 ];

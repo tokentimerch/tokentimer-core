@@ -123,3 +123,34 @@ describe("migration 53 bootstrap contact_group_ids", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 });
+
+describe("migration 54 rebuild join from singular", () => {
+  const migration = migrations.find((entry) => entry.version === 54);
+
+  it("exists with the expected name", () => {
+    assert.ok(migration, "migration 54 expected");
+    assert.equal(migration.name, "rebuild_contact_group_join_from_singular");
+  });
+
+  it("rebuilds both join tables from the singular column before switch-reads", () => {
+    const lockAt = migration.sql.search(
+      /LOCK TABLE\s+token_contact_groups,\s+certops_agent_contact_groups\s+IN SHARE ROW EXCLUSIVE MODE/,
+    );
+    const deleteAt = migration.sql.search(/DELETE FROM token_contact_groups/);
+    assert.notEqual(lockAt, -1);
+    assert.notEqual(deleteAt, -1);
+    assert.ok(
+      lockAt < deleteAt,
+      "SHARE ROW EXCLUSIVE must be taken before the rebuild DELETE",
+    );
+    assert.match(migration.sql, /DELETE FROM certops_agent_contact_groups/);
+    assert.match(
+      migration.sql,
+      /INSERT INTO token_contact_groups \(token_id, workspace_id, contact_group_id\)\s+SELECT id, workspace_id, contact_group_id\s+FROM tokens[\s\S]*?ON CONFLICT \(token_id, contact_group_id\) DO NOTHING/,
+    );
+    assert.match(
+      migration.sql,
+      /INSERT INTO certops_agent_contact_groups \(agent_id, workspace_id, contact_group_id\)\s+SELECT id, workspace_id, contact_group_id\s+FROM certops_agents[\s\S]*?ON CONFLICT \(agent_id, contact_group_id\) DO NOTHING/,
+    );
+  });
+});

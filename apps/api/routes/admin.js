@@ -35,11 +35,48 @@ const { containsPrivateKeyMaterial } = require("../utils/secretMaterial");
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
 } = require("../middleware/reject-key-material");
+const {
+  replaceAssetContactGroups,
+} = require("../src/shared/replaceAssetContactGroups");
+const {
+  interpretContactGroupWrite,
+  canonicalLegacyContactGroupId,
+} = require("../src/shared/contactGroups");
+const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
 
 const DNS_LIVE_CERT_SKIP_DETAILS = new Set([
   "live_certificate_dns_unresolved",
   "live_certificate_dns_temporary",
 ]);
+
+function hasBodyField(body, key) {
+  return Object.prototype.hasOwnProperty.call(body || {}, key);
+}
+
+function interpretBodyContactGroups(body) {
+  return interpretContactGroupWrite({
+    contactGroupIds: body?.contact_group_ids,
+    contactGroupId: body?.contact_group_id,
+    hasPlural: hasBodyField(body, "contact_group_ids"),
+    hasSingular: hasBodyField(body, "contact_group_id"),
+  });
+}
+
+function invalidContactGroupResponse(res) {
+  return res.status(400).json({
+    error: "Invalid contact_group_id for workspace",
+    code: "VALIDATION_ERROR",
+  });
+}
+
+async function membershipIdsForAssetWrite(client, workspaceId, body) {
+  const membership = interpretBodyContactGroups(body);
+  if (membership.action === "set") {
+    await assertContactGroupIds(client, workspaceId, membership.ids);
+    return membership.ids;
+  }
+  return [];
+}
 
 const router = require("express").Router();
 
@@ -50,6 +87,25 @@ function publicToolErrors(toolErrors) {
     code: error.code || "DOMAIN_CHECKER_TOOL_ERROR",
     message: error.message || "Discovery tool failed",
   }));
+}
+
+async function withDbTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackErr) {
+      /* connection may already be closed */
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function attachLongRunningDomainImportSocket(req, res) {
@@ -877,6 +933,47 @@ router.post(
         logger.warn("DB operation failed", { error: _err.message });
       }
 
+      const monitorMembership = interpretBodyContactGroups(monitorOptions);
+      let monitorMembershipIds;
+      try {
+        if (monitorMembership.action === "set") {
+          await assertContactGroupIds(
+            pool,
+            req.workspace.id,
+            monitorMembership.ids,
+          );
+          monitorMembershipIds = monitorMembership.ids;
+        } else {
+          monitorMembershipIds = [];
+        }
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
+        }
+        throw err;
+      }
+
+      if (monitorMembership.action === "omit") {
+        const perCertificateIds = [];
+        for (const certificate of certificates) {
+          if (certificate.contact_group_id) {
+            perCertificateIds.push(String(certificate.contact_group_id));
+          }
+        }
+        try {
+          await assertContactGroupIds(
+            pool,
+            req.workspace.id,
+            perCertificateIds,
+          );
+        } catch (err) {
+          if (err?.code === "VALIDATION_ERROR") {
+            return invalidContactGroupResponse(res);
+          }
+          throw err;
+        }
+      }
+
       const imported = [];
       const skipped = [];
       let monitorsCreated = 0;
@@ -1031,31 +1128,46 @@ router.post(
           continue;
         }
 
-        const tokenResult = await pool.query(
-          `INSERT INTO tokens
+        const membershipIds =
+          monitorMembership.action === "omit" && certificate.contact_group_id
+            ? [String(certificate.contact_group_id)]
+            : monitorMembershipIds;
+        const resolvedGroupId = canonicalLegacyContactGroupId(membershipIds);
+        const tokenResult = await withDbTransaction(async (client) => {
+          const inserted = await client.query(
+            `INSERT INTO tokens
              (user_id, workspace_id, created_by, name, expiration, type, category,
               issuer, serial_number, subject, domains, location, notes, contact_group_id, imported_at, section)
            VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert',
                    $6, $7, $8, $9, $10, $11, $12, NOW(), $13::text[])
            RETURNING id, name, expiration`,
-          [
-            req.user.id,
-            req.workspace.id,
-            req.user.id,
-            String(
-              certificate.name || certificate.commonName || certDomains[0],
-            ).slice(0, 100),
-            expiration,
-            issuer,
-            serialNumber,
-            subject,
-            certDomains,
-            sourceUrl,
-            `Imported by domain checker (${noteSource}).${sourceCertId ? ` domain checker source id: ${sourceCertId}.` : ""} Fingerprint: ${tlsFingerprint || "unknown"}. Domains: ${certDomains.join(", ")}`,
-            certificate.contact_group_id || defaultContactGroupId,
-            importSection,
-          ],
-        );
+            [
+              req.user.id,
+              req.workspace.id,
+              req.user.id,
+              String(
+                certificate.name || certificate.commonName || certDomains[0],
+              ).slice(0, 100),
+              expiration,
+              issuer,
+              serialNumber,
+              subject,
+              certDomains,
+              sourceUrl,
+              `Imported by domain checker (${noteSource}).${sourceCertId ? ` domain checker source id: ${sourceCertId}.` : ""} Fingerprint: ${tlsFingerprint || "unknown"}. Domains: ${certDomains.join(", ")}`,
+              resolvedGroupId,
+              importSection,
+            ],
+          );
+          await replaceAssetContactGroups({
+            client,
+            kind: "token",
+            assetId: inserted.rows[0].id,
+            workspaceId: req.workspace.id,
+            ids: membershipIds,
+          });
+          return inserted;
+        });
 
         imported.push({
           certificateId: certificate.id || sourceCertId || null,
@@ -1255,7 +1367,6 @@ router.post(
         health_check_enabled,
         check_interval,
         alert_after_failures,
-        contact_group_id,
         section: endpointSectionRaw,
       } = req.body || {};
       if (!url || typeof url !== "string") {
@@ -1414,50 +1525,56 @@ router.post(
         domainRow = result.rows[0];
       }
 
-      // Resolve contact_group_id: use provided value, or fall back to workspace default
-      let resolvedContactGroupId = null;
-      if (contact_group_id && String(contact_group_id).trim()) {
-        resolvedContactGroupId = String(contact_group_id).trim();
-      } else {
-        try {
-          const wsSettings = await pool.query(
-            "SELECT default_contact_group_id FROM workspace_settings WHERE workspace_id = $1",
-            [req.workspace.id],
-          );
-          if (wsSettings.rows[0]?.default_contact_group_id) {
-            resolvedContactGroupId = String(
-              wsSettings.rows[0].default_contact_group_id,
-            );
-          }
-        } catch (_err) {
-          logger.warn("DB operation failed", { error: _err.message });
+      let membershipIds;
+      try {
+        membershipIds = await membershipIdsForAssetWrite(
+          pool,
+          req.workspace.id,
+          req.body,
+        );
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
         }
+        throw err;
       }
+      const resolvedContactGroupId =
+        canonicalLegacyContactGroupId(membershipIds);
 
       // Auto-create token for SSL cert if we got cert data (skip if the
       // existing monitor already has one linked)
       if (sslData.ssl_valid_to && !existingMonitor?.token_id) {
         try {
-          const tokenResult = await pool.query(
-            `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id, section)
+          const tokenResult = await withDbTransaction(async (client) => {
+            const inserted = await client.query(
+              `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id, section)
              VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert', $6, $7, $8, $9, $10, $11, $12, $13::text[])
              RETURNING id`,
-            [
-              req.user.id,
-              req.workspace.id,
-              req.user.id,
-              parsedUrl.hostname,
-              formatDateYmd(new Date(sslData.ssl_valid_to)),
-              sslData.ssl_issuer,
-              sslData.ssl_serial,
-              sslData.ssl_subject,
-              [parsedUrl.hostname],
-              normalizedUrl,
-              `Auto-created by endpoint monitor. Fingerprint: ${sslData.ssl_fingerprint || "unknown"}`,
-              resolvedContactGroupId,
-              endpointTokenSection,
-            ],
-          );
+              [
+                req.user.id,
+                req.workspace.id,
+                req.user.id,
+                parsedUrl.hostname,
+                formatDateYmd(new Date(sslData.ssl_valid_to)),
+                sslData.ssl_issuer,
+                sslData.ssl_serial,
+                sslData.ssl_subject,
+                [parsedUrl.hostname],
+                normalizedUrl,
+                `Auto-created by endpoint monitor. Fingerprint: ${sslData.ssl_fingerprint || "unknown"}`,
+                resolvedContactGroupId,
+                endpointTokenSection,
+              ],
+            );
+            await replaceAssetContactGroups({
+              client,
+              kind: "token",
+              assetId: inserted.rows[0].id,
+              workspaceId: req.workspace.id,
+              ids: membershipIds,
+            });
+            return inserted;
+          });
           // Link token to endpoint monitor
           await pool.query(
             "UPDATE domain_monitors SET token_id = $1 WHERE id = $2",

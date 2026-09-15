@@ -5,7 +5,8 @@
 Accepted (2026-09-15). Amended 2026-09-15: the first deployable
 release implements decision 2 steps 1-2 only (schema, backfill,
 dual-write). Alert and digest readers still use the singular column.
-Plural API/UI and switch-reads are the next release.
+Plural API/UI and switch-reads are the next release. This second
+release implements steps 3-4 after that dual-write rollout.
 
 ## Context
 
@@ -124,10 +125,28 @@ group tables.
    The switch-reads release must re-backfill join rows from the singular
    column at migration start (repairing drift from a mixed dual-write
    window) **before** readers trust the join table and **before** the
-   plural API can write two-or-more memberships. Canonical lex-smallest
-   id uses UTF-8 byte order (`Buffer.compare` in Node, `COLLATE "C"` in
-   PostgreSQL), not the database's default text collation and not
-   JavaScript's default `.sort()`.
+   plural API can write two-or-more memberships. That rebuild starts
+   with `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` on both join
+   tables so dual-write `INSERT`/`UPDATE`/`DELETE` wait, while ordinary
+   reads continue. `ON CONFLICT DO NOTHING` is still required: a writer
+   that already holds a row lock can insert the same membership after
+   the rebuild `DELETE` and before the rebuild `INSERT`. The lock is
+   what stops a change or clear (A to B, or A to empty) from leaving a
+   stale extra join row that switch-reads would then treat as
+   authoritative. Canonical lex-smallest id uses UTF-8 byte order
+   (`Buffer.compare` in Node, `COLLATE "C"` in PostgreSQL), not the
+   database's default text collation and not JavaScript's default
+   `.sort()`.
+
+   Step 4 (two-or-more membership writes and dashboard multi-select) is
+   gated by `CONTACT_GROUP_PLURAL_WRITES` (off unless set to `true`;
+   on in `NODE_ENV=test`). This release's dashboard otherwise hits a
+   still-running dual-write API with `[A,B]` and that replica persists
+   only the singular companion. Turn the gate on only after every API,
+   worker, and dashboard replica is this release. Until then a
+   `contact_group_ids` / `contactGroupIds` write with two or more ids
+   is HTTP 400. `GET /api/auth/features` reports
+   `contactGroupPluralWrites` so the dashboard stays single-select.
 
    Until step 5, `tokens.contact_group_id` and
    `certops_agents.contact_group_id` are a compatibility mirror of join
@@ -276,7 +295,7 @@ group tables.
      workspace_id,
      week_start_date,
      channel,          -- email | whatsapp | webhook
-     recipient_key,    -- normalized destination from decision 5
+     recipient_key,    -- HMAC-SHA256 of the normalized destination
      status,           -- pending | sent
      attempt_count,
      lease_expires_at,
@@ -294,13 +313,19 @@ group tables.
    never reclaimed. Expired leases reclaim `pending` rows.
 
    Duplicate suppression for overlapping groups is guaranteed by this
-   invert-and-claim, not by a second log. Retry policy:
+   invert-and-claim, not by a second log. `recipient_key` is HMAC-SHA256
+   of the normalized destination (email, E.164 phone, or webhook URL),
+   keyed by `WEEKLY_DIGEST_RECIPIENT_KEY` or else `SESSION_SECRET`. Do
+   not persist the destination itself.
+
+   Retry policy:
 
    - **WhatsApp:** exactly-once at the provider via idempotency key
-     `weekly-digest:${workspace_id}:${week_start_date}:whatsapp:${phone}`
-     (`phone` is the E.164 value). The key does **not** include a
-     contact-group id (the current key that does would split one
-     recipient across groups).
+     `weekly-digest:${workspace_id}:${week_start_date}:whatsapp:${hmac}`
+     (`hmac` is HMAC-SHA256 of the E.164 phone, same secret as
+     `recipient_key`). The key does **not** include a contact-group id
+     (the current key that does would split one recipient across
+     groups).
    - **Email and webhooks:** at-least-once across a send/commit crash
      window. A process that sends successfully and then fails before
      committing `status = 'sent'` will be reclaimed when the lease

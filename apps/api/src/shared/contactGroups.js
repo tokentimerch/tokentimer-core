@@ -1,5 +1,9 @@
 "use strict";
 
+const {
+  isContactGroupPluralWritesEnabled,
+} = require("./contactGroupPluralWrites");
+
 const MIN_THRESHOLD = -365;
 const MAX_THRESHOLD = 730;
 
@@ -226,8 +230,63 @@ function dedupeNormalizedDestinations(values, kind) {
   return out;
 }
 
-function invalidMembershipWriteError(fieldName) {
-  const err = new Error(`${fieldName} must be an array of strings`);
+function whatsAppAllowedForAlertKey(alertKey) {
+  const key = String(alertKey || "");
+  return !(
+    key.startsWith("cert_renewal_failed:") || key.startsWith("agent_health:")
+  );
+}
+
+function deliveryChannelsFromEligibleGroups(
+  eligibleGroups,
+  { emailAlertsEnabled = true, alertKey = "" } = {},
+) {
+  const groups = Array.isArray(eligibleGroups) ? eligibleGroups : [];
+  if (groups.length === 0) return [];
+  const channels = [];
+  if (emailAlertsEnabled !== false && groups.some(hasEmailContacts)) {
+    channels.push("email");
+  }
+  if (groups.some(hasWebhookNames)) {
+    channels.push("webhooks");
+  }
+  if (
+    whatsAppAllowedForAlertKey(alertKey) &&
+    groups.some(hasWhatsAppContacts)
+  ) {
+    channels.push("whatsapp");
+  }
+  return channels;
+}
+
+function parseQueuedChannels(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string" || value.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function channelsForDeliveryAttempt(
+  liveChannels,
+  queuedChannels,
+  { isRetry = false } = {},
+) {
+  const live = Array.isArray(liveChannels) ? liveChannels.map(String) : [];
+  if (!isRetry) return live;
+  const queued = new Set(parseQueuedChannels(queuedChannels));
+  return live.filter((channel) => queued.has(channel));
+}
+
+function invalidMembershipWriteError(fieldName, { array = false } = {}) {
+  const err = new Error(
+    array
+      ? `${fieldName} must be an array of strings`
+      : `${fieldName} must be a string`,
+  );
   err.code = "VALIDATION_ERROR";
   return err;
 }
@@ -241,22 +300,37 @@ function interpretContactGroupWrite({
   hasPlural,
   hasSingular,
   pluralFieldName = "contact_group_ids",
+  singularFieldName = "contact_group_id",
 }) {
   if (hasPlural) {
     if (!Array.isArray(contactGroupIds)) {
-      throw invalidMembershipWriteError(pluralFieldName);
+      throw invalidMembershipWriteError(pluralFieldName, { array: true });
     }
     for (const raw of contactGroupIds) {
       if (typeof raw !== "string") {
-        throw invalidMembershipWriteError(pluralFieldName);
+        throw invalidMembershipWriteError(pluralFieldName, { array: true });
       }
     }
-    return { action: "set", ids: normalizeAssignedGroupIds(contactGroupIds) };
+    const ids = normalizeAssignedGroupIds(contactGroupIds);
+    if (ids.length > 1 && !isContactGroupPluralWritesEnabled()) {
+      const err = new Error(
+        `${pluralFieldName} cannot assign more than one group until CONTACT_GROUP_PLURAL_WRITES is enabled`,
+      );
+      err.code = "VALIDATION_ERROR";
+      throw err;
+    }
+    return { action: "set", ids };
   }
   if (!hasSingular) {
     return { action: "omit" };
   }
-  if (contactGroupId == null || String(contactGroupId).trim() === "") {
+  if (contactGroupId == null) {
+    return { action: "set", ids: [] };
+  }
+  if (typeof contactGroupId !== "string") {
+    throw invalidMembershipWriteError(singularFieldName);
+  }
+  if (contactGroupId.trim() === "") {
     return { action: "set", ids: [] };
   }
   return {
@@ -291,5 +365,9 @@ module.exports = {
   unionEffectiveThresholds,
   unionContactIds,
   dedupeNormalizedDestinations,
+  whatsAppAllowedForAlertKey,
+  deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
   interpretContactGroupWrite,
+  isContactGroupPluralWritesEnabled,
 };

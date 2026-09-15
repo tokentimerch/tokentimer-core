@@ -18,6 +18,18 @@ import { resolveApiBaseUrl } from './resolveApiBaseUrl.js';
 export { resolveApiBaseUrl };
 export const API_BASE_URL = resolveApiBaseUrl();
 
+function attachContactGroupImportDefaults(payload, defaults = {}) {
+  if (Array.isArray(defaults.contact_group_ids)) {
+    payload.contact_group_ids = defaults.contact_group_ids;
+    payload.contact_group_id = defaults.contact_group_id || null;
+    return payload;
+  }
+  if (Object.prototype.hasOwnProperty.call(defaults, 'contact_group_id')) {
+    payload.contact_group_id = defaults.contact_group_id || null;
+  }
+  return payload;
+}
+
 // Debug: Log environment variables only in development or on local/staging hosts
 try {
   const env = typeof import.meta !== 'undefined' ? import.meta.env : null;
@@ -1228,19 +1240,21 @@ export const vaultAPI = {
   },
   import: async ({ workspaceId, items, defaults = {}, cleanup, scanId }) => {
     try {
-      const payload = {
-        items,
-        default_category: defaults.category,
-        default_type: defaults.type,
-        contact_group_id: defaults.contact_group_id || null,
-        // scan_id is sent independently of cleanup so every scan-backed
-        // import gets provenance attribution, whether or not the user opted
-        // into deletion this time -- otherwise a later cleanup-enabled
-        // import can never adopt this row (see importCleanup.js's "ambiguous
-        // legacy rows" policy) and ends up creating a duplicate instead.
-        ...(scanId ? { scan_id: scanId } : {}),
-        ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
-      };
+      const payload = attachContactGroupImportDefaults(
+        {
+          items,
+          default_category: defaults.category,
+          default_type: defaults.type,
+          // scan_id is sent independently of cleanup so every scan-backed
+          // import gets provenance attribution, whether or not the user opted
+          // into deletion this time -- otherwise a later cleanup-enabled
+          // import can never adopt this row (see importCleanup.js's "ambiguous
+          // legacy rows" policy) and ends up creating a duplicate instead.
+          ...(scanId ? { scan_id: scanId } : {}),
+          ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
+        },
+        defaults
+      );
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_IMPORT(workspaceId),
         payload
@@ -1586,22 +1600,24 @@ export const integrationAPI = {
     scanId,
   }) => {
     try {
-      const payload = {
-        items,
-        default_category: defaults.category,
-        default_type: defaults.type,
-        contact_group_id: defaults.contact_group_id || null,
-        ...(Array.isArray(filterRules) && filterRules.length > 0
-          ? { filterRules }
-          : {}),
-        // scan_id is sent independently of cleanup so every scan-backed
-        // import gets provenance attribution, whether or not the user opted
-        // into deletion this time -- otherwise a later cleanup-enabled
-        // import can never adopt this row (see importCleanup.js's "ambiguous
-        // legacy rows" policy) and ends up creating a duplicate instead.
-        ...(scanId ? { scan_id: scanId } : {}),
-        ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
-      };
+      const payload = attachContactGroupImportDefaults(
+        {
+          items,
+          default_category: defaults.category,
+          default_type: defaults.type,
+          ...(Array.isArray(filterRules) && filterRules.length > 0
+            ? { filterRules }
+            : {}),
+          // scan_id is sent independently of cleanup so every scan-backed
+          // import gets provenance attribution, whether or not the user opted
+          // into deletion this time -- otherwise a later cleanup-enabled
+          // import can never adopt this row (see importCleanup.js's "ambiguous
+          // legacy rows" policy) and ends up creating a duplicate instead.
+          ...(scanId ? { scan_id: scanId } : {}),
+          ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
+        },
+        defaults
+      );
       const res = await apiClient.post(
         API_ENDPOINTS.INTEGRATION_IMPORT(workspaceId),
         payload

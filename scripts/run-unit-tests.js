@@ -18,6 +18,7 @@ if (files.length === 0) {
 
 const result = spawnSync(process.execPath, ["--test", ...files], {
   stdio: "inherit",
+  env: { ...process.env, NODE_ENV: "test" },
 });
 
 process.exit(typeof result.status === "number" ? result.status : 1);

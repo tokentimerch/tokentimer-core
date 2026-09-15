@@ -287,6 +287,57 @@ function dedupeNormalizedDestinations(values, kind) {
   return out;
 }
 
+function whatsAppAllowedForAlertKey(alertKey) {
+  const key = String(alertKey || "");
+  return !(
+    key.startsWith("cert_renewal_failed:") || key.startsWith("agent_health:")
+  );
+}
+
+function deliveryChannelsFromEligibleGroups(
+  eligibleGroups,
+  { emailAlertsEnabled = true, alertKey = "" } = {},
+) {
+  const groups = Array.isArray(eligibleGroups) ? eligibleGroups : [];
+  if (groups.length === 0) return [];
+  const channels = [];
+  if (emailAlertsEnabled !== false && groups.some(hasEmailContacts)) {
+    channels.push("email");
+  }
+  if (groups.some(hasWebhookNames)) {
+    channels.push("webhooks");
+  }
+  if (
+    whatsAppAllowedForAlertKey(alertKey) &&
+    groups.some(hasWhatsAppContacts)
+  ) {
+    channels.push("whatsapp");
+  }
+  return channels;
+}
+
+function parseQueuedChannels(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string" || value.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function channelsForDeliveryAttempt(
+  liveChannels,
+  queuedChannels,
+  { isRetry = false } = {},
+) {
+  const live = Array.isArray(liveChannels) ? liveChannels.map(String) : [];
+  if (!isRetry) return live;
+  const queued = new Set(parseQueuedChannels(queuedChannels));
+  return live.filter((channel) => queued.has(channel));
+}
+
 export {
   resolveContactGroup,
   hasEmailContacts,
@@ -303,4 +354,7 @@ export {
   unionEffectiveThresholds,
   unionContactIds,
   dedupeNormalizedDestinations,
+  whatsAppAllowedForAlertKey,
+  deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
 };

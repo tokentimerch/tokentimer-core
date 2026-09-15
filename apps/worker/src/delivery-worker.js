@@ -26,11 +26,14 @@ import emailAddress from "../../../packages/email-address/index.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
 import { sanitizeWhatsAppTemplateVars } from "./shared/whatsappTemplateVars.js";
 import {
-  resolveContactGroup,
-  hasEmailContacts,
-  hasWhatsAppContacts,
-  hasWebhookNames,
+  resolveContactGroupsForAsset,
+  canonicalLegacyContactGroupId,
   getWebhookNames,
+  unionGroupsForThresholdWindow,
+  unionContactIds,
+  dedupeNormalizedDestinations,
+  deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
 } from "./shared/contactGroups.js";
 import {
   parseCertRenewalFailedJobId,
@@ -41,6 +44,60 @@ import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
 const { isValidEmail } = emailAddress;
 
 export { detectWebhookProviderKind };
+
+const SINGLE_SHOT_ALERT_PREFIXES = [
+  "endpoint_health:",
+  "cert_renewal_failed:",
+  "agent_health:",
+];
+
+function assignedIdsFromRow(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function isSingleShotAlert(alert) {
+  const key = String(alert?.alert_key || "");
+  return SINGLE_SHOT_ALERT_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+function unionWebhookNames(groups) {
+  const names = [];
+  const seen = new Set();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const name of getWebhookNames(group)) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+function uniqueWebhooksByUrl(webhooks) {
+  const list = Array.isArray(webhooks) ? webhooks : [];
+  const urls = dedupeNormalizedDestinations(
+    list.map((webhook) => webhook && webhook.url),
+    "webhook",
+  );
+  const byUrl = new Map();
+  for (const webhook of list) {
+    const url = String(webhook?.url || "").trim();
+    if (!url || byUrl.has(url)) continue;
+    byUrl.set(url, webhook);
+  }
+  return urls.map((url) => byUrl.get(url)).filter(Boolean);
+}
+
+function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
+  const contactGroupId =
+    canonicalLegacyContactGroupId(assignedIds) ||
+    (resolvedGroups[0] ? String(resolvedGroups[0].id) : null);
+  const groups = Array.isArray(contactGroups) ? contactGroups : [];
+  const contactGroupName = contactGroupId
+    ? groups.find((g) => String(g.id) === String(contactGroupId))?.name || null
+    : null;
+  return { contactGroupId, contactGroupName };
+}
 
 function safeJoinList(value) {
   if (!value) return null;
@@ -200,9 +257,7 @@ function buildEmailContent(alert, resolvedDays) {
 function buildCertRenewalFailedEmailContent(alert, job) {
   const name = alert.name || `Certificate #${alert.token_id}`;
   const jobId =
-    (job && job.id) ||
-    String(alert.alert_key || "").split(":")[1] ||
-    "unknown";
+    (job && job.id) || String(alert.alert_key || "").split(":")[1] || "unknown";
   const errorCode = (job && job.error_code) || "unknown";
   const frontendUrl = process.env.APP_URL || "http://localhost:5173";
   const subject = `\u26A0\uFE0F Certificate renewal failed: ${name}`;
@@ -276,7 +331,9 @@ function buildEndpointHealthEmailContent(alert, token) {
     try {
       const hostname = url ? new URL(url).hostname : "";
       showLinkedToken = name !== hostname && name !== url && name !== location;
-    } catch { showLinkedToken = name !== url && name !== location; }
+    } catch {
+      showLinkedToken = name !== url && name !== location;
+    }
   }
 
   // Plain text version
@@ -321,10 +378,14 @@ function buildEndpointHealthEmailContent(alert, token) {
           ${url ? `<a href="${url}" style="color: #2B6CB0; text-decoration: none;">${url}</a>` : location}
         </td>
       </tr>
-      ${showLinkedToken ? `<tr>
+      ${
+        showLinkedToken
+          ? `<tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Linked Token</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${name}</td>
-      </tr>` : ""}
+      </tr>`
+          : ""
+      }
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; color: #718096; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Detected</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #E2E8F0; font-size: 14px;">${timestamp}</td>
@@ -392,8 +453,13 @@ function getEndpointHealthContext(alert, token = alert) {
   if (endpointName && endpointName !== "Endpoint") {
     try {
       const hostname = url ? new URL(url).hostname : "";
-      showLinkedToken = endpointName !== hostname && endpointName !== url && endpointName !== location;
-    } catch { showLinkedToken = endpointName !== url && endpointName !== location; }
+      showLinkedToken =
+        endpointName !== hostname &&
+        endpointName !== url &&
+        endpointName !== location;
+    } catch {
+      showLinkedToken = endpointName !== url && endpointName !== location;
+    }
   }
   return {
     transition,
@@ -417,11 +483,7 @@ function getEndpointHealthContext(alert, token = alert) {
 function buildEndpointHealthWebhookPayload(
   kind,
   alert,
-  {
-    severity,
-    title,
-    routingKey,
-  } = {},
+  { severity, title, routingKey } = {},
 ) {
   const context = getEndpointHealthContext(alert, alert);
   const selectedSeverity = String(severity || context.severity).toLowerCase();
@@ -444,18 +506,34 @@ function buildEndpointHealthWebhookPayload(
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}` },
+          text: {
+            type: "plain_text",
+            text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}`,
+          },
         },
         {
           type: "section",
-          text: { type: "mrkdwn", text: escapeSlackMrkdwn(context.description) },
+          text: {
+            type: "mrkdwn",
+            text: escapeSlackMrkdwn(context.description),
+          },
         },
         {
           type: "section",
           fields: [
             { type: "mrkdwn", text: `*Status:*\n${context.status}` },
-            { type: "mrkdwn", text: `*URL:*\n${context.url || context.location}` },
-            ...(context.showLinkedToken ? [{ type: "mrkdwn", text: `*Linked Token:*\n${alert.name || context.endpointName}` }] : []),
+            {
+              type: "mrkdwn",
+              text: `*URL:*\n${context.url || context.location}`,
+            },
+            ...(context.showLinkedToken
+              ? [
+                  {
+                    type: "mrkdwn",
+                    text: `*Linked Token:*\n${alert.name || context.endpointName}`,
+                  },
+                ]
+              : []),
           ],
         },
       ],
@@ -472,12 +550,20 @@ function buildEndpointHealthWebhookPayload(
           color: context.isDown ? 15158332 : 3066993,
           fields: [
             { name: "Status", value: context.status, inline: true },
-            { name: "URL", value: context.url || context.location, inline: false },
-            ...(context.showLinkedToken ? [{
-              name: "Linked Token",
-              value: alert.name || context.endpointName,
-              inline: true,
-            }] : []),
+            {
+              name: "URL",
+              value: context.url || context.location,
+              inline: false,
+            },
+            ...(context.showLinkedToken
+              ? [
+                  {
+                    name: "Linked Token",
+                    value: alert.name || context.endpointName,
+                    inline: true,
+                  },
+                ]
+              : []),
           ],
           timestamp: new Date().toISOString(),
         },
@@ -498,7 +584,14 @@ function buildEndpointHealthWebhookPayload(
           facts: [
             { name: "Status", value: context.status },
             { name: "URL", value: context.url || context.location },
-            ...(context.showLinkedToken ? [{ name: "Linked Token", value: alert.name || context.endpointName }] : []),
+            ...(context.showLinkedToken
+              ? [
+                  {
+                    name: "Linked Token",
+                    value: alert.name || context.endpointName,
+                  },
+                ]
+              : []),
           ],
           markdown: true,
         },
@@ -597,7 +690,9 @@ function getAgentHealthContext(alert) {
     impactedCertificates,
     impactedTotalCount,
     extraImpactedCount,
-    title: isDown ? `Agent Down: ${agentName}` : `Agent Recovered: ${agentName}`,
+    title: isDown
+      ? `Agent Down: ${agentName}`
+      : `Agent Recovered: ${agentName}`,
     description: isDown
       ? `No heartbeat has been received for more than ${offlineAfterMinutes || 10} minutes.`
       : impactedTotalCount > 0
@@ -638,7 +733,9 @@ function formatImpactedCertificateLines(context) {
 }
 
 function singleLineText(value) {
-  return String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
 }
 
 function neutralizeMentions(value) {
@@ -683,7 +780,9 @@ function buildAgentHealthEmailContent(alert) {
     `Agent ${context.status}: ${singleLineText(context.agentName)}`,
     "",
     `Status: ${context.status}`,
-    ...(context.hostname ? [`Hostname: ${singleLineText(context.hostname)}`] : []),
+    ...(context.hostname
+      ? [`Hostname: ${singleLineText(context.hostname)}`]
+      : []),
     ...(context.platform ? [`OS: ${singleLineText(context.platform)}`] : []),
     ...(context.lastSeenAt
       ? [`Last seen: ${new Date(context.lastSeenAt).toISOString()}`]
@@ -759,7 +858,9 @@ function buildAgentHealthEmailContent(alert) {
   const htmlContent = `${statusBadge}${detailsTable}${impactedHtml}`;
 
   const { html, text: templateText } = generateEmailTemplate({
-    title: escapeHtml(`Agent ${context.status}: ${singleLineText(context.agentName)}`),
+    title: escapeHtml(
+      `Agent ${context.status}: ${singleLineText(context.agentName)}`,
+    ),
     content: htmlContent,
     buttonText: "View Dashboard",
     buttonUrl: frontendUrl,
@@ -797,11 +898,17 @@ function buildAgentHealthWebhookPayload(
       blocks: [
         {
           type: "header",
-          text: { type: "plain_text", text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}` },
+          text: {
+            type: "plain_text",
+            text: `${context.statusIcon} ${neutralizeMentions(selectedTitle)}`,
+          },
         },
         {
           type: "section",
-          text: { type: "mrkdwn", text: escapeSlackMrkdwn(context.description) },
+          text: {
+            type: "mrkdwn",
+            text: escapeSlackMrkdwn(context.description),
+          },
         },
         ...(impactedLines.length > 0
           ? [
@@ -826,12 +933,20 @@ function buildAgentHealthWebhookPayload(
       embeds: [
         {
           title: discordTitle,
-          description: [context.description, ...impactedLines].map(escapeMarkdown).join("\n"),
+          description: [context.description, ...impactedLines]
+            .map(escapeMarkdown)
+            .join("\n"),
           color: context.isDown ? 15158332 : 3066993,
           fields: [
             { name: "Status", value: context.status, inline: true },
             ...(context.hostname
-              ? [{ name: "Hostname", value: escapeMarkdown(context.hostname), inline: true }]
+              ? [
+                  {
+                    name: "Hostname",
+                    value: escapeMarkdown(context.hostname),
+                    inline: true,
+                  },
+                ]
               : []),
           ],
           timestamp: new Date().toISOString(),
@@ -850,7 +965,9 @@ function buildAgentHealthWebhookPayload(
       sections: [
         {
           activityTitle: `${context.statusIcon} ${teamsTitle}`,
-          text: [context.description, ...impactedLines].map(escapeMarkdown).join("\n\n"),
+          text: [context.description, ...impactedLines]
+            .map(escapeMarkdown)
+            .join("\n\n"),
           facts: [
             { name: "Status", value: context.status },
             ...(context.hostname
@@ -1094,6 +1211,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          COALESCE(ws.webhook_urls, wsf.webhook_urls, wjj.webhook_urls) AS webhook_urls,
          COALESCE(ws.contact_groups, wsf.contact_groups, wjj.contact_groups) AS contact_groups,
          COALESCE(ws.default_contact_group_id, wsf.default_contact_group_id, wjj.default_contact_group_id) AS default_contact_group_id,
+         COALESCE(ws.alert_thresholds, wsf.alert_thresholds, wjj.alert_thresholds) AS alert_thresholds,
          COALESCE(ws.email_alerts_enabled, wsf.email_alerts_enabled, wjj.email_alerts_enabled) AS email_alerts_enabled,
          COALESCE(ws.delivery_window_start, wsf.delivery_window_start, wjj.delivery_window_start) AS delivery_window_start,
          COALESCE(ws.delivery_window_end, wsf.delivery_window_end, wjj.delivery_window_end) AS delivery_window_end,
@@ -1105,7 +1223,10 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          t.renewal_url, t.renewal_date::date AS renewal_date, t.contacts, 
          t.description, t.notes,
          t.cert_lifecycle_status,
-         COALESCE(t.contact_group_id, ca.contact_group_id) AS contact_group_id,
+         CASE
+           WHEN aq.token_id IS NOT NULL THEN COALESCE(token_groups.assigned_ids, ARRAY[]::text[])
+           ELSE COALESCE(agent_groups.assigned_ids, ARRAY[]::text[])
+         END AS assigned_ids,
          COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
@@ -1131,6 +1252,20 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
        LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
        LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
        LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(array_agg(tcg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
+         FROM token_contact_groups tcg
+         WHERE aq.token_id IS NOT NULL
+           AND tcg.token_id = aq.token_id
+           AND tcg.workspace_id = COALESCE(t.workspace_id, ca.workspace_id)
+       ) token_groups ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(array_agg(acg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
+         FROM certops_agent_contact_groups acg
+         WHERE aq.certops_agent_id IS NOT NULL
+           AND acg.agent_id = aq.certops_agent_id
+           AND acg.workspace_id = COALESCE(t.workspace_id, ca.workspace_id)
+       ) agent_groups ON TRUE
         WHERE aq.status IN ('pending', 'failed', 'partial') 
          AND aq.due_date <= CURRENT_DATE
          AND (t.id IS NOT NULL OR ca.id IS NOT NULL)
@@ -1187,7 +1322,8 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           CLAIM_MARKER_MS,
         );
       } catch (ownershipErr) {
-        if (!(ownershipErr instanceof DeliveryOwnershipLostError)) throw ownershipErr;
+        if (!(ownershipErr instanceof DeliveryOwnershipLostError))
+          throw ownershipErr;
         logger.debug("Skipping alert no longer claimable at recheck", {
           alertId: alert.id,
         });
@@ -1195,12 +1331,11 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       }
 
       try {
-
-      let jobCertificateStatus = null;
-      const renewalFailedJobId = parseCertRenewalFailedJobId(alert.alert_key);
-      if (renewalFailedJobId) {
-        const certRes = await client.query(
-          `SELECT mc.status
+        let jobCertificateStatus = null;
+        const renewalFailedJobId = parseCertRenewalFailedJobId(alert.alert_key);
+        if (renewalFailedJobId) {
+          const certRes = await client.query(
+            `SELECT mc.status
              FROM certificate_jobs cj
              JOIN managed_certificates mc
                ON mc.workspace_id = cj.workspace_id
@@ -1208,887 +1343,361 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             WHERE cj.id = $1
               AND cj.subject_type = 'managed_certificate'
             LIMIT 1`,
-          [renewalFailedJobId],
-        );
-        jobCertificateStatus = certRes.rows[0]?.status ?? null;
-      }
+            [renewalFailedJobId],
+          );
+          jobCertificateStatus = certRes.rows[0]?.status ?? null;
+        }
 
-      if (
-        shouldDiscardRetiredCertificateAlert({
-          alertKey: alert.alert_key,
-          tokenLifecycleStatus: alert.cert_lifecycle_status,
-          jobCertificateStatus,
-        })
-      ) {
-        const discardRes = await client.query(
-          `UPDATE alert_queue
+        if (
+          shouldDiscardRetiredCertificateAlert({
+            alertKey: alert.alert_key,
+            tokenLifecycleStatus: alert.cert_lifecycle_status,
+            jobCertificateStatus,
+          })
+        ) {
+          const discardRes = await client.query(
+            `UPDATE alert_queue
               SET status = 'sent', last_attempt = NOW(),
                   error_message = 'Discarded: certificate revoked or decommissioned',
                   next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
             WHERE id = $1 AND delivery_claim_id = $2`,
-          [alert.id, claimId],
-        );
-        if (discardRes.rowCount === 0) {
-          logger.warn(
-            "Skipped retired-certificate-alert discard: another worker took ownership",
-            { alertId: alert.id },
+            [alert.id, claimId],
           );
-        } else {
-          logger.info("Discarded alert for retired certificate", {
-            alertId: alert.id,
-            alertKey: alert.alert_key,
-            certLifecycleStatus: alert.cert_lifecycle_status,
-            jobCertificateStatus,
-          });
-        }
-        continue;
-      }
-
-      // For endpoint health "down" alerts, defer until consecutive_failures >= alert_after_failures.
-      // The endpoint-check-worker queues the alert on the first state transition; we wait
-      // here until enough consecutive failures have accumulated before actually delivering.
-      if (
-        alert.alert_key &&
-        alert.alert_key.startsWith("endpoint_health:") &&
-        alert.alert_key.includes(":down")
-      ) {
-        try {
-          const monitorIdMatch = alert.alert_key.match(
-            /^endpoint_health:([^:]+):down/,
-          );
-          if (monitorIdMatch) {
-            const monitorRes = await client.query(
-              "SELECT consecutive_failures, alert_after_failures FROM domain_monitors WHERE id = $1",
-              [monitorIdMatch[1]],
+          if (discardRes.rowCount === 0) {
+            logger.warn(
+              "Skipped retired-certificate-alert discard: another worker took ownership",
+              { alertId: alert.id },
             );
-            if (monitorRes.rows.length > 0) {
-              const dm = monitorRes.rows[0];
-              const threshold = dm.alert_after_failures || 2;
-              if ((dm.consecutive_failures || 0) < threshold) {
-                // Not enough failures yet -- skip for now, will retry next
-                // delivery run. Clear the claim marker and release ownership
-                // so the next run's gating clause does not defer this alert
-                // for the full claim-marker window.
-                const deferRes = await client.query(
-                  `UPDATE alert_queue
+          } else {
+            logger.info("Discarded alert for retired certificate", {
+              alertId: alert.id,
+              alertKey: alert.alert_key,
+              certLifecycleStatus: alert.cert_lifecycle_status,
+              jobCertificateStatus,
+            });
+          }
+          continue;
+        }
+
+        // For endpoint health "down" alerts, defer until consecutive_failures >= alert_after_failures.
+        // The endpoint-check-worker queues the alert on the first state transition; we wait
+        // here until enough consecutive failures have accumulated before actually delivering.
+        if (
+          alert.alert_key &&
+          alert.alert_key.startsWith("endpoint_health:") &&
+          alert.alert_key.includes(":down")
+        ) {
+          try {
+            const monitorIdMatch = alert.alert_key.match(
+              /^endpoint_health:([^:]+):down/,
+            );
+            if (monitorIdMatch) {
+              const monitorRes = await client.query(
+                "SELECT consecutive_failures, alert_after_failures FROM domain_monitors WHERE id = $1",
+                [monitorIdMatch[1]],
+              );
+              if (monitorRes.rows.length > 0) {
+                const dm = monitorRes.rows[0];
+                const threshold = dm.alert_after_failures || 2;
+                if ((dm.consecutive_failures || 0) < threshold) {
+                  // Not enough failures yet -- skip for now, will retry next
+                  // delivery run. Clear the claim marker and release ownership
+                  // so the next run's gating clause does not defer this alert
+                  // for the full claim-marker window.
+                  const deferRes = await client.query(
+                    `UPDATE alert_queue
                       SET next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
                     WHERE id = $1 AND delivery_claim_id = $2`,
-                  [alert.id, claimId],
-                );
-                if (deferRes.rowCount === 0) {
-                  logger.warn(
-                    "Skipped endpoint-alert deferral: another worker took ownership",
-                    { alertId: alert.id },
+                    [alert.id, claimId],
                   );
+                  if (deferRes.rowCount === 0) {
+                    logger.warn(
+                      "Skipped endpoint-alert deferral: another worker took ownership",
+                      { alertId: alert.id },
+                    );
+                  }
+                  continue;
                 }
-                continue;
-              }
-              // If endpoint recovered (consecutive_failures = 0), discard the stale down alert
-              if ((dm.consecutive_failures || 0) === 0) {
-                const discardRes = await client.query(
-                  `UPDATE alert_queue
+                // If endpoint recovered (consecutive_failures = 0), discard the stale down alert
+                if ((dm.consecutive_failures || 0) === 0) {
+                  const discardRes = await client.query(
+                    `UPDATE alert_queue
                       SET status = 'sent', last_attempt = NOW(),
                           error_message = 'Discarded: endpoint recovered before threshold',
                           next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
                     WHERE id = $1 AND delivery_claim_id = $2`,
-                  [alert.id, claimId],
-                );
-                if (discardRes.rowCount === 0) {
-                  logger.warn(
-                    "Skipped endpoint-alert discard: another worker took ownership",
-                    { alertId: alert.id },
+                    [alert.id, claimId],
                   );
-                }
-                continue;
-              }
-            }
-          }
-        } catch (dmErr) {
-          logger.warn(
-            "Failed to check alert_after_failures for endpoint alert",
-            { error: dmErr.message },
-          );
-          // Proceed with delivery anyway if the check fails
-        }
-      }
-
-      // Defer if outside workspace delivery window
-      try {
-        let start = String(alert.delivery_window_start || "").trim();
-        let end = String(alert.delivery_window_end || "").trim();
-        const tzInput = String(alert.delivery_window_tz || "").trim();
-        if (!start && !end) {
-          start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
-          end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
-        }
-        if (start && end) {
-          const now = new Date();
-          let hh = "00";
-          let mm = "00";
-          try {
-            const fmt = new Intl.DateTimeFormat("en-US", {
-              timeZone: tzInput || "UTC",
-              hour12: false,
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-            const parts = fmt.formatToParts(now);
-            hh = parts.find((p) => p.type === "hour")?.value || "00";
-            mm = parts.find((p) => p.type === "minute")?.value || "00";
-          } catch (_tzErr) {
-            // Invalid timezone; fall back to UTC
-            hh = String(now.getUTCHours()).padStart(2, "0");
-            mm = String(now.getUTCMinutes()).padStart(2, "0");
-            if (tzInput)
-              logger.warn(
-                `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
-              );
-          }
-          const cur = `${hh}:${mm}`;
-          const inWindow =
-            start <= end
-              ? cur >= start && cur <= end
-              : cur >= start || cur <= end;
-          if (!inWindow) {
-            const defMs = process.env.DELIVERY_WINDOW_DEFERRAL_MS
-              ? Number(process.env.DELIVERY_WINDOW_DEFERRAL_MS)
-              : 3 * 60 * 60 * 1000; // Default: 3 hours (reduced load for OUT_OF_WINDOW alerts)
-            const ts = new Date(
-              Date.now() + (Number.isFinite(defMs) ? defMs : 10800000),
-            );
-            const windowDeferRes = await client.query(
-              `UPDATE alert_queue 
-              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
-               WHERE id = $1 AND delivery_claim_id = $3`,
-              [alert.id, ts.toISOString(), claimId],
-            );
-            if (windowDeferRes.rowCount === 0) {
-              logger.warn(
-                "Skipped out-of-window deferral: another worker took ownership",
-                { alertId: alert.id },
-              );
-            }
-            // Do not count this as a failure; simply defer
-            continue;
-          }
-        }
-      } catch (_err) {
-        logger.warn("DB operation failed", { error: _err.message });
-      }
-
-      // Process each channel respecting user toggles
-      // Handle alert.channels which could be a JSON string from the database
-      let channelsArray = [];
-      if (Array.isArray(alert.channels)) {
-        channelsArray = alert.channels;
-      } else if (typeof alert.channels === "string") {
-        try {
-          const parsed = JSON.parse(alert.channels);
-          channelsArray = Array.isArray(parsed) ? parsed : [];
-        } catch (_) {
-          channelsArray = [];
-        }
-      }
-
-      // Resolve contact group once for all channel checks
-      const resolvedGroup = resolveContactGroup({
-        contactGroups: alert.contact_groups,
-        contactGroupId: alert.contact_group_id,
-        defaultContactGroupId: alert.default_contact_group_id,
-      });
-
-      const channels = channelsArray.filter((ch) => {
-        if (ch === "email") {
-          const wsEmailEnabled = alert.email_alerts_enabled !== false;
-          return wsEmailEnabled && hasEmailContacts(resolvedGroup);
-        }
-        if (ch === "webhooks") {
-          return hasWebhookNames(resolvedGroup);
-        }
-        if (ch === "whatsapp") {
-          return hasWhatsAppContacts(resolvedGroup);
-        }
-        return true;
-      });
-
-      const finalChannels = channels;
-
-      // If no eligible channels remain, mark failed and continue
-      if (!Array.isArray(finalChannels) || finalChannels.length === 0) {
-        const minimalCooldown =
-          process.env.NODE_ENV === "test" ? new Date(Date.now() + 1000) : null;
-        const noContactsRes = await client.query(
-          `UPDATE alert_queue 
-           SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
-           WHERE id = $1 AND delivery_claim_id = $3`,
-          [
-            alert.id,
-            minimalCooldown ? minimalCooldown.toISOString() : null,
-            claimId,
-          ],
-        );
-        if (noContactsRes.rowCount === 0) {
-          logger.warn(
-            "Skipped no-contacts terminal write: another worker took ownership",
-            { alertId: alert.id },
-          );
-        }
-        failed++;
-        continue;
-      }
-      let allSucceeded = true;
-      const deliveryResults = [];
-      // Track if WhatsApp encountered a permanent failure (non-rate-limit) to block the alert immediately
-      let whatsappPermanentFailure = false;
-
-      // Calculate actual days left based on expiration date (fallback to threshold)
-      const computedDays = computeDaysLeft(alert.expiration);
-      const daysLeft = Number.isFinite(computedDays)
-        ? computedDays
-        : alert.threshold_days;
-
-      // Per-channel backoff helpers
-      const computeCooldownMs = (attempts) => {
-        // Use greatly reduced cooldowns in test mode to allow rapid retries
-        if (process.env.NODE_ENV === "test") {
-          if (attempts >= 20) return 4000;
-          if (attempts >= 10) return 3000;
-          if (attempts >= 5) return 2000;
-          if (attempts >= 3) return 1000;
-          return 0;
-        }
-        // thresholds: 3->5m, 5->15m, 10->60m, 20->24h
-        if (attempts >= 20) return 24 * 60 * 60 * 1000;
-        if (attempts >= 10) return 60 * 60 * 1000;
-        if (attempts >= 5) return 15 * 60 * 1000;
-        if (attempts >= 3) return 5 * 60 * 1000;
-        return 0;
-      };
-      let nextAttemptTimestamp = null;
-      let newAttemptsEmail = Number(alert.attempts_email || 0);
-      let newAttemptsWebhooks = Number(alert.attempts_webhooks || 0);
-      let newAttemptsWhatsApp = Number(alert.attempts_whatsapp || 0);
-
-      // Track partial failures for webhooks to improve observability
-      let webhookPartialErrors = [];
-
-      for (const channel of finalChannels) {
-        let success = false;
-        let errorMessage = null;
-        let errorCode = null;
-
-        try {
-          if (channel === "email") {
-            // Build recipients: group emails only; no fallback
-            let recipients = [];
-            const groupIdUsed = resolvedGroup ? String(resolvedGroup.id) : null;
-            try {
-              if (resolvedGroup && hasEmailContacts(resolvedGroup)) {
-                // Resolve emails from workspace_contacts by id
-                const contactsRes = await client.query(
-                  `SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
-                  [alert.workspace_id, resolvedGroup.email_contact_ids],
-                );
-                recipients = contactsRes.rows
-                  .map((r) => {
-                    try {
-                      return String((r.details && r.details.email) || "")
-                        .toLowerCase()
-                        .trim();
-                    } catch (_) {
-                      return "";
-                    }
-                  })
-                  .filter((e) => isValidEmail(e));
-              }
-            } catch (_err) {
-              logger.debug("Non-critical operation failed", {
-                error: _err.message,
-              });
-            }
-            // No fallback: if recipients is empty, email channel will result in no sends
-
-            // Dedupe recipients
-            const trimmed = Array.from(new Set(recipients)).filter((e) =>
-              isValidEmail(e),
-            );
-
-            if (trimmed.length === 0) {
-              success = false;
-              errorMessage =
-                "No email contacts are defined in the selected contact group";
-            } else {
-              // Send individually and log per recipient
-              const isEndpointAlert =
-                alert.alert_key &&
-                alert.alert_key.startsWith("endpoint_health:");
-              const isCertRenewalFailedAlert =
-                alert.alert_key &&
-                alert.alert_key.startsWith("cert_renewal_failed:");
-              const isAgentHealthAlert =
-                alert.alert_key && alert.alert_key.startsWith("agent_health:");
-              let certRenewalJob = null;
-              if (isCertRenewalFailedAlert) {
-                // Best-effort job lookup for the error code (zero-custody:
-                // only id + error_code, never payloads).
-                try {
-                  const certJobId = alert.alert_key.split(":")[1];
-                  const jobRes = await client.query(
-                    "SELECT id, error_code FROM certificate_jobs WHERE id = $1",
-                    [certJobId],
-                  );
-                  certRenewalJob = jobRes.rows[0] || null;
-                } catch (_err) {
-                  logger.debug("Non-critical operation failed", {
-                    error: _err.message,
-                  });
-                }
-              }
-              const { subject, text, html } = isEndpointAlert
-                ? buildEndpointHealthEmailContent(alert, alert)
-                : isCertRenewalFailedAlert
-                  ? buildCertRenewalFailedEmailContent(alert, certRenewalJob)
-                  : isAgentHealthAlert
-                    ? buildAgentHealthEmailContent(alert)
-                    : buildEmailContent(alert, daysLeft);
-              let allOk = true;
-              for (const rcpt of trimmed) {
-                await assertStillOwnsDelivery(
-                  client,
-                  alert.id,
-                  claimId,
-                  CLAIM_MARKER_MS,
-                );
-                const res = await sendEmailNotification({
-                  to: rcpt,
-                  subject,
-                  text,
-                  html,
-                  onBeforeAttempt: async () => {
-                    await assertStillOwnsDelivery(
-                      client,
-                      alert.id,
-                      claimId,
-                      CLAIM_MARKER_MS,
+                  if (discardRes.rowCount === 0) {
+                    logger.warn(
+                      "Skipped endpoint-alert discard: another worker took ownership",
+                      { alertId: alert.id },
                     );
-                  },
-                });
-                await client.query(
-                  `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-                  [
-                    alert.id,
-                    alert.owner_user_id,
-                    alert.token_id,
-                    alert.workspace_id,
-                    "email",
-                    res.success ? "success" : "failed",
-                    res.success ? null : res.error || null,
-                    JSON.stringify({
-                      group_id: groupIdUsed,
-                      recipient: rcpt,
-                    }),
-                  ],
-                );
-                // Increment metric for each email delivery attempt
-                try {
-                  cDelivery
-                    .labels(
-                      "email",
-                      "email",
-                      res.success ? "success" : "failed",
-                    )
-                    .inc();
-                } catch (_) {
-                  logger.debug("Metrics recording failed", {
-                    error: _.message,
-                  });
-                }
-                if (!res.success) allOk = false;
-              }
-              success = allOk;
-              errorMessage = allOk ? null : "PARTIAL_FAILURE";
-            }
-          } else if (channel === "webhooks") {
-            let webhooks = Array.isArray(alert.webhook_urls)
-              ? [...alert.webhook_urls]
-              : [];
-            // If a group selects named webhook(s), restrict to only those; otherwise, send none
-            const groupIdUsedForWebhooks = resolvedGroup
-              ? String(resolvedGroup.id)
-              : null;
-            try {
-              if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
-                const names = getWebhookNames(resolvedGroup);
-                const filtered = webhooks.filter((w) =>
-                  names.includes(String(w.name || "").trim()),
-                );
-                webhooks = filtered.length > 0 ? filtered : [];
-              } else {
-                webhooks = [];
-              }
-            } catch (_err) {
-              logger.debug("Non-critical operation failed", {
-                error: _err.message,
-              });
-            }
-            if (webhooks.length === 0) {
-              success = false;
-              errorMessage =
-                "No webhook names defined in the selected contact group";
-            } else {
-              // Consider the webhooks channel successful if at least one endpoint succeeds
-              let webhookSuccess = false;
-              const errors = [];
-
-              // Load previously successful webhook url hashes for this alert_queue
-              const priorSuccessRes = await client.query(
-                `SELECT metadata->>'urlHash' AS h
-                 FROM alert_delivery_log
-                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
-                [alert.id],
-              );
-              const priorSuccess = new Set(
-                priorSuccessRes.rows
-                  .map((r) => String(r.h || "").trim())
-                  .filter(Boolean),
-              );
-
-              for (const wh of webhooks) {
-                let kind = String(wh?.kind || "generic");
-                const url = String(wh?.url || "");
-                const routingKey = String(wh?.routingKey || "");
-                if (!url) continue;
-                // Auto-detect provider kind by hostname when not explicitly set
-                try {
-                  const host = new URL(url).hostname.toLowerCase();
-                  if (!wh?.kind || kind === "generic") {
-                    kind = detectWebhookProviderKind(host) || kind;
                   }
-                } catch (_err) {
-                  logger.debug("Non-critical operation failed", {
-                    error: _err.message,
-                  });
-                }
-
-                // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
-                const urlHash = crypto
-                  .createHash("sha256")
-                  .update(url)
-                  .digest("hex");
-                if (priorSuccess.has(urlHash)) {
-                  // Already delivered successfully to this endpoint for this alert; skip re-sending
                   continue;
                 }
-                const name = alert.name || `Token #${alert.token_id}`;
-                const isEndpointHealthWebhook =
-                  alert.alert_key &&
-                  alert.alert_key.startsWith("endpoint_health:");
-                const isCertRenewalFailedWebhook =
-                  alert.alert_key &&
-                  alert.alert_key.startsWith("cert_renewal_failed:");
-                const isAgentHealthWebhook =
-                  alert.alert_key && alert.alert_key.startsWith("agent_health:");
-
-                let text;
-                let tokenData;
-                let endpointTransition = null;
-                let agentTransition = null;
-                if (isEndpointHealthWebhook) {
-                  const ehParts = alert.alert_key.split(":");
-                  const ehTransition = ehParts[2] || "down";
-                  endpointTransition = ehTransition;
-                  const ehStatus =
-                    ehTransition === "down" ? "DOWN" : "RECOVERED";
-                  const location = alert.location || alert.name || "Unknown";
-                  text = location && location !== name
-                    ? `Endpoint ${ehStatus}: ${name} (${location})`
-                    : `Endpoint ${ehStatus}: ${name}`;
-                  tokenData = {
-                    type: "endpoint_health",
-                    token_id: alert.token_id,
-                    name: alert.name,
-                    location: alert.location,
-                    status: ehStatus,
-                    transition: ehTransition,
-                  };
-                } else if (isCertRenewalFailedWebhook) {
-                  // Zero-custody: only job id, error code, cert/token name.
-                  const certJobId = alert.alert_key.split(":")[1] || "unknown";
-                  text = `Certificate renewal failed: ${name} (job ${certJobId})`;
-                  tokenData = {
-                    type: "cert_renewal_failed",
-                    token_id: alert.token_id,
-                    name: alert.name,
-                    job_id: certJobId,
-                  };
-                } else if (isAgentHealthWebhook) {
-                  const agentContext = getAgentHealthContext(alert);
-                  agentTransition = agentContext.transition;
-                  text = `Agent ${agentContext.status}: ${agentContext.agentName}`;
-                  tokenData = {
-                    type: "agent_health",
-                    agent_name: agentContext.agentName,
-                    status: agentContext.status,
-                    transition: agentContext.transition,
-                    impacted_certificate_count: agentContext.impactedTotalCount,
-                  };
-                } else {
-                  const expires = alert.expiration
-                    ? new Date(alert.expiration).toISOString().slice(0, 10)
-                    : null;
-                  const expired = typeof daysLeft === "number" && daysLeft <= 0;
-                  const absDays =
-                    typeof daysLeft === "number"
-                      ? Math.abs(daysLeft)
-                      : daysLeft;
-                  text = expired
-                    ? `${name} expired ${absDays} day(s) ago` +
-                      (expires ? ` (on ${expires})` : "") +
-                      `.`
-                    : `${name} expires in ${daysLeft} day(s)` +
-                      (expires ? ` (on ${expires})` : "") +
-                      `.`;
-
-                  tokenData = {
-                    token_id: alert.token_id,
-                    name: alert.name,
-                    type: alert.type,
-                    expiration: expires,
-                    daysLeft: daysLeft,
-                    ...(alert.renewal_url && {
-                      renewal_url: alert.renewal_url,
-                    }),
-                  };
-                }
-
-                // Determine severity per user-config or default mapping
-                const computedSeverity = daysLeft < 30 ? "critical" : "warning";
-                const selectedSeverity =
-                  typeof wh?.severity === "string" && wh.severity
-                    ? String(wh.severity).toLowerCase()
-                    : isEndpointHealthWebhook
-                      ? endpointTransition === "down"
-                        ? "critical"
-                        : "info"
-                      : isCertRenewalFailedWebhook
-                        ? "critical"
-                        : isAgentHealthWebhook
-                          ? agentTransition === "down"
-                            ? "critical"
-                            : "info"
-                          : computedSeverity;
-                const templateTitle =
-                  typeof wh?.template === "string" && wh.template
-                    ? String(wh.template)
-                    : null;
-
-                const payload = isEndpointHealthWebhook
-                  ? buildEndpointHealthWebhookPayload(kind, alert, {
-                      severity: selectedSeverity,
-                      title: templateTitle || undefined,
-                      routingKey,
-                    })
-                  : isAgentHealthWebhook
-                    ? buildAgentHealthWebhookPayload(kind, alert, {
-                        severity: selectedSeverity,
-                        title: templateTitle || undefined,
-                        routingKey,
-                      })
-                    : kind === "pagerduty"
-                      ? {
-                          routing_key: routingKey,
-                          event_action: "trigger",
-                          payload: {
-                            summary: templateTitle || text,
-                            source: "TokenTimer",
-                            severity: selectedSeverity,
-                            timestamp: new Date().toISOString(),
-                            custom_details: tokenData,
-                          },
-                        }
-                      : formatPayload(kind, text, tokenData, {
-                          severity: selectedSeverity,
-                          title: templateTitle || undefined,
-                        });
-                await assertStillOwnsDelivery(
-                  client,
-                  alert.id,
-                  claimId,
-                  CLAIM_MARKER_MS,
-                );
-                const endTimer = hLatency.labels("webhooks", kind).startTimer();
-                const res = await postJson(url, payload, kind);
-                try {
-                  endTimer();
-                } catch (_) {
-                  logger.debug("Metrics recording failed", {
-                    error: _.message,
-                  });
-                }
-                try {
-                  cDelivery
-                    .labels(
-                      "webhooks",
-                      kind,
-                      res.success ? "success" : "failed",
-                    )
-                    .inc();
-                } catch (_) {
-                  logger.debug("Metrics recording failed", {
-                    error: _.message,
-                  });
-                }
-                if (!res.success) {
-                  errors.push(`${kind}: ${res.error}`);
-                } else {
-                  webhookSuccess = true;
-                  // Mark this urlHash as delivered to avoid future re-sends for this alert
-                  priorSuccess.add(urlHash);
-                }
-                // Log each individual webhook delivery attempt
-                await client.query(
-                  `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                  [
-                    alert.id,
-                    alert.owner_user_id,
-                    alert.token_id,
-                    alert.workspace_id,
-                    "webhooks",
-                    res.success ? "success" : "failed",
-                    res.success ? null : res.error || null,
-                    JSON.stringify({
-                      kind,
-                      urlDomain: new URL(url).hostname,
-                      urlHash,
-                      group_id: groupIdUsedForWebhooks,
-                      payload_type: isEndpointHealthWebhook
-                        ? "endpoint_health"
-                        : isCertRenewalFailedWebhook
-                          ? "cert_renewal_failed"
-                          : isAgentHealthWebhook
-                            ? "agent_health"
-                            : "token_expiry",
-                      endpoint_transition: isEndpointHealthWebhook
-                        ? tokenData?.transition || null
-                        : null,
-                      agent_transition: isAgentHealthWebhook
-                        ? tokenData?.transition || null
-                        : null,
-                    }),
-                  ],
-                );
-              }
-              success = webhookSuccess;
-              if (errors.length > 0) {
-                errorMessage = errors.join("; ");
-              } else if (!webhookSuccess) {
-                errorMessage =
-                  "Webhook delivery skipped because no endpoint was eligible";
-              } else {
-                errorMessage = null;
-              }
-              if (webhookSuccess && errors.length > 0) {
-                webhookPartialErrors = errors.slice();
               }
             }
-          } else if (channel === "whatsapp") {
-            let trimmed = [];
-            const groupIdUsed = resolvedGroup ? String(resolvedGroup.id) : null;
+          } catch (dmErr) {
+            logger.warn(
+              "Failed to check alert_after_failures for endpoint alert",
+              { error: dmErr.message },
+            );
+            // Proceed with delivery anyway if the check fails
+          }
+        }
 
-            {
-              // Resolve phones by querying workspace_contacts with contact_ids from group
+        // Defer if outside workspace delivery window
+        try {
+          let start = String(alert.delivery_window_start || "").trim();
+          let end = String(alert.delivery_window_end || "").trim();
+          const tzInput = String(alert.delivery_window_tz || "").trim();
+          if (!start && !end) {
+            start = process.env.DELIVERY_WINDOW_DEFAULT_START || "00:00";
+            end = process.env.DELIVERY_WINDOW_DEFAULT_END || "23:59";
+          }
+          if (start && end) {
+            const now = new Date();
+            let hh = "00";
+            let mm = "00";
+            try {
+              const fmt = new Intl.DateTimeFormat("en-US", {
+                timeZone: tzInput || "UTC",
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              const parts = fmt.formatToParts(now);
+              hh = parts.find((p) => p.type === "hour")?.value || "00";
+              mm = parts.find((p) => p.type === "minute")?.value || "00";
+            } catch (_tzErr) {
+              // Invalid timezone; fall back to UTC
+              hh = String(now.getUTCHours()).padStart(2, "0");
+              mm = String(now.getUTCMinutes()).padStart(2, "0");
+              if (tzInput)
+                logger.warn(
+                  `Invalid delivery_window_tz: ${tzInput}, falling back to UTC`,
+                );
+            }
+            const cur = `${hh}:${mm}`;
+            const inWindow =
+              start <= end
+                ? cur >= start && cur <= end
+                : cur >= start || cur <= end;
+            if (!inWindow) {
+              const defMs = process.env.DELIVERY_WINDOW_DEFERRAL_MS
+                ? Number(process.env.DELIVERY_WINDOW_DEFERRAL_MS)
+                : 3 * 60 * 60 * 1000; // Default: 3 hours (reduced load for OUT_OF_WINDOW alerts)
+              const ts = new Date(
+                Date.now() + (Number.isFinite(defMs) ? defMs : 10800000),
+              );
+              const windowDeferRes = await client.query(
+                `UPDATE alert_queue 
+              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+               WHERE id = $1 AND delivery_claim_id = $3`,
+                [alert.id, ts.toISOString(), claimId],
+              );
+              if (windowDeferRes.rowCount === 0) {
+                logger.warn(
+                  "Skipped out-of-window deferral: another worker took ownership",
+                  { alertId: alert.id },
+                );
+              }
+              // Do not count this as a failure; simply defer
+              continue;
+            }
+          }
+        } catch (_err) {
+          logger.warn("DB operation failed", { error: _err.message });
+        }
+
+        // Process each channel from current eligible groups, not the
+        // channels snapshot stored at enqueue. A reassignment from an
+        // email group to a WhatsApp group before send must add WhatsApp.
+        const assignedIds = assignedIdsFromRow(alert.assigned_ids);
+        const resolvedGroups = resolveContactGroupsForAsset({
+          contactGroups: alert.contact_groups,
+          assignedIds,
+          defaultContactGroupId: alert.default_contact_group_id,
+        });
+        const workspaceThresholds = Array.isArray(alert.alert_thresholds)
+          ? alert.alert_thresholds.filter((n) => Number.isFinite(n))
+          : [];
+        // Endpoint/agent/renewal store threshold_days=0; that is not an expiry window.
+        const eligibleGroups = isSingleShotAlert(alert)
+          ? resolvedGroups
+          : unionGroupsForThresholdWindow(
+              resolvedGroups,
+              workspaceThresholds,
+              alert.threshold_days,
+            );
+        const { contactGroupId, contactGroupName } = contactGroupAuditFields(
+          assignedIds,
+          resolvedGroups,
+          alert.contact_groups,
+        );
+
+        const liveChannels = deliveryChannelsFromEligibleGroups(
+          eligibleGroups,
+          {
+            emailAlertsEnabled: alert.email_alerts_enabled,
+            alertKey: alert.alert_key,
+          },
+        );
+        // First attempt re-derives channels from current groups. After a
+        // partial send, alert.channels holds only the failed set so a retry
+        // cannot resend a channel that already succeeded.
+        const finalChannels = channelsForDeliveryAttempt(
+          liveChannels,
+          alert.channels,
+          { isRetry: Number(alert.attempts || 0) > 0 },
+        );
+
+        // If no eligible channels remain, mark failed and continue
+        if (!Array.isArray(finalChannels) || finalChannels.length === 0) {
+          const minimalCooldown =
+            process.env.NODE_ENV === "test"
+              ? new Date(Date.now() + 1000)
+              : null;
+          const noContactsRes = await client.query(
+            `UPDATE alert_queue 
+           SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+           WHERE id = $1 AND delivery_claim_id = $3`,
+            [
+              alert.id,
+              minimalCooldown ? minimalCooldown.toISOString() : null,
+              claimId,
+            ],
+          );
+          if (noContactsRes.rowCount === 0) {
+            logger.warn(
+              "Skipped no-contacts terminal write: another worker took ownership",
+              { alertId: alert.id },
+            );
+          }
+          failed++;
+          continue;
+        }
+        let allSucceeded = true;
+        const deliveryResults = [];
+        // Track if WhatsApp encountered a permanent failure (non-rate-limit) to block the alert immediately
+        let whatsappPermanentFailure = false;
+
+        // Calculate actual days left based on expiration date (fallback to threshold)
+        const computedDays = computeDaysLeft(alert.expiration);
+        const daysLeft = Number.isFinite(computedDays)
+          ? computedDays
+          : alert.threshold_days;
+
+        // Per-channel backoff helpers
+        const computeCooldownMs = (attempts) => {
+          // Use greatly reduced cooldowns in test mode to allow rapid retries
+          if (process.env.NODE_ENV === "test") {
+            if (attempts >= 20) return 4000;
+            if (attempts >= 10) return 3000;
+            if (attempts >= 5) return 2000;
+            if (attempts >= 3) return 1000;
+            return 0;
+          }
+          // thresholds: 3->5m, 5->15m, 10->60m, 20->24h
+          if (attempts >= 20) return 24 * 60 * 60 * 1000;
+          if (attempts >= 10) return 60 * 60 * 1000;
+          if (attempts >= 5) return 15 * 60 * 1000;
+          if (attempts >= 3) return 5 * 60 * 1000;
+          return 0;
+        };
+        let nextAttemptTimestamp = null;
+        let newAttemptsEmail = Number(alert.attempts_email || 0);
+        let newAttemptsWebhooks = Number(alert.attempts_webhooks || 0);
+        let newAttemptsWhatsApp = Number(alert.attempts_whatsapp || 0);
+
+        // Track partial failures for webhooks to improve observability
+        let webhookPartialErrors = [];
+
+        for (const channel of finalChannels) {
+          let success = false;
+          let errorMessage = null;
+          let errorCode = null;
+
+          try {
+            if (channel === "email") {
+              // Build recipients: group emails only; no fallback
               let recipients = [];
-              let contactInfos = [];
+              const groupIdUsed = contactGroupId;
               try {
-                if (resolvedGroup && hasWhatsAppContacts(resolvedGroup)) {
-                  const waIds = resolvedGroup.whatsapp_contact_ids;
-                  // Query workspace_contacts to get phones and names
+                const emailIds = unionContactIds(
+                  eligibleGroups,
+                  "email_contact_ids",
+                );
+                if (emailIds.length > 0) {
                   const contactsRes = await client.query(
-                    `SELECT id, first_name, last_name, phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
-                    [alert.workspace_id, waIds],
+                    `SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+                    [alert.workspace_id, emailIds],
                   );
-                  contactInfos = contactsRes.rows
-                    .map((r) => ({
-                      id: r.id,
-                      first_name: String(r.first_name || "").trim(),
-                      last_name: String(r.last_name || "").trim(),
-                      phone: String(r.phone_e164 || "").trim(),
-                    }))
-                    .filter((c) => !!c.phone);
-                  recipients = contactInfos.map((c) => c.phone);
+                  recipients = contactsRes.rows
+                    .map((r) => {
+                      try {
+                        return String((r.details && r.details.email) || "")
+                          .toLowerCase()
+                          .trim();
+                      } catch (_) {
+                        return "";
+                      }
+                    })
+                    .filter((e) => isValidEmail(e));
                 }
               } catch (_err) {
                 logger.debug("Non-critical operation failed", {
                   error: _err.message,
                 });
               }
-
-              // Org-level soft rate limiter per minute (safety valve)
-              if (WHATSAPP_RATE_PER_MIN > 0) {
-                const recent = await client.query(
-                  `SELECT COUNT(*)::int AS c
-                   FROM alert_delivery_log d
-                  WHERE d.user_id = $1 AND d.channel = 'whatsapp' AND d.sent_at > NOW() - INTERVAL '60 seconds'`,
-                  [alert.owner_user_id],
-                );
-                const recentCount = recent.rows?.[0]?.c || 0;
-                if (recentCount >= WHATSAPP_RATE_PER_MIN) {
-                  success = false;
-                  errorMessage = "ORG_RATE_LIMIT";
-                  errorCode = "RATE_LIMIT";
-                }
-              }
+              // No fallback: if recipients is empty, email channel will result in no sends
 
               // Dedupe recipients
-              trimmed = Array.from(new Set(recipients)).filter((p) =>
-                /^\+?\d{6,15}$/.test(String(p).trim()),
-              );
-              // Build a map phone->first_name for template variables
-              const firstNameByPhone = new Map();
-              for (const c of contactInfos) {
-                if (c.phone && !firstNameByPhone.has(c.phone))
-                  firstNameByPhone.set(c.phone, c.first_name || "there");
-              }
+              const trimmed = dedupeNormalizedDestinations(
+                recipients,
+                "email",
+              ).filter((e) => isValidEmail(e));
 
-              if (errorMessage === "ORG_RATE_LIMIT") {
-                // Skip sending due to throttle; log for visibility
-                success = false;
-              } else if (trimmed.length === 0) {
+              if (trimmed.length === 0) {
                 success = false;
                 errorMessage =
-                  "No WhatsApp contacts are defined in the selected contact group";
+                  "No email contacts are defined in the selected contact group";
               } else {
-                const isEndpointHealthWhatsApp =
+                // Send individually and log per recipient
+                const isEndpointAlert =
                   alert.alert_key &&
                   alert.alert_key.startsWith("endpoint_health:");
-                const isExpired = typeof daysLeft === "number" && daysLeft <= 0;
-                const daysText = isExpired ? Math.abs(daysLeft) : daysLeft;
-                const rawName = String(alert.name || "").trim();
-                const name =
-                  rawName || String(alert.type || alert.category || "token");
-                // Prefer WhatsApp ContentSid if configured (outside-session safe)
-                const endpointTransition = isEndpointHealthWhatsApp
-                  ? String(alert.alert_key || "").split(":")[2] || "down"
-                  : null;
-                const selectedContentSid = isEndpointHealthWhatsApp
-                  ? endpointTransition === "down"
-                    ? contentSidEndpointDown
-                    : contentSidEndpointRecovered
-                  : isExpired
-                    ? contentSidExpired
-                    : contentSidExpires;
-                if (isEndpointHealthWhatsApp && !selectedContentSid) {
-                  success = false;
-                  errorMessage = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
-                  errorCode = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
+                const isCertRenewalFailedAlert =
+                  alert.alert_key &&
+                  alert.alert_key.startsWith("cert_renewal_failed:");
+                const isAgentHealthAlert =
+                  alert.alert_key &&
+                  alert.alert_key.startsWith("agent_health:");
+                let certRenewalJob = null;
+                if (isCertRenewalFailedAlert) {
+                  // Best-effort job lookup for the error code (zero-custody:
+                  // only id + error_code, never payloads).
                   try {
-                    await client.query(
-                      `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-                      [
-                        alert.id,
-                        alert.owner_user_id,
-                        alert.token_id,
-                        alert.workspace_id,
-                        "whatsapp",
-                        "failed",
-                        errorMessage,
-                        JSON.stringify({
-                          group_id: groupIdUsed,
-                          reason:
-                            "Set TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN and TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED in environment variables or System Settings",
-                        }),
-                      ],
+                    const certJobId = alert.alert_key.split(":")[1];
+                    const jobRes = await client.query(
+                      "SELECT id, error_code FROM certificate_jobs WHERE id = $1",
+                      [certJobId],
                     );
-                  } catch (_logErr) {
-                    logger.debug("Delivery log write failed", { error: _logErr?.message });
+                    certRenewalJob = jobRes.rows[0] || null;
+                  } catch (_err) {
+                    logger.debug("Non-critical operation failed", {
+                      error: _err.message,
+                    });
                   }
-                } else {
-                // Build smart details based on token type and available information
-                const buildDetails = (tokenData) => {
-                  const details = [];
-                  if (tokenData.issuer)
-                    details.push(`Issuer: ${tokenData.issuer}`);
-                  if (tokenData.location)
-                    details.push(`Location: ${tokenData.location}`);
-                  if (tokenData.used_by)
-                    details.push(`Used By: ${tokenData.used_by}`);
-                  if (
-                    tokenData.domains &&
-                    Array.isArray(tokenData.domains) &&
-                    tokenData.domains.length > 0
-                  ) {
-                    details.push(`Domains: ${tokenData.domains.join(", ")}`);
-                  }
-                  if (tokenData.algorithm)
-                    details.push(`Algorithm: ${tokenData.algorithm}`);
-                  if (tokenData.key_size)
-                    details.push(`Key Size: ${tokenData.key_size} bits`);
-                  if (tokenData.vendor)
-                    details.push(`Vendor: ${tokenData.vendor}`);
-                  if (tokenData.cost) details.push(`Cost: $${tokenData.cost}`);
-                  if (tokenData.serial_number)
-                    details.push(`Serial: ${tokenData.serial_number}`);
-                  if (tokenData.subject)
-                    details.push(`Subject: ${tokenData.subject}`);
-                  if (tokenData.renewal_url)
-                    details.push(`Renewal URL: ${tokenData.renewal_url}`);
-                  if (tokenData.renewal_date)
-                    details.push(`Renewal Date: ${tokenData.renewal_date}`);
-                  if (tokenData.description)
-                    details.push(`Description: ${tokenData.description}`);
-                  if (tokenData.notes)
-                    details.push(`Notes: ${tokenData.notes}`);
-                  if (tokenData.contacts)
-                    details.push(`Contacts: ${tokenData.contacts}`);
-                  return details.length > 0
-                    ? details.join(", ")
-                    : "No additional details available";
-                };
-
-                // Format expiration date as a long, locale-stable string (UTC)
-                const expirationDatePretty = alert.expiration
-                  ? (() => {
-                      try {
-                        const d = new Date(alert.expiration);
-                        const fmt = new Intl.DateTimeFormat("en", {
-                          timeZone: "UTC",
-                          weekday: "long",
-                          month: "long",
-                          day: "numeric",
-                          year: "numeric",
-                        });
-                        return fmt.format(d); // e.g., "Tuesday, November 11, 2025"
-                      } catch (_) {
-                        return String(alert.expiration).slice(0, 10);
-                      }
-                    })()
-                  : "";
-
-                const daysTextForTemplate = isExpired
-                  ? String(daysText)
-                  : String(daysLeft);
-
-                // Token expiry and endpoint health use different Twilio ContentSids;
-                // only include placeholders defined for each template (see DocsAlerts).
-                const contentVariablesBase = selectedContentSid
-                  ? isEndpointHealthWhatsApp
-                    ? buildEndpointHealthWhatsAppTemplateVariables(
-                        alert,
-                        contactInfos[0]?.first_name || "User",
-                      )
-                    : buildTokenExpiryWhatsAppTemplateVariables({
-                        recipientName: contactInfos[0]?.first_name || "User",
-                        tokenName: name,
-                        tokenType: String(alert.type || "security"),
-                        expirationDatePretty,
-                        daysText: daysTextForTemplate,
-                        details: buildDetails(alert),
-                      })
-                  : null;
-
+                }
+                const { subject, text, html } = isEndpointAlert
+                  ? buildEndpointHealthEmailContent(alert, alert)
+                  : isCertRenewalFailedAlert
+                    ? buildCertRenewalFailedEmailContent(alert, certRenewalJob)
+                    : isAgentHealthAlert
+                      ? buildAgentHealthEmailContent(alert)
+                      : buildEmailContent(alert, daysLeft);
                 let allOk = true;
                 for (const rcpt of trimmed) {
                   await assertStillOwnsDelivery(
@@ -2097,41 +1706,43 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                     claimId,
                     CLAIM_MARKER_MS,
                   );
-                  const endTimerWA = hLatency
-                    .labels("whatsapp", "twilio")
-                    .startTimer();
-                  const perRecipientBase = contentVariablesBase
-                    ? {
-                        ...contentVariablesBase,
-                        recipient_name:
-                          firstNameByPhone.get(rcpt) ||
-                          contentVariablesBase.recipient_name ||
-                          "there",
-                      }
-                    : null;
-                  // Sanitize all values before send; Twilio rejects invalid ContentVariables.
-                  const contentVariables = perRecipientBase
-                    ? sanitizeWhatsAppTemplateVars(perRecipientBase)
-                    : null;
-                  const res = await sendWhatsApp({
+                  const res = await sendEmailNotification({
                     to: rcpt,
-                    body: null,
-                    contentSid: selectedContentSid,
-                    contentVariables,
-                    idempotencyKey: `${alert.id}:${rcpt}`,
+                    subject,
+                    text,
+                    html,
+                    onBeforeAttempt: async () => {
+                      await assertStillOwnsDelivery(
+                        client,
+                        alert.id,
+                        claimId,
+                        CLAIM_MARKER_MS,
+                      );
+                    },
                   });
-                  try {
-                    endTimerWA();
-                  } catch (_err) {
-                    logger.warn("WhatsApp operation failed", {
-                      error: _err.message,
-                    });
-                  }
+                  await client.query(
+                    `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                    [
+                      alert.id,
+                      alert.owner_user_id,
+                      alert.token_id,
+                      alert.workspace_id,
+                      "email",
+                      res.success ? "success" : "failed",
+                      res.success ? null : res.error || null,
+                      JSON.stringify({
+                        group_id: groupIdUsed,
+                        recipient: rcpt,
+                      }),
+                    ],
+                  );
+                  // Increment metric for each email delivery attempt
                   try {
                     cDelivery
                       .labels(
-                        "whatsapp",
-                        "twilio",
+                        "email",
+                        "email",
                         res.success ? "success" : "failed",
                       )
                       .inc();
@@ -2140,6 +1751,598 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       error: _.message,
                     });
                   }
+                  if (!res.success) allOk = false;
+                }
+                success = allOk;
+                errorMessage = allOk ? null : "PARTIAL_FAILURE";
+              }
+            } else if (channel === "webhooks") {
+              let webhooks = Array.isArray(alert.webhook_urls)
+                ? [...alert.webhook_urls]
+                : [];
+              // If a group selects named webhook(s), restrict to only those; otherwise, send none
+              const groupIdUsedForWebhooks = contactGroupId;
+              try {
+                const names = unionWebhookNames(eligibleGroups);
+                if (names.length > 0) {
+                  const filtered = webhooks.filter((w) =>
+                    names.includes(String(w.name || "").trim()),
+                  );
+                  webhooks = uniqueWebhooksByUrl(filtered);
+                } else {
+                  webhooks = [];
+                }
+              } catch (_err) {
+                logger.debug("Non-critical operation failed", {
+                  error: _err.message,
+                });
+              }
+              if (webhooks.length === 0) {
+                success = false;
+                errorMessage =
+                  "No webhook names defined in the selected contact group";
+              } else {
+                // Consider the webhooks channel successful if at least one endpoint succeeds
+                let webhookSuccess = false;
+                const errors = [];
+
+                // Load previously successful webhook url hashes for this alert_queue
+                const priorSuccessRes = await client.query(
+                  `SELECT metadata->>'urlHash' AS h
+                 FROM alert_delivery_log
+                 WHERE alert_queue_id = $1 AND channel = 'webhooks' AND status = 'success'`,
+                  [alert.id],
+                );
+                const priorSuccess = new Set(
+                  priorSuccessRes.rows
+                    .map((r) => String(r.h || "").trim())
+                    .filter(Boolean),
+                );
+
+                for (const wh of webhooks) {
+                  let kind = String(wh?.kind || "generic");
+                  const url = String(wh?.url || "");
+                  const routingKey = String(wh?.routingKey || "");
+                  if (!url) continue;
+                  // Auto-detect provider kind by hostname when not explicitly set
+                  try {
+                    const host = new URL(url).hostname.toLowerCase();
+                    if (!wh?.kind || kind === "generic") {
+                      kind = detectWebhookProviderKind(host) || kind;
+                    }
+                  } catch (_err) {
+                    logger.debug("Non-critical operation failed", {
+                      error: _err.message,
+                    });
+                  }
+
+                  // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
+                  const urlHash = crypto
+                    .createHash("sha256")
+                    .update(url)
+                    .digest("hex");
+                  if (priorSuccess.has(urlHash)) {
+                    // Already delivered successfully to this endpoint for this alert; skip re-sending
+                    continue;
+                  }
+                  const name = alert.name || `Token #${alert.token_id}`;
+                  const isEndpointHealthWebhook =
+                    alert.alert_key &&
+                    alert.alert_key.startsWith("endpoint_health:");
+                  const isCertRenewalFailedWebhook =
+                    alert.alert_key &&
+                    alert.alert_key.startsWith("cert_renewal_failed:");
+                  const isAgentHealthWebhook =
+                    alert.alert_key &&
+                    alert.alert_key.startsWith("agent_health:");
+
+                  let text;
+                  let tokenData;
+                  let endpointTransition = null;
+                  let agentTransition = null;
+                  if (isEndpointHealthWebhook) {
+                    const ehParts = alert.alert_key.split(":");
+                    const ehTransition = ehParts[2] || "down";
+                    endpointTransition = ehTransition;
+                    const ehStatus =
+                      ehTransition === "down" ? "DOWN" : "RECOVERED";
+                    const location = alert.location || alert.name || "Unknown";
+                    text =
+                      location && location !== name
+                        ? `Endpoint ${ehStatus}: ${name} (${location})`
+                        : `Endpoint ${ehStatus}: ${name}`;
+                    tokenData = {
+                      type: "endpoint_health",
+                      token_id: alert.token_id,
+                      name: alert.name,
+                      location: alert.location,
+                      status: ehStatus,
+                      transition: ehTransition,
+                    };
+                  } else if (isCertRenewalFailedWebhook) {
+                    // Zero-custody: only job id, error code, cert/token name.
+                    const certJobId =
+                      alert.alert_key.split(":")[1] || "unknown";
+                    text = `Certificate renewal failed: ${name} (job ${certJobId})`;
+                    tokenData = {
+                      type: "cert_renewal_failed",
+                      token_id: alert.token_id,
+                      name: alert.name,
+                      job_id: certJobId,
+                    };
+                  } else if (isAgentHealthWebhook) {
+                    const agentContext = getAgentHealthContext(alert);
+                    agentTransition = agentContext.transition;
+                    text = `Agent ${agentContext.status}: ${agentContext.agentName}`;
+                    tokenData = {
+                      type: "agent_health",
+                      agent_name: agentContext.agentName,
+                      status: agentContext.status,
+                      transition: agentContext.transition,
+                      impacted_certificate_count:
+                        agentContext.impactedTotalCount,
+                    };
+                  } else {
+                    const expires = alert.expiration
+                      ? new Date(alert.expiration).toISOString().slice(0, 10)
+                      : null;
+                    const expired =
+                      typeof daysLeft === "number" && daysLeft <= 0;
+                    const absDays =
+                      typeof daysLeft === "number"
+                        ? Math.abs(daysLeft)
+                        : daysLeft;
+                    text = expired
+                      ? `${name} expired ${absDays} day(s) ago` +
+                        (expires ? ` (on ${expires})` : "") +
+                        `.`
+                      : `${name} expires in ${daysLeft} day(s)` +
+                        (expires ? ` (on ${expires})` : "") +
+                        `.`;
+
+                    tokenData = {
+                      token_id: alert.token_id,
+                      name: alert.name,
+                      type: alert.type,
+                      expiration: expires,
+                      daysLeft: daysLeft,
+                      ...(alert.renewal_url && {
+                        renewal_url: alert.renewal_url,
+                      }),
+                    };
+                  }
+
+                  // Determine severity per user-config or default mapping
+                  const computedSeverity =
+                    daysLeft < 30 ? "critical" : "warning";
+                  const selectedSeverity =
+                    typeof wh?.severity === "string" && wh.severity
+                      ? String(wh.severity).toLowerCase()
+                      : isEndpointHealthWebhook
+                        ? endpointTransition === "down"
+                          ? "critical"
+                          : "info"
+                        : isCertRenewalFailedWebhook
+                          ? "critical"
+                          : isAgentHealthWebhook
+                            ? agentTransition === "down"
+                              ? "critical"
+                              : "info"
+                            : computedSeverity;
+                  const templateTitle =
+                    typeof wh?.template === "string" && wh.template
+                      ? String(wh.template)
+                      : null;
+
+                  const payload = isEndpointHealthWebhook
+                    ? buildEndpointHealthWebhookPayload(kind, alert, {
+                        severity: selectedSeverity,
+                        title: templateTitle || undefined,
+                        routingKey,
+                      })
+                    : isAgentHealthWebhook
+                      ? buildAgentHealthWebhookPayload(kind, alert, {
+                          severity: selectedSeverity,
+                          title: templateTitle || undefined,
+                          routingKey,
+                        })
+                      : kind === "pagerduty"
+                        ? {
+                            routing_key: routingKey,
+                            event_action: "trigger",
+                            payload: {
+                              summary: templateTitle || text,
+                              source: "TokenTimer",
+                              severity: selectedSeverity,
+                              timestamp: new Date().toISOString(),
+                              custom_details: tokenData,
+                            },
+                          }
+                        : formatPayload(kind, text, tokenData, {
+                            severity: selectedSeverity,
+                            title: templateTitle || undefined,
+                          });
+                  await assertStillOwnsDelivery(
+                    client,
+                    alert.id,
+                    claimId,
+                    CLAIM_MARKER_MS,
+                  );
+                  const endTimer = hLatency
+                    .labels("webhooks", kind)
+                    .startTimer();
+                  const res = await postJson(url, payload, kind);
+                  try {
+                    endTimer();
+                  } catch (_) {
+                    logger.debug("Metrics recording failed", {
+                      error: _.message,
+                    });
+                  }
+                  try {
+                    cDelivery
+                      .labels(
+                        "webhooks",
+                        kind,
+                        res.success ? "success" : "failed",
+                      )
+                      .inc();
+                  } catch (_) {
+                    logger.debug("Metrics recording failed", {
+                      error: _.message,
+                    });
+                  }
+                  if (!res.success) {
+                    errors.push(`${kind}: ${res.error}`);
+                  } else {
+                    webhookSuccess = true;
+                    // Mark this urlHash as delivered to avoid future re-sends for this alert
+                    priorSuccess.add(urlHash);
+                  }
+                  // Log each individual webhook delivery attempt
+                  await client.query(
+                    `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                      alert.id,
+                      alert.owner_user_id,
+                      alert.token_id,
+                      alert.workspace_id,
+                      "webhooks",
+                      res.success ? "success" : "failed",
+                      res.success ? null : res.error || null,
+                      JSON.stringify({
+                        kind,
+                        urlDomain: new URL(url).hostname,
+                        urlHash,
+                        group_id: groupIdUsedForWebhooks,
+                        payload_type: isEndpointHealthWebhook
+                          ? "endpoint_health"
+                          : isCertRenewalFailedWebhook
+                            ? "cert_renewal_failed"
+                            : isAgentHealthWebhook
+                              ? "agent_health"
+                              : "token_expiry",
+                        endpoint_transition: isEndpointHealthWebhook
+                          ? tokenData?.transition || null
+                          : null,
+                        agent_transition: isAgentHealthWebhook
+                          ? tokenData?.transition || null
+                          : null,
+                      }),
+                    ],
+                  );
+                }
+                success = webhookSuccess;
+                if (errors.length > 0) {
+                  errorMessage = errors.join("; ");
+                } else if (!webhookSuccess) {
+                  errorMessage =
+                    "Webhook delivery skipped because no endpoint was eligible";
+                } else {
+                  errorMessage = null;
+                }
+                if (webhookSuccess && errors.length > 0) {
+                  webhookPartialErrors = errors.slice();
+                }
+              }
+            } else if (channel === "whatsapp") {
+              let trimmed = [];
+              const groupIdUsed = contactGroupId;
+
+              {
+                // Resolve phones by querying workspace_contacts with contact_ids from group
+                let recipients = [];
+                let contactInfos = [];
+                try {
+                  const waIds = unionContactIds(
+                    eligibleGroups,
+                    "whatsapp_contact_ids",
+                  );
+                  if (waIds.length > 0) {
+                    const contactsRes = await client.query(
+                      `SELECT id, first_name, last_name, phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+                      [alert.workspace_id, waIds],
+                    );
+                    contactInfos = contactsRes.rows
+                      .map((r) => ({
+                        id: r.id,
+                        first_name: String(r.first_name || "").trim(),
+                        last_name: String(r.last_name || "").trim(),
+                        phone: String(r.phone_e164 || "").trim(),
+                      }))
+                      .filter((c) => !!c.phone);
+                    recipients = contactInfos.map((c) => c.phone);
+                  }
+                } catch (_err) {
+                  logger.debug("Non-critical operation failed", {
+                    error: _err.message,
+                  });
+                }
+
+                // Org-level soft rate limiter per minute (safety valve)
+                if (WHATSAPP_RATE_PER_MIN > 0) {
+                  const recent = await client.query(
+                    `SELECT COUNT(*)::int AS c
+                   FROM alert_delivery_log d
+                  WHERE d.user_id = $1 AND d.channel = 'whatsapp' AND d.sent_at > NOW() - INTERVAL '60 seconds'`,
+                    [alert.owner_user_id],
+                  );
+                  const recentCount = recent.rows?.[0]?.c || 0;
+                  if (recentCount >= WHATSAPP_RATE_PER_MIN) {
+                    success = false;
+                    errorMessage = "ORG_RATE_LIMIT";
+                    errorCode = "RATE_LIMIT";
+                  }
+                }
+
+                // Dedupe recipients
+                trimmed = dedupeNormalizedDestinations(
+                  recipients,
+                  "phone",
+                ).filter((p) => /^\+?\d{6,15}$/.test(String(p).trim()));
+                // Build a map phone->first_name for template variables
+                const firstNameByPhone = new Map();
+                for (const c of contactInfos) {
+                  if (c.phone && !firstNameByPhone.has(c.phone))
+                    firstNameByPhone.set(c.phone, c.first_name || "there");
+                }
+
+                if (errorMessage === "ORG_RATE_LIMIT") {
+                  // Skip sending due to throttle; log for visibility
+                  success = false;
+                } else if (trimmed.length === 0) {
+                  success = false;
+                  errorMessage =
+                    "No WhatsApp contacts are defined in the selected contact group";
+                } else {
+                  const isEndpointHealthWhatsApp =
+                    alert.alert_key &&
+                    alert.alert_key.startsWith("endpoint_health:");
+                  const isExpired =
+                    typeof daysLeft === "number" && daysLeft <= 0;
+                  const daysText = isExpired ? Math.abs(daysLeft) : daysLeft;
+                  const rawName = String(alert.name || "").trim();
+                  const name =
+                    rawName || String(alert.type || alert.category || "token");
+                  // Prefer WhatsApp ContentSid if configured (outside-session safe)
+                  const endpointTransition = isEndpointHealthWhatsApp
+                    ? String(alert.alert_key || "").split(":")[2] || "down"
+                    : null;
+                  const selectedContentSid = isEndpointHealthWhatsApp
+                    ? endpointTransition === "down"
+                      ? contentSidEndpointDown
+                      : contentSidEndpointRecovered
+                    : isExpired
+                      ? contentSidExpired
+                      : contentSidExpires;
+                  if (isEndpointHealthWhatsApp && !selectedContentSid) {
+                    success = false;
+                    errorMessage = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
+                    errorCode = "WHATSAPP_ENDPOINT_TEMPLATE_NOT_CONFIGURED";
+                    try {
+                      await client.query(
+                        `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                        [
+                          alert.id,
+                          alert.owner_user_id,
+                          alert.token_id,
+                          alert.workspace_id,
+                          "whatsapp",
+                          "failed",
+                          errorMessage,
+                          JSON.stringify({
+                            group_id: groupIdUsed,
+                            reason:
+                              "Set TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN and TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED in environment variables or System Settings",
+                          }),
+                        ],
+                      );
+                    } catch (_logErr) {
+                      logger.debug("Delivery log write failed", {
+                        error: _logErr?.message,
+                      });
+                    }
+                  } else {
+                    // Build smart details based on token type and available information
+                    const buildDetails = (tokenData) => {
+                      const details = [];
+                      if (tokenData.issuer)
+                        details.push(`Issuer: ${tokenData.issuer}`);
+                      if (tokenData.location)
+                        details.push(`Location: ${tokenData.location}`);
+                      if (tokenData.used_by)
+                        details.push(`Used By: ${tokenData.used_by}`);
+                      if (
+                        tokenData.domains &&
+                        Array.isArray(tokenData.domains) &&
+                        tokenData.domains.length > 0
+                      ) {
+                        details.push(
+                          `Domains: ${tokenData.domains.join(", ")}`,
+                        );
+                      }
+                      if (tokenData.algorithm)
+                        details.push(`Algorithm: ${tokenData.algorithm}`);
+                      if (tokenData.key_size)
+                        details.push(`Key Size: ${tokenData.key_size} bits`);
+                      if (tokenData.vendor)
+                        details.push(`Vendor: ${tokenData.vendor}`);
+                      if (tokenData.cost)
+                        details.push(`Cost: $${tokenData.cost}`);
+                      if (tokenData.serial_number)
+                        details.push(`Serial: ${tokenData.serial_number}`);
+                      if (tokenData.subject)
+                        details.push(`Subject: ${tokenData.subject}`);
+                      if (tokenData.renewal_url)
+                        details.push(`Renewal URL: ${tokenData.renewal_url}`);
+                      if (tokenData.renewal_date)
+                        details.push(`Renewal Date: ${tokenData.renewal_date}`);
+                      if (tokenData.description)
+                        details.push(`Description: ${tokenData.description}`);
+                      if (tokenData.notes)
+                        details.push(`Notes: ${tokenData.notes}`);
+                      if (tokenData.contacts)
+                        details.push(`Contacts: ${tokenData.contacts}`);
+                      return details.length > 0
+                        ? details.join(", ")
+                        : "No additional details available";
+                    };
+
+                    // Format expiration date as a long, locale-stable string (UTC)
+                    const expirationDatePretty = alert.expiration
+                      ? (() => {
+                          try {
+                            const d = new Date(alert.expiration);
+                            const fmt = new Intl.DateTimeFormat("en", {
+                              timeZone: "UTC",
+                              weekday: "long",
+                              month: "long",
+                              day: "numeric",
+                              year: "numeric",
+                            });
+                            return fmt.format(d); // e.g., "Tuesday, November 11, 2025"
+                          } catch (_) {
+                            return String(alert.expiration).slice(0, 10);
+                          }
+                        })()
+                      : "";
+
+                    const daysTextForTemplate = isExpired
+                      ? String(daysText)
+                      : String(daysLeft);
+
+                    // Token expiry and endpoint health use different Twilio ContentSids;
+                    // only include placeholders defined for each template (see DocsAlerts).
+                    const contentVariablesBase = selectedContentSid
+                      ? isEndpointHealthWhatsApp
+                        ? buildEndpointHealthWhatsAppTemplateVariables(
+                            alert,
+                            contactInfos[0]?.first_name || "User",
+                          )
+                        : buildTokenExpiryWhatsAppTemplateVariables({
+                            recipientName:
+                              contactInfos[0]?.first_name || "User",
+                            tokenName: name,
+                            tokenType: String(alert.type || "security"),
+                            expirationDatePretty,
+                            daysText: daysTextForTemplate,
+                            details: buildDetails(alert),
+                          })
+                      : null;
+
+                    let allOk = true;
+                    for (const rcpt of trimmed) {
+                      await assertStillOwnsDelivery(
+                        client,
+                        alert.id,
+                        claimId,
+                        CLAIM_MARKER_MS,
+                      );
+                      const endTimerWA = hLatency
+                        .labels("whatsapp", "twilio")
+                        .startTimer();
+                      const perRecipientBase = contentVariablesBase
+                        ? {
+                            ...contentVariablesBase,
+                            recipient_name:
+                              firstNameByPhone.get(rcpt) ||
+                              contentVariablesBase.recipient_name ||
+                              "there",
+                          }
+                        : null;
+                      // Sanitize all values before send; Twilio rejects invalid ContentVariables.
+                      const contentVariables = perRecipientBase
+                        ? sanitizeWhatsAppTemplateVars(perRecipientBase)
+                        : null;
+                      const res = await sendWhatsApp({
+                        to: rcpt,
+                        body: null,
+                        contentSid: selectedContentSid,
+                        contentVariables,
+                        idempotencyKey: `${alert.id}:${rcpt}`,
+                      });
+                      try {
+                        endTimerWA();
+                      } catch (_err) {
+                        logger.warn("WhatsApp operation failed", {
+                          error: _err.message,
+                        });
+                      }
+                      try {
+                        cDelivery
+                          .labels(
+                            "whatsapp",
+                            "twilio",
+                            res.success ? "success" : "failed",
+                          )
+                          .inc();
+                      } catch (_) {
+                        logger.debug("Metrics recording failed", {
+                          error: _.message,
+                        });
+                      }
+                      await client.query(
+                        `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                        [
+                          alert.id,
+                          alert.owner_user_id,
+                          alert.token_id,
+                          alert.workspace_id,
+                          "whatsapp",
+                          res.success ? "success" : "failed",
+                          res.success ? null : res.error || null,
+                          JSON.stringify({
+                            group_id: groupIdUsed,
+                            recipient: rcpt,
+                            messageSid: res.messageSid || null,
+                            contentSid: selectedContentSid,
+                            payload_type: isEndpointHealthWhatsApp
+                              ? "endpoint_health"
+                              : "token_expiry",
+                            template_kind: isEndpointHealthWhatsApp
+                              ? endpointTransition === "down"
+                                ? "endpoint_down"
+                                : "endpoint_recovered"
+                              : isExpired
+                                ? "token_expired"
+                                : "token_expires",
+                          }),
+                        ],
+                      );
+                      if (!res.success) allOk = false;
+                    }
+                    success = allOk;
+                    errorMessage = allOk ? null : "PARTIAL_FAILURE";
+                  }
+                }
+              }
+
+              // If WhatsApp failed without per-recipient rows (rate limit or no recipients), log a channel-level entry
+              if (!success && trimmed.length === 0) {
+                try {
                   await client.query(
                     `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -2149,49 +2352,51 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       alert.token_id,
                       alert.workspace_id,
                       "whatsapp",
-                      res.success ? "success" : "failed",
-                      res.success ? null : res.error || null,
-                      JSON.stringify({
-                        group_id: groupIdUsed,
-                        recipient: rcpt,
-                        messageSid: res.messageSid || null,
-                        contentSid: selectedContentSid,
-                        payload_type: isEndpointHealthWhatsApp
-                          ? "endpoint_health"
-                          : "token_expiry",
-                        template_kind: isEndpointHealthWhatsApp
-                          ? endpointTransition === "down"
-                            ? "endpoint_down"
-                            : "endpoint_recovered"
-                          : isExpired
-                            ? "token_expired"
-                            : "token_expires",
-                      }),
+                      errorMessage === "ORG_RATE_LIMIT" ? "deferred" : "failed",
+                      errorMessage,
+                      JSON.stringify({ group_id: groupIdUsed }),
                     ],
                   );
-                  if (!res.success) allOk = false;
+                } catch (_err) {
+                  logger.warn("WhatsApp operation failed", {
+                    error: _err.message,
+                  });
                 }
-                success = allOk;
-                errorMessage = allOk ? null : "PARTIAL_FAILURE";
+                try {
+                  cDelivery
+                    .labels(
+                      "whatsapp",
+                      "whatsapp",
+                      errorMessage === "ORG_RATE_LIMIT" ? "deferred" : "failed",
+                    )
+                    .inc();
+                } catch (_) {
+                  logger.debug("Metrics recording failed", {
+                    error: _.message,
+                  });
                 }
               }
             }
-
-            // If WhatsApp failed without per-recipient rows (rate limit or no recipients), log a channel-level entry
-            if (!success && trimmed.length === 0) {
+          } catch (e) {
+            // Ownership loss must abort the whole row, not degrade into a
+            // per-channel failure that still continues other recipients/channels.
+            if (e instanceof DeliveryOwnershipLostError) throw e;
+            success = false;
+            errorMessage = e.message;
+            // Catch-all: if an exception occurred during WhatsApp processing, log it
+            if (channel === "whatsapp") {
               try {
                 await client.query(
-                  `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                  `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
                   [
                     alert.id,
                     alert.owner_user_id,
                     alert.token_id,
                     alert.workspace_id,
                     "whatsapp",
-                    errorMessage === "ORG_RATE_LIMIT" ? "deferred" : "failed",
-                    errorMessage,
-                    JSON.stringify({ group_id: groupIdUsed }),
+                    "failed",
+                    e.message,
                   ],
                 );
               } catch (_err) {
@@ -2200,234 +2405,347 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 });
               }
               try {
-                cDelivery
-                  .labels(
-                    "whatsapp",
-                    "whatsapp",
-                    errorMessage === "ORG_RATE_LIMIT" ? "deferred" : "failed",
-                  )
-                  .inc();
+                cDelivery.labels("whatsapp", "whatsapp", "failed").inc();
               } catch (_) {
                 logger.debug("Metrics recording failed", { error: _.message });
               }
             }
           }
-        } catch (e) {
-          // Ownership loss must abort the whole row, not degrade into a
-          // per-channel failure that still continues other recipients/channels.
-          if (e instanceof DeliveryOwnershipLostError) throw e;
-          success = false;
-          errorMessage = e.message;
-          // Catch-all: if an exception occurred during WhatsApp processing, log it
-          if (channel === "whatsapp") {
+
+          // Log delivery attempt (per-channel). For webhooks, WhatsApp, and email we already insert per-endpoint/per-recipient rows.
+          // Skip the extra per-channel summary for these.
+          if (
+            channel !== "webhooks" &&
+            channel !== "email" &&
+            channel !== "whatsapp"
+          ) {
+            const endTimer = hLatency.labels(channel, channel).startTimer();
+            await client.query(
+              `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [
+                alert.id,
+                alert.owner_user_id,
+                alert.token_id,
+                alert.workspace_id,
+                channel,
+                success ? "success" : "failed",
+                errorMessage,
+              ],
+            );
             try {
-              await client.query(
-                `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-                [
-                  alert.id,
-                  alert.owner_user_id,
-                  alert.token_id,
-                  alert.workspace_id,
-                  "whatsapp",
-                  "failed",
-                  e.message,
-                ],
-              );
+              endTimer();
             } catch (_err) {
-              logger.warn("WhatsApp operation failed", { error: _err.message });
+              logger.debug("Non-critical operation failed", {
+                error: _err.message,
+              });
             }
+          }
+
+          deliveryResults.push({ channel, success, errorMessage, errorCode });
+          // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
+          if (
+            channel === "whatsapp" &&
+            !success &&
+            errorMessage !== "ORG_RATE_LIMIT" &&
+            String(errorCode || "").toUpperCase() !== "RATE_LIMIT"
+          ) {
+            whatsappPermanentFailure = true;
+          }
+          // Note: Email and webhooks metrics are already incremented in their respective channel handlers above.
+          // Only increment metrics here for other channels (e.g., slack, discord) that don't have dedicated handlers.
+          if (channel !== "webhooks" && channel !== "email") {
             try {
-              cDelivery.labels("whatsapp", "whatsapp", "failed").inc();
+              cDelivery
+                .labels(channel, channel, success ? "success" : "failed")
+                .inc();
             } catch (_) {
               logger.debug("Metrics recording failed", { error: _.message });
             }
           }
-        }
-
-        // Log delivery attempt (per-channel). For webhooks, WhatsApp, and email we already insert per-endpoint/per-recipient rows.
-        // Skip the extra per-channel summary for these.
-        if (
-          channel !== "webhooks" &&
-          channel !== "email" &&
-          channel !== "whatsapp"
-        ) {
-          const endTimer = hLatency.labels(channel, channel).startTimer();
-          await client.query(
-            `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-              alert.id,
-              alert.owner_user_id,
-              alert.token_id,
-              alert.workspace_id,
-              channel,
-              success ? "success" : "failed",
-              errorMessage,
-            ],
-          );
-          try {
-            endTimer();
-          } catch (_err) {
-            logger.debug("Non-critical operation failed", {
-              error: _err.message,
-            });
+          if (!success) {
+            allSucceeded = false;
+            if (channel === "email") {
+              newAttemptsEmail += 1;
+              let ms = computeCooldownMs(newAttemptsEmail);
+              // If rate-limited, enforce a visible cooldown even on first failures
+              if (
+                (errorCode && String(errorCode).includes("RATE_LIMIT")) ||
+                /rate[- ]?limit|maximum number of sent emails/i.test(
+                  String(errorMessage || ""),
+                )
+              ) {
+                // At least 60 minutes cooldown to avoid hammering provider
+                ms = Math.max(ms, 60 * 60 * 1000);
+              }
+              if (ms > 0) {
+                const ts = new Date(Date.now() + ms);
+                if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
+                  nextAttemptTimestamp = ts;
+              }
+            } else if (channel === "webhooks") {
+              newAttemptsWebhooks += 1;
+              const ms = computeCooldownMs(newAttemptsWebhooks);
+              if (ms > 0) {
+                const ts = new Date(Date.now() + ms);
+                if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
+                  nextAttemptTimestamp = ts;
+              }
+            } else if (channel === "whatsapp") {
+              newAttemptsWhatsApp += 1;
+              let ms = computeCooldownMs(newAttemptsWhatsApp);
+              // If org-level rate-limited, use a short cooldown (60-90 seconds) instead of exponential backoff
+              if (
+                errorMessage === "ORG_RATE_LIMIT" ||
+                errorCode === "RATE_LIMIT"
+              ) {
+                // Retry in 60-90 seconds (per-minute rate limit)
+                ms = process.env.NODE_ENV === "test" ? 2000 : 75 * 1000;
+              }
+              if (ms > 0) {
+                const ts = new Date(Date.now() + ms);
+                if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
+                  nextAttemptTimestamp = ts;
+              }
+            }
+            try {
+              cRetry.labels(channel, "auto").inc();
+            } catch (_) {
+              logger.debug("Metrics recording failed", { error: _.message });
+            }
+          } else {
+            if (channel === "email") newAttemptsEmail = 0;
+            if (channel === "webhooks") newAttemptsWebhooks = 0;
+            if (channel === "whatsapp") newAttemptsWhatsApp = 0;
           }
         }
 
-        deliveryResults.push({ channel, success, errorMessage, errorCode });
-        // If WhatsApp failed and it's not a soft throttle, consider it permanent and block the queue entry
-        if (
-          channel === "whatsapp" &&
-          !success &&
-          errorMessage !== "ORG_RATE_LIMIT" &&
-          String(errorCode || "").toUpperCase() !== "RATE_LIMIT"
-        ) {
-          whatsappPermanentFailure = true;
-        }
-        // Note: Email and webhooks metrics are already incremented in their respective channel handlers above.
-        // Only increment metrics here for other channels (e.g., slack, discord) that don't have dedicated handlers.
-        if (channel !== "webhooks" && channel !== "email") {
-          try {
-            cDelivery
-              .labels(channel, channel, success ? "success" : "failed")
-              .inc();
-          } catch (_) {
-            logger.debug("Metrics recording failed", { error: _.message });
-          }
-        }
-        if (!success) {
-          allSucceeded = false;
-          if (channel === "email") {
-            newAttemptsEmail += 1;
-            let ms = computeCooldownMs(newAttemptsEmail);
-            // If rate-limited, enforce a visible cooldown even on first failures
-            if (
-              (errorCode && String(errorCode).includes("RATE_LIMIT")) ||
-              /rate[- ]?limit|maximum number of sent emails/i.test(
-                String(errorMessage || ""),
-              )
-            ) {
-              // At least 60 minutes cooldown to avoid hammering provider
-              ms = Math.max(ms, 60 * 60 * 1000);
-            }
-            if (ms > 0) {
-              const ts = new Date(Date.now() + ms);
-              if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
-                nextAttemptTimestamp = ts;
-            }
-          } else if (channel === "webhooks") {
-            newAttemptsWebhooks += 1;
-            const ms = computeCooldownMs(newAttemptsWebhooks);
-            if (ms > 0) {
-              const ts = new Date(Date.now() + ms);
-              if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
-                nextAttemptTimestamp = ts;
-            }
-          } else if (channel === "whatsapp") {
-            newAttemptsWhatsApp += 1;
-            let ms = computeCooldownMs(newAttemptsWhatsApp);
-            // If org-level rate-limited, use a short cooldown (60-90 seconds) instead of exponential backoff
-            if (
-              errorMessage === "ORG_RATE_LIMIT" ||
-              errorCode === "RATE_LIMIT"
-            ) {
-              // Retry in 60-90 seconds (per-minute rate limit)
-              ms = process.env.NODE_ENV === "test" ? 2000 : 75 * 1000;
-            }
-            if (ms > 0) {
-              const ts = new Date(Date.now() + ms);
-              if (!nextAttemptTimestamp || ts > nextAttemptTimestamp)
-                nextAttemptTimestamp = ts;
-            }
-          }
-          try {
-            cRetry.labels(channel, "auto").inc();
-          } catch (_) {
-            logger.debug("Metrics recording failed", { error: _.message });
-          }
+        // If webhooks channel present and at least one endpoint succeeded, don't force overall failure.
+        // Only force failure if all webhook endpoints failed (webhookSuccess === false) which is already
+        // reflected in the channel result above. Here we avoid overriding a true allSucceeded due to partials.
+        // allSucceeded remains as computed from per-channel success values.
+
+        // Update alert queue status
+        // Determine status: "sent" only when all channels succeeded; "partial" when some succeeded and others failed/blocked; "failed" when none succeeded
+        const someSucceeded = deliveryResults.some((r) => r.success);
+        const someFailed = deliveryResults.some((r) => !r.success);
+        const hasPartialIssues = webhookPartialErrors.length > 0;
+
+        let newStatus;
+        if (allSucceeded && !hasPartialIssues) {
+          newStatus = "sent";
+        } else if (someSucceeded && (someFailed || hasPartialIssues)) {
+          newStatus = "partial";
         } else {
-          if (channel === "email") newAttemptsEmail = 0;
-          if (channel === "webhooks") newAttemptsWebhooks = 0;
-          if (channel === "whatsapp") newAttemptsWhatsApp = 0;
+          newStatus = "failed";
         }
-      }
 
-      // If webhooks channel present and at least one endpoint succeeded, don't force overall failure.
-      // Only force failure if all webhook endpoints failed (webhookSuccess === false) which is already
-      // reflected in the channel result above. Here we avoid overriding a true allSucceeded due to partials.
-      // allSucceeded remains as computed from per-channel success values.
+        const attempts = alert.attempts + 1;
+        let errorMessages = deliveryResults
+          .filter((r) => !r.success)
+          .map((r) => `${r.channel}: ${r.errorMessage}`)
+          .join("; ");
+        // If all channels succeeded but webhooks had partial failures, still surface them in error_message
+        if (allSucceeded && webhookPartialErrors.length > 0) {
+          const partialMsg = `webhooks(partial): ${webhookPartialErrors.join("; ")}`;
+          errorMessages = errorMessages
+            ? `${errorMessages}; ${partialMsg}`
+            : partialMsg;
+        }
 
-      // Update alert queue status
-      // Determine status: "sent" only when all channels succeeded; "partial" when some succeeded and others failed/blocked; "failed" when none succeeded
-      const someSucceeded = deliveryResults.some((r) => r.success);
-      const someFailed = deliveryResults.some((r) => !r.success);
-      const hasPartialIssues = webhookPartialErrors.length > 0;
-
-      let newStatus;
-      if (allSucceeded && !hasPartialIssues) {
-        newStatus = "sent";
-      } else if (someSucceeded && (someFailed || hasPartialIssues)) {
-        newStatus = "partial";
-      } else {
-        newStatus = "failed";
-      }
-
-      const attempts = alert.attempts + 1;
-      let errorMessages = deliveryResults
-        .filter((r) => !r.success)
-        .map((r) => `${r.channel}: ${r.errorMessage}`)
-        .join("; ");
-      // If all channels succeeded but webhooks had partial failures, still surface them in error_message
-      if (allSucceeded && webhookPartialErrors.length > 0) {
-        const partialMsg = `webhooks(partial): ${webhookPartialErrors.join("; ")}`;
-        errorMessages = errorMessages
-          ? `${errorMessages}; ${partialMsg}`
-          : partialMsg;
-      }
-
-      if (newStatus === "sent") {
-        const sentRes = await client.query(
-          `UPDATE alert_queue 
+        if (newStatus === "sent") {
+          const sentRes = await client.query(
+            `UPDATE alert_queue 
            SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(),
                attempts_email = $5, attempts_webhooks = $6, attempts_whatsapp = $7, next_attempt_at = NULL,
                delivery_claim_id = NULL
            WHERE id = $4 AND delivery_claim_id = $8`,
-          [
-            newStatus,
-            attempts,
-            errorMessages || null,
-            alert.id,
-            newAttemptsEmail,
-            newAttemptsWebhooks,
-            newAttemptsWhatsApp,
-            claimId,
-          ],
-        );
-        if (sentRes.rowCount === 0) {
-          logger.warn(
-            "Skipped sent terminal write: another worker took ownership",
-            { alertId: alert.id },
+            [
+              newStatus,
+              attempts,
+              errorMessages || null,
+              alert.id,
+              newAttemptsEmail,
+              newAttemptsWebhooks,
+              newAttemptsWhatsApp,
+              claimId,
+            ],
           );
+          if (sentRes.rowCount === 0) {
+            logger.warn(
+              "Skipped sent terminal write: another worker took ownership",
+              { alertId: alert.id },
+            );
+          }
+          // Emit an audit event for partial successes to aid diagnostics
+          if (webhookPartialErrors.length > 0) {
+            await writeAudit(client, {
+              subjectUserId: alert.user_id,
+              action: "ALERT_PARTIAL_SUCCESS",
+              targetId: alert.token_id,
+              metadata: {
+                channel: "webhooks",
+                errors: webhookPartialErrors,
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+                contact_group_id: contactGroupId,
+                contact_group_name: contactGroupName,
+              },
+            });
+          }
+        } else {
+          // In test mode, ensure a minimal cooldown exists to satisfy cooldown tests
+          if (!nextAttemptTimestamp && process.env.NODE_ENV === "test") {
+            nextAttemptTimestamp = new Date(Date.now() + 1000);
+          }
+          // If max attempts reached on any channel, permanently block this alert
+          let reachedMaxAttempts = false;
+          if (
+            MAX_ATTEMPTS_PER_CHANNEL > 0 &&
+            (newAttemptsEmail >= MAX_ATTEMPTS_PER_CHANNEL ||
+              newAttemptsWebhooks >= MAX_ATTEMPTS_PER_CHANNEL ||
+              newAttemptsWhatsApp >= MAX_ATTEMPTS_PER_CHANNEL)
+          ) {
+            reachedMaxAttempts = true;
+            // Ensure no further retries are scheduled
+            nextAttemptTimestamp = null;
+            errorMessages = errorMessages
+              ? `${errorMessages}; MAX_ATTEMPTS`
+              : "MAX_ATTEMPTS";
+            try {
+              await writeAudit(client, {
+                subjectUserId: alert.user_id,
+                action: "ALERT_BLOCKED_MAX_ATTEMPTS",
+                targetId: alert.token_id,
+                metadata: {
+                  days: alert.threshold_days,
+                  attempts_email: newAttemptsEmail,
+                  attempts_webhooks: newAttemptsWebhooks,
+                  attempts_whatsapp: newAttemptsWhatsApp,
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                  contact_group_id: contactGroupId,
+                  contact_group_name: contactGroupName,
+                },
+              });
+            } catch (_err) {
+              logger.warn("WhatsApp operation failed", { error: _err.message });
+            }
+          }
+          // Keep only failed channels for retry to avoid resending successful ones
+          const failedChannels = Array.from(
+            new Set(
+              deliveryResults.filter((r) => !r.success).map((r) => r.channel),
+            ),
+          );
+          const channelsToStore = failedChannels;
+
+          // Compute next_attempt_at based on failed channels
+          let finalNextAttempt = nextAttemptTimestamp;
+
+          // If WhatsApp had a permanent failure, block immediately (no further retries)
+          const blockDueToWhatsApp = whatsappPermanentFailure === true;
+          if (blockDueToWhatsApp) {
+            finalNextAttempt = null;
+            if (errorMessages)
+              errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
+            else errorMessages = "WHATSAPP_PERMANENT_FAILURE";
+            try {
+              await writeAudit(client, {
+                subjectUserId: alert.user_id,
+                action: "ALERT_BLOCKED_WHATSAPP_ERROR",
+                targetId: alert.token_id,
+                channel: "whatsapp",
+                metadata: {
+                  days: alert.threshold_days,
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                  contact_group_id: contactGroupId,
+                  contact_group_name: contactGroupName,
+                },
+              });
+            } catch (_err) {
+              logger.warn("WhatsApp operation failed", { error: _err.message });
+            }
+          }
+          const terminalRes = await client.query(
+            `UPDATE alert_queue 
+           SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(), channels = $5,
+               attempts_email = $6, attempts_webhooks = $7, attempts_whatsapp = $8, next_attempt_at = $9,
+               delivery_claim_id = NULL
+           WHERE id = $4 AND delivery_claim_id = $10`,
+            [
+              reachedMaxAttempts || blockDueToWhatsApp ? "blocked" : newStatus,
+              attempts,
+              errorMessages || null,
+              alert.id,
+              JSON.stringify(channelsToStore),
+              newAttemptsEmail,
+              newAttemptsWebhooks,
+              newAttemptsWhatsApp,
+              reachedMaxAttempts || blockDueToWhatsApp
+                ? null
+                : finalNextAttempt
+                  ? finalNextAttempt.toISOString()
+                  : null,
+              claimId,
+            ],
+          );
+          if (terminalRes.rowCount === 0) {
+            logger.warn(
+              "Skipped failed/blocked terminal write: another worker took ownership",
+              { alertId: alert.id },
+            );
+          }
+          if (!reachedMaxAttempts && nextAttemptTimestamp) {
+            try {
+              await writeAudit(client, {
+                subjectUserId: alert.user_id,
+                action: "ALERT_RETRY_SCHEDULED",
+                targetId: alert.token_id,
+                metadata: {
+                  days: alert.threshold_days,
+                  next_attempt_at: nextAttemptTimestamp.toISOString(),
+                  channels_to_retry: channelsToStore,
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                  contact_group_id: contactGroupId,
+                  contact_group_name: contactGroupName,
+                },
+              });
+            } catch (_err) {
+              logger.debug("Non-critical operation failed", {
+                error: _err.message,
+              });
+            }
+          }
         }
-        // Emit an audit event for partial successes to aid diagnostics
-        if (webhookPartialErrors.length > 0) {
-          const contactGroupId =
-            alert.contact_group_id || alert.default_contact_group_id || null;
-          const groups = Array.isArray(alert.contact_groups)
-            ? alert.contact_groups
-            : [];
-          const contactGroupName = contactGroupId
-            ? groups.find((g) => String(g.id) === String(contactGroupId))
-                ?.name || null
-            : null;
+
+        if (allSucceeded) {
+          sent++;
           await writeAudit(client, {
             subjectUserId: alert.user_id,
-            action: "ALERT_PARTIAL_SUCCESS",
+            action: "ALERT_SENT",
             targetId: alert.token_id,
             metadata: {
-              channel: "webhooks",
-              errors: webhookPartialErrors,
+              days: alert.threshold_days,
+              channels: finalChannels,
+              workspace_name: alert.workspace_name,
+              token_name: alert.name,
+              contact_group_id: contactGroupId,
+              contact_group_name: contactGroupName,
+            },
+          });
+        } else {
+          failed++;
+          await writeAudit(client, {
+            subjectUserId: alert.user_id,
+            action: "ALERT_SEND_FAILED",
+            targetId: alert.token_id,
+            metadata: {
+              days: alert.threshold_days,
+              error: errorMessages,
+              attempts,
               workspace_name: alert.workspace_name,
               token_name: alert.name,
               contact_group_id: contactGroupId,
@@ -2435,211 +2753,6 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             },
           });
         }
-      } else {
-        // In test mode, ensure a minimal cooldown exists to satisfy cooldown tests
-        if (!nextAttemptTimestamp && process.env.NODE_ENV === "test") {
-          nextAttemptTimestamp = new Date(Date.now() + 1000);
-        }
-        // If max attempts reached on any channel, permanently block this alert
-        let reachedMaxAttempts = false;
-        if (
-          MAX_ATTEMPTS_PER_CHANNEL > 0 &&
-          (newAttemptsEmail >= MAX_ATTEMPTS_PER_CHANNEL ||
-            newAttemptsWebhooks >= MAX_ATTEMPTS_PER_CHANNEL ||
-            newAttemptsWhatsApp >= MAX_ATTEMPTS_PER_CHANNEL)
-        ) {
-          reachedMaxAttempts = true;
-          // Ensure no further retries are scheduled
-          nextAttemptTimestamp = null;
-          errorMessages = errorMessages
-            ? `${errorMessages}; MAX_ATTEMPTS`
-            : "MAX_ATTEMPTS";
-          try {
-            const contactGroupId =
-              alert.contact_group_id || alert.default_contact_group_id || null;
-            const groups = Array.isArray(alert.contact_groups)
-              ? alert.contact_groups
-              : [];
-            const contactGroupName = contactGroupId
-              ? groups.find((g) => String(g.id) === String(contactGroupId))
-                  ?.name || null
-              : null;
-            await writeAudit(client, {
-              subjectUserId: alert.user_id,
-              action: "ALERT_BLOCKED_MAX_ATTEMPTS",
-              targetId: alert.token_id,
-              metadata: {
-                days: alert.threshold_days,
-                attempts_email: newAttemptsEmail,
-                attempts_webhooks: newAttemptsWebhooks,
-                attempts_whatsapp: newAttemptsWhatsApp,
-                workspace_name: alert.workspace_name,
-                token_name: alert.name,
-                contact_group_id: contactGroupId,
-                contact_group_name: contactGroupName,
-              },
-            });
-          } catch (_err) {
-            logger.warn("WhatsApp operation failed", { error: _err.message });
-          }
-        }
-        // Keep only failed channels for retry to avoid resending successful ones
-        const failedChannels = Array.from(
-          new Set(
-            deliveryResults.filter((r) => !r.success).map((r) => r.channel),
-          ),
-        );
-        const channelsToStore = failedChannels;
-
-        // Compute next_attempt_at based on failed channels
-        let finalNextAttempt = nextAttemptTimestamp;
-
-        // If WhatsApp had a permanent failure, block immediately (no further retries)
-        const blockDueToWhatsApp = whatsappPermanentFailure === true;
-        if (blockDueToWhatsApp) {
-          finalNextAttempt = null;
-          if (errorMessages)
-            errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
-          else errorMessages = "WHATSAPP_PERMANENT_FAILURE";
-          try {
-            const contactGroupId =
-              alert.contact_group_id || alert.default_contact_group_id || null;
-            const groups = Array.isArray(alert.contact_groups)
-              ? alert.contact_groups
-              : [];
-            const contactGroupName = contactGroupId
-              ? groups.find((g) => String(g.id) === String(contactGroupId))
-                  ?.name || null
-              : null;
-            await writeAudit(client, {
-              subjectUserId: alert.user_id,
-              action: "ALERT_BLOCKED_WHATSAPP_ERROR",
-              targetId: alert.token_id,
-              channel: "whatsapp",
-              metadata: {
-                days: alert.threshold_days,
-                workspace_name: alert.workspace_name,
-                token_name: alert.name,
-                contact_group_id: contactGroupId,
-                contact_group_name: contactGroupName,
-              },
-            });
-          } catch (_err) {
-            logger.warn("WhatsApp operation failed", { error: _err.message });
-          }
-        }
-        const terminalRes = await client.query(
-          `UPDATE alert_queue 
-           SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(), channels = $5,
-               attempts_email = $6, attempts_webhooks = $7, attempts_whatsapp = $8, next_attempt_at = $9,
-               delivery_claim_id = NULL
-           WHERE id = $4 AND delivery_claim_id = $10`,
-          [
-            reachedMaxAttempts || blockDueToWhatsApp ? "blocked" : newStatus,
-            attempts,
-            errorMessages || null,
-            alert.id,
-            JSON.stringify(channelsToStore),
-            newAttemptsEmail,
-            newAttemptsWebhooks,
-            newAttemptsWhatsApp,
-            reachedMaxAttempts || blockDueToWhatsApp
-              ? null
-              : finalNextAttempt
-                ? finalNextAttempt.toISOString()
-                : null,
-            claimId,
-          ],
-        );
-        if (terminalRes.rowCount === 0) {
-          logger.warn(
-            "Skipped failed/blocked terminal write: another worker took ownership",
-            { alertId: alert.id },
-          );
-        }
-        if (!reachedMaxAttempts && nextAttemptTimestamp) {
-          try {
-            const contactGroupId =
-              alert.contact_group_id || alert.default_contact_group_id || null;
-            const groups = Array.isArray(alert.contact_groups)
-              ? alert.contact_groups
-              : [];
-            const contactGroupName = contactGroupId
-              ? groups.find((g) => String(g.id) === String(contactGroupId))
-                  ?.name || null
-              : null;
-            await writeAudit(client, {
-              subjectUserId: alert.user_id,
-              action: "ALERT_RETRY_SCHEDULED",
-              targetId: alert.token_id,
-              metadata: {
-                days: alert.threshold_days,
-                next_attempt_at: nextAttemptTimestamp.toISOString(),
-                channels_to_retry: channelsToStore,
-                workspace_name: alert.workspace_name,
-                token_name: alert.name,
-                contact_group_id: contactGroupId,
-                contact_group_name: contactGroupName,
-              },
-            });
-          } catch (_err) {
-            logger.debug("Non-critical operation failed", {
-              error: _err.message,
-            });
-          }
-        }
-      }
-
-      if (allSucceeded) {
-        sent++;
-        const contactGroupId =
-          alert.contact_group_id || alert.default_contact_group_id || null;
-        const groups = Array.isArray(alert.contact_groups)
-          ? alert.contact_groups
-          : [];
-        const contactGroupName = contactGroupId
-          ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
-            null
-          : null;
-        await writeAudit(client, {
-          subjectUserId: alert.user_id,
-          action: "ALERT_SENT",
-          targetId: alert.token_id,
-          metadata: {
-            days: alert.threshold_days,
-            channels: finalChannels,
-            workspace_name: alert.workspace_name,
-            token_name: alert.name,
-            contact_group_id: contactGroupId,
-            contact_group_name: contactGroupName,
-          },
-        });
-      } else {
-        failed++;
-        const contactGroupId =
-          alert.contact_group_id || alert.default_contact_group_id || null;
-        const groups = Array.isArray(alert.contact_groups)
-          ? alert.contact_groups
-          : [];
-        const contactGroupName = contactGroupId
-          ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
-            null
-          : null;
-        await writeAudit(client, {
-          subjectUserId: alert.user_id,
-          action: "ALERT_SEND_FAILED",
-          targetId: alert.token_id,
-          metadata: {
-            days: alert.threshold_days,
-            error: errorMessages,
-            attempts,
-            workspace_name: alert.workspace_name,
-            token_name: alert.name,
-            contact_group_id: contactGroupId,
-            contact_group_name: contactGroupName,
-          },
-        });
-      }
       } catch (ownershipErr) {
         if (!(ownershipErr instanceof DeliveryOwnershipLostError)) {
           throw ownershipErr;
