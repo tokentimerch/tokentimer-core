@@ -33,6 +33,7 @@ import {
   unionContactIds,
   dedupeNormalizedDestinations,
   deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
 } from "./shared/contactGroups.js";
 import {
   parseCertRenewalFailedJobId,
@@ -1536,12 +1537,21 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           alert.contact_groups,
         );
 
-        const channels = deliveryChannelsFromEligibleGroups(eligibleGroups, {
-          emailAlertsEnabled: alert.email_alerts_enabled,
-          alertKey: alert.alert_key,
-        });
-
-        const finalChannels = channels;
+        const liveChannels = deliveryChannelsFromEligibleGroups(
+          eligibleGroups,
+          {
+            emailAlertsEnabled: alert.email_alerts_enabled,
+            alertKey: alert.alert_key,
+          },
+        );
+        // First attempt re-derives channels from current groups. After a
+        // partial send, alert.channels holds only the failed set so a retry
+        // cannot resend a channel that already succeeded.
+        const finalChannels = channelsForDeliveryAttempt(
+          liveChannels,
+          alert.channels,
+          { isRetry: Number(alert.attempts || 0) > 0 },
+        );
 
         // If no eligible channels remain, mark failed and continue
         if (!Array.isArray(finalChannels) || finalChannels.length === 0) {

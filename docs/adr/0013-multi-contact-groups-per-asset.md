@@ -130,6 +130,16 @@ group tables.
    PostgreSQL), not the database's default text collation and not
    JavaScript's default `.sort()`.
 
+   Step 4 (two-or-more membership writes and dashboard multi-select) is
+   gated by `CONTACT_GROUP_PLURAL_WRITES` (off unless set to `true`;
+   on in `NODE_ENV=test`). This release's dashboard otherwise hits a
+   still-running dual-write API with `[A,B]` and that replica persists
+   only the singular companion. Turn the gate on only after every API,
+   worker, and dashboard replica is this release. Until then a
+   `contact_group_ids` / `contactGroupIds` write with two or more ids
+   is HTTP 400. `GET /api/auth/features` reports
+   `contactGroupPluralWrites` so the dashboard stays single-select.
+
    Until step 5, `tokens.contact_group_id` and
    `certops_agents.contact_group_id` are a compatibility mirror of join
    membership, not an independent assignment. Readers that have not yet

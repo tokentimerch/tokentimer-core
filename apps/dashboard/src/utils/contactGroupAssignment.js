@@ -3,6 +3,17 @@
  * Empty `contact_group_ids` means "use the workspace default".
  */
 
+function compareContactGroupIdsUtf8Bytes(left, right) {
+  const encoder = new TextEncoder();
+  const a = encoder.encode(String(left));
+  const b = encoder.encode(String(right));
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
 export function normalizeContactGroupIds(value) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
@@ -14,7 +25,7 @@ export function normalizeContactGroupIds(value) {
     seen.add(id);
     out.push(id);
   }
-  out.sort();
+  out.sort(compareContactGroupIdsUtf8Bytes);
   return out;
 }
 

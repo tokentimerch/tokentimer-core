@@ -90,6 +90,9 @@ api:
     failureThreshold: 40
 
   env: {}
+  # After every API, worker, and dashboard replica is this chart version, set
+  # CONTACT_GROUP_PLURAL_WRITES: "true" so an asset can belong to more than one
+  # contact group. Leave unset or "false" during the rolling update.
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []

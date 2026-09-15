@@ -1,5 +1,9 @@
 "use strict";
 
+const {
+  isContactGroupPluralWritesEnabled,
+} = require("./contactGroupPluralWrites");
+
 const MIN_THRESHOLD = -365;
 const MAX_THRESHOLD = 730;
 
@@ -255,6 +259,28 @@ function deliveryChannelsFromEligibleGroups(
   return channels;
 }
 
+function parseQueuedChannels(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string" || value.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function channelsForDeliveryAttempt(
+  liveChannels,
+  queuedChannels,
+  { isRetry = false } = {},
+) {
+  const live = Array.isArray(liveChannels) ? liveChannels.map(String) : [];
+  if (!isRetry) return live;
+  const queued = new Set(parseQueuedChannels(queuedChannels));
+  return live.filter((channel) => queued.has(channel));
+}
+
 function invalidMembershipWriteError(fieldName) {
   const err = new Error(`${fieldName} must be an array of strings`);
   err.code = "VALIDATION_ERROR";
@@ -280,7 +306,15 @@ function interpretContactGroupWrite({
         throw invalidMembershipWriteError(pluralFieldName);
       }
     }
-    return { action: "set", ids: normalizeAssignedGroupIds(contactGroupIds) };
+    const ids = normalizeAssignedGroupIds(contactGroupIds);
+    if (ids.length > 1 && !isContactGroupPluralWritesEnabled()) {
+      const err = new Error(
+        `${pluralFieldName} cannot assign more than one group until CONTACT_GROUP_PLURAL_WRITES is enabled`,
+      );
+      err.code = "VALIDATION_ERROR";
+      throw err;
+    }
+    return { action: "set", ids };
   }
   if (!hasSingular) {
     return { action: "omit" };
@@ -322,5 +356,7 @@ module.exports = {
   dedupeNormalizedDestinations,
   whatsAppAllowedForAlertKey,
   deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
   interpretContactGroupWrite,
+  isContactGroupPluralWritesEnabled,
 };

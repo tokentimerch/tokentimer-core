@@ -322,6 +322,14 @@ describe("worker ESM matches API CJS", () => {
         { alertKey: "expires:1:7" },
       ),
     );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+      api.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+    );
   });
 });
 
@@ -447,6 +455,38 @@ describe("interpretContactGroupWrite", () => {
       }),
       { action: "set", ids: ["g1"] },
     );
+  });
+
+  it("rejects two-or-more ids when CONTACT_GROUP_PLURAL_WRITES is off", () => {
+    const previous = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "false";
+    try {
+      assert.equal(api.isContactGroupPluralWritesEnabled(), false);
+      assert.throws(
+        () =>
+          api.interpretContactGroupWrite({
+            contactGroupIds: ["a", "b"],
+            hasPlural: true,
+            hasSingular: false,
+          }),
+        (err) => {
+          assert.equal(err.code, "VALIDATION_ERROR");
+          assert.match(err.message, /CONTACT_GROUP_PLURAL_WRITES/);
+          return true;
+        },
+      );
+      assert.deepEqual(
+        api.interpretContactGroupWrite({
+          contactGroupIds: ["a"],
+          hasPlural: true,
+          hasSingular: false,
+        }),
+        { action: "set", ids: ["a"] },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+      else process.env.CONTACT_GROUP_PLURAL_WRITES = previous;
+    }
   });
 });
 
@@ -699,6 +739,40 @@ describe("deliveryChannelsFromEligibleGroups", () => {
         alertKey: "endpoint_health:7",
       }),
       ["email", "whatsapp"],
+    );
+  });
+});
+
+describe("channelsForDeliveryAttempt", () => {
+  it("on first send uses live channels even when the queue snapshot was email-only", async () => {
+    const worker = await loadWorkerContactGroups();
+    assert.deepEqual(
+      api.channelsForDeliveryAttempt(["whatsapp"], ["email"], {
+        isRetry: false,
+      }),
+      ["whatsapp"],
+    );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["whatsapp"], ["email"], {
+        isRetry: false,
+      }),
+      ["whatsapp"],
+    );
+  });
+
+  it("on retry sends only channels that both failed and are still live", async () => {
+    const worker = await loadWorkerContactGroups();
+    assert.deepEqual(
+      api.channelsForDeliveryAttempt(["email", "webhooks"], ["webhooks"], {
+        isRetry: true,
+      }),
+      ["webhooks"],
+    );
+    assert.deepEqual(
+      worker.channelsForDeliveryAttempt(["email", "webhooks"], '["webhooks"]', {
+        isRetry: true,
+      }),
+      ["webhooks"],
     );
   });
 });

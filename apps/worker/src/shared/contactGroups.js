@@ -316,6 +316,28 @@ function deliveryChannelsFromEligibleGroups(
   return channels;
 }
 
+function parseQueuedChannels(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string" || value.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function channelsForDeliveryAttempt(
+  liveChannels,
+  queuedChannels,
+  { isRetry = false } = {},
+) {
+  const live = Array.isArray(liveChannels) ? liveChannels.map(String) : [];
+  if (!isRetry) return live;
+  const queued = new Set(parseQueuedChannels(queuedChannels));
+  return live.filter((channel) => queued.has(channel));
+}
+
 export {
   resolveContactGroup,
   hasEmailContacts,
@@ -334,4 +356,5 @@ export {
   dedupeNormalizedDestinations,
   whatsAppAllowedForAlertKey,
   deliveryChannelsFromEligibleGroups,
+  channelsForDeliveryAttempt,
 };

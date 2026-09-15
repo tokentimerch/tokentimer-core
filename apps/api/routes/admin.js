@@ -66,18 +66,13 @@ function invalidContactGroupResponse(res) {
   });
 }
 
-async function membershipIdsForAssetWrite(
-  client,
-  workspaceId,
-  body,
-  stampedDefaultId,
-) {
+async function membershipIdsForAssetWrite(client, workspaceId, body) {
   const membership = interpretBodyContactGroups(body);
   if (membership.action === "set") {
     await assertContactGroupIds(client, workspaceId, membership.ids);
     return membership.ids;
   }
-  return stampedDefaultId ? [String(stampedDefaultId)] : [];
+  return [];
 }
 
 const router = require("express").Router();
@@ -967,9 +962,7 @@ router.post(
           );
           monitorMembershipIds = monitorMembership.ids;
         } else {
-          monitorMembershipIds = defaultContactGroupId
-            ? [String(defaultContactGroupId)]
-            : [];
+          monitorMembershipIds = [];
         }
       } catch (err) {
         if (err?.code === "VALIDATION_ERROR") {
@@ -1550,26 +1543,12 @@ router.post(
         domainRow = result.rows[0];
       }
 
-      let stampedDefaultId = null;
-      try {
-        const wsSettings = await pool.query(
-          "SELECT default_contact_group_id FROM workspace_settings WHERE workspace_id = $1",
-          [req.workspace.id],
-        );
-        if (wsSettings.rows[0]?.default_contact_group_id) {
-          stampedDefaultId = String(wsSettings.rows[0].default_contact_group_id);
-        }
-      } catch (_err) {
-        logger.warn("DB operation failed", { error: _err.message });
-      }
-
       let membershipIds;
       try {
         membershipIds = await membershipIdsForAssetWrite(
           pool,
           req.workspace.id,
           req.body,
-          stampedDefaultId,
         );
       } catch (err) {
         if (err?.code === "VALIDATION_ERROR") {

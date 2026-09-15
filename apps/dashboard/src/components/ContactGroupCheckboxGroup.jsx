@@ -6,9 +6,11 @@ import {
   VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
+import { useContactGroupPluralWrites } from '../utils/contactGroupPluralWrites.jsx';
 
 /**
  * Stacked contact-group checkboxes. Empty selection means workspace default.
+ * When plural writes are off, checking a second group replaces the first.
  */
 export default function ContactGroupCheckboxGroup({
   contactGroups = [],
@@ -20,10 +22,17 @@ export default function ContactGroupCheckboxGroup({
   defaultContactGroupId = '',
   size = 'sm',
   maxH = { base: 'min(32vh, 240px)', md: '160px' },
+  allowMultiple,
 }) {
   const helperColor = useColorModeValue('gray.600', 'gray.400');
+  const pluralWritesEnabled = useContactGroupPluralWrites();
+  const canSelectMultiple =
+    allowMultiple === undefined ? pluralWritesEnabled : allowMultiple === true;
   const selected = Array.isArray(value) ? value.map(String) : [];
   const groups = Array.isArray(contactGroups) ? contactGroups : [];
+  const shownHelper = canSelectMultiple
+    ? helperText
+    : 'Select one contact group. Leave unchecked to use the workspace default.';
 
   if (groups.length === 0) {
     return (
@@ -43,9 +52,15 @@ export default function ContactGroupCheckboxGroup({
         <CheckboxGroup
           colorScheme='blue'
           value={selected}
-          onChange={vals =>
-            onChange?.(Array.isArray(vals) ? vals.map(String) : [])
-          }
+          onChange={vals => {
+            const next = Array.isArray(vals) ? vals.map(String) : [];
+            if (!canSelectMultiple && next.length > 1) {
+              const added = next.find(id => !selected.includes(id));
+              onChange?.(added ? [added] : next.slice(-1));
+              return;
+            }
+            onChange?.(next);
+          }}
           isDisabled={isDisabled}
         >
           <VStack align='stretch' spacing={2}>
@@ -70,9 +85,9 @@ export default function ContactGroupCheckboxGroup({
           </VStack>
         </CheckboxGroup>
       </Box>
-      {helperText ? (
+      {shownHelper ? (
         <Text fontSize='xs' mt={1} color={helperColor}>
-          {helperText}
+          {shownHelper}
         </Text>
       ) : null}
     </>

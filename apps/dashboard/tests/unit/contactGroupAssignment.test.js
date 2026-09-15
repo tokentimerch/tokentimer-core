@@ -38,11 +38,17 @@ describe('contactGroupAssignment', () => {
       contactGroupIds: ['g1', 'g2'],
       contactGroupId: 'g1',
     });
-    expect(contactGroupFieldsForImportDefaults(['group-2', 'group-1'])).toEqual({
-      contact_group_ids: ['group-1', 'group-2'],
-      contact_group_id: 'group-1',
-    });
+    expect(contactGroupFieldsForImportDefaults(['group-2', 'group-1'])).toEqual(
+      {
+        contact_group_ids: ['group-1', 'group-2'],
+        contact_group_id: 'group-1',
+      }
+    );
     expect(contactGroupFieldsForImportDefaults([])).toEqual({});
+    expect(canonicalContactGroupFields(['\uFFFF', '\u{1F600}'])).toEqual({
+      contact_group_ids: ['\uFFFF', '\u{1F600}'],
+      contact_group_id: '\uFFFF',
+    });
   });
 
   it('formats names and CSV export values', () => {

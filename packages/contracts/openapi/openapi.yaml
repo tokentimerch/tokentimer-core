@@ -85,6 +85,13 @@ paths:
                     type: boolean
                   manualInvitesDisabled:
                     type: boolean
+                  contactGroupPluralWrites:
+                    type: boolean
+                    description: >
+                      When true, the dashboard may assign an asset to more than
+                      one contact group. Off until every API, worker, and
+                      dashboard replica is this release, then set
+                      CONTACT_GROUP_PLURAL_WRITES=true.
   /api/session:
     get:
       tags: [Session]
