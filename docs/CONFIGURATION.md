@@ -265,7 +265,8 @@ with DNS Zone Contributor (and ARM) as documented in
 inventory unless you intentionally want both roles on one identity.
 Client-credential Entra scans attribute results to the tenant GUID from
 OpenID discovery (`/{tenant}/v2.0/.well-known/openid-configuration`); a
-tenant domain is canonicalized to that GUID before minting.
+tenant domain is canonicalized to that GUID before minting. Key Vault
+client-credential mint uses the tenant GUID or domain as supplied.
 
 Pasted-token scans still work. Existing auto-sync configs keep their stored
 token until you use **Replace credentials**. Core scheduled auto-sync stays

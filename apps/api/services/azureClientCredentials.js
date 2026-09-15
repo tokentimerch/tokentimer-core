@@ -94,6 +94,37 @@ async function timedJsonFetch(fetchFn, url, init, failedMessage) {
   return { response, body };
 }
 
+function throwTenantDiscoveryError({ status, message }) {
+  const err = new Error(message);
+  err.azureTenantDiscovery = true;
+  err.status = status;
+  throw err;
+}
+
+function mapTenantDiscoveryHttpStatus(status) {
+  if (status === 429) {
+    throwTenantDiscoveryError({
+      status: 429,
+      message:
+        "Azure tenant discovery rate limit exceeded. Wait a moment and try again.",
+    });
+  }
+  if (status >= 500) {
+    throwTenantDiscoveryError({
+      status: 502,
+      message: "Azure tenant discovery request failed",
+    });
+  }
+  throwTenantDiscoveryError({
+    status: 400,
+    message: "Tenant not found. Check tenantId.",
+  });
+}
+
+function shouldCanonicalizeAzureTenant(scope) {
+  return scope === GRAPH_SCOPE;
+}
+
 async function resolveCanonicalTenantId(tenantId, fetchImpl) {
   const raw = nonEmptyString(tenantId, "tenantId");
   const already = canonicalTenantGuid(raw);
@@ -101,28 +132,36 @@ async function resolveCanonicalTenantId(tenantId, fetchImpl) {
 
   const fetchFn = fetchImpl || globalThis.fetch;
   if (typeof fetchFn !== "function") {
-    const err = new Error("Azure tenant discovery request failed");
-    err.status = 502;
-    throw err;
+    throwTenantDiscoveryError({
+      status: 502,
+      message: "Azure tenant discovery request failed",
+    });
   }
 
   const url = `${LOGIN_BASE_URL}/${encodeURIComponent(raw)}/v2.0/.well-known/openid-configuration`;
-  const { response, body } = await timedJsonFetch(
-    fetchFn,
-    url,
-    { method: "GET", headers: { Accept: "application/json" } },
-    "Azure tenant discovery request failed",
-  );
+  let response;
+  let body;
+  try {
+    ({ response, body } = await timedJsonFetch(
+      fetchFn,
+      url,
+      { method: "GET", headers: { Accept: "application/json" } },
+      "Azure tenant discovery request failed",
+    ));
+  } catch (e) {
+    e.azureTenantDiscovery = true;
+    if (!e.status || e.status < 500) e.status = 502;
+    throw e;
+  }
   if (!response.ok) {
-    const err = new Error("Tenant not found. Check tenantId.");
-    err.status = 400;
-    throw err;
+    mapTenantDiscoveryHttpStatus(response.status);
   }
   const guid = tenantGuidFromOpenIdConfig(body);
   if (!guid) {
-    const err = new Error("Azure tenant discovery did not return a tenant id");
-    err.status = 502;
-    throw err;
+    throwTenantDiscoveryError({
+      status: 502,
+      message: "Azure tenant discovery did not return a tenant id",
+    });
   }
   return guid;
 }
@@ -312,19 +351,22 @@ async function resolveAzureScanAuth({
     return { token: token.trim(), authProvider: undefined };
   }
 
-  const canonicalTenantId = await resolveCanonicalTenantId(
-    tenantId,
-    fetchImpl,
-  );
+  const canonicalizeTenant = shouldCanonicalizeAzureTenant(scope);
+  const mintTenantId = canonicalizeTenant
+    ? await resolveCanonicalTenantId(tenantId, fetchImpl)
+    : nonEmptyString(tenantId, "tenantId");
   const authProvider = createClientCredentialsTokenProvider({
-    tenantId: canonicalTenantId,
+    tenantId: mintTenantId,
     clientId,
     clientSecret,
     scope,
     fetchImpl,
   });
   const minted = await authProvider.getToken();
-  return { token: minted, authProvider, tenantId: canonicalTenantId };
+  if (canonicalizeTenant) {
+    return { token: minted, authProvider, tenantId: mintTenantId };
+  }
+  return { token: minted, authProvider };
 }
 
 function scrubAzureSecretsFromBody(body) {
@@ -341,6 +383,7 @@ module.exports = {
   resolveAuthMethod,
   canonicalTenantGuid,
   resolveCanonicalTenantId,
+  shouldCanonicalizeAzureTenant,
   mapAzureAuthError,
   mintAccessToken,
   createBearerTokenProvider,

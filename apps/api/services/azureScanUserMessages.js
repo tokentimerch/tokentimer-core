@@ -1,6 +1,7 @@
 "use strict";
 
 function azureKeyVaultUserMessage(e, errorRef, formatIntegrationError) {
+  if (e?.azureTenantDiscovery) return e.message;
   if (e?.status === 400) {
     return `Invalid request: ${e?.message || "Bad Request"}. Check your Key Vault URL format (should be https://[name].vault.azure.net).`;
   }
@@ -39,6 +40,7 @@ function azureKeyVaultUserMessage(e, errorRef, formatIntegrationError) {
 }
 
 function azureAdUserMessage(e, errorRef, formatIntegrationError) {
+  if (e?.azureTenantDiscovery) return e.message;
   if (e?.status === 400 || e?.graphError === "BadRequest") {
     if (e?.message?.includes("Invalid version")) {
       return `Microsoft Graph API version error. This should not happen - please report this. Reference: ${errorRef}`;

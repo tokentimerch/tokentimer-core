@@ -1458,11 +1458,6 @@ export default function ImportTokensModal({
         payload,
         { _suppressLog: true }
       );
-      const res = await apiClient.get(
-        `/api/v1/workspaces/${workspaceId}/auto-sync`
-      );
-      const configs = res.data?.items || [];
-      setAutoSyncConfig(configs.find(c => c.provider === source) || false);
       if (source === 'azure') {
         azureFormRef.current?.resetReplacement?.();
       }
@@ -1474,7 +1469,18 @@ export default function ImportTokensModal({
         setAzureADClientSecret('');
         setAzureADAuthMethod('token');
       }
-      showSuccess(`Auto-sync settings updated for ${source}`);
+      try {
+        const res = await apiClient.get(
+          `/api/v1/workspaces/${workspaceId}/auto-sync`
+        );
+        const configs = res.data?.items || [];
+        setAutoSyncConfig(configs.find(c => c.provider === source) || false);
+        showSuccess(`Auto-sync settings updated for ${source}`);
+      } catch (_refreshErr) {
+        showWarning(
+          'Settings saved, but the latest schedule could not be reloaded. Refresh the page.'
+        );
+      }
     } catch (e) {
       showWarning(
         e?.response?.data?.error || 'Failed to update auto-sync settings'

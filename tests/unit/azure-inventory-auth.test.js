@@ -547,6 +547,20 @@ describe("Azure scan route user messages", () => {
     assert.match(msg, /Application\.Read\.All/);
     assert.match(msg, /broader/);
   });
+
+  it("tenant discovery errors keep their own message", () => {
+    const discovery = {
+      status: 400,
+      message: "Tenant not found. Check tenantId.",
+      azureTenantDiscovery: true,
+    };
+    const kv = azureKeyVaultUserMessage(discovery, "ref", () => "fallback");
+    assert.equal(kv, "Tenant not found. Check tenantId.");
+    assert.ok(!/vault URL/i.test(kv));
+    const ad = azureAdUserMessage(discovery, "ref", () => "fallback");
+    assert.equal(ad, "Tenant not found. Check tenantId.");
+    assert.ok(!/Microsoft Graph/i.test(ad));
+  });
 });
 
 describe("secret redaction", () => {
@@ -583,6 +597,28 @@ describe("auto-sync audit rows", () => {
       adminSrc,
       /action: "AUTO_SYNC_CREATED"[\s\S]{0,500}clientSecret/,
     );
+  });
+});
+
+describe("auto-sync replacement secret lifetime", () => {
+  it("clears Azure replacement state after PUT, before the config refresh GET", () => {
+    const modalSrc = fs.readFileSync(
+      path.resolve(
+        __dirname,
+        "../../apps/dashboard/src/components/ImportTokensModal.jsx",
+      ),
+      "utf8",
+    );
+    const saveMatch = modalSrc.match(
+      /const handleSaveAutoSyncChanges = async \(\) => \{([\s\S]*?)\n  \};/,
+    );
+    assert.ok(saveMatch);
+    const body = saveMatch[1];
+    const putAt = body.indexOf("apiClient.put");
+    const getAt = body.indexOf("apiClient.get");
+    const clearAt = body.indexOf("resetReplacement");
+    assert.ok(putAt >= 0 && getAt > putAt);
+    assert.ok(clearAt > putAt && clearAt < getAt);
   });
 });
 
@@ -682,6 +718,63 @@ describe("canonical tenant provenance", () => {
     assert.match(urls[0], /contoso\.onmicrosoft\.com/);
     assert.match(urls[0], /openid-configuration/);
     assert.match(urls[1], new RegExp(`${TENANT_GUID}/oauth2/v2.0/token`));
+  });
+
+  it("Key Vault client credentials mint against the supplied tenant and skip OpenID discovery", async () => {
+    const urls = [];
+    const fetchImpl = async (url) => {
+      urls.push(String(url));
+      return { ok: true, json: async () => ({ access_token: "minted-kv" }) };
+    };
+    const resolved = await azureCreds.resolveAzureScanAuth({
+      authMethod: "client_credentials",
+      tenantId: "contoso.onmicrosoft.com",
+      clientId: "cid",
+      clientSecret: "csec",
+      scope: azureCreds.KEY_VAULT_SCOPE,
+      fetchImpl,
+    });
+    assert.equal(resolved.token, "minted-kv");
+    assert.equal(resolved.tenantId, undefined);
+    assert.equal(urls.length, 1);
+    assert.match(urls[0], /contoso\.onmicrosoft\.com\/oauth2\/v2\.0\/token/);
+    assert.doesNotMatch(urls[0], /openid-configuration/);
+  });
+
+  it("maps discovery 429 and 5xx separately from a bad tenant", async () => {
+    await assert.rejects(
+      () =>
+        azureCreds.resolveCanonicalTenantId(
+          "contoso.onmicrosoft.com",
+          async () => ({ ok: false, status: 429, json: async () => ({}) }),
+        ),
+      (err) =>
+        err.status === 429 &&
+        err.azureTenantDiscovery === true &&
+        /rate limit/i.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        azureCreds.resolveCanonicalTenantId(
+          "contoso.onmicrosoft.com",
+          async () => ({ ok: false, status: 503, json: async () => ({}) }),
+        ),
+      (err) =>
+        err.status === 502 &&
+        err.azureTenantDiscovery === true &&
+        /discovery request failed/i.test(err.message),
+    );
+    await assert.rejects(
+      () =>
+        azureCreds.resolveCanonicalTenantId(
+          "contoso.onmicrosoft.com",
+          async () => ({ ok: false, status: 404, json: async () => ({}) }),
+        ),
+      (err) =>
+        err.status === 400 &&
+        err.azureTenantDiscovery === true &&
+        err.message === "Tenant not found. Check tenantId.",
+    );
   });
 });
 

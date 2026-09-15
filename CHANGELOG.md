@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Azure Key Vault and Entra inventory scans accept an Entra app** (tenant ID, client ID, client secret) in addition to a pasted access token. TokenTimer mints `vault.azure.net/.default` or `graph.microsoft.com/.default` from `login.microsoftonline.com/{tenant}/oauth2/v2.0/token`. Client-credential Entra scans attribute inventory to the tenant GUID from OpenID discovery, not by decoding the Graph access token. Key Vault inventory lists metadata only, so Key Vault Reader is enough. Graph inventory recommends Application.Read.All. This is not CertOps Azure DNS (DNS Zone Contributor / ARM). **Operator guidance:** existing pasted-token auto-sync configs keep working; use Replace credentials to switch method or rotate a secret.
+- **Azure Key Vault and Entra inventory scans accept an Entra app** (tenant ID, client ID, client secret) in addition to a pasted access token. TokenTimer mints `vault.azure.net/.default` or `graph.microsoft.com/.default` from `login.microsoftonline.com/{tenant}/oauth2/v2.0/token`. Client-credential Entra scans attribute inventory to the tenant GUID from OpenID discovery, not by decoding the Graph access token. Key Vault mints against the supplied tenant GUID or domain and does not call OpenID discovery. A discovery rate-limit or Microsoft outage is reported as such, not as a bad tenant. Key Vault inventory lists metadata only, so Key Vault Reader is enough. Graph inventory recommends Application.Read.All. This is not CertOps Azure DNS (DNS Zone Contributor / ARM). **Operator guidance:** existing pasted-token auto-sync configs keep working; use Replace credentials to switch method or rotate a secret.
 
 ### Security
 
