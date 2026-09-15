@@ -14,8 +14,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { useSearchParams, useNavigate } from 'react-router';
-import axios from 'axios';
-import { API_BASE_URL } from '../utils/apiClient';
+import apiClient, { API_BASE_URL } from '../utils/apiClient';
 
 function VerifyEmail() {
   const [searchParams] = useSearchParams();
@@ -85,15 +84,9 @@ function VerifyEmail() {
         clearTimeout(redirectTimeoutRef.current);
         redirectTimeoutRef.current = null;
       }
-      const apiUrl = API_BASE_URL || '';
-
-      const response = await axios.post(
-        `${apiUrl}/auth/resend-verification`,
-        {
-          email,
-        },
-        { withCredentials: true }
-      );
+      const response = await apiClient.post('/auth/resend-verification', {
+        email,
+      });
 
       if (response.data.emailSent) {
         setMessage('Verification email sent! Please check your inbox.');
@@ -123,8 +116,7 @@ function VerifyEmail() {
 
   const handleLogout = async () => {
     try {
-      const apiUrl = API_BASE_URL || '';
-      await axios.post(`${apiUrl}/api/logout`, {}, { withCredentials: true });
+      await apiClient.post('/api/logout', {});
     } catch (e) {
       // Ignore errors; we still navigate away
     } finally {

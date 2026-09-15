@@ -2,6 +2,7 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
+const { csrfExempt } = require("../middleware/csrf");
 const {
   loginLimiter,
   loginEmailLimiter,
@@ -250,6 +251,7 @@ passport.use(
 // Email/Password Login
 router.post(
   "/auth/login",
+  csrfExempt,
   loginLimiter,
   loginEmailLimiter,
   authSlowdown,
@@ -547,6 +549,7 @@ router.post(
 // Second step: verify TOTP for 2FA
 router.post(
   "/auth/verify-2fa",
+  csrfExempt,
   loginLimiter,
   authSlowdown,
   async (req, res) => {
@@ -919,6 +922,7 @@ router.get(
 // Resend verification email
 router.post(
   "/auth/resend-verification",
+  csrfExempt,
   emailVerificationLimiter,
   async (req, res) => {
     try {

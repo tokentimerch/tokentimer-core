@@ -24,7 +24,6 @@ setTwilioPool(pool);
 const swaggerJsdoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
 const client = require("prom-client");
-const { doubleCsrf } = require("csrf-csrf");
 const { logger, resolveClientIp } = require("./utils/logger.js");
 const { isNodeUseEnvProxySupported } = require("@tokentimer/node-compat");
 
@@ -42,10 +41,7 @@ const {
   requireWorkspaceMembership,
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
-const {
-  createCsrfExemptMiddleware,
-  isCertOpsMachineTokenCsrfExemptPath,
-} = require("./middleware/csrf-exempt");
+const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -182,20 +178,12 @@ const isProductionEnvironment =
   (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
 const {
   resolveSessionCookieOptions,
-  resolveCsrfCookieName,
   buildCorsOrigins,
   resolveProductionSecure,
 } = require("./session-cookie-options.js");
 const allowInsecureLocalProdCookie =
   isProductionEnvironment && !resolveProductionSecure(process.env);
 const sessionCookieOptions = resolveSessionCookieOptions(process.env);
-const csrfCookieName = resolveCsrfCookieName(
-  process.env,
-  sessionCookieOptions,
-);
-const expressSessionCookie = sessionCookieOptions.secure
-  ? { ...sessionCookieOptions, httpOnly: true, secure: true }
-  : { ...sessionCookieOptions, httpOnly: true, secure: false };
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -260,29 +248,45 @@ app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for l
 
 // Initialize session and Passport BEFORE any routes that require authentication
 // This ensures req.isAuthenticated and req.user are available in downstream handlers
-// CSRF is csrf-csrf doubleCsrfProtection on /api, not csurf.
-// Production session cookies always set Secure; local HTTP cannot.
+// Production session cookies use a literal Secure flag; local HTTP cannot.
 // Session setup is middleware, not an HTTP route; limiters wrap the routes below.
-function mountExpressSession(cookie) {
+const sessionStore = new pgSession({
+  pool,
+  tableName: "session",
+  createTableIfMissing: true,
+});
+const sessionCommon = {
+  store: sessionStore,
+  name: "sessionId",
+  secret: process.env.SESSION_SECRET,
+  resave: true,
+  saveUninitialized: false,
+  rolling: true,
+  genid: () => crypto.randomBytes(32).toString("hex"),
+};
+if (sessionCookieOptions.secure) {
   app.use(
     session({
-      store: new pgSession({
-        pool,
-        tableName: "session",
-        createTableIfMissing: true,
-      }),
-      name: "sessionId",
-      secret: process.env.SESSION_SECRET,
-      resave: true,
-      saveUninitialized: false,
-      cookie,
-      rolling: true,
-      genid: () => crypto.randomBytes(32).toString("hex"),
+      ...sessionCommon,
+      cookie: {
+        ...sessionCookieOptions,
+        httpOnly: true,
+        secure: true,
+      },
+    }),
+  );
+} else {
+  app.use(
+    session({
+      ...sessionCommon,
+      cookie: {
+        ...sessionCookieOptions,
+        httpOnly: true,
+        secure: false,
+      },
     }),
   );
 }
-
-mountExpressSession(expressSessionCookie);
 
 // Ensure Passport is only initialized once
 if (!app._passportInitialized) {
@@ -292,6 +296,20 @@ if (!app._passportInitialized) {
 }
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
+
+// Double-submit CSRF immediately after the cookie parser so later mutating
+// /api and /auth routes are guarded. Tests skip enforcement; development
+// does not. Login, 2FA verify, and resend-verification also list this
+// middleware on the route so it sits in the same setup as those handlers.
+app.use("/api", csrfExempt);
+app.use("/auth", csrfExempt);
+
+// Always rotate (overwrite) so stale cookies after secret rotation or
+// cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
+app.get("/api/csrf-token", (req, res) => {
+  const csrfToken = generateCsrfToken(req, res, true, false);
+  res.json({ csrfToken });
+});
 
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
@@ -375,7 +393,8 @@ app.use(
   (req, res, next) => next(),
 );
 
-// Get current session (before CSRF protection)
+// GET is skipped by CSRF middleware; keep the session probe here so it
+// still runs after cookieParser and session.
 app.get("/api/session", (req, res) => {
   try {
     const authenticated =
@@ -587,36 +606,6 @@ app.post(
   },
 );
 
-// CSRF Protection using Double Submit Cookie pattern (replaces deprecated csurf)
-const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
-  getSecret: () => {
-    if (!process.env.SESSION_SECRET) {
-      throw new Error("SESSION_SECRET environment variable is required");
-    }
-    return process.env.SESSION_SECRET;
-  },
-  cookieName: csrfCookieName,
-  cookieOptions: {
-    ...expressSessionCookie,
-    path: "/",
-  },
-  getTokenFromRequest: (req) => req.headers["x-csrf-token"],
-});
-
-// CSRF token endpoint — always rotate (overwrite) so stale cookies after secret
-// rotation or cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
-app.get("/api/csrf-token", (req, res) => {
-  const csrfToken = generateCsrfToken(req, res, true, false);
-  res.json({ csrfToken });
-});
-
-// Apply CSRF protection to API routes - Skip in development and test
-if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
-  const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
-    allowPath: isCertOpsMachineTokenCsrfExemptPath,
-  });
-  app.use("/api", csrfExempt);
-}
 // Apply email verification enforcement to all API routes
 app.use("/api", enforceEmailVerification);
 // --- WORKSPACES (extracted to routes/workspaces.js) ---

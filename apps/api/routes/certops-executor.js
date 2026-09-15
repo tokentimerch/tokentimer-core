@@ -18,7 +18,7 @@ const {
   CERTOPS_DISABLED,
   NOT_FOUND_RESPONSE,
 } = require("../middleware/require-certops-enabled");
-const { logger } = require("../utils/logger");
+const { logger, safeErrorName } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
@@ -1847,8 +1847,7 @@ async function executorEventsHandler(req, res, options = {}) {
     if (handled) return handled;
 
     logger.error("CertOps executor event ingestion failed", {
-      errorName: error?.name || null,
-      code: error.code || null,
+      errorName: safeErrorName(error),
       routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
     });
     return res.status(500).json({
