@@ -125,10 +125,15 @@ group tables.
    The switch-reads release must re-backfill join rows from the singular
    column at migration start (repairing drift from a mixed dual-write
    window) **before** readers trust the join table and **before** the
-   plural API can write two-or-more memberships. Canonical lex-smallest
-   id uses UTF-8 byte order (`Buffer.compare` in Node, `COLLATE "C"` in
-   PostgreSQL), not the database's default text collation and not
-   JavaScript's default `.sort()`.
+   plural API can write two-or-more memberships. That rebuild insert
+   uses `ON CONFLICT DO NOTHING`: dual-write replicas are still serving
+   and can insert a join row after the rebuild `DELETE` and before the
+   rebuild `INSERT`. The concurrent writer already dual-wrote the
+   correct state, so the migration keeps it rather than taking an
+   exclusive table lock. Canonical lex-smallest id uses UTF-8 byte
+   order (`Buffer.compare` in Node, `COLLATE "C"` in PostgreSQL), not
+   the database's default text collation and not JavaScript's default
+   `.sort()`.
 
    Step 4 (two-or-more membership writes and dashboard multi-select) is
    gated by `CONTACT_GROUP_PLURAL_WRITES` (off unless set to `true`;

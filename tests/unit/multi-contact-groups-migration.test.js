@@ -137,11 +137,11 @@ describe("migration 54 rebuild join from singular", () => {
     assert.match(migration.sql, /DELETE FROM certops_agent_contact_groups/);
     assert.match(
       migration.sql,
-      /INSERT INTO token_contact_groups \(token_id, workspace_id, contact_group_id\)/,
+      /INSERT INTO token_contact_groups \(token_id, workspace_id, contact_group_id\)\s+SELECT id, workspace_id, contact_group_id\s+FROM tokens[\s\S]*?ON CONFLICT \(token_id, contact_group_id\) DO NOTHING/,
     );
     assert.match(
       migration.sql,
-      /INSERT INTO certops_agent_contact_groups \(agent_id, workspace_id, contact_group_id\)/,
+      /INSERT INTO certops_agent_contact_groups \(agent_id, workspace_id, contact_group_id\)\s+SELECT id, workspace_id, contact_group_id\s+FROM certops_agents[\s\S]*?ON CONFLICT \(agent_id, contact_group_id\) DO NOTHING/,
     );
   });
 });
