@@ -195,6 +195,119 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
+## Azure Key Vault and Microsoft Entra inventory tokens
+
+Azure Key Vault and Microsoft Entra ID (Azure AD) inventory import take a
+**caller-supplied access token**. TokenTimer does not mint, refresh, or
+rotate it. When the token expires or is revoked, that scan fails; paste a
+new token to continue. Auto-sync, where offered, encrypts the same token
+and reuses it until it fails.
+
+This is the inventory-import surface
+(`POST /api/v1/integrations/azure/scan`,
+`POST /api/v1/integrations/azure-ad/scan`). It is **not** CertOps Azure
+DNS. The agent DNS-01 provider `azure-dns` uses an OAuth2
+client-credentials flow (`tenantId` / `clientId` / `clientSecret`; see
+[docs/certops/agent.md](certops/agent.md)). That flow does not
+authenticate Key Vault or Entra inventory scans.
+
+**Azure Key Vault.** Typical token:
+`az account get-access-token --resource https://vault.azure.net`.
+Azure CLI tokens are short-lived (about one hour). A 401 is treated as a
+failed scan ("token may be expired or invalid"). Service-principal /
+client-credential inventory auth is
+[#228](https://github.com/tokentimerch/tokentimer-core/issues/228).
+
+**Microsoft Entra ID.** Typical token:
+`az account get-access-token --resource https://graph.microsoft.com`.
+The audience must be Microsoft Graph. Typical scan permission is
+`Application.Read.All` or `Directory.Read.All` with admin consent. Graph
+is hardcoded to `https://graph.microsoft.com`; national clouds are out of
+scope here. Client-credential inventory auth is the same follow-on as Key
+Vault ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228)).
+
+Host allowlists (`VAULT_ADDRESS_ALLOWLIST`,
+`AZURE_VAULT_ADDRESS_ALLOWLIST`) restrict which hosts the API may
+contact. They do not change how authentication works.
+
+## Vault AppRole authentication
+
+Inventory import can authenticate to Vault with a static token **or**
+AppRole (role ID and secret ID). The two modes are exclusive. A Vault
+Enterprise namespace is optional and applies to both modes
+(`X-Vault-Namespace` on every Vault HTTP call, including login). Core
+scheduled auto-sync stays GitHub/GitLab; Vault AppRole auto-sync is
+offered where the edition already schedules Vault scans.
+
+### Minimum policy
+
+The AppRole token needs at least:
+
+```hcl
+path "sys/mounts" {
+  capabilities = ["read"]
+}
+
+path "secret/metadata/*" {
+  capabilities = ["list", "read"]
+}
+
+path "secret/data/*" {
+  capabilities = ["read"]
+}
+
+path "pki/certs" {
+  capabilities = ["list"]
+}
+
+path "pki/cert/*" {
+  capabilities = ["read"]
+}
+```
+
+Adjust mount paths to match the engines you scan. KV v2 uses `metadata/`
+and `data/` prefixes.
+
+### Custom auth mount
+
+If AppRole is enabled at a path other than `approle`, set `authMount` to
+that path (no leading or trailing slashes). TokenTimer POSTs
+`/v1/auth/<authMount>/login`. Dot segments (`.` / `..`) are rejected.
+
+### Client-token TTL and re-authentication
+
+TokenTimer reads TTL from `auth.lease_duration` on the login response
+(not the top-level `lease_duration`, which is typically 0). When that
+TTL is positive, it logs in again after 80% of the lease, measured from
+when the login response is received. `auth.lease_duration` of exactly 0
+keeps the client token for that scan only. A downstream Vault `403` is
+not retried as expiry; it stays a permission or revocation failure.
+
+Load engines and Scan are separate API calls, so a manual import
+performs two AppRole logins.
+
+### Revocation
+
+TokenTimer does not revoke Vault tokens or secret IDs. Revoking the
+AppRole role or a secret ID stops future logins. An already-issued
+client token remains valid until its own TTL ends or an operator
+revokes it in Vault. Prefer short role and token TTLs.
+
+### Secret ID lifetime
+
+AppRole secret IDs can have a TTL and a finite `secret_id_num_uses`.
+Each login consumes a use when that limit is set. TokenTimer does not
+issue or rotate secret IDs. Recurring TokenTimer authentication
+requires either a reusable SecretID (`secret_id_num_uses=0`) or an
+external SecretID rotation mechanism; finite-use SecretIDs are
+preferable when such rotation is available. `secret_id_num_uses=0` is
+the practical configuration when TokenTimer stores a reusable SecretID
+and no external rotation exists, not HashiCorp's recommended security
+posture.
+
+Kubernetes auth is out of scope unless operators confirm AppRole is
+insufficient.
+
 ## Proxy
 
 Corporate proxy support for outbound HTTP(S) calls: the API's `fetch`/undici

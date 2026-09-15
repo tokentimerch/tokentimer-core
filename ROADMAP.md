@@ -28,15 +28,6 @@ compliance reporting are not deliverables of this repository.
 
 ## Now -- next release candidate
 
-- **Document Azure Key Vault, Entra, and Vault token-auth limitations
-  and confirm follow-on requirements**
-  ([#225](https://github.com/tokentimerch/tokentimer-core/issues/225)).
-  Current import paths take a bearer or static token. CertOps Azure DNS
-  client-credential auth is a different surface. Record which method
-  operators actually need. Azure client credentials ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228))
-  and Vault AppRole ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229))
-  are already scoped before v1.0.0; this issue only records the method,
-  it does not ship those implementations.
 - **Show alert eligibility separately from delivery**
   ([#226](https://github.com/tokentimerch/tokentimer-core/issues/226)).
   Extend existing inventory and Control Center views: outside threshold /
@@ -54,17 +45,21 @@ compliance reporting are not deliverables of this repository.
 ## Before v1.0.0 -- operator-stable product
 
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
-called stable while they are open. Authentication implementations stay
-gated on [#225](https://github.com/tokentimerch/tokentimer-core/issues/225)
-recording the method; they are no longer unscoped Next work.
+called stable while they are open.
 
 - **Azure client-credential authentication** for inventory import and
   auto-sync
   ([#228](https://github.com/tokentimerch/tokentimer-core/issues/228)).
-- **Vault AppRole authentication** for inventory import and auto-sync
+  Remaining [#225](https://github.com/tokentimerch/tokentimer-core/issues/225)
+  work is this Azure/Entra client-credential path. Vault inventory auth
+  is AppRole
   ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
-  Kubernetes auth is a different method and stays out of scope unless
-  operators confirm AppRole is insufficient.
+- **Vault AppRole auto-sync**
+  ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
+  Inventory import AppRole has shipped. Scheduled Vault AppRole is the
+  Enterprise overlay; Core auto-sync stays GitHub/GitLab. Kubernetes
+  auth stays out of scope unless operators confirm AppRole is
+  insufficient.
 - **Multiple auto-sync configurations per provider in a workspace**
   ([#71](https://github.com/tokentimerch/tokentimer-core/issues/71)).
   Two GitLab instances (or two Vaults) in one workspace, without a

@@ -18,6 +18,25 @@ const isDev =
       window.location.hostname.includes('127.0.0.1') ||
       window.location.hostname.includes('staging')));
 
+const LOG_SECRET_KEY =
+  /password|passwd|secret|token|credential|authorization|cookie|role[-_]?id/i;
+
+export function redactLogValue(value, depth = 0) {
+  if (value == null || typeof value !== 'object' || depth > 8) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => redactLogValue(item, depth + 1));
+  }
+  const out = {};
+  for (const [key, nested] of Object.entries(value)) {
+    out[key] = LOG_SECRET_KEY.test(key)
+      ? '[REDACTED]'
+      : redactLogValue(nested, depth + 1);
+  }
+  return out;
+}
+
 // Store original console methods
 const originalConsole = {
   log: console.log.bind(console),
