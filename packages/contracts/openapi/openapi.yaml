@@ -9571,6 +9571,7 @@ components:
                 token:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
               not:
                 anyOf:
                   - required: [roleId]
@@ -9582,12 +9583,15 @@ components:
                 roleId:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                 secretId:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                 authMount:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                   description: AppRole auth mount path. Defaults to approle.
               not:
                 required: [token]
@@ -9611,6 +9615,7 @@ components:
                 token:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
               not:
                 anyOf:
                   - required: [roleId]
@@ -9622,12 +9627,15 @@ components:
                 roleId:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                 secretId:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                 authMount:
                   type: string
                   minLength: 1
+                  pattern: '.*\S.*'
                   description: AppRole auth mount path. Defaults to approle.
               not:
                 required: [token]

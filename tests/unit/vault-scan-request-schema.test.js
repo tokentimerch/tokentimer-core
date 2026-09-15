@@ -109,4 +109,19 @@ describe("VaultScanRequest oneOf contract (published OpenAPI)", () => {
       false,
     );
   });
+
+  it("rejects whitespace-only credential strings", () => {
+    assert.equal(
+      validate({ address: "https://vault.example", token: " " }),
+      false,
+    );
+    assert.equal(
+      validate({
+        address: "https://vault.example",
+        roleId: " ",
+        secretId: "s",
+      }),
+      false,
+    );
+  });
 });

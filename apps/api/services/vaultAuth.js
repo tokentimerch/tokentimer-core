@@ -19,8 +19,7 @@ const VAULT_AUTH_USER_MESSAGES = {
     "AppRole role ID and secret ID are required.",
   [VAULT_APPROLE_INVALID_RESPONSE]:
     "Vault AppRole login returned an invalid response.",
-  [VAULT_APPROLE_INVALID_MOUNT]:
-    "Vault AppRole auth mount path is invalid.",
+  [VAULT_APPROLE_INVALID_MOUNT]: "Vault AppRole auth mount path is invalid.",
 };
 
 const VAULT_AUTH_HTTP_STATUS = {
@@ -101,11 +100,13 @@ function parseVaultAuthFromBody(body) {
   const hasToken = token.length > 0;
   const hasRole = roleId.length > 0;
   const hasSecret = secretId.length > 0;
+  const authMountProvided =
+    Object.prototype.hasOwnProperty.call(source, "authMount") &&
+    source.authMount != null;
 
-  if (hasToken && (hasRole || hasSecret)) {
+  if (hasToken && (hasRole || hasSecret || authMountProvided)) {
     return {
-      error:
-        "provide either token or roleId and secretId, not both",
+      error: "provide either token or roleId and secretId, not both",
     };
   }
   if (hasRole !== hasSecret) {
@@ -197,9 +198,7 @@ async function vaultHttpRequest({
     clearTimeout(timeoutId);
 
     if (isHttpRedirectStatus(res.status)) {
-      const err = new Error(
-        `Vault ${method} ${url.pathname} refused redirect`,
-      );
+      const err = new Error(`Vault ${method} ${url.pathname} refused redirect`);
       err.status = 400;
       throw err;
     }
@@ -287,7 +286,11 @@ async function vaultAppRoleLogin({
     throw new VaultAuthError(VAULT_APPROLE_INVALID_RESPONSE);
   }
   const ttlSeconds = auth.lease_duration;
-  if (typeof ttlSeconds !== "number" || !Number.isFinite(ttlSeconds)) {
+  if (
+    typeof ttlSeconds !== "number" ||
+    !Number.isFinite(ttlSeconds) ||
+    ttlSeconds < 0
+  ) {
     throw new VaultAuthError(VAULT_APPROLE_INVALID_RESPONSE);
   }
 

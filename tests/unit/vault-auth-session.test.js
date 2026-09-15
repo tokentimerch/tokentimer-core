@@ -111,6 +111,14 @@ describe("parseVaultAuthFromBody", () => {
     assert.match(parsed.error, /not both/);
   });
 
+  it("rejects token mode with authMount", () => {
+    const parsed = parseVaultAuthFromBody({
+      token: "t",
+      authMount: "approle",
+    });
+    assert.match(parsed.error, /not both/);
+  });
+
   it("rejects roleId without secretId", () => {
     const parsed = parseVaultAuthFromBody({ roleId: "r" });
     assert.match(parsed.error, /both required/);
@@ -260,6 +268,26 @@ describe("vaultAppRoleLogin", () => {
       (_req, res) =>
         json(res, 200, {
           auth: { client_token: "s.x", lease_duration: "1200" },
+        }),
+      async ({ address }) => {
+        await assert.rejects(
+          () =>
+            vaultAppRoleLogin({
+              address,
+              roleId: "role",
+              secretId: "secret",
+            }),
+          (err) => err.code === VAULT_APPROLE_INVALID_RESPONSE,
+        );
+      },
+    );
+  });
+
+  it("fails closed on a negative auth.lease_duration", async () => {
+    await withVault(
+      (_req, res) =>
+        json(res, 200, {
+          auth: { client_token: "s.neg", lease_duration: -1 },
         }),
       async ({ address }) => {
         await assert.rejects(
