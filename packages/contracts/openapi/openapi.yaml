@@ -1628,7 +1628,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureKeyVaultScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -1686,7 +1686,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureAdScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -9483,6 +9483,192 @@ components:
         credentials:
           type: object
           additionalProperties: true
+    AzureScanFilterRules:
+      type: array
+      maxItems: 50
+      description: >-
+        Ordered include/exclude rules applied to scan results before
+        import. Exclude rules always win; when include rules exist,
+        only matching items are kept.
+      items:
+        type: object
+        additionalProperties: false
+        required: [action, matchType, field, value]
+        properties:
+          action:
+            type: string
+            enum: [include, exclude]
+          matchType:
+            type: string
+            enum: [regex, exact]
+          field:
+            type: string
+            enum: [name, description, location]
+          value:
+            type: string
+            maxLength: 500
+    AzureKeyVaultScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureKeyVaultBearerScanRequest"
+        - $ref: "#/components/schemas/AzureKeyVaultClientCredentialsScanRequest"
+    AzureKeyVaultBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, token]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        token:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureKeyVaultClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, authMethod, tenantId, clientId, clientSecret]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureAdBearerScanRequest"
+        - $ref: "#/components/schemas/AzureAdClientCredentialsScanRequest"
+    AzureAdBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [authMethod, tenantId, clientId, clientSecret]
+      properties:
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
     GcpScanRequest:
       type: object
       additionalProperties: false
@@ -9547,69 +9733,139 @@ components:
                 type: string
                 maxLength: 500
     VaultScanRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
-        include:
-          type: object
-          additionalProperties: true
-        mounts:
-          type: array
-          items:
-            type: string
-        maxItemsPerMount:
-          type: integer
-          minimum: 1
-          maximum: 2000
-        pathPrefix:
-          type: string
-          description: >-
-            Folder inside each KV engine, or an exact secret path. A leading
-            segment matching the mount's own name is ignored.
-        categories:
-          type: array
-          description: >-
-            Asset categories to keep in the scan result. Omit to keep all.
-          items:
-            type: string
-            enum: [cert, key_secret]
-        filterRules:
-          type: array
-          maxItems: 50
-          description: >-
-            Ordered include/exclude rules applied to scan results before
-            import. Exclude rules always win; when include rules exist, only
-            matching items are kept.
-          items:
-            type: object
-            required: [action, matchType, field, value]
-            properties:
-              action:
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+            include:
+              type: object
+              additionalProperties: true
+            mounts:
+              type: array
+              items:
                 type: string
-                enum: [include, exclude]
-              matchType:
+            maxItemsPerMount:
+              type: integer
+              minimum: 1
+              maximum: 2000
+            pathPrefix:
+              type: string
+              description: >-
+                Folder inside each KV engine, or an exact secret path. A leading
+                segment matching the mount's own name is ignored.
+            categories:
+              type: array
+              description: >-
+                Asset categories to keep in the scan result. Omit to keep all.
+              items:
                 type: string
-                enum: [regex, exact]
-              field:
-                type: string
-                enum: [name, description, location]
-              value:
-                type: string
-                maxLength: 500
+                enum: [cert, key_secret]
+            filterRules:
+              type: array
+              maxItems: 50
+              description: >-
+                Ordered include/exclude rules applied to scan results before
+                import. Exclude rules always win; when include rules exist, only
+                matching items are kept.
+              items:
+                type: object
+                required: [action, matchType, field, value]
+                properties:
+                  action:
+                    type: string
+                    enum: [include, exclude]
+                  matchType:
+                    type: string
+                    enum: [regex, exact]
+                  field:
+                    type: string
+                    enum: [name, description, location]
+                  value:
+                    type: string
+                    maxLength: 500
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     VaultMountsRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     IntegrationScanResponse:
       type: object
       required: [items]
@@ -9638,6 +9894,13 @@ components:
                 type: boolean
               truncated:
                 type: boolean
+              hasErrors:
+                type: boolean
+              permissionDenied:
+                type: boolean
+                description: >-
+                  True when at least one listed object returned HTTP 403.
+                  The scan is partial; the UI must not treat this as success.
               error:
                 type: string
                 description: Provider-formatted reason when the sub-scan failed.

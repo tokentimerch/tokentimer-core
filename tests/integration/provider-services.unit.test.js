@@ -450,7 +450,7 @@ describe("Provider service unit coverage", () => {
       );
     });
 
-    it("returns empty list on 404 for listSecrets", async () => {
+    it("propagates 404 for listSecrets instead of treating it as empty", async () => {
       const axiosMock = async () => {
         const err = new Error("missing");
         err.response = { status: 404, data: {} };
@@ -460,12 +460,15 @@ describe("Provider service unit coverage", () => {
       const azure = requireWithMocks(resolveServiceModule("azureIntegration"), {
         axios: axiosMock,
       });
-      const result = await azure._test.listSecrets({
-        vaultUrl: "https://vault.example.com",
-        token: "test-token",
-        maxItems: 10,
-      });
-      expect(result.items).to.deep.equal([]);
+      await expectReject(
+        () =>
+          azure._test.listSecrets({
+            vaultUrl: "https://vault.example.com",
+            token: "test-token",
+            maxItems: 10,
+          }),
+        /404/,
+      );
     });
 
     it("returns null on 404 for getSecret", async () => {

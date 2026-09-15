@@ -197,6 +197,84 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
+## Vault AppRole authentication
+
+Inventory import can authenticate to Vault with a static token **or**
+AppRole (role ID and secret ID). The two modes are exclusive. A Vault
+Enterprise namespace is optional and applies to both modes
+(`X-Vault-Namespace` on every Vault HTTP call, including login). Core
+scheduled auto-sync stays GitHub/GitLab; Vault AppRole auto-sync is
+offered where the edition already schedules Vault scans.
+
+### Minimum policy
+
+The AppRole token needs at least:
+
+```hcl
+path "sys/mounts" {
+  capabilities = ["read"]
+}
+
+path "secret/metadata/*" {
+  capabilities = ["list", "read"]
+}
+
+path "secret/data/*" {
+  capabilities = ["read"]
+}
+
+path "pki/certs" {
+  capabilities = ["list"]
+}
+
+path "pki/cert/*" {
+  capabilities = ["read"]
+}
+```
+
+Adjust mount paths to match the engines you scan. KV v2 uses `metadata/`
+and `data/` prefixes.
+
+### Custom auth mount
+
+If AppRole is enabled at a path other than `approle`, set `authMount` to
+that path (no leading or trailing slashes). TokenTimer POSTs
+`/v1/auth/<authMount>/login`. Dot segments (`.` / `..`) are rejected.
+
+### Client-token TTL and re-authentication
+
+TokenTimer reads TTL from `auth.lease_duration` on the login response
+(not the top-level `lease_duration`, which is typically 0). When that
+TTL is positive, it logs in again after 80% of the lease, measured from
+when the login response is received. `auth.lease_duration` of exactly 0
+keeps the client token for that scan only. A downstream Vault `403` is
+not retried as expiry; it stays a permission or revocation failure.
+
+Load engines and Scan are separate API calls, so a manual import
+performs two AppRole logins.
+
+### Revocation
+
+TokenTimer does not revoke Vault tokens or secret IDs. Revoking the
+AppRole role or a secret ID stops future logins. An already-issued
+client token remains valid until its own TTL ends or an operator
+revokes it in Vault. Prefer short role and token TTLs.
+
+### Secret ID lifetime
+
+AppRole secret IDs can have a TTL and a finite `secret_id_num_uses`.
+Each login consumes a use when that limit is set. TokenTimer does not
+issue or rotate secret IDs. Recurring TokenTimer authentication
+requires either a reusable SecretID (`secret_id_num_uses=0`) or an
+external SecretID rotation mechanism; finite-use SecretIDs are
+preferable when such rotation is available. `secret_id_num_uses=0` is
+the practical configuration when TokenTimer stores a reusable SecretID
+and no external rotation exists, not HashiCorp's recommended security
+posture.
+
+Kubernetes auth is out of scope unless operators confirm AppRole is
+insufficient.
+
 ## Proxy
 
 Corporate proxy support for outbound HTTP(S) calls: the API's `fetch`/undici
@@ -248,6 +326,35 @@ proxy. When `networkPolicy.enabled` and `config.useEnvProxy` are both `true`,
 fails the render naming whichever is missing, rather than silently rendering
 a NetworkPolicy that blocks the proxy it was just told to use). See
 [`deploy/helm/README.md`](../deploy/helm/README.md) for details and examples.
+
+## Azure inventory authentication
+
+Azure Key Vault and Microsoft Entra (Azure AD) inventory scans accept either
+a pasted access token or an Entra app using the OAuth client-credentials
+flow. TokenTimer mints a token from
+`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`.
+
+| Surface | Audience / scope | Least privilege |
+| ------- | ---------------- | --------------- |
+| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret values. |
+| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission. Directory.Read.All also works and is broader than this inventory needs. |
+
+This is not CertOps Azure DNS. CertOps DNS-01 still uses its own Entra app
+with DNS Zone Contributor (and ARM) as documented in
+[`docs/certops/agent.md`](certops/agent.md). Do not reuse that app for
+inventory unless you intentionally want both roles on one identity.
+Client-credential Entra scans attribute results to the tenant GUID from
+OpenID discovery (`/{tenant}/v2.0/.well-known/openid-configuration`); a
+tenant domain is canonicalized to that GUID before minting. Key Vault
+client-credential mint uses the tenant GUID or domain as supplied.
+
+Pasted-token scans still work. Existing auto-sync configs keep their stored
+token until you use **Replace credentials**. Core scheduled auto-sync stays
+GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise
+capability.
+
+`AZURE_VAULT_ADDRESS_ALLOWLIST` still applies to Key Vault URLs for both
+auth methods.
 
 ## CertOps (certificate operations)
 

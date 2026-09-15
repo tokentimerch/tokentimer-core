@@ -4,124 +4,68 @@ const { X509Certificate } = require("crypto");
 const {
   discoverExpiryFromObject,
   formatDateYmd,
-  isHttpRedirectStatus,
 } = require("./integrationUtils");
 const { logger } = require("../utils/logger");
+const {
+  createVaultAuthSession,
+  isVaultAuthError,
+  vaultRequest,
+  maskVaultAddress,
+} = require("./vaultAuth");
 
-async function vaultRequest({
-  address,
-  token,
-  method = "GET",
-  path,
-  body,
-  query,
-}) {
-  let url;
-  try {
-    url = new URL(path.startsWith("/") ? path : `/${path}`, address);
-  } catch (e) {
-    logger.error("Invalid Vault URL", { address, path, error: e.message });
-    throw new Error(`Invalid Vault URL: ${e.message}`);
-  }
-
-  if (query && typeof query === "object") {
-    for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    }
-  }
-
-  // Create AbortController for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout (increased for up to 2000 items per mount)
-
-  try {
-    logger.debug("Vault API request", {
-      method,
-      path: url.pathname,
-      address: address.replace(/\/\/[^@]+@/, "//***@"),
-    });
-
-    const res = await fetch(url, {
-      method,
-      headers: {
-        "X-Vault-Token": token,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-      redirect: "manual",
-    });
-
-    clearTimeout(timeoutId);
-
-    if (isHttpRedirectStatus(res.status)) {
-      // Match CREDENTIALED_AXIOS_REDIRECTS: surface a client error, never
-      // propagate the provider's 3xx as our own response status.
-      const err = new Error(
-        `Vault ${method} ${url.pathname} refused redirect`,
-      );
-      err.status = 400;
-      throw err;
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      logger.warn("Vault API request failed", {
-        method,
-        path: url.pathname,
-        status: res.status,
-        statusText: res.statusText,
-        address: address.replace(/\/\/[^@]+@/, "//***@"),
-        responseBody: text.substring(0, 200), // Log first 200 chars of response
-      });
-      const err = new Error(`Vault ${method} ${url.pathname} ${res.status}`);
-      err.status = res.status;
-      err.body = text;
-      throw err;
-    }
-    // Some Vault endpoints return empty 204
-    if (res.status === 204) return null;
-    return await res.json();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === "AbortError") {
-      logger.error("Vault API request timeout", {
-        method,
-        path: url.pathname,
-        address: address.replace(/\/\/[^@]+@/, "//***@"),
-        timeoutMs: 120000,
-      });
-      const err = new Error(`Vault ${method} ${url.pathname} timeout`);
-      err.status = 408;
-      err.code = "ETIMEDOUT";
-      throw err;
-    }
-    // Network/connection errors
-    if (error.message && !error.status) {
-      logger.error("Vault network error", {
-        method,
-        path: url?.pathname,
-        address: address.replace(/\/\/[^@]+@/, "//***@"),
-        error: error.message,
-        errorCode: error.code,
-        errorType: error.name,
-        cause: error.cause?.message,
-      });
-    }
-    throw error;
-  }
+function recordVaultItemReadFailure(err, state) {
+  if (isVaultAuthError(err)) throw err;
+  state.hasReadErrors = true;
+  if (err && err.status === 403) state.permissionDenied = true;
 }
 
-async function listMounts({ address, token }) {
+function resolveVaultSession({
+  session,
+  address,
+  token,
+  roleId,
+  secretId,
+  authMount,
+  namespace,
+}) {
+  if (session) return session;
+  return createVaultAuthSession({
+    address,
+    token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
+  });
+}
+
+async function listMounts({
+  address,
+  token,
+  roleId,
+  secretId,
+  authMount,
+  namespace,
+  session: existingSession,
+}) {
   logger.debug("Listing Vault mounts", {
-    address: address.replace(/\/\/[^@]+@/, "//***@"),
+    address: maskVaultAddress(address),
+  });
+
+  const session = resolveVaultSession({
+    session: existingSession,
+    address,
+    token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
   });
 
   try {
     const data = await vaultRequest({
+      session,
       address,
-      token,
       method: "GET",
       path: "/v1/sys/mounts",
     });
@@ -142,7 +86,7 @@ async function listMounts({ address, token }) {
     return mounts;
   } catch (e) {
     logger.error("Failed to list Vault mounts", {
-      address: address.replace(/\/\/[^@]+@/, "//***@"),
+      address: maskVaultAddress(address),
       error: e.message,
       errorCode: e.code,
       errorType: e.name,
@@ -296,7 +240,7 @@ function parseCertificateFromUnknown(value) {
 
 async function listKvV2KeysRecursive({
   address,
-  token,
+  session,
   mountPath,
   prefix = "",
   limit = 1000,
@@ -326,8 +270,8 @@ async function listKvV2KeysRecursive({
     let data;
     try {
       data = await vaultRequest({
+        session,
         address,
-        token,
         method: "LIST",
         path: listPath,
       });
@@ -354,10 +298,10 @@ async function listKvV2KeysRecursive({
   return { keys: results, truncated };
 }
 
-async function readKvV2Secret({ address, token, mountPath, secretPath }) {
+async function readKvV2Secret({ address, session, mountPath, secretPath }) {
   const data = await vaultRequest({
+    session,
     address,
-    token,
     method: "GET",
     path: `/v1/${mountPath}data/${secretPath}`,
   });
@@ -521,7 +465,7 @@ function buildKvSecretItems({ mountPath, key, secret }) {
 
 async function scanKvV2({
   address,
-  token,
+  session,
   mount,
   maxItems = 500,
   pathPrefix = "",
@@ -547,7 +491,7 @@ async function scanKvV2({
   const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
   const { keys, truncated: keyListTruncated } = await listKvV2KeysRecursive({
     address,
-    token,
+    session,
     mountPath,
     prefix: normalizedPrefix,
     limit: maxItems,
@@ -559,12 +503,13 @@ async function scanKvV2({
     try {
       await readKvV2Secret({
         address,
-        token,
+        session,
         mountPath,
         secretPath: trimmedPrefix,
       });
       keys.unshift(trimmedPrefix);
-    } catch (_e) {
+    } catch (e) {
+      if (isVaultAuthError(e)) throw e;
       // Not a readable secret; folder listing (possibly empty) stands.
     }
   }
@@ -573,7 +518,7 @@ async function scanKvV2({
   // before the read loop below ever runs; that must carry through even if
   // every enumerated key happens to be readable and under maxItems.
   let truncated = keyListTruncated;
-  let hasReadErrors = false;
+  const readState = { hasReadErrors: false, permissionDenied: false };
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
@@ -590,16 +535,16 @@ async function scanKvV2({
         try {
           secret = await readKvV2Secret({
             address,
-            token,
+            session,
             mountPath,
             secretPath: key,
           });
-        } catch (_e) {
+        } catch (e) {
           // A secret we know exists (it was LIST-ed) but cannot read means
           // its continued existence is unconfirmed, not confirmed-absent --
           // the mount's KV sub-scope must be reported incomplete so cleanup
-          // never treats "we skipped it" as "it's gone".
-          hasReadErrors = true;
+          // never treats "we skipped it" as "it's gone". Auth failures abort.
+          recordVaultItemReadFailure(e, readState);
           return null;
         }
         return buildKvSecretItems({ mountPath, key, secret });
@@ -618,14 +563,19 @@ async function scanKvV2({
       }
     }
   }
-  return { items, truncated, hasErrors: hasReadErrors };
+  return {
+    items,
+    truncated,
+    hasErrors: readState.hasReadErrors,
+    permissionDenied: readState.permissionDenied,
+  };
 }
 
-async function tryListPkiCertSerials({ address, token, mountPath }) {
+async function tryListPkiCertSerials({ address, session, mountPath }) {
   try {
     const data = await vaultRequest({
+      session,
       address,
-      token,
       method: "LIST",
       path: `/v1/${mountPath}certs`,
     });
@@ -638,10 +588,10 @@ async function tryListPkiCertSerials({ address, token, mountPath }) {
   }
 }
 
-async function readPkiCertBySerial({ address, token, mountPath, serial }) {
+async function readPkiCertBySerial({ address, session, mountPath, serial }) {
   const data = await vaultRequest({
+    session,
     address,
-    token,
     method: "GET",
     path: `/v1/${mountPath}cert/${encodeURIComponent(serial)}`,
   });
@@ -651,11 +601,11 @@ async function readPkiCertBySerial({ address, token, mountPath, serial }) {
   return pem || null;
 }
 
-async function scanPki({ address, token, mount, maxItems = 500 }) {
+async function scanPki({ address, session, mount, maxItems = 500 }) {
   const mountPath = mount.path; // ends with '/'
-  const serials = await tryListPkiCertSerials({ address, token, mountPath });
+  const serials = await tryListPkiCertSerials({ address, session, mountPath });
   const items = [];
-  let hasReadErrors = false;
+  const readState = { hasReadErrors: false, permissionDenied: false };
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < serials.length; i += BATCH_SIZE) {
@@ -669,16 +619,17 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
         try {
           pem = await readPkiCertBySerial({
             address,
-            token,
+            session,
             mountPath,
             serial,
           });
-        } catch (_) {
+        } catch (e) {
           // A per-serial read failure means this cert's continued existence
           // is unconfirmed, not confirmed-absent -- the mount's PKI
           // sub-scope must be reported incomplete so cleanup never treats
           // an unreadable cert as "not rediscovered, therefore obsolete".
-          hasReadErrors = true;
+          // Auth failures abort rather than looking like one unread serial.
+          recordVaultItemReadFailure(e, readState);
           return null;
         }
         if (!pem) return null;
@@ -713,26 +664,47 @@ async function scanPki({ address, token, mount, maxItems = 500 }) {
       }
     }
   }
-  const truncated = serials.length > items.length && !hasReadErrors;
-  return { items, truncated, hasErrors: hasReadErrors };
+  const truncated =
+    serials.length > items.length && !readState.hasReadErrors;
+  return {
+    items,
+    truncated,
+    hasErrors: readState.hasReadErrors,
+    permissionDenied: readState.permissionDenied,
+  };
 }
 
 async function scanVault({
   address,
   token,
+  roleId,
+  secretId,
+  authMount,
+  namespace,
   include = { kv: true, pki: true },
   mounts: mountFilters = null,
   maxItemsPerMount = 250,
   pathPrefix = "",
   categories = null,
 }) {
-  if (!address || !token) {
+  const hasAppRole = Boolean(roleId && secretId);
+  if (!address || !(token || hasAppRole)) {
     logger.error("Vault scan missing required parameters", {
       hasAddress: !!address,
-      hasToken: !!token,
+      hasToken: Boolean(token),
+      hasAppRole,
     });
-    throw new Error("address and token are required");
+    throw new Error("address and token or AppRole credentials are required");
   }
+
+  const session = createVaultAuthSession({
+    address,
+    token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
+  });
 
   // Validate address format
   try {
@@ -755,29 +727,31 @@ async function scanVault({
     !categorySet || categorySet.has(String(item.category));
 
   logger.info("Starting Vault scan", {
-    address: address.replace(/\/\/[^@]+@/, "//***@"),
+    address: maskVaultAddress(address),
     includeKV: include.kv,
     includePKI: include.pki,
     pathPrefix: pathPrefix || "none",
     mountFilters: mountFilters?.length || "none",
     categories: categorySet ? [...categorySet] : "all",
+    authMode: session.mode,
   });
 
   let mounts;
   try {
-    mounts = await listMounts({ address, token });
+    mounts = await listMounts({ address, session });
     logger.info("Vault mounts retrieved", {
       totalMounts: mounts.length,
       mountTypes: [...new Set(mounts.map((m) => m.type))],
     });
   } catch (e) {
     logger.error("Failed to list Vault mounts", {
-      address: address.replace(/\/\/[^@]+@/, "//***@"),
+      address: maskVaultAddress(address),
       error: e.message,
       errorCode: e.code,
       status: e.status,
     });
-    throw new Error(`Failed to list Vault mounts: ${e.message}`);
+    if (isVaultAuthError(e)) throw e;
+    throw new Error(`Failed to list Vault mounts: ${e.message}`, { cause: e });
   }
 
   const toScan = mounts.filter((m) => {
@@ -817,9 +791,10 @@ async function scanVault({
           items: rawItems,
           truncated,
           hasErrors,
+          permissionDenied,
         } = await scanKvV2({
           address,
-          token,
+          session,
           mount: m,
           maxItems: maxItemsPerMount,
           pathPrefix,
@@ -837,6 +812,7 @@ async function scanVault({
           found: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
           complete: !truncated && !hasErrors,
           // Sub-scope dimensions use different key semantics than a token's
           // own recorded dimensions: `pathPrefix` triggers a LIKE-prefix
@@ -854,8 +830,10 @@ async function scanVault({
           itemsFound: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
         });
       } catch (e) {
+        if (isVaultAuthError(e)) throw e;
         logger.warn("Vault KV mount scan failed", {
           mount: m.path,
           error: e.message,
@@ -876,9 +854,10 @@ async function scanVault({
           items: rawItems,
           truncated,
           hasErrors,
+          permissionDenied,
         } = await scanPki({
           address,
-          token,
+          session,
           mount: m,
           maxItems: maxItemsPerMount,
         });
@@ -891,6 +870,7 @@ async function scanVault({
           found: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
           complete: !truncated && !hasErrors,
           dimensions: {
             mount: m.path,
@@ -902,8 +882,10 @@ async function scanVault({
           itemsFound: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
         });
       } catch (e) {
+        if (isVaultAuthError(e)) throw e;
         logger.warn("Vault PKI mount scan failed", {
           mount: m.path,
           error: e.message,
@@ -923,7 +905,7 @@ async function scanVault({
   logger.info("Vault scan completed", {
     totalItemsFound: results.length,
     mountsScanned: toScan.length,
-    address: address.replace(/\/\/[^@]+@/, "//***@"),
+    address: maskVaultAddress(address),
   });
 
   return { items: results, summary, mounts };
@@ -938,6 +920,7 @@ module.exports = {
 if (process.env.NODE_ENV === "test") {
   module.exports._test = {
     vaultRequest,
+    createVaultAuthSession,
     parseCertificateFromUnknown,
     parseCertificatePemForDatesAndNames,
     isBase64Like,

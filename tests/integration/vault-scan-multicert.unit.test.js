@@ -67,7 +67,11 @@ function startFakeVault(routes) {
       const [requestLine] = buf.split("\r\n");
       const [method, rawPath] = requestLine.split(" ");
       const routeKey = `${method} ${rawPath.split("?")[0]}`;
-      const route = routes[routeKey] || { status: 404, body: { errors: [] } };
+      const spec = routes[routeKey];
+      const route =
+        typeof spec === "function"
+          ? spec()
+          : spec || { status: 404, body: { errors: [] } };
       const json = JSON.stringify(route.body);
       socket.end(
         `HTTP/1.1 ${route.status} ${route.status === 200 ? "OK" : "Not Found"}\r\n` +
@@ -312,6 +316,7 @@ describe("Vault KV scan behavior", () => {
           truncated: false,
           complete: true,
           hasErrors: false,
+          permissionDenied: false,
           sourceKind: "vault-kv",
           dimensions: { mount: "secret/", pathPrefix: null, categories: null },
         },
@@ -510,6 +515,7 @@ describe("Vault KV scan behavior", () => {
           truncated: false,
           complete: true,
           hasErrors: false,
+          permissionDenied: false,
           sourceKind: "vault-kv",
           dimensions: { mount: "secret/", pathPrefix: null, categories: ["cert"] },
         },
@@ -525,6 +531,142 @@ describe("Vault KV scan behavior", () => {
       });
       expect(res.items).to.have.length(1);
       expect(res.items[0].category).to.equal("key_secret");
+    });
+  });
+
+  describe("AppRole login failures abort the scan", () => {
+    it("does not downgrade an invalid role to a partial mount result", async () => {
+      const vault = await startFakeVault({
+        "POST /v1/auth/approle/login": {
+          status: 400,
+          body: { errors: ["invalid role ID"] },
+        },
+      });
+      try {
+        let threw = null;
+        try {
+          await mod.scanVault({
+            address: vault.address,
+            roleId: "bad-role",
+            secretId: "secret",
+            include: { kv: true, pki: false },
+          });
+        } catch (e) {
+          threw = e;
+        }
+        expect(threw).to.not.equal(null);
+        expect(threw.name).to.equal("VaultAuthError");
+        expect(threw.code).to.equal("VAULT_APPROLE_BAD_ROLE");
+      } finally {
+        await vault.close();
+      }
+    });
+
+    it("rejects scanVault when an 80% TTL refresh login fails mid-read", async () => {
+      let loginCount = 0;
+      let nowOffset = 0;
+      const realNow = Date.now.bind(Date);
+      Date.now = () => realNow() + nowOffset;
+      const vault = await startFakeVault({
+        "POST /v1/auth/approle/login": () => {
+          loginCount += 1;
+          if (loginCount === 1) {
+            return {
+              status: 200,
+              body: {
+                auth: { client_token: "s.one", lease_duration: 10 },
+              },
+            };
+          }
+          return {
+            status: 400,
+            body: { errors: ["invalid secret id"] },
+          };
+        },
+        "GET /v1/sys/mounts": {
+          status: 200,
+          body: {
+            data: { "secret/": { type: "kv", options: { version: "2" } } },
+          },
+        },
+        "LIST /v1/secret/metadata/": () => {
+          nowOffset = 9000;
+          return { status: 200, body: { data: { keys: ["a"] } } };
+        },
+        "GET /v1/secret/data/a": {
+          status: 200,
+          body: {
+            data: {
+              data: { password: "hunter2" },
+              metadata: { created_time: "2026-01-01T00:00:00Z" },
+            },
+          },
+        },
+      });
+      try {
+        let threw = null;
+        try {
+          await mod.scanVault({
+            address: vault.address,
+            roleId: "role",
+            secretId: "secret",
+            include: { kv: true, pki: false },
+          });
+        } catch (e) {
+          threw = e;
+        }
+        expect(threw).to.not.equal(null);
+        expect(threw.name).to.equal("VaultAuthError");
+        expect(threw.code).to.equal("VAULT_APPROLE_BAD_SECRET");
+        expect(loginCount).to.equal(2);
+      } finally {
+        Date.now = realNow;
+        await vault.close();
+      }
+    });
+  });
+
+  describe("per-secret permission denied", () => {
+    it("keeps a partial scan and flags permissionDenied instead of aborting", async () => {
+      const vault = await startFakeVault({
+        "GET /v1/sys/mounts": {
+          status: 200,
+          body: {
+            data: { "secret/": { type: "kv", options: { version: "2" } } },
+          },
+        },
+        "LIST /v1/secret/metadata/": {
+          status: 200,
+          body: { data: { keys: ["ok", "denied"] } },
+        },
+        "GET /v1/secret/data/ok": {
+          status: 200,
+          body: {
+            data: {
+              data: { password: "hunter2" },
+              metadata: { created_time: "2026-01-01T00:00:00Z" },
+            },
+          },
+        },
+        "GET /v1/secret/data/denied": {
+          status: 403,
+          body: { errors: ["permission denied"] },
+        },
+      });
+      try {
+        const res = await mod.scanVault({
+          address: vault.address,
+          token: "test-token",
+          include: { kv: true, pki: false },
+        });
+        expect(res.items).to.have.length(1);
+        expect(res.summary[0].hasErrors).to.equal(true);
+        expect(res.summary[0].permissionDenied).to.equal(true);
+        expect(res.summary[0].complete).to.equal(false);
+        expect(res.summary[0].error).to.equal(undefined);
+      } finally {
+        await vault.close();
+      }
     });
   });
 });

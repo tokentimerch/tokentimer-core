@@ -11,10 +11,7 @@ const certOpsRouter = require(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
 );
 const agentRegistry = require(
-  path.resolve(
-    __dirname,
-    "../../apps/api/services/certops/agentRegistry.js",
-  ),
+  path.resolve(__dirname, "../../apps/api/services/certops/agentRegistry.js"),
 );
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
@@ -327,9 +324,7 @@ function responseRecorder() {
 function findRouteHandler(method, routePath) {
   const layer = certOpsRouter.stack.find(
     (item) =>
-      item.route &&
-      item.route.path === routePath &&
-      item.route.methods[method],
+      item.route && item.route.path === routePath && item.route.methods[method],
   );
   assert.ok(layer, `${method.toUpperCase()} ${routePath} route not registered`);
   const stack = layer.route.stack;
@@ -896,7 +891,15 @@ describe("agentRegistry service internals", () => {
       agentRegistry._test.normalizeRequiredRetireReason("  ok  "),
       "ok",
     );
-    for (const bad of [undefined, null, "", "  ", 5, "x".repeat(501), "a\u0001b"]) {
+    for (const bad of [
+      undefined,
+      null,
+      "",
+      "  ",
+      5,
+      "x".repeat(501),
+      "a\u0001b",
+    ]) {
       assert.throws(
         () => agentRegistry._test.normalizeRequiredRetireReason(bad),
         (err) => err.code === "CERTOPS_AGENT_RETIRE_REASON_INVALID",
@@ -904,7 +907,3 @@ describe("agentRegistry service internals", () => {
     }
   });
 });
-
-
-
-

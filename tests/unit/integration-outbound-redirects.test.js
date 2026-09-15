@@ -163,6 +163,26 @@ describe("integration follow-up URL origin checks", () => {
 });
 
 describe("credentialed integration clients refuse redirects", () => {
+  it("Vault AppRole login does not follow a 302 to loopback", async () => {
+    const vaultAuth = require("../../apps/api/services/vaultAuth.js");
+    await withRedirectPair(async ({ originUrl, sinkHits }) => {
+      await assert.rejects(
+        () =>
+          vaultAuth.vaultAppRoleLogin({
+            address: originUrl,
+            roleId: "role",
+            secretId: "secret",
+          }),
+        (err) => {
+          assert.match(err.message, /refused redirect/);
+          assert.equal(err.status, 400);
+          return true;
+        },
+      );
+      assert.equal(sinkHits.length, 0);
+    });
+  });
+
   it("Vault fetch does not follow a 302 to loopback or forward the token", async () => {
     const vault = loadService("vaultIntegration.js");
     await withRedirectPair(async ({ originUrl, sinkHits }) => {

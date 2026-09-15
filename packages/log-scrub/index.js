@@ -12,7 +12,7 @@ const {
 
 const MAX_SCRUB_DEPTH = 8;
 const REDACT_KEY_PATTERN =
-  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token/i;
+  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token|role[-_]?id/i;
 
 function isSensitiveKey(key) {
   return REDACT_KEY_PATTERN.test(String(key));

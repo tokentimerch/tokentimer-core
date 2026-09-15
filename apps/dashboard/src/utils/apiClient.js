@@ -3,7 +3,7 @@ import {
   showError as showGlobalError,
   showSuccess as showGlobalSuccess,
 } from './toast.js';
-import { logger } from './logger.js';
+import { logger, redactLogValue } from './logger.js';
 import { resetIdentity } from './analytics.js';
 import { clearSessionLastWorkspaceId } from './lastWorkspacePreference.js';
 
@@ -139,9 +139,9 @@ apiClient.interceptors.request.use(
       logger.info(
         `🚀 API Request: ${config.method?.toUpperCase()} ${config.url}`,
         {
-          data: config.data,
-          params: config.params,
-          headers: config.headers,
+          data: redactLogValue(config.data),
+          params: redactLogValue(config.params),
+          headers: redactLogValue(config.headers),
           timeout: config.timeout, // Log timeout for debugging
         }
       );
@@ -168,14 +168,14 @@ apiClient.interceptors.response.use(
           window.location.hostname.includes('127.0.0.1') ||
           window.location.hostname.includes('staging')));
 
-    if (shouldLog) {
+    if (shouldLog && !response.config?._suppressLog) {
       const duration = new Date() - response.config.metadata.startTime;
 
       logger.info(
         `✅ API Response: ${response.config.method?.toUpperCase()} ${response.config.url} (${duration}ms)`,
         {
           status: response.status,
-          data: response.data,
+          data: redactLogValue(response.data),
         }
       );
     }
@@ -201,7 +201,7 @@ apiClient.interceptors.response.use(
         `❌ API Error: ${error.config?.method?.toUpperCase()} ${error.config?.url} (${duration}ms)`,
         {
           status: error.response?.status,
-          data: error.response?.data,
+          data: redactLogValue(error.response?.data),
           message: error.message,
         }
       );
@@ -1160,6 +1160,10 @@ export const vaultAPI = {
     workspaceId,
     address,
     token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
     include = { kv: true, pki: true },
     mounts = [],
     maxItemsPerMount = 250,
@@ -1173,11 +1177,14 @@ export const vaultAPI = {
     try {
       const payload = {
         address,
-        token,
         include,
         mounts: Array.isArray(mounts) ? mounts : [],
         maxItemsPerMount,
         pathPrefix,
+        ...(token ? { token } : {}),
+        ...(roleId && secretId ? { roleId, secretId } : {}),
+        ...(authMount ? { authMount } : {}),
+        ...(namespace ? { namespace } : {}),
         ...(Array.isArray(categories) && categories.length > 0
           ? { categories }
           : {}),
@@ -1202,14 +1209,28 @@ export const vaultAPI = {
       throw err;
     }
   },
-  listMounts: async ({ workspaceId, address, token }) => {
+  listMounts: async ({
+    workspaceId,
+    address,
+    token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
+  }) => {
     if (!workspaceId) {
       throw new Error('workspaceId is required for integration scans');
     }
     try {
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_MOUNTS(workspaceId),
-        { address, token },
+        {
+          address,
+          ...(token ? { token } : {}),
+          ...(roleId && secretId ? { roleId, secretId } : {}),
+          ...(authMount ? { authMount } : {}),
+          ...(namespace ? { namespace } : {}),
+        },
         { _suppressLog: true }
       );
       return res.data?.mounts || [];
@@ -1440,6 +1461,10 @@ export const azureAPI = {
     workspaceId,
     vaultUrl,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { secrets: true, certificates: true, keys: true },
     maxItems = 500,
   }) => {
@@ -1449,10 +1474,17 @@ export const azureAPI = {
     try {
       const payload = {
         vaultUrl,
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_SCAN(workspaceId),
         payload,
@@ -1515,6 +1547,10 @@ export const azureADAPI = {
   scan: async ({
     workspaceId,
     token,
+    authMethod,
+    tenantId,
+    clientId,
+    clientSecret,
     include = { applications: true, servicePrincipals: true },
     maxItems = 500,
   }) => {
@@ -1523,10 +1559,17 @@ export const azureADAPI = {
     }
     try {
       const payload = {
-        token,
         include,
         maxItems,
       };
+      if (authMethod === 'client_credentials') {
+        payload.authMethod = 'client_credentials';
+        payload.tenantId = tenantId;
+        payload.clientId = clientId;
+        payload.clientSecret = clientSecret;
+      } else {
+        payload.token = token;
+      }
       const res = await apiClient.post(
         API_ENDPOINTS.AZURE_AD_SCAN(workspaceId),
         payload,
