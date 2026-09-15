@@ -350,8 +350,17 @@ function bootstrapTokenMetadataFromRow(row) {
         ? null
         : Boolean(row.downtime_alerts_enabled),
     contactGroupId: canonicalLegacyContactGroupId(contactGroupIds),
+    // Kept on the service object so registration can copy the full set.
+    // HTTP responses must use bootstrapTokenHttpMetadata (no plural field
+    // until the switch-reads release).
     contactGroupIds,
   };
+}
+
+function bootstrapTokenHttpMetadata(token) {
+  if (!token) return null;
+  const { contactGroupIds: _contactGroupIds, ...http } = token;
+  return http;
 }
 
 function agentMetadataFromRow(row) {
@@ -697,6 +706,7 @@ module.exports = {
   CERTOPS_AGENT_CREDENTIAL_MALFORMED,
   CERTOPS_AGENT_WORKSPACE_REQUIRED,
   PRIVATE_KEY_MATERIAL_REJECTED,
+  bootstrapTokenHttpMetadata,
   consumeBootstrapToken,
   createBootstrapToken,
   generateAgentCredential,
@@ -712,6 +722,7 @@ module.exports = {
     RAW_BOOTSTRAP_TOKEN_LENGTH,
     RAW_BOOTSTRAP_TOKEN_PATTERN,
     agentMetadataFromRow,
+    bootstrapTokenHttpMetadata,
     bootstrapTokenMetadataFromRow,
     bootstrapTokenStatusFromRow,
     containsGenericCredentialMaterial,
