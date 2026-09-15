@@ -69,6 +69,22 @@ describe("logger content-based redaction", () => {
     assert.equal(out.safe, "ok");
   });
 
+  it("redacts Vault AppRole roleId and secretId by field name", () => {
+    const out = redactSensitiveFields({
+      roleId: "approle-role-id-value",
+      role_id: "snake-role-id-value",
+      secretId: "approle-secret-id-value",
+      secret_id: "snake-secret-id-value",
+      authMount: "approle",
+    });
+
+    assert.equal(out.roleId, "[REDACTED]");
+    assert.equal(out.role_id, "[REDACTED]");
+    assert.equal(out.secretId, "[REDACTED]");
+    assert.equal(out.secret_id, "[REDACTED]");
+    assert.equal(out.authMount, "approle");
+  });
+
   it("redacts raw PEM private keys in free-form strings", () => {
     const input = `command failed:\n${pem("RSA PRIVATE KEY")}\nretry`;
     const out = scrubLogString(input);

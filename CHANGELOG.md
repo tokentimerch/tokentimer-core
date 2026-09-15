@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Vault inventory import supports AppRole authentication (role ID / secret ID, optional custom auth mount, optional Vault namespace) alongside the existing static token. Client tokens refresh at 80% of `auth.lease_duration`. A downstream 403 is not retried as expiry. Recurring use needs a reusable SecretID or external rotation; see `docs/CONFIGURATION.md` (Vault AppRole authentication).
+- `docs/CONFIGURATION.md` now states that Azure Key Vault and Microsoft Entra inventory import still take a caller-supplied access token (no refresh). Client-credential inventory auth remains [#228](https://github.com/tokentimerch/tokentimer-core/issues/228). CertOps `azure-dns` is a different surface.
+
 ### Security
 
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.

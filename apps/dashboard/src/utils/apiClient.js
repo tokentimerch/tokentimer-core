@@ -1148,6 +1148,10 @@ export const vaultAPI = {
     workspaceId,
     address,
     token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
     include = { kv: true, pki: true },
     mounts = [],
     maxItemsPerMount = 250,
@@ -1161,11 +1165,14 @@ export const vaultAPI = {
     try {
       const payload = {
         address,
-        token,
         include,
         mounts: Array.isArray(mounts) ? mounts : [],
         maxItemsPerMount,
         pathPrefix,
+        ...(token ? { token } : {}),
+        ...(roleId && secretId ? { roleId, secretId } : {}),
+        ...(authMount ? { authMount } : {}),
+        ...(namespace ? { namespace } : {}),
         ...(Array.isArray(categories) && categories.length > 0
           ? { categories }
           : {}),
@@ -1190,14 +1197,28 @@ export const vaultAPI = {
       throw err;
     }
   },
-  listMounts: async ({ workspaceId, address, token }) => {
+  listMounts: async ({
+    workspaceId,
+    address,
+    token,
+    roleId,
+    secretId,
+    authMount,
+    namespace,
+  }) => {
     if (!workspaceId) {
       throw new Error('workspaceId is required for integration scans');
     }
     try {
       const res = await apiClient.post(
         API_ENDPOINTS.VAULT_MOUNTS(workspaceId),
-        { address, token },
+        {
+          address,
+          ...(token ? { token } : {}),
+          ...(roleId && secretId ? { roleId, secretId } : {}),
+          ...(authMount ? { authMount } : {}),
+          ...(namespace ? { namespace } : {}),
+        },
         { _suppressLog: true }
       );
       return res.data?.mounts || [];

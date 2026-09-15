@@ -15,6 +15,12 @@ const {
 const Token = require("../db/models/Token");
 
 const { scanVault } = require("../services/vaultIntegration");
+const {
+  isVaultAuthError,
+  parseVaultAuthFromBody,
+  scrubVaultCredentialBody,
+  VAULT_AUTH_USER_MESSAGES,
+} = require("../services/vaultAuth");
 const { scanGitLab } = require("../services/gitlabIntegration");
 const { scanGitHub } = require("../services/githubIntegration");
 const { scanAWS, detectAWSRegions } = require("../services/awsIntegration");
@@ -122,7 +128,6 @@ router.post(
     try {
       const {
         address,
-        token,
         include,
         mounts,
         maxItemsPerMount,
@@ -133,10 +138,15 @@ router.post(
       // Prevent caching of sensitive responses
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
-      if (!address || !token)
+      if (!address) {
         return res
           .status(400)
-          .json(withQuota({ error: "address and token are required" }));
+          .json(withQuota({ error: "address is required" }));
+      }
+      const parsedAuth = parseVaultAuthFromBody(req.body);
+      if (parsedAuth.error) {
+        return res.status(400).json(withQuota({ error: parsedAuth.error }));
+      }
       const filterRulesError = validateFilterRules(filterRules);
       if (filterRulesError)
         return res.status(400).json(withQuota({ error: filterRulesError }));
@@ -182,7 +192,7 @@ router.post(
       }
       const result = await scanVault({
         address,
-        token,
+        ...parsedAuth.credentials,
         include: {
           kv: include && typeof include.kv === "boolean" ? include.kv : true,
           pki: include && typeof include.pki === "boolean" ? include.pki : true,
@@ -211,7 +221,10 @@ router.post(
           const scan = await persistScan({
             workspaceId,
             provider: "vault",
-            identityContext: { address },
+            identityContext: {
+              address,
+              namespace: parsedAuth.credentials.namespace || undefined,
+            },
             createdBy: req.user?.id || null,
             items: result.items.map((item) => ({
               sourceKind: item.sourceKind,
@@ -260,11 +273,6 @@ router.post(
           stack: _err.stack,
         });
       }
-      try {
-        if (req && req.body) delete req.body.token;
-      } catch (_) {
-        logger.debug("Request body cleanup failed", { error: _?.message });
-      }
     } catch (e) {
       const errorRef = generateErrorReference();
       logger.error("Vault scan failed", {
@@ -289,7 +297,12 @@ router.post(
           ? parseInt(e.message.match(/\s(\d{3})$/)[1])
           : null);
 
-      if (e?.code === "ETIMEDOUT" || e?.name === "AbortError") {
+      if (isVaultAuthError(e)) {
+        userMessage =
+          VAULT_AUTH_USER_MESSAGES[e.code] ||
+          e.message ||
+          "Vault authentication failed";
+      } else if (e?.code === "ETIMEDOUT" || e?.name === "AbortError") {
         userMessage =
           "Vault connection timeout. Vault server is not responding - check if it is accessible from the server and verify firewall rules allow connections.";
       } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
@@ -307,9 +320,8 @@ router.post(
       } else if (e?.status === 400 || e?.message?.includes(" 400")) {
         userMessage = `Invalid request: ${e?.message || "Bad Request"}. Check your Vault address format.`;
       } else if (status === 403 || e?.message?.includes(" 403")) {
-        // 403 could be auth OR network/firewall (some proxies return 403 for blocked connections)
         userMessage =
-          "Vault returned 403 Forbidden. This could be: (1) Token lacks permissions to access KV/PKI mounts, or (2) Firewall/proxy blocking the connection. Verify Vault is accessible and token has proper permissions.";
+          "Vault returned 403 Forbidden. The token or AppRole policy may lack KV/PKI permissions, or a firewall/proxy is blocking the connection. A 403 is not retried as token expiry.";
       } else if (status === 404 || e?.message?.includes(" 404")) {
         userMessage =
           "Vault endpoint not found. Check address and path. Ensure Vault API is accessible at the provided URL.";
@@ -331,6 +343,8 @@ router.post(
       }
 
       res.status(e?.status || 502).json(withQuota({ error: userMessage }));
+    } finally {
+      scrubVaultCredentialBody(req.body);
     }
   },
 );
@@ -344,13 +358,16 @@ router.post(
   ...requireIntegrationWorkspaceAccess,
   async (req, res) => {
     try {
-      const { address, token } = req.body || {};
+      const { address } = req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
-      if (!address || !token)
-        return res
-          .status(400)
-          .json({ error: "address and token are required" });
+      if (!address) {
+        return res.status(400).json({ error: "address is required" });
+      }
+      const parsedAuth = parseVaultAuthFromBody(req.body);
+      if (parsedAuth.error) {
+        return res.status(400).json({ error: parsedAuth.error });
+      }
       try {
         const u = new URL(address);
         if (!/^https?:$/.test(u.protocol))
@@ -371,13 +388,8 @@ router.post(
         return res.status(400).json({ error: "invalid address URL" });
       }
       const { listMounts } = require("../services/vaultIntegration");
-      const mounts = await listMounts({ address, token });
+      const mounts = await listMounts({ address, ...parsedAuth.credentials });
       res.json({ mounts });
-      try {
-        if (req && req.body) delete req.body.token;
-      } catch (_err) {
-        logger.debug("Non-critical operation failed", { error: _err.message });
-      }
     } catch (e) {
       const errorRef = generateErrorReference();
       logger.error("Vault mounts failed", {
@@ -401,7 +413,12 @@ router.post(
           ? parseInt(e.message.match(/\s(\d{3})$/)[1])
           : null);
 
-      if (e?.code === "ETIMEDOUT" || e?.name === "AbortError") {
+      if (isVaultAuthError(e)) {
+        userMessage =
+          VAULT_AUTH_USER_MESSAGES[e.code] ||
+          e.message ||
+          "Vault authentication failed";
+      } else if (e?.code === "ETIMEDOUT" || e?.name === "AbortError") {
         userMessage =
           "Vault connection timeout. Vault server is not responding - check if it is accessible from the server and verify firewall rules allow connections.";
       } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
@@ -419,7 +436,7 @@ router.post(
       } else if (status === 403 || e?.message?.includes(" 403")) {
         // 403 could be auth OR network/firewall (some proxies return 403 for blocked connections)
         userMessage =
-          "Vault returned 403 Forbidden. This could be: (1) Token lacks permissions to list mounts, or (2) Firewall/proxy blocking the connection. Verify Vault is accessible and token has proper permissions.";
+          "Vault returned 403 Forbidden. The token or AppRole policy may lack permission to list mounts, or a firewall/proxy is blocking the connection. A 403 is not retried as token expiry.";
       } else if (status === 404 || e?.message?.includes(" 404")) {
         userMessage =
           "Vault endpoint not found. Check address and ensure /v1/sys/mounts is accessible.";
@@ -428,6 +445,8 @@ router.post(
       }
 
       res.status(e?.status || 502).json({ error: userMessage });
+    } finally {
+      scrubVaultCredentialBody(req.body);
     }
   },
 );

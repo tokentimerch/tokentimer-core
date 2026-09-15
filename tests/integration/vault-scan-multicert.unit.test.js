@@ -527,4 +527,33 @@ describe("Vault KV scan behavior", () => {
       expect(res.items[0].category).to.equal("key_secret");
     });
   });
+
+  describe("AppRole login failures abort the scan", () => {
+    it("does not downgrade an invalid role to a partial mount result", async () => {
+      const vault = await startFakeVault({
+        "POST /v1/auth/approle/login": {
+          status: 400,
+          body: { errors: ["invalid role ID"] },
+        },
+      });
+      try {
+        let threw = null;
+        try {
+          await mod.scanVault({
+            address: vault.address,
+            roleId: "bad-role",
+            secretId: "secret",
+            include: { kv: true, pki: false },
+          });
+        } catch (e) {
+          threw = e;
+        }
+        expect(threw).to.not.equal(null);
+        expect(threw.name).to.equal("VaultAuthError");
+        expect(threw.code).to.equal("VAULT_APPROLE_BAD_ROLE");
+      } finally {
+        await vault.close();
+      }
+    });
+  });
 });
