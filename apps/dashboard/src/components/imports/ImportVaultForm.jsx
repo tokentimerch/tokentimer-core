@@ -27,10 +27,6 @@ import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
-import {
-  canonicalContactGroupFields,
-  contactGroupFieldsForImportDefaults,
-} from '../../utils/contactGroupAssignment.js';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
 
 const VAULT_CATEGORY_OPTIONS = [
@@ -181,7 +177,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   // Shared bulk assignment state
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
+  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsVault.size);
@@ -337,7 +333,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          ...canonicalContactGroupFields(bulkContactGroupIds),
+          contact_group_id: bulkContactGroupId || null,
         }));
       if (!workspaceId) {
         onError && onError('Please select a workspace first.');
@@ -346,10 +342,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       await vaultAPI.import({
         workspaceId,
         items: selected,
-        defaults: {
-          ...vaultDefaults,
-          ...contactGroupFieldsForImportDefaults(bulkContactGroupIds),
-        },
+        defaults: vaultDefaults,
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -765,8 +758,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             selectedCount={selectedRowsVault.size}
             section={bulkSection}
             onSectionChange={setBulkSection}
-            contactGroupIds={bulkContactGroupIds}
-            onContactGroupChange={setBulkContactGroupIds}
+            contactGroupId={bulkContactGroupId}
+            onContactGroupChange={setBulkContactGroupId}
             contactGroups={contactGroups}
             borderColor={borderColor}
           />

@@ -26,15 +26,11 @@ import emailAddress from "../../../packages/email-address/index.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
 import { sanitizeWhatsAppTemplateVars } from "./shared/whatsappTemplateVars.js";
 import {
-  resolveContactGroupsForAsset,
-  canonicalLegacyContactGroupId,
+  resolveContactGroup,
   hasEmailContacts,
   hasWhatsAppContacts,
   hasWebhookNames,
   getWebhookNames,
-  unionGroupsForThresholdWindow,
-  unionContactIds,
-  dedupeNormalizedDestinations,
 } from "./shared/contactGroups.js";
 import {
   parseCertRenewalFailedJobId,
@@ -45,60 +41,6 @@ import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
 const { isValidEmail } = emailAddress;
 
 export { detectWebhookProviderKind };
-
-const SINGLE_SHOT_ALERT_PREFIXES = [
-  "endpoint_health:",
-  "cert_renewal_failed:",
-  "agent_health:",
-];
-
-function assignedIdsFromRow(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function isSingleShotAlert(alert) {
-  const key = String(alert?.alert_key || "");
-  return SINGLE_SHOT_ALERT_PREFIXES.some((prefix) => key.startsWith(prefix));
-}
-
-function unionWebhookNames(groups) {
-  const names = [];
-  const seen = new Set();
-  for (const group of Array.isArray(groups) ? groups : []) {
-    for (const name of getWebhookNames(group)) {
-      if (!name || seen.has(name)) continue;
-      seen.add(name);
-      names.push(name);
-    }
-  }
-  return names;
-}
-
-function uniqueWebhooksByUrl(webhooks) {
-  const list = Array.isArray(webhooks) ? webhooks : [];
-  const urls = dedupeNormalizedDestinations(
-    list.map((webhook) => webhook && webhook.url),
-    "webhook",
-  );
-  const byUrl = new Map();
-  for (const webhook of list) {
-    const url = String(webhook?.url || "").trim();
-    if (!url || byUrl.has(url)) continue;
-    byUrl.set(url, webhook);
-  }
-  return urls.map((url) => byUrl.get(url)).filter(Boolean);
-}
-
-function contactGroupAuditFields(assignedIds, resolvedGroups, contactGroups) {
-  const contactGroupId =
-    canonicalLegacyContactGroupId(assignedIds) ||
-    (resolvedGroups[0] ? String(resolvedGroups[0].id) : null);
-  const groups = Array.isArray(contactGroups) ? contactGroups : [];
-  const contactGroupName = contactGroupId
-    ? groups.find((g) => String(g.id) === String(contactGroupId))?.name || null
-    : null;
-  return { contactGroupId, contactGroupName };
-}
 
 function safeJoinList(value) {
   if (!value) return null;
@@ -1152,7 +1094,6 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          COALESCE(ws.webhook_urls, wsf.webhook_urls, wjj.webhook_urls) AS webhook_urls,
          COALESCE(ws.contact_groups, wsf.contact_groups, wjj.contact_groups) AS contact_groups,
          COALESCE(ws.default_contact_group_id, wsf.default_contact_group_id, wjj.default_contact_group_id) AS default_contact_group_id,
-         COALESCE(ws.alert_thresholds, wsf.alert_thresholds, wjj.alert_thresholds) AS alert_thresholds,
          COALESCE(ws.email_alerts_enabled, wsf.email_alerts_enabled, wjj.email_alerts_enabled) AS email_alerts_enabled,
          COALESCE(ws.delivery_window_start, wsf.delivery_window_start, wjj.delivery_window_start) AS delivery_window_start,
          COALESCE(ws.delivery_window_end, wsf.delivery_window_end, wjj.delivery_window_end) AS delivery_window_end,
@@ -1164,10 +1105,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
          t.renewal_url, t.renewal_date::date AS renewal_date, t.contacts, 
          t.description, t.notes,
          t.cert_lifecycle_status,
-         CASE
-           WHEN aq.token_id IS NOT NULL THEN COALESCE(token_groups.assigned_ids, ARRAY[]::text[])
-           ELSE COALESCE(agent_groups.assigned_ids, ARRAY[]::text[])
-         END AS assigned_ids,
+         COALESCE(t.contact_group_id, ca.contact_group_id) AS contact_group_id,
          COALESCE(t.workspace_id, ca.workspace_id) AS workspace_id,
          COALESCE(w.name, wf.name, wj.name) AS workspace_name
        FROM alert_queue aq
@@ -1193,20 +1131,6 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
        LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
        LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
        LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(array_agg(tcg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
-         FROM token_contact_groups tcg
-         WHERE aq.token_id IS NOT NULL
-           AND tcg.token_id = aq.token_id
-           AND tcg.workspace_id = COALESCE(t.workspace_id, ca.workspace_id)
-       ) token_groups ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(array_agg(acg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
-         FROM certops_agent_contact_groups acg
-         WHERE aq.certops_agent_id IS NOT NULL
-           AND acg.agent_id = aq.certops_agent_id
-           AND acg.workspace_id = COALESCE(t.workspace_id, ca.workspace_id)
-       ) agent_groups ON TRUE
         WHERE aq.status IN ('pending', 'failed', 'partial') 
          AND aq.due_date <= CURRENT_DATE
          AND (t.id IS NOT NULL OR ca.id IS NOT NULL)
@@ -1466,45 +1390,26 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         }
       }
 
-      const assignedIds = assignedIdsFromRow(alert.assigned_ids);
-      const resolvedGroups = resolveContactGroupsForAsset({
+      // Resolve contact group once for all channel checks
+      const resolvedGroup = resolveContactGroup({
         contactGroups: alert.contact_groups,
-        assignedIds,
+        contactGroupId: alert.contact_group_id,
         defaultContactGroupId: alert.default_contact_group_id,
       });
-      const workspaceThresholds = Array.isArray(alert.alert_thresholds)
-        ? alert.alert_thresholds.filter((n) => Number.isFinite(n))
-        : [];
-      // Endpoint/agent/renewal store threshold_days=0; that is not an expiry window.
-      const eligibleGroups = isSingleShotAlert(alert)
-        ? resolvedGroups
-        : unionGroupsForThresholdWindow(
-            resolvedGroups,
-            workspaceThresholds,
-            alert.threshold_days,
-          );
-      const { contactGroupId, contactGroupName } = contactGroupAuditFields(
-        assignedIds,
-        resolvedGroups,
-        alert.contact_groups,
-      );
 
-      const channels =
-        eligibleGroups.length === 0
-          ? []
-          : channelsArray.filter((ch) => {
-              if (ch === "email") {
-                const wsEmailEnabled = alert.email_alerts_enabled !== false;
-                return wsEmailEnabled && eligibleGroups.some(hasEmailContacts);
-              }
-              if (ch === "webhooks") {
-                return eligibleGroups.some(hasWebhookNames);
-              }
-              if (ch === "whatsapp") {
-                return eligibleGroups.some(hasWhatsAppContacts);
-              }
-              return true;
-            });
+      const channels = channelsArray.filter((ch) => {
+        if (ch === "email") {
+          const wsEmailEnabled = alert.email_alerts_enabled !== false;
+          return wsEmailEnabled && hasEmailContacts(resolvedGroup);
+        }
+        if (ch === "webhooks") {
+          return hasWebhookNames(resolvedGroup);
+        }
+        if (ch === "whatsapp") {
+          return hasWhatsAppContacts(resolvedGroup);
+        }
+        return true;
+      });
 
       const finalChannels = channels;
 
@@ -1576,16 +1481,13 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           if (channel === "email") {
             // Build recipients: group emails only; no fallback
             let recipients = [];
-            const groupIdUsed = contactGroupId;
+            const groupIdUsed = resolvedGroup ? String(resolvedGroup.id) : null;
             try {
-              const emailIds = unionContactIds(
-                eligibleGroups,
-                "email_contact_ids",
-              );
-              if (emailIds.length > 0) {
+              if (resolvedGroup && hasEmailContacts(resolvedGroup)) {
+                // Resolve emails from workspace_contacts by id
                 const contactsRes = await client.query(
                   `SELECT details FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
-                  [alert.workspace_id, emailIds],
+                  [alert.workspace_id, resolvedGroup.email_contact_ids],
                 );
                 recipients = contactsRes.rows
                   .map((r) => {
@@ -1607,8 +1509,8 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             // No fallback: if recipients is empty, email channel will result in no sends
 
             // Dedupe recipients
-            const trimmed = dedupeNormalizedDestinations(recipients, "email").filter(
-              (e) => isValidEmail(e),
+            const trimmed = Array.from(new Set(recipients)).filter((e) =>
+              isValidEmail(e),
             );
 
             if (trimmed.length === 0) {
@@ -1712,14 +1614,16 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               ? [...alert.webhook_urls]
               : [];
             // If a group selects named webhook(s), restrict to only those; otherwise, send none
-            const groupIdUsedForWebhooks = contactGroupId;
+            const groupIdUsedForWebhooks = resolvedGroup
+              ? String(resolvedGroup.id)
+              : null;
             try {
-              const names = unionWebhookNames(eligibleGroups);
-              if (names.length > 0) {
+              if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
+                const names = getWebhookNames(resolvedGroup);
                 const filtered = webhooks.filter((w) =>
                   names.includes(String(w.name || "").trim()),
                 );
-                webhooks = uniqueWebhooksByUrl(filtered);
+                webhooks = filtered.length > 0 ? filtered : [];
               } else {
                 webhooks = [];
               }
@@ -1991,18 +1895,16 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             }
           } else if (channel === "whatsapp") {
             let trimmed = [];
-            const groupIdUsed = contactGroupId;
+            const groupIdUsed = resolvedGroup ? String(resolvedGroup.id) : null;
 
             {
               // Resolve phones by querying workspace_contacts with contact_ids from group
               let recipients = [];
               let contactInfos = [];
               try {
-                const waIds = unionContactIds(
-                  eligibleGroups,
-                  "whatsapp_contact_ids",
-                );
-                if (waIds.length > 0) {
+                if (resolvedGroup && hasWhatsAppContacts(resolvedGroup)) {
+                  const waIds = resolvedGroup.whatsapp_contact_ids;
+                  // Query workspace_contacts to get phones and names
                   const contactsRes = await client.query(
                     `SELECT id, first_name, last_name, phone_e164 FROM workspace_contacts WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
                     [alert.workspace_id, waIds],
@@ -2040,8 +1942,8 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               }
 
               // Dedupe recipients
-              trimmed = dedupeNormalizedDestinations(recipients, "phone").filter(
-                (p) => /^\+?\d{6,15}$/.test(String(p).trim()),
+              trimmed = Array.from(new Set(recipients)).filter((p) =>
+                /^\+?\d{6,15}$/.test(String(p).trim()),
               );
               // Build a map phone->first_name for template variables
               const firstNameByPhone = new Map();
@@ -2510,6 +2412,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         }
         // Emit an audit event for partial successes to aid diagnostics
         if (webhookPartialErrors.length > 0) {
+          const contactGroupId =
+            alert.contact_group_id || alert.default_contact_group_id || null;
+          const groups = Array.isArray(alert.contact_groups)
+            ? alert.contact_groups
+            : [];
+          const contactGroupName = contactGroupId
+            ? groups.find((g) => String(g.id) === String(contactGroupId))
+                ?.name || null
+            : null;
           await writeAudit(client, {
             subjectUserId: alert.user_id,
             action: "ALERT_PARTIAL_SUCCESS",
@@ -2544,6 +2455,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             ? `${errorMessages}; MAX_ATTEMPTS`
             : "MAX_ATTEMPTS";
           try {
+            const contactGroupId =
+              alert.contact_group_id || alert.default_contact_group_id || null;
+            const groups = Array.isArray(alert.contact_groups)
+              ? alert.contact_groups
+              : [];
+            const contactGroupName = contactGroupId
+              ? groups.find((g) => String(g.id) === String(contactGroupId))
+                  ?.name || null
+              : null;
             await writeAudit(client, {
               subjectUserId: alert.user_id,
               action: "ALERT_BLOCKED_MAX_ATTEMPTS",
@@ -2582,6 +2502,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
           else errorMessages = "WHATSAPP_PERMANENT_FAILURE";
           try {
+            const contactGroupId =
+              alert.contact_group_id || alert.default_contact_group_id || null;
+            const groups = Array.isArray(alert.contact_groups)
+              ? alert.contact_groups
+              : [];
+            const contactGroupName = contactGroupId
+              ? groups.find((g) => String(g.id) === String(contactGroupId))
+                  ?.name || null
+              : null;
             await writeAudit(client, {
               subjectUserId: alert.user_id,
               action: "ALERT_BLOCKED_WHATSAPP_ERROR",
@@ -2630,6 +2559,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         }
         if (!reachedMaxAttempts && nextAttemptTimestamp) {
           try {
+            const contactGroupId =
+              alert.contact_group_id || alert.default_contact_group_id || null;
+            const groups = Array.isArray(alert.contact_groups)
+              ? alert.contact_groups
+              : [];
+            const contactGroupName = contactGroupId
+              ? groups.find((g) => String(g.id) === String(contactGroupId))
+                  ?.name || null
+              : null;
             await writeAudit(client, {
               subjectUserId: alert.user_id,
               action: "ALERT_RETRY_SCHEDULED",
@@ -2654,6 +2592,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
       if (allSucceeded) {
         sent++;
+        const contactGroupId =
+          alert.contact_group_id || alert.default_contact_group_id || null;
+        const groups = Array.isArray(alert.contact_groups)
+          ? alert.contact_groups
+          : [];
+        const contactGroupName = contactGroupId
+          ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
+            null
+          : null;
         await writeAudit(client, {
           subjectUserId: alert.user_id,
           action: "ALERT_SENT",
@@ -2669,6 +2616,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         });
       } else {
         failed++;
+        const contactGroupId =
+          alert.contact_group_id || alert.default_contact_group_id || null;
+        const groups = Array.isArray(alert.contact_groups)
+          ? alert.contact_groups
+          : [];
+        const contactGroupName = contactGroupId
+          ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
+            null
+          : null;
         await writeAudit(client, {
           subjectUserId: alert.user_id,
           action: "ALERT_SEND_FAILED",

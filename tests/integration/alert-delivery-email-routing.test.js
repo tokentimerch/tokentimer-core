@@ -80,12 +80,6 @@ describe("Alert Delivery - contact group routing (token group > workspace defaul
       `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, contact_group_id) VALUES ($1,$2,$1,$3,$4,'api_key','general',$5) RETURNING id`,
       [userId, wsId, "Token-Ops-Group", exp, "ops"],
     );
-    await TestUtils.execQuery(
-      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT DO NOTHING`,
-      [t1.rows[0].id, wsId, "ops"],
-    );
     const t2 = await TestUtils.execQuery(
       `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category) VALUES ($1,$2,$1,$3,$4,'api_key','general') RETURNING id`,
       [userId, wsId, "Token-Workspace-Default", exp],

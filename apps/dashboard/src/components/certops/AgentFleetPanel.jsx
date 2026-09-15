@@ -18,6 +18,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Stack,
   Table,
@@ -49,11 +50,6 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
 import { retireAgent, updateAgentAlertSettings } from './certopsAgentsApi.js';
-import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
-import {
-  canonicalAgentContactGroupFields,
-  hydrateContactGroupIds,
-} from '../../utils/contactGroupAssignment.js';
 import { formatDateTime, formatRelativeDateTime } from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
@@ -469,7 +465,7 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
   } = useDashboardModalProps();
 
   const [alertsEnabled, setAlertsEnabled] = useState(true);
-  const [contactGroupIds, setContactGroupIds] = useState([]);
+  const [contactGroupId, setContactGroupId] = useState('');
   const [contactGroups, setContactGroups] = useState([]);
   const [defaultContactGroupId, setDefaultContactGroupId] = useState('');
   const [loadingGroups, setLoadingGroups] = useState(false);
@@ -479,7 +475,7 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
   useEffect(() => {
     if (!isOpen || !agent) return undefined;
     setAlertsEnabled(agent.downtimeAlertsEnabled !== false);
-    setContactGroupIds(hydrateContactGroupIds(agent));
+    setContactGroupId(agent.contactGroupId || '');
     setError('');
     setSubmitting(false);
     if (!workspaceId) return undefined;
@@ -515,7 +511,7 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
         agent.id,
         {
           downtimeAlertsEnabled: alertsEnabled,
-          ...canonicalAgentContactGroupFields(contactGroupIds),
+          contactGroupId: contactGroupId || null,
         }
       );
       showSuccess('Alert settings updated');
@@ -559,25 +555,26 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
                 Alert when this agent has not been seen for 10 minutes
               </Text>
             </Checkbox>
-            <FormControl
-              as='fieldset'
-              isDisabled={!alertsEnabled || loadingGroups}
-            >
-              <FormLabel as='legend' fontSize='sm'>
-                Contact groups
-              </FormLabel>
-              <ContactGroupCheckboxGroup
-                contactGroups={contactGroups}
-                value={contactGroupIds}
-                onChange={setContactGroupIds}
-                isDisabled={!alertsEnabled || loadingGroups}
-                defaultContactGroupId={defaultContactGroupId}
-                helperText=''
-                maxH='160px'
-              />
+            <FormControl isDisabled={!alertsEnabled || loadingGroups}>
+              <FormLabel fontSize='sm'>Contact group</FormLabel>
+              <Select
+                size='sm'
+                value={contactGroupId}
+                onChange={event => setContactGroupId(event.target.value)}
+              >
+                <option value=''>Default workspace group</option>
+                {contactGroups.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                    {String(g.id) === String(defaultContactGroupId)
+                      ? ' (default)'
+                      : ''}
+                  </option>
+                ))}
+              </Select>
               <FormHelperText>
-                Down and recovery alerts go to the selected groups. Leave all
-                unchecked to use the workspace default.
+                Down and recovery alerts go to this group's email/webhook
+                channels.
               </FormHelperText>
             </FormControl>
             {error ? (

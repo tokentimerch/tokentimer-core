@@ -36,6 +36,7 @@ function agentFixture(overrides = {}) {
     platform: "win32",
     lastSeenAt: "2026-07-24T08:00:00.000Z",
     downtimeAlertsEnabled: true,
+    contactGroupId: null,
     ...overrides,
   };
 }
@@ -71,11 +72,6 @@ function happyPathHandler(overrides = {}) {
               },
             ],
           };
-    }
-    if (sql.includes("FROM certops_agent_contact_groups")) {
-      return overrides.assignedGroups !== undefined
-        ? overrides.assignedGroups
-        : { rows: [] };
     }
     if (sql.includes("INSERT INTO alert_queue")) {
       return overrides.insertResult !== undefined
@@ -165,10 +161,9 @@ describe("agentHealthAlerts.queueAgentHealthAlert (down)", () => {
     assert.equal(outcome.reason, "alerts_disabled");
   });
 
-  it("uses join-table membership over the workspace default", async () => {
+  it("uses the agent's configured contact group over the workspace default", async () => {
     const { state, client } = createMockClient(
       happyPathHandler({
-        assignedGroups: { rows: [{ contact_group_id: "g2" }] },
         settings: {
           rows: [
             {
@@ -186,16 +181,11 @@ describe("agentHealthAlerts.queueAgentHealthAlert (down)", () => {
     );
     await queueAgentHealthAlert({
       client,
-      agent: agentFixture(),
+      agent: agentFixture({ contactGroupId: "g2" }),
       transitionType: "down",
     });
     const insert = state.queries.find((q) => q.text.includes("INSERT INTO alert_queue"));
     assert.ok(insert, "insert should still occur (g2 also has email contacts)");
-    const membership = state.queries.find((q) =>
-      q.text.includes("FROM certops_agent_contact_groups"),
-    );
-    assert.ok(membership, "join-table membership lookup expected");
-    assert.deepEqual(membership.params, ["agent-row-1", WORKSPACE_A]);
   });
 
   it("caps the impacted-certificates list embedded in metadata", async () => {
@@ -239,41 +229,6 @@ describe("agentHealthAlerts.queueAgentHealthAlert (down)", () => {
     });
     assert.equal(outcome.queued, false);
     assert.equal(outcome.reason, "no_channels");
-  });
-
-  it("unions email and webhook channels across join-table groups", async () => {
-    const { state, client } = createMockClient(
-      happyPathHandler({
-        assignedGroups: {
-          rows: [
-            { contact_group_id: "g-email" },
-            { contact_group_id: "g-hook" },
-          ],
-        },
-        settings: {
-          rows: [
-            {
-              email_alerts_enabled: true,
-              contact_groups: [
-                { id: "g-email", email_contact_ids: ["c1"] },
-                { id: "g-hook", webhook_names: ["ops"] },
-              ],
-              default_contact_group_id: "g-email",
-              webhook_urls: [{ name: "ops" }],
-            },
-          ],
-        },
-      }),
-    );
-    const outcome = await queueAgentHealthAlert({
-      client,
-      agent: agentFixture(),
-      transitionType: "down",
-    });
-    assert.equal(outcome.queued, true);
-    assert.deepEqual(outcome.channels, ["email", "webhooks"]);
-    const insert = state.queries.find((q) => q.text.includes("INSERT INTO alert_queue"));
-    assert.deepEqual(JSON.parse(insert.params[4]), ["email", "webhooks"]);
   });
 
   it("skips when the workspace has no creator to anchor the alert on", async () => {

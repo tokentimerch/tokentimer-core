@@ -20,6 +20,7 @@ import {
   ModalCloseButton,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Text,
   Textarea,
@@ -43,11 +44,6 @@ import {
   createTokenEditData,
   createTokenUpdatePayload,
 } from '../tokenDetailForm.js';
-import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
-import {
-  formatContactGroupNames,
-  hydrateContactGroupIds,
-} from '../../utils/contactGroupAssignment.js';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
@@ -496,15 +492,13 @@ export default function CertificateDetailsModal({
         }
       : null,
   ].filter(Boolean);
-  const contactGroupLabel = useMemo(
-    () =>
-      formatContactGroupNames(
-        hydrateContactGroupIds(token),
-        contactGroups,
-        'Use workspace default'
-      ),
-    [contactGroups, token]
-  );
+  const contactGroupLabel = useMemo(() => {
+    if (!token?.contact_group_id) return 'Use workspace default';
+    const group = contactGroups.find(
+      item => String(item.id) === String(token.contact_group_id)
+    );
+    return group?.name || 'Use workspace default';
+  }, [contactGroups, token?.contact_group_id]);
 
   const workspaceContactOptions = useMemo(
     () =>
@@ -715,19 +709,21 @@ export default function CertificateDetailsModal({
                   )}
                 </DetailRow>
               ) : null}
-              {isEditing || hasValue(hydrateContactGroupIds(token)) ? (
+              {isEditing || hasValue(token.contact_group_id) ? (
                 <DetailRow label='Contact group' valueTitle={contactGroupLabel}>
                   {isEditing ? (
-                    <ContactGroupCheckboxGroup
-                      contactGroups={contactGroups}
-                      value={editData.contact_group_ids}
-                      onChange={ids =>
-                        setEditData(current => ({
-                          ...current,
-                          contact_group_ids: ids,
-                        }))
-                      }
-                    />
+                    <Select
+                      {...commonInputProps}
+                      value={editData.contact_group_id}
+                      onChange={updateField('contact_group_id')}
+                    >
+                      <option value=''>Use workspace default</option>
+                      {contactGroups.map(group => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
+                    </Select>
                   ) : (
                     <Text fontSize='sm'>{contactGroupLabel}</Text>
                   )}

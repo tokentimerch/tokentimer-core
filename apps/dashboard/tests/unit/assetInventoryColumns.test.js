@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   columnsByMode,
   inventoryMode,
-  resolveContactGroupLabel,
 } from '../../src/components/AssetInventoryTable.jsx';
 
 const EXPECTED_COLUMNS = {
@@ -109,37 +108,5 @@ describe('AssetInventoryTable column config', () => {
         );
       }
     });
-  });
-});
-
-describe('resolveContactGroupLabel', () => {
-  const groups = [
-    { id: 'group-1', name: 'Platform On-Call' },
-    { id: 'group-2', name: 'Security On-Call' },
-  ];
-
-  it('joins names from contact_group_ids', () => {
-    expect(
-      resolveContactGroupLabel(
-        { contact_group_ids: ['group-2', 'group-1'] },
-        groups,
-        'group-1'
-      )
-    ).toBe('Platform On-Call, Security On-Call');
-  });
-
-  it('falls back to the singular id when the plural list is missing', () => {
-    expect(
-      resolveContactGroupLabel({ contact_group_id: 'group-2' }, groups)
-    ).toBe('Security On-Call');
-  });
-
-  it('uses Workspace default when no groups are assigned', () => {
-    expect(
-      resolveContactGroupLabel({ contact_group_ids: [] }, groups, 'group-1')
-    ).toBe('Workspace default');
-    expect(resolveContactGroupLabel({}, groups, 'group-1')).toBe(
-      'Workspace default'
-    );
   });
 });

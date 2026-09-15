@@ -11,6 +11,7 @@ import {
   VStack,
   Input,
   Textarea,
+  Select,
 } from '@chakra-ui/react';
 import { BadgeCheck, FileText, Info, KeyRound, List } from 'lucide-react';
 import { getExpiryStatus } from '../styles/colors.js';
@@ -33,11 +34,6 @@ import {
   createTokenEditData,
   createTokenUpdatePayload,
 } from './tokenDetailForm.js';
-import ContactGroupCheckboxGroup from './ContactGroupCheckboxGroup.jsx';
-import {
-  formatContactGroupNames,
-  hydrateContactGroupIds,
-} from '../utils/contactGroupAssignment.js';
 
 function hasDisplayValue(value) {
   if (Array.isArray(value)) return value.some(hasDisplayValue);
@@ -138,6 +134,21 @@ function TokenDetailModal({
       setSaving(false);
     }
   }, [editData, token, onTokenUpdated]);
+
+  const contactGroupOptions = useMemo(
+    () => (
+      <>
+        <option value=''>Use workspace default</option>
+        {Array.isArray(contactGroups) &&
+          contactGroups.map(g => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+      </>
+    ),
+    [contactGroups]
+  );
 
   const workspaceContactOptions = useMemo(
     () =>
@@ -267,30 +278,27 @@ function TokenDetailModal({
     );
   };
 
-  const renderContactGroupsField = () => {
-    const assignedIds = hydrateContactGroupIds(token);
-    if (!isEditing && assignedIds.length === 0) return null;
-
+  const renderEditableSelect = (label, key, options) => {
     return (
-      <DashboardModalDetailRow label='Contact group' tokens={modalTokens}>
+      <DashboardModalDetailRow label={label} tokens={modalTokens}>
         {isEditing ? (
-          <ContactGroupCheckboxGroup
-            contactGroups={contactGroups}
-            value={editData.contact_group_ids}
-            onChange={ids =>
-              setEditData(current => ({
-                ...current,
-                contact_group_ids: ids,
-              }))
-            }
-          />
+          <Select
+            value={editData[key] || ''}
+            onChange={e => setEditData(d => ({ ...d, [key]: e.target.value }))}
+            {...commonInputProps}
+          >
+            {options}
+          </Select>
         ) : (
           <Text fontSize='sm' color={textColor} wordBreak='break-word'>
-            {formatContactGroupNames(
-              assignedIds,
-              contactGroups,
-              'Use workspace default'
-            )}
+            {(() => {
+              const id = (isEditing ? editData[key] : token?.[key]) || '';
+              if (!id) return 'Use workspace default';
+              const g = Array.isArray(contactGroups)
+                ? contactGroups.find(x => String(x.id) === String(id))
+                : null;
+              return g ? g.name : 'Use workspace default';
+            })()}
           </Text>
         )}
       </DashboardModalDetailRow>
@@ -360,7 +368,6 @@ function TokenDetailModal({
       token.name,
       token.section,
       token.contact_group_id,
-      token.contact_group_ids,
       token.expiresAt,
       token.created_at,
       token.imported_at,
@@ -489,7 +496,13 @@ function TokenDetailModal({
                       )
                     : renderField('Section', displayList(token.section))
                   : null}
-                {renderContactGroupsField()}
+                {isEditing || hasDisplayValue(token.contact_group_id)
+                  ? renderEditableSelect(
+                      'Contact group',
+                      'contact_group_id',
+                      contactGroupOptions
+                    )
+                  : null}
 
                 {isEditing
                   ? renderEditable(

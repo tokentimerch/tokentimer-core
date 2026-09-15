@@ -23,38 +23,55 @@
  */
 
 const { pool } = require("../../db/database");
-const {
-  resolveContactGroupsForAsset,
-  hasEmailContacts,
-  hasWebhookNames,
-  getWebhookNames,
-  dedupeNormalizedDestinations,
-} = require("../../src/shared/contactGroups");
-const { loadAssignedGroupIds } = require("../../src/shared/replaceAssetContactGroups");
 
-function unionSingleShotChannels(groups, settings) {
-  const channels = [];
-  if (
-    settings.email_alerts_enabled !== false &&
-    groups.some(hasEmailContacts)
-  ) {
-    channels.push("email");
+// Duplicated (not imported) for the same reason renewalFailureAlerts.js
+// duplicates them: apps/worker/src/shared/contactGroups.js is ESM and this
+// CommonJS API service cannot require it. Keep in sync by hand; the rules
+// are small and stable.
+function resolveContactGroup({ contactGroups, contactGroupId, defaultContactGroupId }) {
+  try {
+    const groups = Array.isArray(contactGroups) ? contactGroups : [];
+    const pickId =
+      contactGroupId && String(contactGroupId).trim().length > 0
+        ? String(contactGroupId)
+        : defaultContactGroupId
+          ? String(defaultContactGroupId)
+          : null;
+    if (!pickId) return null;
+    let resolvedGroup = groups.find((g) => String(g.id) === pickId) || null;
+    if (!resolvedGroup && contactGroupId && defaultContactGroupId) {
+      resolvedGroup =
+        groups.find((g) => String(g.id) === String(defaultContactGroupId)) || null;
+    }
+    return resolvedGroup;
+  } catch (_err) {
+    return null;
   }
+}
 
-  if (groups.some(hasWebhookNames)) {
-    const selectedWebhookNames = dedupeNormalizedDestinations(
-      groups.flatMap((group) => getWebhookNames(group)),
-    );
-    const workspaceWebhooks = Array.isArray(settings.webhook_urls)
-      ? settings.webhook_urls
-      : [];
-    const matchingWebhookCount = workspaceWebhooks.filter((webhook) =>
-      selectedWebhookNames.includes(String(webhook?.name || "").trim()),
-    ).length;
-    if (matchingWebhookCount > 0) channels.push("webhooks");
+function hasEmailContacts(contactGroup) {
+  if (!contactGroup) return false;
+  return (
+    Array.isArray(contactGroup.email_contact_ids) &&
+    contactGroup.email_contact_ids.length > 0
+  );
+}
+
+function hasWebhookNames(contactGroup) {
+  if (!contactGroup) return false;
+  return Boolean(
+    contactGroup.webhook_name ||
+      (Array.isArray(contactGroup.webhook_names) && contactGroup.webhook_names.length > 0),
+  );
+}
+
+function getWebhookNames(contactGroup) {
+  if (!contactGroup) return [];
+  if (Array.isArray(contactGroup.webhook_names)) {
+    return contactGroup.webhook_names.filter(Boolean).map((n) => String(n).trim());
   }
-
-  return channels;
+  if (contactGroup.webhook_name) return [String(contactGroup.webhook_name).trim()];
+  return [];
 }
 
 const AGENT_HEALTH_ALERT_PREFIX = "agent_health:";
@@ -71,8 +88,7 @@ function agentHealthAlertKey(agentRowId, transitionType) {
  * @param {object} options
  * @param {object} options.client - pg client/pool (defaults to the shared pool).
  * @param {object} options.agent - { id, workspaceId, agentId, name, hostname,
- *   platform, lastSeenAt, downtimeAlertsEnabled }. Membership is loaded from
- *   certops_agent_contact_groups using certops_agents.id (the row UUID).
+ *   platform, lastSeenAt, downtimeAlertsEnabled, contactGroupId }.
  * @param {'down'|'recovered'} options.transitionType
  * @param {Array<object>} [options.impactedCertificates] - [{ id, commonName,
  *   renewalPathState }], only meaningful for 'down' (recovery summarizes the
@@ -158,7 +174,7 @@ async function queueAgentHealthAlert({
   // Enterprise currently assumes a real integer.
   //
   // This is a required anchor, not the notification recipient: actual email
-  // recipients are resolved from the assigned contact groups' email_contact_ids
+  // recipients are resolved from the contact group's email_contact_ids
   // below (delivery-worker.js's "group emails only; no fallback" rule), so
   // userId itself never determines who gets notified. Its only remaining
   // effects are alert_delivery_log.user_id bookkeeping and, on a partial
@@ -203,18 +219,24 @@ async function queueAgentHealthAlert({
     [agent.workspaceId],
   );
   const settings = settingsRes.rows[0] || {};
-  const assignedIds = await loadAssignedGroupIds({
-    client,
-    kind: "agent",
-    assetId: agent.id,
-    workspaceId: agent.workspaceId,
-  });
-  const resolvedGroups = resolveContactGroupsForAsset({
+  const resolvedGroup = resolveContactGroup({
     contactGroups: settings.contact_groups,
-    assignedIds,
+    contactGroupId: agent.contactGroupId || null,
     defaultContactGroupId: settings.default_contact_group_id,
   });
-  const channels = unionSingleShotChannels(resolvedGroups, settings);
+
+  const channels = [];
+  if (settings.email_alerts_enabled !== false && hasEmailContacts(resolvedGroup)) {
+    channels.push("email");
+  }
+  if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
+    const selectedWebhookNames = getWebhookNames(resolvedGroup);
+    const workspaceWebhooks = Array.isArray(settings.webhook_urls) ? settings.webhook_urls : [];
+    const matchingWebhookCount = workspaceWebhooks.filter((webhook) =>
+      selectedWebhookNames.includes(String(webhook?.name || "").trim()),
+    ).length;
+    if (matchingWebhookCount > 0) channels.push("webhooks");
+  }
   // WhatsApp intentionally not queued, same reasoning as cert_renewal_failed:
   // the WhatsApp path selects a per-alert-type Twilio ContentSid template and
   // none exists for agent_health. Email + webhooks only.

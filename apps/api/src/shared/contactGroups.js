@@ -3,6 +3,12 @@
 const MIN_THRESHOLD = -365;
 const MAX_THRESHOLD = 730;
 
+function compareContactGroupIdsUtf8Bytes(left, right) {
+  const a = Buffer.from(String(left), "utf8");
+  const b = Buffer.from(String(right), "utf8");
+  return Buffer.compare(a, b);
+}
+
 function normalizeAssignedGroupIds(ids) {
   if (!Array.isArray(ids)) return [];
   const unique = [];
@@ -14,7 +20,7 @@ function normalizeAssignedGroupIds(ids) {
     seen.add(id);
     unique.push(id);
   }
-  unique.sort();
+  unique.sort(compareContactGroupIdsUtf8Bytes);
   return unique;
 }
 
@@ -64,6 +70,9 @@ function resolveContactGroupsForAsset({
   if (valid.length === 0) {
     return pickDefault();
   }
+  valid.sort((left, right) =>
+    compareContactGroupIdsUtf8Bytes(left.id, right.id),
+  );
   return valid;
 }
 
@@ -217,6 +226,12 @@ function dedupeNormalizedDestinations(values, kind) {
   return out;
 }
 
+function invalidMembershipWriteError(fieldName) {
+  const err = new Error(`${fieldName} must be an array of strings`);
+  err.code = "VALIDATION_ERROR";
+  return err;
+}
+
 /**
  * @returns {{ action: 'omit' } | { action: 'set', ids: string[] }}
  */
@@ -225,10 +240,18 @@ function interpretContactGroupWrite({
   contactGroupId,
   hasPlural,
   hasSingular,
+  pluralFieldName = "contact_group_ids",
 }) {
   if (hasPlural) {
-    const list = Array.isArray(contactGroupIds) ? contactGroupIds : [];
-    return { action: "set", ids: normalizeAssignedGroupIds(list) };
+    if (!Array.isArray(contactGroupIds)) {
+      throw invalidMembershipWriteError(pluralFieldName);
+    }
+    for (const raw of contactGroupIds) {
+      if (typeof raw !== "string") {
+        throw invalidMembershipWriteError(pluralFieldName);
+      }
+    }
+    return { action: "set", ids: normalizeAssignedGroupIds(contactGroupIds) };
   }
   if (!hasSingular) {
     return { action: "omit" };
@@ -252,6 +275,7 @@ function membershipAfterContactGroupMove(assignedIds, fromId, toId) {
 }
 
 module.exports = {
+  compareContactGroupIdsUtf8Bytes,
   canonicalLegacyContactGroupId,
   normalizeAssignedGroupIds,
   membershipAfterContactGroupMove,

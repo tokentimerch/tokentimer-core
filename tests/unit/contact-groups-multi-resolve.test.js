@@ -31,10 +31,7 @@ const WORKSPACE_THRESHOLDS = [30, 14, 7, 1, 0];
 async function loadWorkerContactGroups() {
   return import(
     pathToFileURL(
-      path.resolve(
-        __dirname,
-        "../../apps/worker/src/shared/contactGroups.js",
-      ),
+      path.resolve(__dirname, "../../apps/worker/src/shared/contactGroups.js"),
     ).href
   );
 }
@@ -94,11 +91,12 @@ describe("canonicalLegacyContactGroupId", () => {
 });
 
 describe("normalizeAssignedGroupIds", () => {
-  it("unique-sorts and drops empty or non-string values", () => {
+  it("unique-sorts in UTF-8 byte order and drops empty or non-string values", () => {
     assert.deepEqual(
       api.normalizeAssignedGroupIds(["b", "a", "b", "", " a ", 3]),
       ["a", "b"],
     );
+    assert.deepEqual(api.normalizeAssignedGroupIds(["B", "a"]), ["B", "a"]);
   });
 });
 
@@ -184,9 +182,10 @@ describe("resolveContactGroupsForAsset", () => {
 
 describe("effectiveThresholds and window union", () => {
   it("uses group thresholds when they are in range, else workspace", () => {
-    assert.deepEqual(api.effectiveThresholds(GROUP_A, WORKSPACE_THRESHOLDS), [
-      14, 7,
-    ]);
+    assert.deepEqual(
+      api.effectiveThresholds(GROUP_A, WORKSPACE_THRESHOLDS),
+      [14, 7],
+    );
     assert.deepEqual(
       api.effectiveThresholds(GROUP_DEFAULT, WORKSPACE_THRESHOLDS),
       WORKSPACE_THRESHOLDS,
@@ -315,17 +314,13 @@ describe("membershipAfterContactGroupMove", () => {
   });
 
   it("is a no-op add when the asset was only on the source group", () => {
-    assert.deepEqual(
-      api.membershipAfterContactGroupMove(["a"], "a", "b"),
-      ["b"],
-    );
+    assert.deepEqual(api.membershipAfterContactGroupMove(["a"], "a", "b"), [
+      "b",
+    ]);
   });
 
   it("treats an empty join (legacy singular-only) as just the destination", () => {
-    assert.deepEqual(
-      api.membershipAfterContactGroupMove([], "a", "b"),
-      ["b"],
-    );
+    assert.deepEqual(api.membershipAfterContactGroupMove([], "a", "b"), ["b"]);
   });
 });
 
@@ -339,6 +334,41 @@ describe("interpretContactGroupWrite", () => {
         hasSingular: true,
       }),
       { action: "set", ids: ["a", "b"] },
+    );
+  });
+
+  it("rejects a present non-array plural field", () => {
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: "ops",
+          contactGroupId: "keep-me",
+          hasPlural: true,
+          hasSingular: true,
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        assert.match(
+          err.message,
+          /contact_group_ids must be an array of strings/,
+        );
+        return true;
+      },
+    );
+  });
+
+  it("rejects non-string members in the plural field", () => {
+    assert.throws(
+      () =>
+        api.interpretContactGroupWrite({
+          contactGroupIds: ["ops", 123],
+          hasPlural: true,
+          hasSingular: false,
+        }),
+      (err) => {
+        assert.equal(err.code, "VALIDATION_ERROR");
+        return true;
+      },
     );
   });
 
@@ -545,35 +575,42 @@ describe("queue union vs delivery re-filter", () => {
 
   it("queues the union of A={30,7} and B={14} and delivery at 14 keeps only B", () => {
     const queued = api.unionEffectiveThresholds(both, WORKSPACE_THRESHOLDS);
-    assert.deepEqual([...queued].sort((left, right) => left - right), [7, 14, 30]);
     assert.deepEqual(
-      api.unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 30).map((g) => g.id),
+      [...queued].sort((left, right) => left - right),
+      [7, 14, 30],
+    );
+    assert.deepEqual(
+      api
+        .unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 30)
+        .map((g) => g.id),
       ["a"],
     );
     assert.deepEqual(
-      api.unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 14).map((g) => g.id),
+      api
+        .unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 14)
+        .map((g) => g.id),
       ["b"],
     );
     assert.deepEqual(
-      api.unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 7).map((g) => g.id),
+      api
+        .unionGroupsForThresholdWindow(both, WORKSPACE_THRESHOLDS, 7)
+        .map((g) => g.id),
       ["a"],
     );
   });
 
   it("dedupes overlapping destinations across groups that share a window", () => {
-    const bothAtFourteen = [
-      { ...groupA, thresholds: [14] },
-      groupB,
-    ];
+    const bothAtFourteen = [{ ...groupA, thresholds: [14] }, groupB];
     const eligible = api.unionGroupsForThresholdWindow(
       bothAtFourteen,
       WORKSPACE_THRESHOLDS,
       14,
     );
-    assert.deepEqual(
-      api.unionContactIds(eligible, "email_contact_ids"),
-      ["alice", "bob", "carol"],
-    );
+    assert.deepEqual(api.unionContactIds(eligible, "email_contact_ids"), [
+      "alice",
+      "bob",
+      "carol",
+    ]);
   });
 
   it("drops the queued window when assignment no longer includes a firing group", () => {
@@ -583,7 +620,9 @@ describe("queue union vs delivery re-filter", () => {
       defaultContactGroupId: "default",
     });
     assert.deepEqual(
-      api.unionGroupsForThresholdWindow(queued, WORKSPACE_THRESHOLDS, 14).map((g) => g.id),
+      api
+        .unionGroupsForThresholdWindow(queued, WORKSPACE_THRESHOLDS, 14)
+        .map((g) => g.id),
       ["b"],
     );
 

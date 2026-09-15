@@ -114,10 +114,7 @@ describe('DeployAgentModal', () => {
     listAgentsMock.mockReset();
     getAlertSettingsMock.mockReset();
     getAlertSettingsMock.mockResolvedValue({
-      contact_groups: [
-        { id: 'g1', name: 'On-call' },
-        { id: 'g2', name: 'Security' },
-      ],
+      contact_groups: [{ id: 'g1', name: 'On-call' }],
       default_contact_group_id: 'g1',
     });
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
@@ -175,7 +172,6 @@ describe('DeployAgentModal', () => {
     // Downtime alerts default to enabled with the workspace default group.
     expect(payload.downtimeAlertsEnabled).toBe(true);
     expect(payload.contactGroupId).toBe(null);
-    expect(payload.contactGroupIds).toEqual([]);
 
     expect(
       await screen.findByText(/shown only once and registers exactly one agent/)
@@ -403,7 +399,7 @@ describe('DeployAgentModal', () => {
       expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
     });
     expect(
-      await screen.findByRole('checkbox', { name: /On-call \(default\)/ })
+      await screen.findByRole('option', { name: 'On-call (default)' })
     ).toBeInTheDocument();
   });
 
@@ -419,7 +415,7 @@ describe('DeployAgentModal', () => {
     fireEvent.click(
       screen.getByRole('checkbox', { name: 'Agent downtime alerts' })
     );
-    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Contact group')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: 'dc1-edge' },
@@ -435,7 +431,7 @@ describe('DeployAgentModal', () => {
     expect(payload.downtimeAlertsEnabled).toBe(false);
   });
 
-  it('sends the explicitly selected contact group ids', async () => {
+  it('sends the explicitly selected contact group id', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     createBootstrapTokenMock.mockResolvedValue({
       token: { id: 'bt-1', name: 'dc1-edge' },
@@ -444,11 +440,10 @@ describe('DeployAgentModal', () => {
 
     renderModal();
 
-    await screen.findByRole('checkbox', { name: /On-call \(default\)/ });
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /On-call \(default\)/ })
-    );
-    fireEvent.click(screen.getByRole('checkbox', { name: /^Security$/ }));
+    await screen.findByRole('option', { name: 'On-call (default)' });
+    fireEvent.change(screen.getByLabelText('Contact group'), {
+      target: { value: 'g1' },
+    });
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: 'dc1-edge' },
     });
@@ -460,7 +455,6 @@ describe('DeployAgentModal', () => {
       expect(createBootstrapTokenMock).toHaveBeenCalledTimes(1);
     });
     const [, payload] = createBootstrapTokenMock.mock.calls[0];
-    expect(payload.contactGroupIds).toEqual(['g1', 'g2']);
     expect(payload.contactGroupId).toBe('g1');
   });
 

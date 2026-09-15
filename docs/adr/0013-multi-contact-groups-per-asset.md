@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-09-15).
+Accepted (2026-09-15). Amended 2026-09-15: the first deployable
+release implements decision 2 steps 1-2 only (schema, backfill,
+dual-write). Alert and digest readers still use the singular column.
+Plural API/UI and switch-reads are the next release.
 
 ## Context
 
@@ -110,6 +113,21 @@ group tables.
       `contactGroupIds`).
    5. A later change, not this one, stops writing the singular columns
       and then drops them.
+
+   Those steps are two (plus a later drop) **deployable releases**, not
+   commits in one binary. A rolling mix of pre-dual-write writers and
+   join-table readers is the stale-join race this sequence exists to
+   prevent: an old replica writes only `tokens.contact_group_id`, the
+   join row stays at the backfilled value, and new workers send to the
+   wrong group. Do not skip the dual-write release.
+
+   The switch-reads release must re-backfill join rows from the singular
+   column at migration start (repairing drift from a mixed dual-write
+   window) **before** readers trust the join table and **before** the
+   plural API can write two-or-more memberships. Canonical lex-smallest
+   id uses UTF-8 byte order (`Buffer.compare` in Node, `COLLATE "C"` in
+   PostgreSQL), not the database's default text collation and not
+   JavaScript's default `.sort()`.
 
    Until step 5, `tokens.contact_group_id` and
    `certops_agents.contact_group_id` are a compatibility mirror of join
@@ -290,7 +308,14 @@ group tables.
      or webhooks.
    - A failed send leaves `status = 'pending'`, increments
      `attempt_count`, and clears or expires the lease so a later pass
-     can reclaim.
+     can reclaim. The default Helm schedule is once per week (Monday
+     09:00). That next run uses a new `week_start_date`, so it will
+     not reclaim last week's expired `pending` row. Automatic retry
+     therefore requires another digest pass **in the same week**
+     (manual rerun, or a more frequent dispatcher). Extra runs are
+     safe: `sent` rows are never reclaimed. Do not read the five-minute
+     lease as a promise that the weekly cron will retry a failed
+     recipient.
 
    Keep `weekly_digest_log` as an optional group-level audit write if
    useful. Do **not** `SELECT` it as a skip key. The unique
@@ -341,14 +366,18 @@ that unique constraint, or two workers can both insert.
 
 ### Operational implication
 
-Old clients that only send and read `contact_group_id` keep working
-through the compatibility mirror (decision 3). New clients send
-`contact_group_ids`. Until the follow-up that stops singular writes,
-operators can still see a single id on GET; it is the lex-smallest
-assigned id, not a chosen primary. Weekly digest delivery now depends
-on `weekly_digest_recipient_log` claim rows. If that table is missing
-or the unique constraint is absent, overlapping recipients can be
-double-messaged again.
+The dual-write release does not change request or alert behavior:
+operators still assign one group per asset. Join tables stay in sync
+for the later switch. After switch-reads, old clients that only send
+and read `contact_group_id` keep working through the compatibility
+mirror (decision 3). New clients send `contact_group_ids`. Until the
+follow-up that stops singular writes, operators can still see a single
+id on GET; it is the lex-smallest assigned id, not a chosen primary.
+Weekly digest delivery then depends on `weekly_digest_recipient_log`
+claim rows. If that table is missing or the unique constraint is
+absent, overlapping recipients can be double-messaged again. Generic
+digest webhooks must keep the existing `contact_group` property and
+add `contact_groups`; removing `contact_group` is a consumer break.
 
 ## Alternatives considered
 
@@ -394,9 +423,14 @@ double-messaged again.
   recipients with non-overlapping asset sets (one digest containing
   the union, not a suppress-dropped subset); dual-write (join rows
   plus lex-smallest singular, including `[]` -> `NULL`); every request
-  semantic in decision 4; atomic claim (two workers, one `RETURNING`
-  owner); at-least-once email/webhook reclaim after an expired lease
-  on `pending`; WhatsApp idempotency key shape without a group id.
+  semantic in decision 4, including HTTP 400 when a present
+  `contact_group_ids` / `contactGroupIds` is not an array of strings;
+  atomic claim (two workers, one `RETURNING` owner); at-least-once
+  email/webhook reclaim after an expired lease on `pending`; WhatsApp
+  idempotency key shape without a group id; delivery re-deriving
+  channels from current eligible groups (a queued email-only row that
+  is reassigned to a WhatsApp group before send must send WhatsApp,
+  not `NO_CONTACTS_DEFINED`).
 - `assertContactGroupIds` and `replaceAssetContactGroups` are load
   bearing. A new import or integration `INSERT` that sets only
   `tokens.contact_group_id` is a bug against this record, not a

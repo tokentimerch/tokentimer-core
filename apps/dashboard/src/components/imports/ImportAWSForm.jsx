@@ -20,10 +20,6 @@ import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
-import {
-  canonicalContactGroupFields,
-  contactGroupFieldsForImportDefaults,
-} from '../../utils/contactGroupAssignment.js';
 
 function getAWSItemDetails(item) {
   const details = [];
@@ -174,7 +170,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   const [isScanning, setIsScanning] = React.useState(false);
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
+  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // Backend-authoritative scan record cleanup is driven from. Set after
   // any completed scan that returned a scan_id, including All Regions
@@ -366,7 +362,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          ...canonicalContactGroupFields(bulkContactGroupIds),
+          contact_group_id: bulkContactGroupId || null,
         }));
       if (!workspaceId) {
         onError && onError('Please select a workspace first.');
@@ -376,7 +372,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
-        defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
+        defaults: {},
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -742,8 +738,8 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
             selectedCount={selectedRowsAws.size}
             section={bulkSection}
             onSectionChange={setBulkSection}
-            contactGroupIds={bulkContactGroupIds}
-            onContactGroupChange={setBulkContactGroupIds}
+            contactGroupId={bulkContactGroupId}
+            onContactGroupChange={setBulkContactGroupId}
             contactGroups={contactGroups}
             borderColor={borderColor}
           />

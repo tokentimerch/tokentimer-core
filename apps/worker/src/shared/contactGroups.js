@@ -129,6 +129,12 @@ function getWebhookNames(contactGroup) {
 const MIN_GROUP_THRESHOLD_DAYS = -365;
 const MAX_GROUP_THRESHOLD_DAYS = 730;
 
+function compareContactGroupIdsUtf8Bytes(left, right) {
+  const a = Buffer.from(String(left), "utf8");
+  const b = Buffer.from(String(right), "utf8");
+  return Buffer.compare(a, b);
+}
+
 function normalizeAssignedGroupIds(ids) {
   if (!Array.isArray(ids)) return [];
   const unique = [];
@@ -140,7 +146,7 @@ function normalizeAssignedGroupIds(ids) {
     seen.add(id);
     unique.push(id);
   }
-  unique.sort();
+  unique.sort(compareContactGroupIdsUtf8Bytes);
   return unique;
 }
 
@@ -189,13 +195,7 @@ function resolveContactGroupsForAsset({
     return resolveDefault();
   }
 
-  resolved.sort((a, b) => {
-    const left = String(a.id);
-    const right = String(b.id);
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  resolved.sort((a, b) => compareContactGroupIdsUtf8Bytes(a.id, b.id));
   return resolved;
 }
 
@@ -205,7 +205,11 @@ function validGroupThresholds(values) {
   const seen = new Set();
   for (const raw of values) {
     const n = typeof raw === "number" ? raw : Number(raw);
-    if (!Number.isFinite(n) || n < MIN_GROUP_THRESHOLD_DAYS || n > MAX_GROUP_THRESHOLD_DAYS) {
+    if (
+      !Number.isFinite(n) ||
+      n < MIN_GROUP_THRESHOLD_DAYS ||
+      n > MAX_GROUP_THRESHOLD_DAYS
+    ) {
       continue;
     }
     if (seen.has(n)) continue;
@@ -229,7 +233,11 @@ function groupFiresForWindow(group, workspaceThresholds, thresholdDays) {
   );
 }
 
-function unionGroupsForThresholdWindow(groups, workspaceThresholds, thresholdDays) {
+function unionGroupsForThresholdWindow(
+  groups,
+  workspaceThresholds,
+  thresholdDays,
+) {
   return (Array.isArray(groups) ? groups : []).filter((group) =>
     groupFiresForWindow(group, workspaceThresholds, thresholdDays),
   );
@@ -285,6 +293,7 @@ export {
   hasWhatsAppContacts,
   hasWebhookNames,
   getWebhookNames,
+  compareContactGroupIdsUtf8Bytes,
   canonicalLegacyContactGroupId,
   normalizeAssignedGroupIds,
   resolveContactGroupsForAsset,

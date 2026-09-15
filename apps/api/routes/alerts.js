@@ -957,7 +957,7 @@ router.put(
             await client.query(
               `UPDATE tokens
                   SET contact_group_id = (
-                    SELECT min(contact_group_id)
+                    SELECT min(contact_group_id COLLATE "C")
                       FROM token_contact_groups tcg
                      WHERE tcg.token_id = tokens.id
                        AND tcg.workspace_id = tokens.workspace_id
@@ -968,7 +968,7 @@ router.put(
             await client.query(
               `UPDATE certops_agents
                   SET contact_group_id = (
-                    SELECT min(contact_group_id)
+                    SELECT min(contact_group_id COLLATE "C")
                       FROM certops_agent_contact_groups acg
                      WHERE acg.agent_id = certops_agents.id
                        AND acg.workspace_id = certops_agents.workspace_id

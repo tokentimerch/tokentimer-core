@@ -33,40 +33,65 @@ const {
 const {
   shouldSkipRetiredCertificateAlert,
 } = require("../../src/shared/retiredCertificateAlerts");
-const {
-  resolveContactGroupsForAsset,
-  hasEmailContacts,
-  hasWebhookNames,
-  getWebhookNames,
-  dedupeNormalizedDestinations,
-} = require("../../src/shared/contactGroups");
-const { loadAssignedGroupIds } = require("../../src/shared/replaceAssetContactGroups");
 
-function unionSingleShotChannels(groups, settings) {
-  const channels = [];
-  if (
-    settings.email_alerts_enabled !== false &&
-    groups.some(hasEmailContacts)
-  ) {
-    channels.push("email");
-  }
-
-  if (groups.some(hasWebhookNames)) {
-    const selectedWebhookNames = dedupeNormalizedDestinations(
-      groups.flatMap((group) => getWebhookNames(group)),
-    );
-    const workspaceWebhooks = Array.isArray(settings.webhook_urls)
-      ? settings.webhook_urls
-      : [];
-    const matchingWebhookCount = workspaceWebhooks.filter((webhook) =>
-      selectedWebhookNames.includes(String(webhook?.name || "").trim()),
-    ).length;
-    if (matchingWebhookCount > 0) {
-      channels.push("webhooks");
+// Contact-group eligibility helpers. These mirror
+// apps/worker/src/shared/contactGroups.js exactly; that module is ESM and
+// cannot be required from this CommonJS service, so the (small, stable)
+// resolution rules are duplicated here.
+function resolveContactGroup({
+  contactGroups,
+  contactGroupId,
+  defaultContactGroupId,
+}) {
+  try {
+    const groups = Array.isArray(contactGroups) ? contactGroups : [];
+    const pickId =
+      contactGroupId && String(contactGroupId).trim().length > 0
+        ? String(contactGroupId)
+        : defaultContactGroupId
+          ? String(defaultContactGroupId)
+          : null;
+    if (!pickId) return null;
+    let resolvedGroup = groups.find((g) => String(g.id) === pickId) || null;
+    if (!resolvedGroup && contactGroupId && defaultContactGroupId) {
+      resolvedGroup =
+        groups.find((g) => String(g.id) === String(defaultContactGroupId)) ||
+        null;
     }
+    return resolvedGroup;
+  } catch (_err) {
+    return null;
   }
+}
 
-  return channels;
+function hasEmailContacts(contactGroup) {
+  if (!contactGroup) return false;
+  return (
+    Array.isArray(contactGroup.email_contact_ids) &&
+    contactGroup.email_contact_ids.length > 0
+  );
+}
+
+function hasWebhookNames(contactGroup) {
+  if (!contactGroup) return false;
+  return Boolean(
+    contactGroup.webhook_name ||
+      (Array.isArray(contactGroup.webhook_names) &&
+        contactGroup.webhook_names.length > 0),
+  );
+}
+
+function getWebhookNames(contactGroup) {
+  if (!contactGroup) return [];
+  if (Array.isArray(contactGroup.webhook_names)) {
+    return contactGroup.webhook_names
+      .filter(Boolean)
+      .map((n) => String(n).trim());
+  }
+  if (contactGroup.webhook_name) {
+    return [String(contactGroup.webhook_name).trim()];
+  }
+  return [];
 }
 
 const CERT_RENEWAL_FAILED_ALERT_PREFIX = "cert_renewal_failed:";
@@ -167,25 +192,45 @@ async function queueCertRenewalFailedAlert({
   }
   const userId = userRes.rows[0].user_id;
 
-  // Channels: join-table membership, then union every resolved group.
-  // Renewal failure is single-shot, so there is no threshold-window filter.
+  // Channels: same contact-group eligibility rules as endpoint alerts.
   const settingsRes = await client.query(
     "SELECT email_alerts_enabled, contact_groups, default_contact_group_id, webhook_urls FROM workspace_settings WHERE workspace_id = $1",
     [resolvedWorkspaceId],
   );
   const settings = settingsRes.rows[0] || {};
-  const assignedIds = await loadAssignedGroupIds({
-    client,
-    kind: "token",
-    assetId: tokenId,
-    workspaceId: resolvedWorkspaceId,
-  });
-  const resolvedGroups = resolveContactGroupsForAsset({
+  let tokenContactGroupId = null;
+  const tokenRes = await client.query(
+    "SELECT contact_group_id FROM tokens WHERE id = $1 LIMIT 1",
+    [tokenId],
+  );
+  tokenContactGroupId = tokenRes.rows[0]?.contact_group_id || null;
+
+  const resolvedGroup = resolveContactGroup({
     contactGroups: settings.contact_groups,
-    assignedIds,
+    contactGroupId: tokenContactGroupId,
     defaultContactGroupId: settings.default_contact_group_id,
   });
-  const channels = unionSingleShotChannels(resolvedGroups, settings);
+
+  const channels = [];
+  if (
+    settings.email_alerts_enabled !== false &&
+    hasEmailContacts(resolvedGroup)
+  ) {
+    channels.push("email");
+  }
+
+  if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
+    const selectedWebhookNames = getWebhookNames(resolvedGroup);
+    const workspaceWebhooks = Array.isArray(settings.webhook_urls)
+      ? settings.webhook_urls
+      : [];
+    const matchingWebhookCount = workspaceWebhooks.filter((webhook) =>
+      selectedWebhookNames.includes(String(webhook?.name || "").trim()),
+    ).length;
+    if (matchingWebhookCount > 0) {
+      channels.push("webhooks");
+    }
+  }
 
   // WhatsApp is intentionally NOT queued: the WhatsApp delivery path picks a
   // per-alert-type Twilio content template (see endpoint_health ContentSid

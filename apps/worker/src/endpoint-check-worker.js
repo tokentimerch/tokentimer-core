@@ -17,13 +17,12 @@ import http from "http";
 import { X509Certificate, randomUUID } from "node:crypto";
 import { createRequire } from "module";
 import {
-  resolveContactGroupsForAsset,
+  resolveContactGroup,
   hasEmailContacts,
   hasWhatsAppContacts,
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
-import { loadAssignedGroupIds } from "./shared/replaceAssetContactGroups.js";
 import { adoptOrCreateMonitorToken } from "./shared/adoptOrCreateMonitorToken.js";
 
 const require = createRequire(import.meta.url);
@@ -206,52 +205,39 @@ async function queueEndpointAlert(
     if (userRes.rows.length === 0) return;
     const userId = userRes.rows[0].user_id;
 
-    // Resolve channels using join-table membership (single-shot: all resolved groups).
+    // Resolve channels using the same contact-group eligibility rules as token alerts.
     const settingsRes = await client.query(
       "SELECT email_alerts_enabled, contact_groups, default_contact_group_id, webhook_urls FROM workspace_settings WHERE workspace_id = $1",
       [workspace_id],
     );
     const settings = settingsRes.rows[0] || {};
-    let assignedIds = [];
+    let tokenContactGroupId = null;
     try {
-      assignedIds = await loadAssignedGroupIds({
-        client,
-        kind: "token",
-        assetId: token_id,
-        workspaceId: workspace_id,
-      });
+      const tokenRes = await client.query(
+        "SELECT contact_group_id FROM tokens WHERE id = $1 LIMIT 1",
+        [token_id],
+      );
+      tokenContactGroupId = tokenRes.rows[0]?.contact_group_id || null;
     } catch (_tokenErr) {
-      logger.debug("Failed to resolve token contact groups", {
+      logger.debug("Failed to resolve token contact group", {
         tokenId: token_id,
         error: _tokenErr?.message,
       });
     }
 
-    const resolvedGroups = resolveContactGroupsForAsset({
+    const resolvedGroup = resolveContactGroup({
       contactGroups: settings.contact_groups,
-      assignedIds,
+      contactGroupId: tokenContactGroupId,
       defaultContactGroupId: settings.default_contact_group_id,
     });
 
     const channels = [];
-    if (
-      settings.email_alerts_enabled !== false &&
-      resolvedGroups.some(hasEmailContacts)
-    ) {
+    if (settings.email_alerts_enabled !== false && hasEmailContacts(resolvedGroup)) {
       channels.push("email");
     }
 
-    const selectedWebhookNames = [];
-    const seenWebhookNames = new Set();
-    for (const group of resolvedGroups) {
-      if (!hasWebhookNames(group)) continue;
-      for (const name of getWebhookNames(group)) {
-        if (!name || seenWebhookNames.has(name)) continue;
-        seenWebhookNames.add(name);
-        selectedWebhookNames.push(name);
-      }
-    }
-    if (selectedWebhookNames.length > 0) {
+    if (resolvedGroup && hasWebhookNames(resolvedGroup)) {
+      const selectedWebhookNames = getWebhookNames(resolvedGroup);
       const workspaceWebhooks = Array.isArray(settings.webhook_urls)
         ? settings.webhook_urls
         : [];
@@ -263,7 +249,7 @@ async function queueEndpointAlert(
       }
     }
 
-    if (resolvedGroups.some(hasWhatsAppContacts)) {
+    if (hasWhatsAppContacts(resolvedGroup)) {
       channels.push("whatsapp");
     }
 

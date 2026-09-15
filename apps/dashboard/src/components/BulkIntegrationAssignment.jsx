@@ -4,19 +4,19 @@ import {
   HStack,
   Text,
   Input,
+  Select,
   useColorModeValue,
 } from '@chakra-ui/react';
-import ContactGroupCheckboxGroup from './ContactGroupCheckboxGroup.jsx';
 
 /**
- * Reusable component for bulk assignment of section and contact groups
+ * Reusable component for bulk assignment of section and contact group
  * to selected integration items before import
  */
 export default function BulkIntegrationAssignment({
   selectedCount = 0,
   section = '',
   onSectionChange,
-  contactGroupIds = [],
+  contactGroupId = '',
   onContactGroupChange,
   contactGroups = [],
   borderColor,
@@ -40,7 +40,7 @@ export default function BulkIntegrationAssignment({
           {selectedCount !== 1 ? 's' : ''}:
         </Text>
 
-        <HStack spacing={3} flexWrap='wrap' align='flex-start'>
+        <HStack spacing={3} flexWrap='wrap'>
           <Box minW='200px'>
             <Text fontSize='xs' mb={1} fontWeight='medium'>
               Section (optional)
@@ -66,20 +66,25 @@ export default function BulkIntegrationAssignment({
             </Text>
           </Box>
 
-          <Box minW='220px' flex='1'>
+          <Box minW='200px'>
             <Text fontSize='xs' mb={1} fontWeight='medium'>
-              Contact groups (optional)
+              Contact Group (optional)
             </Text>
-            <ContactGroupCheckboxGroup
-              contactGroups={contactGroups}
-              value={contactGroupIds}
-              onChange={onContactGroupChange}
-              helperText=''
-              maxH='140px'
-            />
+            <Select
+              value={contactGroupId}
+              onChange={e => onContactGroupChange(e.target.value)}
+              size='sm'
+              bg={inputBg}
+            >
+              <option value=''>Use workspace default</option>
+              {contactGroups.map(g => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </Select>
             <Text fontSize='2xs' color={helperTextColor} mt={1}>
-              Override alert recipients. Leave all unchecked to use the
-              workspace default.
+              Override alert recipients
             </Text>
           </Box>
         </HStack>

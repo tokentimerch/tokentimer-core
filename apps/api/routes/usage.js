@@ -16,10 +16,6 @@ const {
 const { requeueAlertsCore } = require("../services/alertQueue");
 const User = require("../db/models/User");
 const Token = require("../db/models/Token");
-const {
-  canonicalLegacyContactGroupId,
-  normalizeAssignedGroupIds,
-} = require("../src/shared/contactGroups");
 
 const router = require("express").Router();
 
@@ -257,7 +253,7 @@ router.get(
         };
       };
 
-      const formatTokenForExport = (t, assignedIds = []) => ({
+      const formatTokenForExport = (t) => ({
         id: t.id,
         name: t.name,
         type: t.type,
@@ -281,8 +277,7 @@ router.get(
         contacts: t.contacts,
         description: t.description,
         notes: t.notes,
-        contact_group_id: canonicalLegacyContactGroupId(assignedIds),
-        contact_group_ids: normalizeAssignedGroupIds(assignedIds),
+        contact_group_id: t.contact_group_id || null,
         privileges: t.privileges,
         lastUsed: t.last_used,
         importedAt: t.imported_at,
@@ -379,7 +374,6 @@ router.get(
           description: token.description,
           notes: token.notes,
           contact_group_id: token.contact_group_id || null,
-          contact_group_ids: [],
           privileges: token.privileges,
           lastUsed: token.last_used,
           importedAt: token.imported_at,
@@ -451,26 +445,6 @@ router.get(
           tokensMap.get(key).push(row);
         }
 
-        const assignedByTokenId = new Map();
-        if (allTokensRes.rows.length > 0) {
-          const joinRes = await pool.query(
-            `SELECT token_id, contact_group_id
-               FROM token_contact_groups
-              WHERE workspace_id = ANY($1::uuid[]) AND token_id = ANY($2::int[])`,
-            [wsIds, allTokensRes.rows.map((row) => row.id)],
-          );
-          for (const row of joinRes.rows || []) {
-            const tokenId = Number(row.token_id);
-            if (!assignedByTokenId.has(tokenId)) {
-              assignedByTokenId.set(tokenId, []);
-            }
-            assignedByTokenId.get(tokenId).push(row.contact_group_id);
-          }
-        }
-
-        const exportToken = (row) =>
-          formatTokenForExport(row, assignedByTokenId.get(row.id) || []);
-
         const workspaceInfoMap = new Map();
         for (const row of allWorkspacesRes.rows) {
           workspaceInfoMap.set(String(row.id), row);
@@ -492,14 +466,14 @@ router.get(
           const includeAll =
             role === "admin" || role === "workspace_manager" || isOwner;
           if (includeAll) {
-            tokens = (tokensMap.get(wsId) || []).map(exportToken);
+            tokens = (tokensMap.get(wsId) || []).map(formatTokenForExport);
           } else if (role === "viewer") {
             const wsInfo = workspaceInfoMap.get(wsId) || {};
             const isPersonal =
               String(wsInfo.created_by || "") === String(req.user.id) ||
               wsInfo.is_personal_default === true;
             tokens = isPersonal
-              ? (tokensMap.get(wsId) || []).map(exportToken)
+              ? (tokensMap.get(wsId) || []).map(formatTokenForExport)
               : [];
           }
           workspaces.push({

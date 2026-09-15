@@ -289,15 +289,10 @@ describe('CertificateDetailsModal', () => {
     fireEvent.change(screen.getByDisplayValue('Production'), {
       target: { value: 'Production, Edge' },
     });
-    const platformOnCall = screen.getByRole('checkbox', {
-      name: 'Platform On-Call',
-    });
-    const securityOnCall = screen.getByRole('checkbox', {
-      name: 'Security On-Call',
-    });
-    expect(platformOnCall).toBeChecked();
-    fireEvent.click(platformOnCall);
-    fireEvent.click(securityOnCall);
+    const contactGroupSelect = screen
+      .getAllByRole('combobox')
+      .find(control => control.tagName === 'SELECT');
+    fireEvent.change(contactGroupSelect, { target: { value: 'group-2' } });
     fireEvent.change(screen.getByDisplayValue('2027-09-02'), {
       target: { value: '2028-10-03' },
     });
@@ -335,7 +330,6 @@ describe('CertificateDetailsModal', () => {
           name: 'Renamed certificate',
           section: ['Production', 'Edge'],
           contact_group_id: 'group-2',
-          contact_group_ids: ['group-2'],
           expiresAt: '2028-10-03',
           domains: ['new.example.com', 'www.new.example.com'],
           issuer: 'DigiCert',

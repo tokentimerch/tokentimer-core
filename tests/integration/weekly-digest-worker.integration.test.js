@@ -42,10 +42,6 @@ describe("Weekly digest worker integration", function () {
         "DELETE FROM weekly_digest_log WHERE workspace_id = $1",
         [workspaceId],
       );
-      await TestUtils.execQuery(
-        "DELETE FROM weekly_digest_recipient_log WHERE workspace_id = $1",
-        [workspaceId],
-      );
       await TestUtils.execQuery("DELETE FROM tokens WHERE workspace_id = $1", [
         workspaceId,
       ]);
@@ -95,15 +91,6 @@ describe("Weekly digest worker integration", function () {
         ($1, 'digest-ignore', CURRENT_DATE + INTERVAL '120 day', 'other', 'general', $2)`,
       [workspaceId, contactGroupId],
     );
-    await TestUtils.execQuery(
-      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
-       SELECT id, workspace_id, $2
-         FROM tokens
-        WHERE workspace_id = $1
-          AND name IN ('digest-soon', 'digest-later', 'digest-ignore')
-       ON CONFLICT DO NOTHING`,
-      [workspaceId, contactGroupId],
-    );
 
     await TestUtils.runNode(
       "node",
@@ -125,18 +112,7 @@ describe("Weekly digest worker integration", function () {
     expect(firstRun.rows).to.have.length(1);
     expect(Number(firstRun.rows[0].tokens_count)).to.be.greaterThan(0);
 
-    const firstClaim = await TestUtils.execQuery(
-      `SELECT status, channel, tokens_count
-       FROM weekly_digest_recipient_log
-       WHERE workspace_id = $1 AND week_start_date = $2`,
-      [workspaceId, weekStart],
-    );
-    expect(firstClaim.rows).to.have.length(1);
-    expect(firstClaim.rows[0].status).to.equal("sent");
-    expect(firstClaim.rows[0].channel).to.equal("email");
-    expect(Number(firstClaim.rows[0].tokens_count)).to.be.greaterThan(0);
-
-    // Skip is the recipient claim row, not weekly_digest_log.
+    // Idempotency and skip behavior: second run in same week does not duplicate log
     await TestUtils.runNode(
       "node",
       ["src/weekly-digest-runner.js"],
@@ -154,13 +130,5 @@ describe("Weekly digest worker integration", function () {
       [workspaceId, contactGroupId, weekStart],
     );
     expect(secondRun.rows[0].c).to.equal(1);
-
-    const secondClaim = await TestUtils.execQuery(
-      `SELECT COUNT(*)::int AS c
-       FROM weekly_digest_recipient_log
-       WHERE workspace_id = $1 AND week_start_date = $2 AND status = 'sent'`,
-      [workspaceId, weekStart],
-    );
-    expect(secondClaim.rows[0].c).to.equal(1);
   });
 });

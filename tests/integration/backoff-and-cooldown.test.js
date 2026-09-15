@@ -94,13 +94,6 @@ describe("Backoff and Cooldown", function () {
       `UPDATE tokens SET contact_group_id = $2 WHERE user_id=$1 AND name=$3`,
       [user.user.id, "ops", "Backoff"],
     );
-    await client.query(
-      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
-       SELECT id, workspace_id, 'ops'
-         FROM tokens
-        WHERE user_id=$1 AND name=$2`,
-      [user.user.id, "Backoff"],
-    );
 
     // Run discovery and repeatedly run worker to accumulate failures
     // Release client temporarily to avoid connection conflicts
@@ -244,13 +237,6 @@ describe("Backoff and Cooldown", function () {
     );
     await client.query(
       `UPDATE tokens SET contact_group_id='ops' WHERE user_id=$1 AND name=$2`,
-      [user.user.id, "Cooldown Max"],
-    );
-    await client.query(
-      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
-       SELECT id, workspace_id, 'ops'
-         FROM tokens
-        WHERE user_id=$1 AND name=$2`,
       [user.user.id, "Cooldown Max"],
     );
 

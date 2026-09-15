@@ -1,9 +1,5 @@
 import { useCallback } from 'react';
 import {
-  formatContactGroupNames,
-  hydrateContactGroupIds,
-} from '../utils/contactGroupAssignment.js';
-import {
   Box,
   Button,
   Checkbox,
@@ -244,22 +240,27 @@ export function inventoryMode(selectedCategories) {
 }
 
 /**
- * Alert contact group label for a token.
- * Empty `contact_group_ids` (or no assignment) is "Workspace default".
- * The third argument is unused; callers still pass the workspace default id.
+ * Alert contact group label for a token (explicit id or workspace default).
  * @param {object | null | undefined} token
  * @param {Array<{ id: string, name?: string }>} contactGroups
- * @param {string} [_defaultContactGroupId]
+ * @param {string} defaultContactGroupId
  * @returns {string}
  */
 export function resolveContactGroupLabel(
   token,
   contactGroups = [],
-  _defaultContactGroupId = ''
+  defaultContactGroupId = ''
 ) {
-  const ids = hydrateContactGroupIds(token);
-  if (ids.length === 0) return 'Workspace default';
-  return formatContactGroupNames(ids, contactGroups, 'Workspace default');
+  const explicitId =
+    token?.contact_group_id != null &&
+    String(token.contact_group_id).trim() !== ''
+      ? String(token.contact_group_id).trim()
+      : '';
+  const effectiveId = explicitId || String(defaultContactGroupId || '').trim();
+  if (!effectiveId) return 'Workspace default';
+  const groups = Array.isArray(contactGroups) ? contactGroups : [];
+  const group = groups.find(g => String(g?.id) === effectiveId);
+  return group?.name || effectiveId;
 }
 
 function truncateNameHint(text, maxLen = 72) {

@@ -981,7 +981,7 @@ export async function sweepStaleAgents({
 } = {}) {
   const candidatesResult = await client.query(
     `SELECT id, agent_id, workspace_id, name, hostname, platform,
-            last_seen_at, downtime_alerts_enabled
+            last_seen_at, downtime_alerts_enabled, contact_group_id
        FROM certops_agents
       WHERE status = 'active'
         AND COALESCE(last_seen_at, created_at)
@@ -998,6 +998,7 @@ export async function sweepStaleAgents({
     platform: row.platform,
     lastSeenAt: row.last_seen_at,
     downtimeAlertsEnabled: row.downtime_alerts_enabled,
+    contactGroupId: row.contact_group_id,
   }));
 
   const staleAgents = [];
@@ -1018,7 +1019,7 @@ export async function sweepStaleAgents({
             AND COALESCE(last_seen_at, created_at)
                   < NOW() - ($1 || ' milliseconds')::interval
           RETURNING id, agent_id, workspace_id, name, hostname, platform,
-                    last_seen_at, downtime_alerts_enabled`,
+                    last_seen_at, downtime_alerts_enabled, contact_group_id`,
         [String(offlineAfterMs), candidate.id, candidate.workspaceId],
       );
       if (transition.rows.length === 0) {
@@ -1037,6 +1038,7 @@ export async function sweepStaleAgents({
         platform: row.platform,
         lastSeenAt: row.last_seen_at,
         downtimeAlertsEnabled: row.downtime_alerts_enabled,
+        contactGroupId: row.contact_group_id,
       };
       // Resolve after the guarded status flip so the shared renewal-path
       // resolver observes this agent as offline even when deployments use a
@@ -1124,7 +1126,7 @@ export async function sweepAgentRecoveries({
 } = {}) {
   const result = await client.query(
     `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
-            a.last_seen_at, a.downtime_alerts_enabled
+            a.last_seen_at, a.downtime_alerts_enabled, a.contact_group_id
        FROM certops_agents a
        JOIN certops_agent_health_incidents i ON i.agent_id = a.id
       WHERE a.status = 'active'
@@ -1140,6 +1142,7 @@ export async function sweepAgentRecoveries({
     platform: row.platform,
     lastSeenAt: row.last_seen_at,
     downtimeAlertsEnabled: row.downtime_alerts_enabled,
+    contactGroupId: row.contact_group_id,
   }));
 
   const failures = [];
@@ -1152,7 +1155,7 @@ export async function sweepAgentRecoveries({
       transactionStarted = true;
       const locked = await client.query(
         `SELECT a.id, a.agent_id, a.workspace_id, a.name, a.hostname, a.platform,
-                a.last_seen_at, a.downtime_alerts_enabled
+                a.last_seen_at, a.downtime_alerts_enabled, a.contact_group_id
            FROM certops_agents a
            JOIN certops_agent_health_incidents i ON i.agent_id = a.id
           WHERE a.id = $1
@@ -1176,6 +1179,7 @@ export async function sweepAgentRecoveries({
         platform: row.platform,
         lastSeenAt: row.last_seen_at,
         downtimeAlertsEnabled: row.downtime_alerts_enabled,
+        contactGroupId: row.contact_group_id,
       };
       const outcome = await alertQueuer({
         client,

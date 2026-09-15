@@ -20,6 +20,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Text,
   VStack,
@@ -31,8 +32,6 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
-import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
-import { canonicalAgentContactGroupFields } from '../../utils/contactGroupAssignment.js';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
@@ -176,7 +175,7 @@ export default function DeployAgentModal({
   const [name, setName] = useState('');
   const [expiresLocal, setExpiresLocal] = useState(defaultExpiryLocalValue());
   const [downtimeAlertsEnabled, setDowntimeAlertsEnabled] = useState(true);
-  const [contactGroupIds, setContactGroupIds] = useState([]);
+  const [contactGroupId, setContactGroupId] = useState('');
   const [contactGroups, setContactGroups] = useState([]);
   const [defaultContactGroupId, setDefaultContactGroupId] = useState('');
   const [creating, setCreating] = useState(false);
@@ -228,7 +227,7 @@ export default function DeployAgentModal({
     setName('');
     setExpiresLocal(defaultExpiryLocalValue());
     setDowntimeAlertsEnabled(true);
-    setContactGroupIds([]);
+    setContactGroupId('');
     setCreating(false);
     setPlaintextToken('');
     setSecretAcknowledged(false);
@@ -350,9 +349,7 @@ export default function DeployAgentModal({
         name: name.trim(),
         expiresAt: expiresAtIso,
         downtimeAlertsEnabled,
-        ...canonicalAgentContactGroupFields(
-          downtimeAlertsEnabled ? contactGroupIds : []
-        ),
+        contactGroupId: contactGroupId || null,
       });
       const plaintext =
         typeof result?.plaintextToken === 'string'
@@ -536,19 +533,25 @@ export default function DeployAgentModal({
 
                 {downtimeAlertsEnabled ? (
                   <FormControl
-                    as='fieldset'
                     isDisabled={hasUnacknowledgedSecret}
+                    maxW='280px'
                   >
-                    <FormLabel as='legend' fontSize='sm'>
-                      Contact groups
-                    </FormLabel>
-                    <ContactGroupCheckboxGroup
-                      contactGroups={contactGroups}
-                      value={contactGroupIds}
-                      onChange={setContactGroupIds}
-                      isDisabled={hasUnacknowledgedSecret}
-                      defaultContactGroupId={defaultContactGroupId}
-                    />
+                    <FormLabel fontSize='sm'>Contact group</FormLabel>
+                    <Select
+                      size='sm'
+                      value={contactGroupId}
+                      onChange={event => setContactGroupId(event.target.value)}
+                    >
+                      <option value=''>Default workspace group</option>
+                      {contactGroups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                          {String(g.id) === String(defaultContactGroupId)
+                            ? ' (default)'
+                            : ''}
+                        </option>
+                      ))}
+                    </Select>
                   </FormControl>
                 ) : null}
 
