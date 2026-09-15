@@ -374,10 +374,10 @@ router.post(
       if (movedIds.length > 0 && targetOwnerId) {
         await client.query(
           `UPDATE alert_delivery_log
-             SET user_id = $1, workspace_id = $2
-           WHERE token_id = ANY($3::int[])
+             SET user_id = $1
+           WHERE token_id = ANY($2::int[])
              AND date_trunc('month', (sent_at AT TIME ZONE 'UTC')) = date_trunc('month', (NOW() AT TIME ZONE 'UTC'))`,
-          [targetOwnerId, targetId, movedIds],
+          [targetOwnerId, movedIds],
         );
       }
       await client.query("COMMIT");

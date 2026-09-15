@@ -25,6 +25,8 @@ const ELIGIBILITY_META = {
 const DELIVERY_META = {
   pending: { label: 'Queued / pending', scheme: 'yellow' },
   sent: { label: 'Sent', scheme: 'green' },
+  sent_unverified: { label: 'Delivery unverified', scheme: 'gray' },
+  discarded: { label: 'Discarded', scheme: 'gray' },
   failed: { label: 'Failed', scheme: 'red' },
   blocked: { label: 'Blocked', scheme: 'orange' },
   limit_exceeded: { label: 'Limit exceeded', scheme: 'orange' },
@@ -84,6 +86,14 @@ export function eligibilityExplanation(eligibility) {
 export function deliveryExplanation(delivery) {
   if (!delivery) return 'No alert has been generated for this asset.';
   switch (delivery.reason) {
+    case 'retired_certificate':
+      return 'The alert was discarded because the certificate is retired.';
+    case 'endpoint_recovered':
+      return 'The alert was discarded because the endpoint recovered.';
+    case 'alert_discarded':
+      return 'The alert was discarded without delivery.';
+    case 'delivery_unverified':
+      return 'The queue row is closed, but there is no recorded successful delivery.';
     case 'delivery_window':
       return 'Delivery is deferred until the configured delivery window opens.';
     case 'monthly_plan_limit':

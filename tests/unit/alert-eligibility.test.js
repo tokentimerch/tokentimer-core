@@ -225,6 +225,36 @@ describe("alert eligibility evaluator", () => {
 });
 
 describe("delivery state projection", () => {
+  it("classifies discarded sent queue rows as discarded, not successful delivery", () => {
+    for (const [message, reason] of [
+      ["Discarded: certificate revoked or decommissioned", "retired_certificate"],
+      ["Discarded: endpoint recovered before threshold", "endpoint_recovered"],
+    ]) {
+      const state = buildDeliveryState({ alert_id: 12, alert_status: "sent",
+        alert_error_message: message });
+      assert.equal(state.status, "discarded");
+      assert.equal(state.reason, reason);
+    }
+  });
+  it("requires durable success evidence before describing a closed queue as sent", () => {
+    const unverified = buildDeliveryState({ alert_id: 15, alert_status: "sent",
+      alert_success_evidence: false });
+    assert.equal(unverified.status, "sent_unverified");
+    assert.equal(unverified.reason, "delivery_unverified");
+    assert.equal(buildDeliveryState({ alert_id: 15, alert_status: "sent",
+      alert_success_evidence: true }).status, "sent");
+  });
+  it("redacts queue and attempt errors from viewer-readable alert state", () => {
+    const state = buildDeliveryState({
+      alert_id: 45,
+      alert_status: "failed",
+      alert_error_message: "SMTP to ops@example.test at https://hooks.example.test/private?token=secret +49 151 23456789 password=hunter2",
+      delivery_attempt_error: "Webhook hooks.example.test/private failed for +1 555 123 4567 bearer_token=topsecret",
+      delivery_attempt_status: "failed",
+      delivery_attempt_id: 999,
+    });
+    assert.doesNotMatch(JSON.stringify(state), /ops@example|hooks.example|151 23456789|555 123 4567|hunter2|topsecret/);
+  });
   it("keeps delivery windows, plan limits, and retries out of eligibility", () => {
     const deferred = buildDeliveryState({
       alert_id: 42,

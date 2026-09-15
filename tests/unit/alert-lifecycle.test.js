@@ -11,6 +11,7 @@ const {
 function queueRow(overrides = {}) {
   return {
     alert_id: 10,
+    alert_key: "token_expiry:7:poswin:7",
     token_id: 7,
     token_name: "Production certificate",
     workspace_id: "00000000-0000-4000-8000-000000000001",
@@ -29,6 +30,7 @@ function deliveryRow(overrides = {}) {
   return {
     delivery_id: 100,
     alert_id: 10,
+    alert_key: "token_expiry:7:poswin:7",
     token_id: 7,
     token_name: "Production certificate",
     workspace_id: "00000000-0000-4000-8000-000000000001",
@@ -81,6 +83,25 @@ describe("alert lifecycle normalization", () => {
       [0, "2026-09-20T00:00:00.000Z"],
       [7, "2026-09-13T00:00:00.000Z"],
     ]);
+  });
+
+  it("never fabricates an expiry threshold from endpoint, renewal, or agent alerts", () => {
+    const events = buildAlertLifecycleEvents({
+      queueRows: [
+        queueRow({ alert_id: 21, alert_key: "endpoint_health:21:down" }),
+        queueRow({ alert_id: 22, alert_key: "cert_renewal_failed:22" }),
+        queueRow({ alert_id: 23, alert_key: "agent_health:23" }),
+      ],
+      deliveryRows: [
+        deliveryRow({ alert_id: 21, alert_key: "endpoint_health:21:down" }),
+      ],
+    });
+    assert.equal(events.some(event => event.type === "threshold_reached"), false);
+    assert.deepEqual(
+      events.filter(event => event.type === "alert_queued").map(event => event.reason),
+      ["agent_health", "certificate_renewal_failure", "endpoint_health"],
+    );
+    assert.equal(events.find(event => event.type === "delivery_failed").threshold_days, null);
   });
 
   it("normalizes delivery outcomes, retries, requeues, partial delivery, blocking, and no-channel evidence", () => {
@@ -145,7 +166,7 @@ describe("alert lifecycle normalization", () => {
     assert.equal(bulk.metadata.updated_count, 4);
   });
 
-  it("uses queue state as historical evidence for plan blocking and legacy outcomes", () => {
+  it("uses queue state for plan blocking but requires delivery evidence for success", () => {
     const events = buildAlertLifecycleEvents({
       queueRows: [
         queueRow({ status: "limit_exceeded", error_message: "PLAN_LIMIT" }),
@@ -163,7 +184,18 @@ describe("alert lifecycle normalization", () => {
           event.type === "delivery_blocked" && event.reason === "monthly_limit",
       ),
     );
-    assert.ok(events.some((event) => event.type === "delivery_succeeded"));
+    assert.equal(events.some((event) => event.type === "delivery_succeeded"), false);
+  });
+
+  it("reports discarded retired certificates and recovered endpoints without claiming delivery", () => {
+    const events = buildAlertLifecycleEvents({ queueRows: [
+      queueRow({ status: "sent", error_message: "Discarded: certificate revoked or decommissioned" }),
+      queueRow({ alert_id: 11, alert_key: "endpoint_health:11:down", status: "sent",
+        error_message: "Discarded: endpoint recovered before threshold" }),
+    ] });
+    assert.equal(events.filter(event => event.type === "delivery_succeeded").length, 0);
+    assert.deepEqual(new Set(events.filter(event => event.type === "alert_discarded")
+      .map(event => event.reason)), new Set(["retired_certificate", "endpoint_recovered"]));
   });
 
   it("preserves the monthly-limit reason when a blocked delivery log exists", () => {
@@ -286,11 +318,11 @@ describe("alert lifecycle normalization", () => {
 
   it("redacts contact details, URLs, and generic secrets from errors", () => {
     const error = safeErrorMessage(
-      "email ops@example.com or +49 151 23456789 failed at https://hooks.example.test/a password=hunter2",
+      "email ops@example.com or +49 151 23456789 failed at https://hooks.example.test/a and 10.0.0.1:8000/private or 4915123456789 password=hunter2",
     );
     assert.doesNotMatch(
       error,
-      /ops@example\.com|49 151 23456789|hooks\.example|hunter2/,
+      /ops@example\.com|49 151 23456789|hooks\.example|10\.0\.0\.1|4915123456789|hunter2/,
     );
     assert.match(
       error,
@@ -300,11 +332,11 @@ describe("alert lifecycle normalization", () => {
 });
 
 describe("alert lifecycle fetching", () => {
-  it("uses three bounded queries and paginates the combined read model", async () => {
+  it("uses four bounded event-time queries and paginates the combined read model", async () => {
     const calls = [];
     const query = async (sql, params) => {
       calls.push({ sql, params });
-      if (sql.includes("alert-lifecycle:queue")) {
+      if (sql.includes("alert-lifecycle:queue */")) {
         return {
           rows: [
             queueRow(),
@@ -322,11 +354,32 @@ describe("alert lifecycle fetching", () => {
       { workspaceId: "workspace-1", limit: 2, offset: 1 },
       query,
     );
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
     assert.ok(calls.every((call) => call.params.at(-1) === 4));
     assert.equal(page.items.length, 2);
     assert.equal(page.pagination.offset, 1);
     assert.equal(page.pagination.hasMore, true);
-    assert.match(calls[0].sql, /t\.workspace_id = \$1/);
+    assert.match(calls[0].sql, /COALESCE\(queued_audit\.workspace_id, first_delivery\.workspace_id, t\.workspace_id\) = \$1/);
+    assert.match(calls[0].sql, /ORDER BY aq\.created_at DESC/);
+    assert.doesNotMatch(calls[0].sql, /GREATEST\(/);
+    assert.match(calls[2].sql, /COALESCE\(d\.workspace_id, t\.workspace_id\) = \$1/);
+    assert.match(calls[3].sql, /COALESCE\(ae\.workspace_id, direct_token\.workspace_id, alert_token\.workspace_id\) = \$1/);
+  });
+
+  it("does not let an old queue created long ago but updated today displace a new alert", async () => {
+    const old = queueRow({ alert_id: 31, created_at: "2026-01-01T08:00:00Z",
+      updated_at: "2026-09-15T08:00:00Z", status: "sent" });
+    const recent = queueRow({ alert_id: 32, created_at: "2026-09-14T08:00:00Z",
+      updated_at: "2026-09-14T08:00:00Z" });
+    const calls = [];
+    const query = async sql => {
+      calls.push(sql);
+      return { rows: sql.includes("alert-lifecycle:queue */") ? [recent] : [] };
+    };
+    const page = await fetchAlertLifecycle({ tokenId: 7, limit: 1 }, query);
+    assert.equal(page.items[0].alert_id, recent.alert_id);
+    assert.match(calls[0], /ORDER BY aq\.created_at DESC/);
+    assert.equal(buildAlertLifecycleEvents({ queueRows: [old, recent] })
+      .filter(event => event.type === "delivery_succeeded").length, 0);
   });
 });

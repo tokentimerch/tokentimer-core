@@ -164,6 +164,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const loadData = useCallback(
     async (isRefresh = false) => {
       const generation = ++loadGenerationRef.current;
+      setAlertActivityLoadingMore(false);
       try {
         if (isRefresh) {
           setRefreshing(true);
@@ -536,6 +537,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
     ) {
       return;
     }
+    const generation = loadGenerationRef.current;
     setAlertActivityLoadingMore(true);
     setAlertActivityError('');
     try {
@@ -550,17 +552,21 @@ export function useControlCenterData(initialWorkspaceId = '') {
           },
         }
       );
+      if (generation !== loadGenerationRef.current) return;
       const page = response?.data || {};
       setAlertActivity(current => [...current, ...(page.items || [])]);
       setAlertActivityHasMore(Boolean(page.pagination?.hasMore));
     } catch (activityError) {
+      if (generation !== loadGenerationRef.current) return;
       setAlertActivityError(
         activityError?.response?.data?.error ||
           activityError?.message ||
           'Failed to load recent alert activity'
       );
     } finally {
-      setAlertActivityLoadingMore(false);
+      if (generation === loadGenerationRef.current) {
+        setAlertActivityLoadingMore(false);
+      }
     }
   }, [
     alertActivity.length,
@@ -571,6 +577,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
 
   const handleSetSelectedWorkspaceId = useCallback(
     id => {
+      ++loadGenerationRef.current;
+      setAlertActivityLoadingMore(false);
       setEligibilityOffset(0);
       setEligibilityAssets([]);
       setEligibilityTotal(0);

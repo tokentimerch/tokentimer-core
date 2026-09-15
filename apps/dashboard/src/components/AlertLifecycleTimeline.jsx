@@ -31,6 +31,11 @@ const EVENT_META = {
     icon: Clock3,
   },
   alert_queued: { label: 'Alert queued', color: '#3b82f6', icon: BellRing },
+  alert_discarded: {
+    label: 'Alert discarded',
+    color: '#64748b',
+    icon: Ban,
+  },
   alert_not_queued: {
     label: 'Alert not queued',
     color: '#a855f7',
@@ -87,6 +92,11 @@ const REASON_LABELS = {
   manual_retry: 'Manual retry',
   bulk_requeue: 'Bulk requeue',
   partial_delivery: 'Some channels failed',
+  endpoint_health: 'Endpoint health',
+  certificate_renewal_failure: 'Certificate renewal failure',
+  agent_health: 'Agent health',
+  endpoint_recovered: 'Endpoint recovered',
+  retired_certificate: 'Retired certificate',
 };
 
 function formatThreshold(threshold) {

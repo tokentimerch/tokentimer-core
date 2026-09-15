@@ -158,4 +158,27 @@ describe('AlertLifecycleTimeline', () => {
       screen.getByRole('link', { name: 'Production key' })
     ).toHaveAttribute('href', '/dashboard?workspace=workspace-1&token-id=17');
   });
+
+  it('labels discarded alerts separately from successful delivery in both views', () => {
+    renderTimeline(<>
+      <AlertStateDisplay alertState={{ eligibility: { status: 'suppressed',
+        reason: 'retired_certificate' }, delivery: { status: 'discarded',
+        reason: 'retired_certificate' } }} tokenId={17} />
+      <AlertLifecycleEventRow event={event({ type: 'alert_discarded',
+        status: 'discarded', reason: 'retired_certificate',
+        error_message: 'Discarded: certificate revoked or decommissioned' })} />
+    </>);
+    expect(screen.getByText('Discarded')).toBeInTheDocument();
+    expect(screen.getByText('Alert discarded')).toBeInTheDocument();
+    expect(screen.queryByText('Alert sent')).not.toBeInTheDocument();
+  });
+
+  it('does not label an unverified closed queue as a sent alert', () => {
+    renderTimeline(<AlertStateDisplay alertState={{
+      eligibility: { status: 'due', reason: 'threshold_reached' },
+      delivery: { status: 'sent_unverified', reason: 'delivery_unverified' },
+    }} tokenId={17} />);
+    expect(screen.getByText('Delivery unverified')).toBeInTheDocument();
+    expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  });
 });

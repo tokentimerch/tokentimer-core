@@ -4,6 +4,8 @@ const { pool } = require("../db/database");
 const {
   evaluateAlertEligibility,
 } = require("@tokentimer/alert-eligibility");
+const { safeAlertErrorMessage } = require("./alertErrorRedaction");
+const { discardedAlertReason } = require("./alertDeliveryDisposition");
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -28,6 +30,11 @@ function deliveryReason(row) {
   if (!row.alert_id) return null;
   const status = String(row.alert_status || "").toLowerCase();
   const error = String(row.alert_error_message || "");
+  const discardedReason = discardedAlertReason(status, error);
+  if (discardedReason) return discardedReason;
+  if (status === "sent" && row.alert_success_evidence === false) {
+    return "delivery_unverified";
+  }
   if (error === "OUT_OF_WINDOW") return "delivery_window";
   if (status === "limit_exceeded" || /PLAN_LIMIT/i.test(error)) {
     return "monthly_plan_limit";
@@ -46,13 +53,14 @@ function deliveryReason(row) {
 
 function buildDeliveryState(row) {
   if (!row.alert_id) return null;
+  const reason = deliveryReason(row);
   const latestAttempt = row.delivery_attempt_id
     ? {
         id: row.delivery_attempt_id,
         channel: row.delivery_attempt_channel,
         status: row.delivery_attempt_status,
         attempted_at: row.delivery_attempt_at,
-        error_message: row.delivery_attempt_error || null,
+        error_message: safeAlertErrorMessage(row.delivery_attempt_error),
       }
     : row.last_attempt
       ? {
@@ -60,14 +68,18 @@ function buildDeliveryState(row) {
           channel: null,
           status: row.alert_status,
           attempted_at: row.last_attempt,
-          error_message: row.alert_error_message || null,
+          error_message: safeAlertErrorMessage(row.alert_error_message),
         }
       : null;
 
   return {
     alert_id: row.alert_id,
-    status: row.alert_status,
-    reason: deliveryReason(row),
+    status: ["retired_certificate", "endpoint_recovered", "alert_discarded"].includes(reason)
+      ? "discarded"
+      : reason === "delivery_unverified"
+        ? "sent_unverified"
+        : row.alert_status,
+    reason,
     threshold_days: row.alert_threshold_days,
     due_date: row.alert_due_date,
     channels: parseChannels(row.alert_channels),
@@ -75,7 +87,7 @@ function buildDeliveryState(row) {
     attempts_email: row.alert_attempts_email,
     attempts_webhooks: row.alert_attempts_webhooks,
     attempts_whatsapp: row.alert_attempts_whatsapp,
-    error_message: row.alert_error_message || null,
+    error_message: safeAlertErrorMessage(row.alert_error_message),
     created_at: row.alert_created_at,
     updated_at: row.alert_updated_at,
     last_attempt_at: row.last_attempt || null,
@@ -130,6 +142,19 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        aq.updated_at AS alert_updated_at,
        aq.last_attempt,
        aq.next_attempt_at,
+       CASE WHEN aq.status = 'sent' THEN
+         EXISTS (
+           SELECT 1 FROM alert_delivery_log success
+            WHERE success.alert_queue_id = aq.id AND success.status = 'success'
+         ) OR EXISTS (
+           SELECT 1 FROM audit_events sent_audit
+            WHERE sent_audit.action = 'ALERT_SENT'
+              AND sent_audit.target_type = 'token'
+              AND sent_audit.target_id = t.id
+              AND sent_audit.metadata->>'days' = aq.threshold_days::text
+              AND sent_audit.occurred_at >= aq.created_at
+         )
+       ELSE FALSE END AS alert_success_evidence,
        attempt.id AS delivery_attempt_id,
        attempt.channel AS delivery_attempt_channel,
        attempt.status AS delivery_attempt_status,

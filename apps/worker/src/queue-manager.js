@@ -404,6 +404,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         metadata: {
           daysUntil: days,
           threshold: thresholdReached,
+          alert_key: alertKey,
           dueDate: dueDate.toISOString().slice(0, 10),
           workspace_name: t.workspace_name,
           token_name: t.token_name,

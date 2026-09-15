@@ -9541,6 +9541,7 @@ components:
           enum:
             - threshold_reached
             - alert_queued
+            - alert_discarded
             - alert_not_queued
             - delivery_deferred
             - delivery_attempted
@@ -9669,7 +9670,7 @@ components:
           type: integer
         status:
           type: string
-          enum: [pending, sent, failed, blocked, limit_exceeded, partial]
+          enum: [pending, sent, sent_unverified, discarded, failed, blocked, limit_exceeded, partial]
         reason:
           type: string
           enum:
@@ -9677,6 +9678,10 @@ components:
             - monthly_plan_limit
             - max_attempts
             - retry_scheduled
+            - retired_certificate
+            - endpoint_recovered
+            - alert_discarded
+            - delivery_unverified
           nullable: true
         threshold_days:
           type: integer

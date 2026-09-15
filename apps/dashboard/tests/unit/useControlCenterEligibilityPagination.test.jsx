@@ -119,6 +119,45 @@ describe('Control Center eligibility paging', () => {
     });
   });
 
+  it('does not append an in-flight A load-more page after switching to B', async () => {
+    const existingGet = getMock.getMockImplementation();
+    let resolveOldPage;
+    let aRequests = 0;
+    getMock.mockImplementation(url => {
+      if (url === '/activity/ws-1') {
+        ++aRequests;
+        if (aRequests === 1) {
+          return Promise.resolve({ data: { items: [{ id: 'a:1' }],
+            pagination: { hasMore: true } } });
+        }
+        return new Promise(resolve => { resolveOldPage = resolve; });
+      }
+      if (url === '/activity/ws-2') {
+        return Promise.resolve({ data: { items: [{ id: 'b:1' }],
+          pagination: { hasMore: false } } });
+      }
+      return existingGet(url);
+    });
+    const { result, rerender } = renderHook(() => useControlCenterData());
+    await waitFor(() => expect(result.current.alertActivity.map(item => item.id))
+      .toEqual(['a:1']));
+    act(() => { result.current.loadMoreAlertActivity(); });
+    await waitFor(() => expect(resolveOldPage).toBeTypeOf('function'));
+    act(() => {
+      result.current.setSelectedWorkspaceId('ws-2');
+      workspaceState.id = 'ws-2';
+      rerender();
+    });
+    await waitFor(() => expect(result.current.alertActivity.map(item => item.id))
+      .toEqual(['b:1']));
+    await act(async () => {
+      resolveOldPage({ data: { items: [{ id: 'a:2' }],
+        pagination: { hasMore: false } } });
+    });
+    expect(result.current.alertActivity.map(item => item.id)).toEqual(['b:1']);
+    expect(result.current.alertActivityError).toBe('');
+  });
+
   it('falls back to the existing paginated token API when the new summary route is 404', async () => {
     const existingGet = getMock.getMockImplementation();
     getMock.mockImplementation(url =>
