@@ -3759,6 +3759,37 @@ const migrations = [
          AND contact_group_ids = '[]'::jsonb;
     `,
   },
+  {
+    version: 54,
+    name: "rebuild_contact_group_join_from_singular",
+    sql: `
+      -- Switch-reads cutover: repair join drift from mixed dual-write and
+      -- singular-only writers before join membership is authoritative.
+      -- Still 0-or-1 rows per asset (plural writes start after migrate).
+      DELETE FROM token_contact_groups;
+      INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM tokens
+       WHERE workspace_id IS NOT NULL
+         AND contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> '';
+
+      DELETE FROM certops_agent_contact_groups;
+      INSERT INTO certops_agent_contact_groups (agent_id, workspace_id, contact_group_id)
+      SELECT id, workspace_id, contact_group_id
+        FROM certops_agents
+       WHERE workspace_id IS NOT NULL
+         AND contact_group_id IS NOT NULL
+         AND btrim(contact_group_id) <> '';
+
+      UPDATE certops_agent_bootstrap_tokens
+         SET contact_group_ids = CASE
+           WHEN contact_group_id IS NOT NULL AND btrim(contact_group_id) <> ''
+             THEN jsonb_build_array(contact_group_id)
+           ELSE '[]'::jsonb
+         END;
+    `,
+  },
 ];
 
 async function runMigrations() {

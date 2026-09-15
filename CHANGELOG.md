@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- An asset (token, certificate, or CertOps agent) can belong to more than one contact group. Overlapping recipients get one live alert and one weekly digest for the unioned assets, not one message per group. Existing single-group assignments keep working. **Operator action:** every API and worker replica must already run the dual-write join-table release before this one; do not skip it. **Operator guidance:** `contact_group_ids` is the new write/read field. Old `contact_group_id` still works and returns the lexicographically smallest assigned group (or null when the asset uses the workspace default). Generic digest webhooks keep `contact_group` and add `contact_groups`. A failed digest recipient is not retried by the default Monday 09:00 job (that run is a new week). Rerun the digest the same week, or schedule it more than once weekly; `sent` claims make extra runs safe.
+
 ### Security
 
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.

@@ -740,7 +740,6 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(queuedCalls.length, 1);
     assert.strictEqual(queuedCalls[0].transitionType, "down");
     assert.strictEqual(queuedCalls[0].agent.id, "row-1");
-    assert.strictEqual(queuedCalls[0].agent.contactGroupId, "cg-1");
     assert.strictEqual(queuedCalls[0].offlineAfterMs, 600000);
     assert.deepStrictEqual(queuedCalls[0].impactedCertificates, [
       { id: "cert-1", commonName: "api.example.com", renewalPathState: "unavailable" },

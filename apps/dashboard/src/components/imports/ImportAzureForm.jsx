@@ -20,6 +20,10 @@ import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import {
+  canonicalContactGroupFields,
+  contactGroupFieldsForImportDefaults,
+} from '../../utils/contactGroupAssignment.js';
 
 function getAzureItemDetails(item) {
   const details = [];
@@ -96,7 +100,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   const [isScanning, setIsScanning] = React.useState(false);
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
   // The backend-authoritative scan record cleanup is driven from.
   const [lastScanId, setLastScanId] = React.useState(null);
@@ -176,7 +180,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          contact_group_id: bulkContactGroupId || null,
+          ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
         onError && onError('Please select a workspace first.');
@@ -186,7 +190,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
-        defaults: {},
+        defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -363,8 +367,8 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             selectedCount={selectedRowsAzure.size}
             section={bulkSection}
             onSectionChange={setBulkSection}
-            contactGroupId={bulkContactGroupId}
-            onContactGroupChange={setBulkContactGroupId}
+            contactGroupIds={bulkContactGroupIds}
+            onContactGroupChange={setBulkContactGroupIds}
             contactGroups={contactGroups}
             borderColor={borderColor}
           />

@@ -123,3 +123,25 @@ describe("migration 53 bootstrap contact_group_ids", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 });
+
+describe("migration 54 rebuild join from singular", () => {
+  const migration = migrations.find((entry) => entry.version === 54);
+
+  it("exists with the expected name", () => {
+    assert.ok(migration, "migration 54 expected");
+    assert.equal(migration.name, "rebuild_contact_group_join_from_singular");
+  });
+
+  it("rebuilds both join tables from the singular column before switch-reads", () => {
+    assert.match(migration.sql, /DELETE FROM token_contact_groups/);
+    assert.match(migration.sql, /DELETE FROM certops_agent_contact_groups/);
+    assert.match(
+      migration.sql,
+      /INSERT INTO token_contact_groups \(token_id, workspace_id, contact_group_id\)/,
+    );
+    assert.match(
+      migration.sql,
+      /INSERT INTO certops_agent_contact_groups \(agent_id, workspace_id, contact_group_id\)/,
+    );
+  });
+});

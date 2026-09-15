@@ -51,6 +51,7 @@ function resolveUpdateMembershipIds(contactGroupIds, contactGroupId) {
 function applyMembershipFields(token, ids) {
   const normalized = normalizeAssignedGroupIds(ids);
   token.contact_group_id = canonicalLegacyContactGroupId(normalized);
+  token.contact_group_ids = normalized;
   return token;
 }
 

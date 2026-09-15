@@ -5,7 +5,8 @@
 Accepted (2026-09-15). Amended 2026-09-15: the first deployable
 release implements decision 2 steps 1-2 only (schema, backfill,
 dual-write). Alert and digest readers still use the singular column.
-Plural API/UI and switch-reads are the next release.
+Plural API/UI and switch-reads are the next release. This second
+release implements steps 3-4 after that dual-write rollout.
 
 ## Context
 

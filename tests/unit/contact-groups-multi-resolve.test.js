@@ -302,6 +302,26 @@ describe("worker ESM matches API CJS", () => {
         "email_contact_ids",
       ),
     );
+    assert.deepEqual(
+      worker.deliveryChannelsFromEligibleGroups(
+        [
+          {
+            email_contact_ids: ["u1"],
+            whatsapp_contact_ids: ["+1"],
+          },
+        ],
+        { alertKey: "expires:1:7" },
+      ),
+      api.deliveryChannelsFromEligibleGroups(
+        [
+          {
+            email_contact_ids: ["u1"],
+            whatsapp_contact_ids: ["+1"],
+          },
+        ],
+        { alertKey: "expires:1:7" },
+      ),
+    );
   });
 });
 
@@ -638,6 +658,47 @@ describe("queue union vs delivery re-filter", () => {
         14,
       ),
       [],
+    );
+  });
+});
+
+describe("deliveryChannelsFromEligibleGroups", () => {
+  const emailGroup = {
+    id: "email",
+    email_contact_ids: ["u1"],
+  };
+  const whatsappGroup = {
+    id: "wa",
+    whatsapp_contact_ids: ["+15551212"],
+  };
+
+  it("derives WhatsApp after a queued email-only snapshot would have dropped it", () => {
+    const queuedChannels = ["email"];
+    const live = api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+      alertKey: "expires:42:14",
+    });
+    assert.deepEqual(live, ["whatsapp"]);
+    assert.equal(queuedChannels.filter((ch) => live.includes(ch)).length, 0);
+  });
+
+  it("does not add WhatsApp for renewal or agent-health alerts", () => {
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+        alertKey: "cert_renewal_failed:99",
+      }),
+      [],
+    );
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([whatsappGroup], {
+        alertKey: "agent_health:abc",
+      }),
+      [],
+    );
+    assert.deepEqual(
+      api.deliveryChannelsFromEligibleGroups([emailGroup, whatsappGroup], {
+        alertKey: "endpoint_health:7",
+      }),
+      ["email", "whatsapp"],
     );
   });
 });

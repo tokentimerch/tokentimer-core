@@ -287,6 +287,35 @@ function dedupeNormalizedDestinations(values, kind) {
   return out;
 }
 
+function whatsAppAllowedForAlertKey(alertKey) {
+  const key = String(alertKey || "");
+  return !(
+    key.startsWith("cert_renewal_failed:") || key.startsWith("agent_health:")
+  );
+}
+
+function deliveryChannelsFromEligibleGroups(
+  eligibleGroups,
+  { emailAlertsEnabled = true, alertKey = "" } = {},
+) {
+  const groups = Array.isArray(eligibleGroups) ? eligibleGroups : [];
+  if (groups.length === 0) return [];
+  const channels = [];
+  if (emailAlertsEnabled !== false && groups.some(hasEmailContacts)) {
+    channels.push("email");
+  }
+  if (groups.some(hasWebhookNames)) {
+    channels.push("webhooks");
+  }
+  if (
+    whatsAppAllowedForAlertKey(alertKey) &&
+    groups.some(hasWhatsAppContacts)
+  ) {
+    channels.push("whatsapp");
+  }
+  return channels;
+}
+
 export {
   resolveContactGroup,
   hasEmailContacts,
@@ -303,4 +332,6 @@ export {
   unionEffectiveThresholds,
   unionContactIds,
   dedupeNormalizedDestinations,
+  whatsAppAllowedForAlertKey,
+  deliveryChannelsFromEligibleGroups,
 };
