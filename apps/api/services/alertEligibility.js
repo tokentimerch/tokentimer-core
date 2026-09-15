@@ -151,7 +151,9 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
             WHERE sent_audit.action = 'ALERT_SENT'
               AND sent_audit.target_type = 'token'
               AND sent_audit.target_id = t.id
-              AND sent_audit.metadata->>'days' = aq.threshold_days::text
+              AND (sent_audit.metadata->>'alert_id' = aq.id::text
+                   OR (sent_audit.metadata->>'alert_id' IS NULL
+                       AND sent_audit.metadata->>'alert_key' = aq.alert_key))
               AND sent_audit.occurred_at >= aq.created_at
          )
        ELSE FALSE END AS alert_success_evidence,

@@ -92,7 +92,7 @@ function queueAlertReason(alertKey) {
 }
 
 function baseEvent(row, overrides) {
-  return {
+  const event = {
     id: overrides.id,
     type: overrides.type,
     occurred_at: isoDate(overrides.occurred_at),
@@ -108,6 +108,12 @@ function baseEvent(row, overrides) {
     metadata: overrides.metadata || {},
     source: overrides.source,
   };
+  // Correlation provenance is internal; the viewer timeline does not need to
+  // expose alert keys or raw audit metadata to match persisted records.
+  Object.defineProperty(event, "_alert_key", {
+    value: String(overrides.alert_key ?? row.alert_key ?? ""),
+  });
+  return event;
 }
 
 function normalizeQueueRow(row) {
@@ -252,7 +258,8 @@ function normalizeAuditRow(row) {
     id: `audit:${row.audit_id ?? row.id}`,
     type,
     occurred_at: row.occurred_at,
-    alert_id: row.alert_id,
+    alert_id: finiteInteger(metadata.alert_id) ?? row.alert_id,
+    alert_key: metadata.alert_key ?? row.alert_key,
     threshold_days: isNonExpiry ? null : auditThreshold ?? row.threshold_days,
     channel: row.channel || metadata.channel,
     status,
@@ -264,14 +271,16 @@ function normalizeAuditRow(row) {
 }
 
 function hasEvidence(events, type, row) {
-  const thresholdDays = finiteInteger(row.threshold_days);
   const alertId = finiteInteger(row.alert_id ?? row.id);
+  const alertKey = String(row._alert_key ?? row.alert_key ?? "");
   return events.some(
     (event) =>
       event.type === type &&
-      ((alertId !== null && event.alert_id === alertId) ||
-        (event.token_id === finiteInteger(row.token_id) &&
-          event.threshold_days === thresholdDays)),
+      (alertId !== null && event.alert_id !== null
+        ? event.alert_id === alertId
+        : alertKey && event._alert_key
+          ? event._alert_key === alertKey
+          : false),
   );
 }
 
@@ -404,8 +413,12 @@ function queueSql(scope, state = false) {
           FROM audit_events ae
          WHERE ae.action = 'ALERT_QUEUED' AND ae.target_type = 'token'
            AND ae.target_id = aq.token_id AND ae.workspace_id IS NOT NULL
-           AND (ae.metadata->>'alert_key' = aq.alert_key OR
-             (ae.metadata->>'alert_key' IS NULL AND
+           AND (ae.metadata->>'alert_id' = aq.id::text OR
+             (ae.metadata->>'alert_id' IS NULL AND
+              ae.metadata->>'alert_key' = aq.alert_key) OR
+             (ae.metadata->>'alert_id' IS NULL AND
+              ae.metadata->>'alert_key' IS NULL AND
+              aq.alert_key LIKE 'token_expiry:%' AND
               ae.metadata->>'threshold' = aq.threshold_days::text))
            AND ae.occurred_at BETWEEN aq.created_at - INTERVAL '1 minute'
                                   AND aq.created_at + INTERVAL '1 minute'

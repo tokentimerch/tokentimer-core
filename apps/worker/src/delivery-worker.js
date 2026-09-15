@@ -969,6 +969,18 @@ async function writeAudit(
   );
 }
 
+async function writeAlertAudit(client, alert, details) {
+  return await writeAudit(client, {
+    ...details,
+    workspaceId: alert.workspace_id,
+    metadata: {
+      ...details.metadata,
+      alert_id: alert.id,
+      alert_key: alert.alert_key,
+    },
+  });
+}
+
 // Graceful shutdown handler
 let isShuttingDown = false;
 const shutdown = async (signal) => {
@@ -997,6 +1009,7 @@ const shutdown = async (signal) => {
 
 // Exported for direct unit testing without spinning up the full worker job.
 export const _test = {
+  writeAlertAudit,
   buildAgentHealthEmailContent,
   buildAgentHealthWebhookPayload,
   escapeMarkdown,
@@ -1365,11 +1378,10 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               );
             } else if (alert.error_message !== "OUT_OF_WINDOW") {
               try {
-                await writeAudit(client, {
+                await writeAlertAudit(client, alert, {
                   subjectUserId: alert.user_id,
                   action: "ALERT_DELIVERY_DEFERRED",
                   targetId: alert.token_id,
-                  workspaceId: alert.workspace_id,
                   metadata: {
                     reason: "delivery_window",
                     threshold: alert.threshold_days,
@@ -2450,7 +2462,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             ? groups.find((g) => String(g.id) === String(contactGroupId))
                 ?.name || null
             : null;
-          await writeAudit(client, {
+          await writeAlertAudit(client, alert, {
             subjectUserId: alert.user_id,
             action: "ALERT_PARTIAL_SUCCESS",
             targetId: alert.token_id,
@@ -2493,7 +2505,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               ? groups.find((g) => String(g.id) === String(contactGroupId))
                   ?.name || null
               : null;
-            await writeAudit(client, {
+            await writeAlertAudit(client, alert, {
               subjectUserId: alert.user_id,
               action: "ALERT_BLOCKED_MAX_ATTEMPTS",
               targetId: alert.token_id,
@@ -2540,7 +2552,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               ? groups.find((g) => String(g.id) === String(contactGroupId))
                   ?.name || null
               : null;
-            await writeAudit(client, {
+            await writeAlertAudit(client, alert, {
               subjectUserId: alert.user_id,
               action: "ALERT_BLOCKED_WHATSAPP_ERROR",
               targetId: alert.token_id,
@@ -2597,7 +2609,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               ? groups.find((g) => String(g.id) === String(contactGroupId))
                   ?.name || null
               : null;
-            await writeAudit(client, {
+            await writeAlertAudit(client, alert, {
               subjectUserId: alert.user_id,
               action: "ALERT_RETRY_SCHEDULED",
               targetId: alert.token_id,
@@ -2630,7 +2642,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
             null
           : null;
-        await writeAudit(client, {
+        await writeAlertAudit(client, alert, {
           subjectUserId: alert.user_id,
           action: "ALERT_SENT",
           targetId: alert.token_id,
@@ -2654,7 +2666,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           ? groups.find((g) => String(g.id) === String(contactGroupId))?.name ||
             null
           : null;
-        await writeAudit(client, {
+        await writeAlertAudit(client, alert, {
           subjectUserId: alert.user_id,
           action: "ALERT_SEND_FAILED",
           targetId: alert.token_id,

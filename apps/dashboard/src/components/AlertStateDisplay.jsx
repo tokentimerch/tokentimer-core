@@ -161,8 +161,11 @@ export default function AlertStateDisplay({
   if (!alertState?.eligibility) return null;
 
   const { eligibility, delivery } = alertState;
+  const realAttemptAt = delivery?.latest_attempt?.id
+    ? delivery.latest_attempt.attempted_at
+    : null;
   const latestAttemptAt =
-    delivery?.latest_attempt?.attempted_at || delivery?.last_attempt_at;
+    realAttemptAt || delivery?.last_attempt_at;
 
   return (
     <Box
@@ -243,7 +246,7 @@ export default function AlertStateDisplay({
             </Text>
           ) : null}
           {latestAttemptAt ? (
-            canViewAudit ? (
+            canViewAudit && realAttemptAt ? (
               <Link
                 as={RouterLink}
                 to={buildAlertAuditPath(tokenName, tokenId)}
@@ -255,7 +258,7 @@ export default function AlertStateDisplay({
               </Link>
             ) : (
               <Text color={muted} fontSize='xs'>
-                Latest attempt: {formatDateTime(latestAttemptAt)}
+                {realAttemptAt ? 'Latest attempt' : 'Last queue attempt'}: {formatDateTime(latestAttemptAt)}
               </Text>
             )
           ) : null}
@@ -337,9 +340,11 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
           <Tbody>
             {records.map(token => {
               const { eligibility, delivery } = token.alert_state;
+              const realAttemptAt = delivery?.latest_attempt?.id
+                ? delivery.latest_attempt.attempted_at
+                : null;
               const latestAttemptAt =
-                delivery?.latest_attempt?.attempted_at ||
-                delivery?.last_attempt_at;
+                realAttemptAt || delivery?.last_attempt_at;
               return (
                 <Tr key={token.id}>
                   <Td>
@@ -374,7 +379,7 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
                     <Text color={muted} fontSize='xs' mt={1}>
                       {deliveryExplanation(delivery)}
                     </Text>
-                    {latestAttemptAt ? (
+                    {realAttemptAt && latestAttemptAt ? (
                       <Link
                         as={RouterLink}
                         to={buildAlertAuditPath(token.name, token.id)}

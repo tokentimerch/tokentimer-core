@@ -242,14 +242,16 @@ describe("alert lifecycle normalization", () => {
           action: "ALERT_SENT",
           occurred_at: "2026-09-13T08:04:00.000Z",
           token_id: 7,
-          audit_metadata: { days: 7 },
+          audit_metadata: { days: 7, alert_id: 10,
+            alert_key: "token_expiry:7:poswin:7" },
         },
         {
           audit_id: 100,
           action: "ALERT_SEND_FAILED",
           occurred_at: "2026-09-14T08:04:00.000Z",
           token_id: 7,
-          audit_metadata: { days: 7 },
+          audit_metadata: { days: 7, alert_id: 11,
+            alert_key: "token_expiry:7:poswin:7" },
         },
       ],
     });
@@ -261,6 +263,40 @@ describe("alert lifecycle normalization", () => {
       events.filter((event) => event.type === "delivery_failed").length,
       1,
     );
+  });
+
+  it("keeps exact audit outcomes distinct for non-expiry and expiry alerts at threshold zero", () => {
+    const events = buildAlertLifecycleEvents({
+      queueRows: [
+        queueRow({ alert_id: 30, alert_key: "token_expiry:7:poswin:0",
+          threshold_days: 0 }),
+        queueRow({ alert_id: 31, alert_key: "endpoint_health:7:down",
+          threshold_days: 0 }),
+      ],
+      deliveryRows: [deliveryRow({ delivery_id: 301, alert_id: 30,
+        alert_key: "token_expiry:7:poswin:0", threshold_days: 0,
+        delivery_status: "success" })],
+      auditRows: [{ audit_id: 302, action: "ALERT_SENT", token_id: 7,
+        occurred_at: "2026-09-13T08:05:00Z", audit_metadata: {
+          days: 0, alert_id: 31, alert_key: "endpoint_health:7:down" } }],
+    });
+    assert.deepEqual(events.filter(event => event.type === "delivery_succeeded")
+      .map(event => event.alert_id).sort(), [30, 31]);
+    assert.equal(events.filter(event => event.type === "threshold_reached")
+      .some(event => event.alert_id === 31), false);
+  });
+
+  it("deduplicates a key-only audit against its exact delivery log", () => {
+    const events = buildAlertLifecycleEvents({
+      deliveryRows: [deliveryRow({ delivery_status: "success",
+        alert_key: "token_expiry:7:poswin:7" })],
+      auditRows: [{ audit_id: 407, action: "ALERT_SENT", token_id: 7,
+        occurred_at: "2026-09-13T08:05:00Z", audit_metadata: {
+          days: 7, alert_key: "token_expiry:7:poswin:7" } }],
+    });
+    assert.equal(events.filter(event => event.type === "delivery_succeeded").length, 1);
+    assert.equal(events.find(event => event.type === "delivery_succeeded").source,
+      "alert_delivery_log");
   });
 
   it("uses legacy queue and delivery audits only when primary records are absent", () => {

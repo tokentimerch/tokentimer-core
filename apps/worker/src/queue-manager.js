@@ -290,7 +290,10 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
                 subjectUserId: t.user_id,
                 action: "ALERT_CHANNELS_UPDATED",
                 targetId: t.token_id,
+                workspaceId: t.workspace_id,
                 metadata: {
+                  alert_id: existing.id,
+                  alert_key: alertKey,
                   alertKey,
                   from: stored,
                   to: nextChannels,
@@ -357,6 +360,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
             metadata: {
               reason: "NO_ELIGIBLE_CHANNEL",
               threshold: thresholdReached,
+              alert_id: null,
               alert_key: alertKey,
               workspace_name: t.workspace_name,
               token_name: t.token_name,
@@ -375,9 +379,9 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       // Insert new alert into queue
       // Resolve owner for alert context: subscription owner (workspace.created_by) -> token creator -> legacy token user
       const ownerUserId = t.owner_user_id || t.created_by || t.user_id;
-      await client.query(
+      const queuedAlert = await client.query(
         `INSERT INTO alert_queue (user_id, token_id, alert_key, threshold_days, due_date, channels, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
         [
           ownerUserId,
           t.token_id,
@@ -404,6 +408,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
         metadata: {
           daysUntil: days,
           threshold: thresholdReached,
+          alert_id: queuedAlert.rows?.[0]?.id ?? null,
           alert_key: alertKey,
           dueDate: dueDate.toISOString().slice(0, 10),
           workspace_name: t.workspace_name,

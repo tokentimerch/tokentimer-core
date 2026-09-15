@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import AlertStateDisplay from '../../src/components/AlertStateDisplay.jsx';
+import AlertStateDisplay, {
+  AlertEligibilityOverview,
+} from '../../src/components/AlertStateDisplay.jsx';
 import AlertLifecycleTimeline, {
   AlertLifecycleEventRow,
 } from '../../src/components/AlertLifecycleTimeline.jsx';
@@ -180,5 +182,36 @@ describe('AlertLifecycleTimeline', () => {
     }} tokenId={17} />);
     expect(screen.getByText('Delivery unverified')).toBeInTheDocument();
     expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  });
+
+  it('links View latest attempt only for a persisted delivery-log attempt', () => {
+    const fallbackDelivery = {
+      status: 'failed', last_attempt_at: '2026-09-13T08:00:00Z',
+      latest_attempt: { id: null, attempted_at: '2026-09-13T08:00:00Z' },
+    };
+    const eligibility = { status: 'due', reason: 'threshold_reached' };
+    renderTimeline(<>
+      <AlertStateDisplay alertState={{ eligibility, delivery: fallbackDelivery }}
+        tokenName='Production key' tokenId={17} canViewAudit />
+      <AlertEligibilityOverview workspaceId='workspace-1' tokens={[{
+        id: 17, name: 'Production key', alert_state: {
+          eligibility, delivery: fallbackDelivery,
+        },
+      }]} />
+    </>);
+    expect(screen.getAllByText(/Last queue attempt/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('link', { name: /View latest attempt/i }))
+      .not.toBeInTheDocument();
+  });
+
+  it('keeps the attempt link when the latest attempt has a delivery-log ID', () => {
+    renderTimeline(<AlertStateDisplay alertState={{
+      eligibility: { status: 'due', reason: 'threshold_reached' },
+      delivery: { status: 'failed', latest_attempt: {
+        id: 104, attempted_at: '2026-09-13T08:00:00Z', status: 'failed',
+      } },
+    }} tokenName='Production key' tokenId={17} canViewAudit />);
+    expect(screen.getByRole('link', { name: /View latest attempt/i }))
+      .toBeInTheDocument();
   });
 });

@@ -38,6 +38,7 @@ describe('AlertStateDisplay', () => {
           reason: 'retry_scheduled',
           created_at: '2026-09-13T07:45:00.000Z',
           latest_attempt: {
+            id: 101,
             attempted_at: '2026-09-13T08:00:00.000Z',
           },
           next_attempt_at: '2026-09-13T09:00:00.000Z',
@@ -125,6 +126,7 @@ describe('AlertEligibilityOverview', () => {
                   delivery: {
                     status: 'sent',
                     latest_attempt: {
+                      id: 102,
                       attempted_at: '2026-09-12T08:00:00.000Z',
                     },
                   },

@@ -110,7 +110,7 @@ describe("Alert Delivery - contact group routing (token group > workspace defaul
         );
         await TestUtils.wait(150);
         const q = await TestUtils.execQuery(
-          `SELECT token_id, channels FROM alert_queue WHERE token_id = ANY($1::int[]) ORDER BY id DESC`,
+          `SELECT id, token_id, alert_key, channels FROM alert_queue WHERE token_id = ANY($1::int[]) ORDER BY id DESC`,
           [ids],
         );
         const map = new Map();
@@ -148,5 +148,15 @@ describe("Alert Delivery - contact group routing (token group > workspace defaul
           }
         })();
     expect(t1Channels).to.include("email");
+    const queuedAudit = await TestUtils.execQuery(
+      `SELECT workspace_id, metadata FROM audit_events
+        WHERE action='ALERT_QUEUED' AND target_type='token' AND target_id=$1
+          AND metadata->>'alert_id'=$2
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [t1.rows[0].id, String(t1Row.id)],
+    );
+    expect(queuedAudit.rows).to.have.length(1);
+    expect(queuedAudit.rows[0].workspace_id).to.equal(wsId);
+    expect(queuedAudit.rows[0].metadata.alert_key).to.equal(t1Row.alert_key);
   });
 });

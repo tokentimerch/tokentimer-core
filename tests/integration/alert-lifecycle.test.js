@@ -112,11 +112,17 @@ describe("Alert lifecycle APIs", function () {
          occurred_at, metadata
        ) VALUES
          ($1, 'ALERT_SENT', 'token', $2, $3, TIMESTAMP '2026-09-13 08:05:00',
-          '{"days":7}'),
+          $4::jsonb),
          ($1, 'ALERT_RETRY_SCHEDULED', 'token', $2, $3,
           TIMESTAMP '2026-09-13 08:04:30',
-          '{"days":7,"next_attempt_at":"2026-09-13T08:05:00.000Z","channels_to_retry":["email"]}')`,
-      [owner.user.id, tokenA, workspaceA],
+          $5::jsonb)`,
+      [owner.user.id, tokenA, workspaceA,
+        JSON.stringify({ days: 7, alert_id: alertA,
+          alert_key: `token_expiry:${tokenA}:poswin:7` }),
+        JSON.stringify({ days: 7, alert_id: alertA,
+          alert_key: `token_expiry:${tokenA}:poswin:7`,
+          next_attempt_at: "2026-09-13T08:05:00.000Z",
+          channels_to_retry: ["email"] })],
     );
 
     const queueB = await client.query(
@@ -369,6 +375,54 @@ describe("Alert lifecycle APIs", function () {
       .to.equal(false);
   });
 
+  it("does not use a threshold-zero endpoint success audit as expiry delivery evidence", async () => {
+    const expiryKey = `token_expiry:${tokenB}:poswin:0`;
+    const endpointKey = `endpoint_health:${tokenB}:recovered`;
+    const expiry = await client.query(
+      `INSERT INTO alert_queue (user_id,token_id,alert_key,threshold_days,
+         due_date,channels,status)
+       VALUES ($1,$2,$3,0,CURRENT_DATE,'["email"]','sent') RETURNING id`,
+      [owner.user.id, tokenB, expiryKey],
+    );
+    const endpoint = await client.query(
+      `INSERT INTO alert_queue (user_id,token_id,alert_key,threshold_days,
+         due_date,channels,status)
+       VALUES ($1,$2,$3,0,CURRENT_DATE,'["email"]','sent') RETURNING id`,
+      [owner.user.id, tokenB, endpointKey],
+    );
+    await client.query(
+      `INSERT INTO audit_events (subject_user_id,action,target_type,target_id,
+         workspace_id,metadata)
+       VALUES ($1,'ALERT_SENT','token',$2,$3,$4::jsonb)`,
+      [owner.user.id, tokenB, workspaceB,
+        JSON.stringify({ days: 0, alert_id: endpoint.rows[0].id,
+          alert_key: endpointKey })],
+    );
+    const details = await request(BASE)
+      .get(`/api/tokens/${tokenB}`).set("Cookie", owner.cookie).expect(200);
+    expect(details.body.alert_state.delivery.alert_id).to.equal(expiry.rows[0].id);
+    expect(details.body.alert_state.delivery.status).to.equal("sent_unverified");
+    const timeline = await request(BASE)
+      .get(`/api/tokens/${tokenB}/alert-timeline?limit=100`)
+      .set("Cookie", owner.cookie).expect(200);
+    expect(timeline.body.items.some(item => item.type === "delivery_succeeded" &&
+      item.alert_id === endpoint.rows[0].id)).to.equal(true);
+    expect(timeline.body.items.some(item => item.type === "delivery_succeeded" &&
+      item.alert_id === expiry.rows[0].id)).to.equal(false);
+    expect(timeline.body.items.some(item => item.type === "threshold_reached" &&
+      item.alert_id === endpoint.rows[0].id)).to.equal(false);
+    await client.query(
+      `INSERT INTO audit_events (subject_user_id,action,target_type,target_id,
+         workspace_id,metadata)
+       VALUES ($1,'ALERT_SENT','token',$2,$3,$4::jsonb)`,
+      [owner.user.id, tokenB, workspaceB,
+        JSON.stringify({ days: 0, alert_key: expiryKey })],
+    );
+    const keyMatched = await request(BASE)
+      .get(`/api/tokens/${tokenB}`).set("Cookie", owner.cookie).expect(200);
+    expect(keyMatched.body.alert_state.delivery.status).to.equal("sent");
+  });
+
   it("redacts queue and latest-attempt errors in both viewer-readable token APIs", async () => {
     const privateError = "ops@example.test https://hooks.example.test/private +49 151 23456789 password=hunter2";
     await client.query("UPDATE alert_queue SET error_message=$1 WHERE id=$2", [privateError, alertA]);
@@ -405,6 +459,14 @@ describe("Alert lifecycle APIs", function () {
       [tokenA],
     );
     expect(persisted.rows.map(row => row.workspace_id)).to.deep.equal([workspaceA]);
+    const auditWorkspaces = await client.query(
+      `SELECT DISTINCT workspace_id FROM audit_events
+        WHERE target_type='token' AND target_id=$1
+          AND action IN ('ALERT_SENT','ALERT_RETRY_SCHEDULED')`,
+      [tokenA],
+    );
+    expect(auditWorkspaces.rows.map(row => row.workspace_id))
+      .to.deep.equal([workspaceA]);
     const activityA = await request(BASE)
       .get(`/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`)
       .set("Cookie", manager.cookie).expect(200);
@@ -413,11 +475,43 @@ describe("Alert lifecycle APIs", function () {
       .set("Cookie", owner.cookie).expect(200);
     expect(activityA.body.items.some(item => item.alert_id === alertA &&
       item.type === "delivery_succeeded")).to.equal(true);
+    expect(activityA.body.items.some(item => item.alert_id === alertA &&
+      item.type === "retry_scheduled" && item.source === "audit_events"))
+      .to.equal(true);
     expect(activityB.body.items.some(item => item.token_id === tokenA)).to.equal(false);
     expect(activityB.body.items.map(item => item.id)).to.deep.equal(before.body.items.map(item => item.id));
     const tokenTimeline = await request(BASE)
       .get(`/api/tokens/${tokenA}/alert-timeline?limit=100`)
       .set("Cookie", owner.cookie).expect(200);
     expect(tokenTimeline.body.items.some(item => item.alert_id === alertA)).to.equal(true);
+  });
+
+  it("records a post-transfer manual retry against the alert and B workspace", async () => {
+    await request(BASE)
+      .post(`/api/alert-queue/${alertA}/retry`)
+      .set("Cookie", owner.cookie)
+      .send({ channel: "email" })
+      .expect(200);
+    const audit = await client.query(
+      `SELECT workspace_id,metadata FROM audit_events
+        WHERE action='ALERT_MANUAL_RETRY' AND target_type='alert'
+          AND target_id=$1 ORDER BY occurred_at DESC LIMIT 1`,
+      [alertA],
+    );
+    expect(audit.rows).to.have.length(1);
+    expect(audit.rows[0].workspace_id).to.equal(workspaceB);
+    expect(audit.rows[0].metadata.alert_id).to.equal(alertA);
+    expect(audit.rows[0].metadata.alert_key)
+      .to.equal(`token_expiry:${tokenA}:poswin:7`);
+    const oldActivity = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`)
+      .set("Cookie", manager.cookie).expect(200);
+    const newActivity = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`)
+      .set("Cookie", owner.cookie).expect(200);
+    expect(oldActivity.body.items.some(item => item.type === "alert_requeued" &&
+      item.alert_id === alertA)).to.equal(false);
+    expect(newActivity.body.items.some(item => item.type === "alert_requeued" &&
+      item.alert_id === alertA)).to.equal(true);
   });
 });
