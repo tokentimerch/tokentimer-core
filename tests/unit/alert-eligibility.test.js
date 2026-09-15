@@ -6,7 +6,57 @@ const {
 } = require("../../packages/alert-eligibility");
 const {
   buildDeliveryState,
+  countWorkspaceAlertEligibility,
 } = require("../../apps/api/services/alertEligibility");
+
+describe("workspace eligibility summary", () => {
+  it("counts the whole workspace via the shared evaluator, not a page", async () => {
+    const calls = [];
+    const queryable = {
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.startsWith("SELECT id FROM tokens")) {
+          return { rows: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+        }
+        return {
+          rows: [
+            {
+              token_id: 1,
+              expiration: "2026-10-20",
+              imported_at: "2026-09-01",
+              alert_thresholds: [7],
+            },
+            {
+              token_id: 2,
+              expiration: "2026-09-20",
+              imported_at: "2026-09-01",
+              alert_thresholds: [7],
+              contact_groups: [{ id: "ops", email_contact_ids: ["c1"] }],
+              default_contact_group_id: "ops",
+            },
+            {
+              token_id: 3,
+              expiration: "2026-09-20",
+              imported_at: "2026-09-14",
+              alert_thresholds: [7],
+            },
+          ],
+        };
+      },
+    };
+    const summary = await countWorkspaceAlertEligibility("workspace-1", {
+      queryable,
+      referenceDate: "2026-09-15T12:00:00Z",
+    });
+    assert.deepEqual(summary, {
+      total: 3,
+      counts: { outside_threshold: 1, due: 1, suppressed: 1 },
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].params[0], "workspace-1");
+    assert.deepEqual(calls[1].params[0], [1, 2, 3]);
+  });
+});
 
 const REFERENCE_DATE = "2026-09-13T12:00:00.000Z";
 

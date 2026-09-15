@@ -62,7 +62,11 @@ import TruncatedText from '../components/TruncatedText';
 import { resolveCategoryVisual } from '../components/AssetInventoryTable';
 import { AlertEligibilityOverview } from '../components/AlertStateDisplay.jsx';
 import { AlertLifecycleEventRow } from '../components/AlertLifecycleTimeline.jsx';
-import { useControlCenterData } from '../hooks/useControlCenterData';
+import DashboardPagination from '../components/DashboardPagination.jsx';
+import {
+  ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS,
+  useControlCenterData,
+} from '../hooks/useControlCenterData';
 import {
   useControlCenterStats,
   useControlCenterListPage,
@@ -1882,9 +1886,28 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           and limits.
                         </AlertDescription>
                       </Alert>
-                      <AlertEligibilityOverview
-                        tokens={alertData.eligibilityAssets}
-                        workspaceId={alertData.selectedWorkspaceId}
+                      {alertData.eligibilityLoading ? (
+                        <HStack spacing={2}>
+                          <Spinner size='xs' />
+                          <Text fontSize='sm'>Loading eligibility page...</Text>
+                        </HStack>
+                      ) : alertData.eligibilityError ? (
+                        <Text color='red.400' fontSize='sm'>
+                          {alertData.eligibilityError}
+                        </Text>
+                      ) : (
+                        <AlertEligibilityOverview
+                          tokens={alertData.eligibilityAssets}
+                          workspaceId={alertData.selectedWorkspaceId}
+                        />
+                      )}
+                      <DashboardPagination
+                        limit={alertData.eligibilityLimit}
+                        offset={alertData.eligibilityOffset}
+                        total={alertData.eligibilityTotal}
+                        pageSizeOptions={ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS}
+                        noun='assets'
+                        onChange={alertData.changeEligibilityPage}
                       />
                     </VStack>
                   </SectionState>

@@ -249,6 +249,35 @@ describe("Alert lifecycle APIs", function () {
     await request(BASE).get(path).set("Cookie", outsider.cookie).expect(403);
   });
 
+  it("keeps eligibility counts workspace-wide while token rows are paged", async () => {
+    const path = `/api/v1/workspaces/${workspaceA}/control-center/alert-eligibility-summary`;
+    const summary = await request(BASE)
+      .get(path)
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    expect(summary.body.total).to.equal(3);
+    expect(
+      Object.values(summary.body.counts).reduce((sum, count) => sum + count, 0),
+    ).to.equal(3);
+
+    const firstPage = await request(BASE)
+      .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=0`)
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    const nextPage = await request(BASE)
+      .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=1`)
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    expect(firstPage.body.total).to.equal(3);
+    expect(nextPage.body.total).to.equal(3);
+    expect(firstPage.body.items).to.have.length(1);
+    expect(nextPage.body.items).to.have.length(1);
+    expect(nextPage.body.items[0].id).not.to.equal(firstPage.body.items[0].id);
+
+    await request(BASE).get(path).set("Cookie", viewer.cookie).expect(403);
+    await request(BASE).get(path).set("Cookie", outsider.cookie).expect(403);
+  });
+
   it("paginates recent workspace activity newest-first", async () => {
     const first = await request(BASE)
       .get(

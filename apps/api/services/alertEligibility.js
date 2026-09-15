@@ -201,10 +201,31 @@ async function enrichTokenWithAlertState(token, options = {}) {
   return enriched;
 }
 
+async function countWorkspaceAlertEligibility(
+  workspaceId,
+  { queryable = pool, referenceDate } = {},
+) {
+  const result = await queryable.query(
+    "SELECT id FROM tokens WHERE workspace_id = $1 ORDER BY id",
+    [workspaceId],
+  );
+  const states = await loadAlertStates(
+    result.rows.map((row) => row.id),
+    { queryable, referenceDate },
+  );
+  const counts = { outside_threshold: 0, due: 0, suppressed: 0 };
+  for (const state of states.values()) {
+    const status = state.eligibility?.status;
+    if (Object.hasOwn(counts, status)) counts[status]++;
+  }
+  return { total: result.rows.length, counts };
+}
+
 module.exports = {
   buildAlertState,
   buildDeliveryState,
   loadAlertStates,
   enrichTokensWithAlertState,
   enrichTokenWithAlertState,
+  countWorkspaceAlertEligibility,
 };

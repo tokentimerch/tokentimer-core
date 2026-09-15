@@ -11,6 +11,7 @@ const {
   fetchPrivilegeHighlightsPage,
 } = require("../services/controlCenterStats");
 const { fetchAlertLifecycle } = require("../services/alertLifecycle");
+const { countWorkspaceAlertEligibility } = require("../services/alertEligibility");
 
 const router = require("express").Router();
 
@@ -28,6 +29,27 @@ function parsePageParams(req) {
     offset: parseInt(req.query.offset, 10),
   };
 }
+
+router.get(
+  "/api/v1/workspaces/:id/control-center/alert-eligibility-summary",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  requireWorkspaceManagerRole,
+  async (req, res) => {
+    try {
+      return res.json(await countWorkspaceAlertEligibility(req.workspace.id));
+    } catch (err) {
+      logger.error("Control center eligibility summary error", {
+        error: err.message,
+        workspaceId: req.params?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({ error: "Failed to fetch alert eligibility summary" });
+    }
+  },
+);
 
 router.get(
   "/api/v1/workspaces/:id/control-center/alert-activity",

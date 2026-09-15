@@ -465,6 +465,8 @@ function TokenDetailModal({
               alertState={token.alert_state}
               enabled={isOpen}
               gridColumn='1 / -1'
+              mt={4}
+              mb={4}
             />
             {hasBasicInformation ? (
               <DashboardModalDataSection

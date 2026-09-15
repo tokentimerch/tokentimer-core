@@ -1,12 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import ControlCenter from '../../src/pages/ControlCenter.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
-const { loadMoreMock } = vi.hoisted(() => ({
+const { loadMoreMock, changeEligibilityPageMock } = vi.hoisted(() => ({
   loadMoreMock: vi.fn(),
+  changeEligibilityPageMock: vi.fn(),
 }));
 
 vi.mock('../../src/components/DashboardShell', () => ({
@@ -45,6 +46,7 @@ vi.mock('../../src/hooks/useControlCenterStats', () => ({
 }));
 
 vi.mock('../../src/hooks/useControlCenterData', () => ({
+  ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS: [5, 10, 20, 50, 100],
   useControlCenterData: () => ({
     loading: false,
     refreshing: false,
@@ -55,10 +57,16 @@ vi.mock('../../src/hooks/useControlCenterData', () => ({
     queue: [],
     eligibilityAssets: [],
     eligibilitySummary: {
-      outside_threshold: 1,
-      due: 0,
-      suppressed: 0,
+      outside_threshold: 11,
+      due: 2,
+      suppressed: 1,
     },
+    eligibilityTotal: 14,
+    eligibilityLimit: 10,
+    eligibilityOffset: 0,
+    eligibilityLoading: false,
+    eligibilityError: '',
+    changeEligibilityPage: changeEligibilityPageMock,
     stats: { byChannel: [], monthUsage: 0, allMonthSuccesses: 0 },
     orgStats: { monthUsage: 0 },
     orgWorkspaceCount: 1,
@@ -133,5 +141,39 @@ describe('Control Center recent alert activity', () => {
     expect(
       screen.getByRole('link', { name: 'Production key' })
     ).toHaveAttribute('href', '/dashboard?workspace=workspace-1&token-id=17');
+  });
+
+  it('keeps global eligibility counters and uses Dashboard asset pagination', () => {
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <ControlCenter session={{ displayName: 'Admin' }} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(screen.getByText('Outside threshold')).toBeInTheDocument();
+    expect(screen.getByText('11')).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'assets pagination' })
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Next page of assets' })
+    );
+    expect(changeEligibilityPageMock).toHaveBeenCalledWith({
+      limit: 10,
+      offset: 10,
+    });
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'assets per page' }),
+      {
+        target: { value: '20' },
+      }
+    );
+    expect(changeEligibilityPageMock).toHaveBeenCalledWith({
+      limit: 20,
+      offset: 0,
+    });
   });
 });

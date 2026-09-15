@@ -520,6 +520,8 @@ export const API_ENDPOINTS = {
     `/api/v1/workspaces/${id}/control-center/privilege-highlights`,
   WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY: id =>
     `/api/v1/workspaces/${id}/control-center/alert-activity`,
+  WORKSPACE_CONTROL_CENTER_ALERT_ELIGIBILITY_SUMMARY: id =>
+    `/api/v1/workspaces/${id}/control-center/alert-eligibility-summary`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>

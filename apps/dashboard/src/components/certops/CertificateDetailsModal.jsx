@@ -651,7 +651,8 @@ export default function CertificateDetailsModal({
             tokenId={token.id}
             alertState={token.alert_state}
             enabled={isOpen}
-            mb={4}
+            mt={4}
+            mb={6}
           />
 
           {certOpsLoading ? (

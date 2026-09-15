@@ -168,7 +168,22 @@ export default function AlertStateDisplay({
       <Text color={text} fontSize='sm' fontWeight='semibold' mb={3}>
         Alerting
       </Text>
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+      <SimpleGrid
+        columns={{ base: 1, md: 2 }}
+        spacing={4}
+        position='relative'
+        _before={{
+          content: '""',
+          display: { base: 'none', md: 'block' },
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: '50%',
+          width: '1px',
+          bg: border,
+          pointerEvents: 'none',
+        }}
+      >
         <VStack align='stretch' spacing={1.5} data-testid='alert-eligibility'>
           <HStack justify='space-between' align='start'>
             <Text color={muted} fontSize='xs' fontWeight='semibold'>
@@ -194,7 +209,15 @@ export default function AlertStateDisplay({
           ) : null}
         </VStack>
 
-        <VStack align='stretch' spacing={1.5} data-testid='alert-delivery'>
+        <VStack
+          align='stretch'
+          spacing={1.5}
+          data-testid='alert-delivery'
+          borderTopWidth={{ base: '1px', md: 0 }}
+          borderColor={border}
+          pt={{ base: 4, md: 0 }}
+          mt={{ base: 2, md: 0 }}
+        >
           <HStack justify='space-between' align='start'>
             <Text color={muted} fontSize='xs' fontWeight='semibold'>
               Delivery

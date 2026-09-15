@@ -2433,6 +2433,41 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/alert-eligibility-summary:
+    get:
+      tags: [Workspaces]
+      summary: Workspace-wide alert eligibility counts
+      operationId: getControlCenterAlertEligibilitySummary
+      description: >-
+        Counts current eligibility across the entire workspace, independently
+        of the paginated asset table. Requires workspace admin or manager role.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Global workspace eligibility summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, counts]
+                properties:
+                  total:
+                    type: integer
+                  counts:
+                    type: object
+                    required: [outside_threshold, due, suppressed]
+                    properties:
+                      outside_threshold:
+                        type: integer
+                      due:
+                        type: integer
+                      suppressed:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/contacts:
     get:
       tags: [Workspaces]

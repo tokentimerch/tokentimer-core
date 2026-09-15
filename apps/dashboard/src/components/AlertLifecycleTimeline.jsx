@@ -256,8 +256,8 @@ function UpcomingAlertActivity({ alertState }) {
   if (upcoming.length === 0) return null;
   return (
     <Box
-      mt={3}
-      pt={3}
+      mt={4}
+      pt={4}
       borderTop='1px solid'
       borderColor='dashboard.modal.border'
     >
