@@ -57,6 +57,7 @@ const {
   CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
+  bootstrapTokenHttpMetadata,
   createBootstrapToken,
   getBootstrapTokenById,
   listBootstrapTokens,
@@ -1843,7 +1844,7 @@ router.get(
         offset: req.query.offset,
       });
       return res.json({
-        items: tokens.items,
+        items: tokens.items.map(bootstrapTokenHttpMetadata),
         pagination: tokens.pagination,
       });
     } catch (err) {
@@ -1944,7 +1945,7 @@ router.post(
       // The raw ttboot_ token is returned exactly once; only the hash is
       // persisted, so it can never be shown again.
       return res.status(201).json({
-        token: created.token,
+        token: bootstrapTokenHttpMetadata(created.token),
         plaintextToken: created.plaintextToken,
       });
     } catch (err) {
@@ -2011,7 +2012,7 @@ router.post(
         });
       }
 
-      return res.json({ token: revoked });
+      return res.json({ token: bootstrapTokenHttpMetadata(revoked) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

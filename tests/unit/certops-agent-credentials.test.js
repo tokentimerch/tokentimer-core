@@ -240,6 +240,9 @@ describe("CertOps agent bootstrap tokens", () => {
     assert.equal(created.token.contactGroupId, "alerts");
     assert.deepEqual(client.bootstrapRows[0].contact_group_ids, ["alerts", "ops"]);
     assert.equal(client.bootstrapRows[0].contact_group_id, "alerts");
+    const http = _test.bootstrapTokenHttpMetadata(created.token);
+    assert.equal(http.contactGroupId, "alerts");
+    assert.equal(Object.hasOwn(http, "contactGroupIds"), false);
   });
 
   it("validateBootstrapToken returns the full contactGroupIds set", async () => {
