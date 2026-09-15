@@ -119,6 +119,14 @@ describe("parseVaultAuthFromBody", () => {
     assert.match(parsed.error, /not both/);
   });
 
+  it("rejects token mode when authMount is present as null", () => {
+    const parsed = parseVaultAuthFromBody({
+      token: "t",
+      authMount: null,
+    });
+    assert.match(parsed.error, /not both/);
+  });
+
   it("rejects roleId without secretId", () => {
     const parsed = parseVaultAuthFromBody({ roleId: "r" });
     assert.match(parsed.error, /both required/);
@@ -231,6 +239,71 @@ describe("vaultAppRoleLogin", () => {
         );
       },
     );
+  });
+
+  it("does not log AppRole login response bodies", async () => {
+    const { logger } = require("../../apps/api/utils/logger");
+    const leaked = "role_id=super-secret-role";
+    const warns = [];
+    const origWarn = logger.warn.bind(logger);
+    logger.warn = (msg, meta) => {
+      warns.push({ msg, meta });
+      return origWarn(msg, meta);
+    };
+    try {
+      await withVault(
+        (_req, res) => json(res, 400, { errors: [leaked] }),
+        async ({ address }) => {
+          await assert.rejects(() =>
+            vaultAppRoleLogin({
+              address,
+              roleId: "role",
+              secretId: "secret",
+            }),
+          );
+        },
+      );
+    } finally {
+      logger.warn = origWarn;
+    }
+    const failed = warns.filter((w) => w.msg === "Vault API request failed");
+    assert.ok(failed.length >= 1);
+    for (const w of failed) {
+      assert.equal(w.meta.responseBody, undefined);
+      assert.equal(JSON.stringify(w.meta).includes(leaked), false);
+      assert.equal(w.meta.path, "/v1/auth/approle/login");
+      assert.equal(typeof w.meta.status, "number");
+    }
+  });
+
+  it("still logs non-login Vault error bodies", async () => {
+    const { logger } = require("../../apps/api/utils/logger");
+    const { vaultHttpRequest } = require("../../apps/api/services/vaultAuth.js");
+    const warns = [];
+    const origWarn = logger.warn.bind(logger);
+    logger.warn = (msg, meta) => {
+      warns.push({ msg, meta });
+      return origWarn(msg, meta);
+    };
+    try {
+      await withVault(
+        (_req, res) => json(res, 403, { errors: ["permission denied"] }),
+        async ({ address }) => {
+          await assert.rejects(() =>
+            vaultHttpRequest({
+              address,
+              path: "/v1/sys/mounts",
+              method: "GET",
+            }),
+          );
+        },
+      );
+    } finally {
+      logger.warn = origWarn;
+    }
+    const failed = warns.filter((w) => w.msg === "Vault API request failed");
+    assert.ok(failed.length >= 1);
+    assert.match(String(failed[0].meta.responseBody || ""), /permission denied/);
   });
 
   it("fails closed on missing auth, missing client_token, and malformed TTL", async () => {

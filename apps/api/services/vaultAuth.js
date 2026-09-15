@@ -100,9 +100,10 @@ function parseVaultAuthFromBody(body) {
   const hasToken = token.length > 0;
   const hasRole = roleId.length > 0;
   const hasSecret = secretId.length > 0;
-  const authMountProvided =
-    Object.prototype.hasOwnProperty.call(source, "authMount") &&
-    source.authMount != null;
+  const authMountProvided = Object.prototype.hasOwnProperty.call(
+    source,
+    "authMount",
+  );
 
   if (hasToken && (hasRole || hasSecret || authMountProvided)) {
     return {
@@ -137,6 +138,10 @@ function parseVaultAuthFromBody(body) {
       namespace: namespace || undefined,
     },
   };
+}
+
+function isVaultAppRoleLoginPath(pathname) {
+  return /^\/v1\/auth\/.+\/login$/.test(String(pathname || ""));
 }
 
 function classifyAppRoleLoginFailure(status, bodyText) {
@@ -205,14 +210,17 @@ async function vaultHttpRequest({
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      logger.warn("Vault API request failed", {
+      const failed = {
         method,
         path: url.pathname,
         status: res.status,
         statusText: res.statusText,
         address: maskVaultAddress(address),
-        responseBody: text.substring(0, 200),
-      });
+      };
+      if (!isVaultAppRoleLoginPath(url.pathname)) {
+        failed.responseBody = text.substring(0, 200);
+      }
+      logger.warn("Vault API request failed", failed);
       const err = new Error(`Vault ${method} ${url.pathname} ${res.status}`);
       err.status = res.status;
       err.body = text;

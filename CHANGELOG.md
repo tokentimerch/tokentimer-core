@@ -17,7 +17,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
-- Dashboard API request, response, and error logs redact credential fields (`token`, `roleId`, `secretId`, passwords, `Authorization`) on localhost/dev/staging.
+- Dashboard API request, response, and error logs redact credential fields (`token`, `roleId`, `secretId`, passwords, `Authorization`) on localhost/dev/staging. Failed AppRole login responses log status and path only, never the Vault body.
 - GitHub and GitLab cloud detection now uses the URL hostname, not a substring of the whole URL.
 - Webhook provider auto-detect matches Discord, Office 365, and PagerDuty by hostname suffix, so hosts such as `notdiscord.com` are no longer treated as Discord.
 - Webhook test and delivery refuse HTTP 3xx redirects. The client resolves the destination itself, blocks private/reserved answers, and connects (directly or through `HTTP_PROXY`/`HTTPS_PROXY`) to those IPs. TLS SNI and the Host header still use the original hostname. Direct delivery retries another already-validated address only when the hop never accepted the POST (`ECONNREFUSED` and similar). The 5s budget covers DNS, connect, CONNECT, TLS, and reading the body. **Operator guidance:** if private-IP enforcement is on (production default) and local DNS fails, delivery is blocked instead of letting the proxy resolve the name. Trust the proxy to filter destinations only when `WEBHOOK_ALLOW_PRIVATE_IPS=true`. Worker delivery honors proxy env without `NODE_USE_ENV_PROXY`; the Test button needs `NODE_USE_ENV_PROXY=1`. `NO_PROXY` accepts `*.example.com` and `host:port`.
