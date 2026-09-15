@@ -770,7 +770,7 @@ export default function ProductTour({
       {
         target: '[data-tour="control-center-alert-queue"]',
         content:
-          'Monitor and manage the alert queue: pending and blocked alerts, requeue failed deliveries, and track delivery status.',
+          'Use the Queue tab to monitor pending and blocked alerts, requeue failed deliveries, and track delivery status.',
         placement: 'top',
         mobilePlacement: 'bottom',
         isManagerOnly: true,

@@ -12,6 +12,11 @@ import {
   Link,
   SimpleGrid,
   Spinner,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Table,
   Tbody,
   Td,
@@ -1842,118 +1847,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
 
               {alertData.eligibleWorkspaces.length > 0 ? (
                 <ControlCenterPanel
-                  title='Alert eligibility (workspace)'
-                  description='Current asset eligibility, evaluated independently from delivery state'
+                  title='Workspace alerting'
+                  description='Eligibility, lifecycle activity, and queued delivery for the selected workspace'
                   mb={4}
-                >
-                  <SectionState
-                    status={
-                      alertSectionStatus === 'ready'
-                        ? 'ready'
-                        : alertSectionStatus
-                    }
-                    error={alertData.error}
-                    emptyTitle='No asset eligibility data'
-                    emptyDetail='Eligibility appears when assets are available in the selected workspace.'
-                    unauthorizedDetail='Alert eligibility requires access to the selected workspace.'
-                  >
-                    <VStack align='stretch' spacing={4}>
-                      <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3}>
-                        <ControlStatCard
-                          label='Outside threshold'
-                          value={
-                            alertData.eligibilitySummary.outside_threshold || 0
-                          }
-                          help='Not currently due'
-                        />
-                        <ControlStatCard
-                          label='Due'
-                          value={alertData.eligibilitySummary.due || 0}
-                          help='Eligible to generate an alert'
-                        />
-                        <ControlStatCard
-                          label='Suppressed'
-                          value={alertData.eligibilitySummary.suppressed || 0}
-                          help='Threshold reached but intentionally quiet'
-                        />
-                      </SimpleGrid>
-                      <Alert status='info' variant='left-accent'>
-                        <AlertIcon />
-                        <AlertDescription>
-                          Eligibility explains whether an asset should generate
-                          an alert now. Delivery separately shows what happened
-                          after an alert was queued, including windows, retries,
-                          and limits.
-                        </AlertDescription>
-                      </Alert>
-                      {alertData.eligibilityLoading ? (
-                        <HStack spacing={2}>
-                          <Spinner size='xs' />
-                          <Text fontSize='sm'>Loading eligibility page...</Text>
-                        </HStack>
-                      ) : alertData.eligibilityError ? (
-                        <Text color='red.400' fontSize='sm'>
-                          {alertData.eligibilityError}
-                        </Text>
-                      ) : (
-                        <AlertEligibilityOverview
-                          tokens={alertData.eligibilityAssets}
-                          workspaceId={alertData.selectedWorkspaceId}
-                        />
-                      )}
-                      <DashboardPagination
-                        limit={alertData.eligibilityLimit}
-                        offset={alertData.eligibilityOffset}
-                        total={alertData.eligibilityTotal}
-                        pageSizeOptions={ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS}
-                        noun='assets'
-                        onChange={alertData.changeEligibilityPage}
-                      />
-                    </VStack>
-                  </SectionState>
-                </ControlCenterPanel>
-              ) : null}
-
-              {alertData.eligibleWorkspaces.length > 0 ? (
-                <ControlCenterPanel
-                  title='Recent alert activity'
-                  description='Newest alert lifecycle events across workspace assets'
-                  mb={4}
-                >
-                  <SectionState
-                    status={alertActivityStatus}
-                    error={alertData.alertActivityError}
-                    emptyTitle='No alert activity yet'
-                    emptyDetail='Threshold, queue, delivery, and retry events will appear here.'
-                    unauthorizedDetail='Recent alert activity requires manager or admin access.'
-                  >
-                    <InsightListShell
-                      emptyMessage='No alert activity yet.'
-                      onLoadMore={alertData.loadMoreAlertActivity}
-                      hasMore={alertData.alertActivityHasMore}
-                      isLoadingMore={alertData.alertActivityLoadingMore}
-                    >
-                      {alertActivity.length > 0
-                        ? alertActivity.map(event => (
-                            <Box key={event.id} px={3}>
-                              <AlertLifecycleEventRow
-                                event={event}
-                                showAsset
-                                workspaceId={alertData.selectedWorkspaceId}
-                                relativeTime
-                              />
-                            </Box>
-                          ))
-                        : null}
-                    </InsightListShell>
-                  </SectionState>
-                </ControlCenterPanel>
-              ) : null}
-
-              {alertData.eligibleWorkspaces.length > 0 ? (
-                <ControlCenterPanel
-                  data-tour='control-center-alert-queue'
-                  title='Alert queue (workspace)'
                   action={
                     <DashboardActionButton
                       onClick={handleRefreshAll}
@@ -1967,162 +1863,347 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     </DashboardActionButton>
                   }
                 >
-                  <SectionState
-                    status={
-                      alertSectionStatus === 'ready'
-                        ? 'ready'
-                        : alertSectionStatus
-                    }
-                    error={alertData.error}
-                    emptyTitle='No pending or failed alerts'
-                    emptyDetail='Alerts appear here when they are queued for delivery but have not been sent yet, or when delivery has failed.'
-                    unauthorizedDetail='The alert queue requires manager or admin access.'
-                  >
-                    <VStack align='stretch' spacing={4}>
-                      <VStack align='start' spacing={2}>
-                        <Tooltip
-                          label={alertData.requeueDisabledReason}
-                          hasArrow
-                          placement='top'
+                  <Tabs variant='unstyled' defaultIndex={0} isLazy minW={0}>
+                    <TabList
+                      w={{ base: '100%', md: 'fit-content' }}
+                      overflowX='auto'
+                      borderWidth='1px'
+                      borderColor={border}
+                      borderRadius='md'
+                      bg={surface}
+                      sx={{
+                        scrollbarWidth: 'none',
+                        '&::-webkit-scrollbar': { display: 'none' },
+                      }}
+                    >
+                      {[
+                        {
+                          label: 'Queue',
+                          accessibleName: 'Alert queue (workspace)',
+                          tour: 'control-center-alert-queue',
+                        },
+                        {
+                          label: 'Eligibility',
+                          accessibleName: 'Alert eligibility (workspace)',
+                        },
+                        {
+                          label: 'Activity',
+                          accessibleName: 'Recent alert activity',
+                        },
+                      ].map((tab, index) => (
+                        <Tab
+                          key={tab.label}
+                          aria-label={tab.accessibleName}
+                          data-tour={tab.tour}
+                          px={{ base: 1.5, sm: 3 }}
+                          py={1.5}
+                          flexShrink={0}
+                          whiteSpace='nowrap'
+                          fontSize={{ base: '2xs', sm: 'sm' }}
+                          fontWeight='medium'
+                          color={muted}
+                          borderLeftWidth={index === 0 ? 0 : '1px'}
+                          borderColor={border}
+                          _hover={{ bg: theme.dashboard.bg.panelHover }}
+                          _selected={{
+                            bg: theme.dashboard.accent.interactiveSurface,
+                            color: theme.dashboard.accent.navActive,
+                          }}
+                          _focusVisible={{ boxShadow: 'outline', zIndex: 1 }}
                         >
-                          <Box as='span' display='inline-block'>
-                            <DashboardActionButton
-                              colorScheme='blue'
-                              variant='solid'
-                              onClick={() => alertData.requeueAlerts()}
-                              isDisabled={!alertData.canRequeue}
-                            >
-                              Requeue blocked/failed
-                            </DashboardActionButton>
-                          </Box>
-                        </Tooltip>
-                        <Text fontSize='xs' color={muted}>
-                          Admins can requeue failed alerts for the selected
-                          workspace.
-                        </Text>
-                      </VStack>
-
-                      <Alert status='info' variant='left-accent'>
-                        <AlertIcon />
-                        <AlertDescription>
-                          This shows alerts that are pending, blocked (failed),
-                          or exceeded limits. Each row represents one delivery
-                          channel (email or webhook). Successfully sent alerts
-                          are not shown here but are counted in the delivery
-                          statistics above.{' '}
-                          {alertData.retryHintDate &&
-                          alertData.planInfo.alertLimitMonth > 0
-                            ? `If you reached your monthly alerting limit, delivery will resume on ${formatDate(alertData.retryHintDate)} (start of next month).`
-                            : ''}
-                        </AlertDescription>
-                      </Alert>
-
-                      {alertData.queue.length === 0 ? (
-                        <DashboardState
-                          title='No pending or failed alerts'
-                          py={4}
-                        />
-                      ) : (
-                        <>
-                          <Box display={{ base: 'block', lg: 'none' }}>
-                            <VStack align='stretch' spacing={3}>
-                              {alertData.queue.map(alert => (
-                                <AlertQueueMobileCard
-                                  key={`${alert.id}-${alert.channel}-mobile`}
-                                  alert={alert}
-                                  channelAttempts={getAlertChannelAttempts(
-                                    alert
-                                  )}
-                                />
-                              ))}
+                          {tab.label}
+                        </Tab>
+                      ))}
+                    </TabList>
+                    <TabPanels>
+                      <TabPanel px={0} pt={4} pb={0}>
+                        <SectionState
+                          status={
+                            alertSectionStatus === 'ready'
+                              ? 'ready'
+                              : alertSectionStatus
+                          }
+                          error={alertData.error}
+                          emptyTitle='No pending or failed alerts'
+                          emptyDetail='Alerts appear here when they are queued for delivery but have not been sent yet, or when delivery has failed.'
+                          unauthorizedDetail='The alert queue requires manager or admin access.'
+                        >
+                          <VStack align='stretch' spacing={4}>
+                            <VStack align='start' spacing={2}>
+                              <Tooltip
+                                label={alertData.requeueDisabledReason}
+                                hasArrow
+                                placement='top'
+                              >
+                                <Box as='span' display='inline-block'>
+                                  <DashboardActionButton
+                                    colorScheme='blue'
+                                    variant='solid'
+                                    onClick={() => alertData.requeueAlerts()}
+                                    isDisabled={!alertData.canRequeue}
+                                  >
+                                    Requeue blocked/failed
+                                  </DashboardActionButton>
+                                </Box>
+                              </Tooltip>
+                              <Text fontSize='xs' color={muted}>
+                                Admins can requeue failed alerts for the
+                                selected workspace.
+                              </Text>
                             </VStack>
-                          </Box>
 
-                          <Box
-                            overflowX='auto'
-                            display={{ base: 'none', lg: 'block' }}
+                            <Alert status='info' variant='left-accent'>
+                              <AlertIcon />
+                              <AlertDescription>
+                                This shows alerts that are pending, blocked
+                                (failed), or exceeded limits. Each row
+                                represents one delivery channel (email or
+                                webhook). Successfully sent alerts are not shown
+                                here but are counted in the delivery statistics
+                                above.{' '}
+                                {alertData.retryHintDate &&
+                                alertData.planInfo.alertLimitMonth > 0
+                                  ? `If you reached your monthly alerting limit, delivery will resume on ${formatDate(alertData.retryHintDate)} (start of next month).`
+                                  : ''}
+                              </AlertDescription>
+                            </Alert>
+
+                            {alertData.queue.length === 0 ? (
+                              <DashboardState
+                                title='No pending or failed alerts'
+                                py={4}
+                              />
+                            ) : (
+                              <>
+                                <Box display={{ base: 'block', lg: 'none' }}>
+                                  <VStack align='stretch' spacing={3}>
+                                    {alertData.queue.map(alert => (
+                                      <AlertQueueMobileCard
+                                        key={`${alert.id}-${alert.channel}-mobile`}
+                                        alert={alert}
+                                        channelAttempts={getAlertChannelAttempts(
+                                          alert
+                                        )}
+                                      />
+                                    ))}
+                                  </VStack>
+                                </Box>
+
+                                <Box
+                                  overflowX='auto'
+                                  display={{ base: 'none', lg: 'block' }}
+                                >
+                                  <Table size='sm' variant='simple'>
+                                    <Thead>
+                                      <Tr>
+                                        <Th>Token</Th>
+                                        <Th isNumeric width='80px'>
+                                          Days
+                                        </Th>
+                                        <Th width='130px'>Due</Th>
+                                        <Th>Status</Th>
+                                        <Th>Channel</Th>
+                                        <Th isNumeric>Attempts</Th>
+                                        <Th>Error</Th>
+                                        <Th>Updated</Th>
+                                      </Tr>
+                                    </Thead>
+                                    <Tbody>
+                                      {alertData.queue.map(alert => {
+                                        const channelAttempts =
+                                          getAlertChannelAttempts(alert);
+
+                                        return (
+                                          <Tr
+                                            key={`${alert.id}-${alert.channel}`}
+                                          >
+                                            <Td>
+                                              <VStack align='start' spacing={0}>
+                                                <Text fontWeight='medium'>
+                                                  {alert.token_name ||
+                                                    `Token #${alert.token_id}`}
+                                                </Text>
+                                                <Text
+                                                  fontSize='sm'
+                                                  color={muted}
+                                                >
+                                                  {alert.token_type ||
+                                                    'Unknown'}
+                                                </Text>
+                                              </VStack>
+                                            </Td>
+                                            <Td isNumeric>
+                                              {alert.threshold_days}
+                                            </Td>
+                                            <Td>
+                                              {alert.due_date
+                                                ? new Date(alert.due_date)
+                                                    .toISOString()
+                                                    .slice(0, 10)
+                                                : '-'}
+                                            </Td>
+                                            <Td>
+                                              {getStatusBadge(alert.status)}
+                                            </Td>
+                                            <Td>
+                                              <Badge
+                                                colorScheme={
+                                                  alert.channel === 'email'
+                                                    ? 'green'
+                                                    : 'blue'
+                                                }
+                                                size='sm'
+                                              >
+                                                {alert.channel_display ||
+                                                  alert.channel ||
+                                                  'None'}
+                                              </Badge>
+                                            </Td>
+                                            <Td isNumeric>{channelAttempts}</Td>
+                                            <Td maxW='200px'>
+                                              <TruncatedText
+                                                text={friendlyErrorMessage(
+                                                  alert.channel_error_message ||
+                                                    alert.error_message ||
+                                                    ''
+                                                )}
+                                                maxLines={3}
+                                                maxWidth='200px'
+                                              />
+                                            </Td>
+                                            <Td>
+                                              {formatRelativeTime(
+                                                alert.updated_at
+                                              )}
+                                            </Td>
+                                          </Tr>
+                                        );
+                                      })}
+                                    </Tbody>
+                                  </Table>
+                                </Box>
+                              </>
+                            )}
+                          </VStack>
+                        </SectionState>
+                      </TabPanel>
+                      <TabPanel px={0} pt={4} pb={0}>
+                        <Text fontSize='xs' color={muted} mb={3}>
+                          Current asset eligibility, evaluated independently
+                          from delivery state
+                        </Text>
+                        <SectionState
+                          status={
+                            alertSectionStatus === 'ready'
+                              ? 'ready'
+                              : alertSectionStatus
+                          }
+                          error={alertData.error}
+                          emptyTitle='No asset eligibility data'
+                          emptyDetail='Eligibility appears when assets are available in the selected workspace.'
+                          unauthorizedDetail='Alert eligibility requires access to the selected workspace.'
+                        >
+                          <VStack align='stretch' spacing={4}>
+                            <SimpleGrid
+                              columns={{ base: 1, sm: 3 }}
+                              spacing={3}
+                            >
+                              <ControlStatCard
+                                label='Outside threshold'
+                                value={
+                                  alertData.eligibilitySummary
+                                    .outside_threshold || 0
+                                }
+                                help='Not currently due'
+                              />
+                              <ControlStatCard
+                                label='Due'
+                                value={alertData.eligibilitySummary.due || 0}
+                                help='Eligible to generate an alert'
+                              />
+                              <ControlStatCard
+                                label='Suppressed'
+                                value={
+                                  alertData.eligibilitySummary.suppressed || 0
+                                }
+                                help='Threshold reached but intentionally quiet'
+                              />
+                            </SimpleGrid>
+                            <Alert status='info' variant='left-accent'>
+                              <AlertIcon />
+                              <AlertDescription>
+                                Eligibility explains whether an asset should
+                                generate an alert now. Delivery separately shows
+                                what happened after an alert was queued,
+                                including windows, retries, and limits.
+                              </AlertDescription>
+                            </Alert>
+                            {alertData.eligibilityLoading ? (
+                              <HStack spacing={2}>
+                                <Spinner size='xs' />
+                                <Text fontSize='sm'>
+                                  Loading eligibility page...
+                                </Text>
+                              </HStack>
+                            ) : alertData.eligibilityError ? (
+                              <Text color='red.400' fontSize='sm'>
+                                {alertData.eligibilityError}
+                              </Text>
+                            ) : (
+                              <AlertEligibilityOverview
+                                tokens={alertData.eligibilityAssets}
+                                workspaceId={alertData.selectedWorkspaceId}
+                              />
+                            )}
+                            <DashboardPagination
+                              limit={alertData.eligibilityLimit}
+                              offset={alertData.eligibilityOffset}
+                              total={alertData.eligibilityTotal}
+                              pageSizeOptions={
+                                ALERT_ELIGIBILITY_PAGE_SIZE_OPTIONS
+                              }
+                              noun='assets'
+                              onChange={alertData.changeEligibilityPage}
+                            />
+                          </VStack>
+                        </SectionState>
+                      </TabPanel>
+                      <TabPanel px={0} pt={4} pb={0}>
+                        <Text fontSize='xs' color={muted} mb={3}>
+                          Newest alert lifecycle events across workspace assets
+                        </Text>
+                        <SectionState
+                          status={alertActivityStatus}
+                          error={alertData.alertActivityError}
+                          emptyTitle='No alert activity yet'
+                          emptyDetail='Threshold, queue, delivery, and retry events will appear here.'
+                          unauthorizedDetail='Recent alert activity requires manager or admin access.'
+                        >
+                          <InsightListShell
+                            emptyMessage='No alert activity yet.'
+                            onLoadMore={alertData.loadMoreAlertActivity}
+                            hasMore={alertData.alertActivityHasMore}
+                            isLoadingMore={alertData.alertActivityLoadingMore}
                           >
-                            <Table size='sm' variant='simple'>
-                              <Thead>
-                                <Tr>
-                                  <Th>Token</Th>
-                                  <Th isNumeric width='80px'>
-                                    Days
-                                  </Th>
-                                  <Th width='130px'>Due</Th>
-                                  <Th>Status</Th>
-                                  <Th>Channel</Th>
-                                  <Th isNumeric>Attempts</Th>
-                                  <Th>Error</Th>
-                                  <Th>Updated</Th>
-                                </Tr>
-                              </Thead>
-                              <Tbody>
-                                {alertData.queue.map(alert => {
-                                  const channelAttempts =
-                                    getAlertChannelAttempts(alert);
-
-                                  return (
-                                    <Tr key={`${alert.id}-${alert.channel}`}>
-                                      <Td>
-                                        <VStack align='start' spacing={0}>
-                                          <Text fontWeight='medium'>
-                                            {alert.token_name ||
-                                              `Token #${alert.token_id}`}
-                                          </Text>
-                                          <Text fontSize='sm' color={muted}>
-                                            {alert.token_type || 'Unknown'}
-                                          </Text>
-                                        </VStack>
-                                      </Td>
-                                      <Td isNumeric>{alert.threshold_days}</Td>
-                                      <Td>
-                                        {alert.due_date
-                                          ? new Date(alert.due_date)
-                                              .toISOString()
-                                              .slice(0, 10)
-                                          : '-'}
-                                      </Td>
-                                      <Td>{getStatusBadge(alert.status)}</Td>
-                                      <Td>
-                                        <Badge
-                                          colorScheme={
-                                            alert.channel === 'email'
-                                              ? 'green'
-                                              : 'blue'
-                                          }
-                                          size='sm'
-                                        >
-                                          {alert.channel_display ||
-                                            alert.channel ||
-                                            'None'}
-                                        </Badge>
-                                      </Td>
-                                      <Td isNumeric>{channelAttempts}</Td>
-                                      <Td maxW='200px'>
-                                        <TruncatedText
-                                          text={friendlyErrorMessage(
-                                            alert.channel_error_message ||
-                                              alert.error_message ||
-                                              ''
-                                          )}
-                                          maxLines={3}
-                                          maxWidth='200px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        {formatRelativeTime(alert.updated_at)}
-                                      </Td>
-                                    </Tr>
-                                  );
-                                })}
-                              </Tbody>
-                            </Table>
-                          </Box>
-                        </>
-                      )}
-                    </VStack>
-                  </SectionState>
+                            {alertActivity.length > 0
+                              ? alertActivity.map(event => (
+                                  <Box key={event.id} px={3}>
+                                    <AlertLifecycleEventRow
+                                      event={event}
+                                      showAsset
+                                      workspaceId={
+                                        alertData.selectedWorkspaceId
+                                      }
+                                      relativeTime
+                                    />
+                                  </Box>
+                                ))
+                              : null}
+                          </InsightListShell>
+                        </SectionState>
+                      </TabPanel>
+                    </TabPanels>
+                  </Tabs>
                 </ControlCenterPanel>
               ) : null}
             </VStack>

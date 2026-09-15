@@ -40,19 +40,100 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatDateOnly(value) {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+    const [year, month, day] = String(value).split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString();
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString();
+}
+
 export function formatAlertThreshold(threshold) {
   if (threshold === null || threshold === undefined) return null;
-  if (threshold === 0) return 'Expiry day (0)';
+  if (threshold === 0) return 'Expiry day';
   if (threshold < 0)
-    return `${Math.abs(threshold)} days after expiry (${threshold})`;
+    return `${Math.abs(threshold)} days after expiry`;
   return `${threshold} days before expiry`;
 }
 
 export function formatExpiryDistance(days) {
   if (days === null || days === undefined) return 'Expiry unavailable';
   if (days === 0) return 'Expires today';
-  if (days < 0) return `${Math.abs(days)} days since expiry`;
-  return `${days} days until expiry`;
+  if (days < 0) return `Expired ${Math.abs(days)} days ago`;
+  if (days === 1) return 'Expires in: 1 day';
+  return `Expires in: ${days} days`;
+}
+
+export function formatChannelLabel(channel) {
+  if (!channel) return null;
+  if (channel === 'webhooks') return 'Webhook';
+  if (channel === 'whatsapp') return 'WhatsApp';
+  if (channel === 'email') return 'Email';
+  return String(channel).charAt(0).toUpperCase() + String(channel).slice(1);
+}
+
+export function formatChannelsList(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) return null;
+  return channels
+    .map(channel => {
+      if (channel === 'webhooks') return 'Webhooks';
+      return formatChannelLabel(channel);
+    })
+    .filter(Boolean)
+    .join(', ');
+}
+
+function addDaysToDateOnly(expirationDate, thresholdDays) {
+  if (!expirationDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(expirationDate))) {
+    return null;
+  }
+  if (!Number.isFinite(thresholdDays)) return null;
+  const [year, month, day] = String(expirationDate).split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - thresholdDays);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Upcoming thresholds not yet reached, chronological (nearest first). */
+export function getUpcomingThresholds(eligibility) {
+  if (!eligibility) return [];
+  const thresholds = Array.isArray(eligibility.effective_thresholds)
+    ? eligibility.effective_thresholds
+    : [];
+  const days = eligibility.days_until_expiry;
+  const expiration = eligibility.metadata?.expiration_date;
+
+  if (Number.isFinite(days) && thresholds.length > 0) {
+    return thresholds
+      .filter(threshold => Number.isFinite(threshold) && days > threshold)
+      .sort((a, b) => b - a)
+      .map(threshold => ({
+        threshold,
+        at:
+          addDaysToDateOnly(expiration, threshold) ||
+          (eligibility.next_threshold === threshold
+            ? eligibility.next_evaluation_at
+            : null),
+      }));
+  }
+
+  if (
+    eligibility.next_threshold !== null &&
+    eligibility.next_threshold !== undefined
+  ) {
+    return [
+      {
+        threshold: eligibility.next_threshold,
+        at: eligibility.next_evaluation_at || null,
+      },
+    ];
+  }
+  return [];
 }
 
 export function eligibilityExplanation(eligibility) {
@@ -142,16 +223,99 @@ export function AlertDeliveryBadge({ status }) {
   );
 }
 
+function buildDashboardAssetPath(tokenId, workspaceId) {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace', workspaceId);
+  params.set('token-id', String(tokenId));
+  return `/dashboard?${params.toString()}`;
+}
+
+export function buildAlertLifecycleEventPath({
+  tokenId,
+  attemptId,
+  workspaceId,
+} = {}) {
+  if (tokenId === null || tokenId === undefined) return '/dashboard';
+  if (attemptId === null || attemptId === undefined) {
+    return buildDashboardAssetPath(tokenId, workspaceId);
+  }
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace', workspaceId);
+  params.set('token-id', String(tokenId));
+  params.set('alert-event', `delivery:${attemptId}`);
+  return `/dashboard?${params.toString()}`;
+}
+
+/** @deprecated Prefer buildAlertLifecycleEventPath for delivery attempts. */
 export function buildAlertAuditPath(tokenName, tokenId) {
   const query = tokenName || tokenId;
   return query ? `/audit?q=${encodeURIComponent(String(query))}` : '/audit';
+}
+
+export function AlertUpcomingSection({ alertState, ...boxProps }) {
+  const muted = useColorModeValue('gray.600', 'dashboard.modal.muted');
+  const text = useColorModeValue('gray.800', 'dashboard.modal.text');
+  const border = useColorModeValue('gray.200', 'dashboard.modal.border');
+  const eligibility = alertState?.eligibility;
+  const delivery = alertState?.delivery;
+  const upcoming = getUpcomingThresholds(eligibility);
+  const nextAttempt = delivery?.next_attempt_at || null;
+
+  if (!eligibility && !nextAttempt) return null;
+
+  const primary = upcoming[0] || null;
+  const secondary = upcoming[1] || null;
+
+  return (
+    <Box
+      role='region'
+      aria-label='Upcoming alerts'
+      borderTop='1px solid'
+      borderColor={border}
+      pt={4}
+      mt={4}
+      {...boxProps}
+    >
+      <Text fontSize='xs' fontWeight='semibold' color={muted} mb={2}>
+        Upcoming
+      </Text>
+      <VStack align='stretch' spacing={1}>
+        {primary ? (
+          <Text fontSize='sm' color={text}>
+            Next threshold: {formatAlertThreshold(primary.threshold)}
+            {primary.at ? ` · ${formatDateOnly(primary.at)}` : ''}
+          </Text>
+        ) : (
+          <Text fontSize='sm' color={muted}>
+            No further thresholds configured
+          </Text>
+        )}
+        {secondary ? (
+          <Text fontSize='sm' color={muted}>
+            Then: {formatAlertThreshold(secondary.threshold)}
+            {secondary.at ? ` · ${formatDateOnly(secondary.at)}` : ''}
+          </Text>
+        ) : null}
+        {nextAttempt ? (
+          <Text fontSize='sm' color={text}>
+            Next delivery attempt: {formatDateTime(nextAttempt)}
+          </Text>
+        ) : null}
+      </VStack>
+    </Box>
+  );
 }
 
 export default function AlertStateDisplay({
   alertState,
   tokenName,
   tokenId,
+  workspaceId,
   canViewAudit = false,
+  onViewLatestAttempt,
+  showHeading = true,
+  showUpcoming = false,
+  compact = false,
   ...boxProps
 }) {
   const panelBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.58)');
@@ -161,26 +325,35 @@ export default function AlertStateDisplay({
   if (!alertState?.eligibility) return null;
 
   const { eligibility, delivery } = alertState;
-  const realAttemptAt = delivery?.latest_attempt?.id
-    ? delivery.latest_attempt.attempted_at
-    : null;
-  const latestAttemptAt =
-    realAttemptAt || delivery?.last_attempt_at;
+  const latestAttemptId = delivery?.latest_attempt?.id;
+  const realAttempt = latestAttemptId ? delivery.latest_attempt : null;
+  const lastDeliveryAt =
+    realAttempt?.attempted_at || delivery?.last_attempt_at || null;
+  const lastDeliveryChannel = formatChannelLabel(realAttempt?.channel);
+  const channels = formatChannelsList(eligibility.eligible_channels);
+  const currentThreshold = formatAlertThreshold(eligibility.effective_threshold);
+  const latestAttemptPath = buildAlertLifecycleEventPath({
+    tokenId,
+    attemptId: latestAttemptId,
+    workspaceId,
+  });
 
   return (
     <Box
       role='region'
       aria-label='Alert eligibility and delivery'
-      border='1px solid'
+      border={compact ? 0 : '1px solid'}
       borderColor={border}
       borderRadius='md'
-      bg={panelBg}
-      p={4}
+      bg={compact ? 'transparent' : panelBg}
+      p={compact ? 0 : 4}
       {...boxProps}
     >
-      <Text color={text} fontSize='sm' fontWeight='semibold' mb={3}>
-        Alerting
-      </Text>
+      {showHeading ? (
+        <Text color={text} fontSize='sm' fontWeight='semibold' mb={3}>
+          Current status
+        </Text>
+      ) : null}
       <SimpleGrid
         columns={{ base: 1, md: 2 }}
         spacing={4}
@@ -205,19 +378,16 @@ export default function AlertStateDisplay({
             <AlertEligibilityBadge status={eligibility.status} />
           </HStack>
           <Text color={text} fontSize='sm'>
-            {eligibilityExplanation(eligibility)}
-          </Text>
-          <Text color={muted} fontSize='xs'>
             {formatExpiryDistance(eligibility.days_until_expiry)}
           </Text>
-          {eligibility.eligible_channels?.length > 0 ? (
+          {currentThreshold ? (
             <Text color={muted} fontSize='xs'>
-              Eligible channels: {eligibility.eligible_channels.join(', ')}
+              Current threshold: {currentThreshold}
             </Text>
           ) : null}
-          {eligibility.next_evaluation_at ? (
+          {channels ? (
             <Text color={muted} fontSize='xs'>
-              Next eligibility evaluation: {eligibility.next_evaluation_at}
+              Channels: {channels}
             </Text>
           ) : null}
         </VStack>
@@ -237,52 +407,47 @@ export default function AlertStateDisplay({
             </Text>
             <AlertDeliveryBadge status={delivery?.status} />
           </HStack>
-          <Text color={text} fontSize='sm'>
-            {deliveryExplanation(delivery)}
-          </Text>
-          {delivery?.created_at ? (
+          {lastDeliveryAt ? (
             <Text color={muted} fontSize='xs'>
-              Latest alert: {formatDateTime(delivery.created_at)}
+              Last delivery
+              {lastDeliveryChannel ? `: ${lastDeliveryChannel}` : ''}
+              {' · '}
+              {formatDateTime(lastDeliveryAt)}
+            </Text>
+          ) : !delivery ? (
+            <Text color={muted} fontSize='xs'>
+              No delivery yet
             </Text>
           ) : null}
-          {latestAttemptAt ? (
-            canViewAudit && realAttemptAt ? (
+          {canViewAudit && realAttempt ? (
+            onViewLatestAttempt ? (
               <Link
-                as={RouterLink}
-                to={buildAlertAuditPath(tokenName, tokenId)}
+                as='button'
+                type='button'
+                onClick={() => onViewLatestAttempt(latestAttemptId)}
                 color='blue.400'
                 fontSize='xs'
                 fontWeight='semibold'
               >
-                View latest attempt · {formatDateTime(latestAttemptAt)}
+                View latest attempt
               </Link>
             ) : (
-              <Text color={muted} fontSize='xs'>
-                {realAttemptAt ? 'Latest attempt' : 'Last queue attempt'}: {formatDateTime(latestAttemptAt)}
-              </Text>
+              <Link
+                as={RouterLink}
+                to={latestAttemptPath}
+                color='blue.400'
+                fontSize='xs'
+                fontWeight='semibold'
+              >
+                View latest attempt
+              </Link>
             )
-          ) : null}
-          {delivery?.next_attempt_at ? (
-            <Text color={muted} fontSize='xs'>
-              Next delivery attempt: {formatDateTime(delivery.next_attempt_at)}
-            </Text>
-          ) : null}
-          {delivery?.error_message ? (
-            <Text color={muted} fontSize='xs' wordBreak='break-word'>
-              {delivery.error_message}
-            </Text>
           ) : null}
         </VStack>
       </SimpleGrid>
+      {showUpcoming ? <AlertUpcomingSection alertState={alertState} /> : null}
     </Box>
   );
-}
-
-function buildDashboardAssetPath(tokenId, workspaceId) {
-  const params = new URLSearchParams();
-  if (workspaceId) params.set('workspace', workspaceId);
-  params.set('token-id', String(tokenId));
-  return `/dashboard?${params.toString()}`;
 }
 
 export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
@@ -318,6 +483,7 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
                 alertState={token.alert_state}
                 tokenName={token.name}
                 tokenId={token.id}
+                workspaceId={workspaceId}
                 canViewAudit
               />
             </Box>
@@ -331,7 +497,6 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
             <Tr>
               <Th>Asset</Th>
               <Th>Eligibility</Th>
-              <Th>Why</Th>
               <Th>Threshold / expiry</Th>
               <Th>Delivery</Th>
               <Th>Next</Th>
@@ -340,11 +505,11 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
           <Tbody>
             {records.map(token => {
               const { eligibility, delivery } = token.alert_state;
-              const realAttemptAt = delivery?.latest_attempt?.id
-                ? delivery.latest_attempt.attempted_at
+              const latestAttemptId = delivery?.latest_attempt?.id;
+              const realAttempt = latestAttemptId
+                ? delivery.latest_attempt
                 : null;
-              const latestAttemptAt =
-                realAttemptAt || delivery?.last_attempt_at;
+              const upcoming = getUpcomingThresholds(eligibility);
               return (
                 <Tr key={token.id}>
                   <Td>
@@ -360,11 +525,6 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
                   <Td>
                     <AlertEligibilityBadge status={eligibility.status} />
                   </Td>
-                  <Td minW='260px'>
-                    <Text fontSize='sm'>
-                      {eligibilityExplanation(eligibility)}
-                    </Text>
-                  </Td>
                   <Td minW='180px'>
                     <Text fontSize='sm'>
                       {formatAlertThreshold(eligibility.effective_threshold) ||
@@ -376,34 +536,39 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
                   </Td>
                   <Td minW='180px'>
                     <AlertDeliveryBadge status={delivery?.status} />
-                    <Text color={muted} fontSize='xs' mt={1}>
-                      {deliveryExplanation(delivery)}
-                    </Text>
-                    {realAttemptAt && latestAttemptAt ? (
+                    {realAttempt ? (
                       <Link
                         as={RouterLink}
-                        to={buildAlertAuditPath(token.name, token.id)}
+                        to={buildAlertLifecycleEventPath({
+                          tokenId: token.id,
+                          attemptId: latestAttemptId,
+                          workspaceId,
+                        })}
                         color='blue.400'
                         fontSize='xs'
                         fontWeight='semibold'
+                        display='block'
+                        mt={1}
                       >
                         View latest attempt
                       </Link>
                     ) : null}
                   </Td>
                   <Td minW='190px'>
-                    {eligibility.next_evaluation_at ? (
+                    {upcoming[0] ? (
                       <Text fontSize='xs'>
-                        Eligibility: {eligibility.next_evaluation_at}
+                        {formatAlertThreshold(upcoming[0].threshold)}
+                        {upcoming[0].at
+                          ? ` · ${formatDateOnly(upcoming[0].at)}`
+                          : ''}
                       </Text>
                     ) : null}
                     {delivery?.next_attempt_at ? (
                       <Text fontSize='xs'>
-                        Delivery: {formatDateTime(delivery.next_attempt_at)}
+                        Retry: {formatDateTime(delivery.next_attempt_at)}
                       </Text>
                     ) : null}
-                    {!eligibility.next_evaluation_at &&
-                    !delivery?.next_attempt_at ? (
+                    {!upcoming[0] && !delivery?.next_attempt_at ? (
                       <Text color={muted} fontSize='xs'>
                         -
                       </Text>

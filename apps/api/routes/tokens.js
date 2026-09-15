@@ -12,6 +12,7 @@ const { requireNotViewer } = require("../services/rbac");
 const { sanitizeForLogging } = require("../utils/sanitize");
 const {
   enrichTokenWithAlertState,
+  enrichTokenWithAlertStateBestEffort,
   enrichTokensWithAlertState,
 } = require("../services/alertEligibility");
 const { fetchAlertLifecycle } = require("../services/alertLifecycle");
@@ -655,7 +656,7 @@ router.post(
         });
         return res
           .status(200)
-          .json(await enrichTokenWithAlertState(updatedToken));
+          .json(await enrichTokenWithAlertStateBestEffort(updatedToken));
       }
 
       logger.info("Creating token with data:", {
@@ -748,7 +749,7 @@ router.post(
         type: token.type,
         category: token.category,
       });
-      res.status(201).json(await enrichTokenWithAlertState(token));
+      res.status(201).json(await enrichTokenWithAlertStateBestEffort(token));
     } catch (error) {
       logger.error("Token creation error:", error.message);
       logger.error("Token creation error stack:", error.stack);
@@ -1401,7 +1402,7 @@ router.put(
           error: _err.message,
         });
       }
-      res.json(await enrichTokenWithAlertState(updatedToken));
+      res.json(await enrichTokenWithAlertStateBestEffort(updatedToken));
     } catch (error) {
       logger.error("Error updating token:", {
         error: error.message,

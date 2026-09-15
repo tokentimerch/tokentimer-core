@@ -2199,12 +2199,15 @@ router.get(
       if (!role || !["admin", "workspace_manager"].includes(role))
         return res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
 
+      // Attribute current-month usage to the token's current workspace while
+      // preserving historical alert_delivery_log.workspace_id as written.
       const byChannel = await pool.query(
         `SELECT d.channel,
               COUNT(*)::int AS attempts,
               COUNT(*) FILTER (WHERE d.status='success')::int AS successes
        FROM alert_delivery_log d
-      WHERE d.workspace_id = $1
+       JOIN tokens t ON t.id = d.token_id
+      WHERE t.workspace_id = $1
         AND date_trunc('month', (d.sent_at AT TIME ZONE 'UTC')) = date_trunc('month', (NOW() AT TIME ZONE 'UTC'))
       GROUP BY d.channel`,
         [workspaceId],
@@ -2213,7 +2216,8 @@ router.get(
       const monthUsage = await pool.query(
         `SELECT COUNT(*)::int AS c
          FROM alert_delivery_log d
-        WHERE d.workspace_id = $1 AND d.status='success'
+         JOIN tokens t ON t.id = d.token_id
+        WHERE t.workspace_id = $1 AND d.status='success'
           AND d.channel <> 'whatsapp'
           AND date_trunc('month', (d.sent_at AT TIME ZONE 'UTC')) = date_trunc('month', (NOW() AT TIME ZONE 'UTC'))`,
         [workspaceId],

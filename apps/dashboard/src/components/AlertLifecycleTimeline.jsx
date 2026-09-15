@@ -4,7 +4,9 @@ import {
   Box,
   Button,
   Circle,
+  Collapse,
   HStack,
+  Icon,
   Link,
   Spinner,
   Text,
@@ -18,11 +20,17 @@ import {
   BellRing,
   CheckCircle2,
   Clock3,
+  ChevronDown,
+  ChevronRight,
   RotateCcw,
   Send,
   XCircle,
 } from 'lucide-react';
 import { tokenAPI } from '../utils/apiClient';
+import {
+  AlertUpcomingSection,
+  formatChannelLabel,
+} from './AlertStateDisplay.jsx';
 
 const EVENT_META = {
   threshold_reached: {
@@ -99,21 +107,25 @@ const REASON_LABELS = {
   retired_certificate: 'Retired certificate',
 };
 
-function formatThreshold(threshold) {
-  if (threshold === null || threshold === undefined) return null;
+export function formatThresholdGroupLabel(threshold) {
+  if (threshold === null || threshold === undefined) return 'Other activity';
   if (threshold === 0) return 'Expiry-day threshold';
   if (threshold < 0) return `${Math.abs(threshold)}-day post-expiry threshold`;
   return `${threshold}-day threshold`;
 }
 
-function formatChannel(channel) {
-  if (!channel) return null;
-  if (channel === 'webhooks') return 'Webhook';
-  if (channel === 'whatsapp') return 'WhatsApp';
-  return channel.charAt(0).toUpperCase() + channel.slice(1);
+function formatThresholdBadge(threshold) {
+  if (threshold === null || threshold === undefined) return null;
+  if (threshold === 0) return 'Expiry day';
+  if (threshold < 0) return `${Math.abs(threshold)}-day post-expiry`;
+  return `${threshold}-day threshold`;
 }
 
-export function formatAlertLifecycleEvent(event) {
+function formatChannel(channel) {
+  return formatChannelLabel(channel);
+}
+
+export function formatAlertLifecycleEvent(event, { includeThreshold = true } = {}) {
   const meta = EVENT_META[event.type] || {
     label: String(event.type || 'Alert event').replaceAll('_', ' '),
     color: '#64748b',
@@ -121,7 +133,7 @@ export function formatAlertLifecycleEvent(event) {
   };
   const details = [
     formatChannel(event.channel),
-    formatThreshold(event.threshold_days),
+    includeThreshold ? formatThresholdBadge(event.threshold_days) : null,
     REASON_LABELS[event.reason],
   ].filter(Boolean);
   return { ...meta, details };
@@ -144,6 +156,16 @@ export function formatAlertLifecycleTime(value, relative = false) {
   return days < 7 ? `${days}d ago` : date.toLocaleDateString();
 }
 
+export function formatAlertLifecycleEventTime(event) {
+  if (!event?.occurred_at) return '';
+  if (event.type === 'threshold_reached') {
+    const date = new Date(event.occurred_at);
+    if (Number.isNaN(date.getTime())) return String(event.occurred_at);
+    return date.toLocaleDateString();
+  }
+  return formatAlertLifecycleTime(event.occurred_at);
+}
+
 export function buildAlertLifecycleAssetPath(tokenId, workspaceId) {
   if (tokenId === null || tokenId === undefined) return null;
   const params = new URLSearchParams();
@@ -152,24 +174,88 @@ export function buildAlertLifecycleAssetPath(tokenId, workspaceId) {
   return `/dashboard?${params.toString()}`;
 }
 
+export function groupAlertLifecycleEvents(events) {
+  const groups = new Map();
+  for (const event of events) {
+    const key =
+      event.threshold_days === null || event.threshold_days === undefined
+        ? 'none'
+        : String(event.threshold_days);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        threshold_days:
+          key === 'none' ? null : Number.parseInt(key, 10),
+        events: [],
+      });
+    }
+    groups.get(key).events.push(event);
+  }
+
+  const sorted = [...groups.values()].sort((a, b) => {
+    if (a.threshold_days === null) return 1;
+    if (b.threshold_days === null) return -1;
+    return b.threshold_days - a.threshold_days;
+  });
+
+  for (const group of sorted) {
+    group.events.sort(
+      (a, b) => new Date(a.occurred_at) - new Date(b.occurred_at)
+    );
+    const reached = group.events.find(item => item.type === 'threshold_reached');
+    group.reached_at = reached?.occurred_at || null;
+  }
+  return sorted;
+}
+
+function eventSpecificBadges(event) {
+  return [REASON_LABELS[event.reason]].filter(Boolean);
+}
+
+function eventExpansionDetails(event) {
+  const details = [];
+  if (event.error_message) {
+    details.push({ label: 'Detail', value: event.error_message });
+  }
+  return details;
+}
+
 export function AlertLifecycleEventRow({
   event,
   showAsset = false,
   workspaceId,
   relativeTime = false,
+  showTime = true,
+  focused = false,
+  includeThresholdBadge = true,
 }) {
   const border = useColorModeValue('gray.200', 'dashboard.modal.border');
   const muted = useColorModeValue('gray.600', 'dashboard.modal.muted');
   const text = useColorModeValue('gray.800', 'dashboard.modal.text');
-  const meta = formatAlertLifecycleEvent(event);
+  const focusBg = useColorModeValue('blue.50', 'rgba(59, 130, 246, 0.12)');
+  const meta = formatAlertLifecycleEvent(event, {
+    includeThreshold: includeThresholdBadge,
+  });
   const EventIcon = meta.icon;
   const assetPath = buildAlertLifecycleAssetPath(
     event.token_id,
     workspaceId || event.workspace_id
   );
+  const timeLabel = relativeTime
+    ? formatAlertLifecycleTime(event.occurred_at, true)
+    : formatAlertLifecycleEventTime(event);
+  const channel = formatChannel(event.channel);
 
   return (
-    <HStack align='start' spacing={3} py={2.5} minW={0}>
+    <HStack
+      align='start'
+      spacing={3}
+      py={2.5}
+      minW={0}
+      data-alert-event-id={event.id}
+      bg={focused ? focusBg : undefined}
+      borderRadius={focused ? 'md' : undefined}
+      px={focused ? 2 : undefined}
+    >
       <Circle
         size='28px'
         bg={`${meta.color}20`}
@@ -211,32 +297,26 @@ export function AlertLifecycleEventRow({
               )
             ) : null}
             <Text color={text} fontSize='sm' fontWeight='medium'>
-              {meta.label}
+              {[
+                meta.label,
+                channel,
+                !relativeTime && showTime ? timeLabel : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </Text>
           </Box>
-          <Text
-            color={muted}
-            fontSize='xs'
-            whiteSpace='nowrap'
-            title={formatAlertLifecycleTime(event.occurred_at)}
-          >
-            {formatAlertLifecycleTime(event.occurred_at, relativeTime)}
-          </Text>
+          {showTime && relativeTime ? (
+            <Text
+              color={muted}
+              fontSize='xs'
+              whiteSpace='nowrap'
+              title={formatAlertLifecycleTime(event.occurred_at)}
+            >
+              {timeLabel}
+            </Text>
+          ) : null}
         </HStack>
-        {meta.details.length > 0 ? (
-          <HStack mt={1} spacing={1.5} flexWrap='wrap'>
-            {meta.details.map(detail => (
-              <Badge
-                key={detail}
-                colorScheme='gray'
-                variant='subtle'
-                textTransform='none'
-              >
-                {detail}
-              </Badge>
-            ))}
-          </HStack>
-        ) : null}
         {event.error_message ? (
           <Text color={muted} fontSize='xs' mt={1} wordBreak='break-word'>
             {event.error_message}
@@ -247,38 +327,169 @@ export function AlertLifecycleEventRow({
   );
 }
 
-function UpcomingAlertActivity({ alertState }) {
+function AlertLifecycleExpandableRow({
+  event,
+  focused = false,
+  defaultExpanded = false,
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded || focused);
   const muted = useColorModeValue('gray.600', 'dashboard.modal.muted');
-  const upcoming = [
-    alertState?.eligibility?.next_evaluation_at
-      ? {
-          label: 'Next eligibility evaluation',
-          at: alertState.eligibility.next_evaluation_at,
-        }
-      : null,
-    alertState?.delivery?.next_attempt_at
-      ? {
-          label: 'Next delivery attempt',
-          at: alertState.delivery.next_attempt_at,
-        }
-      : null,
-  ].filter(Boolean);
-  if (upcoming.length === 0) return null;
+  const text = useColorModeValue('gray.800', 'dashboard.modal.text');
+  const hoverBg = useColorModeValue('gray.100', 'dashboard.table.rowHover');
+  const focusBg = useColorModeValue('blue.50', 'rgba(59, 130, 246, 0.12)');
+  const meta = formatAlertLifecycleEvent(event, { includeThreshold: false });
+  const rowRef = useRef(null);
+  const channel = formatChannel(event.channel);
+  const timeLabel = formatAlertLifecycleEventTime(event);
+  const expansion = eventExpansionDetails(event);
+  const badges = eventSpecificBadges(event);
+  const hasDetails = expansion.length > 0 || badges.length > 0;
+
+  useEffect(() => {
+    if (focused || defaultExpanded) setExpanded(true);
+  }, [focused, defaultExpanded]);
+
+  useEffect(() => {
+    if (!focused || !rowRef.current) return;
+    const timer = window.setTimeout(() => {
+      rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [focused, event.id]);
+
+  const summary = [meta.label, channel, timeLabel].filter(Boolean).join(' · ');
+
+  if (!hasDetails) {
+    return (
+      <Box
+        ref={rowRef}
+        data-alert-event-id={event.id}
+        px={2}
+        py={2}
+        bg={focused ? focusBg : undefined}
+        borderRadius={focused ? 'md' : undefined}
+      >
+        <Text fontSize='sm' fontWeight='medium' color={text} pl={5}>
+          {summary}
+        </Text>
+      </Box>
+    );
+  }
+
   return (
     <Box
-      mt={4}
-      pt={4}
-      borderTop='1px solid'
-      borderColor='dashboard.modal.border'
+      ref={rowRef}
+      data-alert-event-id={event.id}
+      bg={focused ? focusBg : undefined}
+      borderRadius={focused ? 'md' : undefined}
     >
-      <Text fontSize='xs' fontWeight='semibold' color={muted} mb={1}>
-        Upcoming
-      </Text>
-      {upcoming.map(item => (
-        <Text key={`${item.label}:${item.at}`} fontSize='xs' color={muted}>
-          {item.label}: {formatAlertLifecycleTime(item.at)}
+      <HStack
+        as='button'
+        type='button'
+        w='full'
+        textAlign='left'
+        spacing={2}
+        px={2}
+        py={2}
+        borderRadius='md'
+        _hover={{ bg: hoverBg }}
+        onClick={() => setExpanded(current => !current)}
+        aria-expanded={expanded}
+      >
+        <Icon
+          as={expanded ? ChevronDown : ChevronRight}
+          boxSize={3.5}
+          color={muted}
+          flexShrink={0}
+        />
+        <Text fontSize='sm' fontWeight='medium' color={text} flex='1' minW={0}>
+          {summary}
         </Text>
-      ))}
+      </HStack>
+      <Collapse in={expanded} animateOpacity={false}>
+        <Box
+          ml={5}
+          pl={3}
+          pb={2}
+          borderLeftWidth='2px'
+          borderColor='dashboard.modal.border'
+        >
+          {badges.length > 0 ? (
+            <HStack spacing={1.5} flexWrap='wrap' mb={1}>
+              {badges.map(detail => (
+                <Badge
+                  key={detail}
+                  colorScheme='gray'
+                  variant='subtle'
+                  textTransform='none'
+                >
+                  {detail}
+                </Badge>
+              ))}
+            </HStack>
+          ) : null}
+          {expansion.map(item => (
+            <Text
+              key={`${item.label}:${item.value}`}
+              color={muted}
+              fontSize='xs'
+              wordBreak='break-word'
+            >
+              {item.label === 'Detail'
+                ? item.value
+                : `${item.label}: ${item.value}`}
+            </Text>
+          ))}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+function ThresholdHistoryGroup({ group, focusedId }) {
+  const muted = useColorModeValue('gray.600', 'dashboard.modal.muted');
+  const text = useColorModeValue('gray.800', 'dashboard.modal.text');
+  const border = useColorModeValue('gray.200', 'dashboard.modal.border');
+  const reachedLabel = group.reached_at
+    ? formatAlertLifecycleEventTime({
+        type: 'threshold_reached',
+        occurred_at: group.reached_at,
+      })
+    : null;
+
+  return (
+    <Box
+      borderTop='1px solid'
+      borderColor={border}
+      pt={3}
+      mt={3}
+      _first={{ borderTop: 0, pt: 0, mt: 0 }}
+    >
+      <HStack spacing={2} mb={1} flexWrap='wrap'>
+        <Badge colorScheme='orange' variant='subtle' textTransform='none'>
+          {formatThresholdGroupLabel(group.threshold_days)}
+        </Badge>
+        {reachedLabel && group.threshold_days !== null ? (
+          <Text fontSize='xs' color={muted}>
+            Reached {reachedLabel}
+          </Text>
+        ) : null}
+      </HStack>
+      <VStack align='stretch' spacing={0}>
+        {group.events.map(event => (
+          <AlertLifecycleExpandableRow
+            key={event.id}
+            event={event}
+            focused={focusedId === String(event.id)}
+            defaultExpanded={focusedId === String(event.id)}
+          />
+        ))}
+      </VStack>
+      {group.events.length === 0 ? (
+        <Text fontSize='sm' color={text}>
+          No events
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -288,6 +499,10 @@ export default function AlertLifecycleTimeline({
   alertState,
   enabled = true,
   pageSize = 20,
+  compact = false,
+  showHeading = true,
+  showUpcoming = false,
+  focusEventId = null,
   ...boxProps
 }) {
   const muted = useColorModeValue('gray.600', 'dashboard.modal.muted');
@@ -343,12 +558,29 @@ export default function AlertLifecycleTimeline({
   }, [loadPage]);
 
   const chronologicalEvents = useMemo(() => [...events].reverse(), [events]);
+  const groups = useMemo(
+    () => groupAlertLifecycleEvents(chronologicalEvents),
+    [chronologicalEvents]
+  );
+  const focusedId = focusEventId ? String(focusEventId) : null;
+
+  useEffect(() => {
+    if (!focusedId || loading || loadingMore || !hasMore) return;
+    const hasFocusTarget = events.some(
+      event => String(event.id) === focusedId
+    );
+    if (!hasFocusTarget) {
+      loadPage(events.length);
+    }
+  }, [events, focusedId, hasMore, loadPage, loading, loadingMore]);
 
   return (
     <Box role='region' aria-label='Alert history' minW={0} {...boxProps}>
-      <Text fontSize='sm' fontWeight='semibold' mb={2}>
-        Alert history
-      </Text>
+      {showHeading ? (
+        <Text fontSize='sm' fontWeight='semibold' mb={2}>
+          History
+        </Text>
+      ) : null}
       {loading ? (
         <HStack spacing={2} py={2}>
           <Spinner size='xs' />
@@ -364,10 +596,28 @@ export default function AlertLifecycleTimeline({
         <Text fontSize='sm' color={muted}>
           No alert history recorded yet.
         </Text>
+      ) : compact ? (
+        <VStack align='stretch' spacing={0}>
+          {groups.map(group => (
+            <ThresholdHistoryGroup
+              key={
+                group.threshold_days === null
+                  ? 'none'
+                  : String(group.threshold_days)
+              }
+              group={group}
+              focusedId={focusedId}
+            />
+          ))}
+        </VStack>
       ) : (
         <VStack align='stretch' spacing={0}>
           {chronologicalEvents.map(event => (
-            <AlertLifecycleEventRow key={event.id} event={event} />
+            <AlertLifecycleEventRow
+              key={event.id}
+              event={event}
+              focused={focusedId === String(event.id)}
+            />
           ))}
         </VStack>
       )}
@@ -382,7 +632,7 @@ export default function AlertLifecycleTimeline({
           Load more
         </Button>
       ) : null}
-      <UpcomingAlertActivity alertState={alertState} />
+      {showUpcoming ? <AlertUpcomingSection alertState={alertState} /> : null}
     </Box>
   );
 }

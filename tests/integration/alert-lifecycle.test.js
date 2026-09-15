@@ -486,6 +486,40 @@ describe("Alert lifecycle APIs", function () {
     expect(tokenTimeline.body.items.some(item => item.alert_id === alertA)).to.equal(true);
   });
 
+  it("attributes current-month alert-stats to the token's current workspace after transfer", async () => {
+    // tokenA was already transferred to workspaceB by the prior test; historical
+    // delivery rows still record workspaceA.
+    const persisted = await client.query(
+      "SELECT DISTINCT workspace_id FROM alert_delivery_log WHERE token_id=$1",
+      [tokenA],
+    );
+    expect(persisted.rows.map(row => row.workspace_id)).to.deep.equal([workspaceA]);
+    const tokenWorkspace = await client.query(
+      "SELECT workspace_id FROM tokens WHERE id=$1",
+      [tokenA],
+    );
+    expect(tokenWorkspace.rows[0].workspace_id).to.equal(workspaceB);
+
+    const statsA = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceA })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    const statsB = await request(BASE)
+      .get("/api/alert-stats")
+      .query({ workspace_id: workspaceB })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+
+    expect(statsA.body.monthUsage).to.equal(0);
+    expect(statsB.body.monthUsage).to.be.at.least(1);
+    const emailB = (statsB.body.byChannel || []).find(
+      (row) => String(row.channel).toLowerCase() === "email",
+    );
+    expect(emailB).to.exist;
+    expect(emailB.successes).to.be.at.least(1);
+  });
+
   it("records a post-transfer manual retry against the alert and B workspace", async () => {
     await request(BASE)
       .post(`/api/alert-queue/${alertA}/retry`)

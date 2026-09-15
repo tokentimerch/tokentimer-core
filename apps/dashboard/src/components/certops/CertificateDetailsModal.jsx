@@ -44,8 +44,7 @@ import {
   createTokenEditData,
   createTokenUpdatePayload,
 } from '../tokenDetailForm.js';
-import AlertStateDisplay from '../AlertStateDisplay.jsx';
-import AlertLifecycleTimeline from '../AlertLifecycleTimeline.jsx';
+import AlertingDetails from '../AlertingDetails.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
@@ -640,21 +639,6 @@ export default function CertificateDetailsModal({
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
 
-          <AlertStateDisplay
-            alertState={token.alert_state}
-            tokenName={token.name}
-            tokenId={token.id}
-            canViewAudit={!isViewer}
-            mb={4}
-          />
-          <AlertLifecycleTimeline
-            tokenId={token.id}
-            alertState={token.alert_state}
-            enabled={isOpen}
-            mt={4}
-            mb={6}
-          />
-
           {certOpsLoading ? (
             <HStack mb={4} spacing={2} color='dashboard.modal.muted'>
               <Spinner size='xs' />
@@ -1073,6 +1057,11 @@ export default function CertificateDetailsModal({
                 )}
               />
             ) : null}
+            <AlertingDetails
+              token={token}
+              canViewAudit={!isViewer}
+              enabled={isOpen}
+            />
           </Box>
 
           <datalist id='certificate-workspace-contacts'>

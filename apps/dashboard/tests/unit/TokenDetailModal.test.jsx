@@ -12,15 +12,20 @@ import TokenDetailModal from '../../src/components/TokenDetailModal.jsx';
 import { TOKEN_CATEGORIES } from '../../src/constants/tokenCategories.js';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
-const { updateTokenMock } = vi.hoisted(() => ({
+const { updateTokenMock, getAlertTimelineMock } = vi.hoisted(() => ({
   updateTokenMock: vi.fn(),
+  getAlertTimelineMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/apiClient', async importOriginal => {
   const actual = await importOriginal();
   return {
     ...actual,
-    tokenAPI: { ...actual.tokenAPI, updateToken: updateTokenMock },
+    tokenAPI: {
+      ...actual.tokenAPI,
+      updateToken: updateTokenMock,
+      getAlertTimeline: getAlertTimelineMock,
+    },
   };
 });
 
@@ -45,7 +50,7 @@ const baseToken = {
   updated_at: '2026-02-01T00:00:00.000Z',
 };
 
-function renderModal(token = baseToken, overrides = {}) {
+function renderModal(token = baseToken, overrides = {}, routerOptions = {}) {
   const props = {
     token,
     isOpen: true,
@@ -63,7 +68,7 @@ function renderModal(token = baseToken, overrides = {}) {
     ...render(
       <ChakraProvider>
         <DashboardThemeProvider>
-          <MemoryRouter>
+          <MemoryRouter {...routerOptions}>
             <TokenDetailModal {...props} />
           </MemoryRouter>
         </DashboardThemeProvider>
@@ -75,6 +80,11 @@ function renderModal(token = baseToken, overrides = {}) {
 describe('TokenDetailModal', () => {
   beforeEach(() => {
     updateTokenMock.mockReset();
+    getAlertTimelineMock.mockReset();
+    getAlertTimelineMock.mockResolvedValue({
+      items: [],
+      pagination: { limit: 20, offset: 0, hasMore: false },
+    });
   });
 
   it('uses compact label/value rows without removing dashboard asset data', () => {
@@ -212,7 +222,7 @@ describe('TokenDetailModal', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows alert eligibility independently from delivery in inventory details', () => {
+  it('shows alert eligibility independently from delivery in inventory details', async () => {
     renderModal({
       ...baseToken,
       alert_state: {
@@ -226,21 +236,208 @@ describe('TokenDetailModal', () => {
         delivery: {
           status: 'sent',
           latest_attempt: {
+            id: 12,
+            channel: 'email',
             attempted_at: '2026-09-12T08:00:00.000Z',
           },
         },
       },
     });
 
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Current status' })
+    );
     const alerting = within(
-      screen.getByRole('region', { name: 'Alert eligibility and delivery' })
+      await screen.findByRole('region', {
+        name: 'Alert eligibility and delivery',
+      })
     );
     expect(alerting.getByText('Suppressed')).toBeInTheDocument();
-    expect(
-      alerting.getByText(/stale catch-up is suppressed/)
-    ).toBeInTheDocument();
+    expect(alerting.getByText('Expires in: 5 days')).toBeInTheDocument();
     expect(alerting.getByText('Sent')).toBeInTheDocument();
-    expect(alerting.getByText('The alert was delivered.')).toBeInTheDocument();
+    expect(
+      alerting.queryByText(/stale catch-up is suppressed/)
+    ).not.toBeInTheDocument();
+    expect(
+      alerting.queryByText('The alert was delivered.')
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens one alert section with current status, upcoming, and grouped history', async () => {
+    getAlertTimelineMock.mockResolvedValue({
+      items: [
+        {
+          id: 'delivery:1',
+          type: 'delivery_failed',
+          occurred_at: '2026-09-13T08:00:00.000Z',
+          channel: 'email',
+          threshold_days: 7,
+          error_message: 'SMTP timeout',
+        },
+      ],
+      pagination: { limit: 20, offset: 0, hasMore: false },
+    });
+    renderModal({
+      ...baseToken,
+      id: 17,
+      alert_state: {
+        eligibility: {
+          status: 'due',
+          reason: 'threshold_reached',
+          effective_threshold: 7,
+          days_until_expiry: 5,
+          effective_thresholds: [7, 1, 0],
+          metadata: { expiration_date: '2026-09-20' },
+        },
+        delivery: {
+          status: 'failed',
+          next_attempt_at: '2026-09-13T09:00:00.000Z',
+        },
+      },
+    });
+
+    const disclosure = screen.getByRole('button', {
+      name: 'Current status',
+    });
+    expect(
+      screen.getByRole('heading', { name: 'Alerting and alert history' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /See the current alert status, upcoming thresholds, and past delivery activity/
+      )
+    ).toBeInTheDocument();
+    expect(
+      getComputedStyle(
+        screen.getByRole('region', { name: 'Alerting and alert history' })
+      ).borderTopWidth
+    ).toBe('0px');
+    expect(
+      screen
+        .getByRole('heading', { name: 'Notes' })
+        .compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(getAlertTimelineMock).not.toHaveBeenCalled();
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      await screen.findByRole('button', { name: /Delivery failed · Email ·/ })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('alert-eligibility')).toHaveTextContent('Due');
+    expect(screen.getByTestId('alert-delivery')).toHaveTextContent('Failed');
+    expect(screen.getByText('Upcoming')).toBeInTheDocument();
+    expect(screen.getAllByText(/Next delivery attempt:/)).toHaveLength(1);
+    expect(screen.getByText('History')).toBeInTheDocument();
+    expect(screen.getByText('7-day threshold')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: /Delivery failed · Email ·/ })
+    );
+    expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
+  });
+
+  it('opens alert history from a delivery deep link', async () => {
+    getAlertTimelineMock.mockResolvedValue({
+      items: [
+        {
+          id: 'delivery:104',
+          type: 'delivery_failed',
+          occurred_at: '2026-09-13T08:00:00.000Z',
+          channel: 'email',
+          threshold_days: 7,
+          error_message: 'SMTP timeout',
+        },
+      ],
+      pagination: { limit: 20, offset: 0, hasMore: false },
+    });
+    renderModal(
+      {
+        ...baseToken,
+        id: 17,
+        alert_state: {
+          eligibility: {
+            status: 'due',
+            reason: 'threshold_reached',
+            effective_threshold: 7,
+            days_until_expiry: 5,
+          },
+          delivery: {
+            status: 'failed',
+            latest_attempt: {
+              id: 104,
+              channel: 'email',
+              attempted_at: '2026-09-13T08:00:00.000Z',
+            },
+          },
+        },
+      },
+      {},
+      {
+        initialEntries: [
+          '/dashboard?token-id=17&alert-event=delivery%3A104',
+        ],
+      }
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Current status' })
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      await screen.findByRole('button', { name: /Delivery failed · Email ·/ })
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
+  });
+
+  it('focuses alert history when View latest attempt is clicked in the modal', async () => {
+    getAlertTimelineMock.mockResolvedValue({
+      items: [
+        {
+          id: 'delivery:104',
+          type: 'delivery_failed',
+          occurred_at: '2026-09-13T08:00:00.000Z',
+          channel: 'email',
+          threshold_days: 7,
+          error_message: 'SMTP timeout',
+        },
+      ],
+      pagination: { limit: 20, offset: 0, hasMore: false },
+    });
+    renderModal(
+      {
+        ...baseToken,
+        id: 17,
+        alert_state: {
+          eligibility: {
+            status: 'due',
+            reason: 'threshold_reached',
+            effective_threshold: 7,
+            days_until_expiry: 5,
+          },
+          delivery: {
+            status: 'failed',
+            latest_attempt: {
+              id: 104,
+              channel: 'email',
+              attempted_at: '2026-09-13T08:00:00.000Z',
+            },
+          },
+        },
+      },
+      {},
+      { initialEntries: ['/dashboard?token-id=17'] }
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Current status' })
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: /View latest attempt/i })
+    );
+
+    expect(
+      await screen.findByRole('button', { name: /Delivery failed · Email ·/ })
+    ).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
   });
 
   it('omits unavailable rows and sections in read mode without hiding edit fields', () => {

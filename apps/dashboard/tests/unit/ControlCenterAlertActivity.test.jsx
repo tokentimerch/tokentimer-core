@@ -135,8 +135,9 @@ describe('Control Center recent alert activity', () => {
       </ChakraProvider>
     );
 
-    expect(screen.getByText('Recent alert activity')).toBeInTheDocument();
-    expect(screen.getByText('Delivery failed')).toBeInTheDocument();
+    expect(screen.getByText('Workspace alerting')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent alert activity' }));
+    expect(screen.getByText(/Delivery failed/)).toBeInTheDocument();
     expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: 'Production key' })
@@ -152,6 +153,9 @@ describe('Control Center recent alert activity', () => {
           </MemoryRouter>
         </DashboardThemeProvider>
       </ChakraProvider>
+    );
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Alert eligibility (workspace)' })
     );
     expect(screen.getByText('Outside threshold')).toBeInTheDocument();
     expect(screen.getByText('11')).toBeInTheDocument();
@@ -175,5 +179,44 @@ describe('Control Center recent alert activity', () => {
       limit: 20,
       offset: 0,
     });
+  });
+
+  it('keeps eligibility, activity and queue in one panel without losing queue actions', () => {
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <ControlCenter session={{ displayName: 'Admin' }} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+
+    const tabList = screen.getByRole('tablist');
+    expect(
+      Array.from(tabList.querySelectorAll('[role="tab"]'), tab =>
+        tab.textContent.trim()
+      )
+    ).toEqual(['Queue', 'Eligibility', 'Activity']);
+    expect(tabList).toContainElement(
+      screen.getByRole('tab', { name: 'Alert eligibility (workspace)' })
+    );
+    expect(tabList).toContainElement(
+      screen.getByRole('tab', { name: 'Recent alert activity' })
+    );
+    expect(
+      screen.getByRole('tab', { name: 'Alert queue (workspace)' })
+    ).toHaveAttribute('aria-selected', 'true');
+    expect(
+      screen.getByRole('button', { name: 'Requeue blocked/failed' })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('tab', { name: 'Alert eligibility (workspace)' })
+    );
+    expect(screen.getByText('11')).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'assets pagination' })
+    ).toBeInTheDocument();
   });
 });

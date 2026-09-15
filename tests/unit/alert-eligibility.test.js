@@ -7,6 +7,7 @@ const {
 const {
   buildDeliveryState,
   countWorkspaceAlertEligibility,
+  enrichTokenWithAlertStateBestEffort,
 } = require("../../apps/api/services/alertEligibility");
 
 describe("workspace eligibility summary", () => {
@@ -55,6 +56,7 @@ describe("workspace eligibility summary", () => {
     assert.equal(calls.length, 2);
     assert.equal(calls[0].params[0], "workspace-1");
     assert.deepEqual(calls[1].params[0], [1, 2, 3]);
+    assert.doesNotMatch(calls[1].sql, /alert_delivery_log|audit_events|alert_queue/);
   });
 });
 
@@ -277,5 +279,21 @@ describe("delivery state projection", () => {
       next_attempt_at: "2026-09-14T08:00:00.000Z",
     });
     assert.equal(retrying.reason, "retry_scheduled");
+  });
+});
+
+describe("mutation alert-state enrichment", () => {
+  it("returns the mutated token when projection fails instead of throwing", async () => {
+    const token = { id: 9, name: "asset" };
+    const enriched = await enrichTokenWithAlertStateBestEffort(token, {
+      queryable: {
+        query: async () => {
+          throw new Error("projection boom");
+        },
+      },
+    });
+    assert.equal(enriched.id, 9);
+    assert.equal(enriched.name, "asset");
+    assert.equal(enriched.alert_state, null);
   });
 });

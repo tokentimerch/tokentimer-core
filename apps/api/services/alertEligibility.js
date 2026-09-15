@@ -4,6 +4,7 @@ const { pool } = require("../db/database");
 const {
   evaluateAlertEligibility,
 } = require("@tokentimer/alert-eligibility");
+const { logger } = require("../utils/logger");
 const { safeAlertErrorMessage } = require("./alertErrorRedaction");
 const { discardedAlertReason } = require("./alertDeliveryDisposition");
 
@@ -106,18 +107,50 @@ function buildAlertState(row, referenceDate) {
   };
 }
 
-async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {}) {
-  const ids = [
+function buildEligibilityOnlyState(row, referenceDate) {
+  return {
+    eligibility: evaluateAlertEligibility(row, {
+      defaultThresholds: DEFAULT_THRESHOLDS,
+      referenceDate,
+    }),
+    delivery: null,
+  };
+}
+
+function normalizeTokenIds(tokenIds) {
+  return [
     ...new Set(
       (Array.isArray(tokenIds) ? tokenIds : [])
         .map((id) => Number.parseInt(String(id), 10))
         .filter((id) => Number.isFinite(id)),
     ),
   ];
-  if (ids.length === 0) return new Map();
+}
 
-  const result = await queryable.query(
-    `SELECT
+const TOKEN_SETTINGS_JOINS = `
+     FROM tokens t
+     LEFT JOIN workspaces w ON w.id = t.workspace_id
+     LEFT JOIN LATERAL (
+       SELECT w2.*
+       FROM workspaces w2
+       WHERE w2.created_by = t.user_id
+       ORDER BY w2.created_at ASC
+       LIMIT 1
+     ) wf ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT w3.*
+       FROM workspaces w3
+       JOIN workspace_memberships wm3
+         ON wm3.workspace_id = w3.id AND wm3.user_id = t.user_id
+       WHERE wm3.role IN ('admin', 'workspace_manager')
+       ORDER BY w3.created_at ASC
+       LIMIT 1
+     ) wj ON TRUE
+     LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
+     LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
+     LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id`;
+
+const TOKEN_ELIGIBILITY_COLUMNS = `
        t.id AS token_id,
        t.expiration::date AS expiration,
        t.imported_at,
@@ -127,7 +160,15 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        COALESCE(ws.webhook_urls, wsf.webhook_urls, wjj.webhook_urls) AS webhook_urls,
        COALESCE(ws.contact_groups, wsf.contact_groups, wjj.contact_groups) AS contact_groups,
        COALESCE(ws.default_contact_group_id, wsf.default_contact_group_id, wjj.default_contact_group_id) AS default_contact_group_id,
-       COALESCE(ws.email_alerts_enabled, wsf.email_alerts_enabled, wjj.email_alerts_enabled) AS ws_email_alerts_enabled,
+       COALESCE(ws.email_alerts_enabled, wsf.email_alerts_enabled, wjj.email_alerts_enabled) AS ws_email_alerts_enabled`;
+
+async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {}) {
+  const ids = normalizeTokenIds(tokenIds);
+  if (ids.length === 0) return new Map();
+
+  const result = await queryable.query(
+    `SELECT
+       ${TOKEN_ELIGIBILITY_COLUMNS},
        aq.id AS alert_id,
        aq.threshold_days AS alert_threshold_days,
        aq.due_date AS alert_due_date,
@@ -162,27 +203,7 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        attempt.status AS delivery_attempt_status,
        attempt.sent_at AS delivery_attempt_at,
        attempt.error_message AS delivery_attempt_error
-     FROM tokens t
-     LEFT JOIN workspaces w ON w.id = t.workspace_id
-     LEFT JOIN LATERAL (
-       SELECT w2.*
-       FROM workspaces w2
-       WHERE w2.created_by = t.user_id
-       ORDER BY w2.created_at ASC
-       LIMIT 1
-     ) wf ON TRUE
-     LEFT JOIN LATERAL (
-       SELECT w3.*
-       FROM workspaces w3
-       JOIN workspace_memberships wm3
-         ON wm3.workspace_id = w3.id AND wm3.user_id = t.user_id
-       WHERE wm3.role IN ('admin', 'workspace_manager')
-       ORDER BY w3.created_at ASC
-       LIMIT 1
-     ) wj ON TRUE
-     LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
-     LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
-     LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
+     ${TOKEN_SETTINGS_JOINS}
      LEFT JOIN LATERAL (
        SELECT aq1.*
        FROM alert_queue aq1
@@ -210,6 +231,29 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
   );
 }
 
+async function loadEligibilityOnlyStates(
+  tokenIds,
+  { queryable = pool, referenceDate } = {},
+) {
+  const ids = normalizeTokenIds(tokenIds);
+  if (ids.length === 0) return new Map();
+
+  const result = await queryable.query(
+    `SELECT
+       ${TOKEN_ELIGIBILITY_COLUMNS}
+     ${TOKEN_SETTINGS_JOINS}
+     WHERE t.id = ANY($1::int[])`,
+    [ids],
+  );
+
+  return new Map(
+    result.rows.map((row) => [
+      String(row.token_id),
+      buildEligibilityOnlyState(row, referenceDate),
+    ]),
+  );
+}
+
 async function enrichTokensWithAlertState(tokens, options = {}) {
   const source = Array.isArray(tokens) ? tokens : [];
   const states = await loadAlertStates(
@@ -228,6 +272,19 @@ async function enrichTokenWithAlertState(token, options = {}) {
   return enriched;
 }
 
+async function enrichTokenWithAlertStateBestEffort(token, options = {}) {
+  if (!token) return token;
+  try {
+    return await enrichTokenWithAlertState(token, options);
+  } catch (err) {
+    logger.warn("Alert state enrichment failed after successful mutation", {
+      error: err.message,
+      tokenId: token.id,
+    });
+    return { ...token, alert_state: null };
+  }
+}
+
 async function countWorkspaceAlertEligibility(
   workspaceId,
   { queryable = pool, referenceDate } = {},
@@ -236,7 +293,7 @@ async function countWorkspaceAlertEligibility(
     "SELECT id FROM tokens WHERE workspace_id = $1 ORDER BY id",
     [workspaceId],
   );
-  const states = await loadAlertStates(
+  const states = await loadEligibilityOnlyStates(
     result.rows.map((row) => row.id),
     { queryable, referenceDate },
   );
@@ -252,7 +309,9 @@ module.exports = {
   buildAlertState,
   buildDeliveryState,
   loadAlertStates,
+  loadEligibilityOnlyStates,
   enrichTokensWithAlertState,
   enrichTokenWithAlertState,
+  enrichTokenWithAlertStateBestEffort,
   countWorkspaceAlertEligibility,
 };

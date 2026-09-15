@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import AlertStateDisplay, {
   AlertEligibilityOverview,
+  AlertUpcomingSection,
+  getUpcomingThresholds,
 } from '../../src/components/AlertStateDisplay.jsx';
 import AssetInventoryTable from '../../src/components/AssetInventoryTable.jsx';
 
@@ -23,7 +25,7 @@ function renderDisplay(alertState, props = {}) {
 }
 
 describe('AlertStateDisplay', () => {
-  it('renders due eligibility independently from failed retrying delivery', () => {
+  it('renders a compact current-status view without repeating badge prose', () => {
     renderDisplay(
       {
         eligibility: {
@@ -31,7 +33,7 @@ describe('AlertStateDisplay', () => {
           reason: 'threshold_reached',
           effective_threshold: 7,
           days_until_expiry: 5,
-          eligible_channels: ['email'],
+          eligible_channels: ['email', 'webhooks'],
         },
         delivery: {
           status: 'failed',
@@ -39,6 +41,7 @@ describe('AlertStateDisplay', () => {
           created_at: '2026-09-13T07:45:00.000Z',
           latest_attempt: {
             id: 101,
+            channel: 'email',
             attempted_at: '2026-09-13T08:00:00.000Z',
           },
           next_attempt_at: '2026-09-13T09:00:00.000Z',
@@ -50,17 +53,83 @@ describe('AlertStateDisplay', () => {
     const eligibility = within(screen.getByTestId('alert-eligibility'));
     const delivery = within(screen.getByTestId('alert-delivery'));
     expect(eligibility.getByText('Due')).toBeInTheDocument();
-    expect(eligibility.getByText(/7 days before expiry/)).toBeInTheDocument();
+    expect(eligibility.getByText('Expires in: 5 days')).toBeInTheDocument();
+    expect(
+      eligibility.getByText('Current threshold: 7 days before expiry')
+    ).toBeInTheDocument();
+    expect(
+      eligibility.getByText('Channels: Email, Webhooks')
+    ).toBeInTheDocument();
     expect(delivery.getByText('Failed')).toBeInTheDocument();
-    expect(delivery.getByText(/attempt is scheduled/)).toBeInTheDocument();
-    expect(delivery.getByText(/Latest alert:/)).toBeInTheDocument();
+    expect(delivery.getByText(/Last delivery: Email ·/)).toBeInTheDocument();
     expect(
       delivery.getByRole('link', { name: /View latest attempt/ })
-    ).toHaveAttribute('href', '/audit?q=Production%20key');
-    expect(delivery.getByText(/Next delivery attempt:/)).toBeInTheDocument();
+    ).toHaveAttribute(
+      'href',
+      '/dashboard?token-id=17&alert-event=delivery%3A101'
+    );
+    expect(
+      screen.queryByText(/7 days before expiry has been reached/)
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Latest alert:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/attempt is scheduled/)).not.toBeInTheDocument();
   });
 
-  it('renders suppressed eligibility independently from sent delivery', () => {
+  it('lists upcoming thresholds and delivery retries in Upcoming', () => {
+    render(
+      <ChakraProvider>
+        <AlertUpcomingSection
+          alertState={{
+            eligibility: {
+              status: 'outside_threshold',
+              days_until_expiry: 20,
+              effective_thresholds: [30, 14, 7, 1, 0],
+              metadata: { expiration_date: '2026-10-05' },
+            },
+            delivery: { next_attempt_at: '2026-09-13T09:00:00.000Z' },
+          }}
+        />
+      </ChakraProvider>
+    );
+
+    expect(screen.getByText(/Next threshold:/)).toBeInTheDocument();
+    expect(screen.getByText(/14 days before expiry/)).toBeInTheDocument();
+    expect(screen.getByText(/Then:/)).toBeInTheDocument();
+    expect(screen.getByText(/Next delivery attempt:/)).toBeInTheDocument();
+  });
+
+  it('says when no further thresholds are configured', () => {
+    render(
+      <ChakraProvider>
+        <AlertUpcomingSection
+          alertState={{
+            eligibility: {
+              status: 'due',
+              days_until_expiry: 0,
+              effective_threshold: 0,
+              effective_thresholds: [7, 0],
+            },
+            delivery: null,
+          }}
+        />
+      </ChakraProvider>
+    );
+    expect(
+      screen.getByText('No further thresholds configured')
+    ).toBeInTheDocument();
+  });
+
+  it('computes upcoming thresholds after the active window', () => {
+    expect(
+      getUpcomingThresholds({
+        days_until_expiry: 5,
+        effective_thresholds: [30, 14, 7, 1, 0],
+        metadata: { expiration_date: '2026-09-20' },
+      }).map(item => item.threshold)
+    ).toEqual([1, 0]);
+  });
+
+  it('renders suppressed eligibility without delivery prose', () => {
     renderDisplay({
       eligibility: {
         status: 'suppressed',
@@ -71,19 +140,24 @@ describe('AlertStateDisplay', () => {
       },
       delivery: {
         status: 'sent',
-        latest_attempt: { attempted_at: '2026-09-12T08:00:00.000Z' },
+        latest_attempt: {
+          id: 9,
+          channel: 'email',
+          attempted_at: '2026-09-12T08:00:00.000Z',
+        },
       },
     });
 
     expect(screen.getByText('Suppressed')).toBeInTheDocument();
-    expect(
-      screen.getByText(/no eligible recipients or channels/)
-    ).toBeInTheDocument();
+    expect(screen.getByText('Expires today')).toBeInTheDocument();
     expect(screen.getByText('Sent')).toBeInTheDocument();
-    expect(screen.getByText('The alert was delivered.')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no eligible recipients or channels/)
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('The alert was delivered.')).not.toBeInTheDocument();
   });
 
-  it('shows outside-threshold scheduling separately from an absent delivery', () => {
+  it('shows outside-threshold current status without next-evaluation prose', () => {
     renderDisplay({
       eligibility: {
         status: 'outside_threshold',
@@ -98,11 +172,11 @@ describe('AlertStateDisplay', () => {
     });
 
     expect(screen.getByText('Outside threshold')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Next eligibility evaluation: 2026-10-01/)
-    ).toBeInTheDocument();
     expect(screen.getByText('No alert')).toBeInTheDocument();
-    expect(screen.getByText(/No alert has been generated/)).toBeInTheDocument();
+    expect(screen.getByText('No delivery yet')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Next eligibility evaluation/)
+    ).not.toBeInTheDocument();
   });
 });
 

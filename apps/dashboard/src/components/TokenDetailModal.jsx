@@ -30,8 +30,7 @@ import {
   DashboardModalSectionHeading,
 } from './DashboardModalDetails.jsx';
 import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
-import AlertStateDisplay from './AlertStateDisplay.jsx';
-import AlertLifecycleTimeline from './AlertLifecycleTimeline.jsx';
+import AlertingDetails from './AlertingDetails.jsx';
 import {
   createTokenEditData,
   createTokenUpdatePayload,
@@ -453,21 +452,6 @@ function TokenDetailModal({
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
           <DashboardModalDetailsGrid>
-            <AlertStateDisplay
-              alertState={token.alert_state}
-              tokenName={token.name}
-              tokenId={token.id}
-              canViewAudit={!isViewer}
-              gridColumn='1 / -1'
-            />
-            <AlertLifecycleTimeline
-              tokenId={token.id}
-              alertState={token.alert_state}
-              enabled={isOpen}
-              gridColumn='1 / -1'
-              mt={4}
-              mb={4}
-            />
             {hasBasicInformation ? (
               <DashboardModalDataSection
                 title='Basic information'
@@ -849,6 +833,14 @@ function TokenDetailModal({
                 })}
               </>
             )}
+            <AlertingDetails
+              token={token}
+              canViewAudit={!isViewer}
+              enabled={isOpen}
+              gridColumn='1 / -1'
+              mt={4}
+              mb={4}
+            />
           </DashboardModalDetailsGrid>
           {/* Datalist for workspace contacts suggestions */}
           <datalist id='workspace-contacts-suggestions'>
