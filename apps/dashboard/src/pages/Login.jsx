@@ -22,6 +22,7 @@ import {
 import apiClient, { authAPI } from '../utils/apiClient';
 import WelcomeModal from '../components/WelcomeModal';
 import { trackEvent } from '../utils/analytics.js';
+import { dashboardHrefAfterLogin } from '../utils/lastWorkspacePreference.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -114,25 +115,15 @@ export default function Login() {
           return;
         }
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const verificationSuccess = urlParams.get('verification_success');
-        if (verificationSuccess === 'true') {
-          try {
-            trackEvent('login_success', { method: 'email', two_factor: false });
-          } catch (_) {}
-          try {
-            localStorage.removeItem('tt_last_workspace_id');
-          } catch (_) {}
-          window.location.href = '/dashboard?first_login=true';
-        } else {
-          try {
-            trackEvent('login_success', { method: 'email', two_factor: false });
-          } catch (_) {}
-          try {
-            localStorage.removeItem('tt_last_workspace_id');
-          } catch (_) {}
-          window.location.href = '/dashboard';
-        }
+        try {
+          trackEvent('login_success', { method: 'email', two_factor: false });
+        } catch (_) {}
+        window.location.href = dashboardHrefAfterLogin({
+          firstLogin:
+            new URLSearchParams(window.location.search).get(
+              'verification_success'
+            ) === 'true',
+        });
       } catch (error) {
         logger.error('Login error:', error);
         let errorMessage = 'Login failed. Please try again.';
@@ -164,25 +155,15 @@ export default function Login() {
     setIsOtpLoading(true);
     try {
       await apiClient.post('/auth/verify-2fa', { token: twoFaCode });
-      const urlParams = new URLSearchParams(window.location.search);
-      const verificationSuccess = urlParams.get('verification_success');
-      if (verificationSuccess === 'true') {
-        try {
-          trackEvent('login_success', { method: 'email', two_factor: true });
-        } catch (_) {}
-        try {
-          localStorage.removeItem('tt_last_workspace_id');
-        } catch (_) {}
-        window.location.href = '/dashboard?first_login=true';
-      } else {
-        try {
-          trackEvent('login_success', { method: 'email', two_factor: true });
-        } catch (_) {}
-        try {
-          localStorage.removeItem('tt_last_workspace_id');
-        } catch (_) {}
-        window.location.href = '/dashboard';
-      }
+      try {
+        trackEvent('login_success', { method: 'email', two_factor: true });
+      } catch (_) {}
+      window.location.href = dashboardHrefAfterLogin({
+        firstLogin:
+          new URLSearchParams(window.location.search).get(
+            'verification_success'
+          ) === 'true',
+      });
     } catch (error) {
       const errorMessage =
         error.response?.data?.error || 'Invalid 2FA code. Please try again.';

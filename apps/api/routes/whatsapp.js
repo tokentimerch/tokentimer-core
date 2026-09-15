@@ -2,7 +2,10 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  getApiLimiter,
+  getTwilioWebhookLimiter,
+} = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
   loadWorkspace,
@@ -11,6 +14,13 @@ const {
 } = require("../services/rbac");
 const { maskPhone } = require("../utils/sanitize");
 const crypto = require("crypto");
+const {
+  replaceAssetContactGroups,
+  loadAssignedGroupIds,
+} = require("../src/shared/replaceAssetContactGroups");
+const {
+  membershipAfterContactGroupMove,
+} = require("../src/shared/contactGroups");
 
 const router = require("express").Router();
 
@@ -340,31 +350,35 @@ router.post(
 );
 
 // Twilio WhatsApp delivery status webhook
-router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
-  try {
-    const token =
-      process.env.TWILIO_AUTH_TOKEN ||
-      (await systemSettings.getSettingValue(pool, "twilio_auth_token")) ||
-      "";
-    if (!token)
-      return res
-        .status(500)
-        .json({ error: "Twilio not configured", code: "INTERNAL_ERROR" });
-    if (!verifyTwilioSignature(req, token))
-      return res
-        .status(403)
-        .json({ error: "Invalid signature", code: "FORBIDDEN" });
+// codeql[js/missing-rate-limiting]
+router.post(
+  "/webhooks/twilio/whatsapp/status",
+  getTwilioWebhookLimiter(),
+  async (req, res) => {
+    try {
+      const token =
+        process.env.TWILIO_AUTH_TOKEN ||
+        (await systemSettings.getSettingValue(pool, "twilio_auth_token")) ||
+        "";
+      if (!token)
+        return res
+          .status(500)
+          .json({ error: "Twilio not configured", code: "INTERNAL_ERROR" });
+      if (!verifyTwilioSignature(req, token))
+        return res
+          .status(403)
+          .json({ error: "Invalid signature", code: "FORBIDDEN" });
 
-    const messageSid = String(
-      req.body?.MessageSid || req.body?.SmsSid || "",
-    ).trim();
-    const messageStatus = String(req.body?.MessageStatus || "").trim();
-    const errorCode =
-      req.body?.ErrorCode != null ? String(req.body.ErrorCode) : null;
-    if (!messageSid) return res.status(200).end();
+      const messageSid = String(
+        req.body?.MessageSid || req.body?.SmsSid || "",
+      ).trim();
+      const messageStatus = String(req.body?.MessageStatus || "").trim();
+      const errorCode =
+        req.body?.ErrorCode != null ? String(req.body.ErrorCode) : null;
+      if (!messageSid) return res.status(200).end();
 
-    await pool.query(
-      `UPDATE alert_delivery_log
+      await pool.query(
+        `UPDATE alert_delivery_log
          SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{status}', to_jsonb($2::text), true)
        WHERE id IN (
          SELECT id FROM alert_delivery_log
@@ -372,11 +386,11 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
           ORDER BY sent_at DESC
           LIMIT 1
        )`,
-      [messageSid, messageStatus || "unknown"],
-    );
-    if (errorCode) {
-      await pool.query(
-        `UPDATE alert_delivery_log
+        [messageSid, messageStatus || "unknown"],
+      );
+      if (errorCode) {
+        await pool.query(
+          `UPDATE alert_delivery_log
            SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{errorCode}', to_jsonb($2::text), true)
          WHERE id IN (
            SELECT id FROM alert_delivery_log
@@ -384,15 +398,16 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
             ORDER BY sent_at DESC
             LIMIT 1
          )`,
-        [messageSid, errorCode],
-      );
+          [messageSid, errorCode],
+        );
+      }
+      return res.status(200).end();
+    } catch (e) {
+      logger.warn("twilio-whatsapp-status-webhook", { error: e.message });
+      return res.status(200).end();
     }
-    return res.status(200).end();
-  } catch (e) {
-    logger.warn("twilio-whatsapp-status-webhook", { error: e.message });
-    return res.status(200).end();
-  }
-});
+  },
+);
 
 // Enforce workspace membership and write restrictions for all workspace routes
 
@@ -400,8 +415,10 @@ router.post("/webhooks/twilio/whatsapp/status", async (req, res) => {
 // POST /api/v1/workspaces/:id/tokens/reassign-contact-group
 // Body: { from_group_id, to_group_id }
 // Auth: admin or workspace_manager
+// codeql[js/missing-rate-limiting]
 router.post(
   "/api/v1/workspaces/:id/tokens/reassign-contact-group",
+  getApiLimiter(),
   loadWorkspace,
   requireWorkspaceMembership,
   authorize("workspace.update"),
@@ -442,11 +459,81 @@ router.post(
           code: "VALIDATION_ERROR",
         });
 
-      const r = await pool.query(
-        `UPDATE tokens SET contact_group_id = $3, updated_at = NOW()
-         WHERE workspace_id = $1 AND contact_group_id = $2`,
-        [workspaceId, String(fromId), String(toId)],
-      );
+      const client = await pool.connect();
+      let updated = 0;
+      try {
+        await client.query("BEGIN");
+        const selectedTokens = await client.query(
+          `SELECT id FROM tokens
+            WHERE workspace_id = $1
+              AND (
+                contact_group_id = $2
+                OR EXISTS (
+                  SELECT 1 FROM token_contact_groups tcg
+                   WHERE tcg.token_id = tokens.id
+                     AND tcg.workspace_id = tokens.workspace_id
+                     AND tcg.contact_group_id = $2
+                )
+              )`,
+          [workspaceId, String(fromId)],
+        );
+        const selectedAgents = await client.query(
+          `SELECT id FROM certops_agents
+            WHERE workspace_id = $1
+              AND (
+                contact_group_id = $2
+                OR EXISTS (
+                  SELECT 1 FROM certops_agent_contact_groups acg
+                   WHERE acg.agent_id = certops_agents.id
+                     AND acg.workspace_id = certops_agents.workspace_id
+                     AND acg.contact_group_id = $2
+                )
+              )`,
+          [workspaceId, String(fromId)],
+        );
+        for (const row of selectedTokens.rows) {
+          const assigned = await loadAssignedGroupIds({
+            client,
+            kind: "token",
+            assetId: row.id,
+            workspaceId,
+          });
+          await replaceAssetContactGroups({
+            client,
+            kind: "token",
+            assetId: row.id,
+            workspaceId,
+            ids: membershipAfterContactGroupMove(assigned, fromId, toId),
+          });
+        }
+        for (const row of selectedAgents.rows) {
+          const assigned = await loadAssignedGroupIds({
+            client,
+            kind: "agent",
+            assetId: row.id,
+            workspaceId,
+          });
+          await replaceAssetContactGroups({
+            client,
+            kind: "agent",
+            assetId: row.id,
+            workspaceId,
+            ids: membershipAfterContactGroupMove(assigned, fromId, toId),
+          });
+        }
+        await client.query("COMMIT");
+        updated =
+          (selectedTokens.rowCount || 0) + (selectedAgents.rowCount || 0);
+      } catch (txErr) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_rollbackErr) {
+          /* connection may already be closed */
+        }
+        throw txErr;
+      } finally {
+        client.release();
+      }
       try {
         await writeAudit({
           actorUserId: req.user?.id || null,
@@ -458,13 +545,13 @@ router.post(
           metadata: {
             from_group_id: String(fromId),
             to_group_id: String(toId),
-            updated: r.rowCount,
+            updated,
           },
         });
       } catch (_err) {
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
-      return res.json({ updated: r.rowCount || 0 });
+      return res.json({ updated: updated || 0 });
     } catch (_e) {
       return res.status(500).json({
         error: "failed to reassign contact group",

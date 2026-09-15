@@ -5,6 +5,9 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "url";
 import { logger } from "../logger.js";
 import { pool } from "../db.js";
+import emailAddress from "../../../../packages/email-address/index.js";
+
+const { stripHtmlToText } = emailAddress;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -286,11 +289,11 @@ ${title || "TokenTimer"}
 
 ${greeting || ""}
 
-${content.replace(/<[^>]*>/g, "").replace(/\n\s*\n/g, "\n\n")}
+${stripHtmlToText(content).replace(/\n\s*\n/g, "\n\n")}
 
 ${buttonText && buttonUrl ? `${buttonText}: ${buttonUrl}` : ""}
 
-${footerNote ? footerNote.replace(/<[^>]*>/g, "") : ""}
+${footerNote ? stripHtmlToText(footerNote) : ""}
 
 TokenTimer
 ${getEmailFooterText()}

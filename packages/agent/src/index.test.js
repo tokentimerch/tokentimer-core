@@ -4057,8 +4057,10 @@ describe("windows-iis renew job (os-store-managed)", () => {
     function connectStub(_options) {
       const socket = new EventEmitter();
       socket.destroy = () => {};
+      const peer = new crypto.X509Certificate(FIXTURE_NEW_CERT_PEM);
       socket.getPeerCertificate = () => ({
-        raw: new crypto.X509Certificate(FIXTURE_NEW_CERT_PEM).raw,
+        raw: peer.raw,
+        fingerprint: peer.fingerprint,
       });
       process.nextTick(() => socket.emit("secureConnect"));
       return socket;
@@ -4684,11 +4686,15 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     return function connectStub(_options) {
       const socket = new EventEmitter();
       socket.destroy = () => {};
-      socket.getPeerCertificate = () => ({
-        raw: matches
-          ? new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).raw
-          : Buffer.from("not a real certificate, deliberately mismatched"),
-      });
+      socket.getPeerCertificate = () => {
+        if (!matches) {
+          return {
+            raw: Buffer.from("not a real certificate, deliberately mismatched"),
+          };
+        }
+        const peer = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM);
+        return { raw: peer.raw, fingerprint: peer.fingerprint };
+      };
       process.nextTick(() => socket.emit("secureConnect"));
       return socket;
     };
@@ -4724,10 +4730,10 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     // Use the real replacement thumbprint = sha1(DER) of the fixture the
     // handshake stub presents, so the probe's own comparison is exercised
     // for real rather than short-circuited.
-    const realReplacementThumbprint = crypto
-      .createHash("sha1")
-      .update(new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).raw)
-      .digest("hex")
+    const realReplacementThumbprint = new crypto.X509Certificate(
+      FIXTURE_REPLACEMENT_PROBE_CERT_PEM,
+    ).fingerprint
+      .replace(/:/g, "")
       .toUpperCase();
     fs.rmSync(ledgerDirFor(workDir), { recursive: true, force: true });
     createLedgerRow({

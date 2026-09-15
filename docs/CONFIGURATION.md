@@ -115,6 +115,7 @@ the origins users and integrations actually use in the browser.
 | `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
+| `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
@@ -190,17 +191,109 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
 | `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
 | `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
+| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset (`true` only after every replica is this image) | `unset` (`true` in `NODE_ENV=test`) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
+## Vault AppRole authentication
+
+Inventory import can authenticate to Vault with a static token **or**
+AppRole (role ID and secret ID). The two modes are exclusive. A Vault
+Enterprise namespace is optional and applies to both modes
+(`X-Vault-Namespace` on every Vault HTTP call, including login). Core
+scheduled auto-sync stays GitHub/GitLab; Vault AppRole auto-sync is
+offered where the edition already schedules Vault scans.
+
+### Minimum policy
+
+The AppRole token needs at least:
+
+```hcl
+path "sys/mounts" {
+  capabilities = ["read"]
+}
+
+path "secret/metadata/*" {
+  capabilities = ["list", "read"]
+}
+
+path "secret/data/*" {
+  capabilities = ["read"]
+}
+
+path "pki/certs" {
+  capabilities = ["list"]
+}
+
+path "pki/cert/*" {
+  capabilities = ["read"]
+}
+```
+
+Adjust mount paths to match the engines you scan. KV v2 uses `metadata/`
+and `data/` prefixes.
+
+### Custom auth mount
+
+If AppRole is enabled at a path other than `approle`, set `authMount` to
+that path (no leading or trailing slashes). TokenTimer POSTs
+`/v1/auth/<authMount>/login`. Dot segments (`.` / `..`) are rejected.
+
+### Client-token TTL and re-authentication
+
+TokenTimer reads TTL from `auth.lease_duration` on the login response
+(not the top-level `lease_duration`, which is typically 0). When that
+TTL is positive, it logs in again after 80% of the lease, measured from
+when the login response is received. `auth.lease_duration` of exactly 0
+keeps the client token for that scan only. A downstream Vault `403` is
+not retried as expiry; it stays a permission or revocation failure.
+
+Load engines and Scan are separate API calls, so a manual import
+performs two AppRole logins.
+
+### Revocation
+
+TokenTimer does not revoke Vault tokens or secret IDs. Revoking the
+AppRole role or a secret ID stops future logins. An already-issued
+client token remains valid until its own TTL ends or an operator
+revokes it in Vault. Prefer short role and token TTLs.
+
+### Secret ID lifetime
+
+AppRole secret IDs can have a TTL and a finite `secret_id_num_uses`.
+Each login consumes a use when that limit is set. TokenTimer does not
+issue or rotate secret IDs. Recurring TokenTimer authentication
+requires either a reusable SecretID (`secret_id_num_uses=0`) or an
+external SecretID rotation mechanism; finite-use SecretIDs are
+preferable when such rotation is available. `secret_id_num_uses=0` is
+the practical configuration when TokenTimer stores a reusable SecretID
+and no external rotation exists, not HashiCorp's recommended security
+posture.
+
+Kubernetes auth is out of scope unless operators confirm AppRole is
+insufficient.
+
 ## Proxy
 
 Corporate proxy support for outbound HTTP(S) calls: the API's `fetch`/undici
-calls (e.g. the webhook Test button, OAuth/SAML callbacks) and the worker's
-`axios` calls (which already honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on
-any Node version; `NODE_USE_ENV_PROXY` only changes `fetch`/undici behavior).
+calls (OAuth/SAML callbacks, and the webhook Test button when
+`NODE_USE_ENV_PROXY=1`) and worker webhook delivery (which honors
+`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` on any Node version, the same way
+`axios` did before the shared webhook client).
+
+Webhook delivery does not hand the destination hostname to the proxy to
+resolve. The process looks the name up locally, applies the private-IP
+check, then asks the proxy to connect to that IP. TLS SNI and the HTTP
+`Host` header still carry the original hostname, and certificate
+verification stays on (`rejectUnauthorized` is not disabled). Extra CAs
+come from Node's normal `NODE_EXTRA_CA_CERTS` handling at process start.
+If private-IP enforcement is on and DNS fails, the webhook is blocked. Set
+`WEBHOOK_ALLOW_PRIVATE_IPS=true` only when you trust the proxy (or the
+destination network) to filter private targets, including names this
+process cannot resolve. The proxy still sees the destination IP and can
+apply its own ACLs; it is not asked to re-resolve the hostname.
 
 The table below is the variable **inside the container**, which is what Node
 actually reads. Docker Compose sources each one from a dedicated,
@@ -209,16 +302,16 @@ actually reads. Docker Compose sources each one from a dedicated,
 rather than the bare name, so a corporate shell's own ambient `HTTP_PROXY` (or
 `NODE_USE_ENV_PROXY`) can never silently apply to your containers. Set
 `TOKENTIMER_USE_ENV_PROXY=1` whenever you set the proxy URLs in `.env`, or the
-API's `fetch` stays unproxied (the Test button keeps failing) while the
-worker's `axios` still proxies real delivery -- exactly the half-on state
-this release fixes.
+API's `fetch` stays unproxied (the Test button keeps failing) while worker
+webhook delivery still proxies -- exactly the half-on state this release
+fixes.
 
 | Variable              | Description                                                                     | Default value | Scope       |
 | --------------------- | -------------------------------------------------------------------------------- | -------------- | ----------- |
-| `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. On an unsupported Node version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (`axios` keeps working regardless of Node version). Compose sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` alongside this variable to silence Node's own `EnvHttpProxyAgent is experimental` warning. Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
+| `NODE_USE_ENV_PROXY`   | Set to `1` to make Node's global `fetch`/undici (and the webhook Test button) honor `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`. On an unsupported Node version the API and worker log a non-fatal startup warning and `fetch`/undici simply ignore the proxy vars (worker webhook delivery keeps working regardless of Node version). Compose sets `NODE_OPTIONS=--disable-warning=UNDICI-EHPA` alongside this variable to silence Node's own `EnvHttpProxyAgent is experimental` warning. Compose input: `TOKENTIMER_USE_ENV_PROXY`. | `unset (disabled)` | API, worker |
 | `HTTP_PROXY`           | Proxy URL for plain HTTP destinations, e.g. `http://user:pass@proxy:3128`. Compose input: `TOKENTIMER_HTTP_PROXY`. | `unset`        | API, worker |
 | `HTTPS_PROXY`          | Proxy URL for HTTPS destinations. Compose input: `TOKENTIMER_HTTPS_PROXY`.        | `unset`        | API, worker |
-| `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |
+| `NO_PROXY`             | Comma-separated hosts/domains that bypass the proxy. Supports `*` (all hosts), suffix forms (`example.com`, `.example.com`, `*.example.com`), and `host:port` (bypass only on that port). Only affects HTTP(S) traffic through `HTTP_PROXY`/`HTTPS_PROXY`, not raw SMTP. Compose input: `TOKENTIMER_NO_PROXY` (default `localhost,127.0.0.1,::1,api,postgres` -- overriding it must preserve the `api`/`postgres` service names). | `unset`        | API, worker |
 
 **Helm.** The chart does not accept plain-text proxy URLs as values (they
 commonly embed credentials). Set `config.useEnvProxy: true` plus
@@ -233,6 +326,35 @@ proxy. When `networkPolicy.enabled` and `config.useEnvProxy` are both `true`,
 fails the render naming whichever is missing, rather than silently rendering
 a NetworkPolicy that blocks the proxy it was just told to use). See
 [`deploy/helm/README.md`](../deploy/helm/README.md) for details and examples.
+
+## Azure inventory authentication
+
+Azure Key Vault and Microsoft Entra (Azure AD) inventory scans accept either
+a pasted access token or an Entra app using the OAuth client-credentials
+flow. TokenTimer mints a token from
+`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`.
+
+| Surface | Audience / scope | Least privilege |
+| ------- | ---------------- | --------------- |
+| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret values. |
+| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission. Directory.Read.All also works and is broader than this inventory needs. |
+
+This is not CertOps Azure DNS. CertOps DNS-01 still uses its own Entra app
+with DNS Zone Contributor (and ARM) as documented in
+[`docs/certops/agent.md`](certops/agent.md). Do not reuse that app for
+inventory unless you intentionally want both roles on one identity.
+Client-credential Entra scans attribute results to the tenant GUID from
+OpenID discovery (`/{tenant}/v2.0/.well-known/openid-configuration`); a
+tenant domain is canonicalized to that GUID before minting. Key Vault
+client-credential mint uses the tenant GUID or domain as supplied.
+
+Pasted-token scans still work. Existing auto-sync configs keep their stored
+token until you use **Replace credentials**. Core scheduled auto-sync stays
+GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise
+capability.
+
+`AZURE_VAULT_ADDRESS_ALLOWLIST` still applies to Key Vault URLs for both
+auth methods.
 
 ## CertOps (certificate operations)
 

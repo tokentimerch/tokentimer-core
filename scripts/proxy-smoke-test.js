@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 "use strict";
 
-// Real behavioral proof that Node's corporate-proxy support
-// (NODE_USE_ENV_PROXY=1) actually works for both HTTP clients this
-// codebase uses in the webhook path: global fetch/undici (API "Test"
-// button) and axios (worker delivery), over both plain HTTP and HTTPS.
+// Real behavioral proof that corporate-proxy env vars actually work for
+// both HTTP clients the webhook path uses: global fetch/undici (API Test
+// button, gated on NODE_USE_ENV_PROXY=1) and the shared postWebhook client
+// (worker delivery, honors HTTP_PROXY/HTTPS_PROXY regardless of that flag),
+// over both plain HTTP and HTTPS.
 //
 // Unit tests already cover the route/allowlist wiring
 // (tests/integration/webhook-test-endpoint.test.js). This script proves
@@ -182,7 +183,7 @@ async function main() {
       JSON.stringify(fetchHttp),
     );
 
-    // --- 3 & 4: axios through the proxy, HTTPS and HTTP (no flag needed) ---
+    // --- 3 & 4: worker webhook client through the proxy, HTTPS and HTTP ---
     resetConnections();
     const axiosHttps = await runProbe(
       AXIOS_PROBE_PATH,
@@ -193,9 +194,12 @@ async function main() {
         PROXY_SMOKE_TARGET_URL: httpsTargetUrl,
       }),
     );
+    // CONNECT is pinned to the locally resolved IP, not the hostname.
     record(
-      "axios: HTTPS target reached via CONNECT tunnel (proxies regardless of NODE_USE_ENV_PROXY)",
-      axiosHttps.ok === true && proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      "worker webhook client: HTTPS target reached via CONNECT tunnel (proxies regardless of NODE_USE_ENV_PROXY)",
+      axiosHttps.ok === true &&
+        (proxy.wasConnectedTo("127.0.0.1") || proxy.wasConnectedTo("::1")) &&
+        !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
       JSON.stringify(axiosHttps),
     );
 
@@ -209,7 +213,7 @@ async function main() {
       }),
     );
     record(
-      "axios: HTTP target reached via absolute-URI proxy request (proxies regardless of NODE_USE_ENV_PROXY)",
+      "worker webhook client: HTTP target reached via absolute-URI proxy request (proxies regardless of NODE_USE_ENV_PROXY)",
       axiosHttp.ok === true && proxy.wasConnectedTo(HTTP_TARGET_HOSTNAME),
       JSON.stringify(axiosHttp),
     );
@@ -228,7 +232,7 @@ async function main() {
     );
     record(
       "fetch + NO_PROXY: bypasses the proxy entirely (direct connection, nothing recorded)",
-      fetchNoProxy.ok === true && !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      fetchNoProxy.ok === true && proxy.connections.length === 0,
       JSON.stringify(fetchNoProxy),
     );
 
@@ -244,8 +248,8 @@ async function main() {
       }),
     );
     record(
-      "axios + NO_PROXY: bypasses the proxy entirely (direct connection, nothing recorded)",
-      axiosNoProxy.ok === true && !proxy.wasConnectedTo(HTTPS_TARGET_HOSTNAME),
+      "worker webhook client + NO_PROXY: bypasses the proxy entirely (direct connection, nothing recorded)",
+      axiosNoProxy.ok === true && proxy.connections.length === 0,
       JSON.stringify(axiosNoProxy),
     );
 
@@ -255,7 +259,7 @@ async function main() {
     // the proxy fixture to the real target). Without NODE_USE_ENV_PROXY,
     // fetch must ignore the proxy vars and fail going direct; axios must
     // succeed regardless, because its proxy support never depended on the
-    // flag in the first place.
+    // flag in the first place. postWebhook keeps that axios-like contract.
     resetConnections();
     const fetchHalfOn = await runProbe(
       FETCH_PROBE_PATH,
@@ -279,7 +283,7 @@ async function main() {
       }),
     );
     record(
-      "axios WITHOUT NODE_USE_ENV_PROXY: still proxies, succeeds against the same proxy-only target",
+      "worker webhook client WITHOUT NODE_USE_ENV_PROXY: still proxies, succeeds against the same proxy-only target",
       axiosHalfOn.ok === true && proxy.wasConnectedTo(UNREACHABLE_DIRECT_HOSTNAME),
       JSON.stringify(axiosHalfOn),
     );

@@ -19,6 +19,10 @@ import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import {
+  canonicalContactGroupFields,
+  contactGroupFieldsForImportDefaults,
+} from '../../utils/contactGroupAssignment.js';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
 
 function getGitLabItemDetails(item) {
@@ -129,7 +133,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   const [isScanning, setIsScanning] = React.useState(false);
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
   const [filterRules, setFilterRules] = React.useState([]);
   const [filterSummary, setFilterSummary] = React.useState(null);
   const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
@@ -310,7 +314,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          contact_group_id: bulkContactGroupId || null,
+          ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
         onError && onError('Please select a workspace first.');
@@ -320,7 +324,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       await integrationAPI.import({
         workspaceId,
         items: selected,
-        defaults: {},
+        defaults: contactGroupFieldsForImportDefaults(bulkContactGroupIds),
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -399,6 +403,10 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             value={gitlabBaseUrl}
             onChange={e => setGitlabBaseUrl(e.target.value)}
           />
+          <Text fontSize='xs' color={helpTextColor} mt={1}>
+            Self-hosted GitLab can include a path, for example
+            https://git.example.com/gitlab
+          </Text>
         </Box>
         <Box minW='320px'>
           <Text fontSize='sm' mb={1}>
@@ -626,8 +634,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             selectedCount={selectedRowsGitlab.size}
             section={bulkSection}
             onSectionChange={setBulkSection}
-            contactGroupId={bulkContactGroupId}
-            onContactGroupChange={setBulkContactGroupId}
+            contactGroupIds={bulkContactGroupIds}
+            onContactGroupChange={setBulkContactGroupIds}
             contactGroups={contactGroups}
             borderColor={borderColor}
           />

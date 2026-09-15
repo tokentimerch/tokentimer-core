@@ -11,6 +11,7 @@ import {
 import { useNavigate } from 'react-router';
 import { trackEvent } from '../utils/analytics';
 import { logger } from '../utils/logger';
+import { readSessionLastWorkspaceId } from '../utils/lastWorkspacePreference.js';
 
 /** Chakra lg breakpoint: sidebar/topbar vs legacy nav drawer split */
 const LAYOUT_LG_BREAKPOINT_PX = 992;
@@ -275,7 +276,7 @@ const isWorkspaceAlertSubStepTourId = tourId =>
 const buildDashboardTourUrl = () => {
   const search = new URLSearchParams();
   try {
-    const last = localStorage.getItem('tt_last_workspace_id');
+    const last = readSessionLastWorkspaceId();
     if (last) search.set('workspace', last);
   } catch (_) {}
   const qs = search.toString();

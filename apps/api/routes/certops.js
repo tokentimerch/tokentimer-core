@@ -57,6 +57,7 @@ const {
   CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
   CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
+  bootstrapTokenHttpMetadata,
   createBootstrapToken,
   getBootstrapTokenById,
   listBootstrapTokens,
@@ -73,6 +74,12 @@ const {
   retireAgent,
   updateAgentAlertSettings,
 } = require("../services/certops/agentRegistry");
+const {
+  interpretContactGroupWrite,
+  canonicalLegacyContactGroupId,
+  normalizeAssignedGroupIds,
+} = require("../src/shared/contactGroups");
+const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
 const {
   countCertificatesDependentPerAgent,
   resolveRenewalPathsForCertificateIds,
@@ -342,6 +349,39 @@ function writeOptionsFromRequest(req, source) {
     keyReference: optionalTrimmedString(req.body?.keyReference),
     createdBy: req.user?.id || null,
   };
+}
+
+function hasBodyField(body, key) {
+  return Object.prototype.hasOwnProperty.call(body || {}, key);
+}
+
+async function attachAgentContactGroupIds(client, workspaceId, agents) {
+  const list = (Array.isArray(agents) ? agents : [agents]).filter(Boolean);
+  for (const agent of list) {
+    agent.contactGroupIds = [];
+  }
+  const ids = list.map((agent) => agent.id).filter(Boolean);
+  if (ids.length === 0) return agents;
+
+  const result = await (client || pool).query(
+    `SELECT agent_id, contact_group_id
+       FROM certops_agent_contact_groups
+      WHERE workspace_id = $1 AND agent_id = ANY($2::uuid[])`,
+    [workspaceId, ids],
+  );
+  const grouped = new Map();
+  for (const row of result.rows || []) {
+    const agentId = String(row.agent_id);
+    if (!grouped.has(agentId)) grouped.set(agentId, []);
+    grouped.get(agentId).push(row.contact_group_id);
+  }
+  for (const agent of list) {
+    agent.contactGroupIds = normalizeAssignedGroupIds(
+      grouped.get(String(agent.id)) || [],
+    );
+    agent.contactGroupId = canonicalLegacyContactGroupId(agent.contactGroupIds);
+  }
+  return agents;
 }
 
 function handleCertOpsError(res, err) {
@@ -1804,7 +1844,7 @@ router.get(
         offset: req.query.offset,
       });
       return res.json({
-        items: tokens.items,
+        items: tokens.items.map(bootstrapTokenHttpMetadata),
         pagination: tokens.pagination,
       });
     } catch (err) {
@@ -1840,27 +1880,46 @@ router.post(
   async (req, res) => {
     try {
       const created = await withCertOpsTokenTransaction(async (client) => {
-        // Validate contact_group_id belongs to the workspace up front (same
+        // Validate membership belongs to the workspace up front (same
         // check as tokens.js), so a bad id fails the create instead of
         // silently resolving to "no group" at send time much later.
-        let contactGroupId = null;
-        if (
-          req.body?.contactGroupId !== undefined &&
-          req.body?.contactGroupId !== null &&
-          String(req.body.contactGroupId).trim() !== ""
-        ) {
-          const cgId = String(req.body.contactGroupId).trim();
-          const cgRes = await client.query(
-            "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)",
-            [req.workspace.id, cgId],
-          );
-          if (cgRes.rowCount === 0) {
-            const error = new Error("Invalid contactGroupId for workspace");
+        let membership;
+        try {
+          membership = interpretContactGroupWrite({
+            contactGroupIds: req.body?.contactGroupIds,
+            contactGroupId: req.body?.contactGroupId,
+            hasPlural: hasBodyField(req.body, "contactGroupIds"),
+            hasSingular: hasBodyField(req.body, "contactGroupId"),
+            pluralFieldName: "contactGroupIds",
+            singularFieldName: "contactGroupId",
+          });
+        } catch (err) {
+          if (err?.code === "VALIDATION_ERROR") {
+            const error = new Error(err.message);
             error.code = "CERTOPS_AGENT_CONTACT_GROUP_INVALID";
             error.statusCode = 400;
             throw error;
           }
-          contactGroupId = cgId;
+          throw err;
+        }
+        const contactGroupIds =
+          membership.action === "set" ? membership.ids : [];
+        if (contactGroupIds.length > 0) {
+          try {
+            await assertContactGroupIds(
+              client,
+              req.workspace.id,
+              contactGroupIds,
+            );
+          } catch (err) {
+            if (err?.code === "VALIDATION_ERROR") {
+              const error = new Error("Invalid contactGroupId for workspace");
+              error.code = "CERTOPS_AGENT_CONTACT_GROUP_INVALID";
+              error.statusCode = 400;
+              throw error;
+            }
+            throw err;
+          }
         }
 
         // createBootstrapToken enforces required future expiry and the
@@ -1872,7 +1931,7 @@ router.post(
           expiresAt: req.body?.expiresAt,
           createdBy: req.user.id,
           downtimeAlertsEnabled: req.body?.downtimeAlertsEnabled,
-          contactGroupId,
+          contactGroupIds,
         });
         await recordBootstrapTokenAudit({
           client,
@@ -1887,7 +1946,7 @@ router.post(
       // The raw ttboot_ token is returned exactly once; only the hash is
       // persisted, so it can never be shown again.
       return res.status(201).json({
-        token: created.token,
+        token: bootstrapTokenHttpMetadata(created.token),
         plaintextToken: created.plaintextToken,
       });
     } catch (err) {
@@ -1954,7 +2013,7 @@ router.post(
         });
       }
 
-      return res.json({ token: revoked });
+      return res.json({ token: bootstrapTokenHttpMetadata(revoked) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -2025,6 +2084,7 @@ router.get(
         sort: req.query.sort,
         direction: req.query.direction,
       });
+      await attachAgentContactGroupIds(pool, req.workspace.id, agents.items);
       let impactCounts = new Map();
       try {
         impactCounts = await countCertificatesDependentPerAgent({
@@ -2187,10 +2247,12 @@ router.patch(
 
     if (
       req.body?.downtimeAlertsEnabled === undefined &&
-      req.body?.contactGroupId === undefined
+      !hasBodyField(req.body, "contactGroupId") &&
+      !hasBodyField(req.body, "contactGroupIds")
     ) {
       return res.status(400).json({
-        error: "At least one of downtimeAlertsEnabled or contactGroupId is required",
+        error:
+          "At least one of downtimeAlertsEnabled, contactGroupId, or contactGroupIds is required",
         code: "CERTOPS_AGENT_ALERT_SETTINGS_EMPTY",
       });
     }
@@ -2204,30 +2266,51 @@ router.patch(
         });
         if (!existing) return { notFound: true };
 
-        let contactGroupId;
-        if (req.body?.contactGroupId !== undefined) {
-          if (req.body.contactGroupId === null || String(req.body.contactGroupId).trim() === "") {
-            contactGroupId = null;
-          } else {
-            const cgId = String(req.body.contactGroupId).trim();
-            const cgRes = await client.query(
-              "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)",
-              [req.workspace.id, cgId],
+        let membership;
+        try {
+          membership = interpretContactGroupWrite({
+            contactGroupIds: req.body?.contactGroupIds,
+            contactGroupId: req.body?.contactGroupId,
+            hasPlural: hasBodyField(req.body, "contactGroupIds"),
+            hasSingular: hasBodyField(req.body, "contactGroupId"),
+            pluralFieldName: "contactGroupIds",
+            singularFieldName: "contactGroupId",
+          });
+        } catch (err) {
+          if (err?.code === "VALIDATION_ERROR") {
+            return { invalidContactGroup: true };
+          }
+          throw err;
+        }
+
+        if (membership.action === "set") {
+          try {
+            await assertContactGroupIds(
+              client,
+              req.workspace.id,
+              membership.ids,
             );
-            if (cgRes.rowCount === 0) {
+          } catch (err) {
+            if (err?.code === "VALIDATION_ERROR") {
               return { invalidContactGroup: true };
             }
-            contactGroupId = cgId;
+            throw err;
           }
         }
 
-        const agent = await updateAgentAlertSettings({
+        const updateOptions = {
           client,
           workspaceId: req.workspace.id,
           agentId,
           downtimeAlertsEnabled: req.body?.downtimeAlertsEnabled,
-          contactGroupId,
-        });
+        };
+        if (membership.action === "set") {
+          updateOptions.contactGroupIds = membership.ids;
+        }
+
+        const agent = await updateAgentAlertSettings(updateOptions);
+        if (!agent) return { notFound: true };
+        await attachAgentContactGroupIds(client, req.workspace.id, [agent]);
 
         await writeAudit({
           client,
@@ -3442,6 +3525,8 @@ router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Path id plus pagination; no secrets in the query string.
+  // codeql[js/sensitive-get-query]
   async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
       return res.status(404).json({
@@ -3454,7 +3539,10 @@ router.get(
       const result = await listCertificateInstances({
         workspaceId: req.workspace.id,
         certId: req.params.certId,
+        // Pagination only.
+        // codeql[js/sensitive-get-query]
         limit: req.query.limit,
+        // codeql[js/sensitive-get-query]
         offset: req.query.offset,
       });
 
@@ -3561,6 +3649,8 @@ router.get(
   "/api/v1/workspaces/:id/certops/certificates/:certId",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Certificate id is a path parameter, not a secret query string.
+  // codeql[js/sensitive-get-query]
   async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
       return res.status(404).json({

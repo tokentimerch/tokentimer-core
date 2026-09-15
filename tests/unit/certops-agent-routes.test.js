@@ -764,3 +764,15 @@ describe("Register handler", () => {
     assert.equal(res.body.code, "CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED");
   });
 });
+
+describe("handleAgentRouteError", () => {
+  it("maps an uncoded Error to a generic 500 without leaking the message", () => {
+    const res = createResponse();
+    const error = new Error("internal sql detail should stay off the wire");
+    _test.handleAgentRouteError(res, error);
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.code, "CERTOPS_AGENT_REQUEST_FAILED");
+    assert.equal(res.body.error, "CertOps agent request failed");
+    assert.equal(JSON.stringify(res.body).includes("internal sql"), false);
+  });
+});

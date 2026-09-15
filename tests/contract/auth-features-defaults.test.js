@@ -21,5 +21,6 @@ describe("Runtime extension auth feature defaults", () => {
     const source = readFileSync(healthRoutePath, "utf8");
     assert.match(source, /saml:\s*false/);
     assert.match(source, /oidc:\s*false/);
+    assert.match(source, /contactGroupPluralWrites:\s*isContactGroupPluralWritesEnabled\(\)/);
   });
 });

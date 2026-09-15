@@ -38,9 +38,14 @@ function requireWithMocks(modulePath, mocks) {
 // Builds a mocked GitHub API responder for a single authenticated user with
 // one SSH key, one repo secret, and one deploy key -- enough to exercise
 // every sourceKind the scan produces.
+function githubApiPathname(url) {
+  const { pathname } = new URL(url);
+  return pathname.replace(/^\/api\/v3(?=\/)/, "");
+}
+
 function buildAxiosMock({ userId, sshKeyId = 501, repoId = 900 }) {
   return async (config) => {
-    const { pathname } = new URL(config.url);
+    const pathname = githubApiPathname(config.url);
     if (pathname === "/user") {
       return { data: { id: userId, login: `user-${userId}` } };
     }
@@ -103,6 +108,22 @@ describe("GitHub integration host and owner attribution", () => {
     expect(resultA.ownerKey).to.equal(resultB.ownerKey);
   });
 
+  it("keeps GitHub Enterprise /api/v3 on API requests", async () => {
+    const seen = [];
+    const github = requireWithMocks(resolveGithubModule(), {
+      axios: async (config) => {
+        seen.push(new URL(config.url).pathname);
+        return { data: { id: 1, login: "octo" } };
+      },
+    });
+    await github._test.githubRequest({
+      baseUrl: "https://ghe.example.com/api/v3",
+      token: "token",
+      path: "/user",
+    });
+    expect(seen).to.deep.equal(["/api/v3/user"]);
+  });
+
   it("uses the authenticated user's immutable numeric id as ownerKey, not the mutable login", async () => {
     const github = requireWithMocks(resolveGithubModule(), {
       axios: buildAxiosMock({ userId: 4242 }),
@@ -135,5 +156,88 @@ describe("GitHub integration host and owner attribution", () => {
     expect(secret.sourceObjectId).to.equal("900:DEPLOY_SECRET");
     expect(deployKey.sourceKind).to.equal("github-deploy-key");
     expect(deployKey.sourceObjectId).to.equal("900:700");
+  });
+
+  it("rewrites github.com and www.github.com scans onto api.github.com", async () => {
+    const seenHosts = [];
+    const github = requireWithMocks(resolveGithubModule(), {
+      axios: async (config) => {
+        seenHosts.push(new URL(config.url).host);
+        const pathname = new URL(config.url).pathname;
+        if (pathname === "/user") {
+          return { data: { id: 1, login: "octo" } };
+        }
+        return { data: [] };
+      },
+    });
+    const result = await github.scanGitHub({
+      baseUrl: "https://www.github.com",
+      token: "token",
+      include: {
+        tokens: false,
+        sshKeys: true,
+        deployKeys: false,
+        secrets: false,
+      },
+    });
+    expect(seenHosts.length).to.be.greaterThan(1);
+    expect(seenHosts.every((host) => host === "api.github.com")).to.equal(true);
+    expect(result.host).to.equal("api.github.com");
+  });
+
+  it("does not treat a path substring as GitHub cloud", async () => {
+    const seenHosts = [];
+    const github = requireWithMocks(resolveGithubModule(), {
+      axios: async (config) => {
+        seenHosts.push(new URL(config.url).host);
+        return { data: { id: 1, login: "octo" } };
+      },
+    });
+    await github.scanGitHub({
+      baseUrl: "https://evil.example/api.github.com",
+      token: "token",
+      include: {
+        tokens: false,
+        sshKeys: false,
+        deployKeys: false,
+        secrets: false,
+      },
+    });
+    expect(seenHosts.length).to.be.greaterThan(0);
+    expect(seenHosts.every((host) => host === "evil.example")).to.equal(true);
+  });
+
+  it("prefixes every GitHub Enterprise scan request with /api/v3", async () => {
+    const seen = [];
+    const github = requireWithMocks(resolveGithubModule(), {
+      axios: async (config) => {
+        const { pathname } = new URL(config.url);
+        seen.push(pathname);
+        const apiPath = pathname.replace(/^\/api\/v3(?=\/)/, "");
+        if (apiPath === "/user") {
+          return { data: { id: 1, login: "octo" } };
+        }
+        if (apiPath === "/user/keys") {
+          return { data: [{ id: 501, title: "laptop" }] };
+        }
+        return { data: [] };
+      },
+    });
+    await github.scanGitHub({
+      baseUrl: "https://ghe.example.com/api/v3",
+      token: "token",
+      include: {
+        tokens: false,
+        sshKeys: true,
+        deployKeys: false,
+        secrets: false,
+      },
+    });
+    expect(seen.length).to.be.greaterThan(1);
+    expect(seen.every((pathname) => pathname.startsWith("/api/v3/"))).to.equal(
+      true,
+    );
+    expect(seen).to.include("/api/v3/user");
+    expect(seen).to.include("/api/v3/user/keys");
   });
 });

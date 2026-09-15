@@ -63,8 +63,8 @@ const FINGERPRINT_INPUT_PATTERN = /^(?:[0-9a-f]{2}:){31}[0-9a-f]{2}$|^[0-9a-f]{6
 const PEM_CERTIFICATE_PATTERN =
   /-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----/;
 
-const PEM_CERTIFICATE_BLOCK_PATTERN =
-  /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+const PEM_CERT_BEGIN = "-----BEGIN CERTIFICATE-----";
+const PEM_CERT_END = "-----END CERTIFICATE-----";
 
 /**
  * Normalizes a sha256 fingerprint to the schema form: strip colons,
@@ -96,8 +96,18 @@ function sha256HexOfDer(derBytes) {
  */
 function splitCertificatePems(pem) {
   if (typeof pem !== "string" || pem.length === 0) return [];
-  const matches = pem.match(PEM_CERTIFICATE_BLOCK_PATTERN);
-  return matches ? [...matches] : [];
+  const blocks = [];
+  let cursor = 0;
+  while (cursor < pem.length) {
+    const start = pem.indexOf(PEM_CERT_BEGIN, cursor);
+    if (start === -1) break;
+    const endAt = pem.indexOf(PEM_CERT_END, start + PEM_CERT_BEGIN.length);
+    if (endAt === -1) break;
+    const blockEnd = endAt + PEM_CERT_END.length;
+    blocks.push(pem.slice(start, blockEnd));
+    cursor = blockEnd;
+  }
+  return blocks;
 }
 
 /**
@@ -585,6 +595,7 @@ function verifyDeployedCertificate({
         // module header for the full rationale (fresh deploys, private CAs,
         // staging endpoints). The sha256 comparison below is the actual
         // verification.
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
       });
     } catch (err) {

@@ -103,6 +103,11 @@ import DashboardPagination from './components/DashboardPagination.jsx';
 import AssetInventoryTable, {
   resolveContactGroupLabel,
 } from './components/AssetInventoryTable.jsx';
+import ContactGroupCheckboxGroup from './components/ContactGroupCheckboxGroup.jsx';
+import {
+  canonicalContactGroupFields,
+  joinContactGroupIdsForExport,
+} from './utils/contactGroupAssignment.js';
 import {
   DashboardThemeProvider,
   useDashboardTheme,
@@ -125,6 +130,7 @@ import {
 } from './utils/inventoryFilterCounts.js';
 
 import apiClient, {
+  API_ENDPOINTS,
   authAPI,
   tokenAPI,
   formatDate,
@@ -133,6 +139,7 @@ import apiClient, {
 } from './utils/apiClient';
 
 import { isNeverExpires, NEVER_EXPIRES_DATE_VALUE } from './utils/dateUtils';
+import { ContactGroupPluralWritesProvider } from './utils/contactGroupPluralWrites.jsx';
 import {
   TOUR_MOCK_TOKENS,
   TOUR_MOCK_CONTACT_GROUPS,
@@ -154,6 +161,12 @@ const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
 import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import {
+  pickAccessibleWorkspace,
+  readLastWorkspaceId,
+  readSessionLastWorkspaceId,
+  writeLastWorkspaceId,
+} from './utils/lastWorkspacePreference.js';
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -587,6 +600,8 @@ function App() {
       return true;
     }
   });
+  const [contactGroupPluralWrites, setContactGroupPluralWrites] =
+    useState(false);
   const isDev =
     typeof import.meta !== 'undefined' &&
     import.meta.env &&
@@ -636,6 +651,25 @@ function App() {
     setShowProductTour(false);
     setForceRunTour(false);
   }, [isProductTourMobile, showProductTour]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.get(API_ENDPOINTS.AUTH_FEATURES);
+        if (!cancelled) {
+          setContactGroupPluralWrites(
+            res?.data?.contactGroupPluralWrites === true
+          );
+        }
+      } catch (_) {
+        if (!cancelled) setContactGroupPluralWrites(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Token detail modal state
   const [selectedToken, setSelectedToken] = useState(null);
@@ -742,7 +776,7 @@ function App() {
     domains: '',
     location: '',
     used_by: '',
-    contact_group_id: '',
+    contact_group_ids: [],
     issuer: '',
     serial_number: '',
     subject: '',
@@ -1439,10 +1473,8 @@ function App() {
     try {
       const search = new URLSearchParams(window.location.search);
       if (!search.get('workspace')) {
-        try {
-          const last = localStorage.getItem('tt_last_workspace_id');
-          if (last) search.set('workspace', last);
-        } catch (_) {}
+        const last = readSessionLastWorkspaceId();
+        if (last) search.set('workspace', last);
       }
       const q = search.toString();
       navigate(q ? `/dashboard?${q}` : '/dashboard');
@@ -1690,10 +1722,9 @@ function App() {
         domains: domainsArray,
         location: formData.location.trim() || null,
         used_by: formData.used_by.trim() || null,
-        contact_group_id:
-          !isViewer && formData.contact_group_id
-            ? formData.contact_group_id
-            : null,
+        ...(isViewer
+          ? { contact_group_ids: [], contact_group_id: null }
+          : canonicalContactGroupFields(formData.contact_group_ids)),
         issuer: formData.issuer.trim() || null,
         serial_number: formData.serial_number.trim() || null,
         subject: formData.subject.trim() || null,
@@ -1740,6 +1771,7 @@ function App() {
         domains: '',
         location: '',
         used_by: '',
+        contact_group_ids: [],
         issuer: '',
         serial_number: '',
         subject: '',
@@ -1848,10 +1880,9 @@ function App() {
           domains: domainsArray,
           location: formData.location.trim() || null,
           used_by: formData.used_by.trim() || null,
-          contact_group_id:
-            !isViewer && formData.contact_group_id
-              ? formData.contact_group_id
-              : null,
+          ...(isViewer
+            ? { contact_group_ids: [], contact_group_id: null }
+            : canonicalContactGroupFields(formData.contact_group_ids)),
           issuer: formData.issuer.trim() || null,
           serial_number: formData.serial_number.trim() || null,
           subject: formData.subject.trim() || null,
@@ -1897,6 +1928,7 @@ function App() {
         domains: '',
         location: '',
         used_by: '',
+        contact_group_ids: [],
         issuer: '',
         serial_number: '',
         subject: '',
@@ -2376,151 +2408,207 @@ function App() {
   return (
     <ChakraProvider theme={theme}>
       <ColorModeScript initialColorMode={theme.config.initialColorMode} />
-      <DashboardThemeProvider>
-        <HelmetProvider>
-          <ErrorBoundary>
-            <ThemeBackgroundOverlay />
+      <ContactGroupPluralWritesProvider value={contactGroupPluralWrites}>
+        <DashboardThemeProvider>
+          <HelmetProvider>
+            <ErrorBoundary>
+              <ThemeBackgroundOverlay />
 
-            <Box
-              minH='100vh'
-              display='flex'
-              flexDirection='column'
-              position='relative'
-              zIndex={1}
-              w='100%'
-              maxW='100%'
-              overflowX='hidden'
-            >
-              <Box flex='1'>
-                {loading &&
-                ![
-                  '/login',
-                  '/register',
-                  '/reset-password',
-                  '/verify-email',
-                ].includes(location.pathname) ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      height: '100%',
-                    }}
-                  >
-                    <AccessibleSpinner
-                      size='lg'
-                      aria-label='Loading application'
-                    />
-                  </div>
-                ) : (
-                  <WorkspaceProvider>
-                    <Suspense
-                      fallback={
-                        <Flex align='center' justify='center' minH='60vh'>
-                          <AccessibleSpinner label='Loading content…' />
-                        </Flex>
-                      }
+              <Box
+                minH='100vh'
+                display='flex'
+                flexDirection='column'
+                position='relative'
+                zIndex={1}
+                w='100%'
+                maxW='100%'
+                overflowX='hidden'
+              >
+                <Box flex='1'>
+                  {loading &&
+                  ![
+                    '/login',
+                    '/register',
+                    '/reset-password',
+                    '/verify-email',
+                  ].includes(location.pathname) ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        height: '100%',
+                      }}
                     >
-                      <Routes>
-                        <Route
-                          path='/'
-                          element={<Navigate to='/login' replace />}
-                        />
-                        <Route
-                          path='/login'
-                          element={
-                            session ? (
-                              session.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session.email || ''
-                                  )}`}
-                                  replace
-                                />
+                      <AccessibleSpinner
+                        size='lg'
+                        aria-label='Loading application'
+                      />
+                    </div>
+                  ) : (
+                    <WorkspaceProvider accountId={session?.id}>
+                      <Suspense
+                        fallback={
+                          <Flex align='center' justify='center' minH='60vh'>
+                            <AccessibleSpinner label='Loading content…' />
+                          </Flex>
+                        }
+                      >
+                        <Routes>
+                          <Route
+                            path='/'
+                            element={<Navigate to='/login' replace />}
+                          />
+                          <Route
+                            path='/login'
+                            element={
+                              session ? (
+                                session.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : (
+                                  <Navigate to='/dashboard' replace />
+                                )
                               ) : (
-                                <Navigate to='/dashboard' replace />
+                                <Login />
                               )
-                            ) : (
-                              <Login />
-                            )
-                          }
-                        />
+                            }
+                          />
 
-                        <Route
-                          path='/register'
-                          element={
-                            session ? (
-                              session.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session.email || ''
-                                  )}`}
-                                  replace
-                                />
+                          <Route
+                            path='/register'
+                            element={
+                              session ? (
+                                session.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : (
+                                  <Navigate to='/dashboard' replace />
+                                )
                               ) : (
+                                <Register />
+                              )
+                            }
+                          />
+                          <Route
+                            path='/verify-email'
+                            element={<VerifyEmailWrapper session={session} />}
+                          />
+                          <Route
+                            path='/reset-password'
+                            element={
+                              session ? (
                                 <Navigate to='/dashboard' replace />
-                              )
-                            ) : (
-                              <Register />
-                            )
-                          }
-                        />
-                        <Route
-                          path='/verify-email'
-                          element={<VerifyEmailWrapper session={session} />}
-                        />
-                        <Route
-                          path='/reset-password'
-                          element={
-                            session ? (
-                              <Navigate to='/dashboard' replace />
-                            ) : (
-                              <ResetPassword />
-                            )
-                          }
-                        />
-                        <Route
-                          path='/account'
-                          element={
-                            session ? (
-                              session.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session.email || ''
-                                  )}`}
-                                  replace
-                                />
                               ) : (
-                                <Account
-                                  session={session}
-                                  onLogout={handleLogout}
-                                  onAccountClick={handleHelpAccountClick}
-                                  onAccountDeleted={handleAccountDeleted}
-                                  onSessionUpdate={updates =>
-                                    setSession(prev =>
-                                      prev ? { ...prev, ...updates } : prev
-                                    )
-                                  }
-                                />
+                                <ResetPassword />
                               )
-                            ) : (
-                              <Navigate to='/login' replace />
-                            )
-                          }
-                        />
-                        <Route
-                          path='/preferences'
-                          element={
-                            session ? (
-                              session.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session?.email || ''
-                                  )}`}
-                                  replace
-                                />
+                            }
+                          />
+                          <Route
+                            path='/account'
+                            element={
+                              session ? (
+                                session.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : (
+                                  <Account
+                                    session={session}
+                                    onLogout={handleLogout}
+                                    onAccountClick={handleHelpAccountClick}
+                                    onAccountDeleted={handleAccountDeleted}
+                                    onSessionUpdate={updates =>
+                                      setSession(prev =>
+                                        prev ? { ...prev, ...updates } : prev
+                                      )
+                                    }
+                                  />
+                                )
                               ) : (
-                                <UserPreferences
+                                <Navigate to='/login' replace />
+                              )
+                            }
+                          />
+                          <Route
+                            path='/preferences'
+                            element={
+                              session ? (
+                                session.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session?.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : (
+                                  <UserPreferences
+                                    session={session}
+                                    onLogout={handleLogout}
+                                    onAccountClick={handleHelpAccountClick}
+                                    onNavigateToDashboard={
+                                      handleHelpNavigateToDashboard
+                                    }
+                                    onNavigateToLanding={
+                                      handleNavigateToLanding
+                                    }
+                                  />
+                                )
+                              ) : (
+                                <Navigate to='/login' replace />
+                              )
+                            }
+                          />
+                          <Route
+                            path='/workspace-preferences'
+                            element={
+                              <RequireManagerRoute session={session}>
+                                {session?.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session?.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : (
+                                  <AlertPreferences
+                                    session={session}
+                                    showProductTour={showProductTour}
+                                    onLogout={handleLogout}
+                                    onAccountClick={handleHelpAccountClick}
+                                    onNavigateToDashboard={
+                                      handleHelpNavigateToDashboard
+                                    }
+                                    onNavigateToLanding={
+                                      handleNavigateToLanding
+                                    }
+                                  />
+                                )}
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/alert-preferences'
+                            element={
+                              <Navigate to='/workspace-preferences' replace />
+                            }
+                          />
+                          <Route
+                            path='/control-center'
+                            element={
+                              <RequireManagerRoute session={session}>
+                                <ControlCenter
                                   session={session}
                                   onLogout={handleLogout}
                                   onAccountClick={handleHelpAccountClick}
@@ -2529,27 +2617,34 @@ function App() {
                                   }
                                   onNavigateToLanding={handleNavigateToLanding}
                                 />
-                              )
-                            ) : (
-                              <Navigate to='/login' replace />
-                            )
-                          }
-                        />
-                        <Route
-                          path='/workspace-preferences'
-                          element={
-                            <RequireManagerRoute session={session}>
-                              {session?.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session?.email || ''
-                                  )}`}
-                                  replace
-                                />
-                              ) : (
-                                <AlertPreferences
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/usage'
+                            element={<Navigate to='/control-center' replace />}
+                          />
+                          <Route
+                            path='/certops/*'
+                            element={
+                              <RequireManagerRoute
+                                session={session}
+                                scope='active-workspace'
+                              >
+                                <CertOpsRoutes
                                   session={session}
-                                  showProductTour={showProductTour}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/workspaces'
+                            element={
+                              <RequireManagerRoute session={session}>
+                                <Workspaces
+                                  session={session}
                                   onLogout={handleLogout}
                                   onAccountClick={handleHelpAccountClick}
                                   onNavigateToDashboard={
@@ -2557,256 +2652,209 @@ function App() {
                                   }
                                   onNavigateToLanding={handleNavigateToLanding}
                                 />
-                              )}
-                            </RequireManagerRoute>
-                          }
-                        />
-                        <Route
-                          path='/alert-preferences'
-                          element={
-                            <Navigate to='/workspace-preferences' replace />
-                          }
-                        />
-                        <Route
-                          path='/control-center'
-                          element={
-                            <RequireManagerRoute session={session}>
-                              <ControlCenter
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                                onNavigateToDashboard={
-                                  handleHelpNavigateToDashboard
-                                }
-                                onNavigateToLanding={handleNavigateToLanding}
-                              />
-                            </RequireManagerRoute>
-                          }
-                        />
-                        <Route
-                          path='/usage'
-                          element={<Navigate to='/control-center' replace />}
-                        />
-                        <Route
-                          path='/certops/*'
-                          element={
-                            <RequireManagerRoute
-                              session={session}
-                              scope='active-workspace'
-                            >
-                              <CertOpsRoutes
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                              />
-                            </RequireManagerRoute>
-                          }
-                        />
-                        <Route
-                          path='/workspaces'
-                          element={
-                            <RequireManagerRoute session={session}>
-                              <Workspaces
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                                onNavigateToDashboard={
-                                  handleHelpNavigateToDashboard
-                                }
-                                onNavigateToLanding={handleNavigateToLanding}
-                              />
-                            </RequireManagerRoute>
-                          }
-                        />
-                        <Route
-                          path='/audit'
-                          element={
-                            <RequireManagerRoute session={session}>
-                              <Audit
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                                onNavigateToDashboard={
-                                  handleHelpNavigateToDashboard
-                                }
-                                onNavigateToLanding={handleNavigateToLanding}
-                              />
-                            </RequireManagerRoute>
-                          }
-                        />
-                        <Route
-                          path='/system-settings'
-                          element={
-                            <AdminOnlyRoute session={session}>
-                              <SystemSettings
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                                onNavigateToDashboard={
-                                  handleHelpNavigateToDashboard
-                                }
-                                onNavigateToLanding={handleNavigateToLanding}
-                              />
-                            </AdminOnlyRoute>
-                          }
-                        />
-                        <Route
-                          path='/dashboard'
-                          element={
-                            session ? (
-                              session.needsVerification ? (
-                                <Navigate
-                                  to={`/verify-email?email=${encodeURIComponent(
-                                    session.email || ''
-                                  )}`}
-                                  replace
-                                />
-                              ) : new URLSearchParams(location.search).get(
-                                  'view'
-                                ) === 'account' ? (
-                                <Navigate
-                                  to={buildAccountPathFromDashboardSearch(
-                                    location.search
-                                  )}
-                                  replace
-                                />
-                              ) : (
-                                <DashboardWrapper
-                                  key={dashboardRouteKey}
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/audit'
+                            element={
+                              <RequireManagerRoute session={session}>
+                                <Audit
                                   session={session}
-                                  tokens={
-                                    showProductTour ? TOUR_MOCK_TOKENS : tokens
-                                  }
-                                  tokensLoading={tokensLoading}
-                                  contactGroups={
-                                    showProductTour
-                                      ? TOUR_MOCK_CONTACT_GROUPS
-                                      : tokenContactGroups
-                                  }
-                                  workspaceContacts={
-                                    showProductTour
-                                      ? TOUR_MOCK_WORKSPACE_CONTACTS
-                                      : workspaceContacts
-                                  }
-                                  formData={formData}
-                                  formErrors={formErrors}
-                                  isSubmitting={isSubmitting}
-                                  onInputChange={handleInputChange}
-                                  onTokenAdd={handleTokenAdd}
-                                  onDeleteToken={
-                                    isViewer ? undefined : handleDeleteToken
-                                  }
-                                  onOpenRenew={
-                                    isViewer ? undefined : handleOpenRenew
-                                  }
-                                  TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-                                  onOpenTokenModal={handleOpenTokenModal}
                                   onLogout={handleLogout}
-                                  getFilteredAndSortedTokens={
-                                    getFilteredAndSortedTokens
+                                  onAccountClick={handleHelpAccountClick}
+                                  onNavigateToDashboard={
+                                    handleHelpNavigateToDashboard
                                   }
-                                  showWelcomeModal={showWelcomeModal}
-                                  setShowWelcomeModal={setShowWelcomeModal}
-                                  welcomeData={welcomeData}
-                                  selectedToken={selectedToken}
-                                  setSelectedToken={setSelectedToken}
-                                  handleCloseTokenModal={handleCloseTokenModal}
-                                  // Thread global filtering/search/sort state into wrapper
-                                  setSearchQuery={setCommittedSearchQuery}
-                                  showProductTour={showProductTour}
-                                  setShowProductTour={setShowProductTour}
-                                  tourType={tourType}
-                                  setTourType={setTourType}
-                                  forceRunTour={forceRunTour}
-                                  setForceRunTour={setForceRunTour}
-                                  isProductTourMobile={isProductTourMobile}
-                                  setServerSort={setServerSort}
-                                  selectedCategories={selectedCategories}
-                                  setSelectedCategories={setSelectedCategories}
-                                  tokenFacets={tokenFacets}
-                                  globalFacets={globalFacets}
-                                  fetchGlobalFacets={fetchGlobalFacets}
-                                  fetchTokensForCategoryReset={
-                                    fetchTokensForCategoryReset
-                                  }
-                                  setTokens={setTokens}
-                                  isRefreshing={isRefreshing}
-                                  categoryHasMore={categoryHasMore}
-                                  categoryLoading={categoryLoading}
-                                  categoryCounts={categoryCounts}
-                                  fetchTokensForCategory={
-                                    fetchTokensForCategory
-                                  }
-                                  isViewer={isViewer}
-                                  locationEntries={locationEntries}
-                                  addLocationEntry={addLocationEntry}
-                                  removeLocationEntry={removeLocationEntry}
-                                  updateLocationEntry={updateLocationEntry}
-                                  defaultContactGroupId={defaultContactGroupId}
-                                  createTokenNotesFlushRef={
-                                    createTokenNotesFlushRef
-                                  }
+                                  onNavigateToLanding={handleNavigateToLanding}
                                 />
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
+                            path='/system-settings'
+                            element={
+                              <AdminOnlyRoute session={session}>
+                                <SystemSettings
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onNavigateToDashboard={
+                                    handleHelpNavigateToDashboard
+                                  }
+                                  onNavigateToLanding={handleNavigateToLanding}
+                                />
+                              </AdminOnlyRoute>
+                            }
+                          />
+                          <Route
+                            path='/dashboard'
+                            element={
+                              session ? (
+                                session.needsVerification ? (
+                                  <Navigate
+                                    to={`/verify-email?email=${encodeURIComponent(
+                                      session.email || ''
+                                    )}`}
+                                    replace
+                                  />
+                                ) : new URLSearchParams(location.search).get(
+                                    'view'
+                                  ) === 'account' ? (
+                                  <Navigate
+                                    to={buildAccountPathFromDashboardSearch(
+                                      location.search
+                                    )}
+                                    replace
+                                  />
+                                ) : (
+                                  <DashboardWrapper
+                                    key={dashboardRouteKey}
+                                    session={session}
+                                    tokens={
+                                      showProductTour
+                                        ? TOUR_MOCK_TOKENS
+                                        : tokens
+                                    }
+                                    tokensLoading={tokensLoading}
+                                    contactGroups={
+                                      showProductTour
+                                        ? TOUR_MOCK_CONTACT_GROUPS
+                                        : tokenContactGroups
+                                    }
+                                    workspaceContacts={
+                                      showProductTour
+                                        ? TOUR_MOCK_WORKSPACE_CONTACTS
+                                        : workspaceContacts
+                                    }
+                                    formData={formData}
+                                    formErrors={formErrors}
+                                    isSubmitting={isSubmitting}
+                                    onInputChange={handleInputChange}
+                                    onTokenAdd={handleTokenAdd}
+                                    onDeleteToken={
+                                      isViewer ? undefined : handleDeleteToken
+                                    }
+                                    onOpenRenew={
+                                      isViewer ? undefined : handleOpenRenew
+                                    }
+                                    TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+                                    onOpenTokenModal={handleOpenTokenModal}
+                                    onLogout={handleLogout}
+                                    getFilteredAndSortedTokens={
+                                      getFilteredAndSortedTokens
+                                    }
+                                    showWelcomeModal={showWelcomeModal}
+                                    setShowWelcomeModal={setShowWelcomeModal}
+                                    welcomeData={welcomeData}
+                                    selectedToken={selectedToken}
+                                    setSelectedToken={setSelectedToken}
+                                    handleCloseTokenModal={
+                                      handleCloseTokenModal
+                                    }
+                                    // Thread global filtering/search/sort state into wrapper
+                                    setSearchQuery={setCommittedSearchQuery}
+                                    showProductTour={showProductTour}
+                                    setShowProductTour={setShowProductTour}
+                                    tourType={tourType}
+                                    setTourType={setTourType}
+                                    forceRunTour={forceRunTour}
+                                    setForceRunTour={setForceRunTour}
+                                    isProductTourMobile={isProductTourMobile}
+                                    setServerSort={setServerSort}
+                                    selectedCategories={selectedCategories}
+                                    setSelectedCategories={
+                                      setSelectedCategories
+                                    }
+                                    tokenFacets={tokenFacets}
+                                    globalFacets={globalFacets}
+                                    fetchGlobalFacets={fetchGlobalFacets}
+                                    fetchTokensForCategoryReset={
+                                      fetchTokensForCategoryReset
+                                    }
+                                    setTokens={setTokens}
+                                    isRefreshing={isRefreshing}
+                                    categoryHasMore={categoryHasMore}
+                                    categoryLoading={categoryLoading}
+                                    categoryCounts={categoryCounts}
+                                    fetchTokensForCategory={
+                                      fetchTokensForCategory
+                                    }
+                                    isViewer={isViewer}
+                                    locationEntries={locationEntries}
+                                    addLocationEntry={addLocationEntry}
+                                    removeLocationEntry={removeLocationEntry}
+                                    updateLocationEntry={updateLocationEntry}
+                                    defaultContactGroupId={
+                                      defaultContactGroupId
+                                    }
+                                    createTokenNotesFlushRef={
+                                      createTokenNotesFlushRef
+                                    }
+                                  />
+                                )
+                              ) : (
+                                <Navigate to='/login' replace />
                               )
-                            ) : (
-                              <Navigate to='/login' replace />
-                            )
-                          }
-                        />
-                        <Route path='*' element={<NotFound />} />
-                      </Routes>
-                    </Suspense>
-                  </WorkspaceProvider>
-                )}
+                            }
+                          />
+                          <Route path='*' element={<NotFound />} />
+                        </Routes>
+                      </Suspense>
+                    </WorkspaceProvider>
+                  )}
+                </Box>
+                <Footer />
               </Box>
-              <Footer />
-            </Box>
 
-            <Toaster />
+              <Toaster />
 
-            <TokenDeletionModal
-              isOpen={isDeleteModalOpen}
-              onClose={cancelDeleteToken}
-              tokenToDelete={tokenToDelete}
-              onConfirm={confirmDeleteToken}
-            />
+              <TokenDeletionModal
+                isOpen={isDeleteModalOpen}
+                onClose={cancelDeleteToken}
+                tokenToDelete={tokenToDelete}
+                onConfirm={confirmDeleteToken}
+              />
 
-            <DuplicateTokenModal
-              isOpen={isDuplicateModalOpen}
-              onClose={onDuplicateModalClose}
-              duplicateTokenInfo={duplicateTokenInfo}
-              onConfirm={handleConfirmDuplicate}
-              isSubmitting={isSubmitting}
-            />
+              <DuplicateTokenModal
+                isOpen={isDuplicateModalOpen}
+                onClose={onDuplicateModalClose}
+                duplicateTokenInfo={duplicateTokenInfo}
+                onConfirm={handleConfirmDuplicate}
+                isSubmitting={isSubmitting}
+              />
 
-            <TokenRenewModal
-              isOpen={isRenewModalOpen}
-              onClose={handleCloseRenew}
-              tokenToRenew={tokenToRenew}
-              renewDate={renewDate}
-              renewErrors={renewErrors}
-              isRenewSubmitting={isRenewSubmitting}
-              onRenewDateChange={setRenewDate}
-              onConfirm={handleConfirmRenew}
-            />
-          </ErrorBoundary>
+              <TokenRenewModal
+                isOpen={isRenewModalOpen}
+                onClose={handleCloseRenew}
+                tokenToRenew={tokenToRenew}
+                renewDate={renewDate}
+                renewErrors={renewErrors}
+                isRenewSubmitting={isRenewSubmitting}
+                onRenewDateChange={setRenewDate}
+                onConfirm={handleConfirmRenew}
+              />
+            </ErrorBoundary>
 
-          {!isViewer && !isProductTourMobile && (
-            <ProductTour
-              run={showProductTour}
-              tourType={tourType}
-              forceRun={forceRunTour}
-              onTourComplete={completed => {
-                setShowProductTour(false);
-                setForceRunTour(false);
-                if (completed) {
-                  trackEvent('product_tour_finished', { tour_type: tourType });
-                }
-              }}
-            />
-          )}
-        </HelmetProvider>
-      </DashboardThemeProvider>
+            {!isViewer && !isProductTourMobile && (
+              <ProductTour
+                run={showProductTour}
+                tourType={tourType}
+                forceRun={forceRunTour}
+                onTourComplete={completed => {
+                  setShowProductTour(false);
+                  setForceRunTour(false);
+                  if (completed) {
+                    trackEvent('product_tour_finished', {
+                      tour_type: tourType,
+                    });
+                  }
+                }}
+              />
+            )}
+          </HelmetProvider>
+        </DashboardThemeProvider>
+      </ContactGroupPluralWritesProvider>
     </ChakraProvider>
   );
 }
@@ -3252,6 +3300,10 @@ function DashboardView({
     navigate('/account');
   }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
+  const dashboardSelectionIdRef = useRef(workspaceId);
+  useEffect(() => {
+    if (workspaceId) dashboardSelectionIdRef.current = workspaceId;
+  }, [workspaceId]);
 
   // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
   // to gate deletion of managed cert tokens and to hide retired certs by default.
@@ -3447,18 +3499,15 @@ function DashboardView({
         const roles = items.map(w => String(w.role || '').toLowerCase());
         const managerAny =
           roles.includes('admin') || roles.includes('workspace_manager');
-        let desiredId = workspaceId || null;
-        if (!desiredId) {
-          try {
-            desiredId = localStorage.getItem('tt_last_workspace_id') || null;
-          } catch (_) {
-            desiredId = null;
-          }
-        }
-        const selected =
-          (desiredId && items.find(w => w.id === desiredId)) ||
-          items[0] ||
-          null;
+        const chosenId = pickAccessibleWorkspace({
+          urlWorkspaceId:
+            dashboardSelectionIdRef.current || workspaceId || null,
+          lastWorkspaceId: readLastWorkspaceId(_session?.id),
+          workspaces: items,
+        });
+        const selected = chosenId
+          ? items.find(w => String(w.id) === String(chosenId)) || null
+          : null;
 
         setDashboardWorkspaces(items);
         setDashboardWorkspace(selected);
@@ -3487,13 +3536,11 @@ function DashboardView({
 
   const handleDashboardWorkspaceSelect = workspace => {
     if (!workspace?.id) return;
+    dashboardSelectionIdRef.current = String(workspace.id);
     setDashboardWorkspace(workspace);
     try {
       selectWorkspace(workspace.id);
-      localStorage.setItem('tt_last_workspace_id', workspace.id);
-    } catch (_) {}
-    try {
-      window.dispatchEvent(new CustomEvent('tt:workspaces-updated'));
+      writeLastWorkspaceId(_session?.id, workspace.id);
     } catch (_) {}
   };
 
@@ -4222,6 +4269,7 @@ function DashboardView({
           'imported_at',
           'created_at',
           'contact_group_id',
+          'contact_group_ids',
         ];
         const rows = currentTokens.map(t => ({
           name: t.name ?? '',
@@ -4254,6 +4302,7 @@ function DashboardView({
           imported_at: t.imported_at ?? '',
           created_at: t.created_at ?? '',
           contact_group_id: t.contact_group_id ?? '',
+          contact_group_ids: joinContactGroupIdsForExport(t),
         }));
         const escape = v => {
           const s = String(v == null ? '' : v);
@@ -4306,6 +4355,7 @@ function DashboardView({
           imported_at: t.imported_at ?? '',
           created_at: t.created_at ?? '',
           contact_group_id: t.contact_group_id ?? '',
+          contact_group_ids: joinContactGroupIdsForExport(t),
         }));
         const header = [
           'name',
@@ -4334,6 +4384,7 @@ function DashboardView({
           'imported_at',
           'created_at',
           'contact_group_id',
+          'contact_group_ids',
         ];
         const ws = XLSX.utils.json_to_sheet(rows, { header });
         const wb = XLSX.utils.book_new();
@@ -5260,28 +5311,25 @@ function DashboardView({
                           </FormControl>
 
                           {/* Contact group selector - replaces per-token email override */}
-                          <FormControl>
-                            <FormLabel>Contact group (alerts)</FormLabel>
-                            <Select
-                              name='contact_group_id'
-                              value={formData.contact_group_id || ''}
-                              onChange={onInputChange}
+                          <FormControl as='fieldset'>
+                            <FormLabel as='legend'>
+                              Contact groups (alerts)
+                            </FormLabel>
+                            <ContactGroupCheckboxGroup
+                              contactGroups={contactGroups}
+                              value={formData.contact_group_ids}
+                              onChange={ids =>
+                                setFormData(prev => ({
+                                  ...prev,
+                                  contact_group_ids: ids,
+                                }))
+                              }
                               isDisabled={isViewer}
-                              bg={inputBg}
-                              borderColor={inputBorder}
-                            >
-                              <option value=''>Use workspace default</option>
-                              {Array.isArray(contactGroups) &&
-                                contactGroups.map(g => (
-                                  <option key={g.id} value={g.id}>
-                                    {g.name}
-                                  </option>
-                                ))}
-                            </Select>
+                            />
                             {isViewer ? (
                               <Text fontSize='xs' color={helpTextColor} mt={1}>
                                 Only workspace managers and admins can set
-                                per-token contact group.
+                                per-token contact groups.
                               </Text>
                             ) : null}
                           </FormControl>

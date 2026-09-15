@@ -41,6 +41,9 @@ function formatAjvError(error) {
  * @returns {{ valid: boolean, errors: string[] }}
  */
 function validateAgentProtocolMessage(message) {
+  // Body size is capped at the parser. allErrors is for operator-readable
+  // validation messages, not unbounded traversal of attacker JSON.
+  // codeql[js/resource-exhaustion-from-deep-object-traversal]
   const valid = validateCompiled(message);
   if (valid) return { valid: true, errors: [] };
   return {

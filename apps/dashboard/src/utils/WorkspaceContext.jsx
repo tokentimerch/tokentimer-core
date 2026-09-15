@@ -9,186 +9,180 @@ import {
 } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { workspaceAPI } from './apiClient';
+import {
+  pickAccessibleWorkspace,
+  readLastWorkspaceId,
+  readSessionLastWorkspaceId,
+  writeLastWorkspaceId,
+} from './lastWorkspacePreference';
+import {
+  clearInventoryFiltersForWorkspaceSwitch,
+  isInventoryDashboardPath,
+} from '../hooks/useInventoryUrlState.js';
 
 const WorkspaceContext = createContext(null);
 
-export function WorkspaceProvider({ children }) {
+const PUBLIC_WORKSPACE_PATHS = new Set([
+  '/login',
+  '/register',
+  '/reset-password',
+  '/verify-email',
+  '/',
+  '/pricing',
+  '/privacy-policy',
+  '/terms-of-service',
+]);
+
+function isPublicWorkspacePath(path) {
+  if (PUBLIC_WORKSPACE_PATHS.has(path)) return true;
+  return (
+    path.startsWith('/solutions') ||
+    path.startsWith('/blog') ||
+    path.startsWith('/faq')
+  );
+}
+
+function idsEqual(left, right) {
+  if (left == null || left === '' || right == null || right === '') {
+    return false;
+  }
+  return String(left) === String(right);
+}
+
+export function WorkspaceProvider({ children, accountId = null }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const pendingIdRef = useRef(null);
+  const selectionEpochRef = useRef(0);
+  const searchParamsRef = useRef(searchParams);
+  const locationRef = useRef(location);
+  const selectWorkspaceRef = useRef(null);
+  searchParamsRef.current = searchParams;
+  locationRef.current = location;
 
   const [workspaceId, setWorkspaceId] = useState(() => {
-    const inUrl = searchParams.get('workspace');
-    if (inUrl) return inUrl;
-    try {
-      const last = localStorage.getItem('tt_last_workspace_id');
-      return last || null;
-    } catch (_) {
-      return null;
-    }
+    return searchParams.get('workspace') || null;
   });
-  const normalizedRef = useRef(false);
-  const prevPathRef = useRef(location.pathname);
 
   const selectWorkspace = useCallback(
     (id, { replace = false } = {}) => {
-      const params = new URLSearchParams(location.search);
+      if (id == null || id === '') return;
+      pendingIdRef.current = String(id);
+      selectionEpochRef.current += 1;
+      const current = locationRef.current;
+      const params = new URLSearchParams(current.search);
+      const previous = params.get('workspace');
       params.set('workspace', id);
-      // Always preserve the current path; avoid redirecting to dashboard
+      if (
+        previous &&
+        String(previous) !== String(id) &&
+        isInventoryDashboardPath(current.pathname)
+      ) {
+        clearInventoryFiltersForWorkspaceSwitch(params);
+      }
       const path =
-        location.pathname ||
+        current.pathname ||
         (typeof window !== 'undefined' ? window.location.pathname : '/') ||
         '/';
       const hash =
-        location.hash ||
+        current.hash ||
         (typeof window !== 'undefined' ? window.location.hash : '') ||
         '';
       navigate(`${path}?${params.toString()}${hash}`, { replace });
       setWorkspaceId(id);
-      try {
-        localStorage.setItem('tt_last_workspace_id', id);
-      } catch (_) {}
+      writeLastWorkspaceId(accountId, id);
     },
-    [navigate, location.pathname, location.search, location.hash]
+    [navigate, accountId]
   );
+  selectWorkspaceRef.current = selectWorkspace;
 
-  // Sync local state when URL changes (e.g., back/forward, programmatic navigation).
-  // Only update when a workspace IS present in the URL; don't clear when navigating
-  // to routes without the param (e.g., /workspace-preferences) to avoid losing context.
   useEffect(() => {
     const inUrl = searchParams.get('workspace');
-    if (inUrl) {
-      setWorkspaceId(inUrl);
+    if (!inUrl) return;
+    if (pendingIdRef.current && !idsEqual(inUrl, pendingIdRef.current)) {
+      return;
+    }
+    setWorkspaceId(inUrl);
+    if (idsEqual(inUrl, pendingIdRef.current)) {
+      pendingIdRef.current = null;
     }
   }, [searchParams]);
 
-  // Ensure a workspace is always selected/defined by normalizing URL and state
   useEffect(() => {
-    if (prevPathRef.current !== location.pathname) {
-      normalizedRef.current = false;
-      prevPathRef.current = location.pathname;
-    }
-
     const path = location.pathname || '';
-    const isPublicRoute =
-      path === '/login' ||
-      path === '/register' ||
-      path === '/reset-password' ||
-      path === '/verify-email' ||
-      path === '/' ||
-      path === '/pricing' ||
-      path === '/privacy-policy' ||
-      path === '/terms-of-service' ||
-      path.startsWith('/solutions') ||
-      path.startsWith('/blog') ||
-      path.startsWith('/faq');
-    if (isPublicRoute) return;
-    const onboardingActive = [
-      'new_user',
-      'first_login',
-      'registered',
-      'verification_success',
-    ].some(key => searchParams.get(key) === 'true');
-    if (onboardingActive) return;
+    if (isPublicWorkspacePath(path)) return;
 
-    const workspaceInUrl = searchParams.get('workspace');
-    if (workspaceInUrl && workspaceInUrl === workspaceId) return;
+    let cancelled = false;
+    const epochAtStart = selectionEpochRef.current;
 
-    // Keep URL in sync when state/localStorage already has a workspace selected.
-    if (workspaceId && !workspaceInUrl) {
-      selectWorkspace(workspaceId, { replace: true });
-      return;
-    }
-
-    if (normalizedRef.current) return;
-    normalizedRef.current = true;
-    (async () => {
+    async function restoreAccessibleWorkspace() {
       let items = [];
       try {
         const ws = await workspaceAPI.list(50, 0);
-        items = (ws?.items || []).filter(w => !w.is_frozen);
-      } catch (_) {}
-
-      const ids = new Set(items.map(w => w.id));
-
-      try {
-        const last = localStorage.getItem('tt_last_workspace_id');
-        if (last && ids.has(last)) {
-          selectWorkspace(last, { replace: true });
-          return;
-        }
-      } catch (_) {}
-
-      const first = items[0];
-      if (first && first.id) {
-        selectWorkspace(first.id, { replace: true });
-      }
-    })();
-  }, [workspaceId, searchParams, location.pathname, selectWorkspace]);
-
-  // Validate that selected workspace is accessible; if not, switch to the first accessible one
-  useEffect(() => {
-    const path = location.pathname || '';
-    const isPublicRoute =
-      path === '/login' ||
-      path === '/register' ||
-      path === '/reset-password' ||
-      path === '/verify-email' ||
-      path === '/' ||
-      path === '/pricing' ||
-      path === '/privacy-policy' ||
-      path === '/terms-of-service' ||
-      path.startsWith('/solutions') ||
-      path.startsWith('/blog') ||
-      path.startsWith('/faq');
-    if (isPublicRoute) return;
-    const onboardingActive = [
-      'new_user',
-      'first_login',
-      'registered',
-      'verification_success',
-    ].some(key => searchParams.get(key) === 'true');
-    if (onboardingActive) return;
-
-    const inUrl = searchParams.get('workspace');
-    if (inUrl && inUrl === workspaceId) return;
-
-    let cancelled = false;
-    async function normalizeToAccessible() {
-      try {
-        const ws = await workspaceAPI.list(50, 0);
-        if (cancelled) return;
-        const items = (ws?.items || []).filter(w => !w.is_frozen);
-        if (items.length === 0) return;
-        const ids = new Set(items.map(w => w.id));
-
-        if (workspaceId && ids.has(workspaceId) && inUrl === workspaceId)
-          return;
-
-        let last = null;
-        try {
-          last = localStorage.getItem('tt_last_workspace_id');
-        } catch (_) {
-          last = null;
-        }
-        const chosen =
-          inUrl && ids.has(inUrl)
-            ? inUrl
-            : last && ids.has(last)
-              ? last
-              : items[0].id;
-        if (!workspaceId || !ids.has(workspaceId) || inUrl !== chosen) {
-          selectWorkspace(chosen, { replace: true });
-        }
+        items = ws?.items || [];
       } catch (_) {
-        // ignore
+        items = [];
       }
+      if (cancelled) return;
+
+      const lastWorkspaceId =
+        accountId != null && accountId !== ''
+          ? readLastWorkspaceId(accountId)
+          : readSessionLastWorkspaceId();
+
+      const applyChosen = chosen => {
+        if (!chosen) return;
+        const inUrl = searchParamsRef.current.get('workspace');
+        if (idsEqual(inUrl, chosen)) {
+          setWorkspaceId(chosen);
+          if (idsEqual(pendingIdRef.current, chosen)) {
+            pendingIdRef.current = null;
+          }
+          return;
+        }
+        selectWorkspaceRef.current(chosen, { replace: true });
+      };
+
+      const livePending = pendingIdRef.current;
+      if (livePending) {
+        const pendingChosen = pickAccessibleWorkspace({
+          urlWorkspaceId: livePending,
+          lastWorkspaceId,
+          workspaces: items,
+        });
+        if (idsEqual(pendingChosen, livePending)) {
+          applyChosen(pendingChosen);
+          return;
+        }
+      }
+
+      if (selectionEpochRef.current !== epochAtStart) {
+        const liveUrl = searchParamsRef.current.get('workspace');
+        const liveChosen = pickAccessibleWorkspace({
+          urlWorkspaceId: liveUrl,
+          lastWorkspaceId,
+          workspaces: items,
+        });
+        if (idsEqual(liveUrl, liveChosen)) {
+          applyChosen(liveChosen);
+        }
+        return;
+      }
+
+      const chosen = pickAccessibleWorkspace({
+        urlWorkspaceId: searchParamsRef.current.get('workspace'),
+        lastWorkspaceId,
+        workspaces: items,
+      });
+      applyChosen(chosen);
     }
-    normalizeToAccessible();
+
+    restoreAccessibleWorkspace();
     return () => {
       cancelled = true;
     };
-  }, [searchParams, workspaceId, location.pathname, selectWorkspace]);
+  }, [accountId, location.pathname]);
 
   const value = useMemo(
     () => ({ workspaceId, selectWorkspace }),

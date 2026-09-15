@@ -324,6 +324,20 @@ describe("Email service unit coverage", () => {
     expect(String(out.html)).to.include("support@example.com");
   });
 
+  it("builds plaintext from HTML when plainTextContent is omitted", () => {
+    process.env.FROM_EMAIL = "support@example.com";
+    const email = requireEmailServiceWithStubs();
+    const out = email.generateEmailTemplate({
+      title: "Verify email",
+      greeting: "Hi",
+      content: "<p>Nested <b>bold</b> &amp; <span>text</span></p>",
+    });
+    expect(String(out.text)).to.include("Nested bold");
+    expect(String(out.text)).to.include("text");
+    expect(String(out.text)).to.not.include("<p>");
+    expect(String(out.text)).to.not.include("<b>");
+  });
+
   it("returns SMTP not configured response for generic sendEmail when no account works", async () => {
     process.env.SMTP_HOST = "smtp.local";
     process.env.SMTP_USER = "u1,u2";

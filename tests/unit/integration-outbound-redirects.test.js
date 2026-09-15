@@ -75,7 +75,38 @@ describe("integration follow-up URL origin checks", () => {
     assertSameOriginFollowUp,
     isHttpRedirectStatus,
     CREDENTIALED_AXIOS_REDIRECTS,
+    joinIntegrationApiUrl,
   } = require(path.join(servicesDir, "integrationUtils.js"));
+
+  it("keeps GitLab relative_url_root and GitHub Enterprise /api/v3 prefixes", () => {
+    assert.equal(
+      joinIntegrationApiUrl("https://gitlab.com", "/api/v4/user"),
+      "https://gitlab.com/api/v4/user",
+    );
+    assert.equal(
+      joinIntegrationApiUrl("https://test.com/gitlab", "/api/v4/user"),
+      "https://test.com/gitlab/api/v4/user",
+    );
+    assert.equal(
+      joinIntegrationApiUrl("https://test.com/gitlab/", "api/v4/user"),
+      "https://test.com/gitlab/api/v4/user",
+    );
+    assert.equal(
+      joinIntegrationApiUrl("https://ghe.example.com/api/v3", "/user"),
+      "https://ghe.example.com/api/v3/user",
+    );
+    assert.equal(
+      joinIntegrationApiUrl("https://api.github.com", "/user"),
+      "https://api.github.com/user",
+    );
+  });
+
+  it("rejects a scheme-relative API path", () => {
+    assert.throws(
+      () => joinIntegrationApiUrl("https://test.com/gitlab", "//evil.example/x"),
+      /scheme-relative/,
+    );
+  });
 
   it("accepts same-origin absolute and relative follow-up URLs", () => {
     const relative = assertSameOriginFollowUp(
@@ -132,6 +163,26 @@ describe("integration follow-up URL origin checks", () => {
 });
 
 describe("credentialed integration clients refuse redirects", () => {
+  it("Vault AppRole login does not follow a 302 to loopback", async () => {
+    const vaultAuth = require("../../apps/api/services/vaultAuth.js");
+    await withRedirectPair(async ({ originUrl, sinkHits }) => {
+      await assert.rejects(
+        () =>
+          vaultAuth.vaultAppRoleLogin({
+            address: originUrl,
+            roleId: "role",
+            secretId: "secret",
+          }),
+        (err) => {
+          assert.match(err.message, /refused redirect/);
+          assert.equal(err.status, 400);
+          return true;
+        },
+      );
+      assert.equal(sinkHits.length, 0);
+    });
+  });
+
   it("Vault fetch does not follow a 302 to loopback or forward the token", async () => {
     const vault = loadService("vaultIntegration.js");
     await withRedirectPair(async ({ originUrl, sinkHits }) => {

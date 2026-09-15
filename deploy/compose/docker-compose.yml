@@ -113,6 +113,10 @@ services:
       # through an external identity provider (set to true to enable).
       DISABLE_MANUAL_INVITES: ${DISABLE_MANUAL_INVITES:-}
 
+      # Off until every replica is this image, then true so assets can join
+      # more than one contact group. Tests default the flag on.
+      CONTACT_GROUP_PLURAL_WRITES: ${CONTACT_GROUP_PLURAL_WRITES:-}
+
       # Worker <-> API shared secret (falls back to SESSION_SECRET if unset)
       WORKER_API_KEY: ${WORKER_API_KEY:-}
 
@@ -368,6 +372,7 @@ services:
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       WORKER_API_KEY: ${WORKER_API_KEY:-}
+      WEEKLY_DIGEST_RECIPIENT_KEY: ${WEEKLY_DIGEST_RECIPIENT_KEY:-}
 
       # Delivery window (digest also respects it)
       DELIVERY_WINDOW_DEFAULT_START: ${DELIVERY_WINDOW_DEFAULT_START:-}

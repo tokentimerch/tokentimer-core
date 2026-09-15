@@ -24,6 +24,8 @@ const REQUIRED_REDACTION_FIELDS = [
   { name: "cookie", aliases: ["cookie"] },
   { name: "credentials", aliases: ["credentials"] },
   { name: "privateKey", aliases: ["privateKey", "private_key"] },
+  { name: "roleId", aliases: ["roleId", "role_id"] },
+  { name: "secretId", aliases: ["secretId", "secret_id"] },
 ];
 
 const RAW_LOG_HEURISTIC_PATTERNS = [
@@ -35,6 +37,8 @@ const RAW_LOG_HEURISTIC_PATTERNS = [
   { id: "personal_access_token", re: /\bpersonal_access_token\b/ },
   { id: "vaultToken", re: /\bvaultToken\b/ },
   { id: "vault_token", re: /\bvault_token\b/ },
+  { id: "roleId", re: /\broleId\b/ },
+  { id: "secretId", re: /\bsecretId\b/ },
   { id: "apiToken+raw", re: /\bapiToken\b.*\braw\b|\braw\b.*\bapiToken\b/ },
 ];
 
@@ -56,6 +60,10 @@ const CREDENTIAL_METADATA_KEYS = new Set([
   "credentials",
   "vaultToken",
   "vault_token",
+  "roleId",
+  "role_id",
+  "secretId",
+  "secret_id",
   "personal_access_token",
   "personalAccessToken",
   "authorization",
@@ -110,12 +118,23 @@ const RAW_LOG_ALLOWLIST = [
     pattern: /req\.body\?\.projectId/,
     reason: "Only GCP projectId is logged on scan failure, not access tokens",
   },
+  {
+    file: "apps/api/services/azureIntegration.js",
+    pattern: /secretId:\s*secret\.id/,
+    reason:
+      "Azure Key Vault secret resource identifier, not an AppRole secret ID",
+  },
+  {
+    file: "apps/api/services/gcpIntegration.js",
+    pattern: /secretId,/,
+    reason: "GCP Secret Manager resource name, not an AppRole secret ID",
+  },
 ];
 
 const ERROR_PATH_FORBIDDEN = [
   { id: "err.config", re: /\berr\.config\b/ },
   { id: "error.config", re: /\berror\.config\b/ },
-  { id: "request payload", re: /\b(req\.body|credentials|accessKeyId|secretAccessKey|sessionToken|client_secret|privateKey|personal_access_token|vaultToken|vault_token)\b/ },
+  { id: "request payload", re: /\b(req\.body|credentials|accessKeyId|secretAccessKey|sessionToken|client_secret|privateKey|personal_access_token|vaultToken|vault_token|roleId|secretId)\b/ },
 ];
 
 let filesScanned = 0;

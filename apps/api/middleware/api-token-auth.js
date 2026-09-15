@@ -63,12 +63,42 @@ function bearerTokenFromRequest(req) {
     return { ok: false };
   }
 
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (!match || !match[1].trim()) {
+  const trimmed = header.trim();
+  if (trimmed.length < 8) {
     return { ok: false };
   }
+  const scheme = trimmed.slice(0, 6);
+  if (scheme.toLowerCase() !== "bearer") {
+    return { ok: false };
+  }
+  const sep = trimmed.charCodeAt(6);
+  if (sep !== 32 && sep !== 9) {
+    return { ok: false };
+  }
+  let i = 7;
+  while (i < trimmed.length) {
+    const code = trimmed.charCodeAt(i);
+    if (code !== 32 && code !== 9) break;
+    i += 1;
+  }
+  let end = trimmed.length;
+  while (end > i) {
+    const code = trimmed.charCodeAt(end - 1);
+    if (code !== 32 && code !== 9) break;
+    end -= 1;
+  }
+  const rawToken = trimmed.slice(i, end);
+  if (!rawToken) {
+    return { ok: false };
+  }
+  for (let j = 0; j < rawToken.length; j += 1) {
+    const code = rawToken.charCodeAt(j);
+    if (code === 32 || code === 9) {
+      return { ok: false };
+    }
+  }
 
-  return { ok: true, rawToken: match[1].trim() };
+  return { ok: true, rawToken };
 }
 
 function normalizeRequiredScopes(scopes) {

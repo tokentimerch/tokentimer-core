@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import axios from 'axios';
 import {
   Box,
   Button,
@@ -18,8 +17,9 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import SEO from '../components/SEO.jsx';
-import { API_BASE_URL } from '../utils/apiClient.js';
+import apiClient from '../utils/apiClient.js';
 import { getLogoPath } from '../utils/logoUtils.js';
+import { isValidEmail } from '../utils/emailAddress.js';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -48,7 +48,7 @@ export default function Register() {
   const validate = () => {
     const nextErrors = {};
     if (!token) nextErrors.general = 'Invitation token is missing or invalid.';
-    if (!form.email.trim() || !/.+@.+\..+/.test(form.email.trim())) {
+    if (!form.email.trim() || !isValidEmail(form.email)) {
       nextErrors.email = 'Valid email is required';
     }
     if (!form.first_name.trim())
@@ -81,18 +81,13 @@ export default function Register() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const apiUrl = API_BASE_URL || '';
-      const response = await axios.post(
-        `${apiUrl}/auth/register`,
-        {
-          token,
-          email: form.email.trim(),
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          password: form.password,
-        },
-        { withCredentials: true }
-      );
+      const response = await apiClient.post('/auth/register', {
+        token,
+        email: form.email.trim(),
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        password: form.password,
+      });
 
       const requiresVerification = !!response.data?.requiresEmailVerification;
       const userEmail = form.email.trim();

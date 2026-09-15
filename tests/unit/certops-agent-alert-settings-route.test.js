@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it, beforeEach } = require("node:test");
+const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
@@ -41,12 +41,14 @@ function createMemoryDb() {
   ];
   const auditEvents = [];
   const workspaceSettings = {
-    contact_groups: [{ id: "g1", email_contact_ids: ["c1"] }],
+    contact_groups: [{ id: "g1", email_contact_ids: ["c1"] }, { id: "g2" }],
   };
+  const agentContactGroups = [];
 
   const db = {
     agentRows,
     auditEvents,
+    agentContactGroups,
     async query(sql, params = []) {
       const normalized = String(sql).replace(/\s+/g, " ").trim();
 
@@ -65,6 +67,13 @@ function createMemoryDb() {
         return { rows: [] };
       }
 
+      if (normalized.includes("SELECT contact_groups FROM workspace_settings")) {
+        return {
+          rows: [{ contact_groups: workspaceSettings.contact_groups }],
+          rowCount: 1,
+        };
+      }
+
       if (
         normalized.includes("FROM workspace_settings") &&
         normalized.includes("jsonb_array_elements")
@@ -75,6 +84,61 @@ function createMemoryDb() {
         );
         const rows = found ? [{ x: 1 }] : [];
         return { rows, rowCount: rows.length };
+      }
+
+      if (normalized.startsWith("DELETE FROM certops_agent_contact_groups")) {
+        const [agentId, workspaceId] = params;
+        for (let i = agentContactGroups.length - 1; i >= 0; i -= 1) {
+          if (
+            agentContactGroups[i].agent_id === agentId &&
+            agentContactGroups[i].workspace_id === workspaceId
+          ) {
+            agentContactGroups.splice(i, 1);
+          }
+        }
+        return { rows: [] };
+      }
+
+      if (normalized.startsWith("INSERT INTO certops_agent_contact_groups")) {
+        const [agentId, workspaceId, ids] = params;
+        for (const id of ids || []) {
+          agentContactGroups.push({
+            agent_id: agentId,
+            workspace_id: workspaceId,
+            contact_group_id: id,
+          });
+        }
+        return { rows: [] };
+      }
+
+      if (normalized.includes("FROM certops_agent_contact_groups")) {
+        const workspaceId = params[0];
+        const agentIds = Array.isArray(params[1]) ? params[1] : [params[1]];
+        const idSet = new Set(agentIds.map((id) => String(id)));
+        // loadAssignedGroupIds uses (agent_id, workspace_id)
+        if (
+          normalized.includes("WHERE agent_id = $1 AND workspace_id = $2")
+        ) {
+          const rows = agentContactGroups
+            .filter(
+              (row) =>
+                row.agent_id === params[0] &&
+                row.workspace_id === params[1],
+            )
+            .map((row) => ({ contact_group_id: row.contact_group_id }));
+          return { rows };
+        }
+        const rows = agentContactGroups
+          .filter(
+            (row) =>
+              row.workspace_id === workspaceId &&
+              idSet.has(String(row.agent_id)),
+          )
+          .map((row) => ({
+            agent_id: row.agent_id,
+            contact_group_id: row.contact_group_id,
+          }));
+        return { rows };
       }
 
       if (
@@ -91,11 +155,24 @@ function createMemoryDb() {
       }
 
       if (normalized.startsWith("UPDATE certops_agents")) {
+        if (
+          normalized.includes("SET contact_group_id = $1") &&
+          normalized.includes("WHERE id = $2")
+        ) {
+          const [canonical, assetId, workspaceId] = params;
+          const row = agentRows.find(
+            (item) => item.id === assetId && item.workspace_id === workspaceId,
+          );
+          if (!row) return { rows: [] };
+          row.contact_group_id = canonical;
+          return { rows: [row] };
+        }
+
         const row = agentRows.find(
           (item) => item.workspace_id === params[0] && item.id === params[1],
         );
         if (!row) return { rows: [] };
-        let idx = 2; // params[0]=workspaceId, params[1]=agentId, then in-order set clauses
+        let idx = 2;
         if (normalized.includes("downtime_alerts_enabled = $")) {
           row.downtime_alerts_enabled = params[idx];
           idx += 1;
@@ -173,6 +250,21 @@ const alertSettingsPath =
   "/api/v1/workspaces/:id/certops/agents/:agentId/alert-settings";
 
 describe("CertOps agent alert-settings route", () => {
+  let previousPluralWrites;
+
+  before(() => {
+    previousPluralWrites = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.CONTACT_GROUP_PLURAL_WRITES = "true";
+  });
+
+  after(() => {
+    if (previousPluralWrites === undefined) {
+      delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    } else {
+      process.env.CONTACT_GROUP_PLURAL_WRITES = previousPluralWrites;
+    }
+  });
+
   it("updates downtimeAlertsEnabled and audits the change", async () => {
     const res = await invokeRoute("patch", alertSettingsPath, {
       params: { agentId: AGENT_ROW_ID },
@@ -197,6 +289,7 @@ describe("CertOps agent alert-settings route", () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1"]);
     assert.equal(db.agentRows[0].contact_group_id, "g1");
   });
 
@@ -283,5 +376,46 @@ describe("CertOps agent alert-settings route", () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.agent.downtimeAlertsEnabled, true);
     assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1"]);
+  });
+
+  it("accepts contactGroupIds and returns them lex-sorted", async () => {
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupIds: ["g2", "g1", "g1"] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g1", "g2"]);
+    assert.equal(res.body.agent.contactGroupId, "g1");
+    assert.equal(db.agentRows[0].contact_group_id, "g1");
+  });
+
+  it("lets contactGroupIds win when both fields are present", async () => {
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupId: "g1", contactGroupIds: ["g2"] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, ["g2"]);
+    assert.equal(res.body.agent.contactGroupId, "g2");
+  });
+
+  it("clears membership with contactGroupIds: []", async () => {
+    db.agentRows[0].contact_group_id = "g1";
+    db.agentContactGroups.push({
+      agent_id: AGENT_ROW_ID,
+      workspace_id: WORKSPACE_A,
+      contact_group_id: "g1",
+    });
+    const res = await invokeRoute("patch", alertSettingsPath, {
+      params: { agentId: AGENT_ROW_ID },
+      body: { contactGroupIds: [] },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.agent.contactGroupIds, []);
+    assert.equal(res.body.agent.contactGroupId, null);
   });
 });

@@ -54,7 +54,9 @@ import apiClient, {
 } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
+import { writeLastWorkspaceId } from '../utils/lastWorkspacePreference.js';
 import { showWarning, showError } from '../utils/toast.js';
+import { isValidEmail } from '../utils/emailAddress.js';
 
 const MEMBER_ROLE_LABELS = {
   admin: 'Workspace owner',
@@ -709,7 +711,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                           }
                         } catch (_) {}
                         try {
-                          localStorage.setItem('tt_last_workspace_id', sel.id);
+                          writeLastWorkspaceId(session?.id, sel.id);
                         } catch (_) {}
                         try {
                           window.dispatchEvent(
@@ -1000,7 +1002,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     onClick={async () => {
                       if (!currentWorkspace || !inviteEmail) return;
                       const email = inviteEmail.trim();
-                      if (!/.+@.+\..+/.test(email)) {
+                      if (!isValidEmail(email)) {
                         showWarning('Invalid email');
                         return;
                       }

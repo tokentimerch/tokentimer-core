@@ -8,9 +8,8 @@
  * acme/acme.test.js), and the thumbprint/PEM-parsing logic is verified
  * against the real fixture certificate already committed for
  * verify/verify.test.js, cross-checked against node:crypto's own
- * X509Certificate.fingerprint so this module's independent sha1(DER)
- * computation cannot silently drift from what a real certificate parser
- * reports.
+ * X509Certificate.fingerprint so the Windows thumbprint cannot silently
+ * drift from what a real certificate parser reports.
  *
  * Real-host verification (real certreq.exe, a real CNG-backed
  * non-exportable key, a real CA response) is tracked separately as the
@@ -50,7 +49,9 @@ const FIXTURE_CERT_PEM = fs.readFileSync(
   path.join(__dirname, "..", "verify", "fixtures", "selfsigned.crt.pem"),
   "utf8",
 );
-const FIXTURE_THUMBPRINT = new X509Certificate(FIXTURE_CERT_PEM).fingerprint.replace(/:/g, "");
+const FIXTURE_THUMBPRINT = new X509Certificate(FIXTURE_CERT_PEM)
+  .fingerprint.replace(/:/g, "")
+  .toUpperCase();
 
 const tempDirs = [];
 function makeTempDir() {
@@ -254,6 +255,24 @@ describe("computeSha1ThumbprintFromPem", () => {
   it("rejects an empty string", () => {
     assert.throws(() => computeSha1ThumbprintFromPem(""), /non-empty PEM string/);
   });
+
+  it("rejects a well-formed CERTIFICATE PEM whose body is not X.509", () => {
+    const garbageCertPem =
+      "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    assert.throws(
+      () => computeSha1ThumbprintFromPem(garbageCertPem),
+      /did not parse as X\.509/,
+    );
+  });
+
+  it("rejects a CERTIFICATE REQUEST PEM (label matches, body is not a cert)", () => {
+    const csrPem =
+      "-----BEGIN CERTIFICATE REQUEST-----\nAA==\n-----END CERTIFICATE REQUEST-----\n";
+    assert.throws(
+      () => computeSha1ThumbprintFromPem(csrPem),
+      /did not parse as X\.509/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -450,6 +469,22 @@ describe("acceptCertificateViaCng", () => {
     await assert.rejects(
       acceptCertificateViaCng({ certificatePem: "not a pem", workDir, execFileImpl }),
       /not a recognizable PEM block/,
+    );
+    assert.equal(execFileImpl.calls.length, 0);
+  });
+
+  it("rejects a garbage CERTIFICATE PEM before invoking execFile", async () => {
+    const workDir = makeTempDir();
+    const execFileImpl = makeExecStub();
+    const garbageCertPem =
+      "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    await assert.rejects(
+      acceptCertificateViaCng({
+        certificatePem: garbageCertPem,
+        workDir,
+        execFileImpl,
+      }),
+      /did not parse as X\.509/,
     );
     assert.equal(execFileImpl.calls.length, 0);
   });

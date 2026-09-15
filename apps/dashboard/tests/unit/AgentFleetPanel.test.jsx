@@ -679,8 +679,9 @@ describe('AgentFleetPanel', () => {
     await waitFor(() => {
       expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
     });
+    expect(await screen.findByText('On-call (default)')).toBeInTheDocument();
     expect(
-      await screen.findByRole('option', { name: 'On-call (default)' })
+      await screen.findByRole('checkbox', { name: /On-call/ })
     ).toBeInTheDocument();
 
     fireEvent.click(
@@ -692,7 +693,11 @@ describe('AgentFleetPanel', () => {
       expect(updateAgentAlertSettingsMock).toHaveBeenCalledWith(
         'ws-1',
         'row-1',
-        { downtimeAlertsEnabled: false, contactGroupId: null }
+        {
+          downtimeAlertsEnabled: false,
+          contactGroupId: null,
+          contactGroupIds: [],
+        }
       );
       expect(refresh).toHaveBeenCalled();
     });

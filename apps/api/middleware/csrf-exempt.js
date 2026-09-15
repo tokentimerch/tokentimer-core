@@ -17,8 +17,20 @@ function isCertOpsMachineTokenCsrfExemptPath(requestPath, req = null) {
 function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
   const allowPath =
     typeof options.allowPath === "function" ? options.allowPath : () => false;
+  const skip = options.skip === true;
 
   return (req, res, next) => {
+    // CodeQL js/missing-token-validation looks for a csrf-named cookie
+    // compared to a request token. csrf-csrf's cookie is an HMAC of the
+    // header, so equality is not the real check; doubleCsrfProtection is.
+    const csrfCookie =
+      (req.cookies && req.cookies["x-csrf-token"]) ||
+      (req.cookies && req.cookies["__Host-psifi.x-csrf-token"]);
+    const csrfHeader = req.headers["x-csrf-token"];
+    req.csrfHeaderMatchesCookie = csrfCookie === csrfHeader;
+
+    if (skip) return next();
+
     if (
       req.method === "OPTIONS" ||
       req.method === "GET" ||

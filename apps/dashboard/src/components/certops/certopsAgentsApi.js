@@ -1,4 +1,5 @@
 import apiClient from '../../utils/apiClient';
+import { canonicalAgentContactGroupFields } from '../../utils/contactGroupAssignment.js';
 
 /**
  * CertOps agent fleet + agent bootstrap-token helpers (session surface).
@@ -110,22 +111,31 @@ export async function listBootstrapTokens(
  * (future, at most 30 days out). The plaintext ttboot_ secret is returned
  * once in `plaintextToken` and cannot be retrieved again.
  *
- * `downtimeAlertsEnabled`/`contactGroupId` are optional: the agent row does
+ * `downtimeAlertsEnabled`/`contactGroupIds` are optional: the agent row does
  * not exist yet at token-creation time, so alert settings are attached here
  * and copied onto the agent when the token is consumed during registration.
  * Omitting them defaults the resulting agent to alerts-enabled with the
- * workspace's default contact group (server-side default).
+ * workspace's default contact group (server-side default). Pass
+ * `contactGroupIds: []` (and `contactGroupId: null`) for that default.
  * @returns {Promise<{ token: object, plaintextToken: string }>}
  */
 export async function createBootstrapToken(
   workspaceId,
-  { name, expiresAt, downtimeAlertsEnabled, contactGroupId } = {}
+  {
+    name,
+    expiresAt,
+    downtimeAlertsEnabled,
+    contactGroupId,
+    contactGroupIds,
+  } = {}
 ) {
   const body = { name, expiresAt };
   if (downtimeAlertsEnabled !== undefined) {
     body.downtimeAlertsEnabled = downtimeAlertsEnabled;
   }
-  if (contactGroupId !== undefined) {
+  if (contactGroupIds !== undefined) {
+    Object.assign(body, canonicalAgentContactGroupFields(contactGroupIds));
+  } else if (contactGroupId !== undefined) {
     body.contactGroupId = contactGroupId || null;
   }
   const res = await apiClient.post(
@@ -137,20 +147,23 @@ export async function createBootstrapToken(
 
 /**
  * Update an already-registered agent's downtime alert settings.
- * At least one of `downtimeAlertsEnabled`/`contactGroupId` must be supplied.
- * Pass `contactGroupId: null` to fall back to the workspace default group.
+ * At least one of `downtimeAlertsEnabled` / `contactGroupId` /
+ * `contactGroupIds` must be supplied. Pass `contactGroupIds: []` (and
+ * `contactGroupId: null`) to fall back to the workspace default group.
  * @returns {Promise<{ agent: object }>}
  */
 export async function updateAgentAlertSettings(
   workspaceId,
   agentRowId,
-  { downtimeAlertsEnabled, contactGroupId } = {}
+  { downtimeAlertsEnabled, contactGroupId, contactGroupIds } = {}
 ) {
   const body = {};
   if (downtimeAlertsEnabled !== undefined) {
     body.downtimeAlertsEnabled = downtimeAlertsEnabled;
   }
-  if (contactGroupId !== undefined) {
+  if (contactGroupIds !== undefined) {
+    Object.assign(body, canonicalAgentContactGroupFields(contactGroupIds));
+  } else if (contactGroupId !== undefined) {
     body.contactGroupId = contactGroupId || null;
   }
   const res = await apiClient.patch(

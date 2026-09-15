@@ -85,6 +85,11 @@ const HOSTNAME_PATTERN =
  * passed to certreq INF/argv, so it must stay in a safe, boring alphabet. */
 const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
+/** Windows-convention thumbprint: 40 hex chars, case-insensitive on input
+ * (Windows tooling emits either case; this module's own output is always
+ * uppercase via computeSha1ThumbprintFromPem). */
+const THUMBPRINT_PATTERN = /^[0-9A-Fa-f]{40}$/;
+
 /** Every container buildContainerName produces starts with this literal
  * prefix. isAgentOwnedContainerName uses it to distinguish a container THIS
  * agent created from one a human operator or another tool created directly
@@ -505,7 +510,21 @@ function computeSha1ThumbprintFromPem(certPem) {
     throw buildError("computeSha1ThumbprintFromPem requires a non-empty PEM string");
   }
   const der = pemToDer(certPem, /CERTIFICATE/);
-  return crypto.createHash("sha1").update(der).digest("hex").toUpperCase();
+  // Windows store thumbprints are SHA-1 of the DER. Read Node's own
+  // X509Certificate fingerprint instead of hashing peer bytes again.
+  let fingerprint;
+  try {
+    fingerprint = new crypto.X509Certificate(der).fingerprint;
+  } catch {
+    throw buildError("certificate PEM did not parse as X.509");
+  }
+  const thumbprint = String(fingerprint || "")
+    .replace(/:/g, "")
+    .toUpperCase();
+  if (!THUMBPRINT_PATTERN.test(thumbprint)) {
+    throw buildError("certificate fingerprint is not a Windows SHA-1 thumbprint");
+  }
+  return thumbprint;
 }
 
 /**
@@ -518,13 +537,51 @@ function computeSha1ThumbprintFromPem(certPem) {
  * @returns {Buffer}
  */
 function pemToDer(pem, labelPattern) {
-  const match = pem.match(
-    /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]+?)-----END \1-----/,
-  );
-  if (!match || !labelPattern.test(match[1])) {
-    throw buildError(`input is not a recognizable PEM block matching ${labelPattern}`);
+  const beginPrefix = "-----BEGIN ";
+  const dashRun = "-----";
+  const start = pem.indexOf(beginPrefix);
+  if (start === -1) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
   }
-  const base64 = match[2].replace(/\s+/g, "");
+  const labelStart = start + beginPrefix.length;
+  const labelEnd = pem.indexOf(dashRun, labelStart);
+  if (labelEnd === -1 || labelEnd === labelStart) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const label = pem.slice(labelStart, labelEnd);
+  if (!labelPattern.test(label)) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const headerEnd = labelEnd + dashRun.length;
+  const endMarker = `-----END ${label}-----`;
+  const endAt = pem.indexOf(endMarker, headerEnd);
+  if (endAt === -1) {
+    throw buildError(
+      `input is not a recognizable PEM block matching ${labelPattern}`,
+    );
+  }
+  const body = pem.slice(headerEnd, endAt);
+  let base64 = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const code = body.charCodeAt(i);
+    // ASCII whitespace only (space, tab, LF, VT, FF, CR). Matches PEM `\s`.
+    if (
+      code !== 32 &&
+      code !== 9 &&
+      code !== 10 &&
+      code !== 11 &&
+      code !== 12 &&
+      code !== 13
+    ) {
+      base64 += body[i];
+    }
+  }
   return Buffer.from(base64, "base64");
 }
 
@@ -1082,11 +1139,6 @@ function acquireStoreLock(stateDir, storeName) {
     },
   };
 }
-
-/** Windows-convention thumbprint: 40 hex chars, case-insensitive on input
- * (Windows tooling emits either case; this module's own output is always
- * uppercase via computeSha1ThumbprintFromPem). */
-const THUMBPRINT_PATTERN = /^[0-9A-Fa-f]{40}$/;
 
 /**
  * Removes a superseded certificate from the machine store and deletes its

@@ -7,6 +7,7 @@ import { ChakraProvider } from '@chakra-ui/react';
 import ImportVaultForm from '../../src/components/imports/ImportVaultForm.jsx';
 import ImportAWSForm from '../../src/components/imports/ImportAWSForm.jsx';
 import ImportGCPForm from '../../src/components/imports/ImportGCPForm.jsx';
+import ImportAzureForm from '../../src/components/imports/ImportAzureForm.jsx';
 
 const {
   vaultScanMock,
@@ -14,6 +15,7 @@ const {
   awsDetectRegionsMock,
   awsScanMock,
   gcpScanMock,
+  azureScanMock,
   integrationImportMock,
   checkDuplicatesMock,
 } = vi.hoisted(() => ({
@@ -22,6 +24,7 @@ const {
   awsDetectRegionsMock: vi.fn(),
   awsScanMock: vi.fn(),
   gcpScanMock: vi.fn(),
+  azureScanMock: vi.fn(),
   integrationImportMock: vi.fn(),
   checkDuplicatesMock: vi.fn(),
 }));
@@ -60,6 +63,9 @@ vi.mock('../../src/utils/apiClient', async () => {
     },
     gcpAPI: {
       scan: gcpScanMock,
+    },
+    azureAPI: {
+      scan: azureScanMock,
     },
     integrationAPI: {
       checkDuplicates: checkDuplicatesMock,
@@ -145,6 +151,114 @@ describe('Dashboard import forms', () => {
     await waitFor(() => expect(vaultImportMock).toHaveBeenCalledTimes(1));
     expect(onImportComplete).toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(null);
+  });
+
+  it('ImportVaultForm scans with exclusive AppRole credentials', async () => {
+    vaultScanMock.mockResolvedValue({ items: [], summary: [], mounts: [] });
+
+    renderWithProviders(
+      <ImportVaultForm
+        workspaceId='ws-approle'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('https://vault.your-org.com'),
+      { target: { value: 'https://vault.example.com' } }
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'AppRole' }));
+    fireEvent.change(screen.getByPlaceholderText('AppRole role ID'), {
+      target: { value: 'role-uuid' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('AppRole secret ID'), {
+      target: { value: 'secret-uuid' },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText('Vault Enterprise namespace'),
+      { target: { value: 'ops' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() => expect(vaultScanMock).toHaveBeenCalledTimes(1));
+    expect(vaultScanMock.mock.calls[0][0]).toMatchObject({
+      workspaceId: 'ws-approle',
+      address: 'https://vault.example.com',
+      roleId: 'role-uuid',
+      secretId: 'secret-uuid',
+      namespace: 'ops',
+    });
+    expect(vaultScanMock.mock.calls[0][0].token).toBeUndefined();
+  });
+
+  it('ImportVaultForm warns when a scan has per-path permission errors', async () => {
+    vaultScanMock.mockResolvedValue({
+      items: [
+        {
+          name: 'readable',
+          expiration: '2030-01-01',
+          category: 'general',
+          type: 'other',
+          location: 'kv/app',
+        },
+      ],
+      summary: [
+        {
+          mount: 'secret/',
+          type: 'kv',
+          found: 1,
+          hasErrors: true,
+          permissionDenied: true,
+        },
+      ],
+    });
+
+    renderWithProviders(
+      <ImportVaultForm
+        workspaceId='ws-perm'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('https://vault.your-org.com'),
+      { target: { value: 'https://vault.example.com' } }
+    );
+    fireEvent.change(screen.getByPlaceholderText('token'), {
+      target: { value: 'vault-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/permission denied on some paths/)
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/^found 1$/)).toBeNull();
   });
 
   it('ImportVaultForm surfaces quota exceeded UI state', async () => {
@@ -410,5 +524,167 @@ describe('Dashboard import forms', () => {
     expect(
       screen.queryByText(/Request failed with status code/)
     ).not.toBeInTheDocument();
+  });
+
+  it('ImportAzureForm scans with Entra client credentials', async () => {
+    const onError = vi.fn();
+    azureScanMock.mockResolvedValue({
+      items: [
+        {
+          name: 'db-password',
+          expiration: '2030-01-01',
+          location: 'https://my-vault.vault.azure.net/secrets/db-password',
+        },
+      ],
+      summary: [{ type: 'secrets', found: 1, complete: true }],
+      scan_id: 'scan-1',
+    });
+
+    renderWithProviders(
+      <ImportAzureForm
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={onError}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='Paste token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('https://my-vault.vault.azure.net'),
+      { target: { value: 'https://my-vault.vault.azure.net' } }
+    );
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Entra app (client credentials)' })
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('Directory (tenant) ID or domain'),
+      { target: { value: 'tenant-id' } }
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('App registration client ID'),
+      { target: { value: 'client-id' } }
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('App registration client secret'),
+      { target: { value: 'client-secret' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() => expect(azureScanMock).toHaveBeenCalledTimes(1));
+    expect(azureScanMock.mock.calls[0][0]).toMatchObject({
+      workspaceId: 'ws-1',
+      vaultUrl: 'https://my-vault.vault.azure.net',
+      authMethod: 'client_credentials',
+      tenantId: 'tenant-id',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+    });
+    expect(azureScanMock.mock.calls[0][0].token).toBeUndefined();
+  });
+
+  it('ImportAzureForm Replace credentials keeps stored secrets off the PUT payload', () => {
+    const ref = React.createRef();
+    renderWithProviders(
+      <ImportAzureForm
+        ref={ref}
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='Paste token'
+        autoSyncManageMode
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
+    expect(ref.current.getCredentials().credentials).toEqual({});
+    fireEvent.click(screen.getByRole('button', { name: 'Replace credentials' }));
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Entra app (client credentials)' })
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('https://my-vault.vault.azure.net'),
+      { target: { value: 'https://my-vault.vault.azure.net' } }
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('Directory (tenant) ID or domain'),
+      { target: { value: 'tenant-id' } }
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('App registration client ID'),
+      { target: { value: 'client-id' } }
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText('App registration client secret'),
+      { target: { value: 'rotated-secret' } }
+    );
+    expect(ref.current.getCredentials().credentials).toMatchObject({
+      authMethod: 'client_credentials',
+      tenantId: 'tenant-id',
+      clientId: 'client-id',
+      clientSecret: 'rotated-secret',
+      vaultUrl: 'https://my-vault.vault.azure.net',
+    });
+  });
+
+  it('ImportAzureForm keeps Key Vault URL read-only until Replace credentials', () => {
+    const ref = React.createRef();
+    renderWithProviders(
+      <ImportAzureForm
+        ref={ref}
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='Paste token'
+        autoSyncManageMode
+        initialVaultUrl='https://old-vault.vault.azure.net'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    const vaultUrl = screen.getByPlaceholderText(
+      'https://my-vault.vault.azure.net'
+    );
+    expect(vaultUrl).toBeDisabled();
+    expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
+    expect(ref.current.validateReplacement()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace credentials' }));
+    expect(vaultUrl).not.toBeDisabled();
+    expect(ref.current.validateReplacement()).toBe('Access token is required');
+    fireEvent.change(vaultUrl, {
+      target: { value: 'https://new-vault.vault.azure.net' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel replace' }));
+    expect(vaultUrl).toBeDisabled();
+    expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
+    expect(ref.current.getCredentials().credentials).toEqual({});
   });
 });

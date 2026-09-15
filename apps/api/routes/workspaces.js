@@ -3,6 +3,7 @@ const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
+const { isValidEmail } = require("../utils/emailAddress");
 const {
   loadWorkspace,
   requireWorkspaceMembership,
@@ -536,7 +537,7 @@ router.post(
       }
       // Already normalized above
       // Basic email format validation to avoid downstream errors
-      if (!/.+@.+\..+/.test(normalizedEmail)) {
+      if (!isValidEmail(normalizedEmail)) {
         return res
           .status(400)
           .json({ error: "Invalid email format", code: "VALIDATION_ERROR" });

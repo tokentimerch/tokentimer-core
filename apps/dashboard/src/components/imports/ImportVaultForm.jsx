@@ -20,6 +20,8 @@ import {
   Tooltip,
   Link as ChakraLink,
   Spinner,
+  Radio,
+  RadioGroup,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff, FiHelpCircle, FiRefreshCw } from 'react-icons/fi';
 import { vaultAPI, integrationAPI } from '../../utils/apiClient';
@@ -27,12 +29,39 @@ import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import {
+  canonicalContactGroupFields,
+  contactGroupFieldsForImportDefaults,
+} from '../../utils/contactGroupAssignment.js';
 import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
 
 const VAULT_CATEGORY_OPTIONS = [
   { value: 'cert', label: 'Certificates' },
   { value: 'key_secret', label: 'Secrets & keys' },
 ];
+
+function vaultMountSummaryBadge(s) {
+  if (s.error) {
+    return { colorScheme: 'red', label: s.error };
+  }
+  const extra = s.truncated ? '+' : '';
+  if (s.permissionDenied) {
+    return {
+      colorScheme: 'orange',
+      label: `found ${s.found}${extra}, permission denied on some paths`,
+    };
+  }
+  if (s.hasErrors) {
+    return {
+      colorScheme: 'orange',
+      label: `found ${s.found}${extra}, incomplete`,
+    };
+  }
+  return {
+    colorScheme: 'green',
+    label: `found ${s.found}${extra}`,
+  };
+}
 
 function getVaultItemDetails(item) {
   const details = [];
@@ -121,6 +150,11 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     }
   });
   const [vaultToken, setVaultToken] = React.useState('');
+  const [authMode, setAuthMode] = React.useState('token');
+  const [vaultRoleId, setVaultRoleId] = React.useState('');
+  const [vaultSecretId, setVaultSecretId] = React.useState('');
+  const [vaultAuthMount, setVaultAuthMount] = React.useState('approle');
+  const [vaultNamespace, setVaultNamespace] = React.useState('');
   const [includeKV, setIncludeKV] = React.useState(() => {
     try {
       return (localStorage.getItem('tt_vault_include_kv') || 'true') === 'true';
@@ -177,19 +211,43 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
 
   // Shared bulk assignment state
   const [bulkSection, setBulkSection] = React.useState('');
-  const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [bulkContactGroupIds, setBulkContactGroupIds] = React.useState([]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsVault.size);
   }, [selectedRowsVault.size, onSelectionChange]);
 
-  const loadMounts = async () => {
-    if (!vaultAddress || !vaultAddress.trim()) {
-      setMountsError('Vault address is required');
-      return;
+  const vaultAuthPayload = () => {
+    const namespace = vaultNamespace.trim();
+    const shared = namespace ? { namespace } : {};
+    if (authMode === 'approle') {
+      return {
+        ...shared,
+        roleId: vaultRoleId,
+        secretId: vaultSecretId,
+        ...(vaultAuthMount.trim() ? { authMount: vaultAuthMount.trim() } : {}),
+      };
     }
-    if (!vaultToken || !vaultToken.trim()) {
-      setMountsError('Vault token is required');
+    return { ...shared, token: vaultToken };
+  };
+
+  const vaultAuthReady = () => {
+    if (!vaultAddress || !vaultAddress.trim())
+      return 'Vault address is required';
+    if (authMode === 'approle') {
+      if (!vaultRoleId.trim() || !vaultSecretId.trim()) {
+        return 'AppRole role ID and secret ID are required';
+      }
+      return null;
+    }
+    if (!vaultToken || !vaultToken.trim()) return 'Vault token is required';
+    return null;
+  };
+
+  const loadMounts = async () => {
+    const authError = vaultAuthReady();
+    if (authError) {
+      setMountsError(authError);
       return;
     }
     setIsLoadingMounts(true);
@@ -198,7 +256,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       const mounts = await vaultAPI.listMounts({
         workspaceId,
         address: vaultAddress,
-        token: vaultToken,
+        ...vaultAuthPayload(),
       });
       const scannable = mounts.filter(m => m.type === 'kv' || m.type === 'pki');
       setAvailableMounts(scannable);
@@ -243,12 +301,9 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       return;
     }
 
-    if (!vaultAddress || !vaultAddress.trim()) {
-      onError && onError('Vault address is required');
-      return;
-    }
-    if (!vaultToken || !vaultToken.trim()) {
-      onError && onError('Vault token is required');
+    const authError = vaultAuthReady();
+    if (authError) {
+      onError && onError(authError);
       return;
     }
     if (availableMounts.length > 0 && selectedMountPaths.size === 0) {
@@ -269,7 +324,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       const res = await vaultAPI.scan({
         workspaceId,
         address: vaultAddress,
-        token: vaultToken,
+        ...vaultAuthPayload(),
         include: { kv: includeKV, pki: includePKI },
         mounts: mountsFilterForScan(),
         maxItemsPerMount,
@@ -333,7 +388,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         .map(item => ({
           ...item,
           section: bulkSection || item.section || null,
-          contact_group_id: bulkContactGroupId || null,
+          ...canonicalContactGroupFields(bulkContactGroupIds),
         }));
       if (!workspaceId) {
         onError && onError('Please select a workspace first.');
@@ -342,7 +397,10 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       await vaultAPI.import({
         workspaceId,
         items: selected,
-        defaults: vaultDefaults,
+        defaults: {
+          ...vaultDefaults,
+          ...contactGroupFieldsForImportDefaults(bulkContactGroupIds),
+        },
         // scan_id is sent whenever this import followed a scan, regardless
         // of whether cleanup is enabled -- provenance attribution must not
         // depend on the cleanup toggle (see apiClient.js).
@@ -366,7 +424,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     importSelected: importVaultSelected,
     getSelectedCount: () => selectedRowsVault.size,
     getCredentials: () => ({
-      credentials: { address: vaultAddress, token: vaultToken },
+      credentials: { address: vaultAddress, ...vaultAuthPayload() },
       scanParams: {
         address: vaultAddress,
         include: { kv: includeKV, pki: includePKI },
@@ -384,9 +442,10 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
           Scans KV v2 and PKI engines to extract expirations. Base64
-          certificates are decoded to read expiry. Token is used for scanning
-          and stored encrypted if auto-sync is enabled. The Vault host must have
-          a valid TLS certificate for the import to work.
+          certificates are decoded to read expiry. Authenticate with a static
+          token or AppRole (role ID and secret ID). TokenTimer does not mint or
+          rotate those credentials. The Vault host must have a valid TLS
+          certificate for the import to work.
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
@@ -416,6 +475,29 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               }}
             />
           </Box>
+          <Box minW='220px'>
+            <Text fontSize='sm' mb={1}>
+              Authentication
+            </Text>
+            <RadioGroup value={authMode} onChange={setAuthMode}>
+              <HStack spacing={4}>
+                <Radio value='token'>Token</Radio>
+                <Radio value='approle'>AppRole</Radio>
+              </HStack>
+            </RadioGroup>
+          </Box>
+          <Box minW='240px'>
+            <Text fontSize='sm' mb={1}>
+              Namespace (optional)
+            </Text>
+            <Input
+              placeholder='Vault Enterprise namespace'
+              value={vaultNamespace}
+              onChange={e => setVaultNamespace(e.target.value)}
+            />
+          </Box>
+        </HStack>
+        {authMode === 'token' ? (
           <Box minW='320px'>
             <Text fontSize='sm' mb={1}>
               Token
@@ -438,7 +520,52 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
               </InputRightElement>
             </InputGroup>
           </Box>
-        </HStack>
+        ) : (
+          <HStack spacing={3} align='flex-end' flexWrap='wrap'>
+            <Box minW='240px'>
+              <Text fontSize='sm' mb={1}>
+                Role ID
+              </Text>
+              <Input
+                placeholder='AppRole role ID'
+                value={vaultRoleId}
+                onChange={e => setVaultRoleId(e.target.value)}
+              />
+            </Box>
+            <Box minW='240px'>
+              <Text fontSize='sm' mb={1}>
+                Secret ID
+              </Text>
+              <InputGroup>
+                <Input
+                  type={showSecret ? 'text' : 'password'}
+                  placeholder='AppRole secret ID'
+                  value={vaultSecretId}
+                  onChange={e => setVaultSecretId(e.target.value)}
+                />
+                <InputRightElement>
+                  <IconButton
+                    size='xs'
+                    variant='ghost'
+                    icon={showSecret ? <FiEyeOff /> : <FiEye />}
+                    onClick={() => setShowSecret(!showSecret)}
+                    aria-label={showSecret ? 'Hide' : 'Show'}
+                  />
+                </InputRightElement>
+              </InputGroup>
+            </Box>
+            <Box minW='180px'>
+              <Text fontSize='sm' mb={1}>
+                Auth mount
+              </Text>
+              <Input
+                placeholder='approle'
+                value={vaultAuthMount}
+                onChange={e => setVaultAuthMount(e.target.value)}
+              />
+            </Box>
+          </HStack>
+        )}
 
         <HStack spacing={4} flexWrap='wrap'>
           <HStack>
@@ -499,7 +626,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             colorScheme='blue'
             onClick={doVaultScan}
             isLoading={isScanning}
-            isDisabled={!vaultAddress || !vaultToken}
+            isDisabled={Boolean(vaultAuthReady())}
           >
             Scan
           </Button>
@@ -598,9 +725,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                         )
                       }
                       onClick={loadMounts}
-                      isDisabled={
-                        isLoadingMounts || !vaultAddress || !vaultToken
-                      }
+                      isDisabled={isLoadingMounts || Boolean(vaultAuthReady())}
                     >
                       {availableMounts.length > 0 ? 'Refresh' : 'Load engines'}
                     </Button>
@@ -719,14 +844,12 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                 <Text fontSize='sm'>
                   {s.mount} ({s.type})
                 </Text>
-                {s.error ? (
-                  <Badge colorScheme='red'>{s.error}</Badge>
-                ) : (
-                  <Badge colorScheme='green'>
-                    found {s.found}
-                    {s.truncated ? '+' : ''}
-                  </Badge>
-                )}
+                {(() => {
+                  const badge = vaultMountSummaryBadge(s);
+                  return (
+                    <Badge colorScheme={badge.colorScheme}>{badge.label}</Badge>
+                  );
+                })()}
               </HStack>
             ))}
           </VStack>
@@ -758,8 +881,8 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             selectedCount={selectedRowsVault.size}
             section={bulkSection}
             onSectionChange={setBulkSection}
-            contactGroupId={bulkContactGroupId}
-            onContactGroupChange={setBulkContactGroupId}
+            contactGroupIds={bulkContactGroupIds}
+            onContactGroupChange={setBulkContactGroupIds}
             contactGroups={contactGroups}
             borderColor={borderColor}
           />

@@ -122,6 +122,11 @@ describe("Channel Selection", function () {
       `UPDATE tokens SET contact_group_id='admins' WHERE id=$1`,
       [missingTokenId],
     );
+    await TestUtils.execQuery(
+      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+       VALUES ($1,$2,'admins')`,
+      [missingTokenId, wsId],
+    );
 
     await TestUtils.runNode(
       "node",
@@ -218,6 +223,11 @@ describe("Channel Selection", function () {
     await TestUtils.execQuery(
       `UPDATE tokens SET contact_group_id='admins' WHERE id=$1`,
       [tokenWithRecipientsId],
+    );
+    await TestUtils.execQuery(
+      `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+       VALUES ($1,$2,'admins')`,
+      [tokenWithRecipientsId, wsId],
     );
 
     await TestUtils.runNode(

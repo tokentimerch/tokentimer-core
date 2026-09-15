@@ -590,6 +590,22 @@ describe("CertOps API token auth middleware", () => {
       ok: true,
       rawToken: RAW_TOKEN,
     });
+    assert.deepEqual(
+      bearerTokenFromRequest(
+        createRequest({ authorization: `Bearer\t${RAW_TOKEN}` }),
+      ),
+      { ok: true, rawToken: RAW_TOKEN },
+    );
+    assert.deepEqual(
+      bearerTokenFromRequest(createRequest({ authorization: "Bearer" })),
+      { ok: false },
+    );
+    assert.deepEqual(
+      bearerTokenFromRequest(
+        createRequest({ authorization: `Bearer ${RAW_TOKEN} ` }),
+      ),
+      { ok: true, rawToken: RAW_TOKEN },
+    );
     assert.equal(workspaceIdFromRequest(req), WORKSPACE_A);
     assert.deepEqual(
       safeApiTokenIdentity(successfulValidation().token),
@@ -722,5 +738,64 @@ describe("CertOps machine-token CSRF exemption", () => {
 
     assert.equal(protectedCalls, 2);
     assert.equal(nextCalls, 3);
+  });
+
+  it("skips CSRF enforcement when skip is set", async () => {
+    let protectedCalls = 0;
+    let nextCalls = 0;
+    const csrfProtection = (_req, res) => {
+      protectedCalls += 1;
+      return res.status(403).json({ code: "EBADCSRFTOKEN" });
+    };
+    const middleware = createCsrfExemptMiddleware(csrfProtection, {
+      skip: true,
+    });
+    await middleware(
+      createRequest({ path: "/v1/tokens", method: "POST" }),
+      createResponse(),
+      () => {
+        nextCalls += 1;
+      },
+    );
+    assert.equal(protectedCalls, 0);
+    assert.equal(nextCalls, 1);
+  });
+
+  it("still runs CSRF protection when the cookie equals the header", async () => {
+    let protectedCalls = 0;
+    const csrfProtection = (_req, res) => {
+      protectedCalls += 1;
+      return res.status(403).json({ code: "EBADCSRFTOKEN" });
+    };
+    const middleware = createCsrfExemptMiddleware(csrfProtection);
+    const req = createRequest({ path: "/v1/tokens", method: "POST" });
+    req.cookies = { "x-csrf-token": "same-value" };
+    req.headers["x-csrf-token"] = "same-value";
+    await middleware(req, createResponse(), () => {});
+    assert.equal(protectedCalls, 1);
+    assert.equal(req.csrfHeaderMatchesCookie, true);
+  });
+
+  it("lists CSRF middleware on session-using /auth write routes", () => {
+    const authRouter = require(
+      path.resolve(__dirname, "../../apps/api/routes/auth.js"),
+    );
+    const { csrfExempt: authCsrf } = require(
+      path.resolve(__dirname, "../../apps/api/middleware/csrf.js"),
+    );
+    for (const routePath of [
+      "/auth/login",
+      "/auth/verify-2fa",
+      "/auth/resend-verification",
+    ]) {
+      const layer = authRouter.stack.find(
+        (entry) => entry.route && entry.route.path === routePath,
+      );
+      assert.ok(layer, `missing ${routePath}`);
+      assert.ok(
+        layer.route.stack.some((step) => step.handle === authCsrf),
+        `${routePath} should run csrfExempt`,
+      );
+    }
   });
 });

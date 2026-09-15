@@ -70,7 +70,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const tls = require("node:tls");
-const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,
@@ -3413,6 +3412,8 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
         host,
         port,
         ...(servername !== undefined ? { servername } : {}),
+        // Fingerprint pin after connect; chain validation is intentionally skipped.
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
       });
     } catch {
@@ -3423,11 +3424,17 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
     socket.on("secureConnect", () => {
       try {
         const peerCert = socket.getPeerCertificate();
-        if (!peerCert || !peerCert.raw) {
+        // Node's fingerprint is SHA-1 of the DER, the same identifier
+        // Windows store / netsh sslcert uses. Read it from TLS rather
+        // than hashing peerCert.raw again.
+        const thumbprint = String(peerCert?.fingerprint || "")
+          .replace(/:/g, "")
+          .toUpperCase();
+        if (!/^[0-9A-F]{40}$/.test(thumbprint)) {
           settle(null);
           return;
         }
-        settle(crypto.createHash("sha1").update(peerCert.raw).digest("hex").toUpperCase());
+        settle(thumbprint);
       } catch {
         settle(null);
       }

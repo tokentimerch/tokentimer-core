@@ -202,6 +202,30 @@ function preAuthWorkspaceId(req, options = {}) {
   return safeKeyFragment(req.params?.[paramName], "workspace-unknown");
 }
 
+// Do not log req.apiToken fields. Path params and req.workspace are the
+// operator-safe sources for the 429 payload.
+function logWorkspaceId(req, { preAuth = false, options = {} } = {}) {
+  if (preAuth) return preAuthWorkspaceId(req, options);
+  return safeKeyFragment(
+    req.workspace?.id || req.params?.[options.workspaceIdParam || "workspaceId"],
+    "workspace-unknown",
+  );
+}
+
+function machineTokenRateLimitLogMeta(
+  req,
+  { preAuth = false, options = {}, retryAfter } = {},
+) {
+  return {
+    type: "certops_machine_token",
+    phase: preAuth ? "pre_auth" : "post_auth",
+    workspaceId: logWorkspaceId(req, { preAuth, options }),
+    routeFamily: routeFamilyFromRequest(req, options),
+    ip: resolveClientIp(req),
+    retryAfterSeconds: retryAfter,
+  };
+}
+
 function machineTokenPreAuthRateLimitKey(req, options = {}) {
   const workspaceId = preAuthWorkspaceId(req, options);
   const tokenPrefix = tokenPrefixFromAuthorization(req);
@@ -225,16 +249,10 @@ function createRateLimitHandler({ windowMs, preAuth, options }) {
   return (req, res) => {
     const retryAfter = retryAfterSeconds(req, windowMs);
 
-    logger.warn("RATE_LIMIT_EXCEEDED", {
-      type: "certops_machine_token",
-      phase: preAuth ? "pre_auth" : "post_auth",
-      workspaceId: preAuth
-        ? preAuthWorkspaceId(req, options)
-        : safeKeyFragment(req.apiToken?.workspaceId),
-      routeFamily: routeFamilyFromRequest(req, options),
-      ip: resolveClientIp(req),
-      retryAfterSeconds: retryAfter,
-    });
+    logger.warn(
+      "RATE_LIMIT_EXCEEDED",
+      machineTokenRateLimitLogMeta(req, { preAuth, options, retryAfter }),
+    );
 
     res.set("Retry-After", String(retryAfter));
     return res.status(429).json({
@@ -314,6 +332,8 @@ module.exports = {
     normalizeRouteFamily,
     rateLimitOptions,
     retryAfterSeconds,
+    logWorkspaceId,
+    machineTokenRateLimitLogMeta,
     routeFamilyFromRequest,
     safeKeyFragment,
     safeRoutePattern,

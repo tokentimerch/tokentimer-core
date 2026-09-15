@@ -67,7 +67,18 @@ function generateIdempotencyKey() {
   ) {
     return crypto.randomUUID();
   }
-  return `trust-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.getRandomValues === 'function'
+  ) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(
+      ''
+    );
+    return `trust-${hex}`;
+  }
+  throw new Error('Secure random is unavailable');
 }
 
 // Installation transitionStates that still represent a live reference; a

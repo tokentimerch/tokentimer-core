@@ -8,6 +8,7 @@ const {
   buildOrderedLogRecord,
   redactSensitiveFields,
   scrubLogString,
+  safeErrorName,
 } = require(path.resolve(__dirname, "../../apps/api/utils/logger.js"));
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
@@ -66,6 +67,22 @@ describe("logger content-based redaction", () => {
     assert.equal(out.authorization, "[REDACTED]");
     assert.equal(out.cookie, "[REDACTED]");
     assert.equal(out.safe, "ok");
+  });
+
+  it("redacts Vault AppRole roleId and secretId by field name", () => {
+    const out = redactSensitiveFields({
+      roleId: "approle-role-id-value",
+      role_id: "snake-role-id-value",
+      secretId: "approle-secret-id-value",
+      secret_id: "snake-secret-id-value",
+      authMount: "approle",
+    });
+
+    assert.equal(out.roleId, "[REDACTED]");
+    assert.equal(out.role_id, "[REDACTED]");
+    assert.equal(out.secretId, "[REDACTED]");
+    assert.equal(out.secret_id, "[REDACTED]");
+    assert.equal(out.authMount, "approle");
   });
 
   it("redacts raw PEM private keys in free-form strings", () => {
@@ -227,5 +244,15 @@ describe("logger content-based redaction", () => {
     assert.equal(scrubLogString("ok"), "ok");
     assert.equal(scrubLogString("certificate renew succeeded"), "certificate renew succeeded");
     assert.equal(scrubLogString(""), "");
+  });
+
+  it("safeErrorName returns built-in class names without copying error fields", () => {
+    assert.equal(safeErrorName(new TypeError("nope")), "TypeError");
+    assert.equal(safeErrorName(new RangeError("nope")), "RangeError");
+    assert.equal(safeErrorName(new SyntaxError("nope")), "SyntaxError");
+    const envShaped = new Error("CERTOPS_API_TOKEN_SCOPE_DENIED");
+    envShaped.code = "CERTOPS_API_TOKEN_SCOPE_DENIED";
+    envShaped.name = "CERTOPS_API_TOKEN_SCOPE_DENIED";
+    assert.equal(safeErrorName(envShaped), "Error");
   });
 });

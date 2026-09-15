@@ -405,6 +405,8 @@ importers:
         specifier: 3.0.1
         version: 3.0.1(ajv@8.18.0)
 
+  packages/email-address: {}
+
   packages/log-scrub: {}
 
   packages/node-compat: {}

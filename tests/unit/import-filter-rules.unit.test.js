@@ -1,12 +1,20 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, after } = require("node:test");
 const assert = require("node:assert");
 const {
   validateFilterRules,
   evaluateFilterRules,
   applyFilterRules,
 } = require("../../apps/api/services/importFilterRules");
+const {
+  regexTestBounded,
+  _test: regexBudgetTest,
+} = require("../../apps/api/services/regexMatchBudget");
+
+after(() => {
+  regexBudgetTest.killWorker();
+});
 
 describe("importFilterRules.validateFilterRules", () => {
   it("accepts undefined/null (no rules)", () => {
@@ -85,7 +93,13 @@ describe("importFilterRules.validateFilterRules", () => {
   });
 
   it("rejects other common nested-quantifier shapes", () => {
-    const unsafeValues = ["(a*)*", "(a+)*", "(a*)+", "(a{2,})+", "((a+))+"];
+    const unsafeValues = [
+      "(a*)*",
+      "(a+)*",
+      "(a*)+",
+      "(a{2,})+",
+      "((a+))+",
+    ];
     for (const value of unsafeValues) {
       const err = validateFilterRules([
         { action: "include", matchType: "regex", field: "name", value },
@@ -93,6 +107,19 @@ describe("importFilterRules.validateFilterRules", () => {
       assert.match(
         err,
         /nested quantifiers detected/,
+        `expected ${value} to be rejected`,
+      );
+    }
+  });
+
+  it("rejects overlapping quantified alternatives that the nested-quantifier scan misses", () => {
+    for (const value of ["^(a|aa)+$", "(a|aa)+", "(?:a|aa)+", "(ab|a)*"]) {
+      const err = validateFilterRules([
+        { action: "include", matchType: "regex", field: "name", value },
+      ]);
+      assert.match(
+        err,
+        /overlapping alternatives detected/,
         `expected ${value} to be rejected`,
       );
     }
@@ -340,6 +367,87 @@ describe("importFilterRules.evaluateFilterRules", () => {
     const elapsed = Date.now() - start;
     assert.strictEqual(result, false);
     assert.ok(elapsed < 500, `expected a fast, bounded match, took ${elapsed}ms`);
+  });
+
+  it("does not hang on an overlapping-alternation regex at match time", () => {
+    const rules = [
+      {
+        action: "include",
+        matchType: "regex",
+        field: "name",
+        value: "^(a|aa)+$",
+      },
+    ];
+    const start = Date.now();
+    const result = evaluateFilterRules(rules, { name: `${"a".repeat(40)}` });
+    const elapsed = Date.now() - start;
+    assert.strictEqual(result, false);
+    assert.ok(elapsed < 500, `expected a bounded miss, took ${elapsed}ms`);
+  });
+
+  it("drops the item when an exclude regex cannot be bounded", () => {
+    const rules = [
+      {
+        action: "exclude",
+        matchType: "regex",
+        field: "name",
+        value: "^(a|aa)+$",
+      },
+    ];
+    assert.strictEqual(evaluateFilterRules(rules, { name: "keep-me" }), false);
+  });
+
+  it("still matches a safe regex through the bounded engine", () => {
+    const rules = [
+      {
+        action: "include",
+        matchType: "regex",
+        field: "name",
+        value: "^ci-",
+      },
+    ];
+    assert.strictEqual(evaluateFilterRules(rules, { name: "ci-token" }), true);
+    assert.strictEqual(evaluateFilterRules(rules, { name: "prod-token" }), false);
+  });
+
+  it("fails closed on a persisted overlapping include without hanging", () => {
+    const rules = [
+      {
+        action: "include",
+        matchType: "regex",
+        field: "name",
+        value: "^(a|aa)+$",
+      },
+    ];
+    assert.strictEqual(evaluateFilterRules(rules, { name: "aaaa" }), false);
+  });
+
+  it("fails closed on a persisted overlapping exclude without hanging", () => {
+    const rules = [
+      {
+        action: "exclude",
+        matchType: "regex",
+        field: "name",
+        value: "^(a|aa)+$",
+      },
+    ];
+    assert.strictEqual(evaluateFilterRules(rules, { name: "keep" }), false);
+  });
+});
+
+describe("regexMatchBudget", () => {
+  it("kills a catastrophic match after the budget instead of hanging", () => {
+    assert.strictEqual(regexTestBounded("^x$", "", "x", 50).match, true);
+    const start = Date.now();
+    const result = regexTestBounded(
+      "^(a|aa)+$",
+      "",
+      `${"a".repeat(40)}!`,
+      50,
+    );
+    const elapsed = Date.now() - start;
+    assert.strictEqual(result.timedOut, true);
+    assert.ok(elapsed < 400, `budget kill took ${elapsed}ms`);
   });
 });
 

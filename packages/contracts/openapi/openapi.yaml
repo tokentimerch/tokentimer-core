@@ -85,6 +85,13 @@ paths:
                     type: boolean
                   manualInvitesDisabled:
                     type: boolean
+                  contactGroupPluralWrites:
+                    type: boolean
+                    description: >
+                      When true, the dashboard may assign an asset to more than
+                      one contact group. Off until every API, worker, and
+                      dashboard replica is this release, then set
+                      CONTACT_GROUP_PLURAL_WRITES=true.
   /api/session:
     get:
       tags: [Session]
@@ -1646,7 +1653,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureKeyVaultScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -1704,7 +1711,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProviderScanRequest"
+              $ref: "#/components/schemas/AzureAdScanRequest"
       responses:
         "200":
           description: Integration scan result
@@ -2640,6 +2647,13 @@ paths:
                   type: integer
                 contact_group_id:
                   type: string
+                  nullable: true
+                  description: Legacy single-group assignment. Ignored when contact_group_ids is present. Null or empty clears membership.
+                contact_group_ids:
+                  type: array
+                  items:
+                    type: string
+                  description: Assigned contact groups. Empty array uses the workspace default.
       responses:
         "201":
           description: Endpoint monitor created
@@ -2961,7 +2975,12 @@ paths:
                     contact_group_id:
                       type: string
                       nullable: true
-                      description: Contact group for alerts from the created monitors. Falls back to the workspace default if omitted.
+                      description: Legacy single-group assignment for created monitors. Ignored when contact_group_ids is present. Falls back to the workspace default if both are omitted.
+                    contact_group_ids:
+                      type: array
+                      items:
+                        type: string
+                      description: Assigned contact groups for created monitors. Empty array uses the workspace default.
       responses:
         "201":
           description: Import result with created and skipped rows
@@ -3035,7 +3054,7 @@ paths:
       tags: [Workspaces]
       summary: Reassign tokens between contact groups
       operationId: reassignTokenContactGroup
-      description: Moves token contact_group_id values from one group to another in the workspace.
+      description: Moves tokens and CertOps agents from one contact group to another. Other assigned groups on a multi-group asset are kept. The destination group is added; the source group is removed.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -5567,12 +5586,13 @@ paths:
       summary: Update a CertOps agent's downtime alert settings
       operationId: updateCertOpsAgentAlertSettings
       description: >-
-        Edits `downtimeAlertsEnabled` and/or `contactGroupId` for an already
-        registered agent. Both fields are independently optional: omit a
-        field to leave it unchanged, or send `contactGroupId: null` to
-        explicitly clear it back to "use the workspace default contact
-        group". At least one field is required. Recorded as a
-        CERTOPS_AGENT_ALERT_SETTINGS_UPDATED audit event.
+        Edits `downtimeAlertsEnabled`, `contactGroupId`, and/or
+        `contactGroupIds` for an already registered agent. Fields are
+        independently optional: omit a field to leave it unchanged.
+        `contactGroupIds` wins over `contactGroupId` when both are sent.
+        Send `contactGroupIds: []` or `contactGroupId: null` to clear
+        back to the workspace default. At least one field is required.
+        Recorded as a CERTOPS_AGENT_ALERT_SETTINGS_UPDATED audit event.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -5595,6 +5615,11 @@ paths:
                 contactGroupId:
                   type: string
                   nullable: true
+                contactGroupIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Assigned contact groups. Empty array uses the workspace default. Wins over contactGroupId when both are sent.
       responses:
         "200":
           description: Agent alert settings updated
@@ -5616,7 +5641,7 @@ paths:
               examples:
                 emptyBody:
                   value:
-                    error: At least one of downtimeAlertsEnabled or contactGroupId is required
+                    error: At least one of downtimeAlertsEnabled, contactGroupId, or contactGroupIds is required
                     code: CERTOPS_AGENT_ALERT_SETTINGS_EMPTY
                 invalidContactGroup:
                   value:
@@ -9432,7 +9457,14 @@ components:
           example: false
         contact_group_id:
           type: string
+          nullable: true
           example: "d7c5f1be-15f4-4b5b-9b49-f80f0d48d085"
+          description: Legacy single-group assignment. Ignored when contact_group_ids is present. Null or empty clears membership.
+        contact_group_ids:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups. Empty array uses the workspace default.
         description:
           type: string
           example: "Rotated quarterly by platform team"
@@ -9474,6 +9506,15 @@ components:
         updated_at:
           type: string
           format: date-time
+        contact_group_id:
+          type: string
+          nullable: true
+          description: Lexicographically smallest assigned group, or null when the asset uses the workspace default.
+        contact_group_ids:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups, sorted lexicographically. Empty when the asset uses the workspace default.
         alert_state:
           $ref: "#/components/schemas/AlertState"
       example:
@@ -9752,6 +9793,192 @@ components:
         credentials:
           type: object
           additionalProperties: true
+    AzureScanFilterRules:
+      type: array
+      maxItems: 50
+      description: >-
+        Ordered include/exclude rules applied to scan results before
+        import. Exclude rules always win; when include rules exist,
+        only matching items are kept.
+      items:
+        type: object
+        additionalProperties: false
+        required: [action, matchType, field, value]
+        properties:
+          action:
+            type: string
+            enum: [include, exclude]
+          matchType:
+            type: string
+            enum: [regex, exact]
+          field:
+            type: string
+            enum: [name, description, location]
+          value:
+            type: string
+            maxLength: 500
+    AzureKeyVaultScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureKeyVaultBearerScanRequest"
+        - $ref: "#/components/schemas/AzureKeyVaultClientCredentialsScanRequest"
+    AzureKeyVaultBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, token]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        token:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureKeyVaultClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultUrl, authMethod, tenantId, clientId, clientSecret]
+      properties:
+        vaultUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            secrets:
+              type: boolean
+              default: true
+            certificates:
+              type: boolean
+              default: true
+            keys:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdScanRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AzureAdBearerScanRequest"
+        - $ref: "#/components/schemas/AzureAdClientCredentialsScanRequest"
+    AzureAdBearerScanRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        authMethod:
+          type: string
+          enum: [token]
+          description: >-
+            Optional. Omitted values default to token at runtime.
+            Explicit empty or null is rejected.
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
+    AzureAdClientCredentialsScanRequest:
+      type: object
+      additionalProperties: false
+      required: [authMethod, tenantId, clientId, clientSecret]
+      properties:
+        authMethod:
+          type: string
+          enum: [client_credentials]
+        tenantId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: Entra tenant GUID or tenant domain name.
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        include:
+          type: object
+          additionalProperties: false
+          properties:
+            applications:
+              type: boolean
+              default: true
+            servicePrincipals:
+              type: boolean
+              default: true
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 2000
+          default: 500
+        filterRules:
+          $ref: "#/components/schemas/AzureScanFilterRules"
     GcpScanRequest:
       type: object
       additionalProperties: false
@@ -9816,69 +10043,139 @@ components:
                 type: string
                 maxLength: 500
     VaultScanRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
-        include:
-          type: object
-          additionalProperties: true
-        mounts:
-          type: array
-          items:
-            type: string
-        maxItemsPerMount:
-          type: integer
-          minimum: 1
-          maximum: 2000
-        pathPrefix:
-          type: string
-          description: >-
-            Folder inside each KV engine, or an exact secret path. A leading
-            segment matching the mount's own name is ignored.
-        categories:
-          type: array
-          description: >-
-            Asset categories to keep in the scan result. Omit to keep all.
-          items:
-            type: string
-            enum: [cert, key_secret]
-        filterRules:
-          type: array
-          maxItems: 50
-          description: >-
-            Ordered include/exclude rules applied to scan results before
-            import. Exclude rules always win; when include rules exist, only
-            matching items are kept.
-          items:
-            type: object
-            required: [action, matchType, field, value]
-            properties:
-              action:
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+            include:
+              type: object
+              additionalProperties: true
+            mounts:
+              type: array
+              items:
                 type: string
-                enum: [include, exclude]
-              matchType:
+            maxItemsPerMount:
+              type: integer
+              minimum: 1
+              maximum: 2000
+            pathPrefix:
+              type: string
+              description: >-
+                Folder inside each KV engine, or an exact secret path. A leading
+                segment matching the mount's own name is ignored.
+            categories:
+              type: array
+              description: >-
+                Asset categories to keep in the scan result. Omit to keep all.
+              items:
                 type: string
-                enum: [regex, exact]
-              field:
-                type: string
-                enum: [name, description, location]
-              value:
-                type: string
-                maxLength: 500
+                enum: [cert, key_secret]
+            filterRules:
+              type: array
+              maxItems: 50
+              description: >-
+                Ordered include/exclude rules applied to scan results before
+                import. Exclude rules always win; when include rules exist, only
+                matching items are kept.
+              items:
+                type: object
+                required: [action, matchType, field, value]
+                properties:
+                  action:
+                    type: string
+                    enum: [include, exclude]
+                  matchType:
+                    type: string
+                    enum: [regex, exact]
+                  field:
+                    type: string
+                    enum: [name, description, location]
+                  value:
+                    type: string
+                    maxLength: 500
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     VaultMountsRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     IntegrationScanResponse:
       type: object
       required: [items]
@@ -9907,6 +10204,13 @@ components:
                 type: boolean
               truncated:
                 type: boolean
+              hasErrors:
+                type: boolean
+              permissionDenied:
+                type: boolean
+                description: >-
+                  True when at least one listed object returned HTTP 403.
+                  The scan is partial; the UI must not treat this as success.
               error:
                 type: string
                 description: Provider-formatted reason when the sub-scan failed.
@@ -10016,7 +10320,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group to copy onto the agent record created when this token is consumed. Null means "use the workspace default contact group".
+          description: Lexicographically smallest assigned group copied onto the agent at registration. Null when contactGroupIds is empty.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Contact groups copied onto the agent at registration. Empty array uses the workspace default.
     CertOpsAgentBootstrapTokenListResponse:
       type: object
       additionalProperties: false
@@ -10048,7 +10357,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group for the agent's downtime alerts. Validated against the workspace's configured contact groups; null uses the workspace default.
+          description: Legacy single-group assignment. Ignored when contactGroupIds is present. Null uses the workspace default.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Contact groups for the agent's downtime alerts. Empty array uses the workspace default.
     CertOpsAgentBootstrapTokenCreateResponse:
       type: object
       additionalProperties: false
@@ -10126,7 +10440,12 @@ components:
         contactGroupId:
           type: string
           nullable: true
-          description: Contact group used for this agent's downtime alerts. Null means "use the workspace default contact group".
+          description: Lexicographically smallest assigned group, or null when the agent uses the workspace default.
+        contactGroupIds:
+          type: array
+          items:
+            type: string
+          description: Assigned contact groups, sorted lexicographically. Empty when the agent uses the workspace default.
         dependentAutoRenewCertificateCount:
           type: integer
           minimum: 0

@@ -2,6 +2,9 @@ const client = require("prom-client");
 const { csrfRejections } = require("../utils/metrics");
 const { logger } = require("../utils/logger");
 const { pool } = require("../db/database");
+const {
+  isContactGroupPluralWritesEnabled,
+} = require("../src/shared/contactGroupPluralWrites");
 
 const router = require("express").Router();
 
@@ -29,11 +32,12 @@ router.get("/health", async (req, res) => {
 // Auth features availability endpoint (for frontend conditional UI)
 // Core only supports local email/password
 router.get("/api/auth/features", (_req, res) => {
-  res.json({
-    saml: false,
-    oidc: false,
-    manualInvitesDisabled: process.env.DISABLE_MANUAL_INVITES === "true",
-  });
+    res.json({
+      saml: false,
+      oidc: false,
+      manualInvitesDisabled: process.env.DISABLE_MANUAL_INVITES === "true",
+      contactGroupPluralWrites: isContactGroupPluralWritesEnabled(),
+    });
 });
 
 // CSRF rejection counter

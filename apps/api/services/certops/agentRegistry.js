@@ -17,6 +17,9 @@ const {
   CERTOPS_AGENT_ALERTS_ENABLED_INVALID,
   normalizeDowntimeAlertsEnabled,
 } = require("./agentAlertSettings");
+const {
+  replaceAssetContactGroups,
+} = require("../../src/shared/replaceAssetContactGroups");
 
 const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
 const CERTOPS_AGENT_INVALID = "CERTOPS_AGENT_INVALID";
@@ -602,49 +605,90 @@ async function getAgentsByAgentIdStrings(options) {
  * Edit an existing agent's downtime alert settings.
  * Both fields are independently optional so a PATCH can change just one;
  * `undefined` (field omitted from the request body) leaves the stored value
- * untouched, while `null` for contactGroupId explicitly clears it back to
- * "use workspace default". Contact-group existence is validated by the
- * route (it needs workspace_settings, which this registry module does not
- * otherwise touch), mirroring the same split used for bootstrap-token create.
+ * untouched, while `null` / `[]` for contact groups explicitly clears them
+ * back to "use workspace default". Pass `contactGroupIds` (preferred) or
+ * `contactGroupId`. Contact-group existence is validated by the route.
  */
 async function updateAgentAlertSettings(options) {
-  const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
-  const setClauses = [];
-  const params = [workspaceId, options.agentId];
+  const hasDowntime = options.downtimeAlertsEnabled !== undefined;
+  const hasContactGroup =
+    options.contactGroupIds !== undefined ||
+    options.contactGroupId !== undefined;
 
-  if (options.downtimeAlertsEnabled !== undefined) {
-    params.push(
-      normalizeDowntimeAlertsEnabled(options.downtimeAlertsEnabled, {
-        allowOmitted: false,
-      }),
-    );
-    setClauses.push(`downtime_alerts_enabled = $${params.length}`);
-  }
-  if (options.contactGroupId !== undefined) {
-    params.push(options.contactGroupId || null);
-    setClauses.push(`contact_group_id = $${params.length}`);
-  }
-
-  if (setClauses.length === 0) {
+  if (!hasDowntime && !hasContactGroup) {
     return await getAgentById({
-      client: db,
+      client: options.client || pool,
       workspaceId,
       agentId: options.agentId,
       env: options.env,
     });
   }
 
-  const result = await db.query(
-    `UPDATE certops_agents
-        SET ${setClauses.join(", ")},
-            updated_at = NOW()
-      WHERE workspace_id = $1
-        AND id = $2
-      RETURNING ${AGENT_SAFE_SELECT_FIELDS}`,
-    params,
-  );
-  return agentMetadataFromRow(result.rows[0] || null, options.env);
+  let downtimeValue;
+  if (hasDowntime) {
+    downtimeValue = normalizeDowntimeAlertsEnabled(
+      options.downtimeAlertsEnabled,
+      { allowOmitted: false },
+    );
+  }
+
+  // Downtime-only stays a single UPDATE. Contact-group changes go through
+  // replaceAssetContactGroups (join table plus singular mirror) and keep
+  // downtime in the same transaction.
+  if (!hasContactGroup) {
+    const db = options.client || pool;
+    const result = await db.query(
+      `UPDATE certops_agents
+          SET downtime_alerts_enabled = $3,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = $2
+        RETURNING ${AGENT_SAFE_SELECT_FIELDS}`,
+      [workspaceId, options.agentId, downtimeValue],
+    );
+    return agentMetadataFromRow(result.rows[0] || null, options.env);
+  }
+
+  async function apply(client) {
+    const ids =
+      options.contactGroupIds !== undefined
+        ? Array.isArray(options.contactGroupIds)
+          ? options.contactGroupIds
+          : []
+        : options.contactGroupId
+          ? [String(options.contactGroupId)]
+          : [];
+    await replaceAssetContactGroups({
+      client,
+      kind: "agent",
+      assetId: options.agentId,
+      workspaceId,
+      ids,
+    });
+
+    const assignments = ["updated_at = NOW()"];
+    const params = [workspaceId, options.agentId];
+    if (hasDowntime) {
+      params.push(downtimeValue);
+      assignments.unshift(`downtime_alerts_enabled = $${params.length}`);
+    }
+
+    const result = await client.query(
+      `UPDATE certops_agents
+          SET ${assignments.join(", ")}
+        WHERE workspace_id = $1
+          AND id = $2
+        RETURNING ${AGENT_SAFE_SELECT_FIELDS}`,
+      params,
+    );
+    return agentMetadataFromRow(result.rows[0] || null, options.env);
+  }
+
+  if (options.client) {
+    return await apply(options.client);
+  }
+  return await withTransaction(pool, apply);
 }
 
 // Leased jobs actively claimed by this agent block a non-forced retire.

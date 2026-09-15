@@ -994,6 +994,13 @@ describe("CERTOPS_AGENT_REGISTERED", () => {
         if (sql.includes("INSERT INTO certops_agent_registration_replays")) {
           return { rows: [] };
         }
+        if (
+          sql.includes("certops_agent_contact_groups") ||
+          (sql.includes("UPDATE certops_agents") &&
+            sql.includes("SET contact_group_id"))
+        ) {
+          return { rows: [] };
+        }
         throw new Error(`unexpected query: ${sql}`);
       },
       release() {},

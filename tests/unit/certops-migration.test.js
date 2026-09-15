@@ -1646,12 +1646,12 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 52);
+    assert.equal(sorted[sorted.length - 1], 55);
   });
 });
 
-describe("migration 52 alert read-model indexes", () => {
-  const migration = migrations.find((entry) => entry.version === 52);
+describe("migration 55 alert read-model indexes", () => {
+  const migration = migrations.find((entry) => entry.version === 55);
 
   it("adds idempotent partial indexes for expiry lookup and historical enqueue provenance", () => {
     assert.ok(migration);

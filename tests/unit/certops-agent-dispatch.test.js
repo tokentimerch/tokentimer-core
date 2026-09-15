@@ -89,6 +89,13 @@ function createMockPool(handler) {
         });
         return { rows: [] };
       }
+      if (
+        sql.includes("certops_agent_contact_groups") ||
+        (sql.includes("UPDATE certops_agents") &&
+          sql.includes("SET contact_group_id"))
+      ) {
+        return { rows: [] };
+      }
       return handler(sql, params, state);
     },
     release: () => {
@@ -335,6 +342,42 @@ describe("agentDispatch.registerAgent", () => {
     assert.equal(persisted[0].encryption_version, ENCRYPTION_VERSION);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
     assert.equal(dbPool.state.released, true);
+  });
+
+  it("copies bootstrap contactGroupIds onto the agent join table", async () => {
+    const dbPool = createMockPool(registrationQueryHandler());
+    await registerAgent({
+      dbPool,
+      bootstrapToken: {
+        id: "boot-1",
+        workspaceId: WORKSPACE_A,
+        contactGroupId: "alerts",
+        contactGroupIds: ["ops", "alerts"],
+      },
+      envelope: registerEnvelope(),
+      body: registerBody(),
+      deps: {
+        ensureActiveSigningKey: async () => ({
+          signingKeyId: "key-1",
+          publicKeyPem: "pem",
+        }),
+        generateAgentCredential: () => ({
+          credentialPrefix: "ttagent_0123456789abcdef",
+          credentialHash: "hash",
+          plaintextCredential: `ttagent_0123456789abcdef_${"a".repeat(64)}`,
+        }),
+        consumeBootstrapToken: async () => ({ id: "boot-1" }),
+      },
+    });
+    const insert = dbPool.state.queries.find((query) =>
+      query.text.includes("INSERT INTO certops_agent_contact_groups"),
+    );
+    assert.ok(insert, "expected join-table insert");
+    assert.deepEqual(insert.params, [
+      "agent-row-1",
+      WORKSPACE_A,
+      ["alerts", "ops"],
+    ]);
   });
 
   it("fails closed when the registration encryption key is missing", async () => {

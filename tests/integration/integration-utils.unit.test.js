@@ -18,8 +18,12 @@ function loadIntegrationUtils() {
   throw new Error("Unable to resolve integrationUtils module in this variant");
 }
 
-const { tryParseDate, discoverExpiryFromObject, formatDateYmd } =
-  loadIntegrationUtils();
+const {
+  tryParseDate,
+  discoverExpiryFromObject,
+  formatDateYmd,
+  joinIntegrationApiUrl,
+} = loadIntegrationUtils();
 
 describe("integrationUtils unit tests", () => {
   describe("tryParseDate", () => {
@@ -110,6 +114,29 @@ describe("integrationUtils unit tests", () => {
 
     it("returns null for invalid dates", () => {
       expect(formatDateYmd("not-a-date")).to.be.null;
+    });
+  });
+
+  describe("joinIntegrationApiUrl", () => {
+    it("keeps a GitLab relative URL root and GitHub Enterprise /api/v3 prefix", () => {
+      expect(
+        joinIntegrationApiUrl("https://gitlab.com", "/api/v4/user"),
+      ).to.equal("https://gitlab.com/api/v4/user");
+      expect(
+        joinIntegrationApiUrl("https://test.com/gitlab", "/api/v4/user"),
+      ).to.equal("https://test.com/gitlab/api/v4/user");
+      expect(
+        joinIntegrationApiUrl("https://test.com/gitlab/", "api/v4/projects"),
+      ).to.equal("https://test.com/gitlab/api/v4/projects");
+      expect(
+        joinIntegrationApiUrl("https://ghe.example.com/api/v3", "/user"),
+      ).to.equal("https://ghe.example.com/api/v3/user");
+    });
+
+    it("rejects a scheme-relative API path", () => {
+      expect(() =>
+        joinIntegrationApiUrl("https://test.com/gitlab", "//evil.example/x"),
+      ).to.throw(/scheme-relative/);
     });
   });
 });

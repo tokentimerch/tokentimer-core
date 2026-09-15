@@ -81,6 +81,23 @@ describe('CertOpsSettings job approval policy', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps job approval visible for a non-admin and names the admin-only bar', () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+
+    renderPage();
+
+    expect(screen.getByText('Job approval')).toBeInTheDocument();
+    expect(screen.getByText('Not required')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Only workspace admins can enable or disable job approval.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Require approval for every new job')
+    ).not.toBeInTheDocument();
+  });
+
   it('lets an admin turn the policy on', async () => {
     const setRequireApprovalAlways = vi.fn().mockResolvedValue({});
     useCertOpsWorkspaceKillSwitchMock.mockReturnValue({
@@ -92,7 +109,9 @@ describe('CertOpsSettings job approval policy', () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByLabelText('Require approval for every new job'));
+    fireEvent.click(
+      screen.getByLabelText('Require approval for every new job')
+    );
 
     await waitFor(() => {
       expect(setRequireApprovalAlways).toHaveBeenCalledWith(true);

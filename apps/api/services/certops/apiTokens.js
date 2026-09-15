@@ -281,6 +281,8 @@ function tokenPrefixFor(rawToken) {
 }
 
 function sha256Hex(value) {
+  // High-entropy API token lookup hash, not a password KDF.
+  // codeql[js/insufficient-password-hash]
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
 

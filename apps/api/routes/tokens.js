@@ -16,6 +16,12 @@ const {
   enrichTokensWithAlertState,
 } = require("../services/alertEligibility");
 const { fetchAlertLifecycle } = require("../services/alertLifecycle");
+const {
+  interpretContactGroupWrite,
+  normalizeAssignedGroupIds,
+  canonicalLegacyContactGroupId,
+} = require("../src/shared/contactGroups");
+const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
 
 const router = require("express").Router();
 
@@ -72,6 +78,95 @@ function isCertificateToken(token) {
   const category = String(token?.category || "").toLowerCase();
   const type = String(token?.type || "").toLowerCase();
   return category === "cert" || CERTIFICATE_TOKEN_TYPES.has(type);
+}
+
+function hasBodyField(body, key) {
+  return Object.prototype.hasOwnProperty.call(body || {}, key);
+}
+
+function interpretTokenMembership(body, { isCreate }) {
+  try {
+    const interpreted = interpretContactGroupWrite({
+      contactGroupIds: body?.contact_group_ids,
+      contactGroupId: body?.contact_group_id,
+      hasPlural: hasBodyField(body, "contact_group_ids"),
+      hasSingular: hasBodyField(body, "contact_group_id"),
+    });
+    if (isCreate && interpreted.action === "omit") {
+      return { action: "set", ids: [] };
+    }
+    return interpreted;
+  } catch (err) {
+    if (err?.code === "VALIDATION_ERROR") err.statusCode = 400;
+    throw err;
+  }
+}
+
+function invalidContactGroupResponse(res) {
+  return res.status(400).json({
+    error: "Invalid contact_group_id for workspace",
+    code: "VALIDATION_ERROR",
+  });
+}
+
+async function assertMembershipIfSet(workspaceId, membership) {
+  if (!workspaceId || membership.action !== "set") return;
+  await assertContactGroupIds(pool, workspaceId, membership.ids);
+}
+
+function applyMembershipToTokenData(tokenData, membership) {
+  if (membership.action !== "set") return tokenData;
+  tokenData.contact_group_ids = membership.ids;
+  return tokenData;
+}
+
+async function attachContactGroupIdsToTokens(tokens) {
+  const list = (Array.isArray(tokens) ? tokens : [tokens]).filter(Boolean);
+  for (const token of list) {
+    token.contact_group_ids = Array.isArray(token.contact_group_ids)
+      ? normalizeAssignedGroupIds(token.contact_group_ids)
+      : [];
+  }
+
+  const workspaceIds = [];
+  const tokenIds = [];
+  const seenWs = new Set();
+  const seenTok = new Set();
+  for (const token of list) {
+    if (!token.workspace_id || token.id == null) continue;
+    const wsKey = String(token.workspace_id);
+    if (!seenWs.has(wsKey)) {
+      seenWs.add(wsKey);
+      workspaceIds.push(token.workspace_id);
+    }
+    if (!seenTok.has(token.id)) {
+      seenTok.add(token.id);
+      tokenIds.push(token.id);
+    }
+  }
+  if (workspaceIds.length === 0 || tokenIds.length === 0) return tokens;
+
+  const result = await pool.query(
+    `SELECT token_id, contact_group_id
+       FROM token_contact_groups
+      WHERE workspace_id = ANY($1::uuid[]) AND token_id = ANY($2::int[])`,
+    [workspaceIds, tokenIds],
+  );
+  const grouped = new Map();
+  for (const row of result.rows || []) {
+    const tokenId = Number(row.token_id);
+    if (!grouped.has(tokenId)) grouped.set(tokenId, []);
+    grouped.get(tokenId).push(row.contact_group_id);
+  }
+  for (const token of list) {
+    if (!token.workspace_id || token.id == null) continue;
+    const ids = normalizeAssignedGroupIds(
+      grouped.get(Number(token.id)) || grouped.get(token.id) || [],
+    );
+    token.contact_group_ids = ids;
+    token.contact_group_id = canonicalLegacyContactGroupId(ids);
+  }
+  return tokens;
 }
 
 async function isManagedBackedCertificateToken(token) {
@@ -241,6 +336,7 @@ router.get(
       const items = await enrichTokensWithAlertState(
         itemsRes.rows.map((t) => Token.convertNumericFields(t)),
       );
+      await attachContactGroupIdsToTokens(items);
 
       // 2. Fetch total count and facets in a single optimized query using CTEs
       const statsSql = `
@@ -365,6 +461,7 @@ router.get(
           .json({ error: "Token not found", code: "TOKEN_NOT_FOUND" });
       }
 
+      await attachContactGroupIdsToTokens(token);
       res.json(await enrichTokenWithAlertState(token));
     } catch (error) {
       logger.error("Error fetching token:", {
@@ -409,7 +506,6 @@ router.post(
         contacts,
         description,
         notes,
-        contact_group_id,
         privileges,
         last_used,
         imported_at,
@@ -624,12 +720,26 @@ router.post(
             message: `A token named "${tokenData.name}"${tokenData.location ? ` at location "${tokenData.location}"` : ""} already exists in this workspace. Creating this token will update the existing one.`,
           });
         }
+        let updateMembership;
+        try {
+          updateMembership = interpretTokenMembership(req.body, {
+            isCreate: false,
+          });
+          await assertMembershipIfSet(workspaceId, updateMembership);
+        } catch (err) {
+          if (err?.code === "VALIDATION_ERROR") {
+            return invalidContactGroupResponse(res);
+          }
+          throw err;
+        }
+        applyMembershipToTokenData(tokenData, updateMembership);
         // If confirmed, update the existing token instead
         const updatedToken = await Token.update(existingToken.id, {
           ...tokenData,
           expiration,
           created_at: tokenData.created_at, // Allow updating to null if not found in latest import
         });
+        await attachContactGroupIdsToTokens(updatedToken);
         // Audit: token updated via creation endpoint
         try {
           await writeAudit({
@@ -667,34 +777,24 @@ router.post(
         expiration: tokenData.expiration,
       });
 
-      // Validate contact_group_id belongs to workspace (if provided)
-      let normalizedContactGroupId = null;
-      if (
-        contact_group_id !== undefined &&
-        contact_group_id !== null &&
-        String(contact_group_id).trim() !== ""
-      ) {
-        const cgId = String(contact_group_id).trim();
-        try {
-          const sql =
-            "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)";
-          const cgRes = await pool.query(sql, [workspaceId, cgId]);
-          if (cgRes.rowCount === 0) {
-            return res.status(400).json({
-              error: "Invalid contact_group_id for workspace",
-              code: "VALIDATION_ERROR",
-            });
-          }
-          normalizedContactGroupId = cgId;
-        } catch (_err) {
-          logger.warn("DB operation failed", { error: _err.message });
+      // Validate contact_group_id / contact_group_ids against workspace JSON
+      let createMembership;
+      try {
+        createMembership = interpretTokenMembership(req.body, {
+          isCreate: true,
+        });
+        await assertMembershipIfSet(workspaceId, createMembership);
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
         }
+        throw err;
       }
 
-      const tokenDataWithGroup = {
-        ...tokenData,
-        contact_group_id: normalizedContactGroupId,
-      };
+      const tokenDataWithGroup = applyMembershipToTokenData(
+        { ...tokenData },
+        createMembership,
+      );
 
       // Validate certopsApiTokenId belongs to this workspace before linking,
       // so a token in one workspace can't be wired to another workspace's
@@ -749,8 +849,12 @@ router.post(
         type: token.type,
         category: token.category,
       });
+      await attachContactGroupIdsToTokens(token);
       res.status(201).json(await enrichTokenWithAlertStateBestEffort(token));
     } catch (error) {
+      if (error?.code === "VALIDATION_ERROR") {
+        return invalidContactGroupResponse(res);
+      }
       logger.error("Token creation error:", error.message);
       logger.error("Token creation error stack:", error.stack);
       logger.error("Request details:", {
@@ -958,7 +1062,6 @@ router.put(
       domains,
       location,
       used_by,
-      contact_group_id,
       issuer,
       serial_number,
       subject,
@@ -1348,26 +1451,26 @@ router.put(
         }),
       };
 
-      // Validate contact_group_id ownership
-      if (contact_group_id !== undefined && contact_group_id !== null) {
-        const cgId = String(contact_group_id || "").trim();
-        if (cgId.length > 0) {
-          const sql =
-            "SELECT 1 FROM workspace_settings WHERE workspace_id = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(contact_groups) AS g WHERE (g->>'id') = $2)";
-          const cgRes = await pool.query(sql, [
+      // Validate contact_group_id / contact_group_ids against workspace JSON
+      let updateMembership;
+      try {
+        updateMembership = interpretTokenMembership(req.body, {
+          isCreate: false,
+        });
+        if (updateMembership.action === "set") {
+          await assertMembershipIfSet(
             existingToken.workspace_id,
-            cgId,
-          ]);
-          if (cgRes.rowCount === 0) {
-            return res.status(400).json({
-              error: "Invalid contact_group_id for workspace",
-              code: "VALIDATION_ERROR",
-            });
-          }
-          updateData.contact_group_id = cgId;
-        } else {
-          updateData.contact_group_id = null;
+            updateMembership,
+          );
         }
+      } catch (err) {
+        if (err?.code === "VALIDATION_ERROR") {
+          return invalidContactGroupResponse(res);
+        }
+        throw err;
+      }
+      if (updateMembership.action === "set") {
+        applyMembershipToTokenData(updateData, updateMembership);
       }
 
       const updatedToken = await Token.update(id, updateData);
@@ -1402,8 +1505,12 @@ router.put(
           error: _err.message,
         });
       }
+      await attachContactGroupIdsToTokens(updatedToken);
       res.json(await enrichTokenWithAlertStateBestEffort(updatedToken));
     } catch (error) {
+      if (error?.code === "VALIDATION_ERROR") {
+        return invalidContactGroupResponse(res);
+      }
       logger.error("Error updating token:", {
         error: error.message,
         stack: error.stack,

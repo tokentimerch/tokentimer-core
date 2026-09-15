@@ -58,10 +58,14 @@ const REDACT_FIELDS = [
   "private_key",
   "client_secret",
   "clientSecret",
+  "roleId",
+  "role_id",
+  "secretId",
+  "secret_id",
 ];
 
 const REDACT_KEY_PATTERN =
-  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token/i;
+  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token|role[-_]?id/i;
 
 function isSensitiveKey(key) {
   return REDACT_KEY_PATTERN.test(String(key));
@@ -192,9 +196,18 @@ logger.error = (...args) => {
   return origError(...args);
 };
 
+/** Reconstruct a class name so logs never copy fields off a tainted Error. */
+function safeErrorName(error) {
+  if (error instanceof TypeError) return "TypeError";
+  if (error instanceof RangeError) return "RangeError";
+  if (error instanceof SyntaxError) return "SyntaxError";
+  return "Error";
+}
+
 module.exports = {
   logger,
   resolveClientIp,
+  safeErrorName,
   buildOrderedLogRecord,
   redactSensitiveFields,
   scrubLogString,

@@ -1,10 +1,6 @@
 const { parseLimits } = require("../services/planLimits");
 const { logger } = require("../utils/logger");
-const {
-  shouldEnforcePrivateIpCheck,
-  validateResolvedIP,
-  webhookHostAllowed,
-} = require("../utils/webhookSafety");
+const { webhookHostAllowed, postWebhook } = require("../utils/webhookSafety");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
 const APP_URL = normalizeUrl(process.env.APP_URL) || "http://localhost:5173";
@@ -52,17 +48,6 @@ async function testWebhookUrl(
         return { success: false, error: "Invalid PagerDuty routing key" };
       }
     }
-    // SSRF protection aligned with worker delivery: block private/reserved
-    // destinations unless WEBHOOK_ALLOW_PRIVATE_IPS=true (self-hosted only).
-    if (shouldEnforcePrivateIpCheck()) {
-      const ipSafe = await validateResolvedIP(target.hostname);
-      if (!ipSafe) {
-        return {
-          success: false,
-          error: `Webhook blocked: ${target.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
-        };
-      }
-    }
     const text = "This is a test message from TokenTimer";
     let payload;
     if (lowerKind === "slack") {
@@ -91,17 +76,11 @@ async function testWebhookUrl(
     } else {
       payload = { message: text, severity: "info" };
     }
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), 5000);
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: signal || controller.signal,
+    const { status, bodyText } = await postWebhook(url, {
+      body: payload,
+      timeoutMs: 5000,
+      signal,
     });
-    clearTimeout(to);
-    const { status } = resp;
-    const bodyText = await resp.text().catch(() => "");
     if (lowerKind === "slack") {
       if (status === 200 && bodyText.trim().toLowerCase() === "ok")
         return { success: true };
@@ -146,7 +125,7 @@ async function testWebhookUrl(
       ? { success: true }
       : { success: false, error: `HTTP ${status}: ${bodyText}` };
   } catch (e) {
-    if (e.name === "AbortError")
+    if (e.name === "AbortError" || e.code === "WEBHOOK_TIMEOUT")
       return { success: false, error: "Timed out (5s)" };
     return { success: false, error: e.message };
   }

@@ -58,4 +58,20 @@ describe("API OpenAPI conformance contract", () => {
       );
     }
   });
+
+  it("VaultScanRequest oneOf forbids mixed token and AppRole fields", () => {
+    const yaml = fs.readFileSync(openApiPath, "utf8");
+    const start = yaml.indexOf("    VaultScanRequest:");
+    assert.ok(start >= 0, "VaultScanRequest schema is missing");
+    const next = yaml.indexOf("\n    VaultMountsRequest:", start);
+    const block = yaml.slice(start, next > start ? next : start + 4000);
+    assert.match(block, /oneOf:/);
+    assert.match(block, /required: \[token\]/);
+    assert.match(block, /required: \[roleId, secretId\]/);
+    assert.match(block, /required: \[roleId\]/);
+    assert.match(block, /required: \[secretId\]/);
+    assert.match(block, /required: \[authMount\]/);
+    assert.match(block, /minLength: 1/);
+    assert.match(block, /not:\s*\n\s+required: \[token\]/);
+  });
 });

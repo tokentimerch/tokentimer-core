@@ -19,8 +19,8 @@ const CERTOPS_CERTIFICATE_PARSE_FAILED = "CERTOPS_CERTIFICATE_PARSE_FAILED";
 const MAX_PUBLIC_CERTIFICATE_INPUT_BYTES = 64 * 1024;
 const CERTOPS_CERTIFICATE_TOO_LARGE = "CERTOPS_CERTIFICATE_TOO_LARGE";
 
-const CERTIFICATE_PEM_BLOCK_PATTERN =
-  /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+const PEM_CERT_BEGIN = "-----BEGIN CERTIFICATE-----";
+const PEM_CERT_END = "-----END CERTIFICATE-----";
 
 class CertOpsCertificateParserError extends Error {
   constructor(message, code) {
@@ -94,15 +94,35 @@ function extractCertificatePemBlocks(input) {
     );
   }
 
-  const matches = [...input.matchAll(CERTIFICATE_PEM_BLOCK_PATTERN)];
-  if (matches.length === 0) {
+  const blocks = [];
+  let cursor = 0;
+  let remainder = "";
+  while (cursor < input.length) {
+    const start = input.indexOf(PEM_CERT_BEGIN, cursor);
+    if (start === -1) {
+      remainder += input.slice(cursor);
+      break;
+    }
+    remainder += input.slice(cursor, start);
+    const endAt = input.indexOf(PEM_CERT_END, start + PEM_CERT_BEGIN.length);
+    if (endAt === -1) {
+      throw createParserError(
+        "Certificate input contains unsupported PEM or non-certificate content",
+        CERTOPS_CERTIFICATE_PARSE_FAILED,
+      );
+    }
+    const blockEnd = endAt + PEM_CERT_END.length;
+    blocks.push(input.slice(start, blockEnd));
+    cursor = blockEnd;
+  }
+
+  if (blocks.length === 0) {
     throw createParserError(
       "Certificate input must contain at least one PEM certificate block",
       CERTOPS_CERTIFICATE_PARSE_FAILED,
     );
   }
 
-  const remainder = input.replace(CERTIFICATE_PEM_BLOCK_PATTERN, "");
   if (remainder.trim().length > 0) {
     throw createParserError(
       "Certificate input contains unsupported PEM or non-certificate content",
@@ -110,7 +130,7 @@ function extractCertificatePemBlocks(input) {
     );
   }
 
-  return matches.map((match) => normalizePemBlock(match[0]));
+  return blocks.map((block) => normalizePemBlock(block));
 }
 
 function normalizeFingerprint(value) {

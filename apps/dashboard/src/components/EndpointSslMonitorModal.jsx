@@ -70,6 +70,8 @@ import {
   useDashboardModalProps,
 } from './DashboardModalFrame.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
+import ContactGroupCheckboxGroup from './ContactGroupCheckboxGroup.jsx';
+import { canonicalContactGroupFields } from '../utils/contactGroupAssignment.js';
 
 const DOMAIN_CHECKER_PAGE_SIZE = 50;
 const ENDPOINT_MONITORS_PAGE_SIZE = 40;
@@ -188,9 +190,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   const [domainHealthCheck, setDomainHealthCheck] = useState(true);
   const [domainInterval, setDomainInterval] = useState('hourly');
   const [domainAlertAfter, setDomainAlertAfter] = useState(2);
-  const [domainContactGroupId, setDomainContactGroupId] = useState(
-    defaultContactGroupId || ''
-  );
+  const [domainContactGroupIds, setDomainContactGroupIds] = useState([]);
   const [addingDomain, setAddingDomain] = useState(false);
   const [domains, setDomains] = useState([]);
   const [domainsLoading, setDomainsLoading] = useState(false);
@@ -222,9 +222,9 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   const [domainCheckerMonitorAlertAfter, setDomainCheckerMonitorAlertAfter] =
     useState(2);
   const [
-    domainCheckerMonitorContactGroupId,
-    setDomainCheckerMonitorContactGroupId,
-  ] = useState(defaultContactGroupId || '');
+    domainCheckerMonitorContactGroupIds,
+    setDomainCheckerMonitorContactGroupIds,
+  ] = useState([]);
   const [domainCheckerImportSection, setDomainCheckerImportSection] =
     useState('');
   const domainCheckerImportInFlightRef = useRef(false);
@@ -365,7 +365,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         health_check_enabled: domainHealthCheck,
         check_interval: domainInterval,
         alert_after_failures: domainAlertAfter,
-        contact_group_id: domainContactGroupId || null,
+        ...canonicalContactGroupFields(domainContactGroupIds),
       };
       if (domainEndpointTokenSection.trim()) {
         endpointBody.section = domainEndpointTokenSection.trim();
@@ -379,7 +379,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       setDomainHealthCheck(true);
       setDomainInterval('hourly');
       setDomainAlertAfter(2);
-      setDomainContactGroupId(defaultContactGroupId || '');
+      setDomainContactGroupIds([]);
       setDomainEndpointTokenSection('');
       loadDomains();
       try {
@@ -666,7 +666,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
           health_check_enabled: domainCheckerMonitorHealthCheck,
           check_interval: domainCheckerMonitorInterval,
           alert_after_failures: domainCheckerMonitorAlertAfter,
-          contact_group_id: domainCheckerMonitorContactGroupId || null,
+          ...canonicalContactGroupFields(domainCheckerMonitorContactGroupIds),
         },
       };
       if (domainCheckerImportSection.trim()) {
@@ -1580,24 +1580,18 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                           </NumberInput>
                         </FormControl>
                       )}
-                      <FormControl minW='220px' maxW='280px'>
-                        <FormLabel fontSize='sm'>Contact group</FormLabel>
-                        <Select
-                          size='sm'
-                          value={domainCheckerMonitorContactGroupId}
-                          onChange={e =>
-                            setDomainCheckerMonitorContactGroupId(
-                              e.target.value
-                            )
-                          }
-                        >
-                          <option value=''>Default workspace group</option>
-                          {(contactGroups || []).map(g => (
-                            <option key={g.id} value={g.id}>
-                              {g.name}
-                            </option>
-                          ))}
-                        </Select>
+                      <FormControl as='fieldset' minW='220px' maxW='320px'>
+                        <FormLabel as='legend' fontSize='sm'>
+                          Contact groups
+                        </FormLabel>
+                        <ContactGroupCheckboxGroup
+                          contactGroups={contactGroups}
+                          value={domainCheckerMonitorContactGroupIds}
+                          onChange={setDomainCheckerMonitorContactGroupIds}
+                          defaultContactGroupId={defaultContactGroupId}
+                          helperText=''
+                          maxH='140px'
+                        />
                       </FormControl>
                     </HStack>
                   )}
@@ -1688,23 +1682,18 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 </FormControl>
               )}
               {Array.isArray(contactGroups) && contactGroups.length > 0 && (
-                <FormControl minW='150px' flex={1}>
-                  <FormLabel fontSize='sm'>Contact group</FormLabel>
-                  <Select
-                    size='sm'
-                    value={domainContactGroupId}
-                    onChange={e => setDomainContactGroupId(e.target.value)}
-                  >
-                    <option value=''>Workspace default</option>
-                    {contactGroups.map(g => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                        {String(g.id) === String(defaultContactGroupId)
-                          ? ' (default)'
-                          : ''}
-                      </option>
-                    ))}
-                  </Select>
+                <FormControl as='fieldset' minW='220px' flex={1}>
+                  <FormLabel as='legend' fontSize='sm'>
+                    Contact groups
+                  </FormLabel>
+                  <ContactGroupCheckboxGroup
+                    contactGroups={contactGroups}
+                    value={domainContactGroupIds}
+                    onChange={setDomainContactGroupIds}
+                    defaultContactGroupId={defaultContactGroupId}
+                    helperText=''
+                    maxH='140px'
+                  />
                 </FormControl>
               )}
               <Button

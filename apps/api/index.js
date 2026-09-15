@@ -24,7 +24,6 @@ setTwilioPool(pool);
 const swaggerJsdoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
 const client = require("prom-client");
-const { doubleCsrf } = require("csrf-csrf");
 const { logger, resolveClientIp } = require("./utils/logger.js");
 const { isNodeUseEnvProxySupported } = require("@tokentimer/node-compat");
 
@@ -42,10 +41,7 @@ const {
   requireWorkspaceMembership,
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
-const {
-  createCsrfExemptMiddleware,
-  isCertOpsMachineTokenCsrfExemptPath,
-} = require("./middleware/csrf-exempt");
+const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -175,30 +171,6 @@ app.set(
 // In production, opt-in explicitly with ENABLE_API_DOCS=true.
 const apiDocsEnabled =
   process.env.ENABLE_API_DOCS === "true" || process.env.NODE_ENV !== "production";
-if (apiDocsEnabled) {
-  app.get("/api-docs/openapi.yaml", (_req, res) => {
-    const openApiSpecFilePath = resolveOpenApiSpecPath();
-    if (!openApiSpecFilePath) {
-      return res.status(500).json({
-        error: "OpenAPI spec file not found",
-        code: "OPENAPI_SPEC_NOT_FOUND",
-      });
-    }
-    return res.sendFile(openApiSpecFilePath);
-  });
-  app.use(
-    "/api-docs",
-    swaggerUi.serve,
-    swaggerUi.setup(null, {
-      swaggerOptions: {
-        url: "/api-docs/openapi.yaml",
-      },
-    }),
-  );
-  logger.info("Swagger documentation available at /api-docs");
-} else {
-  logger.info("Swagger documentation disabled");
-}
 
 // --- CONFIG ---
 const APP_URL = process.env.APP_URL || "http://localhost:5173";
@@ -206,17 +178,12 @@ const isProductionEnvironment =
   (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
 const {
   resolveSessionCookieOptions,
-  resolveCsrfCookieName,
   buildCorsOrigins,
   resolveProductionSecure,
 } = require("./session-cookie-options.js");
 const allowInsecureLocalProdCookie =
   isProductionEnvironment && !resolveProductionSecure(process.env);
 const sessionCookieOptions = resolveSessionCookieOptions(process.env);
-const csrfCookieName = resolveCsrfCookieName(
-  process.env,
-  sessionCookieOptions,
-);
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -275,29 +242,51 @@ app.options(/.*/, cors(corsOptions));
 // prefix/IP limiter before parsing, then applies the smaller dedicated parser.
 // It marks accepted requests so the machine router does not count them twice.
 app.use(createCertOpsMachineWritePreParserBoundary());
+// Parser, not a route. Global and per-route limiters apply to handlers.
+// codeql[js/missing-rate-limiting]
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
 
 // Initialize session and Passport BEFORE any routes that require authentication
 // This ensures req.isAuthenticated and req.user are available in downstream handlers
-app.use(
-  session({
-    store: new pgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true, // Enable table creation if missing
+// Production session cookies use a literal Secure flag; local HTTP cannot.
+// Session setup is middleware, not an HTTP route; limiters wrap the routes below.
+const sessionStore = new pgSession({
+  pool,
+  tableName: "session",
+  createTableIfMissing: true,
+});
+const sessionCommon = {
+  store: sessionStore,
+  name: "sessionId",
+  secret: process.env.SESSION_SECRET,
+  resave: true,
+  saveUninitialized: false,
+  rolling: true,
+  genid: () => crypto.randomBytes(32).toString("hex"),
+};
+if (sessionCookieOptions.secure) {
+  app.use(
+    session({
+      ...sessionCommon,
+      cookie: {
+        ...sessionCookieOptions,
+        httpOnly: true,
+        secure: true,
+      },
     }),
-    name: "sessionId",
-    secret: process.env.SESSION_SECRET,
-    resave: true, // Changed to true to ensure session is saved
-    saveUninitialized: false,
-    cookie: sessionCookieOptions,
-    // Security enhancements
-    rolling: true, // Reset expiration on activity
-    genid: () => {
-      return crypto.randomBytes(32).toString("hex"); // Secure session ID generation
-    },
-  }),
-);
+  );
+} else {
+  app.use(
+    session({
+      ...sessionCommon,
+      cookie: {
+        ...sessionCookieOptions,
+        httpOnly: true,
+        secure: false,
+      },
+    }),
+  );
+}
 
 // Ensure Passport is only initialized once
 if (!app._passportInitialized) {
@@ -308,10 +297,20 @@ if (!app._passportInitialized) {
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// --- CONTACTS (extracted to routes/contacts.js) ---
-app.use(require("./routes/contacts"));
-// --- WHATSAPP (extracted to routes/whatsapp.js) ---
-app.use(require("./routes/whatsapp"));
+// Double-submit CSRF immediately after the cookie parser so later mutating
+// /api and /auth routes are guarded. Tests skip enforcement; development
+// does not. Login, 2FA verify, and resend-verification also list this
+// middleware on the route so it sits in the same setup as those handlers.
+app.use("/api", csrfExempt);
+app.use("/auth", csrfExempt);
+
+// Always rotate (overwrite) so stale cookies after secret rotation or
+// cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
+app.get("/api/csrf-token", (req, res) => {
+  const csrfToken = generateCsrfToken(req, res, true, false);
+  res.json({ csrfToken });
+});
+
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
     // Accept empty bodies for endpoints that don't require a JSON payload
@@ -334,11 +333,45 @@ const {
   getApiLimiter,
 } = require("./middleware/rateLimit");
 
+// Contacts and WhatsApp already attach getApiLimiter on each route. Keep them
+// ahead of the global limiter so unauthenticated Twilio callbacks are not
+// delayed by speedLimiter or double-counted against GLOBAL_RATE_LIMIT_MAX.
+app.use(require("./routes/contacts"));
+app.use(require("./routes/whatsapp"));
+
 // Apply global rate limiting (excluding auth routes)
 app.use(applyGlobalRateLimit);
 // Apply speed limiter only in production
 if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
   app.use(speedLimiter);
+}
+
+if (apiDocsEnabled) {
+  // Register the spec GET before the /api-docs UI middleware so that
+  // path is limited once, not once per layer.
+  app.get("/api-docs/openapi.yaml", getApiLimiter(), (_req, res) => {
+    const openApiSpecFilePath = resolveOpenApiSpecPath();
+    if (!openApiSpecFilePath) {
+      return res.status(500).json({
+        error: "OpenAPI spec file not found",
+        code: "OPENAPI_SPEC_NOT_FOUND",
+      });
+    }
+    return res.sendFile(openApiSpecFilePath);
+  });
+  app.use(
+    "/api-docs",
+    getApiLimiter(),
+    swaggerUi.serve,
+    swaggerUi.setup(null, {
+      swaggerOptions: {
+        url: "/api-docs/openapi.yaml",
+      },
+    }),
+  );
+  logger.info("Swagger documentation available at /api-docs");
+} else {
+  logger.info("Swagger documentation disabled");
 }
 
 // Remove duplicate later session initialization: session was already set up earlier
@@ -360,7 +393,8 @@ app.use(
   (req, res, next) => next(),
 );
 
-// Get current session (before CSRF protection)
+// GET is skipped by CSRF middleware; keep the session probe here so it
+// still runs after cookieParser and session.
 app.get("/api/session", (req, res) => {
   try {
     const authenticated =
@@ -580,36 +614,6 @@ app.post(
   },
 );
 
-// CSRF Protection using Double Submit Cookie pattern (replaces deprecated csurf)
-const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
-  getSecret: () => {
-    if (!process.env.SESSION_SECRET) {
-      throw new Error("SESSION_SECRET environment variable is required");
-    }
-    return process.env.SESSION_SECRET;
-  },
-  cookieName: csrfCookieName,
-  cookieOptions: {
-    ...sessionCookieOptions,
-    path: "/",
-  },
-  getTokenFromRequest: (req) => req.headers["x-csrf-token"],
-});
-
-// CSRF token endpoint — always rotate (overwrite) so stale cookies after secret
-// rotation or cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
-app.get("/api/csrf-token", (req, res) => {
-  const csrfToken = generateCsrfToken(req, res, true, false);
-  res.json({ csrfToken });
-});
-
-// Apply CSRF protection to API routes - Skip in development and test
-if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
-  const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
-    allowPath: isCertOpsMachineTokenCsrfExemptPath,
-  });
-  app.use("/api", csrfExempt);
-}
 // Apply email verification enforcement to all API routes
 app.use("/api", enforceEmailVerification);
 // --- WORKSPACES (extracted to routes/workspaces.js) ---
