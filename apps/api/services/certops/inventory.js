@@ -13,6 +13,9 @@ const {
   RETIRED_CERT_UNSENT_ALERT_STATUSES,
   TOKEN_EXPIRY_ALERT_PREFIX,
 } = require("../../src/shared/retiredCertificateAlerts");
+const {
+  replaceAssetContactGroups,
+} = require("../../src/shared/replaceAssetContactGroups");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID =
@@ -817,7 +820,17 @@ async function ensureManagedCertificateToken(
       certOpsTokenNotes(certificate, domains, options.tokenNotesSourceLabel),
     ],
   );
-  return token.rows[0].id;
+  const tokenId = token.rows[0].id;
+  if (options.workspaceId) {
+    await replaceAssetContactGroups({
+      client,
+      kind: "token",
+      assetId: tokenId,
+      workspaceId: options.workspaceId,
+      ids: [],
+    });
+  }
+  return tokenId;
 }
 
 async function upsertManagedCertificate(client, certificate, options, chainIndex) {

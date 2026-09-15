@@ -9692,69 +9692,139 @@ components:
                 type: string
                 maxLength: 500
     VaultScanRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
-        include:
-          type: object
-          additionalProperties: true
-        mounts:
-          type: array
-          items:
-            type: string
-        maxItemsPerMount:
-          type: integer
-          minimum: 1
-          maximum: 2000
-        pathPrefix:
-          type: string
-          description: >-
-            Folder inside each KV engine, or an exact secret path. A leading
-            segment matching the mount's own name is ignored.
-        categories:
-          type: array
-          description: >-
-            Asset categories to keep in the scan result. Omit to keep all.
-          items:
-            type: string
-            enum: [cert, key_secret]
-        filterRules:
-          type: array
-          maxItems: 50
-          description: >-
-            Ordered include/exclude rules applied to scan results before
-            import. Exclude rules always win; when include rules exist, only
-            matching items are kept.
-          items:
-            type: object
-            required: [action, matchType, field, value]
-            properties:
-              action:
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+            include:
+              type: object
+              additionalProperties: true
+            mounts:
+              type: array
+              items:
                 type: string
-                enum: [include, exclude]
-              matchType:
+            maxItemsPerMount:
+              type: integer
+              minimum: 1
+              maximum: 2000
+            pathPrefix:
+              type: string
+              description: >-
+                Folder inside each KV engine, or an exact secret path. A leading
+                segment matching the mount's own name is ignored.
+            categories:
+              type: array
+              description: >-
+                Asset categories to keep in the scan result. Omit to keep all.
+              items:
                 type: string
-                enum: [regex, exact]
-              field:
-                type: string
-                enum: [name, description, location]
-              value:
-                type: string
-                maxLength: 500
+                enum: [cert, key_secret]
+            filterRules:
+              type: array
+              maxItems: 50
+              description: >-
+                Ordered include/exclude rules applied to scan results before
+                import. Exclude rules always win; when include rules exist, only
+                matching items are kept.
+              items:
+                type: object
+                required: [action, matchType, field, value]
+                properties:
+                  action:
+                    type: string
+                    enum: [include, exclude]
+                  matchType:
+                    type: string
+                    enum: [regex, exact]
+                  field:
+                    type: string
+                    enum: [name, description, location]
+                  value:
+                    type: string
+                    maxLength: 500
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     VaultMountsRequest:
-      type: object
-      required: [address, token]
-      properties:
-        address:
-          type: string
-          format: uri
-        token:
-          type: string
+      allOf:
+        - type: object
+          required: [address]
+          properties:
+            address:
+              type: string
+              format: uri
+            namespace:
+              type: string
+              description: >-
+                Vault Enterprise namespace sent as X-Vault-Namespace.
+                Valid with token or AppRole.
+        - oneOf:
+            - type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+              not:
+                anyOf:
+                  - required: [roleId]
+                  - required: [secretId]
+                  - required: [authMount]
+            - type: object
+              required: [roleId, secretId]
+              properties:
+                roleId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                secretId:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                authMount:
+                  type: string
+                  minLength: 1
+                  pattern: '.*\S.*'
+                  description: AppRole auth mount path. Defaults to approle.
+              not:
+                required: [token]
     IntegrationScanResponse:
       type: object
       required: [items]
@@ -9783,6 +9853,13 @@ components:
                 type: boolean
               truncated:
                 type: boolean
+              hasErrors:
+                type: boolean
+              permissionDenied:
+                type: boolean
+                description: >-
+                  True when at least one listed object returned HTTP 403.
+                  The scan is partial; the UI must not treat this as success.
               error:
                 type: string
                 description: Provider-formatted reason when the sub-scan failed.

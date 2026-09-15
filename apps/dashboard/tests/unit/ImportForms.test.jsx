@@ -153,6 +153,114 @@ describe('Dashboard import forms', () => {
     expect(onError).toHaveBeenCalledWith(null);
   });
 
+  it('ImportVaultForm scans with exclusive AppRole credentials', async () => {
+    vaultScanMock.mockResolvedValue({ items: [], summary: [], mounts: [] });
+
+    renderWithProviders(
+      <ImportVaultForm
+        workspaceId='ws-approle'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('https://vault.your-org.com'),
+      { target: { value: 'https://vault.example.com' } }
+    );
+    fireEvent.click(screen.getByRole('radio', { name: 'AppRole' }));
+    fireEvent.change(screen.getByPlaceholderText('AppRole role ID'), {
+      target: { value: 'role-uuid' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('AppRole secret ID'), {
+      target: { value: 'secret-uuid' },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText('Vault Enterprise namespace'),
+      { target: { value: 'ops' } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() => expect(vaultScanMock).toHaveBeenCalledTimes(1));
+    expect(vaultScanMock.mock.calls[0][0]).toMatchObject({
+      workspaceId: 'ws-approle',
+      address: 'https://vault.example.com',
+      roleId: 'role-uuid',
+      secretId: 'secret-uuid',
+      namespace: 'ops',
+    });
+    expect(vaultScanMock.mock.calls[0][0].token).toBeUndefined();
+  });
+
+  it('ImportVaultForm warns when a scan has per-path permission errors', async () => {
+    vaultScanMock.mockResolvedValue({
+      items: [
+        {
+          name: 'readable',
+          expiration: '2030-01-01',
+          category: 'general',
+          type: 'other',
+          location: 'kv/app',
+        },
+      ],
+      summary: [
+        {
+          mount: 'secret/',
+          type: 'kv',
+          found: 1,
+          hasErrors: true,
+          permissionDenied: true,
+        },
+      ],
+    });
+
+    renderWithProviders(
+      <ImportVaultForm
+        workspaceId='ws-perm'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText('https://vault.your-org.com'),
+      { target: { value: 'https://vault.example.com' } }
+    );
+    fireEvent.change(screen.getByPlaceholderText('token'), {
+      target: { value: 'vault-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/permission denied on some paths/)
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/^found 1$/)).toBeNull();
+  });
+
   it('ImportVaultForm surfaces quota exceeded UI state', async () => {
     const onError = vi.fn();
     vaultScanMock.mockRejectedValue(new Error('quota exceeded from backend'));

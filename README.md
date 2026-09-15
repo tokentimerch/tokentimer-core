@@ -68,7 +68,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 |---|---|
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full environment variables reference |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
 | [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
 | [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, verification, and trust-anchor (CA) distribution/revocation |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
