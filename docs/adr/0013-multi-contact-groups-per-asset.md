@@ -125,14 +125,17 @@ group tables.
    The switch-reads release must re-backfill join rows from the singular
    column at migration start (repairing drift from a mixed dual-write
    window) **before** readers trust the join table and **before** the
-   plural API can write two-or-more memberships. That rebuild insert
-   uses `ON CONFLICT DO NOTHING`: dual-write replicas are still serving
-   and can insert a join row after the rebuild `DELETE` and before the
-   rebuild `INSERT`. The concurrent writer already dual-wrote the
-   correct state, so the migration keeps it rather than taking an
-   exclusive table lock. Canonical lex-smallest id uses UTF-8 byte
-   order (`Buffer.compare` in Node, `COLLATE "C"` in PostgreSQL), not
-   the database's default text collation and not JavaScript's default
+   plural API can write two-or-more memberships. That rebuild starts
+   with `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` on both join
+   tables so dual-write `INSERT`/`UPDATE`/`DELETE` wait, while ordinary
+   reads continue. `ON CONFLICT DO NOTHING` is still required: a writer
+   that already holds a row lock can insert the same membership after
+   the rebuild `DELETE` and before the rebuild `INSERT`. The lock is
+   what stops a change or clear (A to B, or A to empty) from leaving a
+   stale extra join row that switch-reads would then treat as
+   authoritative. Canonical lex-smallest id uses UTF-8 byte order
+   (`Buffer.compare` in Node, `COLLATE "C"` in PostgreSQL), not the
+   database's default text collation and not JavaScript's default
    `.sort()`.
 
    Step 4 (two-or-more membership writes and dashboard multi-select) is

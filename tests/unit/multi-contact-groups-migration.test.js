@@ -133,7 +133,16 @@ describe("migration 54 rebuild join from singular", () => {
   });
 
   it("rebuilds both join tables from the singular column before switch-reads", () => {
-    assert.match(migration.sql, /DELETE FROM token_contact_groups/);
+    const lockAt = migration.sql.search(
+      /LOCK TABLE\s+token_contact_groups,\s+certops_agent_contact_groups\s+IN SHARE ROW EXCLUSIVE MODE/,
+    );
+    const deleteAt = migration.sql.search(/DELETE FROM token_contact_groups/);
+    assert.notEqual(lockAt, -1);
+    assert.notEqual(deleteAt, -1);
+    assert.ok(
+      lockAt < deleteAt,
+      "SHARE ROW EXCLUSIVE must be taken before the rebuild DELETE",
+    );
     assert.match(migration.sql, /DELETE FROM certops_agent_contact_groups/);
     assert.match(
       migration.sql,

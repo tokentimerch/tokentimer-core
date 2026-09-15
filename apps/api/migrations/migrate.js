@@ -3766,10 +3766,18 @@ const migrations = [
       -- Switch-reads cutover: repair join drift from mixed dual-write and
       -- singular-only writers before join membership is authoritative.
       -- Still 0-or-1 rows per asset (plural writes start after migrate).
-      -- ON CONFLICT is required for the dual-write -> switch-reads rolling
-      -- cutover: a still-running dual-write replica can insert a join row
-      -- after DELETE and before this INSERT. That writer already dual-wrote
-      -- the correct state, so keep the existing row.
+      -- SHARE ROW EXCLUSIVE lets SELECTs continue and blocks join INSERT /
+      -- UPDATE / DELETE for the rebuild. Without it, a dual-write change
+      -- A->B can leave stale A: this DELETE of A is uncommitted, the writer
+      -- sets singular B then waits on that row, this INSERT still copies A,
+      -- commit, and the writer's DELETE (snapshot from before the insert)
+      -- never sees the new A. ON CONFLICT still covers a writer that
+      -- inserts after DELETE and before INSERT of the same membership.
+      LOCK TABLE
+        token_contact_groups,
+        certops_agent_contact_groups
+      IN SHARE ROW EXCLUSIVE MODE;
+
       DELETE FROM token_contact_groups;
       INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
       SELECT id, workspace_id, contact_group_id
