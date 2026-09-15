@@ -13,6 +13,12 @@ const {
   maskVaultAddress,
 } = require("./vaultAuth");
 
+function recordVaultItemReadFailure(err, state) {
+  if (isVaultAuthError(err)) throw err;
+  state.hasReadErrors = true;
+  if (err && err.status === 403) state.permissionDenied = true;
+}
+
 function resolveVaultSession({
   session,
   address,
@@ -502,7 +508,8 @@ async function scanKvV2({
         secretPath: trimmedPrefix,
       });
       keys.unshift(trimmedPrefix);
-    } catch (_e) {
+    } catch (e) {
+      if (isVaultAuthError(e)) throw e;
       // Not a readable secret; folder listing (possibly empty) stands.
     }
   }
@@ -511,7 +518,7 @@ async function scanKvV2({
   // before the read loop below ever runs; that must carry through even if
   // every enumerated key happens to be readable and under maxItems.
   let truncated = keyListTruncated;
-  let hasReadErrors = false;
+  const readState = { hasReadErrors: false, permissionDenied: false };
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
@@ -532,12 +539,12 @@ async function scanKvV2({
             mountPath,
             secretPath: key,
           });
-        } catch (_e) {
+        } catch (e) {
           // A secret we know exists (it was LIST-ed) but cannot read means
           // its continued existence is unconfirmed, not confirmed-absent --
           // the mount's KV sub-scope must be reported incomplete so cleanup
-          // never treats "we skipped it" as "it's gone".
-          hasReadErrors = true;
+          // never treats "we skipped it" as "it's gone". Auth failures abort.
+          recordVaultItemReadFailure(e, readState);
           return null;
         }
         return buildKvSecretItems({ mountPath, key, secret });
@@ -556,7 +563,12 @@ async function scanKvV2({
       }
     }
   }
-  return { items, truncated, hasErrors: hasReadErrors };
+  return {
+    items,
+    truncated,
+    hasErrors: readState.hasReadErrors,
+    permissionDenied: readState.permissionDenied,
+  };
 }
 
 async function tryListPkiCertSerials({ address, session, mountPath }) {
@@ -593,7 +605,7 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
   const mountPath = mount.path; // ends with '/'
   const serials = await tryListPkiCertSerials({ address, session, mountPath });
   const items = [];
-  let hasReadErrors = false;
+  const readState = { hasReadErrors: false, permissionDenied: false };
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < serials.length; i += BATCH_SIZE) {
@@ -611,12 +623,13 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
             mountPath,
             serial,
           });
-        } catch (_) {
+        } catch (e) {
           // A per-serial read failure means this cert's continued existence
           // is unconfirmed, not confirmed-absent -- the mount's PKI
           // sub-scope must be reported incomplete so cleanup never treats
           // an unreadable cert as "not rediscovered, therefore obsolete".
-          hasReadErrors = true;
+          // Auth failures abort rather than looking like one unread serial.
+          recordVaultItemReadFailure(e, readState);
           return null;
         }
         if (!pem) return null;
@@ -651,8 +664,14 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
       }
     }
   }
-  const truncated = serials.length > items.length && !hasReadErrors;
-  return { items, truncated, hasErrors: hasReadErrors };
+  const truncated =
+    serials.length > items.length && !readState.hasReadErrors;
+  return {
+    items,
+    truncated,
+    hasErrors: readState.hasReadErrors,
+    permissionDenied: readState.permissionDenied,
+  };
 }
 
 async function scanVault({
@@ -732,7 +751,7 @@ async function scanVault({
       status: e.status,
     });
     if (isVaultAuthError(e)) throw e;
-    throw new Error(`Failed to list Vault mounts: ${e.message}`);
+    throw new Error(`Failed to list Vault mounts: ${e.message}`, { cause: e });
   }
 
   const toScan = mounts.filter((m) => {
@@ -772,6 +791,7 @@ async function scanVault({
           items: rawItems,
           truncated,
           hasErrors,
+          permissionDenied,
         } = await scanKvV2({
           address,
           session,
@@ -792,6 +812,7 @@ async function scanVault({
           found: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
           complete: !truncated && !hasErrors,
           // Sub-scope dimensions use different key semantics than a token's
           // own recorded dimensions: `pathPrefix` triggers a LIKE-prefix
@@ -809,6 +830,7 @@ async function scanVault({
           itemsFound: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
         });
       } catch (e) {
         if (isVaultAuthError(e)) throw e;
@@ -832,6 +854,7 @@ async function scanVault({
           items: rawItems,
           truncated,
           hasErrors,
+          permissionDenied,
         } = await scanPki({
           address,
           session,
@@ -847,6 +870,7 @@ async function scanVault({
           found: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
           complete: !truncated && !hasErrors,
           dimensions: {
             mount: m.path,
@@ -858,6 +882,7 @@ async function scanVault({
           itemsFound: items.length,
           truncated,
           hasErrors,
+          permissionDenied: Boolean(permissionDenied),
         });
       } catch (e) {
         if (isVaultAuthError(e)) throw e;

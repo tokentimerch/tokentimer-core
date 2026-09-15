@@ -70,6 +70,8 @@ describe("API OpenAPI conformance contract", () => {
     assert.match(block, /required: \[roleId, secretId\]/);
     assert.match(block, /required: \[roleId\]/);
     assert.match(block, /required: \[secretId\]/);
+    assert.match(block, /required: \[authMount\]/);
+    assert.match(block, /minLength: 1/);
     assert.match(block, /not:\s*\n\s+required: \[token\]/);
   });
 });

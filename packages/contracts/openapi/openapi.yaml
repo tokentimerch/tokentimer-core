@@ -9570,19 +9570,24 @@ components:
               properties:
                 token:
                   type: string
+                  minLength: 1
               not:
                 anyOf:
                   - required: [roleId]
                   - required: [secretId]
+                  - required: [authMount]
             - type: object
               required: [roleId, secretId]
               properties:
                 roleId:
                   type: string
+                  minLength: 1
                 secretId:
                   type: string
+                  minLength: 1
                 authMount:
                   type: string
+                  minLength: 1
                   description: AppRole auth mount path. Defaults to approle.
               not:
                 required: [token]
@@ -9605,19 +9610,24 @@ components:
               properties:
                 token:
                   type: string
+                  minLength: 1
               not:
                 anyOf:
                   - required: [roleId]
                   - required: [secretId]
+                  - required: [authMount]
             - type: object
               required: [roleId, secretId]
               properties:
                 roleId:
                   type: string
+                  minLength: 1
                 secretId:
                   type: string
+                  minLength: 1
                 authMount:
                   type: string
+                  minLength: 1
                   description: AppRole auth mount path. Defaults to approle.
               not:
                 required: [token]
@@ -9649,6 +9659,13 @@ components:
                 type: boolean
               truncated:
                 type: boolean
+              hasErrors:
+                type: boolean
+              permissionDenied:
+                type: boolean
+                description: >-
+                  True when at least one listed object returned HTTP 403.
+                  The scan is partial; the UI must not treat this as success.
               error:
                 type: string
                 description: Provider-formatted reason when the sub-scan failed.

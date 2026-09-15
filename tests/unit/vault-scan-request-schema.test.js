@@ -2,52 +2,43 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
 
-const vaultScanRequest = {
-  allOf: [
-    {
-      type: "object",
-      required: ["address"],
-      properties: {
-        address: { type: "string" },
-        namespace: { type: "string" },
-      },
-    },
-    {
-      oneOf: [
-        {
-          type: "object",
-          required: ["token"],
-          properties: { token: { type: "string" } },
-          not: {
-            anyOf: [{ required: ["roleId"] }, { required: ["secretId"] }],
-          },
-        },
-        {
-          type: "object",
-          required: ["roleId", "secretId"],
-          properties: {
-            roleId: { type: "string" },
-            secretId: { type: "string" },
-            authMount: { type: "string" },
-          },
-          not: { required: ["token"] },
-        },
-      ],
-    },
-  ],
-};
+const OPENAPI_PATH = path.join(
+  __dirname,
+  "..",
+  "..",
+  "packages",
+  "contracts",
+  "openapi",
+  "openapi.yaml",
+);
 
-function compile() {
-  const ajv = new Ajv({ allErrors: true, strict: false });
-  addFormats(ajv);
-  return ajv.compile(vaultScanRequest);
+function loadYaml(text) {
+  const yamlPath = require.resolve("js-yaml", {
+    paths: [path.join(__dirname, "..", "..", "apps", "dashboard")],
+  });
+  return require(yamlPath).load(text);
 }
 
-describe("VaultScanRequest oneOf contract", () => {
-  const validate = compile();
+function compileVaultScanRequest() {
+  const spec = loadYaml(fs.readFileSync(OPENAPI_PATH, "utf8"));
+  const schema = spec.components.schemas.VaultScanRequest;
+  assert.ok(schema, "VaultScanRequest missing from OpenAPI");
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  addFormats(ajv);
+  return ajv.compile(schema);
+}
+
+function ajvErrors(validate) {
+  return JSON.stringify(validate.errors || []);
+}
+
+describe("VaultScanRequest oneOf contract (published OpenAPI)", () => {
+  const validate = compileVaultScanRequest();
 
   it("accepts token mode and AppRole mode", () => {
     assert.equal(
@@ -67,7 +58,7 @@ describe("VaultScanRequest oneOf contract", () => {
     );
   });
 
-  it("rejects both modes, role-only, secret-only, and neither", () => {
+  it("rejects both modes, role-only, secret-only, neither, and token+authMount", () => {
     assert.equal(
       validate({
         address: "https://vault.example",
@@ -86,9 +77,36 @@ describe("VaultScanRequest oneOf contract", () => {
       false,
     );
     assert.equal(validate({ address: "https://vault.example" }), false);
+    assert.equal(
+      validate({
+        address: "https://vault.example",
+        token: "s.x",
+        authMount: "approle",
+      }),
+      false,
+    );
+  });
+
+  it("rejects empty credential strings", () => {
+    assert.equal(
+      validate({ address: "https://vault.example", token: "" }),
+      false,
+    );
+    assert.equal(
+      validate({
+        address: "https://vault.example",
+        roleId: "",
+        secretId: "s",
+      }),
+      false,
+    );
+    assert.equal(
+      validate({
+        address: "https://vault.example",
+        roleId: "r",
+        secretId: "",
+      }),
+      false,
+    );
   });
 });
-
-function ajvErrors(validate) {
-  return JSON.stringify(validate.errors || []);
-}

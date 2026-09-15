@@ -36,6 +36,29 @@ const VAULT_CATEGORY_OPTIONS = [
   { value: 'key_secret', label: 'Secrets & keys' },
 ];
 
+function vaultMountSummaryBadge(s) {
+  if (s.error) {
+    return { colorScheme: 'red', label: s.error };
+  }
+  const extra = s.truncated ? '+' : '';
+  if (s.permissionDenied) {
+    return {
+      colorScheme: 'orange',
+      label: `found ${s.found}${extra}, permission denied on some paths`,
+    };
+  }
+  if (s.hasErrors) {
+    return {
+      colorScheme: 'orange',
+      label: `found ${s.found}${extra}, incomplete`,
+    };
+  }
+  return {
+    colorScheme: 'green',
+    label: `found ${s.found}${extra}`,
+  };
+}
+
 function getVaultItemDetails(item) {
   const details = [];
   if (item.mount || item.path) {
@@ -814,14 +837,12 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
                 <Text fontSize='sm'>
                   {s.mount} ({s.type})
                 </Text>
-                {s.error ? (
-                  <Badge colorScheme='red'>{s.error}</Badge>
-                ) : (
-                  <Badge colorScheme='green'>
-                    found {s.found}
-                    {s.truncated ? '+' : ''}
-                  </Badge>
-                )}
+                {(() => {
+                  const badge = vaultMountSummaryBadge(s);
+                  return (
+                    <Badge colorScheme={badge.colorScheme}>{badge.label}</Badge>
+                  );
+                })()}
               </HStack>
             ))}
           </VStack>

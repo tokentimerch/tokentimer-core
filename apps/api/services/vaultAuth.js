@@ -163,7 +163,7 @@ async function vaultHttpRequest({
     url = new URL(path.startsWith("/") ? path : `/${path}`, address);
   } catch (e) {
     logger.error("Invalid Vault URL", { address, path, error: e.message });
-    throw new Error(`Invalid Vault URL: ${e.message}`);
+    throw new Error(`Invalid Vault URL: ${e.message}`, { cause: e });
   }
 
   if (query && typeof query === "object") {
