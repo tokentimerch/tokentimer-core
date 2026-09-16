@@ -113,8 +113,8 @@ services:
       # through an external identity provider (set to true to enable).
       DISABLE_MANUAL_INVITES: ${DISABLE_MANUAL_INVITES:-}
 
-      # Off until every replica is this image, then true so assets can join
-      # more than one contact group. Tests default the flag on.
+      # Multi-group contact assignment is on by default. Set false only as a
+      # mixed-fleet kill switch during a rolling upgrade.
       CONTACT_GROUP_PLURAL_WRITES: ${CONTACT_GROUP_PLURAL_WRITES:-}
 
       # Worker <-> API shared secret (falls back to SESSION_SECRET if unset)

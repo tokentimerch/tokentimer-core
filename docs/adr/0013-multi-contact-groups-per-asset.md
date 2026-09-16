@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted (2026-09-15). Amended 2026-09-15: the first deployable
-release implements decision 2 steps 1-2 only (schema, backfill,
-dual-write). Alert and digest readers still use the singular column.
-Plural API/UI and switch-reads are the next release. This second
-release implements steps 3-4 after that dual-write rollout.
+Accepted (2026-09-15). Amended 2026-09-16: schema, backfill, dual-write,
+plural API/UI, and alert/digest plural reads ship together. Multi-group
+writes are **on by default** (unset / empty). Set
+`CONTACT_GROUP_PLURAL_WRITES=false` only as a mixed-fleet kill switch
+during a rolling upgrade.
 
 ## Context
 
@@ -139,14 +139,15 @@ group tables.
    `.sort()`.
 
    Step 4 (two-or-more membership writes and dashboard multi-select) is
-   gated by `CONTACT_GROUP_PLURAL_WRITES` (off unless set to `true`;
-   on in `NODE_ENV=test`). This release's dashboard otherwise hits a
-   still-running dual-write API with `[A,B]` and that replica persists
-   only the singular companion. Turn the gate on only after every API,
-   worker, and dashboard replica is this release. Until then a
-   `contact_group_ids` / `contactGroupIds` write with two or more ids
-   is HTTP 400. `GET /api/auth/features` reports
-   `contactGroupPluralWrites` so the dashboard stays single-select.
+   gated by `CONTACT_GROUP_PLURAL_WRITES` (on unless set to `false` /
+   `0` / `no`). This release's dashboard otherwise hits a still-running
+   dual-write API with `[A,B]` and that replica persists only the
+   singular companion. Keep the kill switch off (`false`) only while a
+   mixed dual-write fleet remains; after every API, worker, and
+   dashboard replica is this release, leave the variable unset (on).
+   When the flag is off, a `contact_group_ids` / `contactGroupIds` write
+   with two or more ids is HTTP 400. `GET /api/auth/features` reports
+   `contactGroupPluralWrites` so the dashboard can stay single-select.
 
    Until step 5, `tokens.contact_group_id` and
    `certops_agents.contact_group_id` are a compatibility mirror of join

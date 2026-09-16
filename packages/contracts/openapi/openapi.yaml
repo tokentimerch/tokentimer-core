@@ -89,9 +89,9 @@ paths:
                     type: boolean
                     description: >
                       When true, the dashboard may assign an asset to more than
-                      one contact group. Off until every API, worker, and
-                      dashboard replica is this release, then set
-                      CONTACT_GROUP_PLURAL_WRITES=true.
+                      one contact group. On by default (unset env). Set
+                      CONTACT_GROUP_PLURAL_WRITES=false only as a mixed-fleet
+                      kill switch during a rolling upgrade.
   /api/session:
     get:
       tags: [Session]

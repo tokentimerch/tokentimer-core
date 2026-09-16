@@ -66,7 +66,7 @@ services:
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
       - ADMIN_NAME=Administrator
-      # Local compose can assign multiple contact groups immediately.
+      # Multi-group contact assignment is on by default; explicit true keeps local intent clear.
       - CONTACT_GROUP_PLURAL_WRITES=${CONTACT_GROUP_PLURAL_WRITES:-true}
       # SMTP (optional - configure here or via System Settings UI)
       - SMTP_HOST=${SMTP_HOST:-}
