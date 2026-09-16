@@ -601,7 +601,7 @@ function App() {
     }
   });
   const [contactGroupPluralWrites, setContactGroupPluralWrites] =
-    useState(false);
+    useState(true);
   const isDev =
     typeof import.meta !== 'undefined' &&
     import.meta.env &&
@@ -658,12 +658,13 @@ function App() {
       try {
         const res = await apiClient.get(API_ENDPOINTS.AUTH_FEATURES);
         if (!cancelled) {
+          // Only force single-select when the API explicitly disables it.
           setContactGroupPluralWrites(
-            res?.data?.contactGroupPluralWrites === true
+            res?.data?.contactGroupPluralWrites !== false
           );
         }
       } catch (_) {
-        if (!cancelled) setContactGroupPluralWrites(false);
+        // Keep the on-by-default optimistic value if features are unreachable.
       }
     })();
     return () => {
@@ -2731,6 +2732,7 @@ function App() {
                                     formErrors={formErrors}
                                     isSubmitting={isSubmitting}
                                     onInputChange={handleInputChange}
+                                    setFormData={setFormData}
                                     onTokenAdd={handleTokenAdd}
                                     onDeleteToken={
                                       isViewer ? undefined : handleDeleteToken
@@ -2872,6 +2874,7 @@ function DashboardWrapper({
   formErrors,
   isSubmitting,
   onInputChange,
+  setFormData,
   onTokenAdd,
   onDeleteToken,
   onOpenRenew,
@@ -3037,6 +3040,7 @@ function DashboardWrapper({
             formErrors={formErrors}
             isSubmitting={isSubmitting}
             onInputChange={onInputChange}
+            setFormData={setFormData}
             onTokenAdd={onTokenAdd}
             onDeleteToken={onDeleteToken}
             onOpenRenew={onOpenRenew}
@@ -3260,6 +3264,7 @@ function DashboardView({
   formErrors,
   isSubmitting,
   onInputChange,
+  setFormData,
   onTokenAdd,
   onDeleteToken,
   onOpenRenew,
@@ -5194,7 +5199,7 @@ function DashboardView({
                       <form id={createTokenFormId} onSubmit={onTokenAdd}>
                         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
                           {/* Name Field */}
-                          <FormControl isInvalid={!!formErrors.name}>
+                          <FormControl isInvalid={!!formErrors.name} minW={0}>
                             <FormLabel htmlFor='name'>Name *</FormLabel>
                             <Input
                               type='text'
@@ -5222,7 +5227,10 @@ function DashboardView({
                           </FormControl>
 
                           {/* Category Field */}
-                          <FormControl isInvalid={!!formErrors.category}>
+                          <FormControl
+                            isInvalid={!!formErrors.category}
+                            minW={0}
+                          >
                             <FormLabel htmlFor='category'>Category *</FormLabel>
                             <Select
                               id='category'
@@ -5260,7 +5268,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Type Field - Dynamic based on category */}
-                          <FormControl isInvalid={!!formErrors.type}>
+                          <FormControl isInvalid={!!formErrors.type} minW={0}>
                             <FormLabel htmlFor='type'>Type *</FormLabel>
                             <Select
                               id='type'
@@ -5295,7 +5303,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Section Field */}
-                          <FormControl>
+                          <FormControl minW={0}>
                             <FormLabel htmlFor='section'>Section</FormLabel>
                             <Input
                               type='text'
@@ -5311,7 +5319,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Contact group selector - replaces per-token email override */}
-                          <FormControl as='fieldset'>
+                          <FormControl as='fieldset' minW={0} overflow='hidden'>
                             <FormLabel as='legend'>
                               Contact groups (alerts)
                             </FormLabel>
@@ -5335,7 +5343,10 @@ function DashboardView({
                           </FormControl>
 
                           {/* Expiration Date Field */}
-                          <FormControl isInvalid={!!formErrors.expiresAt}>
+                          <FormControl
+                            isInvalid={!!formErrors.expiresAt}
+                            minW={0}
+                          >
                             <FormLabel htmlFor='expiresAt'>
                               Expiration Date
                             </FormLabel>

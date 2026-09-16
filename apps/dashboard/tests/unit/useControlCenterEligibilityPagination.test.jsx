@@ -111,6 +111,7 @@ describe('Control Center eligibility paging', () => {
       workspace_id: 'ws-2',
       limit: 10,
       offset: 0,
+      sort: 'expiration_asc',
     });
     expect(result.current.eligibilitySummary).toEqual({
       outside_threshold: 1,
@@ -200,6 +201,7 @@ describe('Control Center eligibility paging', () => {
       workspace_id: 'ws-1',
       limit: 10,
       offset: 0,
+      sort: 'expiration_asc',
     });
     expect(result.current.eligibilitySummary).toEqual({
       outside_threshold: 11,
@@ -215,6 +217,7 @@ describe('Control Center eligibility paging', () => {
       workspace_id: 'ws-1',
       limit: 10,
       offset: 10,
+      sort: 'expiration_asc',
     });
     expect(result.current.eligibilitySummary.due).toBe(2);
 
@@ -226,6 +229,7 @@ describe('Control Center eligibility paging', () => {
       workspace_id: 'ws-1',
       limit: 20,
       offset: 0,
+      sort: 'expiration_asc',
     });
     expect(
       getMock.mock.calls.filter(([url]) =>

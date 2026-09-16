@@ -394,7 +394,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
-        <Box minW='280px'>
+        <Box minW='280px' flex='1'>
           <Text fontSize='sm' mb={1}>
             GitLab URL
           </Text>
@@ -403,19 +403,15 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             value={gitlabBaseUrl}
             onChange={e => setGitlabBaseUrl(e.target.value)}
           />
-          <Text fontSize='xs' color={helpTextColor} mt={1}>
-            Self-hosted GitLab can include a path, for example
-            https://git.example.com/gitlab
-          </Text>
         </Box>
-        <Box minW='320px'>
+        <Box minW='280px' flex='1'>
           <Text fontSize='sm' mb={1}>
-            Personal Access Token (read_api scope)
+            Personal access token
           </Text>
           <InputGroup>
             <Input
               type={showSecret ? 'text' : 'password'}
-              placeholder={autoSyncTokenPlaceholder || 'Paste token'}
+              placeholder={autoSyncTokenPlaceholder || 'Paste token (read_api)'}
               value={gitlabToken}
               onChange={e => setGitlabToken(e.target.value)}
             />

@@ -124,6 +124,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
         workspace_id: eligibilityWorkspaceId,
         limit: eligibilityLimit,
         offset: eligibilityOffset,
+        sort: 'expiration_asc',
       })
       .then(page => {
         if (!active || generation !== eligibilityGenerationRef.current) return;

@@ -5,6 +5,7 @@ import {
   screen,
   fireEvent,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
@@ -403,7 +404,7 @@ describe('DeployAgentModal', () => {
       expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
     });
     expect(
-      await screen.findByRole('checkbox', { name: /On-call \(default\)/ })
+      await screen.findByRole('button', { name: 'Contact groups' })
     ).toBeInTheDocument();
   });
 
@@ -444,11 +445,10 @@ describe('DeployAgentModal', () => {
 
     renderModal();
 
-    await screen.findByRole('checkbox', { name: /On-call \(default\)/ });
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /On-call \(default\)/ })
-    );
-    fireEvent.click(screen.getByRole('checkbox', { name: /^Security$/ }));
+    await screen.findByRole('button', { name: 'Contact groups' });
+    fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
+    fireEvent.click(screen.getByText(/On-call \(workspace default group\)/));
+    fireEvent.click(screen.getByText(/^Security$/));
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: 'dc1-edge' },
     });

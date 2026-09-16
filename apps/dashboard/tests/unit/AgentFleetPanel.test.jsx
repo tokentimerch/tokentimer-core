@@ -679,9 +679,14 @@ describe('AgentFleetPanel', () => {
     await waitFor(() => {
       expect(getAlertSettingsMock).toHaveBeenCalledWith('ws-1');
     });
-    expect(await screen.findByText('On-call (default)')).toBeInTheDocument();
     expect(
-      await screen.findByRole('checkbox', { name: /On-call/ })
+      await screen.findByRole('button', { name: 'Contact groups' })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
+    expect(
+      await screen.findByRole('menuitemcheckbox', {
+        name: /On-call \(workspace default group\)/,
+      })
     ).toBeInTheDocument();
 
     fireEvent.click(

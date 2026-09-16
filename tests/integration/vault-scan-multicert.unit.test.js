@@ -626,6 +626,42 @@ describe("Vault KV scan behavior", () => {
     });
   });
 
+  describe("mount-list permission denied after login", () => {
+    it("preserves Vault 403 instead of wrapping it as a transport failure", async () => {
+      const vault = await startFakeVault({
+        "POST /v1/auth/approle/login": {
+          status: 200,
+          body: {
+            auth: { client_token: "s.ok", lease_duration: 3600 },
+          },
+        },
+        "GET /v1/sys/mounts": {
+          status: 403,
+          body: { errors: ["permission denied"] },
+        },
+      });
+      try {
+        let threw = null;
+        try {
+          await mod.scanVault({
+            address: vault.address,
+            roleId: "role",
+            secretId: "secret",
+            include: { kv: true, pki: false },
+          });
+        } catch (e) {
+          threw = e;
+        }
+        expect(threw).to.not.equal(null);
+        expect(threw.name).to.not.equal("VaultAuthError");
+        expect(threw.status).to.equal(403);
+        expect(threw.message).to.match(/403$/);
+      } finally {
+        await vault.close();
+      }
+    });
+  });
+
   describe("per-secret permission denied", () => {
     it("keeps a partial scan and flags permissionDenied instead of aborting", async () => {
       const vault = await startFakeVault({

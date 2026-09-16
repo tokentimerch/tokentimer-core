@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 
@@ -330,15 +330,10 @@ describe('CertificateDetailsModal', () => {
     fireEvent.change(screen.getByDisplayValue('Production'), {
       target: { value: 'Production, Edge' },
     });
-    const platformOnCall = screen.getByRole('checkbox', {
-      name: 'Platform On-Call',
-    });
-    const securityOnCall = screen.getByRole('checkbox', {
-      name: 'Security On-Call',
-    });
-    expect(platformOnCall).toBeChecked();
-    fireEvent.click(platformOnCall);
-    fireEvent.click(securityOnCall);
+    fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
+    const platformOptions = screen.getAllByText('Platform On-Call');
+    fireEvent.click(platformOptions[platformOptions.length - 1]);
+    fireEvent.click(screen.getByText('Security On-Call'));
     fireEvent.change(screen.getByDisplayValue('2027-09-02'), {
       target: { value: '2028-10-03' },
     });

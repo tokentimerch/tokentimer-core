@@ -562,6 +562,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
             <FormControl
               as='fieldset'
               isDisabled={!alertsEnabled || loadingGroups}
+              minW={0}
+              overflow='hidden'
             >
               <FormLabel as='legend' fontSize='sm'>
                 Contact groups
@@ -576,8 +578,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
                 maxH='160px'
               />
               <FormHelperText>
-                Down and recovery alerts go to the selected groups. Leave all
-                unchecked to use the workspace default.
+                Down and recovery alerts go to the selected groups. Leave as
+                workspace default when empty.
               </FormHelperText>
             </FormControl>
             {error ? (

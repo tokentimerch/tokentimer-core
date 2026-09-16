@@ -121,15 +121,11 @@ describe('TokenDetailModal', () => {
     fireEvent.change(screen.getByDisplayValue('Production'), {
       target: { value: 'Production, Edge' },
     });
-    const platformOnCall = screen.getByRole('checkbox', {
-      name: 'Platform On-Call',
-    });
-    const securityOnCall = screen.getByRole('checkbox', {
-      name: 'Security On-Call',
-    });
-    expect(platformOnCall).toBeChecked();
-    fireEvent.click(platformOnCall);
-    fireEvent.click(securityOnCall);
+    fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
+    // Button summary and menu option can both show the same label.
+    const platformOptions = screen.getAllByText('Platform On-Call');
+    fireEvent.click(platformOptions[platformOptions.length - 1]);
+    fireEvent.click(screen.getByText('Security On-Call'));
     fireEvent.change(screen.getByDisplayValue('2027-09-01'), {
       target: { value: '2028-09-01' },
     });

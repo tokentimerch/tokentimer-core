@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Alert,
@@ -845,12 +845,14 @@ function SectionState({
 
   if (status === 'loading' || status === 'refreshing') {
     return (
-      <HStack spacing={3} py={4} justify='center'>
-        <Spinner size='sm' color='blue.300' />
-        <Text color={muted} fontSize='sm'>
-          {status === 'refreshing' ? 'Refreshing…' : 'Loading…'}
-        </Text>
-      </HStack>
+      <Flex flex='1' align='center' justify='center' py={4} minH='12rem'>
+        <HStack spacing={3}>
+          <Spinner size='sm' color='blue.300' />
+          <Text color={muted} fontSize='sm'>
+            {status === 'refreshing' ? 'Refreshing…' : 'Loading…'}
+          </Text>
+        </HStack>
+      </Flex>
     );
   }
 
@@ -883,12 +885,14 @@ function SectionState({
 
   if (status === 'empty') {
     return (
-      <DashboardState title={emptyTitle} description={emptyDetail} py={6} />
+      <Flex flex='1' align='center' justify='center' minH='12rem'>
+        <DashboardState title={emptyTitle} description={emptyDetail} py={6} />
+      </Flex>
     );
   }
 
   return (
-    <VStack align='stretch' spacing={3}>
+    <VStack align='stretch' spacing={3} flex='1'>
       {status === 'partial' ? (
         <Alert status='warning' variant='left-accent'>
           <AlertIcon />
@@ -991,6 +995,22 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const assetStats = useControlCenterStats();
   const alertData = useControlCenterData();
   const alertActivity = alertData.alertActivity || EMPTY_LIST;
+  const workspaceAlertingPanelRef = useRef(null);
+  // Keep Queue / Eligibility / Activity panes a stable height so empty states
+  // center inside the panel instead of collapsing into the page middle.
+  const WORKSPACE_ALERT_TAB_MIN_H = '20rem';
+
+  const preserveWorkspaceAlertingScroll = useCallback(() => {
+    const y = window.scrollY;
+    const x = window.scrollX;
+    requestAnimationFrame(() => {
+      window.scrollTo(x, y);
+      workspaceAlertingPanelRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    });
+  }, []);
 
   const selectedWorkspace = useMemo(
     () =>
@@ -1845,7 +1865,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                 ) : null}
               </SectionState>
 
-              {alertData.eligibleWorkspaces.length > 0 ? (
+                {alertData.eligibleWorkspaces.length > 0 ? (
+                <Box ref={workspaceAlertingPanelRef}>
                 <ControlCenterPanel
                   title='Workspace alerting'
                   description='Eligibility, lifecycle activity, and queued delivery for the selected workspace'
@@ -1863,7 +1884,13 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     </DashboardActionButton>
                   }
                 >
-                  <Tabs variant='unstyled' defaultIndex={0} isLazy minW={0}>
+                  <Tabs
+                    variant='unstyled'
+                    defaultIndex={0}
+                    isLazy
+                    minW={0}
+                    onChange={preserveWorkspaceAlertingScroll}
+                  >
                     <TabList
                       w={{ base: '100%', md: 'fit-content' }}
                       overflowX='auto'
@@ -1910,13 +1937,21 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             color: theme.dashboard.accent.navActive,
                           }}
                           _focusVisible={{ boxShadow: 'outline', zIndex: 1 }}
+                          onFocus={preserveWorkspaceAlertingScroll}
                         >
                           {tab.label}
                         </Tab>
                       ))}
                     </TabList>
-                    <TabPanels>
-                      <TabPanel px={0} pt={4} pb={0}>
+                    <TabPanels minH={WORKSPACE_ALERT_TAB_MIN_H}>
+                      <TabPanel
+                        px={0}
+                        pt={4}
+                        pb={0}
+                        minH={WORKSPACE_ALERT_TAB_MIN_H}
+                        display='flex'
+                        flexDirection='column'
+                      >
                         <SectionState
                           status={
                             alertSectionStatus === 'ready'
@@ -2087,7 +2122,14 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           </VStack>
                         </SectionState>
                       </TabPanel>
-                      <TabPanel px={0} pt={4} pb={0}>
+                      <TabPanel
+                        px={0}
+                        pt={4}
+                        pb={0}
+                        minH={WORKSPACE_ALERT_TAB_MIN_H}
+                        display='flex'
+                        flexDirection='column'
+                      >
                         <Text fontSize='xs' color={muted} mb={3}>
                           Current asset eligibility, evaluated independently
                           from delivery state
@@ -2168,7 +2210,14 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           </VStack>
                         </SectionState>
                       </TabPanel>
-                      <TabPanel px={0} pt={4} pb={0}>
+                      <TabPanel
+                        px={0}
+                        pt={4}
+                        pb={0}
+                        minH={WORKSPACE_ALERT_TAB_MIN_H}
+                        display='flex'
+                        flexDirection='column'
+                      >
                         <Text fontSize='xs' color={muted} mb={3}>
                           Newest alert lifecycle events across workspace assets
                         </Text>
@@ -2205,6 +2254,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     </TabPanels>
                   </Tabs>
                 </ControlCenterPanel>
+                </Box>
               ) : null}
             </VStack>
           </Box>

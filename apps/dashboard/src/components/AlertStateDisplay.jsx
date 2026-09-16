@@ -1,6 +1,8 @@
+import { useMemo, useState } from 'react';
 import {
   Badge,
   Box,
+  Button,
   HStack,
   Link,
   SimpleGrid,
@@ -438,9 +440,123 @@ export default function AlertStateDisplay({
   );
 }
 
+const ELIGIBILITY_STATUS_RANK = {
+  due: 0,
+  suppressed: 1,
+  outside_threshold: 2,
+};
+
+function compareNullable(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+export function sortEligibilityRecords(tokens, sort) {
+  const dir = sort?.direction === 'desc' ? -1 : 1;
+  const key = sort?.key || 'eligibility';
+  return [...tokens].sort((left, right) => {
+    const eligA = left.alert_state?.eligibility || {};
+    const eligB = right.alert_state?.eligibility || {};
+    const deliveryA = left.alert_state?.delivery || {};
+    const deliveryB = right.alert_state?.delivery || {};
+    let result = 0;
+    switch (key) {
+      case 'asset':
+        result = String(left.name || '').localeCompare(
+          String(right.name || ''),
+          undefined,
+          { sensitivity: 'base' }
+        );
+        break;
+      case 'expiry':
+        result = compareNullable(
+          eligA.days_until_expiry,
+          eligB.days_until_expiry
+        );
+        break;
+      case 'delivery':
+        result = String(deliveryA.status || '').localeCompare(
+          String(deliveryB.status || ''),
+          undefined,
+          { sensitivity: 'base' }
+        );
+        break;
+      case 'next': {
+        const nextA =
+          getUpcomingThresholds(eligA)[0]?.at ||
+          deliveryA.next_attempt_at ||
+          '';
+        const nextB =
+          getUpcomingThresholds(eligB)[0]?.at ||
+          deliveryB.next_attempt_at ||
+          '';
+        result = String(nextA).localeCompare(String(nextB));
+        break;
+      }
+      case 'eligibility':
+      default:
+        result =
+          (ELIGIBILITY_STATUS_RANK[eligA.status] ?? 99) -
+          (ELIGIBILITY_STATUS_RANK[eligB.status] ?? 99);
+        if (result === 0) {
+          result = compareNullable(
+            eligA.days_until_expiry,
+            eligB.days_until_expiry
+          );
+        }
+        break;
+    }
+    if (result === 0) {
+      result = String(left.name || '').localeCompare(String(right.name || ''), undefined, {
+        sensitivity: 'base',
+      });
+    }
+    return result * dir;
+  });
+}
+
+function EligibilitySortHeader({ label, sortKey, sort, onSort }) {
+  const isActive = sort.key === sortKey;
+  return (
+    <Th>
+      <Button
+        variant='ghost'
+        size='xs'
+        px={1}
+        h='auto'
+        minH='unset'
+        fontWeight='bold'
+        textTransform='uppercase'
+        letterSpacing='wider'
+        onClick={() => onSort(sortKey)}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        {isActive ? (sort.direction === 'desc' ? ' ↓' : ' ↑') : ''}
+      </Button>
+    </Th>
+  );
+}
+
 export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
   const muted = useColorModeValue('gray.600', 'rgba(148, 163, 184, 0.92)');
-  const records = tokens.filter(token => token.alert_state?.eligibility);
+  const [sort, setSort] = useState({ key: 'eligibility', direction: 'asc' });
+  const records = useMemo(() => {
+    const filtered = tokens.filter(token => token.alert_state?.eligibility);
+    return sortEligibilityRecords(filtered, sort);
+  }, [tokens, sort]);
+
+  const handleSort = nextKey => {
+    setSort(current => ({
+      key: nextKey,
+      direction:
+        current.key === nextKey && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   if (records.length === 0) {
     return (
@@ -479,11 +595,36 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
         <Table size='sm' variant='simple'>
           <Thead>
             <Tr>
-              <Th>Asset</Th>
-              <Th>Eligibility</Th>
-              <Th>Threshold / expiry</Th>
-              <Th>Delivery</Th>
-              <Th>Next</Th>
+              <EligibilitySortHeader
+                label='Asset'
+                sortKey='asset'
+                sort={sort}
+                onSort={handleSort}
+              />
+              <EligibilitySortHeader
+                label='Eligibility'
+                sortKey='eligibility'
+                sort={sort}
+                onSort={handleSort}
+              />
+              <EligibilitySortHeader
+                label='Threshold / expiry'
+                sortKey='expiry'
+                sort={sort}
+                onSort={handleSort}
+              />
+              <EligibilitySortHeader
+                label='Delivery'
+                sortKey='delivery'
+                sort={sort}
+                onSort={handleSort}
+              />
+              <EligibilitySortHeader
+                label='Next'
+                sortKey='next'
+                sort={sort}
+                onSort={handleSort}
+              />
             </Tr>
           </Thead>
           <Tbody>

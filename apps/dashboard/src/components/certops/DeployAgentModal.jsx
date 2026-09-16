@@ -538,6 +538,8 @@ export default function DeployAgentModal({
                   <FormControl
                     as='fieldset'
                     isDisabled={hasUnacknowledgedSecret}
+                    minW={0}
+                    overflow='hidden'
                   >
                     <FormLabel as='legend' fontSize='sm'>
                       Contact groups

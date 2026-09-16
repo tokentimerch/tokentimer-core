@@ -881,18 +881,11 @@ const components = {
     baseStyle: {
       control: {
         borderWidth: '2px',
-        _light: {
-          borderColor: 'gray.500',
-          bg: 'white',
-          _checked: {
-            bg: 'blue.500',
-            borderColor: 'blue.500',
-            color: 'white',
-            _hover: {
-              bg: 'blue.600',
-              borderColor: 'blue.600',
-            },
-          },
+        borderColor: 'gray.500',
+        bg: 'white',
+        _dark: {
+          borderColor: 'gray.600',
+          bg: 'transparent',
         },
         _checked: {
           bg: 'blue.500',
@@ -902,29 +895,25 @@ const components = {
             bg: 'blue.600',
             borderColor: 'blue.600',
           },
-        },
-        _focus: {
-          boxShadow: '0 0 0 3px rgba(66, 153, 225, 0.3)',
-        },
-        _disabled: {
-          _light: {
-            bg: 'rgba(255, 255, 255, 0.92)',
-            borderColor: 'gray.400',
-          },
-          opacity: 0.7,
-          cursor: 'not-allowed',
-        },
-        _dark: {
-          borderColor: 'gray.600',
-          _checked: {
+          _dark: {
             bg: 'blue.500',
             borderColor: 'blue.500',
+            color: 'white',
             _hover: {
               bg: 'blue.400',
               borderColor: 'blue.400',
             },
           },
-          _disabled: {
+        },
+        _focus: {
+          boxShadow: '0 0 0 3px rgba(66, 153, 225, 0.3)',
+        },
+        _disabled: {
+          bg: 'rgba(255, 255, 255, 0.92)',
+          borderColor: 'gray.400',
+          opacity: 0.7,
+          cursor: 'not-allowed',
+          _dark: {
             bg: 'gray.700',
             borderColor: 'gray.600',
             opacity: 0.7,
@@ -932,15 +921,12 @@ const components = {
         },
       },
       icon: {
-        _light: {
-          color: 'white',
-        },
         color: 'white',
       },
       label: {
         _disabled: {
-          opacity: 0.7, // More visible disabled text
-          color: 'gray.500', // More visible in light theme
+          opacity: 0.7,
+          color: 'gray.500',
           _dark: {
             color: 'gray.400',
           },

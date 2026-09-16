@@ -110,7 +110,7 @@ export default function AzureInventoryAuthFields({
                   Tenant ID
                 </Text>
                 <Input
-                  placeholder='Directory (tenant) ID or domain'
+                  placeholder='Tenant ID or domain'
                   value={tenantId}
                   onChange={e => onTenantIdChange(e.target.value)}
                 />
@@ -120,7 +120,7 @@ export default function AzureInventoryAuthFields({
                   Application (client) ID
                 </Text>
                 <Input
-                  placeholder='App registration client ID'
+                  placeholder='Client ID'
                   value={clientId}
                   onChange={e => onClientIdChange(e.target.value)}
                 />
@@ -132,7 +132,7 @@ export default function AzureInventoryAuthFields({
                 <InputGroup>
                   <Input
                     type={showSecret ? 'text' : 'password'}
-                    placeholder='App registration client secret'
+                    placeholder='Client secret'
                     value={clientSecret}
                     onChange={e => onClientSecretChange(e.target.value)}
                   />

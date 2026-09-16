@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import AlertStateDisplay, {
   AlertEligibilityOverview,
   AlertUpcomingSection,
   getUpcomingThresholds,
+  sortEligibilityRecords,
 } from '../../src/components/AlertStateDisplay.jsx';
 import AssetInventoryTable from '../../src/components/AssetInventoryTable.jsx';
 
@@ -311,10 +312,111 @@ describe('AlertEligibilityOverview', () => {
     expect(screen.getAllByText('Suppressed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sent').length).toBeGreaterThan(0);
   });
+
+  it('lists due assets first by default', () => {
+    render(
+      <ChakraProvider>
+        <MemoryRouter>
+          <AlertEligibilityOverview
+            tokens={[
+              {
+                id: 1,
+                name: 'Zeta outside',
+                alert_state: {
+                  eligibility: {
+                    status: 'outside_threshold',
+                    days_until_expiry: 40,
+                  },
+                  delivery: { status: 'pending' },
+                },
+              },
+              {
+                id: 2,
+                name: 'Alpha due',
+                alert_state: {
+                  eligibility: {
+                    status: 'due',
+                    days_until_expiry: 5,
+                  },
+                  delivery: { status: 'failed' },
+                },
+              },
+            ]}
+          />
+        </MemoryRouter>
+      </ChakraProvider>
+    );
+
+    const assetLinks = screen.getAllByRole('link').map(node => node.textContent);
+    expect(assetLinks.indexOf('Alpha due')).toBeLessThan(
+      assetLinks.indexOf('Zeta outside')
+    );
+  });
+
+  it('sorts by asset name when the Asset column is clicked', () => {
+    render(
+      <ChakraProvider>
+        <MemoryRouter>
+          <AlertEligibilityOverview
+            tokens={[
+              {
+                id: 1,
+                name: 'Zeta due',
+                alert_state: {
+                  eligibility: { status: 'due', days_until_expiry: 2 },
+                  delivery: { status: 'pending' },
+                },
+              },
+              {
+                id: 2,
+                name: 'Alpha due',
+                alert_state: {
+                  eligibility: { status: 'due', days_until_expiry: 8 },
+                  delivery: { status: 'pending' },
+                },
+              },
+            ]}
+          />
+        </MemoryRouter>
+      </ChakraProvider>
+    );
+
+    fireEvent.click(screen.getByLabelText('Sort by Asset'));
+    const assetLinks = screen.getAllByRole('link').map(node => node.textContent);
+    expect(assetLinks.indexOf('Alpha due')).toBeLessThan(
+      assetLinks.indexOf('Zeta due')
+    );
+  });
+});
+
+describe('sortEligibilityRecords', () => {
+  it('ranks due before suppressed and outside threshold', () => {
+    const sorted = sortEligibilityRecords(
+      [
+        {
+          id: 1,
+          name: 'c',
+          alert_state: { eligibility: { status: 'outside_threshold' } },
+        },
+        {
+          id: 2,
+          name: 'a',
+          alert_state: { eligibility: { status: 'due' } },
+        },
+        {
+          id: 3,
+          name: 'b',
+          alert_state: { eligibility: { status: 'suppressed' } },
+        },
+      ],
+      { key: 'eligibility', direction: 'asc' }
+    );
+    expect(sorted.map(token => token.name)).toEqual(['a', 'b', 'c']);
+  });
 });
 
 describe('AssetInventoryTable alert eligibility', () => {
-  it('shows eligibility without presenting delivery as asset status', () => {
+  it('keeps asset status independent of alert eligibility and delivery', () => {
     render(
       <ChakraProvider>
         <MemoryRouter>
@@ -354,7 +456,9 @@ describe('AssetInventoryTable alert eligibility', () => {
       </ChakraProvider>
     );
 
-    expect(screen.getAllByText('Due').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Healthy').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Due')).not.toBeInTheDocument();
+    expect(screen.queryByText('Outside threshold')).not.toBeInTheDocument();
     expect(screen.queryByText('Failed')).not.toBeInTheDocument();
   });
 });
