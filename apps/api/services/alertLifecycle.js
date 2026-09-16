@@ -384,7 +384,10 @@ function queueSql(scope, state = false) {
   // Queue has no workspace_id. A matching enqueue audit or delivery records
   // historical ownership; current token ownership is a legacy-only fallback.
   const historicalOwner = `COALESCE(queued_audit.workspace_id, first_delivery.workspace_id, t.workspace_id)`;
-  const where = scope === "token" ? "t.id = $1" : `${historicalOwner} = $1`;
+  // Queue-state fallbacks describe the row's current state, so after a token
+  // transfer they belong to its current workspace, not its enqueue workspace.
+  const workspaceOwner = state ? "t.workspace_id" : historicalOwner;
+  const where = scope === "token" ? "t.id = $1" : `${workspaceOwner} = $1`;
   const stateTime = `CASE
       WHEN aq.status = 'pending' AND aq.error_message = 'OUT_OF_WINDOW'
         THEN aq.updated_at
@@ -397,7 +400,7 @@ function queueSql(scope, state = false) {
     SELECT aq.id AS alert_id, aq.alert_key, aq.threshold_days, aq.status,
            aq.error_message, aq.created_at, aq.updated_at, aq.last_attempt,
            aq.next_attempt_at, t.id AS token_id, t.name AS token_name,
-           t.expiration, ${historicalOwner} AS workspace_id
+           t.expiration, ${workspaceOwner} AS workspace_id
            ${state ? `, ${stateTime} AS state_occurred_at` : ""}
       FROM alert_queue aq
       JOIN tokens t ON t.id = aq.token_id

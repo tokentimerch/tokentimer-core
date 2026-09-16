@@ -493,6 +493,7 @@ describe("alert lifecycle fetching", () => {
     assert.doesNotMatch(calls[0].sql, /GREATEST\(/);
     assert.match(calls[0].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
     assert.match(calls[1].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
+    assert.match(calls[1].sql, /WHERE t\.workspace_id = \$1/);
     assert.match(calls[2].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
     assert.match(calls[3].sql, /metadata_alert\.alert_key/);
     assert.match(calls[3].sql, /LIKE 'token_expiry:%'/);

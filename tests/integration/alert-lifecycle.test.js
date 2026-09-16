@@ -626,6 +626,103 @@ describe("Alert lifecycle APIs", function () {
     ).to.equal(true);
   });
 
+  it("attributes a post-transfer queue-state fallback to the current workspace", async () => {
+    let movedTokenId;
+    try {
+      const token = await client.query(
+        `INSERT INTO tokens (
+           user_id, workspace_id, created_by, name, expiration, imported_at,
+           type, category
+         ) VALUES ($1, $2, $1, 'Moved queue-state token', DATE '2026-09-20',
+                   TIMESTAMP '2026-09-01 00:00:00', 'api_key', 'general')
+         RETURNING id`,
+        [owner.user.id, workspaceA],
+      );
+      movedTokenId = token.rows[0].id;
+      const alertKey = `token_expiry:${movedTokenId}:poswin:7`;
+      const queued = await client.query(
+        `INSERT INTO alert_queue (
+           user_id, token_id, alert_key, threshold_days, due_date, channels,
+           status, created_at, updated_at
+         ) VALUES ($1, $2, $3, 7, DATE '2026-09-13', '["email"]',
+                   'pending', NOW(), NOW())
+         RETURNING id`,
+        [owner.user.id, movedTokenId, alertKey],
+      );
+      const movedAlertId = queued.rows[0].id;
+      await client.query(
+        `INSERT INTO audit_events (
+           subject_user_id, action, target_type, target_id, workspace_id,
+           occurred_at, metadata
+         ) VALUES ($1, 'ALERT_QUEUED', 'token', $2, $3, NOW(), $4::jsonb)`,
+        [
+          owner.user.id,
+          movedTokenId,
+          workspaceA,
+          JSON.stringify({
+            threshold: 7,
+            alert_id: movedAlertId,
+            alert_key: alertKey,
+          }),
+        ],
+      );
+
+      await request(BASE)
+        .post(`/api/v1/workspaces/${workspaceB}/transfer-tokens`)
+        .set("Cookie", owner.cookie)
+        .send({ from_workspace_id: workspaceA, token_ids: [movedTokenId] })
+        .expect(200);
+      await client.query(
+        `UPDATE alert_queue
+            SET status='limit_exceeded', error_message='Monthly limit reached',
+                updated_at=NOW()
+          WHERE id=$1`,
+        [movedAlertId],
+      );
+
+      const activityA = await request(BASE)
+        .get(
+          `/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`,
+        )
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const activityB = await request(BASE)
+        .get(
+          `/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`,
+        )
+        .set("Cookie", owner.cookie)
+        .expect(200);
+      const fallbackId = `queue-state:${movedAlertId}:delivery_blocked`;
+      expect(activityA.body.items.some((item) => item.id === fallbackId)).to.equal(
+        false,
+      );
+      expect(activityB.body.items.some((item) => item.id === fallbackId)).to.equal(
+        true,
+      );
+      expect(
+        activityA.body.items.some(
+          (item) => item.id === `queue:${movedAlertId}`,
+        ),
+      ).to.equal(true);
+
+      const tokenTimeline = await request(BASE)
+        .get(`/api/tokens/${movedTokenId}/alert-timeline?limit=100`)
+        .set("Cookie", owner.cookie)
+        .expect(200);
+      expect(
+        tokenTimeline.body.items.some((item) => item.id === fallbackId),
+      ).to.equal(true);
+    } finally {
+      if (movedTokenId) {
+        await client.query(
+          "DELETE FROM audit_events WHERE target_type='token' AND target_id=$1",
+          [movedTokenId],
+        );
+        await client.query("DELETE FROM tokens WHERE id=$1", [movedTokenId]);
+      }
+    }
+  });
+
   it("attributes current-month alert-stats to the token's current workspace after transfer", async () => {
     // tokenA was already transferred to workspaceB by the prior test; historical
     // delivery rows still record workspaceA.
