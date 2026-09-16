@@ -394,7 +394,7 @@ describe('TokenDetailModal', () => {
     expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
   });
 
-  it('focuses alert history when View latest attempt is clicked in the modal', async () => {
+  it('shows View in audit logs without navigation behavior in the modal', async () => {
     getAlertTimelineMock.mockResolvedValue({
       items: [
         {
@@ -436,14 +436,13 @@ describe('TokenDetailModal', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Current status' })
     );
-    fireEvent.click(
-      await screen.findByRole('button', { name: /View latest attempt/i })
-    );
-
+    expect(await screen.findByText('View in audit logs')).toBeInTheDocument();
     expect(
-      await screen.findByRole('button', { name: /Delivery failed · Email ·/ })
-    ).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
+      screen.queryByRole('link', { name: /View in audit logs/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /View in audit logs/i })
+    ).not.toBeInTheDocument();
   });
 
   it('omits unavailable rows and sections in read mode without hiding edit fields', () => {

@@ -15,8 +15,6 @@ function renderDisplay(alertState, props = {}) {
       <MemoryRouter>
         <AlertStateDisplay
           alertState={alertState}
-          tokenName='Production key'
-          tokenId={17}
           {...props}
         />
       </MemoryRouter>
@@ -65,12 +63,10 @@ describe('AlertStateDisplay', () => {
     expect(
       delivery.queryByText(/Previous alert:/)
     ).not.toBeInTheDocument();
+    expect(delivery.getByText('View in audit logs')).toBeInTheDocument();
     expect(
-      delivery.getByRole('link', { name: /View latest attempt/ })
-    ).toHaveAttribute(
-      'href',
-      '/dashboard?token-id=17&alert-event=delivery%3A101'
-    );
+      delivery.queryByRole('link', { name: /View in audit logs/ })
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/7 days before expiry has been reached/)
     ).not.toBeInTheDocument();
@@ -142,7 +138,7 @@ describe('AlertStateDisplay', () => {
     expect(delivery.getByText(/Last queue attempt ·/)).toBeInTheDocument();
     expect(delivery.queryByText(/Last delivery/)).not.toBeInTheDocument();
     expect(
-      delivery.queryByRole('link', { name: /View latest attempt/ })
+      delivery.queryByText(/View in audit logs/)
     ).not.toBeInTheDocument();
   });
 
@@ -162,7 +158,7 @@ describe('AlertStateDisplay', () => {
     expect(delivery.queryByText(/Last queue attempt/)).not.toBeInTheDocument();
   });
 
-  it('shows View latest attempt for readers with a real delivery-log id', () => {
+  it('shows a non-interactive audit-log label for a real delivery-log id', () => {
     renderDisplay({
       eligibility: { status: 'due', effective_threshold: 7, days_until_expiry: 5 },
       delivery: {
@@ -174,9 +170,13 @@ describe('AlertStateDisplay', () => {
         },
       },
     });
+    expect(screen.getByText('View in audit logs')).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /View latest attempt/ })
-    ).toBeInTheDocument();
+      screen.queryByRole('link', { name: /View in audit logs/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /View in audit logs/ })
+    ).not.toBeInTheDocument();
   });
 
   it('lists upcoming thresholds and delivery retries in Upcoming', () => {
@@ -319,7 +319,7 @@ describe('AlertEligibilityOverview', () => {
     expect(screen.getAllByText('Suppressed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sent').length).toBeGreaterThan(0);
     expect(
-      screen.getAllByRole('link', { name: /View latest attempt/ }).length
+      screen.getAllByText('View in audit logs').length
     ).toBeGreaterThan(0);
   });
 });

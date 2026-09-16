@@ -308,10 +308,6 @@ export function AlertUpcomingSection({ alertState, ...boxProps }) {
 
 export default function AlertStateDisplay({
   alertState,
-  tokenName,
-  tokenId,
-  workspaceId,
-  onViewLatestAttempt,
   showHeading = true,
   showUpcoming = false,
   compact = false,
@@ -334,12 +330,6 @@ export default function AlertStateDisplay({
     deliveryThreshold != null &&
     currentThreshold != null &&
     Number(delivery.threshold_days) !== Number(eligibility.effective_threshold);
-  const latestAttemptPath = buildAlertLifecycleEventPath({
-    tokenId,
-    attemptId: latestAttemptId,
-    workspaceId,
-  });
-
   let attemptLine = null;
   if (realAttempt) {
     attemptLine = (
@@ -442,28 +432,9 @@ export default function AlertStateDisplay({
           ) : null}
           {attemptLine}
           {realAttempt ? (
-            onViewLatestAttempt ? (
-              <Link
-                as='button'
-                type='button'
-                onClick={() => onViewLatestAttempt(latestAttemptId)}
-                color='blue.400'
-                fontSize='xs'
-                fontWeight='semibold'
-              >
-                View latest attempt
-              </Link>
-            ) : (
-              <Link
-                as={RouterLink}
-                to={latestAttemptPath}
-                color='blue.400'
-                fontSize='xs'
-                fontWeight='semibold'
-              >
-                View latest attempt
-              </Link>
-            )
+            <Text color='blue.400' fontSize='xs' fontWeight='semibold'>
+              View in audit logs
+            </Text>
           ) : null}
         </VStack>
       </SimpleGrid>
@@ -503,9 +474,6 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
               </Link>
               <AlertStateDisplay
                 alertState={token.alert_state}
-                tokenName={token.name}
-                tokenId={token.id}
-                workspaceId={workspaceId}
               />
             </Box>
           ))}

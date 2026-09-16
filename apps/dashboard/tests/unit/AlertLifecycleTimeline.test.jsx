@@ -87,8 +87,6 @@ describe('AlertLifecycleTimeline', () => {
             },
             delivery: { status: 'sent' },
           }}
-          tokenName='Production key'
-          tokenId={17}
         />
         <AlertUpcomingSection
           alertState={{
@@ -292,7 +290,7 @@ describe('AlertLifecycleTimeline', () => {
     renderTimeline(<>
       <AlertStateDisplay alertState={{ eligibility: { status: 'suppressed',
         reason: 'retired_certificate' }, delivery: { status: 'discarded',
-        reason: 'retired_certificate' } }} tokenId={17} />
+        reason: 'retired_certificate' } }} />
       <AlertLifecycleEventRow event={event({ type: 'alert_discarded',
         status: 'discarded', reason: 'retired_certificate',
         error_message: 'Discarded: certificate revoked or decommissioned' })} />
@@ -306,20 +304,19 @@ describe('AlertLifecycleTimeline', () => {
     renderTimeline(<AlertStateDisplay alertState={{
       eligibility: { status: 'due', reason: 'threshold_reached' },
       delivery: { status: 'sent_unverified', reason: 'delivery_unverified' },
-    }} tokenId={17} />);
+    }} />);
     expect(screen.getByText('Delivery unverified')).toBeInTheDocument();
     expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   });
 
-  it('links View latest attempt only for a persisted delivery-log attempt', () => {
+  it('shows the audit-log label only for a persisted delivery-log attempt', () => {
     const fallbackDelivery = {
       status: 'failed', last_attempt_at: '2026-09-13T08:00:00Z',
       latest_attempt: { id: null, attempted_at: '2026-09-13T08:00:00Z' },
     };
     const eligibility = { status: 'due', reason: 'threshold_reached' };
     renderTimeline(<>
-      <AlertStateDisplay alertState={{ eligibility, delivery: fallbackDelivery }}
-        tokenName='Production key' tokenId={17} />
+      <AlertStateDisplay alertState={{ eligibility, delivery: fallbackDelivery }} />
       <AlertEligibilityOverview workspaceId='workspace-1' tokens={[{
         id: 17, name: 'Production key', alert_state: {
           eligibility, delivery: fallbackDelivery,
@@ -328,22 +325,22 @@ describe('AlertLifecycleTimeline', () => {
     </>);
     expect(screen.getAllByText(/Last queue attempt/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Last delivery/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /View latest attempt/i }))
+    expect(screen.queryByText(/View in audit logs/i))
       .not.toBeInTheDocument();
   });
 
-  it('keeps the attempt link when the latest attempt has a delivery-log ID', () => {
+  it('keeps the audit-log label non-interactive for a delivery-log ID', () => {
     renderTimeline(<AlertStateDisplay alertState={{
       eligibility: { status: 'due', reason: 'threshold_reached' },
       delivery: { status: 'failed', latest_attempt: {
         id: 104, attempted_at: '2026-09-13T08:00:00Z', status: 'failed',
       } },
-    }} tokenName='Production key' tokenId={17} />);
-    expect(screen.getByRole('link', { name: /View latest attempt/i }))
-      .toHaveAttribute(
-        'href',
-        '/dashboard?token-id=17&alert-event=delivery%3A104'
-      );
+    }} />);
+    expect(screen.getByText(/View in audit logs/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /View in audit logs/i }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /View in audit logs/i }))
+      .not.toBeInTheDocument();
   });
 
   it('expands and focuses the deep-linked delivery lifecycle event', async () => {

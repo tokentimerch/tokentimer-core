@@ -9,8 +9,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router';
-import { buildAlertLifecycleEventPath } from './AlertStateDisplay.jsx';
+import { useSearchParams } from 'react-router';
 import { DASHBOARD_MODAL_HEADING_FONT } from './DashboardModalFrame.jsx';
 import AlertStateDisplay, {
   AlertUpcomingSection,
@@ -25,7 +24,6 @@ export default function AlertingDetails({
   ...boxProps
 }) {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const focusEventId = useMemo(() => {
     const raw = searchParams.get('alert-event');
     if (!raw || !String(raw).startsWith('delivery:')) return null;
@@ -59,17 +57,6 @@ export default function AlertingDetails({
     }, 120);
     return () => window.clearTimeout(timer);
   }, [focusEventId, expanded, token?.id]);
-
-  const handleViewLatestAttempt = attemptId => {
-    if (token?.id == null || attemptId == null) return;
-    navigate(
-      buildAlertLifecycleEventPath({
-        tokenId: token.id,
-        attemptId,
-        workspaceId: token.workspace_id,
-      })
-    );
-  };
 
   return (
     <Box
@@ -125,10 +112,6 @@ export default function AlertingDetails({
           <Box id={contentId} mt={1} ml={1} pl={3} py={2} borderLeftWidth='2px' borderColor='dashboard.modal.border'>
             <AlertStateDisplay
               alertState={token?.alert_state}
-              tokenName={token?.name}
-              tokenId={token?.id}
-              workspaceId={token?.workspace_id}
-              onViewLatestAttempt={handleViewLatestAttempt}
               showHeading={false}
               compact
             />
