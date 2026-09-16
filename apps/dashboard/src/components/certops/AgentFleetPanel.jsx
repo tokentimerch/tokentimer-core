@@ -562,6 +562,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
             <FormControl
               as='fieldset'
               isDisabled={!alertsEnabled || loadingGroups}
+              minW={0}
+              overflow='hidden'
             >
               <FormLabel as='legend' fontSize='sm'>
                 Contact groups

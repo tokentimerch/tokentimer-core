@@ -1,3 +1,4 @@
+import { Box } from '@chakra-ui/react';
 import SelectMenu from './SelectMenu.jsx';
 import { useContactGroupPluralWrites } from '../utils/contactGroupPluralWrites.jsx';
 
@@ -32,24 +33,26 @@ export default function ContactGroupCheckboxGroup({
   });
 
   return (
-    <SelectMenu
-      options={options}
-      value={value}
-      onChange={onChange}
-      multiple={canSelectMultiple}
-      isDisabled={isDisabled}
-      emptyText={emptyText}
-      helperText={
-        canSelectMultiple
-          ? helperText
-          : 'Select one contact group, or leave as workspace default.'
-      }
-      allowEmpty
-      emptyOptionLabel='Workspace default'
-      placeholder='Workspace default'
-      size={size}
-      maxMenuH={maxH}
-      aria-label='Contact groups'
-    />
+    <Box w='100%' minW={0} maxW='100%'>
+      <SelectMenu
+        options={options}
+        value={value}
+        onChange={onChange}
+        multiple={canSelectMultiple}
+        isDisabled={isDisabled}
+        emptyText={emptyText}
+        helperText={
+          canSelectMultiple
+            ? helperText
+            : 'Select one contact group, or leave as workspace default.'
+        }
+        allowEmpty
+        emptyOptionLabel='Workspace default'
+        placeholder='Workspace default'
+        size={size}
+        maxMenuH={maxH}
+        aria-label='Contact groups'
+      />
+    </Box>
   );
 }

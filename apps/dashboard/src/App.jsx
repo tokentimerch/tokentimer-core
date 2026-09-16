@@ -5199,7 +5199,7 @@ function DashboardView({
                       <form id={createTokenFormId} onSubmit={onTokenAdd}>
                         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
                           {/* Name Field */}
-                          <FormControl isInvalid={!!formErrors.name}>
+                          <FormControl isInvalid={!!formErrors.name} minW={0}>
                             <FormLabel htmlFor='name'>Name *</FormLabel>
                             <Input
                               type='text'
@@ -5227,7 +5227,10 @@ function DashboardView({
                           </FormControl>
 
                           {/* Category Field */}
-                          <FormControl isInvalid={!!formErrors.category}>
+                          <FormControl
+                            isInvalid={!!formErrors.category}
+                            minW={0}
+                          >
                             <FormLabel htmlFor='category'>Category *</FormLabel>
                             <Select
                               id='category'
@@ -5265,7 +5268,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Type Field - Dynamic based on category */}
-                          <FormControl isInvalid={!!formErrors.type}>
+                          <FormControl isInvalid={!!formErrors.type} minW={0}>
                             <FormLabel htmlFor='type'>Type *</FormLabel>
                             <Select
                               id='type'
@@ -5300,7 +5303,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Section Field */}
-                          <FormControl>
+                          <FormControl minW={0}>
                             <FormLabel htmlFor='section'>Section</FormLabel>
                             <Input
                               type='text'

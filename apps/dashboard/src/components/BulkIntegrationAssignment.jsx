@@ -41,7 +41,7 @@ export default function BulkIntegrationAssignment({
         </Text>
 
         <HStack spacing={3} flexWrap='wrap' align='flex-start'>
-          <Box minW='200px'>
+          <Box minW={0} flex='1 1 200px'>
             <Text fontSize='xs' mb={1} fontWeight='medium'>
               Section (optional)
             </Text>
@@ -66,7 +66,7 @@ export default function BulkIntegrationAssignment({
             </Text>
           </Box>
 
-          <Box minW='220px' flex='1'>
+          <Box minW={0} flex='1 1 220px' overflow='hidden'>
             <Text fontSize='xs' mb={1} fontWeight='medium'>
               Contact groups (optional)
             </Text>

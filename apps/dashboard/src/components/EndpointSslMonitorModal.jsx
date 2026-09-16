@@ -1580,7 +1580,13 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                           </NumberInput>
                         </FormControl>
                       )}
-                      <FormControl as='fieldset' minW='220px' maxW='320px'>
+                      <FormControl
+                        as='fieldset'
+                        minW={0}
+                        maxW='320px'
+                        flex='1'
+                        overflow='hidden'
+                      >
                         <FormLabel as='legend' fontSize='sm'>
                           Contact groups
                         </FormLabel>
@@ -1682,7 +1688,12 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 </FormControl>
               )}
               {Array.isArray(contactGroups) && contactGroups.length > 0 && (
-                <FormControl as='fieldset' minW='220px' flex={1}>
+                <FormControl
+                  as='fieldset'
+                  minW={0}
+                  flex={1}
+                  overflow='hidden'
+                >
                   <FormLabel as='legend' fontSize='sm'>
                     Contact groups
                   </FormLabel>
