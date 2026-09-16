@@ -113,8 +113,9 @@ describe('AlertLifecycleTimeline', () => {
     ).not.toBeInTheDocument();
 
     const history = screen.getByRole('region', { name: 'Alert history' });
-    expect(history.textContent.indexOf('Alert queued')).toBeLessThan(
-      history.textContent.indexOf('Delivery failed')
+    // Newest first: delivery failed (08:04) above alert queued (08:03).
+    expect(history.textContent.indexOf('Delivery failed')).toBeLessThan(
+      history.textContent.indexOf('Alert queued')
     );
   });
 

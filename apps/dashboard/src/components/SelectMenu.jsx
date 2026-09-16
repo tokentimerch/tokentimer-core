@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import {
   Button,
+  HStack,
   Menu,
   MenuButton,
   MenuItemOption,
@@ -10,9 +11,9 @@ import {
   Text,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { ChevronDownIcon } from '@chakra-ui/icons';
+import { CheckIcon, ChevronDownIcon } from '@chakra-ui/icons';
 
-/** Internal sentinel so radio mode can clear back to "none". */
+/** Internal sentinel so radio/checkbox mode can clear back to "none". */
 export const SELECT_MENU_NONE = '__select_menu_none__';
 
 /**
@@ -42,6 +43,7 @@ export default function SelectMenu({
   const helperColor = useColorModeValue('gray.600', 'gray.400');
   const buttonBorder = useColorModeValue('gray.300', 'whiteAlpha.300');
   const buttonBg = useColorModeValue('white', 'gray.800');
+  const checkColor = useColorModeValue('blue.500', 'blue.300');
   const selected = useMemo(
     () => (Array.isArray(value) ? value.map(String) : []),
     [value]
@@ -74,7 +76,9 @@ export default function SelectMenu({
   }, [selected, multiple, placeholder, labelByValue]);
 
   const groupValue = multiple
-    ? selected
+    ? selected.length === 0 && allowEmpty
+      ? [SELECT_MENU_NONE]
+      : selected
     : selected.length > 0
       ? selected[0]
       : allowEmpty
@@ -83,9 +87,14 @@ export default function SelectMenu({
 
   const handleGroupChange = next => {
     if (multiple) {
-      const ids = (Array.isArray(next) ? next : [])
-        .map(String)
-        .filter(id => id && id !== SELECT_MENU_NONE);
+      const raw = (Array.isArray(next) ? next : []).map(String);
+      const ids = raw.filter(id => id && id !== SELECT_MENU_NONE);
+      const pickedNone = raw.includes(SELECT_MENU_NONE);
+      // Clicking "none" while items are selected clears back to empty.
+      if (pickedNone && selected.length > 0 && ids.length >= selected.length) {
+        onChange?.([]);
+        return;
+      }
       onChange?.(ids);
       return;
     }
@@ -117,31 +126,37 @@ export default function SelectMenu({
           size={size}
           variant='outline'
           w='100%'
-          textAlign='left'
           fontWeight='normal'
-          rightIcon={<ChevronDownIcon />}
           isDisabled={isDisabled}
           bg={buttonBg}
           borderColor={buttonBorder}
+          px={3}
           aria-label={ariaLabel || placeholder}
           title={
             selected.length > 2
               ? selected.map(id => labelByValue.get(id) || id).join(', ')
               : undefined
           }
-          sx={{
-            span: {
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              display: 'block',
-              flex: 1,
-              textAlign: 'left',
-            },
-          }}
           {...buttonProps}
         >
-          {summary}
+          <HStack w='100%' spacing={2} justify='space-between'>
+            <Text
+              as='span'
+              flex='1'
+              minW={0}
+              textAlign='left'
+              noOfLines={1}
+              color={selected.length === 0 ? helperColor : 'inherit'}
+            >
+              {summary}
+            </Text>
+            <ChevronDownIcon
+              boxSize='1.25em'
+              flexShrink={0}
+              opacity={0.85}
+              aria-hidden
+            />
+          </HStack>
         </MenuButton>
         <Portal>
           <MenuList
@@ -157,7 +172,11 @@ export default function SelectMenu({
               onChange={handleGroupChange}
             >
               {allowEmpty ? (
-                <MenuItemOption value={SELECT_MENU_NONE} fontSize={size}>
+                <MenuItemOption
+                  value={SELECT_MENU_NONE}
+                  fontSize={size}
+                  icon={<CheckIcon color={checkColor} boxSize='0.85em' />}
+                >
                   {emptyOptionLabel}
                 </MenuItemOption>
               ) : null}
@@ -166,6 +185,7 @@ export default function SelectMenu({
                   key={item.value}
                   value={item.value}
                   fontSize={size}
+                  icon={<CheckIcon color={checkColor} boxSize='0.85em' />}
                 >
                   {item.label}
                 </MenuItemOption>

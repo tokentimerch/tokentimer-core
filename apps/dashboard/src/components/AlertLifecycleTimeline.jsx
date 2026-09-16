@@ -199,7 +199,7 @@ export function groupAlertLifecycleEvents(events) {
 
   for (const group of sorted) {
     group.events.sort(
-      (a, b) => new Date(a.occurred_at) - new Date(b.occurred_at)
+      (a, b) => new Date(b.occurred_at) - new Date(a.occurred_at)
     );
     const reached = group.events.find(item => item.type === 'threshold_reached');
     group.reached_at = reached?.occurred_at || null;
@@ -564,7 +564,8 @@ export default function AlertLifecycleTimeline({
     loadPage(0);
   }, [loadPage]);
 
-  const chronologicalEvents = useMemo(() => [...events].reverse(), [events]);
+  // API returns newest-first; keep that order for history (youngest at top).
+  const chronologicalEvents = useMemo(() => events, [events]);
   const groups = useMemo(
     () => groupAlertLifecycleEvents(chronologicalEvents),
     [chronologicalEvents]
