@@ -17,18 +17,41 @@ describe("Token contact_group_ids HTTP round-trip", function () {
       "Token contact groups",
     );
 
+    const contact = await request(BASE)
+      .post(`/api/v1/workspaces/${ws}/contacts`)
+      .set("Cookie", cookie)
+      .send({
+        first_name: "Alert",
+        last_name: "Contact",
+        details: { email: "alert-groups@example.com" },
+      })
+      .expect(201);
+    const contactId = String(contact.body.id);
+
     await request(BASE)
       .put(`/api/v1/workspaces/${ws}/alert-settings`)
       .set("Cookie", cookie)
       .send({
         contact_groups: [
-          { id: "zeta", name: "Zeta", email_contact_ids: [] },
-          { id: "alpha", name: "Alpha", email_contact_ids: [] },
-          { id: "default-ws", name: "Workspace default", email_contact_ids: [] },
+          { id: "zeta", name: "Zeta", email_contact_ids: [contactId] },
+          { id: "alpha", name: "Alpha", email_contact_ids: [contactId] },
+          {
+            id: "default-ws",
+            name: "Workspace default",
+            email_contact_ids: [contactId],
+          },
         ],
         default_contact_group_id: "default-ws",
       })
       .expect(200);
+
+    const settings = await request(BASE)
+      .get(`/api/v1/workspaces/${ws}/alert-settings`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(
+      settings.body.contact_groups.map((group) => group.id).sort(),
+    ).to.deep.equal(["alpha", "default-ws", "zeta"]);
   });
 
   it("POSTs two ids, GETs them sorted with lex-smallest singular, and PUT [] clears to workspace default", async () => {

@@ -447,8 +447,10 @@ describe('DeployAgentModal', () => {
 
     await screen.findByRole('button', { name: 'Contact groups' });
     fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
-    fireEvent.click(screen.getByText(/On-call \(workspace default group\)/));
-    fireEvent.click(screen.getByText(/^Security$/));
+    fireEvent.pointerDown(
+      screen.getByText(/On-call \(workspace default group\)/)
+    );
+    fireEvent.pointerDown(screen.getByText(/^Security$/));
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: 'dc1-edge' },
     });
