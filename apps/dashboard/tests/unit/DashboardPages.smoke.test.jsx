@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, useNavigate } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { useState } from 'react';
 
 import Workspaces from '../../src/pages/Workspaces.jsx';
 import Audit from '../../src/pages/Audit.jsx';
@@ -15,9 +16,11 @@ const {
   workspaceGetMock,
   workspaceListMock,
   workspaceListMembersMock,
+  workspaceListInvitationsMock,
   workspaceCreateMock,
   alertGetAuditEventsMock,
   tokenGetTokensMock,
+  workspaceState,
 } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
   apiPostMock: vi.fn(),
@@ -25,9 +28,14 @@ const {
   workspaceGetMock: vi.fn(),
   workspaceListMock: vi.fn(),
   workspaceListMembersMock: vi.fn(),
+  workspaceListInvitationsMock: vi.fn(),
   workspaceCreateMock: vi.fn(),
   alertGetAuditEventsMock: vi.fn(),
   tokenGetTokensMock: vi.fn(),
+  workspaceState: {
+    workspaceId: 'ws-1',
+    selectWorkspace: vi.fn(),
+  },
 }));
 
 vi.mock('../../src/hooks/useDashboardShellProps.js', () => ({
@@ -84,8 +92,8 @@ vi.mock('../../src/utils/toast.js', () => ({
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
   useWorkspace: () => ({
-    workspaceId: 'ws-1',
-    selectWorkspace: vi.fn(),
+    workspaceId: workspaceState.workspaceId,
+    selectWorkspace: workspaceState.selectWorkspace,
   }),
 }));
 
@@ -117,6 +125,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     get: workspaceGetMock,
     list: workspaceListMock,
     listMembers: workspaceListMembersMock,
+    listInvitations: workspaceListInvitationsMock,
     create: workspaceCreateMock,
     inviteMember: vi.fn(),
     changeRole: vi.fn(),
@@ -194,8 +203,11 @@ describe('Dashboard page smoke tests', () => {
     // resolves the caller's role via workspaceAPI.get; these smoke tests
     // don't assert on manager gating, so any resolvable role is fine.
     workspaceGetMock.mockResolvedValue({ role: 'admin' });
+    workspaceState.workspaceId = 'ws-1';
+    workspaceState.selectWorkspace.mockReset();
     workspaceListMock.mockResolvedValue({ items: [] });
     workspaceListMembersMock.mockResolvedValue({ items: [] });
+    workspaceListInvitationsMock.mockResolvedValue({ items: [] });
     workspaceCreateMock.mockResolvedValue({ id: 'ws-2' });
     tokenGetTokensMock.mockResolvedValue({ items: [] });
     alertGetAuditEventsMock.mockResolvedValue([]);
@@ -208,6 +220,64 @@ describe('Dashboard page smoke tests', () => {
     renderWithProviders(<Workspaces {...baseProps} />);
     await waitFor(() => expectTextPresent('Workspaces'));
     expect(workspaceListMock).toHaveBeenCalled();
+  });
+
+  it('aligns the Workspaces page selector with the global workspace', async () => {
+    workspaceState.workspaceId = 'ws-test';
+    workspaceListMock.mockResolvedValue({
+      items: [
+        { id: 'ws-admin', name: 'Default', role: 'admin' },
+        { id: 'ws-test', name: 'Test', role: 'admin' },
+      ],
+    });
+
+    function Harness() {
+      const [, setEpoch] = useState(0);
+      return (
+        <div>
+          <button type='button' onClick={() => setEpoch(n => n + 1)}>
+            bump-workspace
+          </button>
+          <Workspaces {...baseProps} />
+        </div>
+      );
+    }
+
+    renderWithProviders(<Harness />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace')).toHaveValue('ws-test');
+    });
+
+    workspaceState.workspaceId = 'ws-admin';
+    fireEvent.click(screen.getByRole('button', { name: 'bump-workspace' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace')).toHaveValue('ws-admin');
+    });
+  });
+
+  it('updates the global workspace when the Workspaces page selector changes', async () => {
+    workspaceListMock.mockResolvedValue({
+      items: [
+        { id: 'ws-1', name: 'Default', role: 'admin' },
+        { id: 'ws-test', name: 'Test', role: 'admin' },
+      ],
+    });
+
+    renderWithProviders(<Workspaces {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace')).toHaveValue('ws-1');
+    });
+
+    fireEvent.change(screen.getByLabelText('Workspace'), {
+      target: { value: 'ws-test' },
+    });
+
+    await waitFor(() => {
+      expect(workspaceState.selectWorkspace).toHaveBeenCalledWith('ws-test');
+    });
   });
 
   it('renders Audit route with mocked data state', async () => {
