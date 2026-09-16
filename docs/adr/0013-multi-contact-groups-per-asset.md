@@ -101,7 +101,8 @@ group tables.
    time (decision 5) still drops stale ids even if a row was not cleaned
    up yet.
 
-2. **Dual-write rollout. This record does not stop writing singular columns.**
+2. **Dual-write in one 0.16.0 binary. This record does not stop writing
+   singular columns.** *(Amended 2026-09-16.)*
 
    Sequence, and not another order:
 
@@ -109,50 +110,59 @@ group tables.
    2. Every writer dual-writes (join table plus singular compatibility
       mirror) via `replaceAssetContactGroups` (decision 7).
    3. Switch alert and digest **readers** to the join table
-      (`resolveContactGroupsForAsset`, decision 5).
+      (`resolveContactGroupsForAsset`, decision 5). API eligibility is
+      a reader: it must load `token_contact_groups` and union
+      thresholds the same way the worker does, not only
+      `tokens.contact_group_id`.
    4. Ship the plural API field and UI (`contact_group_ids` /
       `contactGroupIds`).
    5. A later change, not this one, stops writing the singular columns
       and then drops them.
 
-   Those steps are two (plus a later drop) **deployable releases**, not
-   commits in one binary. A rolling mix of pre-dual-write writers and
-   join-table readers is the stale-join race this sequence exists to
-   prevent: an old replica writes only `tokens.contact_group_id`, the
-   join row stays at the backfilled value, and new workers send to the
-   wrong group. Do not skip the dual-write release.
+   History: this record first split steps 1-2 and 3-4 into two
+   deployable releases (plus a later drop), and told operators not to
+   skip a dual-write-only tag. That split was never shipped. 0.15.0 is
+   singular-only: no join tables, and it never writes them. 0.16.0 ships
+   migrations 52 (join tables, first backfill,
+   `weekly_digest_recipient_log`), 53 (bootstrap `contact_group_ids`),
+   and 54 (rebuild join rows from the singular column) in **one**
+   binary, with steps 1-4 above and with plural writes on by default.
+   Do not wait for a dual-write-only release.
 
-   The switch-reads release must re-backfill join rows from the singular
-   column at migration start (repairing drift from a mixed dual-write
-   window) **before** readers trust the join table and **before** the
-   plural API can write two-or-more memberships. That rebuild starts
-   with `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` on both join
-   tables so dual-write `INSERT`/`UPDATE`/`DELETE` wait, while ordinary
-   reads continue. `ON CONFLICT DO NOTHING` is still required: a writer
-   that already holds a row lock can insert the same membership after
-   the rebuild `DELETE` and before the rebuild `INSERT`. The lock is
-   what stops a change or clear (A to B, or A to empty) from leaving a
-   stale extra join row that switch-reads would then treat as
-   authoritative. Canonical lex-smallest id uses UTF-8 byte order
-   (`Buffer.compare` in Node, `COLLATE "C"` in PostgreSQL), not the
-   database's default text collation and not JavaScript's default
-   `.sort()`.
+   A rolling mix of 0.15.0 writers and 0.16.0 join-table readers is the
+   stale-join race: an old replica writes only `tokens.contact_group_id`,
+   the join row stays at the backfilled value, and new workers send to
+   the wrong group. Mixed 0.15.0 + 0.16.0 is unsafe. Rolling a 0.15.0
+   binary onto a post-54 database is unsupported.
+
+   Migration 54 re-backfills join rows from the singular column
+   (repairing drift from a 0.15.0 writer that ran after 52) **before**
+   readers trust the join table and **before** the plural API can write
+   two-or-more memberships. That rebuild starts with
+   `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` on both join tables so
+   dual-write `INSERT`/`UPDATE`/`DELETE` wait, while ordinary reads
+   continue. `ON CONFLICT DO NOTHING` is still required: a writer that
+   already holds a row lock can insert the same membership after the
+   rebuild `DELETE` and before the rebuild `INSERT`. The lock is what
+   stops a change or clear (A to B, or A to empty) from leaving a stale
+   extra join row that switch-reads would then treat as authoritative.
+   Canonical lex-smallest id uses UTF-8 byte order (`Buffer.compare` in
+   Node, `COLLATE "C"` in PostgreSQL), not the database's default text
+   collation and not JavaScript's default `.sort()`.
 
    Step 4 (two-or-more membership writes and dashboard multi-select) is
    gated by `CONTACT_GROUP_PLURAL_WRITES` (on unless set to `false` /
-   `0` / `no`). This release's dashboard otherwise hits a still-running
-   dual-write API with `[A,B]` and that replica persists only the
-   singular companion. Keep the kill switch off (`false`) only while a
-   mixed dual-write fleet remains; after every API, worker, and
-   dashboard replica is this release, leave the variable unset (on).
-   When the flag is off, a `contact_group_ids` / `contactGroupIds` write
-   with two or more ids is HTTP 400. `GET /api/auth/features` reports
-   `contactGroupPluralWrites` so the dashboard can stay single-select.
+   `0` / `no`). Setting the flag to `false` on 0.16.0 only 400s a
+   `contact_group_ids` / `contactGroupIds` write with two or more ids.
+   It does **not** make 0.15.0 write the join, and it does not make a
+   mixed 0.15.0 + 0.16.0 fleet safe. Leave the variable unset (on)
+   unless you need that 0.16.0-only 400. `GET /api/auth/features`
+   reports `contactGroupPluralWrites` so the dashboard can stay
+   single-select while the flag is off.
 
    Until step 5, `tokens.contact_group_id` and
    `certops_agents.contact_group_id` are a compatibility mirror of join
-   membership, not an independent assignment. Readers that have not yet
-   been switched may still consult the singular column. After step 3,
+   membership, not an independent assignment. After step 3 (in 0.16.0),
    join-table membership is the source of truth even if the mirror is
    wrong.
 
@@ -392,18 +402,32 @@ that unique constraint, or two workers can both insert.
 
 ### Operational implication
 
-The dual-write release does not change request or alert behavior:
-operators still assign one group per asset. Join tables stay in sync
-for the later switch. After switch-reads, old clients that only send
-and read `contact_group_id` keep working through the compatibility
-mirror (decision 3). New clients send `contact_group_ids`. Until the
-follow-up that stops singular writes, operators can still see a single
-id on GET; it is the lex-smallest assigned id, not a chosen primary.
-Weekly digest delivery then depends on `weekly_digest_recipient_log`
-claim rows. If that table is missing or the unique constraint is
-absent, overlapping recipients can be double-messaged again. Generic
-digest webhooks must keep the existing `contact_group` property and
-add `contact_groups`; removing `contact_group` is a consumer break.
+0.15.0 is singular-only: no join tables, no dual-write. 0.16.0 is one
+binary: migrations 52, 53, and 54, dual-write, switch-reads, and plural
+API/UI, with `CONTACT_GROUP_PLURAL_WRITES` on by default. There is no
+dual-write-only tag to wait for.
+
+`CONTACT_GROUP_PLURAL_WRITES=false` on 0.16.0 only 400s two-or-more
+ids. It does not make a 0.15.0 replica write the join. A mixed
+0.15.0 + 0.16.0 fleet is unsafe: 0.15.0 writes only
+`tokens.contact_group_id` / `certops_agents.contact_group_id`, so join
+rows go stale and 0.16.0 workers send to the wrong groups. Rolling a
+0.15.0 binary onto a post-54 database is unsupported.
+
+After 0.16.0, old clients that only send and read `contact_group_id`
+keep working through the compatibility mirror (decision 3). New
+clients send `contact_group_ids`. Until the follow-up that stops
+singular writes, operators can still see a single id on GET; it is the
+lex-smallest assigned id, not a chosen primary. API eligibility must
+read `token_contact_groups` and union each resolved group's
+thresholds, the same as the worker; it must not decide eligibility
+from `tokens.contact_group_id` alone.
+
+Weekly digest delivery depends on `weekly_digest_recipient_log` claim
+rows. If that table is missing or the unique constraint is absent,
+overlapping recipients can be double-messaged again. Generic digest
+webhooks must keep the existing `contact_group` property and add
+`contact_groups`; removing `contact_group` is a consumer break.
 
 ## Alternatives considered
 

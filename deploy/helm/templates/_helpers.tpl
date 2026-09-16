@@ -216,6 +216,9 @@ DISABLE_ADMIN_BOOTSTRAP: "true"
 {{- if .Values.config.disableManualInvites }}
 DISABLE_MANUAL_INVITES: "true"
 {{- end }}
+{{- if not (eq (.Values.config.contactGroupPluralWrites | toString) "") }}
+CONTACT_GROUP_PLURAL_WRITES: {{ .Values.config.contactGroupPluralWrites | quote }}
+{{- end }}
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
@@ -289,6 +292,12 @@ TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: {{ .Values.twilio.alertCon
 TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: {{ .Values.twilio.weeklyDigestContentSid | quote }}
 {{- end }}
 {{- end }}
+{{- if .Values.twilio.webhookRateLimitWindowMs }}
+TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS: {{ .Values.twilio.webhookRateLimitWindowMs | quote }}
+{{- end }}
+{{- if .Values.twilio.webhookRateLimitMax }}
+TWILIO_WEBHOOK_RATE_LIMIT_MAX: {{ .Values.twilio.webhookRateLimitMax | quote }}
+{{- end }}
 {{- end -}}
 
 {{- define "tokentimer.configmapChecksum" -}}
@@ -306,6 +315,7 @@ Stable secret inputs (avoids randAlphaNum in checksum/secret during helm templat
   "externalPgPassword" (.Values.postgresql.external.password | default "")
   "smtpPassword" (.Values.smtp.password | default "")
   "twilioAuthToken" (.Values.twilio.authToken | default "")
+  "weeklyDigestRecipientKey" (.Values.config.weeklyDigestRecipientKey | default "")
   "existingSecret" (.Values.config.existingSecret | default "")
   "pgExistingSecret" (.Values.postgresql.auth.existingSecret | default "")
   "externalPgExistingSecret" (.Values.postgresql.external.existingSecret | default "")

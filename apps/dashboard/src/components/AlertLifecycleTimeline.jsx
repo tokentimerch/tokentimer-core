@@ -125,7 +125,10 @@ function formatChannel(channel) {
   return formatChannelLabel(channel);
 }
 
-export function formatAlertLifecycleEvent(event, { includeThreshold = true } = {}) {
+export function formatAlertLifecycleEvent(
+  event,
+  { includeThreshold = true } = {}
+) {
   const meta = EVENT_META[event.type] || {
     label: String(event.type || 'Alert event').replaceAll('_', ' '),
     color: '#64748b',
@@ -183,8 +186,7 @@ export function groupAlertLifecycleEvents(events) {
         : String(event.threshold_days);
     if (!groups.has(key)) {
       groups.set(key, {
-        threshold_days:
-          key === 'none' ? null : Number.parseInt(key, 10),
+        threshold_days: key === 'none' ? null : Number.parseInt(key, 10),
         events: [],
       });
     }
@@ -201,7 +203,9 @@ export function groupAlertLifecycleEvents(events) {
     group.events.sort(
       (a, b) => new Date(b.occurred_at) - new Date(a.occurred_at)
     );
-    const reached = group.events.find(item => item.type === 'threshold_reached');
+    const reached = group.events.find(
+      item => item.type === 'threshold_reached'
+    );
     group.reached_at = reached?.occurred_at || null;
     // Threshold groups already show the crossing in the header; omit the
     // duplicate threshold_reached child row. Keep all events for "Other".
@@ -574,9 +578,7 @@ export default function AlertLifecycleTimeline({
 
   useEffect(() => {
     if (!focusedId || loading || loadingMore || !hasMore) return;
-    const hasFocusTarget = events.some(
-      event => String(event.id) === focusedId
-    );
+    const hasFocusTarget = events.some(event => String(event.id) === focusedId);
     if (!hasFocusTarget) {
       loadPage(events.length);
     }

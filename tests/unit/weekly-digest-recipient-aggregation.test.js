@@ -6,6 +6,7 @@ process.env.WEEKLY_DIGEST_RECIPIENT_KEY =
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -195,6 +196,43 @@ describe("claimWeeklyDigestRecipient", () => {
       state.queries[0].params[3],
       hashDigestRecipientKey("alice@example.com"),
     );
+  });
+});
+
+describe("WEEKLY_DIGEST_RECIPIENT_KEY HMAC", () => {
+  it("hashes skip keys with the dedicated key, not SESSION_SECRET", async () => {
+    const { hashDigestRecipientKey } = await loadDigest();
+    const previousDedicated = process.env.WEEKLY_DIGEST_RECIPIENT_KEY;
+    const previousSession = process.env.SESSION_SECRET;
+    const destination = "alice@example.com";
+    const dedicated = "dedicated-weekly-digest-recipient-key";
+    const session = "session-secret-must-not-be-used";
+    try {
+      process.env.WEEKLY_DIGEST_RECIPIENT_KEY = dedicated;
+      process.env.SESSION_SECRET = session;
+      const hashed = hashDigestRecipientKey(destination);
+      const expectedDedicated = crypto
+        .createHmac("sha256", dedicated)
+        .update(destination, "utf8")
+        .digest("hex");
+      const expectedSession = crypto
+        .createHmac("sha256", session)
+        .update(destination, "utf8")
+        .digest("hex");
+      assert.equal(hashed, expectedDedicated);
+      assert.notEqual(hashed, expectedSession);
+    } finally {
+      if (previousDedicated === undefined) {
+        delete process.env.WEEKLY_DIGEST_RECIPIENT_KEY;
+      } else {
+        process.env.WEEKLY_DIGEST_RECIPIENT_KEY = previousDedicated;
+      }
+      if (previousSession === undefined) {
+        delete process.env.SESSION_SECRET;
+      } else {
+        process.env.SESSION_SECRET = previousSession;
+      }
+    }
   });
 });
 

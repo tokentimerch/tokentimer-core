@@ -15,6 +15,7 @@ tests/integration/two-factor-disable.test.js
 tests/integration/tokens.test.js
 tests/integration/token-validation.test.js
 tests/integration/token-update-validation.test.js
+tests/integration/token-contact-group-ids.test.js
 tests/integration/token-categories.test.js
 tests/integration/tokens-extended.test.js
 tests/integration/token-deletion-cleans-alert-queue.test.js
@@ -93,6 +94,7 @@ tests/integration/audit-system-admin-org-scope.test.js
 # Schema and utilities
 tests/integration/certops-migration.test.js
 tests/integration/certops-migrations-37-38-upgrade.test.js
+tests/integration/contact-groups-migrations-52-54-upgrade.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
 tests/integration/certops-controller-observations.test.js
@@ -153,3 +155,4 @@ tests/integration/security.test.js
 tests/integration/rate-limit-security.test.js
 tests/integration/csrf-and-rate-limit.test.js
 tests/integration/csrf-worker-exemption.test.js
+tests/integration/csrf-login-enforcement.test.js

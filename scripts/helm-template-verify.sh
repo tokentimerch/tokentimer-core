@@ -489,6 +489,26 @@ assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_PROVIDER_HOSTS: "c
 assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_EXTRA_PROVIDER_HOSTS: "extra.example.com"' "webhook extra provider hosts"
 assert_contains "$(cat "${webhook_hosts_rendered}")" 'WEBHOOK_ALLOW_ALL_HOSTS: "true"' "webhook allow all hosts"
 
+echo "==> assert Twilio limiter knobs render even when twilio.existingSecret is set"
+twilio_limiter_existing_secret="${OUT}/rendered-twilio-limiter-existing-secret.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set twilio.existingSecret=my-twilio-secret \
+  --set twilio.webhookRateLimitMax=5000 \
+  > "${twilio_limiter_existing_secret}"
+assert_contains "$(cat "${twilio_limiter_existing_secret}")" 'TWILIO_WEBHOOK_RATE_LIMIT_MAX: "5000"' "twilio limiter max with existingSecret"
+
+echo "==> assert CONTACT_GROUP_PLURAL_WRITES and WEEKLY_DIGEST_RECIPIENT_KEY first-class keys"
+contact_group_digest_rendered="${OUT}/rendered-contact-group-digest.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.contactGroupPluralWrites=false \
+  --set config.weeklyDigestRecipientKey=testkey \
+  > "${contact_group_digest_rendered}"
+assert_contains "$(cat "${contact_group_digest_rendered}")" 'CONTACT_GROUP_PLURAL_WRITES: "false"' "contact group plural writes false"
+assert_contains "$(cat "${contact_group_digest_rendered}")" 'WEEKLY_DIGEST_RECIPIENT_KEY: "testkey"' "weekly digest recipient key in secret"
+assert_not_contains "$(cat "${proxy_disabled}")" 'CONTACT_GROUP_PLURAL_WRITES:' "default omit CONTACT_GROUP_PLURAL_WRITES"
+
 expect_proxy_failure network-policy-without-proxy-cidrs 'proxyCidrs' \
   --set config.useEnvProxy=true \
   --set config.proxyExistingSecret=corporate-proxy \

@@ -25,7 +25,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.15.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.16.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
@@ -90,9 +90,6 @@ api:
     failureThreshold: 40
 
   env: {}
-  # Multi-group contact assignment is on by default. Set
-  # CONTACT_GROUP_PLURAL_WRITES: "false" only during a mixed dual-write
-  # rolling update, then leave unset again.
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []
@@ -114,7 +111,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.15.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.16.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -161,16 +158,13 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.15.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.16.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
   env: {}
-  # Optional WEEKLY_DIGEST_RECIPIENT_KEY HMAC secret for digest skip keys.
-  # Falls back to SESSION_SECRET when unset. Rotating it re-sends already
-  # claimed recipients for the current week.
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []
@@ -309,7 +303,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.15.0"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.16.0"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -444,8 +438,14 @@ config:
   sessionSecret: ""
 
   # Replaces the chart-generated secret entirely.
-  # Must contain SESSION_SECRET; optionally DB_PASSWORD, ADMIN_PASSWORD, etc.
+  # Must contain SESSION_SECRET; optionally DB_PASSWORD, ADMIN_PASSWORD,
+  # WEEKLY_DIGEST_RECIPIENT_KEY, etc.
   existingSecret: ""
+
+  # Optional HMAC secret for digest skip keys; falls back to SESSION_SECRET.
+  # Rotating re-sends already claimed recipients this week. When existingSecret
+  # is set, put WEEKLY_DIGEST_RECIPIENT_KEY in that secret instead.
+  weeklyDigestRecipientKey: ""
 
   # Admin Bootstrap (required for first startup)
   adminEmail: ""          # required (unless existingSecret is set)
@@ -457,6 +457,9 @@ config:
   # returns 403 MANUAL_INVITES_DISABLED) when users are provisioned exclusively through
   # an external identity provider. Existing pending invitations are unaffected.
   disableManualInvites: false
+  # Empty = unset = on. Set "false" only to 400 two-or-more contact_group_ids
+  # on 0.16.0. Does not make 0.15.0 write join tables. Do not mix 0.15.0 + 0.16.0.
+  contactGroupPluralWrites: ""
   # Set to true to allow webhook alert/test destinations to resolve to private,
   # loopback, or link-local IPs (including IPv4-mapped IPv6). Default false
   # blocks these to prevent SSRF against internal infrastructure; only enable
@@ -553,7 +556,10 @@ smtp:
 # -- Twilio WhatsApp (optional) -----------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
 # Precedence: env vars here > System Settings DB (admin UI) > disabled.
-# existingSecret replaces all Twilio keys; must contain all TWILIO_* keys.
+# existingSecret replaces Twilio credential/SID keys; must contain those TWILIO_*
+# keys (account SID, auth token, WhatsApp from, content SIDs). Limiter knobs
+# (webhookRateLimitWindowMs / webhookRateLimitMax) are ConfigMap first-class
+# keys and are not required in the existing secret.
 twilio:
   accountSid: ""
   authToken: ""
@@ -565,6 +571,9 @@ twilio:
   alertContentSidEndpointDown: ""
   alertContentSidEndpointRecovered: ""
   weeklyDigestContentSid: ""
+  # Inbound StatusCallback limiter. Empty keeps code defaults (60s / 1200 in production).
+  webhookRateLimitWindowMs: ""
+  webhookRateLimitMax: ""
 
 # -- Monitoring ----------------------------------------------------------------
 monitoring:

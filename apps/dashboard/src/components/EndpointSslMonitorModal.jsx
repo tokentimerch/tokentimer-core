@@ -1688,12 +1688,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 </FormControl>
               )}
               {Array.isArray(contactGroups) && contactGroups.length > 0 && (
-                <FormControl
-                  as='fieldset'
-                  minW={0}
-                  flex={1}
-                  overflow='hidden'
-                >
+                <FormControl as='fieldset' minW={0} flex={1} overflow='hidden'>
                   <FormLabel as='legend' fontSize='sm'>
                     Contact groups
                   </FormLabel>

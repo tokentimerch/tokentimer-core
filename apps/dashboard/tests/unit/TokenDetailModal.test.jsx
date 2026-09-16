@@ -450,7 +450,7 @@ describe('TokenDetailModal', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText('General details')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
-    expect(screen.queryByText('Contact group')).not.toBeInTheDocument();
+    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
     expect(screen.queryByText('Asset expiration')).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Notes' })
@@ -460,7 +460,7 @@ describe('TokenDetailModal', () => {
 
     expect(screen.getByText('General details')).toBeInTheDocument();
     expect(screen.getByText('Section :')).toBeInTheDocument();
-    expect(screen.getByText('Contact group :')).toBeInTheDocument();
+    expect(screen.getByText('Contact groups :')).toBeInTheDocument();
     expect(screen.getByText('Asset expiration :')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
   });

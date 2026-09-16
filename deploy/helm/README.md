@@ -90,7 +90,7 @@ Open http://localhost:8080 and log in with your admin credentials.
 > OCI URL. The chart declares no subchart dependencies, so there is no
 > `helm dependency update` step.
 
-> **TLS Warning:** With `NODE_ENV=production`, the API sets the `Secure` flag on session cookies and enforces CSRF protection. Browsers will not persist or send secure cookies over plain HTTP, and mutating requests (including login) over `http://localhost` port-forwards will fail with 403 CSRF errors. For local testing, set `config.nodeEnv=development`, or inject `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` on the API via `api.envFrom`. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
+> **TLS Warning:** CSRF is always on (`CSRF_ENABLED` is unused). With `NODE_ENV=production` (the default), the API also sets the `Secure` flag on session cookies. Browsers will not persist or send those cookies over plain HTTP, and mutating requests (including login) over `http://localhost` port-forwards fail with 403 (missing Secure cookie and/or `X-CSRF-Token`). For local testing, set `config.nodeEnv=development` (drops the Secure flag), or inject `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` on the API via `api.envFrom`. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
 
 ## Configuration Precedence
 
@@ -166,7 +166,8 @@ config:
   existingSecret: "my-tokentimer-secrets"  # must contain SESSION_SECRET; also
                                            # CERTOPS_SIGNING_ENCRYPTION_KEY and
                                            # CERTOPS_REGISTRATION_ENCRYPTION_KEY
-                                           # when CertOps is enabled
+                                           # when CertOps is enabled; optionally
+                                           # WEEKLY_DIGEST_RECIPIENT_KEY
 
 postgresql:
   external:
@@ -176,10 +177,13 @@ smtp:
   existingSecret: "my-smtp-secret"         # all SMTP_* + FROM_* keys
 
 twilio:
-  existingSecret: "my-twilio-secret"       # all TWILIO_* keys
+  existingSecret: "my-twilio-secret"       # credential/SID TWILIO_* keys
+                                           # (limiter knobs are ConfigMap
+                                           # first-class keys, not required
+                                           # in this secret)
 ```
 
-When `existingSecret` is set for a group, the chart renders **no keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts.
+When `existingSecret` is set for a group, the chart renders **no credential keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts. Twilio inbound limiter knobs (`twilio.webhookRateLimitWindowMs` / `twilio.webhookRateLimitMax`) still render into the ConfigMap when set, even if `twilio.existingSecret` is set.
 
 ### Corporate Proxy
 

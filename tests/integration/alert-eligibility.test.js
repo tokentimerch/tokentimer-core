@@ -42,6 +42,22 @@ describe("Alert eligibility API and queue discovery parity", function () {
     );
     const id = result.rows[0].id;
     tokenIds.push(id);
+    const membershipIds = Object.prototype.hasOwnProperty.call(
+      options,
+      "assignedGroupIds",
+    )
+      ? options.assignedGroupIds
+      : options.contactGroupId
+        ? [options.contactGroupId]
+        : [];
+    for (const groupId of membershipIds) {
+      await TestUtils.execQuery(
+        `INSERT INTO token_contact_groups (token_id, workspace_id, contact_group_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [id, workspaceId, groupId],
+      );
+    }
     return id;
   }
 
@@ -86,6 +102,24 @@ describe("Alert eligibility API and queue discovery parity", function () {
             thresholds: [7, 0],
           },
           { id: "empty", name: "Empty", thresholds: [7, 0, -2] },
+          {
+            id: "a",
+            name: "Group A",
+            email_contact_ids: ["c1"],
+            thresholds: [7, 1],
+          },
+          {
+            id: "z",
+            name: "Group Z",
+            email_contact_ids: ["c1"],
+            thresholds: [30, 14],
+          },
+          {
+            id: "c",
+            name: "Group C",
+            email_contact_ids: ["c1"],
+            thresholds: [30, 14],
+          },
         ]),
       ],
     );
@@ -300,5 +334,37 @@ describe("Alert eligibility API and queue discovery parity", function () {
       .set("Cookie", viewer.cookie)
       .send({ workspace_id: workspaceId })
       .expect(403);
+  });
+
+  it("unions assigned-group thresholds instead of using only the lex-smallest group", async () => {
+    const tokenId = await insertToken("Unioned thresholds", 20, {
+      importedAt: utcDate(-1),
+      contactGroupId: "a",
+      assignedGroupIds: ["a", "z"],
+    });
+    const states = await loadStates();
+    const eligibility = states.get(tokenId).eligibility;
+    expect(eligibility).to.include({
+      status: "due",
+      reason: "threshold_reached",
+      effective_threshold: 30,
+      contact_group_id: "a",
+    });
+    expect(eligibility.effective_thresholds).to.include.members([30, 14, 7, 1]);
+  });
+
+  it("follows join-table membership when it disagrees with the singular column", async () => {
+    const tokenId = await insertToken("Join not singular", 20, {
+      importedAt: utcDate(-1),
+      contactGroupId: "c",
+      assignedGroupIds: ["a"],
+    });
+    const states = await loadStates();
+    const eligibility = states.get(tokenId).eligibility;
+    expect(eligibility.contact_group_id).to.equal("a");
+    expect(eligibility.status).to.equal("outside_threshold");
+    expect(eligibility.effective_threshold).to.equal(null);
+    expect(eligibility.effective_thresholds).to.include(1);
+    expect(eligibility.effective_thresholds).to.not.include(30);
   });
 });

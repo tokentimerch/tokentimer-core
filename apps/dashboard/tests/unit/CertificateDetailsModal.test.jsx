@@ -427,7 +427,7 @@ describe('CertificateDetailsModal', () => {
     expect(screen.queryByText('Auto-renewal')).not.toBeInTheDocument();
     expect(screen.queryByText('Key locality')).not.toBeInTheDocument();
     expect(screen.queryByText('Section')).not.toBeInTheDocument();
-    expect(screen.queryByText('Contact group')).not.toBeInTheDocument();
+    expect(screen.queryByText('Contact groups')).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Certificate details' })
     ).not.toBeInTheDocument();
@@ -472,7 +472,7 @@ describe('CertificateDetailsModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     expect(screen.getByText('Section')).toBeInTheDocument();
-    expect(screen.getByText('Contact group')).toBeInTheDocument();
+    expect(screen.getByText('Contact groups')).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'Certificate details' })
     ).toBeInTheDocument();

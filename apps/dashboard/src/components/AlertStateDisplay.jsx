@@ -58,8 +58,7 @@ function formatDateOnly(value) {
 export function formatAlertThreshold(threshold) {
   if (threshold === null || threshold === undefined) return null;
   if (threshold === 0) return 'Expiry day';
-  if (threshold < 0)
-    return `${Math.abs(threshold)} days after expiry`;
+  if (threshold < 0) return `${Math.abs(threshold)} days after expiry`;
   return `${threshold} days before expiry`;
 }
 
@@ -158,7 +157,7 @@ export function eligibilityExplanation(eligibility) {
     case 'retired_certificate':
       return 'Expiry alerts are suppressed for retired certificates.';
     case 'no_eligible_channels':
-      return 'The threshold is reached, but the selected contact group has no eligible recipients or channels.';
+      return 'The threshold is reached, but the assigned contact groups have no eligible recipients or channels.';
     case 'invalid_expiration':
       return 'No valid expiration date is available for evaluation.';
     default:
@@ -326,7 +325,9 @@ export default function AlertStateDisplay({
   const realAttempt = latestAttemptId ? delivery.latest_attempt : null;
   const lastDeliveryChannel = formatChannelLabel(realAttempt?.channel);
   const channels = formatChannelsList(eligibility.eligible_channels);
-  const currentThreshold = formatAlertThreshold(eligibility.effective_threshold);
+  const currentThreshold = formatAlertThreshold(
+    eligibility.effective_threshold
+  );
   const deliveryThreshold = formatAlertThreshold(delivery?.threshold_days);
   const thresholdsDiffer =
     deliveryThreshold != null &&
@@ -511,9 +512,13 @@ export function sortEligibilityRecords(tokens, sort) {
         break;
     }
     if (result === 0) {
-      result = String(left.name || '').localeCompare(String(right.name || ''), undefined, {
-        sensitivity: 'base',
-      });
+      result = String(left.name || '').localeCompare(
+        String(right.name || ''),
+        undefined,
+        {
+          sensitivity: 'base',
+        }
+      );
     }
     return result * dir;
   });
@@ -583,9 +588,7 @@ export function AlertEligibilityOverview({ tokens = [], workspaceId }) {
               >
                 {token.name || `Asset #${token.id}`}
               </Link>
-              <AlertStateDisplay
-                alertState={token.alert_state}
-              />
+              <AlertStateDisplay alertState={token.alert_state} />
             </Box>
           ))}
         </VStack>
