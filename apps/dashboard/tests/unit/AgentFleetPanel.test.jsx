@@ -684,9 +684,7 @@ describe('AgentFleetPanel', () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
     expect(
-      await screen.findByRole('menuitemcheckbox', {
-        name: /On-call \(workspace default group\)/,
-      })
+      await screen.findByText(/On-call \(workspace default group\)/)
     ).toBeInTheDocument();
 
     fireEvent.click(

@@ -567,17 +567,15 @@ describe('Dashboard import forms', () => {
       screen.getByRole('radio', { name: 'Entra app (client credentials)' })
     );
     fireEvent.change(
-      screen.getByPlaceholderText('Directory (tenant) ID or domain'),
+      screen.getByPlaceholderText('Tenant ID or domain'),
       { target: { value: 'tenant-id' } }
     );
-    fireEvent.change(
-      screen.getByPlaceholderText('App registration client ID'),
-      { target: { value: 'client-id' } }
-    );
-    fireEvent.change(
-      screen.getByPlaceholderText('App registration client secret'),
-      { target: { value: 'client-secret' } }
-    );
+    fireEvent.change(screen.getByPlaceholderText('Client ID'), {
+      target: { value: 'client-id' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Client secret'), {
+      target: { value: 'client-secret' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Scan' }));
 
     await waitFor(() => expect(azureScanMock).toHaveBeenCalledTimes(1));
@@ -626,17 +624,15 @@ describe('Dashboard import forms', () => {
       { target: { value: 'https://my-vault.vault.azure.net' } }
     );
     fireEvent.change(
-      screen.getByPlaceholderText('Directory (tenant) ID or domain'),
+      screen.getByPlaceholderText('Tenant ID or domain'),
       { target: { value: 'tenant-id' } }
     );
-    fireEvent.change(
-      screen.getByPlaceholderText('App registration client ID'),
-      { target: { value: 'client-id' } }
-    );
-    fireEvent.change(
-      screen.getByPlaceholderText('App registration client secret'),
-      { target: { value: 'rotated-secret' } }
-    );
+    fireEvent.change(screen.getByPlaceholderText('Client ID'), {
+      target: { value: 'client-id' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Client secret'), {
+      target: { value: 'rotated-secret' },
+    });
     expect(ref.current.getCredentials().credentials).toMatchObject({
       authMethod: 'client_credentials',
       tenantId: 'tenant-id',

@@ -122,10 +122,10 @@ describe('TokenDetailModal', () => {
       target: { value: 'Production, Edge' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
-    // Button summary and menu option can both show the same label.
+    // Button summary and listbox option can both show the same label.
     const platformOptions = screen.getAllByText('Platform On-Call');
-    fireEvent.click(platformOptions[platformOptions.length - 1]);
-    fireEvent.click(screen.getByText('Security On-Call'));
+    fireEvent.pointerDown(platformOptions[platformOptions.length - 1]);
+    fireEvent.pointerDown(screen.getByText('Security On-Call'));
     fireEvent.change(screen.getByDisplayValue('2027-09-01'), {
       target: { value: '2028-09-01' },
     });

@@ -338,7 +338,9 @@ describe("Alert eligibility API and queue discovery parity", function () {
 
   it("unions assigned-group thresholds instead of using only the lex-smallest group", async () => {
     const tokenId = await insertToken("Unioned thresholds", 20, {
-      importedAt: utcDate(-1),
+      // Import must predate the 30-day window (opens 10 days before today)
+      // or eligibility is stale_import_threshold, not due.
+      importedAt: utcDate(-40),
       contactGroupId: "a",
       assignedGroupIds: ["a", "z"],
     });

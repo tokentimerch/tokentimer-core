@@ -332,8 +332,8 @@ describe('CertificateDetailsModal', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
     const platformOptions = screen.getAllByText('Platform On-Call');
-    fireEvent.click(platformOptions[platformOptions.length - 1]);
-    fireEvent.click(screen.getByText('Security On-Call'));
+    fireEvent.pointerDown(platformOptions[platformOptions.length - 1]);
+    fireEvent.pointerDown(screen.getByText('Security On-Call'));
     fireEvent.change(screen.getByDisplayValue('2027-09-02'), {
       target: { value: '2028-10-03' },
     });
