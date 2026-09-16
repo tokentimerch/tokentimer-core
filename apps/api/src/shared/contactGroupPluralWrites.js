@@ -6,7 +6,7 @@ function isContactGroupPluralWritesEnabled() {
     .toLowerCase();
   if (raw === "false" || raw === "0" || raw === "no") return false;
   if (raw === "true" || raw === "1" || raw === "yes") return true;
-  // Unset / empty: on. Explicit false is the mixed-fleet kill switch.
+  // Unset / empty: on. Explicit false only 400s two-or-more group ids.
   return true;
 }
 

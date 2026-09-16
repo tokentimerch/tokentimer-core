@@ -22,6 +22,10 @@ const {
   inviteSentTotal,
   inviteCancelledTotal,
 } = require("../utils/metrics");
+const {
+  TransferAssociationConflictError,
+  transferTokenAssociations,
+} = require("../services/workspaceTokenTransfer");
 
 const router = require("express").Router();
 
@@ -364,26 +368,15 @@ router.post(
       }
 
       await client.query("BEGIN");
-      const updateRes = await client.query(
-        `UPDATE tokens
-         SET workspace_id = $1, updated_at = NOW()
-         WHERE id = ANY($2::int[]) AND workspace_id = $3
-         RETURNING id`,
-        [targetId, tokenIds, fromWorkspaceId],
-      );
-      const movedIds = (updateRes.rows || []).map((r) => r.id);
-      if (movedIds.length > 0 && targetOwnerId) {
-        await client.query(
-          `UPDATE alert_delivery_log
-             SET user_id = $1
-           WHERE token_id = ANY($2::int[])
-             AND date_trunc('month', (sent_at AT TIME ZONE 'UTC')) = date_trunc('month', (NOW() AT TIME ZONE 'UTC'))`,
-          [targetOwnerId, movedIds],
-        );
-      }
+      const transferred = await transferTokenAssociations(client, {
+        tokenIds,
+        fromWorkspaceId,
+        toWorkspaceId: targetId,
+        targetOwnerId,
+      });
       await client.query("COMMIT");
 
-      const moved = updateRes.rowCount || 0;
+      const moved = transferred.movedIds.length;
 
       try {
         await writeAudit({
@@ -398,18 +391,37 @@ router.post(
             from_workspace_id: fromWorkspaceId,
             to_workspace_id: targetId,
             moved,
+            dropped_contact_groups: transferred.droppedContactGroups.length,
+            moved_monitors: transferred.movedMonitors,
+            moved_certificates: transferred.movedCertificates,
           },
         });
       } catch (_err) {
         logger.warn("Audit write failed", { error: _err.message });
       }
 
-      return res.json({ moved, targetWorkspaceId: targetId, fromWorkspaceId });
+      return res.json({
+        moved,
+        targetWorkspaceId: targetId,
+        fromWorkspaceId,
+        dropped_contact_groups: transferred.droppedContactGroups,
+      });
     } catch (e) {
       try {
         await client.query("ROLLBACK");
       } catch (_err) {
         logger.warn("DB operation failed", { error: _err.message });
+      }
+      if (e instanceof TransferAssociationConflictError || e.code === "23505") {
+        return res.status(409).json({
+          error:
+            e instanceof TransferAssociationConflictError
+              ? e.message
+              : "Transfer conflicts with an existing record in the destination workspace",
+          code: "TRANSFER_CONFLICT",
+          details:
+            e instanceof TransferAssociationConflictError ? e.details : [],
+        });
       }
       logger.error("Transfer tokens between workspaces failed", {
         error: e.message,

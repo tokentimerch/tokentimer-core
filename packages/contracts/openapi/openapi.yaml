@@ -91,8 +91,9 @@ paths:
                     description: >
                       When true, the dashboard may assign an asset to more than
                       one contact group. On by default (unset env). Set
-                      CONTACT_GROUP_PLURAL_WRITES=false only as a mixed-fleet
-                      kill switch during a rolling upgrade.
+                      CONTACT_GROUP_PLURAL_WRITES=false only to 400 two-or-more
+                      contact_group_ids on a 0.16.0 process. That flag is not a
+                      mixed-version upgrade path.
   /api/session:
     get:
       tags: [Session]
@@ -830,7 +831,14 @@ paths:
       tags: [Workspaces]
       summary: Transfer token ownership between workspaces
       operationId: transferWorkspaceTokens
-      description: Moves tokens from one workspace to another workspace within the same account scope.
+      description: >
+        Moves tokens from one workspace to another workspace the caller
+        administers. The same transaction remaps contact-group join rows
+        (same destination id, else same group name, else dropped), moves
+        linked endpoint monitors, and moves linked managed certificates
+        plus their targets, instances, jobs, and evidence. Unique collisions
+        in the destination return 409 TRANSFER_CONFLICT and leave the
+        source unchanged.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -865,6 +873,15 @@ paths:
                   fromWorkspaceId:
                     type: string
                     format: uuid
+                  dropped_contact_groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        token_id:
+                          type: integer
+                        contact_group_id:
+                          type: string
         "400":
           $ref: "#/components/responses/BadRequest"
         "402":
@@ -877,6 +894,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Destination already has a conflicting managed certificate or job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/tokens:
