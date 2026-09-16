@@ -76,6 +76,17 @@ export default function ContactGroupCheckboxGroup({
                   w='100%'
                   minH={{ base: '44px', md: 'auto' }}
                   py={{ base: 1, md: 0 }}
+                  colorScheme='blue'
+                  sx={{
+                    '.chakra-checkbox__control[data-checked]': {
+                      bg: 'blue.500',
+                      borderColor: 'blue.500',
+                      color: 'white',
+                    },
+                    '.chakra-checkbox__control[data-checked] svg': {
+                      color: 'white',
+                    },
+                  }}
                 >
                   {group.name}
                   {isDefault ? ' (default)' : ''}

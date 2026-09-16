@@ -2275,13 +2275,6 @@ export default function ImportTokensModal({
                       type: 'icon',
                     },
                     {
-                      key: 'cert-pem',
-                      label: 'Certificate (PEM)',
-                      alt: 'Public certificate PEM import',
-                      type: 'icon',
-                      icon: 'shield',
-                    },
-                    {
                       key: 'vault',
                       label: 'HashiCorp Vault',
                       alt: 'HashiCorp Vault',
@@ -2322,6 +2315,13 @@ export default function ImportTokensModal({
                       label: 'GCP',
                       alt: 'Google Cloud',
                       src: '/Branding/vendor-logos/google-cloud-icon.png',
+                    },
+                    {
+                      key: 'cert-pem',
+                      label: 'Certificate (PEM)',
+                      alt: 'Public certificate PEM import',
+                      type: 'icon',
+                      icon: 'shield',
                     },
                   ].map(card => {
                     const isCertPemCard = card.key === 'cert-pem';

@@ -601,7 +601,7 @@ function App() {
     }
   });
   const [contactGroupPluralWrites, setContactGroupPluralWrites] =
-    useState(false);
+    useState(true);
   const isDev =
     typeof import.meta !== 'undefined' &&
     import.meta.env &&
@@ -658,12 +658,13 @@ function App() {
       try {
         const res = await apiClient.get(API_ENDPOINTS.AUTH_FEATURES);
         if (!cancelled) {
+          // Only force single-select when the API explicitly disables it.
           setContactGroupPluralWrites(
-            res?.data?.contactGroupPluralWrites === true
+            res?.data?.contactGroupPluralWrites !== false
           );
         }
       } catch (_) {
-        if (!cancelled) setContactGroupPluralWrites(false);
+        // Keep the on-by-default optimistic value if features are unreachable.
       }
     })();
     return () => {
