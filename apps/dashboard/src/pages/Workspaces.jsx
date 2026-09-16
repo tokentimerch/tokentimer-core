@@ -69,6 +69,11 @@ const MEMBER_ROLE_OPTIONS = [
   { value: 'workspace_manager', label: MEMBER_ROLE_LABELS.workspace_manager },
 ];
 
+function findWorkspaceById(items, id) {
+  if (id == null || id === '' || !Array.isArray(items)) return null;
+  return items.find(workspace => String(workspace.id) === String(id)) || null;
+}
+
 function WorkspaceConfirmSectionTitle({ children, tokens }) {
   return (
     <Text
@@ -508,35 +513,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
     (async () => {
       try {
         const ws = await workspaceAPI.list(50, 0);
-        const allItems = ws?.items || [];
-        const items = allItems;
         if (cancelled) return;
-        setWorkspaces(items);
-        // Prefer an admin workspace, then manager, then any
-        const selected =
-          items.find(w => w.role === 'admin') ||
-          items.find(w => w.role === 'workspace_manager') ||
-          items[0] ||
-          null;
-        setCurrentWorkspace(selected);
-        // Preselect transfer source/target hints
-        if (selected) {
-          setTransferState(prev => ({
-            ...prev,
-            fromId: selected.id,
-            toId: items.find(w => w.id !== selected.id)?.id || '',
-          }));
-        }
-        if (selected) {
-          const res = await workspaceAPI.listMembers(selected.id, 100, 0);
-          if (!cancelled) setMembers(res?.items || []);
-          try {
-            const inv = await workspaceAPI.listInvitations(selected.id, 100, 0);
-            if (!cancelled) setPendingInvitations(inv?.items || []);
-          } catch (_) {
-            if (!cancelled) setPendingInvitations([]);
-          }
-        }
+        setWorkspaces(ws?.items || []);
       } catch (_) {
         if (!cancelled) {
           setWorkspaces([]);
@@ -549,6 +527,57 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
       cancelled = true;
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!workspaces.length) return;
+    if (!workspaceId) return;
+    const selected =
+      findWorkspaceById(workspaces, workspaceId) ||
+      workspaces.find(w => w.role === 'admin') ||
+      workspaces.find(w => w.role === 'workspace_manager') ||
+      workspaces[0] ||
+      null;
+    if (!selected || selected.id === currentWorkspace?.id) return;
+
+    let cancelled = false;
+    setCurrentWorkspace(selected);
+    setRenaming(false);
+    setTransferState(prev => ({
+      ...prev,
+      fromId: selected.id,
+      toId:
+        prev.toId && prev.toId !== selected.id
+          ? prev.toId
+          : workspaces.find(w => w.id !== selected.id)?.id || '',
+    }));
+    (async () => {
+      try {
+        const res = await workspaceAPI.listMembers(selected.id, 100, 0);
+        if (!cancelled) setMembers(res?.items || []);
+        try {
+          const inv = await workspaceAPI.listInvitations(selected.id, 100, 0);
+          if (!cancelled) setPendingInvitations(inv?.items || []);
+        } catch (_) {
+          if (!cancelled) setPendingInvitations([]);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setMembers([]);
+          setPendingInvitations([]);
+        }
+      }
+    })();
+
+    if (String(selected.id) !== String(workspaceId)) {
+      try {
+        selectWorkspace(selected.id, { replace: true });
+      } catch (_) {}
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, workspaces, currentWorkspace?.id, selectWorkspace]);
 
   async function reloadMembers(workspaceId) {
     const res = await workspaceAPI.listMembers(workspaceId, 100, 0);
@@ -752,14 +781,18 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
               <HStack spacing={3} mb={4} align='center' flexWrap='wrap'>
                 <Text fontWeight='semibold'>Workspace:</Text>
                 <Select
+                  aria-label='Workspace'
                   maxW={{ base: '100%', sm: '300px' }}
                   value={currentWorkspace?.id || ''}
                   onChange={async e => {
                     const id = e.target.value;
-                    const ws = workspaces.find(w => w.id === id);
+                    const ws = findWorkspaceById(workspaces, id);
                     setCurrentWorkspace(ws || null);
                     setRenaming(false);
                     if (ws) {
+                      try {
+                        selectWorkspace(ws.id);
+                      } catch (_) {}
                       await reloadMembers(ws.id);
                       await reloadInvitations(ws.id);
                     } else {
