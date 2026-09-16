@@ -390,7 +390,10 @@ router.post(
         userMessage = formatIntegrationError("Vault", e, errorRef);
       }
 
-      res.status(e?.status || 502).json(withQuota({ error: userMessage }));
+      const httpStatus = e?.status || status || 502;
+      const payload = { error: userMessage };
+      if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
+      res.status(httpStatus).json(withQuota(payload));
     } finally {
       scrubVaultCredentialBody(req.body);
     }
@@ -492,7 +495,10 @@ router.post(
         userMessage = formatIntegrationError("Vault mounts", e, errorRef);
       }
 
-      res.status(e?.status || 502).json({ error: userMessage });
+      const httpStatus = e?.status || status || 502;
+      const payload = { error: userMessage };
+      if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
+      res.status(httpStatus).json(payload);
     } finally {
       scrubVaultCredentialBody(req.body);
     }

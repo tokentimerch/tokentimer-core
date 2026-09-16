@@ -751,7 +751,12 @@ async function scanVault({
       status: e.status,
     });
     if (isVaultAuthError(e)) throw e;
-    throw new Error(`Failed to list Vault mounts: ${e.message}`, { cause: e });
+    const wrapped = new Error(`Failed to list Vault mounts: ${e.message}`, {
+      cause: e,
+    });
+    if (e.status != null) wrapped.status = e.status;
+    if (e.code) wrapped.code = e.code;
+    throw wrapped;
   }
 
   const toScan = mounts.filter((m) => {

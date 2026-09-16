@@ -250,7 +250,9 @@ TokenTimer reads TTL from `auth.lease_duration` on the login response
 TTL is positive, it logs in again after 80% of the lease, measured from
 when the login response is received. `auth.lease_duration` of exactly 0
 keeps the client token for that scan only. A downstream Vault `403` is
-not retried as expiry; it stays a permission or revocation failure.
+not retried as expiry; it stays a permission or revocation failure. A
+scan that cannot list mounts after a successful login is HTTP 403 with
+`code: VAULT_PERMISSION_DENIED`.
 
 Load engines and Scan are separate API calls, so a manual import
 performs two AppRole logins.

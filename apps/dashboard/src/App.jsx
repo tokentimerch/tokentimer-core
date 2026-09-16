@@ -2732,6 +2732,7 @@ function App() {
                                     formErrors={formErrors}
                                     isSubmitting={isSubmitting}
                                     onInputChange={handleInputChange}
+                                    setFormData={setFormData}
                                     onTokenAdd={handleTokenAdd}
                                     onDeleteToken={
                                       isViewer ? undefined : handleDeleteToken
@@ -2873,6 +2874,7 @@ function DashboardWrapper({
   formErrors,
   isSubmitting,
   onInputChange,
+  setFormData,
   onTokenAdd,
   onDeleteToken,
   onOpenRenew,
@@ -3038,6 +3040,7 @@ function DashboardWrapper({
             formErrors={formErrors}
             isSubmitting={isSubmitting}
             onInputChange={onInputChange}
+            setFormData={setFormData}
             onTokenAdd={onTokenAdd}
             onDeleteToken={onDeleteToken}
             onOpenRenew={onOpenRenew}
@@ -3261,6 +3264,7 @@ function DashboardView({
   formErrors,
   isSubmitting,
   onInputChange,
+  setFormData,
   onTokenAdd,
   onDeleteToken,
   onOpenRenew,
@@ -5312,7 +5316,7 @@ function DashboardView({
                           </FormControl>
 
                           {/* Contact group selector - replaces per-token email override */}
-                          <FormControl as='fieldset'>
+                          <FormControl as='fieldset' minW={0} overflow='hidden'>
                             <FormLabel as='legend'>
                               Contact groups (alerts)
                             </FormLabel>
@@ -5336,7 +5340,10 @@ function DashboardView({
                           </FormControl>
 
                           {/* Expiration Date Field */}
-                          <FormControl isInvalid={!!formErrors.expiresAt}>
+                          <FormControl
+                            isInvalid={!!formErrors.expiresAt}
+                            minW={0}
+                          >
                             <FormLabel htmlFor='expiresAt'>
                               Expiration Date
                             </FormLabel>

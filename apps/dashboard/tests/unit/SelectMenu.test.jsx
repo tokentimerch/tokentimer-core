@@ -1,7 +1,16 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { ChakraProvider } from '@chakra-ui/react';
+import React from 'react';
+import {
+  ChakraProvider,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalOverlay,
+} from '@chakra-ui/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import SelectMenu from '../../src/components/SelectMenu.jsx';
+import ContactGroupCheckboxGroup from '../../src/components/ContactGroupCheckboxGroup.jsx';
+import { ContactGroupPluralWritesProvider } from '../../src/utils/contactGroupPluralWrites.jsx';
 
 beforeAll(() => {
   // jsdom lacks Element.scrollTo; Chakra Menu calls it on open.
@@ -31,7 +40,7 @@ describe('SelectMenu', () => {
     renderMenu({ multiple: false, onChange, placeholder: 'Pick one' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Pick one' }));
-    fireEvent.click(screen.getByText('Alpha'));
+    fireEvent.pointerDown(screen.getByText('Alpha'));
     expect(onChange).toHaveBeenLastCalledWith(['a']);
   });
 
@@ -49,25 +58,47 @@ describe('SelectMenu', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Workspace default' })
     );
-    fireEvent.click(screen.getByText('Alpha'));
+    fireEvent.pointerDown(screen.getByText('Alpha'));
     expect(onChange).toHaveBeenLastCalledWith(['a']);
+  });
+
+  it('selects a contact group from inside an open modal', () => {
+    const onChange = vi.fn();
+    render(
+      <ChakraProvider>
+        <ContactGroupPluralWritesProvider value={true}>
+          <Modal isOpen onClose={() => {}}>
+            <ModalOverlay />
+            <ModalContent>
+              <ModalBody>
+                <ContactGroupCheckboxGroup
+                  contactGroups={[
+                    { id: 1, name: 'Ops' },
+                    { id: 2, name: 'Security' },
+                  ]}
+                  value={[]}
+                  onChange={onChange}
+                  defaultContactGroupId='1'
+                />
+              </ModalBody>
+            </ModalContent>
+          </Modal>
+        </ContactGroupPluralWritesProvider>
+      </ChakraProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Contact groups' }));
+    fireEvent.pointerDown(
+      screen.getByText('Ops (workspace default group)')
+    );
+    expect(onChange).toHaveBeenLastCalledWith(['1']);
   });
 
   it('allows multiple selections when multiple is true', () => {
     const onChange = vi.fn();
-    const { rerender } = renderMenu({
-      multiple: true,
-      onChange,
-      value: [],
-      placeholder: 'Pick many',
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Pick many' }));
-    fireEvent.click(screen.getByText('Alpha'));
-    expect(onChange).toHaveBeenLastCalledWith(['a']);
-
-    rerender(
-      <ChakraProvider>
+    function Harness() {
+      const [value, setValue] = React.useState([]);
+      return (
         <SelectMenu
           options={[
             { value: 'a', label: 'Alpha' },
@@ -75,15 +106,26 @@ describe('SelectMenu', () => {
             { value: 'c', label: 'Gamma' },
           ]}
           multiple
-          value={['a']}
-          onChange={onChange}
+          value={value}
+          onChange={next => {
+            onChange(next);
+            setValue(next);
+          }}
           placeholder='Pick many'
         />
+      );
+    }
+    render(
+      <ChakraProvider>
+        <Harness />
       </ChakraProvider>
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Pick many' }));
-    fireEvent.click(screen.getByText('Beta'));
+    fireEvent.pointerDown(screen.getByText('Alpha'));
+    expect(onChange).toHaveBeenLastCalledWith(['a']);
+
+    fireEvent.pointerDown(screen.getByText('Beta'));
     expect(onChange).toHaveBeenLastCalledWith(['a', 'b']);
   });
 
@@ -98,7 +140,7 @@ describe('SelectMenu', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Pick one' }));
-    fireEvent.click(screen.getByText('Workspace default'));
+    fireEvent.pointerDown(screen.getByText('Workspace default'));
     expect(onChange).toHaveBeenLastCalledWith([]);
   });
 
