@@ -44,7 +44,9 @@ export default function ContactGroupCheckboxGroup({
           ? helperText
           : 'Select one contact group, or leave as workspace default.'
       }
-      allowEmpty
+      // Multi: clear by deselecting items (placeholder already means default).
+      // Single: explicit "Workspace default" radio clears the selection.
+      allowEmpty={!canSelectMultiple}
       emptyOptionLabel='Workspace default'
       placeholder='Workspace default'
       size={size}

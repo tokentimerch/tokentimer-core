@@ -576,8 +576,8 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
                 maxH='160px'
               />
               <FormHelperText>
-                Down and recovery alerts go to the selected groups. Leave all
-                unchecked to use the workspace default.
+                Down and recovery alerts go to the selected groups. Leave as
+                workspace default when empty.
               </FormHelperText>
             </FormControl>
             {error ? (
