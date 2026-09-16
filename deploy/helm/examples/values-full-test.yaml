@@ -139,6 +139,8 @@ twilio:
   alertContentSidEndpointDown: "HXtest0000000000000000000003test"
   alertContentSidEndpointRecovered: "HXtest0000000000000000000004test"
   weeklyDigestContentSid: "HXtest0000000000000000000005test"
+  webhookRateLimitWindowMs: "60000"
+  webhookRateLimitMax: "1200"
 
 # -- Monitoring: metrics + ServiceMonitor + PrometheusRules
 monitoring:

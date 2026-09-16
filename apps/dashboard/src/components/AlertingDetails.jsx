@@ -109,7 +109,15 @@ export default function AlertingDetails({
           </Text>
         </HStack>
         <Collapse in={expanded} animateOpacity>
-          <Box id={contentId} mt={1} ml={1} pl={3} py={2} borderLeftWidth='2px' borderColor='dashboard.modal.border'>
+          <Box
+            id={contentId}
+            mt={1}
+            ml={1}
+            pl={3}
+            py={2}
+            borderLeftWidth='2px'
+            borderColor='dashboard.modal.border'
+          >
             <AlertStateDisplay
               alertState={token?.alert_state}
               showHeading={false}

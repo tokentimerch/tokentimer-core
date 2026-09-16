@@ -5,6 +5,7 @@ const {
   findThresholdWindow,
 } = require("../../packages/alert-eligibility");
 const {
+  buildAlertState,
   buildDeliveryState,
   countWorkspaceAlertEligibility,
   enrichTokenWithAlertStateBestEffort,
@@ -56,6 +57,7 @@ describe("workspace eligibility summary", () => {
     assert.equal(calls.length, 2);
     assert.equal(calls[0].params[0], "workspace-1");
     assert.deepEqual(calls[1].params[0], [1, 2, 3]);
+    assert.match(calls[1].sql, /token_contact_groups/);
     assert.doesNotMatch(calls[1].sql, /alert_delivery_log|audit_events|alert_queue/);
   });
 });
@@ -223,6 +225,75 @@ describe("alert eligibility evaluator", () => {
     assert.equal(result.effective_threshold, 5);
     assert.deepEqual(result.effective_thresholds, [5, -5]);
     assert.deepEqual(result.eligible_channels, ["webhooks"]);
+  });
+});
+
+describe("join-table unioned eligibility", () => {
+  const groups = [
+    {
+      id: "a",
+      name: "Group A",
+      thresholds: [7, 1],
+      email_contact_ids: ["c1"],
+    },
+    {
+      id: "z",
+      name: "Group Z",
+      thresholds: [30, 14],
+      email_contact_ids: ["c1"],
+    },
+    {
+      id: "c",
+      name: "Group C",
+      thresholds: [30, 14],
+      email_contact_ids: ["c1"],
+    },
+    { id: "ops", name: "Operations", email_contact_ids: ["c1"] },
+  ];
+
+  function row(overrides = {}) {
+    return {
+      expiration: "2026-10-03",
+      imported_at: "2026-09-01",
+      alert_thresholds: [7, 0],
+      contact_groups: groups,
+      default_contact_group_id: "ops",
+      ws_email_alerts_enabled: true,
+      webhook_urls: [],
+      ...overrides,
+    };
+  }
+
+  it("unions assigned-group thresholds instead of using only the lex-smallest group", () => {
+    const state = buildAlertState(
+      row({ assigned_ids: ["a", "z"], contact_group_id: "a" }),
+      REFERENCE_DATE,
+    );
+    assert.equal(state.eligibility.status, "due");
+    assert.equal(state.eligibility.effective_threshold, 30);
+    assert.equal(state.eligibility.contact_group_id, "a");
+    assert.deepEqual(state.eligibility.effective_thresholds, [30, 14, 7, 1]);
+  });
+
+  it("follows join-table membership when it disagrees with the singular column", () => {
+    const state = buildAlertState(
+      row({ assigned_ids: ["a"], contact_group_id: "c" }),
+      REFERENCE_DATE,
+    );
+    assert.equal(state.eligibility.status, "outside_threshold");
+    assert.equal(state.eligibility.contact_group_id, "a");
+    assert.equal(state.eligibility.effective_threshold, null);
+    assert.deepEqual(state.eligibility.effective_thresholds, [7, 1]);
+  });
+
+  it("uses workspace default when the join table is empty, not the singular column", () => {
+    const state = buildAlertState(
+      row({ assigned_ids: [], contact_group_id: "z" }),
+      REFERENCE_DATE,
+    );
+    assert.equal(state.eligibility.status, "outside_threshold");
+    assert.equal(state.eligibility.contact_group_id, "ops");
+    assert.deepEqual(state.eligibility.effective_thresholds, [7, 0]);
   });
 });
 

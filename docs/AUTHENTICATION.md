@@ -195,9 +195,23 @@ DELETE /api/v1/workspaces/:id/members/:userId
 
 ### Accept Invitation (Public)
 
+Cookie-session clients must `GET /api/csrf-token` and send the JSON
+`csrfToken` as `X-CSRF-Token`. Do not copy the cookie. Cookie names are
+`x-csrf-token` (default) or `__Host-psifi.x-csrf-token` (production +
+Secure + no `SESSION_COOKIE_DOMAIN`). The cookie is an httpOnly HMAC, not
+the header token. A missing header is 403 `EBADCSRFTOKEN`. The dashboard
+already does this.
+
+```
+GET /api/csrf-token
+```
+
+Use the JSON `csrfToken` on the register and login POSTs below.
+
 ```
 POST /auth/register
 Content-Type: application/json
+X-CSRF-Token: <csrfToken>
 
 {
   "token": "invitation-token-here",
@@ -213,6 +227,7 @@ Content-Type: application/json
 ```
 POST /auth/login
 Content-Type: application/json
+X-CSRF-Token: <csrfToken>
 
 {
   "email": "admin@company.com",
@@ -226,6 +241,8 @@ Content-Type: application/json
 POST /auth/logout
 ```
 
+Logout does not require `X-CSRF-Token`.
+
 ## Authentication Features
 
 | Feature | Status |
@@ -234,7 +251,7 @@ POST /auth/logout
 | User invitations (admin or manager) | Enabled by default; blockable with `DISABLE_MANUAL_INVITES=true` |
 | Local email/password auth | Always available (not configurable) |
 | Two-factor authentication (TOTP) | Always available, opt-in per user |
-| CSRF protection | Always on (not configurable) |
+| CSRF protection | Always on (not configurable), including development (`NODE_ENV=test` still skips it). Cookie-session clients must send `X-CSRF-Token` from `GET /api/csrf-token` on mutating `/api` and `/auth` routes except logout. Cookie names are `x-csrf-token` (default) or `__Host-psifi.x-csrf-token` (production + Secure + no `SESSION_COOKIE_DOMAIN`). Do not copy the cookie; it is an httpOnly HMAC. Missing header is 403 `EBADCSRFTOKEN`. |
 | Email verification | Enforced for local accounts only (`auth_method = 'local'`); not env-configurable |
 
 ## Configuration
@@ -275,7 +292,7 @@ The actual, non-configurable behavior is:
 | Behavior | Actual value | Where |
 |---|---|---|
 | Session cookie lifetime | 2 hours, `rolling` (renewed on activity) | `apps/api/session-cookie-options.js` |
-| CSRF protection | Always on outside tests (double-submit cookie on `/api` and `/auth`), with a fixed exempt list for logout, worker-to-API, and machine-token routes | `apps/api/index.js`, `apps/api/middleware/csrf-exempt.js` |
+| CSRF protection | Always on in development and production (skipped only when `NODE_ENV=test`). Double-submit cookie on `/api` and `/auth`. Cookie names `x-csrf-token` or `__Host-psifi.x-csrf-token`. Exempt: logout, worker-to-API bearer (`WORKER_API_KEY`), and CertOps machine-token routes. Missing header is 403 `EBADCSRFTOKEN`. | `apps/api/index.js`, `apps/api/middleware/csrf-exempt.js` |
 | Local email/password auth | Always available | `apps/api/routes/auth.js` |
 | Two-factor (TOTP) | Always available, opt-in per user | `apps/api/routes/auth.js` |
 | Password rules | Fixed 5 rules, see [Password requirements](#password-requirements) | `apps/api/routes/auth.js` |

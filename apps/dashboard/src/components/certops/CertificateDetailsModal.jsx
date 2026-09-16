@@ -717,7 +717,10 @@ export default function CertificateDetailsModal({
                 </DetailRow>
               ) : null}
               {isEditing || hasValue(hydrateContactGroupIds(token)) ? (
-                <DetailRow label='Contact group' valueTitle={contactGroupLabel}>
+                <DetailRow
+                  label='Contact groups'
+                  valueTitle={contactGroupLabel}
+                >
                   {isEditing ? (
                     <ContactGroupCheckboxGroup
                       contactGroups={contactGroups}
@@ -1061,10 +1064,7 @@ export default function CertificateDetailsModal({
                 )}
               />
             ) : null}
-            <AlertingDetails
-              token={token}
-              enabled={isOpen}
-            />
+            <AlertingDetails token={token} enabled={isOpen} />
           </Box>
 
           <datalist id='certificate-workspace-contacts'>

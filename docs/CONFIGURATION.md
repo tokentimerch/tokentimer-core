@@ -104,8 +104,10 @@ the origins users and integrations actually use in the browser.
 > `REQUIRE_NUMBERS` were previously listed here as supported variables. They are
 > parsed by `packages/config` but never read, so setting them has no effect. The
 > real behavior is fixed in code: a 2-hour rolling session cookie, CSRF always on
-> outside tests, local auth and TOTP always available, and a fixed 12-character
-> 5-class password policy. See [AUTHENTICATION.md](AUTHENTICATION.md).
+> in development and production (`NODE_ENV=test` still skips it; worker bearer
+> and CertOps machine tokens are CSRF-exempt), local auth and TOTP always
+> available, and a fixed 12-character 5-class password policy. See
+> [AUTHENTICATION.md](AUTHENTICATION.md).
 >
 > The cookie, CORS, and proxy variables below _are_ live.
 
@@ -117,7 +119,7 @@ the origins users and integrations actually use in the browser.
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `WEEKLY_DIGEST_RECIPIENT_KEY`              | HMAC secret for weekly-digest skip keys. Falls back to `SESSION_SECRET`. Rotating it re-sends already claimed recipients for the current week. | `unset` | Worker privacy |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
-| `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
+| `WORKER_API_KEY`                           | Worker-to-API auth key. Bearer requests authenticated with this key are CSRF-exempt, as are CertOps machine-token paths. CSRF is enforced in development as well as production. | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
 ## Email and delivery
 
@@ -191,7 +193,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
 | `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
 | `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
-| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset via `contact_group_ids` / `contactGroupIds`. Unset or empty = **on**. Set `false` only as a mixed-fleet kill switch during a rolling upgrade. Dashboard exposes the flag on `GET /api/auth/features` as `contactGroupPluralWrites`. | `unset` (on) | API, dashboard |
+| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset via `contact_group_ids` / `contactGroupIds`. Unset or empty = **on**. Set `false` only to 400 two-or-more `contact_group_ids` on a 0.16.0 replica. It does **not** make 0.15.0 write join tables. Do not mix 0.15.0 + 0.16.0 API/worker. Migrations 52-54 add the join tables; rolling a 0.15.0 binary onto a post-54 database is unsupported. Dashboard exposes the flag on `GET /api/auth/features` as `contactGroupPluralWrites`. | `unset` (on) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
@@ -202,9 +204,12 @@ an incomplete configuration and SMTP is reported as not configured. With no
 Inventory import can authenticate to Vault with a static token **or**
 AppRole (role ID and secret ID). The two modes are exclusive. A Vault
 Enterprise namespace is optional and applies to both modes
-(`X-Vault-Namespace` on every Vault HTTP call, including login). Core
-scheduled auto-sync stays GitHub/GitLab; Vault AppRole auto-sync is
-offered where the edition already schedules Vault scans.
+(`X-Vault-Namespace` on every Vault HTTP call, including login). The
+Vault address must use `http` or `https`. For a private Vault CA, set
+`NODE_EXTRA_CA_CERTS` on the API (Node reads it at process start; see also
+the Proxy section below). Core scheduled auto-sync stays GitHub/GitLab;
+Vault AppRole auto-sync is offered where the edition already schedules
+Vault scans.
 
 ### Minimum policy
 
@@ -252,7 +257,9 @@ when the login response is received. `auth.lease_duration` of exactly 0
 keeps the client token for that scan only. A downstream Vault `403` is
 not retried as expiry; it stays a permission or revocation failure. A
 scan that cannot list mounts after a successful login is HTTP 403 with
-`code: VAULT_PERMISSION_DENIED`.
+`code: VAULT_PERMISSION_DENIED`, not 502. A scan that can list a mount but
+cannot read some objects reports `hasErrors` / `permissionDenied` on that
+mount. The import UI shows a warning, not a green success badge.
 
 Load engines and Scan are separate API calls, so a manual import
 performs two AppRole logins.
@@ -334,9 +341,14 @@ a NetworkPolicy that blocks the proxy it was just told to use). See
 ## Azure inventory authentication
 
 Azure Key Vault and Microsoft Entra (Azure AD) inventory scans accept either
-a pasted access token or an Entra app using the OAuth client-credentials
-flow. TokenTimer mints a token from
+a pasted access token or an Entra app (`authMethod: client_credentials`,
+with tenant ID, client ID, and client secret). TokenTimer mints a token from
 `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`.
+
+Commercial Azure only (`login.microsoftonline.com`, `vault.azure.net`,
+`graph.microsoft.com`). National clouds are not supported.
+`AZURE_VAULT_ADDRESS_ALLOWLIST` cannot make China or US Government Azure
+work, because token minting is hardcoded to those commercial endpoints.
 
 | Surface | Audience / scope | Least privilege |
 | ------- | ---------------- | --------------- |
@@ -363,7 +375,8 @@ GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise
 capability.
 
 `AZURE_VAULT_ADDRESS_ALLOWLIST` still applies to Key Vault URLs for both
-auth methods.
+auth methods (`token` and `client_credentials`). It does not change the
+commercial mint endpoints above.
 
 ## CertOps (certificate operations)
 
@@ -478,7 +491,9 @@ TokenTimer stores only public certificate material (fingerprints, serials, issue
 | `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED` | Content template SID for endpoint recovered alerts | `unset`       | WhatsApp            |
 | `TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID`            | Content template SID for weekly digest             | `unset`       | WhatsApp            |
 | `TWILIO_WHATSAPP_TEST_CONTENT_SID`                     | Content template SID for test messages             | `unset`       | WhatsApp            |
-| `WHATSAPP_RATE_PER_MIN`                                | Outbound WhatsApp message rate cap                 | `unset`       | WhatsApp throttling |
+| `TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS`                  | Inbound Twilio StatusCallback limiter window. Product send does not set StatusCallback. | `60000`       | API                 |
+| `TWILIO_WEBHOOK_RATE_LIMIT_MAX`                        | Inbound Twilio StatusCallback requests per window. If callbacks return 429 `TWILIO_WEBHOOK_RATE_LIMITED`, raise this value. | `1200` in production (`10000` in development/test) | API |
+| `WHATSAPP_RATE_PER_MIN`                                | Outbound WhatsApp message rate cap                 | `60`          | WhatsApp throttling |
 | `WHATSAPP_DRY_RUN`                                     | Log messages without sending when `true`           | `false`       | WhatsApp testing    |
 
 ### Admin Setup: Twilio WhatsApp

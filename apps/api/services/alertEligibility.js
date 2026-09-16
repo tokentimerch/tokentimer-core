@@ -7,6 +7,12 @@ const {
 const { logger } = require("../utils/logger");
 const { safeAlertErrorMessage } = require("./alertErrorRedaction");
 const { discardedAlertReason } = require("./alertDeliveryDisposition");
+const {
+  resolveContactGroupsForAsset,
+  unionEffectiveThresholds,
+  unionContactIds,
+  getWebhookNames,
+} = require("../src/shared/contactGroups");
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -97,9 +103,90 @@ function buildDeliveryState(row) {
   };
 }
 
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function assignedIdsFromRow(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function workspaceThresholdsFromRow(row) {
+  if (Array.isArray(row.alert_thresholds)) {
+    return row.alert_thresholds.filter((n) => Number.isFinite(n));
+  }
+  return DEFAULT_THRESHOLDS;
+}
+
+function unionWebhookNames(groups) {
+  const names = [];
+  const seen = new Set();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const name of getWebhookNames(group)) {
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Join-table ids are the membership source of truth. Empty assigned set
+ * means workspace default; do not consult the singular column.
+ * evaluateAlertEligibility still resolves one group, so fold assigned
+ * groups into a synthetic group with unioned thresholds and channels.
+ */
+function toUnionedEligibilityAsset(row) {
+  const contactGroups = parseJsonArray(row.contact_groups);
+  const assignedIds = assignedIdsFromRow(row.assigned_ids);
+  const resolvedGroups = resolveContactGroupsForAsset({
+    contactGroups,
+    assignedIds,
+    defaultContactGroupId: row.default_contact_group_id,
+  });
+
+  if (resolvedGroups.length === 0) {
+    return {
+      ...row,
+      contact_groups: contactGroups,
+      contact_group_id: null,
+    };
+  }
+
+  const primary = resolvedGroups[0];
+  const syntheticGroup = {
+    id: primary.id,
+    name: primary.name,
+    thresholds: unionEffectiveThresholds(
+      resolvedGroups,
+      workspaceThresholdsFromRow(row),
+    ),
+    email_contact_ids: unionContactIds(resolvedGroups, "email_contact_ids"),
+    whatsapp_contact_ids: unionContactIds(
+      resolvedGroups,
+      "whatsapp_contact_ids",
+    ),
+    webhook_names: unionWebhookNames(resolvedGroups),
+  };
+
+  return {
+    ...row,
+    contact_groups: [syntheticGroup],
+    contact_group_id: primary.id,
+  };
+}
+
 function buildAlertState(row, referenceDate) {
   return {
-    eligibility: evaluateAlertEligibility(row, {
+    eligibility: evaluateAlertEligibility(toUnionedEligibilityAsset(row), {
       defaultThresholds: DEFAULT_THRESHOLDS,
       referenceDate,
     }),
@@ -109,7 +196,7 @@ function buildAlertState(row, referenceDate) {
 
 function buildEligibilityOnlyState(row, referenceDate) {
   return {
-    eligibility: evaluateAlertEligibility(row, {
+    eligibility: evaluateAlertEligibility(toUnionedEligibilityAsset(row), {
       defaultThresholds: DEFAULT_THRESHOLDS,
       referenceDate,
     }),
@@ -148,13 +235,19 @@ const TOKEN_SETTINGS_JOINS = `
      ) wj ON TRUE
      LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
      LEFT JOIN workspace_settings wsf ON wsf.workspace_id = wf.id
-     LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id`;
+     LEFT JOIN workspace_settings wjj ON wjj.workspace_id = wj.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(array_agg(tcg.contact_group_id), ARRAY[]::text[]) AS assigned_ids
+       FROM token_contact_groups tcg
+       WHERE tcg.token_id = t.id AND tcg.workspace_id = t.workspace_id
+     ) assigned_groups ON TRUE`;
 
 const TOKEN_ELIGIBILITY_COLUMNS = `
        t.id AS token_id,
        t.expiration::date AS expiration,
        t.imported_at,
        t.contact_group_id,
+       COALESCE(assigned_groups.assigned_ids, ARRAY[]::text[]) AS assigned_ids,
        t.cert_lifecycle_status,
        COALESCE(ws.alert_thresholds, wsf.alert_thresholds, wjj.alert_thresholds) AS alert_thresholds,
        COALESCE(ws.webhook_urls, wsf.webhook_urls, wjj.webhook_urls) AS webhook_urls,

@@ -273,7 +273,7 @@ function TokenDetailModal({
     if (!isEditing && assignedIds.length === 0) return null;
 
     return (
-      <DashboardModalDetailRow label='Contact group' tokens={modalTokens}>
+      <DashboardModalDetailRow label='Contact groups' tokens={modalTokens}>
         {isEditing ? (
           <ContactGroupCheckboxGroup
             contactGroups={contactGroups}

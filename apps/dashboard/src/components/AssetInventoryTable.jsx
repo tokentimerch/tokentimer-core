@@ -134,7 +134,7 @@ const COLUMN_META = {
   owner: { label: 'Owner / Used By', minW: '170px', sortable: true },
   used_by: { label: 'Used By', minW: '120px', sortable: true },
   contact_group: {
-    label: 'Contact group',
+    label: 'Contact groups',
     minW: '140px',
     sortable: true,
   },
@@ -1005,7 +1005,7 @@ function AssetInventoryMobileCard({
                 <MobileMetaItem label='Owner' value={owner} />
               </HStack>
               <HStack align='start' spacing={3}>
-                <MobileMetaItem label='Contact group' value={contactGroup} />
+                <MobileMetaItem label='Contact groups' value={contactGroup} />
                 <MobileMetaItem label='Expiration' value={expiresAtLabel} />
               </HStack>
             </VStack>
