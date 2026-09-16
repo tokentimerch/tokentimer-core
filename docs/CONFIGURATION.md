@@ -143,7 +143,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 
 | Variable                                  | Description                                                                 | Default value                         | Scope                |
 | ----------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------- | -------------------- |
-| `ALERT_THRESHOLDS`                        | Default days-before-expiry thresholds (overridden by workspace preferences) | `30,14,7,1,0`                         | Alerts               |
+| `ALERT_THRESHOLDS`                        | Default workspace alert thresholds as whole-number days relative to expiry (overridden by workspace preferences). Range **-365 to 730**: positive = days before, `0` = day of expiry, negative = days after (for example `-1`). | `30,14,7,1,0`                         | Alerts               |
 | `ALERT_MAX_ATTEMPTS`                      | Max delivery retries per alert                                              | `20`                                  | Alerts               |
 | `ALERT_RETRY_DELAY_MS`                    | Retry delay in ms                                                           | `300000`                              | Alerts               |
 | `ALERT_TEST_UTC_DAY`                      | Test-only scheduler day override                                            | `unset`                               | Alerts testing       |
@@ -191,7 +191,7 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
 | `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
 | `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
-| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset (`true` only after every replica is this image) | `unset` (`true` in `NODE_ENV=test`) | API, dashboard |
+| `CONTACT_GROUP_PLURAL_WRITES`             | Allow two-or-more contact groups per asset via `contact_group_ids` / `contactGroupIds`. Unset or empty = **on**. Set `false` only as a mixed-fleet kill switch during a rolling upgrade. Dashboard exposes the flag on `GET /api/auth/features` as `contactGroupPluralWrites`. | `unset` (on) | API, dashboard |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
@@ -216,7 +216,7 @@ path "sys/mounts" {
 }
 
 path "secret/metadata/*" {
-  capabilities = ["list", "read"]
+  capabilities = ["list"]
 }
 
 path "secret/data/*" {
@@ -233,7 +233,9 @@ path "pki/cert/*" {
 ```
 
 Adjust mount paths to match the engines you scan. KV v2 uses `metadata/`
-and `data/` prefixes.
+and `data/` prefixes. TokenTimer **lists** KV metadata and **GETs** KV v2
+secret data (and PKI public certificate PEM) in memory to discover expiry
+and type; it does **not persist** secret values or private keys.
 
 ### Custom auth mount
 
@@ -336,11 +338,16 @@ flow. TokenTimer mints a token from
 
 | Surface | Audience / scope | Least privilege |
 | ------- | ---------------- | --------------- |
-| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret values. |
-| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission. Directory.Read.All also works and is broader than this inventory needs. |
+| Azure Key Vault inventory | `https://vault.azure.net/.default` | Key Vault Reader on the vault. Inventory lists secret, certificate, and key metadata; it does not fetch secret **values**. Public certificate material (`cer`) may be read to enrich subject/issuer. |
+| Entra (Azure AD) inventory | `https://graph.microsoft.com/.default` | Application.Read.All as an application permission (metadata only: names, `endDateTime`, key ids; no secret values). Directory.Read.All also works and is broader than this inventory needs. |
+
+Granting Microsoft Graph **application** permissions requires admin consent
+from a **Global Administrator** or **Privileged Role Administrator**
+(Application Administrator / Cloud Application Administrator cannot consent
+to Graph application permissions).
 
 This is not CertOps Azure DNS. CertOps DNS-01 still uses its own Entra app
-with DNS Zone Contributor (and ARM) as documented in
+with DNS Zone Contributor on the DNS zone as documented in
 [`docs/certops/agent.md`](certops/agent.md). Do not reuse that app for
 inventory unless you intentionally want both roles on one identity.
 Client-credential Entra scans attribute results to the tenant GUID from

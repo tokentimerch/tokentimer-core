@@ -535,6 +535,29 @@ describe("interpretContactGroupWrite", () => {
       else process.env.CONTACT_GROUP_PLURAL_WRITES = previous;
     }
   });
+
+  it("enables plural writes when CONTACT_GROUP_PLURAL_WRITES is unset", () => {
+    const previous = process.env.CONTACT_GROUP_PLURAL_WRITES;
+    const previousNodeEnv = process.env.NODE_ENV;
+    delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+    process.env.NODE_ENV = "production";
+    try {
+      assert.equal(api.isContactGroupPluralWritesEnabled(), true);
+      assert.deepEqual(
+        api.interpretContactGroupWrite({
+          contactGroupIds: ["a", "b"],
+          hasPlural: true,
+          hasSingular: false,
+        }),
+        { action: "set", ids: ["a", "b"] },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CONTACT_GROUP_PLURAL_WRITES;
+      else process.env.CONTACT_GROUP_PLURAL_WRITES = previous;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
 });
 
 describe("assertContactGroupIds", () => {
