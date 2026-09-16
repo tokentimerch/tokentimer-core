@@ -381,13 +381,6 @@ function buildAlertLifecycleEvents({
 }
 
 function queueSql(scope, state = false) {
-  // Queue has no workspace_id. A matching enqueue audit or delivery records
-  // historical ownership; current token ownership is a legacy-only fallback.
-  const historicalOwner = `COALESCE(queued_audit.workspace_id, first_delivery.workspace_id, t.workspace_id)`;
-  // Queue-state fallbacks describe the row's current state, so after a token
-  // transfer they belong to its current workspace, not its enqueue workspace.
-  const workspaceOwner = state ? "t.workspace_id" : historicalOwner;
-  const where = scope === "token" ? "t.id = $1" : `${workspaceOwner} = $1`;
   const stateTime = `CASE
       WHEN aq.status = 'pending' AND aq.error_message = 'OUT_OF_WINDOW'
         THEN aq.updated_at
@@ -396,6 +389,18 @@ function queueSql(scope, state = false) {
         THEN aq.updated_at
       ELSE COALESCE(aq.last_attempt, aq.updated_at)
     END`;
+  // Queue has no workspace_id. A matching enqueue audit or delivery records
+  // historical ownership; current token ownership is a legacy-only fallback.
+  const historicalOwner = `COALESCE(queued_audit.workspace_id, first_delivery.workspace_id, t.workspace_id)`;
+  // Every transfer updates tokens.updated_at. A fallback is safely attributable
+  // to the current workspace only when its state happened after that boundary;
+  // older states remain visible only on the token timeline rather than guessed.
+  const currentStateOwner = `CASE
+      WHEN ${stateTime} >= t.updated_at THEN t.workspace_id
+      ELSE NULL
+    END`;
+  const workspaceOwner = state ? currentStateOwner : historicalOwner;
+  const where = scope === "token" ? "t.id = $1" : `${workspaceOwner} = $1`;
   return `/* alert-lifecycle:${state ? "queue-state" : "queue"} */
     SELECT aq.id AS alert_id, aq.alert_key, aq.threshold_days, aq.status,
            aq.error_message, aq.created_at, aq.updated_at, aq.last_attempt,
