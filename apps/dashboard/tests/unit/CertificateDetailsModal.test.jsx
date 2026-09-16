@@ -164,6 +164,47 @@ describe('CertificateDetailsModal', () => {
     );
   });
 
+  it('groups certificate alert state, history and upcoming delivery in one disclosure', async () => {
+    renderModal({
+      token: {
+        ...token,
+        alert_state: {
+          eligibility: { status: 'suppressed', reason: 'retired_certificate' },
+          delivery: {
+            status: 'failed',
+            next_attempt_at: '2026-09-13T09:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    const disclosure = screen.getByRole('button', {
+      name: 'Current status',
+    });
+    const alertHeading = screen.getByRole('heading', {
+      name: 'Alerting and alert history',
+    });
+    expect(alertHeading.closest('section')).not.toBe(
+      screen.getByRole('heading', { name: 'Job history' }).closest('section')
+    );
+    expect(
+      screen
+        .getByRole('heading', { name: 'Job history' })
+        .compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByTestId('alert-eligibility')).toHaveTextContent(
+      'Suppressed'
+    );
+    expect(screen.getByTestId('alert-delivery')).toHaveTextContent('Failed');
+    expect(screen.getAllByText(/Next delivery attempt:/)).toHaveLength(1);
+    expect(
+      screen.getByRole('heading', { name: 'Job history' })
+    ).toBeInTheDocument();
+  });
+
   it('uses at most two columns inside the three certificate information sections', () => {
     renderModal();
 

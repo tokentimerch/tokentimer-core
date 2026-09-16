@@ -43,6 +43,7 @@ import {
   createTokenEditData,
   createTokenUpdatePayload,
 } from '../tokenDetailForm.js';
+import AlertingDetails from '../AlertingDetails.jsx';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import {
   formatContactGroupNames,
@@ -1060,6 +1061,10 @@ export default function CertificateDetailsModal({
                 )}
               />
             ) : null}
+            <AlertingDetails
+              token={token}
+              enabled={isOpen}
+            />
           </Box>
 
           <datalist id='certificate-workspace-contacts'>

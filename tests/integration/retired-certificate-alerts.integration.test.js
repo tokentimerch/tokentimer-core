@@ -402,6 +402,17 @@ describe("Retired certificate alerts against PostgreSQL", function () {
         (row) => row.channel === "email" && row.status === "success",
       ),
     ).to.equal(true);
+    const sentAudit = await TestUtils.execQuery(
+      `SELECT workspace_id, metadata FROM audit_events
+        WHERE action = 'ALERT_SENT'
+          AND metadata->>'alert_id' = $1
+          AND metadata->>'alert_key' = $2
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [String(endpoint.id), `endpoint_health:${monitorId}:down`],
+    );
+    expect(sentAudit.rows).to.have.length(1);
+    expect(sentAudit.rows[0].workspace_id).to.equal(workspaceId);
+    expect(sentAudit.rows[0].metadata.alert_id).to.equal(endpoint.id);
   });
 
   it("does not enqueue expiry alerts for a fully retired token, and still enqueues a live one", async () => {
@@ -423,7 +434,7 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     await TestUtils.runNode("node", ["src/queue-manager.js"], "apps/worker");
 
     const liveQueued = await TestUtils.execQuery(
-      `SELECT alert_key FROM alert_queue
+      `SELECT id, alert_key FROM alert_queue
         WHERE token_id = $1 AND alert_key LIKE 'token_expiry:%'`,
       [liveTokenId],
     );
@@ -435,6 +446,17 @@ describe("Retired certificate alerts against PostgreSQL", function () {
 
     expect(liveQueued.rows.length).to.be.at.least(1);
     expect(retiredQueued.rows.length).to.equal(0);
+    const queuedAudit = await TestUtils.execQuery(
+      `SELECT workspace_id, metadata FROM audit_events
+        WHERE action='ALERT_QUEUED' AND target_type='token' AND target_id=$1
+          AND metadata->>'alert_id'=$2
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [liveTokenId, String(liveQueued.rows[0].id)],
+    );
+    expect(queuedAudit.rows).to.have.length(1);
+    expect(queuedAudit.rows[0].workspace_id).to.equal(workspaceId);
+    expect(queuedAudit.rows[0].metadata.alert_key)
+      .to.equal(liveQueued.rows[0].alert_key);
   });
 
   it("discards leftover renewal-failure delivery for a retired certificate while the shared token stays live", async () => {

@@ -1072,12 +1072,13 @@ async function writeAudit(
     targetType = "token",
     targetId,
     channel = null,
+    workspaceId = null,
     metadata = {},
   },
 ) {
   await client.query(
-    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [
       actorUserId,
       subjectUserId,
@@ -1086,8 +1087,21 @@ async function writeAudit(
       targetId,
       channel,
       metadata,
+      workspaceId,
     ],
   );
+}
+
+async function writeAlertAudit(client, alert, details) {
+  return await writeAudit(client, {
+    ...details,
+    workspaceId: alert.workspace_id,
+    metadata: {
+      ...details.metadata,
+      alert_id: alert.id,
+      alert_key: alert.alert_key,
+    },
+  });
 }
 
 // Graceful shutdown handler
@@ -1118,6 +1132,7 @@ const shutdown = async (signal) => {
 
 // Exported for direct unit testing without spinning up the full worker job.
 export const _test = {
+  writeAlertAudit,
   buildAgentHealthEmailContent,
   buildAgentHealthWebhookPayload,
   escapeMarkdown,
@@ -1502,6 +1517,25 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                   "Skipped out-of-window deferral: another worker took ownership",
                   { alertId: alert.id },
                 );
+              } else if (alert.error_message !== "OUT_OF_WINDOW") {
+                try {
+                  await writeAlertAudit(client, alert, {
+                    subjectUserId: alert.user_id,
+                    action: "ALERT_DELIVERY_DEFERRED",
+                    targetId: alert.token_id,
+                    metadata: {
+                      reason: "delivery_window",
+                      threshold: alert.threshold_days,
+                      next_attempt_at: ts.toISOString(),
+                      workspace_name: alert.workspace_name,
+                      token_name: alert.name,
+                    },
+                  });
+                } catch (_auditErr) {
+                  logger.debug("Non-critical operation failed", {
+                    error: _auditErr.message,
+                  });
+                }
               }
               // Do not count this as a failure; simply defer
               continue;
@@ -2579,7 +2613,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           }
           // Emit an audit event for partial successes to aid diagnostics
           if (webhookPartialErrors.length > 0) {
-            await writeAudit(client, {
+            await writeAlertAudit(client, alert, {
               subjectUserId: alert.user_id,
               action: "ALERT_PARTIAL_SUCCESS",
               targetId: alert.token_id,
@@ -2613,7 +2647,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               ? `${errorMessages}; MAX_ATTEMPTS`
               : "MAX_ATTEMPTS";
             try {
-              await writeAudit(client, {
+              await writeAlertAudit(client, alert, {
                 subjectUserId: alert.user_id,
                 action: "ALERT_BLOCKED_MAX_ATTEMPTS",
                 targetId: alert.token_id,
@@ -2651,7 +2685,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               errorMessages = `${errorMessages}; WHATSAPP_PERMANENT_FAILURE`;
             else errorMessages = "WHATSAPP_PERMANENT_FAILURE";
             try {
-              await writeAudit(client, {
+              await writeAlertAudit(client, alert, {
                 subjectUserId: alert.user_id,
                 action: "ALERT_BLOCKED_WHATSAPP_ERROR",
                 targetId: alert.token_id,
@@ -2699,7 +2733,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           }
           if (!reachedMaxAttempts && nextAttemptTimestamp) {
             try {
-              await writeAudit(client, {
+              await writeAlertAudit(client, alert, {
                 subjectUserId: alert.user_id,
                 action: "ALERT_RETRY_SCHEDULED",
                 targetId: alert.token_id,
@@ -2723,7 +2757,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
         if (allSucceeded) {
           sent++;
-          await writeAudit(client, {
+          await writeAlertAudit(client, alert, {
             subjectUserId: alert.user_id,
             action: "ALERT_SENT",
             targetId: alert.token_id,
@@ -2738,7 +2772,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           });
         } else {
           failed++;
-          await writeAudit(client, {
+          await writeAlertAudit(client, alert, {
             subjectUserId: alert.user_id,
             action: "ALERT_SEND_FAILED",
             targetId: alert.token_id,

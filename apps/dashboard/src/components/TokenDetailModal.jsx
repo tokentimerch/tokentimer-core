@@ -29,6 +29,7 @@ import {
   DashboardModalSectionHeading,
 } from './DashboardModalDetails.jsx';
 import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
+import AlertingDetails from './AlertingDetails.jsx';
 import {
   createTokenEditData,
   createTokenUpdatePayload,
@@ -819,6 +820,13 @@ function TokenDetailModal({
                 })}
               </>
             )}
+            <AlertingDetails
+              token={token}
+              enabled={isOpen}
+              gridColumn='1 / -1'
+              mt={4}
+              mb={4}
+            />
           </DashboardModalDetailsGrid>
           {/* Datalist for workspace contacts suggestions */}
           <datalist id='workspace-contacts-suggestions'>

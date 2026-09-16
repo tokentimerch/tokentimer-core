@@ -15,6 +15,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@tokentimer/alert-eligibility": "workspace:*",
     "@aws-sdk/client-acm": "3.1045.0",
     "@aws-sdk/client-ec2": "3.1045.0",
     "@aws-sdk/client-iam": "3.1045.0",
