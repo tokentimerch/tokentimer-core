@@ -28,11 +28,6 @@ compliance reporting are not deliverables of this repository.
 
 ## Now -- next release candidate
 
-- **Show alert eligibility separately from delivery**
-  ([#226](https://github.com/tokentimerch/tokentimer-core/issues/226)).
-  Extend existing inventory and Control Center views: outside threshold /
-  due / suppressed versus queued / sent / failed. Explain
-  expired-at-import and negative thresholds.
 - **Make existing CI quality gates dependable**
   ([#227](https://github.com/tokentimerch/tokentimer-core/issues/227)).
   No contributor PR-triggered Actions. Tighten the existing
