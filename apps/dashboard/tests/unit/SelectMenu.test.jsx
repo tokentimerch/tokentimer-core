@@ -35,6 +35,24 @@ describe('SelectMenu', () => {
     expect(onChange).toHaveBeenLastCalledWith(['a']);
   });
 
+  it('selects a group from an empty workspace-default state in multi mode', () => {
+    const onChange = vi.fn();
+    renderMenu({
+      multiple: true,
+      allowEmpty: true,
+      emptyOptionLabel: 'Workspace default',
+      onChange,
+      value: [],
+      placeholder: 'Workspace default',
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Workspace default' })
+    );
+    fireEvent.click(screen.getByText('Alpha'));
+    expect(onChange).toHaveBeenLastCalledWith(['a']);
+  });
+
   it('allows multiple selections when multiple is true', () => {
     const onChange = vi.fn();
     const { rerender } = renderMenu({

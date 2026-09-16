@@ -4,17 +4,14 @@ import {
   HStack,
   Menu,
   MenuButton,
+  MenuItem,
   MenuItemOption,
   MenuList,
   MenuOptionGroup,
-  Portal,
   Text,
   useColorModeValue,
 } from '@chakra-ui/react';
 import { CheckIcon, ChevronDownIcon } from '@chakra-ui/icons';
-
-/** Internal sentinel so radio/checkbox mode can clear back to "none". */
-export const SELECT_MENU_NONE = '__select_menu_none__';
 
 /**
  * Reusable single- or multi-select dropdown (Chakra Menu).
@@ -76,34 +73,21 @@ export default function SelectMenu({
   }, [selected, multiple, placeholder, labelByValue]);
 
   const groupValue = multiple
-    ? selected.length === 0 && allowEmpty
-      ? [SELECT_MENU_NONE]
-      : selected
+    ? selected
     : selected.length > 0
       ? selected[0]
-      : allowEmpty
-        ? SELECT_MENU_NONE
-        : undefined;
+      : '';
 
   const handleGroupChange = next => {
     if (multiple) {
-      const raw = (Array.isArray(next) ? next : []).map(String);
-      const ids = raw.filter(id => id && id !== SELECT_MENU_NONE);
-      const pickedNone = raw.includes(SELECT_MENU_NONE);
-      // Clicking "none" while items are selected clears back to empty.
-      if (pickedNone && selected.length > 0 && ids.length >= selected.length) {
-        onChange?.([]);
-        return;
-      }
+      const ids = (Array.isArray(next) ? next : next == null ? [] : [next])
+        .map(String)
+        .filter(Boolean);
       onChange?.(ids);
       return;
     }
     const id = next == null ? '' : String(next);
-    if (!id || id === SELECT_MENU_NONE) {
-      onChange?.([]);
-      return;
-    }
-    onChange?.([id]);
+    onChange?.(id ? [id] : []);
   };
 
   if (items.length === 0) {
@@ -120,6 +104,8 @@ export default function SelectMenu({
         closeOnSelect={!multiple}
         matchWidth={matchWidth}
         placement='bottom-start'
+        strategy='fixed'
+        gutter={4}
       >
         <MenuButton
           as={Button}
@@ -131,6 +117,7 @@ export default function SelectMenu({
           bg={buttonBg}
           borderColor={buttonBorder}
           px={3}
+          type='button'
           aria-label={ariaLabel || placeholder}
           title={
             selected.length > 2
@@ -158,41 +145,44 @@ export default function SelectMenu({
             />
           </HStack>
         </MenuButton>
-        <Portal>
-          <MenuList
-            maxH={maxMenuH}
-            overflowY='auto'
-            zIndex='popover'
-            py={1}
-            {...menuListProps}
-          >
-            <MenuOptionGroup
-              type={multiple ? 'checkbox' : 'radio'}
-              value={groupValue}
-              onChange={handleGroupChange}
+        <MenuList
+          maxH={maxMenuH}
+          overflowY='auto'
+          zIndex='popover'
+          py={1}
+          {...menuListProps}
+        >
+          {allowEmpty ? (
+            <MenuItem
+              fontSize={size}
+              type='button'
+              icon={
+                selected.length === 0 ? (
+                  <CheckIcon color={checkColor} boxSize='0.85em' />
+                ) : undefined
+              }
+              onClick={() => onChange?.([])}
             >
-              {allowEmpty ? (
-                <MenuItemOption
-                  value={SELECT_MENU_NONE}
-                  fontSize={size}
-                  icon={<CheckIcon color={checkColor} boxSize='0.85em' />}
-                >
-                  {emptyOptionLabel}
-                </MenuItemOption>
-              ) : null}
-              {items.map(item => (
-                <MenuItemOption
-                  key={item.value}
-                  value={item.value}
-                  fontSize={size}
-                  icon={<CheckIcon color={checkColor} boxSize='0.85em' />}
-                >
-                  {item.label}
-                </MenuItemOption>
-              ))}
-            </MenuOptionGroup>
-          </MenuList>
-        </Portal>
+              {emptyOptionLabel}
+            </MenuItem>
+          ) : null}
+          <MenuOptionGroup
+            type={multiple ? 'checkbox' : 'radio'}
+            value={groupValue}
+            onChange={handleGroupChange}
+          >
+            {items.map(item => (
+              <MenuItemOption
+                key={item.value}
+                value={item.value}
+                fontSize={size}
+                icon={<CheckIcon color={checkColor} boxSize='0.85em' />}
+              >
+                {item.label}
+              </MenuItemOption>
+            ))}
+          </MenuOptionGroup>
+        </MenuList>
       </Menu>
       {helperText ? (
         <Text fontSize='xs' mt={1} color={helperColor}>
