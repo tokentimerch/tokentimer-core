@@ -116,13 +116,23 @@ describe("Alert lifecycle APIs", function () {
          ($1, 'ALERT_RETRY_SCHEDULED', 'token', $2, $3,
           TIMESTAMP '2026-09-13 08:04:30',
           $5::jsonb)`,
-      [owner.user.id, tokenA, workspaceA,
-        JSON.stringify({ days: 7, alert_id: alertA,
-          alert_key: `token_expiry:${tokenA}:poswin:7` }),
-        JSON.stringify({ days: 7, alert_id: alertA,
+      [
+        owner.user.id,
+        tokenA,
+        workspaceA,
+        JSON.stringify({
+          days: 7,
+          alert_id: alertA,
+          alert_key: `token_expiry:${tokenA}:poswin:7`,
+        }),
+        JSON.stringify({
+          days: 7,
+          alert_id: alertA,
           alert_key: `token_expiry:${tokenA}:poswin:7`,
           next_attempt_at: "2026-09-13T08:05:00.000Z",
-          channels_to_retry: ["email"] })],
+          channels_to_retry: ["email"],
+        }),
+      ],
     );
 
     const queueB = await client.query(
@@ -258,30 +268,53 @@ describe("Alert lifecycle APIs", function () {
     await request(BASE).get(path).set("Cookie", outsider.cookie).expect(403);
   });
 
-  it("keeps eligibility counts workspace-wide while token rows are paged", async () => {
+  it("keeps eligibility counts authoritative beyond 500 while token rows are paged", async () => {
     const path = `/api/v1/workspaces/${workspaceA}/control-center/alert-eligibility-summary`;
-    const summary = await request(BASE)
-      .get(path)
-      .set("Cookie", manager.cookie)
-      .expect(200);
-    expect(summary.body.total).to.equal(3);
-    expect(
-      Object.values(summary.body.counts).reduce((sum, count) => sum + count, 0),
-    ).to.equal(3);
+    const bulkPrefix = `Lifecycle aggregate ${crypto.randomUUID()}`;
+    await client.query(
+      `INSERT INTO tokens (
+         user_id, workspace_id, created_by, name, expiration, imported_at,
+         type, category
+       )
+       SELECT $1, $2, $1, $3 || '-' || value, DATE '2027-12-31',
+              TIMESTAMP '2026-09-01 00:00:00', 'api_key', 'general'
+         FROM generate_series(1, 501) AS value`,
+      [owner.user.id, workspaceA, bulkPrefix],
+    );
+    try {
+      const summary = await request(BASE)
+        .get(path)
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      expect(summary.body.total).to.equal(504);
+      expect(
+        Object.values(summary.body.counts).reduce(
+          (sum, count) => sum + count,
+          0,
+        ),
+      ).to.equal(504);
 
-    const firstPage = await request(BASE)
-      .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=0`)
-      .set("Cookie", manager.cookie)
-      .expect(200);
-    const nextPage = await request(BASE)
-      .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=1`)
-      .set("Cookie", manager.cookie)
-      .expect(200);
-    expect(firstPage.body.total).to.equal(3);
-    expect(nextPage.body.total).to.equal(3);
-    expect(firstPage.body.items).to.have.length(1);
-    expect(nextPage.body.items).to.have.length(1);
-    expect(nextPage.body.items[0].id).not.to.equal(firstPage.body.items[0].id);
+      const firstPage = await request(BASE)
+        .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=0`)
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const nextPage = await request(BASE)
+        .get(`/api/tokens?workspace_id=${workspaceA}&limit=1&offset=1`)
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      expect(firstPage.body.total).to.equal(504);
+      expect(nextPage.body.total).to.equal(504);
+      expect(firstPage.body.items).to.have.length(1);
+      expect(nextPage.body.items).to.have.length(1);
+      expect(nextPage.body.items[0].id).not.to.equal(
+        firstPage.body.items[0].id,
+      );
+    } finally {
+      await client.query(
+        "DELETE FROM tokens WHERE workspace_id=$1 AND name LIKE $2",
+        [workspaceA, `${bulkPrefix}%`],
+      );
+    }
 
     await request(BASE).get(path).set("Cookie", viewer.cookie).expect(403);
     await request(BASE).get(path).set("Cookie", outsider.cookie).expect(403);
@@ -318,14 +351,23 @@ describe("Alert lifecycle APIs", function () {
            due_date,channels,status,created_at,updated_at)
          VALUES ($1,$2,$3,$4,CURRENT_DATE,'["email"]','sent',
            TIMESTAMP '2026-01-01 08:00:00',NOW())`,
-        [owner.user.id, tokenB, `token_expiry:${tokenB}:poswin:${threshold}`,
-          threshold],
+        [
+          owner.user.id,
+          tokenB,
+          `token_expiry:${tokenB}:poswin:${threshold}`,
+          threshold,
+        ],
       );
     }
     const response = await request(BASE)
-      .get(`/api/tokens/${tokenB}/alert-timeline?limit=2`)
-      .set("Cookie", owner.cookie).expect(200);
-    expect(response.body.items.map(item => item.id)).to.include(`queue:${alertB}`);
+      .get(
+        `/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=2`,
+      )
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(response.body.items.map((item) => item.id)).to.include(
+      `queue:${alertB}`,
+    );
   });
 
   it("never derives an expiry threshold or a sent delivery from discarded health/retirement alerts", async () => {
@@ -338,27 +380,42 @@ describe("Alert lifecycle APIs", function () {
          'Discarded: endpoint recovered before threshold'),
          ($1,$4,$6,7,CURRENT_DATE,'["email"]','pending',NULL)
        RETURNING id, alert_key`,
-      [owner.user.id, retiredToken, `token_expiry:${retiredToken}:poswin:7`,
-        tokenB, `endpoint_health:${tokenB}:down`, `cert_renewal_failed:${tokenB}`],
+      [
+        owner.user.id,
+        retiredToken,
+        `token_expiry:${retiredToken}:poswin:7`,
+        tokenB,
+        `endpoint_health:${tokenB}:down`,
+        `cert_renewal_failed:${tokenB}`,
+      ],
     );
     const retired = await request(BASE)
       .get(`/api/tokens/${retiredToken}/alert-timeline`)
-      .set("Cookie", viewer.cookie).expect(200);
+      .set("Cookie", viewer.cookie)
+      .expect(200);
     const endpoint = await request(BASE)
       .get(`/api/tokens/${tokenB}/alert-timeline`)
-      .set("Cookie", owner.cookie).expect(200);
-    for (const response of [retired, endpoint]) {
-      expect(response.body.items.some(item => item.type === "delivery_succeeded")).to.equal(false);
-      expect(response.body.items.some(item => item.type === "alert_discarded")).to.equal(true);
-    }
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(
+      retired.body.items.some((item) => item.type === "delivery_succeeded"),
+    ).to.equal(false);
+    expect(
+      retired.body.items.some((item) => item.type === "alert_discarded"),
+    ).to.equal(true);
     const nonExpiryIds = discardedRows.rows
-      .filter(row => !row.alert_key.startsWith('token_expiry:'))
-      .map(row => row.id);
-    expect(endpoint.body.items.some(item => item.type === "threshold_reached" &&
-      nonExpiryIds.includes(item.alert_id))).to.equal(false);
+      .filter((row) => !row.alert_key.startsWith("token_expiry:"))
+      .map((row) => row.id);
+    expect(
+      endpoint.body.items.some((item) => nonExpiryIds.includes(item.alert_id)),
+    ).to.equal(false);
     const retiredDetails = await request(BASE)
-      .get(`/api/tokens/${retiredToken}`).set("Cookie", viewer.cookie).expect(200);
-    expect(retiredDetails.body.alert_state.delivery.status).to.equal("discarded");
+      .get(`/api/tokens/${retiredToken}`)
+      .set("Cookie", viewer.cookie)
+      .expect(200);
+    expect(retiredDetails.body.alert_state.delivery.status).to.equal(
+      "discarded",
+    );
     await client.query(
       `INSERT INTO alert_queue (user_id,token_id,alert_key,threshold_days,
          due_date,channels,status)
@@ -366,13 +423,21 @@ describe("Alert lifecycle APIs", function () {
       [owner.user.id, staleToken, `token_expiry:${staleToken}:poswin:0`],
     );
     const unverified = await request(BASE)
-      .get(`/api/tokens/${staleToken}`).set("Cookie", viewer.cookie).expect(200);
-    expect(unverified.body.alert_state.delivery.status).to.equal("sent_unverified");
+      .get(`/api/tokens/${staleToken}`)
+      .set("Cookie", viewer.cookie)
+      .expect(200);
+    expect(unverified.body.alert_state.delivery.status).to.equal(
+      "sent_unverified",
+    );
     const staleTimeline = await request(BASE)
       .get(`/api/tokens/${staleToken}/alert-timeline`)
-      .set("Cookie", viewer.cookie).expect(200);
-    expect(staleTimeline.body.items.some(item => item.type === "delivery_succeeded"))
-      .to.equal(false);
+      .set("Cookie", viewer.cookie)
+      .expect(200);
+    expect(
+      staleTimeline.body.items.some(
+        (item) => item.type === "delivery_succeeded",
+      ),
+    ).to.equal(false);
   });
 
   it("does not use a threshold-zero endpoint success audit as expiry delivery evidence", async () => {
@@ -394,51 +459,98 @@ describe("Alert lifecycle APIs", function () {
       `INSERT INTO audit_events (subject_user_id,action,target_type,target_id,
          workspace_id,metadata)
        VALUES ($1,'ALERT_SENT','token',$2,$3,$4::jsonb)`,
-      [owner.user.id, tokenB, workspaceB,
-        JSON.stringify({ days: 0, alert_id: endpoint.rows[0].id,
-          alert_key: endpointKey })],
+      [
+        owner.user.id,
+        tokenB,
+        workspaceB,
+        JSON.stringify({
+          days: 0,
+          alert_id: endpoint.rows[0].id,
+          alert_key: endpointKey,
+        }),
+      ],
     );
     const details = await request(BASE)
-      .get(`/api/tokens/${tokenB}`).set("Cookie", owner.cookie).expect(200);
-    expect(details.body.alert_state.delivery.alert_id).to.equal(expiry.rows[0].id);
-    expect(details.body.alert_state.delivery.status).to.equal("sent_unverified");
+      .get(`/api/tokens/${tokenB}`)
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(details.body.alert_state.delivery.alert_id).to.equal(
+      expiry.rows[0].id,
+    );
+    expect(details.body.alert_state.delivery.status).to.equal(
+      "sent_unverified",
+    );
     const timeline = await request(BASE)
       .get(`/api/tokens/${tokenB}/alert-timeline?limit=100`)
-      .set("Cookie", owner.cookie).expect(200);
-    expect(timeline.body.items.some(item => item.type === "delivery_succeeded" &&
-      item.alert_id === endpoint.rows[0].id)).to.equal(true);
-    expect(timeline.body.items.some(item => item.type === "delivery_succeeded" &&
-      item.alert_id === expiry.rows[0].id)).to.equal(false);
-    expect(timeline.body.items.some(item => item.type === "threshold_reached" &&
-      item.alert_id === endpoint.rows[0].id)).to.equal(false);
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(
+      timeline.body.items.some(
+        (item) =>
+          item.type === "delivery_succeeded" &&
+          item.alert_id === endpoint.rows[0].id,
+      ),
+    ).to.equal(false);
+    expect(
+      timeline.body.items.some(
+        (item) =>
+          item.type === "delivery_succeeded" &&
+          item.alert_id === expiry.rows[0].id,
+      ),
+    ).to.equal(false);
+    expect(
+      timeline.body.items.some(
+        (item) =>
+          item.type === "threshold_reached" &&
+          item.alert_id === endpoint.rows[0].id,
+      ),
+    ).to.equal(false);
     await client.query(
       `INSERT INTO audit_events (subject_user_id,action,target_type,target_id,
          workspace_id,metadata)
        VALUES ($1,'ALERT_SENT','token',$2,$3,$4::jsonb)`,
-      [owner.user.id, tokenB, workspaceB,
-        JSON.stringify({ days: 0, alert_key: expiryKey })],
+      [
+        owner.user.id,
+        tokenB,
+        workspaceB,
+        JSON.stringify({ days: 0, alert_key: expiryKey }),
+      ],
     );
     const keyMatched = await request(BASE)
-      .get(`/api/tokens/${tokenB}`).set("Cookie", owner.cookie).expect(200);
+      .get(`/api/tokens/${tokenB}`)
+      .set("Cookie", owner.cookie)
+      .expect(200);
     expect(keyMatched.body.alert_state.delivery.status).to.equal("sent");
   });
 
   it("redacts queue and latest-attempt errors in both viewer-readable token APIs", async () => {
-    const privateError = "ops@example.test https://hooks.example.test/private +49 151 23456789 password=hunter2";
-    await client.query("UPDATE alert_queue SET error_message=$1 WHERE id=$2", [privateError, alertA]);
+    const privateError =
+      "ops@example.test https://hooks.example.test/private +49 151 23456789 password=hunter2";
+    await client.query("UPDATE alert_queue SET error_message=$1 WHERE id=$2", [
+      privateError,
+      alertA,
+    ]);
     await client.query(
       `INSERT INTO alert_delivery_log (alert_queue_id,user_id,token_id,workspace_id,
         channel,status,sent_at,error_message)
        VALUES ($1,$2,$3,$4,'email','failed',NOW(),$5)`,
       [alertA, owner.user.id, tokenA, workspaceA, privateError],
     );
-    for (const path of [`/api/tokens?workspace_id=${workspaceA}&limit=10`, `/api/tokens/${tokenA}`]) {
-      const response = await request(BASE).get(path).set("Cookie", viewer.cookie).expect(200);
+    for (const path of [
+      `/api/tokens?workspace_id=${workspaceA}&limit=10`,
+      `/api/tokens/${tokenA}`,
+    ]) {
+      const response = await request(BASE)
+        .get(path)
+        .set("Cookie", viewer.cookie)
+        .expect(200);
       const token = path.includes("limit=")
-        ? response.body.items.find(item => item.id === tokenA)
+        ? response.body.items.find((item) => item.id === tokenA)
         : response.body;
       expect(token.alert_state.delivery.error_message).to.be.a("string");
-      expect(token.alert_state.delivery.latest_attempt.error_message).to.be.a("string");
+      expect(token.alert_state.delivery.latest_attempt.error_message).to.be.a(
+        "string",
+      );
       expect(JSON.stringify(token.alert_state)).not.to.match(
         /ops@example\.test|hooks\.example\.test|151 23456789|hunter2/,
       );
@@ -447,8 +559,11 @@ describe("Alert lifecycle APIs", function () {
 
   it("retains delivery and audit history in A after transferring its token to B", async () => {
     const before = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`)
-      .set("Cookie", owner.cookie).expect(200);
+      .get(
+        `/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`,
+      )
+      .set("Cookie", owner.cookie)
+      .expect(200);
     await request(BASE)
       .post(`/api/v1/workspaces/${workspaceB}/transfer-tokens`)
       .set("Cookie", owner.cookie)
@@ -458,32 +573,57 @@ describe("Alert lifecycle APIs", function () {
       "SELECT DISTINCT workspace_id FROM alert_delivery_log WHERE token_id=$1",
       [tokenA],
     );
-    expect(persisted.rows.map(row => row.workspace_id)).to.deep.equal([workspaceA]);
+    expect(persisted.rows.map((row) => row.workspace_id)).to.deep.equal([
+      workspaceA,
+    ]);
     const auditWorkspaces = await client.query(
       `SELECT DISTINCT workspace_id FROM audit_events
         WHERE target_type='token' AND target_id=$1
           AND action IN ('ALERT_SENT','ALERT_RETRY_SCHEDULED')`,
       [tokenA],
     );
-    expect(auditWorkspaces.rows.map(row => row.workspace_id))
-      .to.deep.equal([workspaceA]);
+    expect(auditWorkspaces.rows.map((row) => row.workspace_id)).to.deep.equal([
+      workspaceA,
+    ]);
     const activityA = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`)
-      .set("Cookie", manager.cookie).expect(200);
+      .get(
+        `/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`,
+      )
+      .set("Cookie", manager.cookie)
+      .expect(200);
     const activityB = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`)
-      .set("Cookie", owner.cookie).expect(200);
-    expect(activityA.body.items.some(item => item.alert_id === alertA &&
-      item.type === "delivery_succeeded")).to.equal(true);
-    expect(activityA.body.items.some(item => item.alert_id === alertA &&
-      item.type === "retry_scheduled" && item.source === "audit_events"))
-      .to.equal(true);
-    expect(activityB.body.items.some(item => item.token_id === tokenA)).to.equal(false);
-    expect(activityB.body.items.map(item => item.id)).to.deep.equal(before.body.items.map(item => item.id));
+      .get(
+        `/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`,
+      )
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(
+      activityA.body.items.some(
+        (item) =>
+          item.alert_id === alertA && item.type === "delivery_succeeded",
+      ),
+    ).to.equal(true);
+    expect(
+      activityA.body.items.some(
+        (item) =>
+          item.alert_id === alertA &&
+          item.type === "retry_scheduled" &&
+          item.source === "audit_events",
+      ),
+    ).to.equal(true);
+    expect(
+      activityB.body.items.some((item) => item.token_id === tokenA),
+    ).to.equal(false);
+    expect(activityB.body.items.map((item) => item.id)).to.deep.equal(
+      before.body.items.map((item) => item.id),
+    );
     const tokenTimeline = await request(BASE)
       .get(`/api/tokens/${tokenA}/alert-timeline?limit=100`)
-      .set("Cookie", owner.cookie).expect(200);
-    expect(tokenTimeline.body.items.some(item => item.alert_id === alertA)).to.equal(true);
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(
+      tokenTimeline.body.items.some((item) => item.alert_id === alertA),
+    ).to.equal(true);
   });
 
   it("attributes current-month alert-stats to the token's current workspace after transfer", async () => {
@@ -493,7 +633,9 @@ describe("Alert lifecycle APIs", function () {
       "SELECT DISTINCT workspace_id FROM alert_delivery_log WHERE token_id=$1",
       [tokenA],
     );
-    expect(persisted.rows.map(row => row.workspace_id)).to.deep.equal([workspaceA]);
+    expect(persisted.rows.map((row) => row.workspace_id)).to.deep.equal([
+      workspaceA,
+    ]);
     const tokenWorkspace = await client.query(
       "SELECT workspace_id FROM tokens WHERE id=$1",
       [tokenA],
@@ -595,17 +737,30 @@ describe("Alert lifecycle APIs", function () {
     expect(audit.rows).to.have.length(1);
     expect(audit.rows[0].workspace_id).to.equal(workspaceB);
     expect(audit.rows[0].metadata.alert_id).to.equal(alertA);
-    expect(audit.rows[0].metadata.alert_key)
-      .to.equal(`token_expiry:${tokenA}:poswin:7`);
+    expect(audit.rows[0].metadata.alert_key).to.equal(
+      `token_expiry:${tokenA}:poswin:7`,
+    );
     const oldActivity = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`)
-      .set("Cookie", manager.cookie).expect(200);
+      .get(
+        `/api/v1/workspaces/${workspaceA}/control-center/alert-activity?limit=100`,
+      )
+      .set("Cookie", manager.cookie)
+      .expect(200);
     const newActivity = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`)
-      .set("Cookie", owner.cookie).expect(200);
-    expect(oldActivity.body.items.some(item => item.type === "alert_requeued" &&
-      item.alert_id === alertA)).to.equal(false);
-    expect(newActivity.body.items.some(item => item.type === "alert_requeued" &&
-      item.alert_id === alertA)).to.equal(true);
+      .get(
+        `/api/v1/workspaces/${workspaceB}/control-center/alert-activity?limit=100`,
+      )
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    expect(
+      oldActivity.body.items.some(
+        (item) => item.type === "alert_requeued" && item.alert_id === alertA,
+      ),
+    ).to.equal(false);
+    expect(
+      newActivity.body.items.some(
+        (item) => item.type === "alert_requeued" && item.alert_id === alertA,
+      ),
+    ).to.equal(true);
   });
 });

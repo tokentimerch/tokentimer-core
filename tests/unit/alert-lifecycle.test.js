@@ -85,7 +85,7 @@ describe("alert lifecycle normalization", () => {
     ]);
   });
 
-  it("never fabricates an expiry threshold from endpoint, renewal, or agent alerts", () => {
+  it("excludes endpoint, renewal, and agent alerts from the expiry lifecycle", () => {
     const events = buildAlertLifecycleEvents({
       queueRows: [
         queueRow({ alert_id: 21, alert_key: "endpoint_health:21:down" }),
@@ -96,12 +96,7 @@ describe("alert lifecycle normalization", () => {
         deliveryRow({ alert_id: 21, alert_key: "endpoint_health:21:down" }),
       ],
     });
-    assert.equal(events.some(event => event.type === "threshold_reached"), false);
-    assert.deepEqual(
-      events.filter(event => event.type === "alert_queued").map(event => event.reason),
-      ["agent_health", "certificate_renewal_failure", "endpoint_health"],
-    );
-    assert.equal(events.find(event => event.type === "delivery_failed").threshold_days, null);
+    assert.deepEqual(events, []);
   });
 
   it("normalizes delivery outcomes, retries, requeues, partial delivery, blocking, and no-channel evidence", () => {
@@ -124,7 +119,13 @@ describe("alert lifecycle normalization", () => {
     ].map(([action, id, audit_metadata]) => ({
       audit_id: id,
       action,
-      audit_metadata,
+      audit_metadata:
+        action === "ALERTS_BULK_REQUEUED"
+          ? audit_metadata
+          : {
+              ...audit_metadata,
+              alert_key: "token_expiry:7:poswin:7",
+            },
       occurred_at: `2026-09-13T08:${String(id).padStart(2, "0")}:00.000Z`,
       token_id: action === "ALERTS_BULK_REQUEUED" ? null : 7,
       token_name:
@@ -162,8 +163,10 @@ describe("alert lifecycle normalization", () => {
     ]) {
       assert.ok(types.has(type), `expected ${type}`);
     }
-    const bulk = events.find((event) => event.reason === "bulk_requeue");
-    assert.equal(bulk.metadata.updated_count, 4);
+    assert.equal(
+      events.some((event) => event.reason === "bulk_requeue"),
+      false,
+    );
   });
 
   it("uses queue state for plan blocking but requires delivery evidence for success", () => {
@@ -184,18 +187,39 @@ describe("alert lifecycle normalization", () => {
           event.type === "delivery_blocked" && event.reason === "monthly_limit",
       ),
     );
-    assert.equal(events.some((event) => event.type === "delivery_succeeded"), false);
+    assert.equal(
+      events.some((event) => event.type === "delivery_succeeded"),
+      false,
+    );
   });
 
-  it("reports discarded retired certificates and recovered endpoints without claiming delivery", () => {
-    const events = buildAlertLifecycleEvents({ queueRows: [
-      queueRow({ status: "sent", error_message: "Discarded: certificate revoked or decommissioned" }),
-      queueRow({ alert_id: 11, alert_key: "endpoint_health:11:down", status: "sent",
-        error_message: "Discarded: endpoint recovered before threshold" }),
-    ] });
-    assert.equal(events.filter(event => event.type === "delivery_succeeded").length, 0);
-    assert.deepEqual(new Set(events.filter(event => event.type === "alert_discarded")
-      .map(event => event.reason)), new Set(["retired_certificate", "endpoint_recovered"]));
+  it("reports discarded retired expiry alerts and excludes recovered endpoints", () => {
+    const events = buildAlertLifecycleEvents({
+      queueRows: [
+        queueRow({
+          status: "sent",
+          error_message: "Discarded: certificate revoked or decommissioned",
+        }),
+        queueRow({
+          alert_id: 11,
+          alert_key: "endpoint_health:11:down",
+          status: "sent",
+          error_message: "Discarded: endpoint recovered before threshold",
+        }),
+      ],
+    });
+    assert.equal(
+      events.filter((event) => event.type === "delivery_succeeded").length,
+      0,
+    );
+    assert.deepEqual(
+      new Set(
+        events
+          .filter((event) => event.type === "alert_discarded")
+          .map((event) => event.reason),
+      ),
+      new Set(["retired_certificate"]),
+    );
   });
 
   it("preserves the monthly-limit reason when a blocked delivery log exists", () => {
@@ -210,9 +234,7 @@ describe("alert lifecycle normalization", () => {
         }),
       ],
     });
-    const blocked = events.filter(
-      (event) => event.type === "delivery_blocked",
-    );
+    const blocked = events.filter((event) => event.type === "delivery_blocked");
     assert.equal(blocked.length, 1);
     assert.equal(blocked[0].reason, "monthly_limit");
   });
@@ -242,16 +264,22 @@ describe("alert lifecycle normalization", () => {
           action: "ALERT_SENT",
           occurred_at: "2026-09-13T08:04:00.000Z",
           token_id: 7,
-          audit_metadata: { days: 7, alert_id: 10,
-            alert_key: "token_expiry:7:poswin:7" },
+          audit_metadata: {
+            days: 7,
+            alert_id: 10,
+            alert_key: "token_expiry:7:poswin:7",
+          },
         },
         {
           audit_id: 100,
           action: "ALERT_SEND_FAILED",
           occurred_at: "2026-09-14T08:04:00.000Z",
           token_id: 7,
-          audit_metadata: { days: 7, alert_id: 11,
-            alert_key: "token_expiry:7:poswin:7" },
+          audit_metadata: {
+            days: 7,
+            alert_id: 11,
+            alert_key: "token_expiry:7:poswin:7",
+          },
         },
       ],
     });
@@ -265,41 +293,90 @@ describe("alert lifecycle normalization", () => {
     );
   });
 
-  it("keeps exact audit outcomes distinct for non-expiry and expiry alerts at threshold zero", () => {
+  it("keeps the expiry outcome and excludes a non-expiry alert at threshold zero", () => {
     const events = buildAlertLifecycleEvents({
       queueRows: [
-        queueRow({ alert_id: 30, alert_key: "token_expiry:7:poswin:0",
-          threshold_days: 0 }),
-        queueRow({ alert_id: 31, alert_key: "endpoint_health:7:down",
-          threshold_days: 0 }),
+        queueRow({
+          alert_id: 30,
+          alert_key: "token_expiry:7:poswin:0",
+          threshold_days: 0,
+        }),
+        queueRow({
+          alert_id: 31,
+          alert_key: "endpoint_health:7:down",
+          threshold_days: 0,
+        }),
       ],
-      deliveryRows: [deliveryRow({ delivery_id: 301, alert_id: 30,
-        alert_key: "token_expiry:7:poswin:0", threshold_days: 0,
-        delivery_status: "success" })],
-      auditRows: [{ audit_id: 302, action: "ALERT_SENT", token_id: 7,
-        occurred_at: "2026-09-13T08:05:00Z", audit_metadata: {
-          days: 0, alert_id: 31, alert_key: "endpoint_health:7:down" } }],
+      deliveryRows: [
+        deliveryRow({
+          delivery_id: 301,
+          alert_id: 30,
+          alert_key: "token_expiry:7:poswin:0",
+          threshold_days: 0,
+          delivery_status: "success",
+        }),
+      ],
+      auditRows: [
+        {
+          audit_id: 302,
+          action: "ALERT_SENT",
+          token_id: 7,
+          occurred_at: "2026-09-13T08:05:00Z",
+          audit_metadata: {
+            days: 0,
+            alert_id: 31,
+            alert_key: "endpoint_health:7:down",
+          },
+        },
+      ],
     });
-    assert.deepEqual(events.filter(event => event.type === "delivery_succeeded")
-      .map(event => event.alert_id).sort(), [30, 31]);
-    assert.equal(events.filter(event => event.type === "threshold_reached")
-      .some(event => event.alert_id === 31), false);
+    assert.deepEqual(
+      events
+        .filter((event) => event.type === "delivery_succeeded")
+        .map((event) => event.alert_id)
+        .sort(),
+      [30],
+    );
+    assert.equal(
+      events
+        .filter((event) => event.type === "threshold_reached")
+        .some((event) => event.alert_id === 31),
+      false,
+    );
   });
 
   it("deduplicates a key-only audit against its exact delivery log", () => {
     const events = buildAlertLifecycleEvents({
-      deliveryRows: [deliveryRow({ delivery_status: "success",
-        alert_key: "token_expiry:7:poswin:7" })],
-      auditRows: [{ audit_id: 407, action: "ALERT_SENT", token_id: 7,
-        occurred_at: "2026-09-13T08:05:00Z", audit_metadata: {
-          days: 7, alert_key: "token_expiry:7:poswin:7" } }],
+      deliveryRows: [
+        deliveryRow({
+          delivery_status: "success",
+          alert_key: "token_expiry:7:poswin:7",
+        }),
+      ],
+      auditRows: [
+        {
+          audit_id: 407,
+          action: "ALERT_SENT",
+          token_id: 7,
+          occurred_at: "2026-09-13T08:05:00Z",
+          audit_metadata: {
+            days: 7,
+            alert_key: "token_expiry:7:poswin:7",
+          },
+        },
+      ],
     });
-    assert.equal(events.filter(event => event.type === "delivery_succeeded").length, 1);
-    assert.equal(events.find(event => event.type === "delivery_succeeded").source,
-      "alert_delivery_log");
+    assert.equal(
+      events.filter((event) => event.type === "delivery_succeeded").length,
+      1,
+    );
+    assert.equal(
+      events.find((event) => event.type === "delivery_succeeded").source,
+      "alert_delivery_log",
+    );
   });
 
-  it("uses legacy queue and delivery audits only when primary records are absent", () => {
+  it("uses keyed expiry audits only when primary records are absent", () => {
     const auditRows = [
       ["ALERT_QUEUED", 201],
       ["ALERT_SENT", 202],
@@ -309,6 +386,7 @@ describe("alert lifecycle normalization", () => {
       action,
       audit_metadata: {
         threshold: 7,
+        alert_key: "token_expiry:7:poswin:7",
         channels: ["email"],
         error: action === "ALERT_SEND_FAILED" ? "SMTP timeout" : undefined,
       },
@@ -327,6 +405,21 @@ describe("alert lifecycle normalization", () => {
       events.some((event) => event.type === "threshold_reached"),
       false,
     );
+  });
+
+  it("excludes ambiguous legacy audits without an expiry alert key", () => {
+    const events = buildAlertLifecycleEvents({
+      auditRows: [
+        {
+          audit_id: 301,
+          action: "ALERT_SENT",
+          occurred_at: "2026-09-13T09:00:00.000Z",
+          token_id: 7,
+          audit_metadata: { days: 7 },
+        },
+      ],
+    });
+    assert.deepEqual(events, []);
   });
 
   it("orders equal timestamps deterministically in lifecycle order", () => {
@@ -360,10 +453,7 @@ describe("alert lifecycle normalization", () => {
       error,
       /ops@example\.com|49 151 23456789|hooks\.example|10\.0\.0\.1|4915123456789|hunter2/,
     );
-    assert.match(
-      error,
-      /EMAIL_REDACTED|PHONE_REDACTED|URL_REDACTED|REDACTED/,
-    );
+    assert.match(error, /EMAIL_REDACTED|PHONE_REDACTED|URL_REDACTED|REDACTED/);
   });
 });
 
@@ -395,27 +485,52 @@ describe("alert lifecycle fetching", () => {
     assert.equal(page.items.length, 2);
     assert.equal(page.pagination.offset, 1);
     assert.equal(page.pagination.hasMore, true);
-    assert.match(calls[0].sql, /COALESCE\(queued_audit\.workspace_id, first_delivery\.workspace_id, t\.workspace_id\) = \$1/);
+    assert.match(
+      calls[0].sql,
+      /COALESCE\(queued_audit\.workspace_id, first_delivery\.workspace_id, t\.workspace_id\) = \$1/,
+    );
     assert.match(calls[0].sql, /ORDER BY aq\.created_at DESC/);
     assert.doesNotMatch(calls[0].sql, /GREATEST\(/);
-    assert.match(calls[2].sql, /COALESCE\(d\.workspace_id, t\.workspace_id\) = \$1/);
-    assert.match(calls[3].sql, /COALESCE\(ae\.workspace_id, direct_token\.workspace_id, alert_token\.workspace_id\) = \$1/);
+    assert.match(calls[0].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
+    assert.match(calls[1].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
+    assert.match(calls[2].sql, /aq\.alert_key LIKE 'token_expiry:%'/);
+    assert.match(calls[3].sql, /metadata_alert\.alert_key/);
+    assert.match(calls[3].sql, /LIKE 'token_expiry:%'/);
+    assert.match(
+      calls[2].sql,
+      /COALESCE\(d\.workspace_id, t\.workspace_id\) = \$1/,
+    );
+    assert.match(
+      calls[3].sql,
+      /COALESCE\(ae\.workspace_id, direct_token\.workspace_id, alert_token\.workspace_id\) = \$1/,
+    );
   });
 
   it("does not let an old queue created long ago but updated today displace a new alert", async () => {
-    const old = queueRow({ alert_id: 31, created_at: "2026-01-01T08:00:00Z",
-      updated_at: "2026-09-15T08:00:00Z", status: "sent" });
-    const recent = queueRow({ alert_id: 32, created_at: "2026-09-14T08:00:00Z",
-      updated_at: "2026-09-14T08:00:00Z" });
+    const old = queueRow({
+      alert_id: 31,
+      created_at: "2026-01-01T08:00:00Z",
+      updated_at: "2026-09-15T08:00:00Z",
+      status: "sent",
+    });
+    const recent = queueRow({
+      alert_id: 32,
+      created_at: "2026-09-14T08:00:00Z",
+      updated_at: "2026-09-14T08:00:00Z",
+    });
     const calls = [];
-    const query = async sql => {
+    const query = async (sql) => {
       calls.push(sql);
       return { rows: sql.includes("alert-lifecycle:queue */") ? [recent] : [] };
     };
     const page = await fetchAlertLifecycle({ tokenId: 7, limit: 1 }, query);
     assert.equal(page.items[0].alert_id, recent.alert_id);
     assert.match(calls[0], /ORDER BY aq\.created_at DESC/);
-    assert.equal(buildAlertLifecycleEvents({ queueRows: [old, recent] })
-      .filter(event => event.type === "delivery_succeeded").length, 0);
+    assert.equal(
+      buildAlertLifecycleEvents({ queueRows: [old, recent] }).filter(
+        (event) => event.type === "delivery_succeeded",
+      ).length,
+      0,
+    );
   });
 });

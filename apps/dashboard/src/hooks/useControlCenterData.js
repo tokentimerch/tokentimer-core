@@ -107,6 +107,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const lastLoadedRef = useRef('');
   const loadGenerationRef = useRef(0);
   const eligibilityGenerationRef = useRef(0);
+  const alertActivityWorkspaceIdRef = useRef('');
 
   useEffect(() => {
     const generation = ++eligibilityGenerationRef.current;
@@ -217,6 +218,8 @@ export function useControlCenterData(initialWorkspaceId = '') {
         const effectiveWorkspaceId = selectedIsEligible
           ? selectedWorkspaceId
           : eligibleWorkspaces[0]?.id || '';
+
+        alertActivityWorkspaceIdRef.current = effectiveWorkspaceId;
 
         lastLoadedRef.current =
           selectedWorkspaceId || effectiveWorkspaceId || '__none__';
@@ -421,6 +424,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
           setOrgStats({ monthUsage: 0 });
           setOrgTokenCount(0);
           setAlertActivity([]);
+          alertActivityWorkspaceIdRef.current = '';
           setAlertActivityHasMore(false);
           setAlertActivityError('');
         }
@@ -458,6 +462,11 @@ export function useControlCenterData(initialWorkspaceId = '') {
 
   useEffect(() => {
     if (workspaceId && workspaceId !== selectedWorkspaceId) {
+      ++loadGenerationRef.current;
+      alertActivityWorkspaceIdRef.current = workspaceId;
+      setAlertActivity([]);
+      setAlertActivityHasMore(false);
+      setAlertActivityLoadingMore(false);
       setEligibilityOffset(0);
       setEligibilityAssets([]);
       setEligibilityTotal(0);
@@ -530,8 +539,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
   }, [loadData, selectedWorkspaceId]);
 
   const loadMoreAlertActivity = useCallback(async () => {
+    const activityWorkspaceId = alertActivityWorkspaceIdRef.current;
     if (
-      !selectedWorkspaceId ||
+      !activityWorkspaceId ||
       !alertActivityHasMore ||
       alertActivityLoadingMore
     ) {
@@ -543,7 +553,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
     try {
       const response = await apiClient.get(
         API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_ALERT_ACTIVITY(
-          selectedWorkspaceId
+          activityWorkspaceId
         ),
         {
           params: {
@@ -552,32 +562,41 @@ export function useControlCenterData(initialWorkspaceId = '') {
           },
         }
       );
-      if (generation !== loadGenerationRef.current) return;
+      if (
+        generation !== loadGenerationRef.current ||
+        activityWorkspaceId !== alertActivityWorkspaceIdRef.current
+      )
+        return;
       const page = response?.data || {};
       setAlertActivity(current => [...current, ...(page.items || [])]);
       setAlertActivityHasMore(Boolean(page.pagination?.hasMore));
     } catch (activityError) {
-      if (generation !== loadGenerationRef.current) return;
+      if (
+        generation !== loadGenerationRef.current ||
+        activityWorkspaceId !== alertActivityWorkspaceIdRef.current
+      )
+        return;
       setAlertActivityError(
         activityError?.response?.data?.error ||
           activityError?.message ||
           'Failed to load recent alert activity'
       );
     } finally {
-      if (generation === loadGenerationRef.current) {
+      if (
+        generation === loadGenerationRef.current &&
+        activityWorkspaceId === alertActivityWorkspaceIdRef.current
+      ) {
         setAlertActivityLoadingMore(false);
       }
     }
-  }, [
-    alertActivity.length,
-    alertActivityHasMore,
-    alertActivityLoadingMore,
-    selectedWorkspaceId,
-  ]);
+  }, [alertActivity.length, alertActivityHasMore, alertActivityLoadingMore]);
 
   const handleSetSelectedWorkspaceId = useCallback(
     id => {
       ++loadGenerationRef.current;
+      alertActivityWorkspaceIdRef.current = id || '';
+      setAlertActivity([]);
+      setAlertActivityHasMore(false);
       setAlertActivityLoadingMore(false);
       setEligibilityOffset(0);
       setEligibilityAssets([]);

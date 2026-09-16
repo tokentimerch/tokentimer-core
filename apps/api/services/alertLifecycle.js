@@ -37,6 +37,7 @@ const TYPE_ORDER = Object.freeze({
 });
 
 const ALLOWED_CHANNELS = new Set(["email", "webhooks", "whatsapp"]);
+const TOKEN_EXPIRY_ALERT_PREFIX = "token_expiry:";
 
 function clampLimit(value) {
   return Math.max(
@@ -81,14 +82,13 @@ function safeChannels(value) {
 
 const safeErrorMessage = safeAlertErrorMessage;
 
-function queueAlertReason(alertKey) {
-  if (alertKey.startsWith("token_expiry:")) return "threshold_reached";
-  if (alertKey.startsWith("endpoint_health:")) return "endpoint_health";
-  if (alertKey.startsWith("cert_renewal_failed:")) {
-    return "certificate_renewal_failure";
-  }
-  if (alertKey.startsWith("agent_health:")) return "agent_health";
-  return "other_alert";
+function rowAlertKey(row) {
+  const metadata = row.audit_metadata || row.metadata || {};
+  return String(row.alert_key || metadata.alert_key || "");
+}
+
+function isTokenExpiryAlert(row) {
+  return rowAlertKey(row).startsWith(TOKEN_EXPIRY_ALERT_PREFIX);
 }
 
 function baseEvent(row, overrides) {
@@ -117,15 +117,11 @@ function baseEvent(row, overrides) {
 }
 
 function normalizeQueueRow(row) {
+  if (!isTokenExpiryAlert(row)) return [];
   const alertId = finiteInteger(row.alert_id ?? row.id);
-  const alertKey = String(row.alert_key || "");
-  const isExpiry = alertKey.startsWith("token_expiry:");
-  const thresholdDays = isExpiry ? finiteInteger(row.threshold_days) : null;
-  const reason = queueAlertReason(alertKey);
+  const thresholdDays = finiteInteger(row.threshold_days);
   const events = [];
-  const thresholdDate = isExpiry
-    ? formatThresholdDate(row.expiration, thresholdDays)
-    : null;
+  const thresholdDate = formatThresholdDate(row.expiration, thresholdDays);
   if (thresholdDate) {
     events.push(
       baseEvent(row, {
@@ -154,7 +150,7 @@ function normalizeQueueRow(row) {
       alert_id: alertId,
       threshold_days: thresholdDays,
       status: "queued",
-      reason,
+      reason: "threshold_reached",
       source: "alert_queue",
     }),
   );
@@ -177,6 +173,7 @@ function deliveryType(status) {
 }
 
 function normalizeDeliveryRow(row) {
+  if (!isTokenExpiryAlert(row)) return null;
   const mapping = deliveryType(row.delivery_status ?? row.status);
   if (!mapping) return null;
   const [type, status, mappedReason] = mapping;
@@ -189,9 +186,7 @@ function normalizeDeliveryRow(row) {
     type,
     occurred_at: row.sent_at,
     alert_id: row.alert_id ?? row.alert_queue_id,
-    threshold_days: String(row.alert_key || "").startsWith("token_expiry:")
-      ? row.threshold_days
-      : null,
+    threshold_days: row.threshold_days,
     channel: row.channel,
     status,
     reason,
@@ -230,15 +225,11 @@ function auditMapping(action) {
 }
 
 function normalizeAuditRow(row) {
+  if (!isTokenExpiryAlert(row)) return null;
   const mapping = auditMapping(row.action);
   if (!mapping) return null;
   const metadata = row.audit_metadata || row.metadata || {};
   const [type, status, mappedReason] = mapping;
-  const alertKey = String(row.alert_key || metadata.alert_key || "");
-  const isNonExpiry = alertKey && !alertKey.startsWith("token_expiry:");
-  const reason = type === "alert_queued" && isNonExpiry
-    ? queueAlertReason(alertKey)
-    : mappedReason;
   const nextAttemptAt = isoDate(metadata.next_attempt_at);
   const updatedCount = finiteInteger(metadata.updated);
   const safeMetadata = {};
@@ -260,10 +251,10 @@ function normalizeAuditRow(row) {
     occurred_at: row.occurred_at,
     alert_id: finiteInteger(metadata.alert_id) ?? row.alert_id,
     alert_key: metadata.alert_key ?? row.alert_key,
-    threshold_days: isNonExpiry ? null : auditThreshold ?? row.threshold_days,
+    threshold_days: auditThreshold ?? row.threshold_days,
     channel: row.channel || metadata.channel,
     status,
-    reason,
+    reason: mappedReason,
     error_message: auditError,
     metadata: safeMetadata,
     source: "audit_events",
@@ -285,10 +276,9 @@ function hasEvidence(events, type, row) {
 }
 
 function queueFallbackEvent(row, auditEvents, deliveryEvents) {
+  if (!isTokenExpiryAlert(row)) return null;
   const alertId = finiteInteger(row.alert_id ?? row.id);
-  const thresholdDays = String(row.alert_key || "").startsWith("token_expiry:")
-    ? finiteInteger(row.threshold_days)
-    : null;
+  const thresholdDays = finiteInteger(row.threshold_days);
   const discardReason = discardedAlertReason(row.status, row.error_message);
   let details = null;
   if (row.status === "limit_exceeded") {
@@ -322,7 +312,10 @@ function queueFallbackEvent(row, auditEvents, deliveryEvents) {
     id: `queue-state:${alertId}:${type}`,
     type,
     occurred_at:
-      row.state_occurred_at || row.last_attempt || row.updated_at || row.created_at,
+      row.state_occurred_at ||
+      row.last_attempt ||
+      row.updated_at ||
+      row.created_at,
     alert_id: alertId,
     threshold_days: thresholdDays,
     status,
@@ -429,17 +422,23 @@ function queueSql(scope, state = false) {
         SELECT d.workspace_id FROM alert_delivery_log d
          WHERE d.alert_queue_id = aq.id AND d.workspace_id IS NOT NULL
          ORDER BY d.sent_at ASC, d.id ASC LIMIT 1
-      ) first_delivery ON TRUE
+     ) first_delivery ON TRUE
      WHERE ${where}
-       ${state ? `AND (aq.status IN ('failed', 'blocked', 'limit_exceeded', 'partial')
+       AND aq.alert_key LIKE 'token_expiry:%'
+       ${
+         state
+           ? `AND (aq.status IN ('failed', 'blocked', 'limit_exceeded', 'partial')
                OR (aq.status = 'pending' AND aq.error_message = 'OUT_OF_WINDOW')
-               OR (aq.status = 'sent' AND aq.error_message ILIKE 'Discarded:%'))` : ""}
+               OR (aq.status = 'sent' AND aq.error_message ILIKE 'Discarded:%'))`
+           : ""
+       }
      ORDER BY ${state ? stateTime : "aq.created_at"} DESC, aq.id DESC
      LIMIT $2`;
 }
 
 function deliverySql(scope) {
-  const where = scope === "token" ? "t.id" : "COALESCE(d.workspace_id, t.workspace_id)";
+  const where =
+    scope === "token" ? "t.id" : "COALESCE(d.workspace_id, t.workspace_id)";
   return `/* alert-lifecycle:delivery */
     SELECT d.id AS delivery_id, d.alert_queue_id AS alert_id,
            d.status AS delivery_status, d.channel, d.sent_at, d.error_message,
@@ -450,6 +449,7 @@ function deliverySql(scope) {
       JOIN tokens t ON t.id = d.token_id
       LEFT JOIN alert_queue aq ON aq.id = d.alert_queue_id
      WHERE ${where} = $1
+       AND aq.alert_key LIKE 'token_expiry:%'
      ORDER BY d.sent_at DESC, d.id DESC
      LIMIT $2`;
 }
@@ -457,23 +457,33 @@ function deliverySql(scope) {
 function auditSql(scope) {
   const where =
     scope === "token"
-      ? "COALESCE(direct_token.id, alert_token.id) = $1"
+      ? "COALESCE(alert_token.id, direct_token.id) = $1"
       : "COALESCE(ae.workspace_id, direct_token.workspace_id, alert_token.workspace_id) = $1";
   return `/* alert-lifecycle:audit */
     SELECT ae.id AS audit_id, ae.occurred_at, ae.action, ae.channel,
-           ae.metadata AS audit_metadata, targeted_alert.id AS alert_id,
-           targeted_alert.alert_key, targeted_alert.threshold_days,
-           COALESCE(direct_token.id, alert_token.id) AS token_id,
-           COALESCE(direct_token.name, alert_token.name) AS token_name,
+           ae.metadata AS audit_metadata,
+           COALESCE(targeted_alert.id, metadata_alert.id) AS alert_id,
+           COALESCE(targeted_alert.alert_key, metadata_alert.alert_key,
+                    ae.metadata->>'alert_key') AS alert_key,
+           COALESCE(targeted_alert.threshold_days,
+                    metadata_alert.threshold_days) AS threshold_days,
+           COALESCE(alert_token.id, direct_token.id) AS token_id,
+           COALESCE(alert_token.name, direct_token.name) AS token_name,
            COALESCE(ae.workspace_id, direct_token.workspace_id, alert_token.workspace_id) AS workspace_id
       FROM audit_events ae
       LEFT JOIN alert_queue targeted_alert
         ON ae.target_type = 'alert' AND targeted_alert.id = ae.target_id
+      LEFT JOIN alert_queue metadata_alert
+        ON ae.metadata->>'alert_id' ~ '^[0-9]+$'
+       AND metadata_alert.id = (ae.metadata->>'alert_id')::bigint
       LEFT JOIN tokens direct_token
         ON ae.target_type = 'token' AND direct_token.id = ae.target_id
-      LEFT JOIN tokens alert_token ON alert_token.id = targeted_alert.token_id
+      LEFT JOIN tokens alert_token
+        ON alert_token.id = COALESCE(targeted_alert.token_id, metadata_alert.token_id)
      WHERE ae.action = ANY($2::text[])
        AND ${where}
+       AND COALESCE(targeted_alert.alert_key, metadata_alert.alert_key,
+                    ae.metadata->>'alert_key') LIKE 'token_expiry:%'
      ORDER BY ae.occurred_at DESC, ae.id DESC
      LIMIT $3`;
 }
@@ -490,12 +500,17 @@ async function fetchAlertLifecycle(
   const pageLimit = clampLimit(limit);
   const pageOffset = clampOffset(offset);
   const candidateLimit = pageOffset + pageLimit + 1;
-  const [queueResult, queueStateResult, deliveryResult, auditResult] = await Promise.all([
-    query(queueSql(scope), [scopeId, candidateLimit]),
-    query(queueSql(scope, true), [scopeId, candidateLimit]),
-    query(deliverySql(scope), [scopeId, candidateLimit]),
-    query(auditSql(scope), [scopeId, SUPPORTED_AUDIT_ACTIONS, candidateLimit]),
-  ]);
+  const [queueResult, queueStateResult, deliveryResult, auditResult] =
+    await Promise.all([
+      query(queueSql(scope), [scopeId, candidateLimit]),
+      query(queueSql(scope, true), [scopeId, candidateLimit]),
+      query(deliverySql(scope), [scopeId, candidateLimit]),
+      query(auditSql(scope), [
+        scopeId,
+        SUPPORTED_AUDIT_ACTIONS,
+        candidateLimit,
+      ]),
+    ]);
   const events = buildAlertLifecycleEvents({
     queueRows: queueResult.rows,
     queueStateRows: queueStateResult.rows,
