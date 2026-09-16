@@ -329,17 +329,14 @@ describe('AlertLifecycleTimeline', () => {
       .not.toBeInTheDocument();
   });
 
-  it('keeps the audit-log label non-interactive for a delivery-log ID', () => {
+  it('omits the audit-log link for a delivery-log ID', () => {
     renderTimeline(<AlertStateDisplay alertState={{
       eligibility: { status: 'due', reason: 'threshold_reached' },
       delivery: { status: 'failed', latest_attempt: {
         id: 104, attempted_at: '2026-09-13T08:00:00Z', status: 'failed',
       } },
     }} />);
-    expect(screen.getByText(/View in audit logs/i)).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /View in audit logs/i }))
-      .not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /View in audit logs/i }))
+    expect(screen.queryByText(/View in audit logs/i))
       .not.toBeInTheDocument();
   });
 

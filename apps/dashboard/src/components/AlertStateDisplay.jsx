@@ -431,11 +431,6 @@ export default function AlertStateDisplay({
             </Text>
           ) : null}
           {attemptLine}
-          {realAttempt ? (
-            <Text color='blue.400' fontSize='xs' fontWeight='semibold'>
-              View in audit logs
-            </Text>
-          ) : null}
         </VStack>
       </SimpleGrid>
       {showUpcoming ? <AlertUpcomingSection alertState={alertState} /> : null}

@@ -63,10 +63,6 @@ describe('AlertStateDisplay', () => {
     expect(
       delivery.queryByText(/Previous alert:/)
     ).not.toBeInTheDocument();
-    expect(delivery.getByText('View in audit logs')).toBeInTheDocument();
-    expect(
-      delivery.queryByRole('link', { name: /View in audit logs/ })
-    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/7 days before expiry has been reached/)
     ).not.toBeInTheDocument();
@@ -158,7 +154,7 @@ describe('AlertStateDisplay', () => {
     expect(delivery.queryByText(/Last queue attempt/)).not.toBeInTheDocument();
   });
 
-  it('shows a non-interactive audit-log label for a real delivery-log id', () => {
+  it('does not render an audit-log link for a real delivery-log id', () => {
     renderDisplay({
       eligibility: { status: 'due', effective_threshold: 7, days_until_expiry: 5 },
       delivery: {
@@ -170,12 +166,8 @@ describe('AlertStateDisplay', () => {
         },
       },
     });
-    expect(screen.getByText('View in audit logs')).toBeInTheDocument();
     expect(
-      screen.queryByRole('link', { name: /View in audit logs/ })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /View in audit logs/ })
+      screen.queryByText(/View in audit logs/)
     ).not.toBeInTheDocument();
   });
 
@@ -318,9 +310,6 @@ describe('AlertEligibilityOverview', () => {
 
     expect(screen.getAllByText('Suppressed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sent').length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText('View in audit logs').length
-    ).toBeGreaterThan(0);
   });
 });
 

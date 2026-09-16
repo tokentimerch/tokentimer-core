@@ -394,7 +394,7 @@ describe('TokenDetailModal', () => {
     expect(screen.getByText('SMTP timeout')).toBeInTheDocument();
   });
 
-  it('shows View in audit logs without navigation behavior in the modal', async () => {
+  it('does not show a View in audit logs link in the modal', () => {
     getAlertTimelineMock.mockResolvedValue({
       items: [
         {
@@ -436,12 +436,8 @@ describe('TokenDetailModal', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Current status' })
     );
-    expect(await screen.findByText('View in audit logs')).toBeInTheDocument();
     expect(
-      screen.queryByRole('link', { name: /View in audit logs/i })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /View in audit logs/i })
+      screen.queryByText(/View in audit logs/i)
     ).not.toBeInTheDocument();
   });
 
