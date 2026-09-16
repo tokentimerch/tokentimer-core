@@ -76,12 +76,6 @@ NOTE: SMTP is not configured. Configure it in values.yaml or via the
       System Settings UI after first login.
 {{- end }}
 
-NOTE: Do not mix 0.15.0 and 0.16.0 API/worker images. CONTACT_GROUP_PLURAL_WRITES=false
-      is not a mixed-fleet safety net (it only 400s two-or-more contact_group_ids on
-      0.16.0; it does not make 0.15.0 write join tables). WEEKLY_DIGEST_RECIPIENT_KEY
-      is optional (unset falls back to SESSION_SECRET; with config.existingSecret,
-      put it in that secret).
-
 {{- if .Values.certops.controller.enabled }}
 
 CertOps Controller:
