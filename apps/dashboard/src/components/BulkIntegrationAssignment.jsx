@@ -78,8 +78,7 @@ export default function BulkIntegrationAssignment({
               maxH='140px'
             />
             <Text fontSize='2xs' color={helperTextColor} mt={1}>
-              Override alert recipients. Leave all unchecked to use the
-              workspace default.
+              Override alert recipients. Leave as workspace default when empty.
             </Text>
           </Box>
         </HStack>
