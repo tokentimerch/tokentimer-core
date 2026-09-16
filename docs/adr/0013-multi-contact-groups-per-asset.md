@@ -5,8 +5,9 @@
 Accepted (2026-09-15). Amended 2026-09-16: schema, backfill, dual-write,
 plural API/UI, and alert/digest plural reads ship together. Multi-group
 writes are **on by default** (unset / empty). Set
-`CONTACT_GROUP_PLURAL_WRITES=false` only as a mixed-fleet kill switch
-during a rolling upgrade.
+`CONTACT_GROUP_PLURAL_WRITES=false` only to 400 two-or-more
+`contact_group_ids` on a 0.16.0 process. It is not a mixed-version
+upgrade path. Stop every 0.15.0 API/worker before starting 0.16.0.
 
 ## Context
 

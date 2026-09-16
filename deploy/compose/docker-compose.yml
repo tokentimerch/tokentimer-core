@@ -113,8 +113,7 @@ services:
       # through an external identity provider (set to true to enable).
       DISABLE_MANUAL_INVITES: ${DISABLE_MANUAL_INVITES:-}
 
-      # Multi-group contact assignment is on by default. Set false only as a
-      # mixed-fleet kill switch during a rolling upgrade.
+      # Multi-group writes are on by default.
       CONTACT_GROUP_PLURAL_WRITES: ${CONTACT_GROUP_PLURAL_WRITES:-}
 
       # Worker <-> API shared secret (falls back to SESSION_SECRET if unset)
