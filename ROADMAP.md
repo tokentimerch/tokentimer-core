@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-15 against main `35c5a843` (0.15.0).
+Last reviewed: 2026-09-16 against main `7c7b2197` (post-0.15.0 tip).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -42,12 +42,6 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **Vault AppRole auto-sync**
-  ([#229](https://github.com/tokentimerch/tokentimer-core/issues/229)).
-  Inventory import AppRole has shipped. Scheduled Vault AppRole is the
-  Enterprise overlay; Core auto-sync stays GitHub/GitLab. Kubernetes
-  auth stays out of scope unless operators confirm AppRole is
-  insufficient.
 - **Multiple auto-sync configurations per provider in a workspace**
   ([#71](https://github.com/tokentimerch/tokentimer-core/issues/71)).
   Two GitLab instances (or two Vaults) in one workspace, without a
