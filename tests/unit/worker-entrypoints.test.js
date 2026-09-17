@@ -6,6 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "..", "..");
+const {
+  WORKER_IMAGE_ENTRYPOINTS,
+} = require("../../scripts/boot-worker-image-entrypoints.js");
 
 function readRepoFile(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
@@ -154,5 +157,14 @@ describe("worker entrypoints", () => {
         `${template} must invoke ${entrypoint} directly (not runner.js)`,
       );
     }
+
+    const expected = Object.values(cronjobFiles).map(
+      (file) => `apps/worker/src/${file}`,
+    );
+    assert.deepStrictEqual(
+      [...WORKER_IMAGE_ENTRYPOINTS].sort(),
+      [...expected].sort(),
+      "image boot probe must cover every Helm CronJob entrypoint",
+    );
   });
 });
