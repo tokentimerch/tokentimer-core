@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /api/tokens` pages stay distinct when many tokens share `created_at`.** Offset 0 and 1 no longer return the same row. The list sort now ties on `id`.
+
 ## [0.16.1] - 2026-09-17
 
 ### Fixed

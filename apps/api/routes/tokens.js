@@ -248,22 +248,24 @@ router.get(
       }
 
       // Prefix with "tokens." to avoid ambiguity when LEFT JOINing domain_monitors
+      // id tiebreaker keeps LIMIT/OFFSET pages distinct when the sort key ties
+      // (bulk inserts often share created_at / imported_at / expiration).
       const sortSql =
         sort === "expiration_asc"
-          ? "tokens.expiration ASC NULLS LAST"
+          ? "tokens.expiration ASC NULLS LAST, tokens.id ASC"
           : sort === "expiration_desc"
-            ? "tokens.expiration DESC NULLS LAST"
+            ? "tokens.expiration DESC NULLS LAST, tokens.id DESC"
             : sort === "name_asc"
-              ? "LOWER(tokens.name) ASC"
+              ? "LOWER(tokens.name) ASC, tokens.id ASC"
               : sort === "last_used_desc"
-                ? "tokens.last_used DESC NULLS LAST"
+                ? "tokens.last_used DESC NULLS LAST, tokens.id DESC"
                 : sort === "last_used_asc"
-                  ? "tokens.last_used ASC NULLS LAST"
+                  ? "tokens.last_used ASC NULLS LAST, tokens.id ASC"
                   : sort === "imported_desc"
-                    ? "tokens.imported_at DESC NULLS LAST"
+                    ? "tokens.imported_at DESC NULLS LAST, tokens.id DESC"
                     : sort === "imported_asc"
-                      ? "tokens.imported_at ASC NULLS LAST"
-                      : "tokens.created_at DESC NULLS LAST"; // created_desc default
+                      ? "tokens.imported_at ASC NULLS LAST, tokens.id ASC"
+                      : "tokens.created_at DESC NULLS LAST, tokens.id DESC"; // created_desc default
 
       // Build filters: either legacy user-owned or any workspace where user is member
       // Performance optimization: Pre-fetch workspace IDs to avoid subquery in main token filter
