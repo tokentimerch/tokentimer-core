@@ -9,6 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-17
+
+### Fixed
+
+- **The published worker image could not start `certops-worker.js`.** The Helm CertOps CronJob failed at import because three API modules (`replaceAssetContactGroups`, `contactGroups`, `contactGroupPluralWrites`) were required at load time but not copied into the worker image. Lease reaper, stale-agent sweep, renewal scheduler, diagnostic-agent TTL, trust-anchor reconciliation, and worker-side agent-health / renewal-failed alerts did not run. Delivery, digest, and endpoint-check workers were unaffected. **Operator action:** rebuild and roll the worker image to 0.16.1.
+- **Workspaces no longer shows a disabled Invite form when `DISABLE_MANUAL_INVITES=true`.** The form is hidden; the SSO/IDM alert stays. Invite POST is still `403 MANUAL_INVITES_DISABLED`.
+
 ## [0.16.0] - 2026-09-16
 
 ### Added

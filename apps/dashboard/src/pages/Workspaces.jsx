@@ -18,7 +18,6 @@ import {
   Badge,
   Checkbox,
   Switch,
-  Tooltip,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -1007,18 +1006,13 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 </Alert>
               )}
 
-              <Tooltip
-                hasArrow
-                placement='top'
-                label='Manual invites are disabled. Users must sign in via SSO/IDM.'
-                isDisabled={!manualInvitesDisabled}
-              >
+              {!manualInvitesDisabled && (
                 <HStack spacing={3} mb={4} flexWrap='wrap' w='full'>
                   <Input
                     placeholder='Invite by email'
                     value={inviteEmail}
                     onChange={e => setInviteEmail(e.target.value)}
-                    isDisabled={!canManage || manualInvitesDisabled}
+                    isDisabled={!canManage}
                     flex='1'
                     minW='200px'
                   />
@@ -1026,7 +1020,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     value={inviteRole}
                     onChange={e => setInviteRole(e.target.value)}
                     maxW={{ base: '100%', sm: '220px' }}
-                    isDisabled={!canManage || manualInvitesDisabled}
+                    isDisabled={!canManage}
                   >
                     <option value='viewer'>Viewer</option>
                     <option value='workspace_manager'>Manager</option>
@@ -1047,12 +1041,12 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                       await reloadMembers(currentWorkspace.id);
                       await reloadInvitations(currentWorkspace.id);
                     }}
-                    isDisabled={!canManage || manualInvitesDisabled}
+                    isDisabled={!canManage}
                   >
                     Invite
                   </Button>
                 </HStack>
-              </Tooltip>
+              )}
 
               <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
                 <Table size='sm' minW='600px'>

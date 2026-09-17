@@ -120,6 +120,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     ACCOUNT_PLAN: '/api/account/plan',
     ALERT_QUEUE: '/api/alert-queue',
     ALERT_STATS: '/api/alert-stats',
+    AUTH_FEATURES: '/api/auth/features',
   },
   workspaceAPI: {
     get: workspaceGetMock,
@@ -220,6 +221,31 @@ describe('Dashboard page smoke tests', () => {
     renderWithProviders(<Workspaces {...baseProps} />);
     await waitFor(() => expectTextPresent('Workspaces'));
     expect(workspaceListMock).toHaveBeenCalled();
+  });
+
+  it('shows invite controls when manual invites are enabled', async () => {
+    renderWithProviders(<Workspaces {...baseProps} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy()
+    );
+    expect(screen.getByPlaceholderText('Invite by email')).toBeTruthy();
+  });
+
+  it('hides invite controls when GET /api/auth/features reports manualInvitesDisabled', async () => {
+    apiGetMock.mockImplementation(url => {
+      if (url === '/api/auth/features') {
+        return Promise.resolve({ data: { manualInvitesDisabled: true } });
+      }
+      return Promise.resolve({ data: { plan: 'oss', monthUsage: 0 } });
+    });
+    renderWithProviders(<Workspaces {...baseProps} />);
+    await waitFor(() =>
+      expectTextPresent(
+        'Manual invites are disabled for this installation. Users must sign in through your identity provider (SSO/IDM) to get workspace access.'
+      )
+    );
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(screen.queryByPlaceholderText('Invite by email')).toBeNull();
   });
 
   it('aligns the Workspaces page selector with the global workspace', async () => {
