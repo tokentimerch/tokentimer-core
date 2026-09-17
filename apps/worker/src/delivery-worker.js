@@ -299,6 +299,165 @@ function buildCertRenewalFailedEmailContent(alert, job) {
   return { subject, text: templateText, html };
 }
 
+function getCertRenewalFailedContext(alert, job) {
+  const name = alert?.name || `Certificate #${alert?.token_id}`;
+  const jobId =
+    (job && job.id) || String(alert?.alert_key || "").split(":")[1] || "unknown";
+  const errorCode = (job && (job.error_code || job.errorCode)) || "unknown";
+  return {
+    name,
+    jobId,
+    errorCode,
+    title: "Certificate Renewal Failed",
+    description: `The automated renewal job for ${name} reached a terminal failure.`,
+  };
+}
+
+function buildCertRenewalFailedWebhookPayload(
+  kind,
+  alert,
+  { severity, title, routingKey, job } = {},
+) {
+  const context = getCertRenewalFailedContext(alert, job);
+  const selectedSeverity = String(severity || "critical").toLowerCase();
+  const selectedTitle = title || context.title;
+  const certData = {
+    type: "cert_renewal_failed",
+    token_id: alert?.token_id,
+    name: context.name,
+    job_id: context.jobId,
+    error_code: context.errorCode,
+  };
+
+  if (kind === "slack") {
+    return {
+      text: `${selectedTitle}: ${context.name} (job ${context.jobId})`,
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: `\u26A0\uFE0F ${neutralizeMentions(selectedTitle)}`,
+            emoji: true,
+          },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: escapeSlackMrkdwn(context.description),
+          },
+        },
+        {
+          type: "section",
+          fields: [
+            {
+              type: "mrkdwn",
+              text: `*Certificate:*\n${escapeSlackMrkdwn(context.name)}`,
+            },
+            {
+              type: "mrkdwn",
+              text: `*Job:*\n${escapeSlackMrkdwn(context.jobId)}`,
+            },
+            {
+              type: "mrkdwn",
+              text: `*Error code:*\n${escapeSlackMrkdwn(context.errorCode)}`,
+            },
+            {
+              type: "mrkdwn",
+              text: `*Severity:*\n${selectedSeverity.toUpperCase()}`,
+            },
+          ],
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "View in TokenTimer",
+                emoji: true,
+              },
+              url: `${process.env.APP_URL || "http://localhost:5173"}/dashboard`,
+              style: "danger",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (kind === "discord") {
+    return {
+      content: `\u26A0\uFE0F **${escapeMarkdown(selectedTitle)}**`,
+      allowed_mentions: { parse: [] },
+      embeds: [
+        {
+          title: escapeMarkdown(context.name),
+          description: escapeMarkdown(context.description),
+          color: 15158332,
+          fields: [
+            { name: "Job", value: escapeMarkdown(context.jobId), inline: true },
+            {
+              name: "Error code",
+              value: escapeMarkdown(context.errorCode),
+              inline: true,
+            },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+  }
+
+  if (kind === "teams") {
+    return {
+      "@type": "MessageCard",
+      "@context": "https://schema.org/extensions",
+      summary: selectedTitle,
+      themeColor: "E02424",
+      sections: [
+        {
+          activityTitle: `\u26A0\uFE0F ${escapeMarkdown(selectedTitle)}`,
+          text: escapeMarkdown(context.description),
+          facts: [
+            { name: "Certificate", value: escapeMarkdown(context.name) },
+            { name: "Job", value: escapeMarkdown(context.jobId) },
+            { name: "Error code", value: escapeMarkdown(context.errorCode) },
+          ],
+          markdown: true,
+        },
+      ],
+    };
+  }
+
+  if (kind === "pagerduty") {
+    return {
+      routing_key: routingKey,
+      event_action: "trigger",
+      payload: {
+        summary: `${selectedTitle}: ${context.name}`,
+        source: "TokenTimer",
+        severity: selectedSeverity,
+        timestamp: new Date().toISOString(),
+        custom_details: certData,
+      },
+    };
+  }
+
+  return {
+    text: `${selectedTitle}: ${context.name} (job ${context.jobId})`,
+    content: `${selectedTitle}: ${context.name} (job ${context.jobId})`,
+    message: context.description,
+    severity: selectedSeverity,
+    title: selectedTitle,
+    timestamp: new Date().toISOString(),
+    type: "cert_renewal_failed",
+    certificate: certData,
+  };
+}
+
 function buildEndpointHealthEmailContent(alert, token) {
   const name = token.name || "Endpoint";
   const location = token.location || token.name || "Unknown";
@@ -1135,10 +1294,12 @@ export const _test = {
   writeAlertAudit,
   buildAgentHealthEmailContent,
   buildAgentHealthWebhookPayload,
+  buildCertRenewalFailedWebhookPayload,
   escapeMarkdown,
   escapeSlackMrkdwn,
   formatImpactedCertificateLines,
   getAgentHealthContext,
+  getCertRenewalFailedContext,
   neutralizeMentions,
   RENEWAL_PATH_STATE_LABELS,
 };
@@ -1968,6 +2129,22 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       ? String(wh.template)
                       : null;
 
+                  let certRenewalWebhookJob = null;
+                  if (isCertRenewalFailedWebhook) {
+                    try {
+                      const certJobId = alert.alert_key.split(":")[1];
+                      const jobRes = await client.query(
+                        "SELECT id, error_code FROM certificate_jobs WHERE id = $1",
+                        [certJobId],
+                      );
+                      certRenewalWebhookJob = jobRes.rows[0] || null;
+                    } catch (_err) {
+                      logger.debug("Non-critical operation failed", {
+                        error: _err.message,
+                      });
+                    }
+                  }
+
                   const payload = isEndpointHealthWebhook
                     ? buildEndpointHealthWebhookPayload(kind, alert, {
                         severity: selectedSeverity,
@@ -1980,6 +2157,13 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                           title: templateTitle || undefined,
                           routingKey,
                         })
+                      : isCertRenewalFailedWebhook
+                        ? buildCertRenewalFailedWebhookPayload(kind, alert, {
+                            severity: selectedSeverity,
+                            title: templateTitle || undefined,
+                            routingKey,
+                            job: certRenewalWebhookJob,
+                          })
                       : kind === "pagerduty"
                         ? {
                             routing_key: routingKey,
