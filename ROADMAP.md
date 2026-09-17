@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-16 against main `749b79fc` (0.16.0 release).
+Last reviewed: 2026-09-17 against main `fe1cfb82` (0.16.1 release).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0

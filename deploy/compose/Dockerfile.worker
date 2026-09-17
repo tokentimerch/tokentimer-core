@@ -29,6 +29,9 @@ COPY apps/worker ./apps/worker
 COPY apps/api/services/certops ./apps/api/services/certops
 # renewalFailureAlerts (and other certops services) require this shared helper.
 COPY apps/api/src/shared/retiredCertificateAlerts.js ./apps/api/src/shared/retiredCertificateAlerts.js
+COPY apps/api/src/shared/contactGroupPluralWrites.js ./apps/api/src/shared/contactGroupPluralWrites.js
+COPY apps/api/src/shared/contactGroups.js ./apps/api/src/shared/contactGroups.js
+COPY apps/api/src/shared/replaceAssetContactGroups.js ./apps/api/src/shared/replaceAssetContactGroups.js
 COPY apps/api/services/audit.js ./apps/api/services/audit.js
 COPY apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY apps/api/utils/logger.js ./apps/api/utils/logger.js
