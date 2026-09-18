@@ -124,12 +124,12 @@ TokenTimer stores expiration metadata, ownership, and status information without
 
 # Get Started
 
-| [![TokenTimer Cloud](docs/assets/tokentimer-cloud-cta.svg)](https://tokentimer.ch) | [![TokenTimer Enterprise](docs/assets/tokentimer-enterprise-cta.svg)](https://tokentimer.ch/pricing) | [![TokenTimer Core](docs/assets/tokentimer-core-cta.svg)](QUICKSTART.md) |
+| [![TokenTimer Cloud](docs/assets/readme/tokentimer-cloud-cta.svg)](https://tokentimer.ch) | [![TokenTimer Enterprise](docs/assets/readme/tokentimer-enterprise-cta.svg)](https://tokentimer.ch/pricing) | [![TokenTimer Core](docs/assets/readme/tokentimer-core-cta.svg)](QUICKSTART.md) |
 |:---:|:---:|:---:|
 
 ### Run it on your own server
 
-| [![Docker Compose](docs/assets/docker-icon.svg)](QUICKSTART.md#option-1-docker-compose-fastest) | [![Kubernetes / Helm](docs/assets/kubernetes-icon.svg)](QUICKSTART.md#option-3-kubernetes-helm) | [![Local Development](docs/assets/local-dev-icon.svg)](QUICKSTART.md#option-2-local-development) |
+| [![Docker Compose](docs/assets/readme/docker-icon.svg)](QUICKSTART.md#option-1-docker-compose-fastest) | [![Kubernetes / Helm](docs/assets/readme/kubernetes-icon.svg)](QUICKSTART.md#option-3-kubernetes-helm) | [![Local Development](docs/assets/readme/local-dev-icon.svg)](QUICKSTART.md#option-2-local-development) |
 |:--:|:--:|:--:|
 
 <br>
