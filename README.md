@@ -96,6 +96,10 @@ Track certificates, tokens, secrets, licenses, subscriptions, and other expiring
 
 Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 
+<p align="center">
+  <img src="docs/assets/workspace-alerting.png" alt="Workspace alerting preferences: expiry thresholds, delivery window, contacts, and webhook setup guides for Slack, Discord, Teams, and PagerDuty" width="888" />
+</p>
+
 ### Native integrations, auto-sync, and automated discovery
 
 Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
