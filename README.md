@@ -84,7 +84,7 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
     </td>
     <td align="center" width="50%">
       <img src="docs/assets/readme/certops-agents.png" alt="Agent fleet showing OS, version, compatibility, clock drift, NTP, execution state, signing key, and last heartbeat per agent" />
-      <br /><sub>Agent fleet health and signing keys</sub>
+      <br /><sub>Agent fleet health</sub>
     </td>
   </tr>
 </table>
