@@ -80,8 +80,8 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
       <br /><sub>Upcoming renewals and profiles</sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/assets/certops-jobs.png" alt="Machine executor jobs with pending approvals" />
-      <br /><sub>Executor jobs with approval gates</sub>
+      <img src="docs/assets/certops-jobs.png" alt="Succeeded renew job with audit-log timeline evidence" />
+      <br /><sub>Executor jobs with timeline evidence</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/assets/certops-agents.png" alt="Agent fleet health and signing keys" />
