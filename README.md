@@ -5,24 +5,14 @@
 <h3 align="center">The open-source token, certificate, license, and secret expiration manager for teams.</h3>
 
 <p align="center">
-  <a href="https://github.com/tokentimerch?tab=packages&repo_name=tokentimer-core">
-    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftokentimerch%2Ftokentimer-core%2Fbadges%2Fdownloads.json&style=for-the-badge" alt="Package downloads (GHCR images and Helm chart)" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/Open%20Source-AGPL--3.0-16A34A?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Open Source, AGPL-3.0" />
-  </a>
+  <a href="https://github.com/tokentimerch?tab=packages&repo_name=tokentimer-core"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftokentimerch%2Ftokentimer-core%2Fbadges%2Fdownloads.json&style=for-the-badge" alt="Package downloads (GHCR images and Helm chart)" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Open%20Source-AGPL--3.0-16A34A?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Open Source, AGPL-3.0" /></a>
 </p>
 
 <p align="center">
-  <a href="https://tokentimer.ch">
-    <img src="https://img.shields.io/badge/Website-tokentimer.ch-0F766E?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website" />
-  </a>
-  <a href="https://discord.gg/7AUSMNWHC5">
-    <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord community" />
-  </a>
-  <a href="https://tokentimer.ch/docs">
-    <img src="https://img.shields.io/badge/Docs-Documentation-2563EB?style=for-the-badge&logo=gitbook&logoColor=white" alt="Documentation" />
-  </a>
+  <a href="https://tokentimer.ch"><img src="https://img.shields.io/badge/Website-tokentimer.ch-0F766E?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website" /></a>
+  <a href="https://discord.gg/7AUSMNWHC5"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord community" /></a>
+  <a href="https://tokentimer.ch/docs"><img src="https://img.shields.io/badge/Docs-Documentation-2563EB?style=for-the-badge&logo=gitbook&logoColor=white" alt="Documentation" /></a>
 </p>
 
 <p align="center">
@@ -194,4 +184,4 @@ This project is licensed under the [GNU Affero General Public License v3.0 (AGPL
 
 A commercial license without AGPL's source-disclosure obligations is available for organizations that want to embed or redistribute TokenTimer Core without those terms. Contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
 
-"TokenTimer" is a trademark of Tokentimer SÃ rl, Switzerland.
+"TokenTimer" is a trademark of Tokentimer Sàrl, Switzerland.
