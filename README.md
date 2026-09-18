@@ -72,17 +72,22 @@ An outbound-only agent renews, deploys, reloads, and verifies certificates on yo
   <img src="docs/assets/certops-certificates.png" alt="Managed certificate inventory with status, days left, renewal policy, key locality, and source for every certificate" width="888" />
 </p>
 
-<p align="center">
-  <img src="docs/assets/certops-renewals.png" alt="Upcoming renewals with expiry, renewal window, auto-renew state, and last attempt, plus the renewal profiles that pin key type, lead time, and deploy target" width="888" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/certops-jobs.png" alt="Machine executor jobs with pending approvals, running, succeeded, and failed renewals" width="888" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/certops-agents.png" alt="Agent fleet showing OS, version, compatibility, clock drift, NTP, execution state, signing key, and last heartbeat per agent" width="888" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/assets/certops-renewals.png" alt="Upcoming renewals and renewal profiles" />
+      <br /><sub>Upcoming renewals and profiles</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/assets/certops-jobs.png" alt="Machine executor jobs with pending approvals" />
+      <br /><sub>Executor jobs with approval gates</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/assets/certops-agents.png" alt="Agent fleet health and signing keys" />
+      <br /><sub>Agent fleet health and signing keys</sub>
+    </td>
+  </tr>
+</table>
 
 ### Unified expiration visibility
 
