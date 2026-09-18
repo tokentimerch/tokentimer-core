@@ -1,0 +1,56 @@
+name: Refresh README badges
+
+# Publishes shields.io endpoint JSON to the orphan `badges` branch so the README
+# can show a live GHCR downloads count without depending on a third-party
+# scraper instance. Data only; never touches main.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readme-badges
+  cancel-in-progress: true
+
+jobs:
+  downloads:
+    name: GHCR downloads badge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Compute downloads badge
+        run: node scripts/ghcr-downloads-badge.js --out "$RUNNER_TEMP/badges/downloads.json"
+
+      - name: Publish to badges branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin badges --depth=1 || true
+          if git show-ref --verify --quiet refs/remotes/origin/badges; then
+            git worktree add "$RUNNER_TEMP/badges-wt" origin/badges
+            (cd "$RUNNER_TEMP/badges-wt" && git checkout -B badges)
+          else
+            git worktree add --detach "$RUNNER_TEMP/badges-wt"
+            (cd "$RUNNER_TEMP/badges-wt" && git checkout --orphan badges && git rm -rfq . )
+          fi
+
+          cp "$RUNNER_TEMP/badges/downloads.json" "$RUNNER_TEMP/badges-wt/downloads.json"
+          cd "$RUNNER_TEMP/badges-wt"
+          git add downloads.json
+          if git diff --cached --quiet; then
+            echo "Badge unchanged; nothing to publish."
+            exit 0
+          fi
+          git commit -qm "chore(badges): refresh downloads $(date -u +%Y-%m-%d)"
+          git push origin badges
