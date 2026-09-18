@@ -32,7 +32,7 @@
   <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white" alt="Kubernetes" />
   <img src="https://img.shields.io/badge/Helm-0F1689?style=flat-square&logo=helm&logoColor=white" alt="Helm" />
-  <a href="https://cloudnative-pg.io/"><img src="docs/assets/readme/cloudnativepg-logo.svg" alt="CloudNativePG" height="28" /></a>
+  <a href="https://cloudnative-pg.io/"><img src="https://img.shields.io/badge/CloudNativePG-121646?style=flat-square&logo=postgresql&logoColor=white" alt="CloudNativePG" /></a>
   <img src="https://img.shields.io/badge/pnpm-F69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm" />
 </p>
 
