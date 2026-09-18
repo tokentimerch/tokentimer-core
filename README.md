@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://tokentimer.ch"><img src="docs/assets/logo.svg" alt="TokenTimer" width="120" /></a>
+  <a href="https://tokentimer.ch"><img src="docs/assets/readme/logo.svg" alt="TokenTimer" width="120" /></a>
 </p>
 
 <h3 align="center">The open-source token, certificate, license, and secret expiration manager for teams.</h3>
