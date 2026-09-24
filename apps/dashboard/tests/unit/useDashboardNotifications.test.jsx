@@ -79,6 +79,26 @@ describe('useDashboardNotifications', () => {
     expect(result.current.dashboardUnreadCount).toBe(1);
   });
 
+  it('preserves info notifications and falls back to warning for unknown kinds', async () => {
+    getNotifications.mockResolvedValue({
+      unreadCount: 0,
+      items: [
+        { id: 'deferred-alert', kind: 'info', persisted: false },
+        { id: 'unknown-kind', kind: 'unexpected', persisted: false },
+      ],
+    });
+    const { result } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications).toHaveLength(5)
+    );
+    expect(result.current.dashboardNotifications[0].kind).toBe('info');
+    expect(result.current.dashboardNotifications[1].kind).toBe('warning');
+  });
+
   it('keeps settings-based warnings without inventing persisted incidents when notifications fail', async () => {
     getNotifications.mockRejectedValue(new Error('notifications unavailable'));
     const { result } = renderHook(

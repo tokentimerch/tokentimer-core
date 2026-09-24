@@ -3258,6 +3258,10 @@ paths:
                           type: boolean
                   unreadCount:
                     type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/notifications/{notificationId}/read:
