@@ -68,7 +68,11 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
     };
     const { requeueAlertsCore } = loadAlertQueue({
       pool,
-      resolveOperationalNotification: async (client, workspaceId, dedupeKey) => {
+      resolveOperationalNotification: async (
+        client,
+        workspaceId,
+        dedupeKey,
+      ) => {
         resolvedKeys.push({ workspaceId, dedupeKey });
       },
     });
@@ -106,7 +110,11 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
     };
     const { requeueAlertsCore } = loadAlertQueue({
       pool,
-      resolveOperationalNotification: async (client, workspaceId, dedupeKey) => {
+      resolveOperationalNotification: async (
+        client,
+        workspaceId,
+        dedupeKey,
+      ) => {
         resolvedKeys.push({ workspaceId, dedupeKey });
       },
     });
@@ -116,12 +124,14 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
     assert.equal(count, 2);
     assert.ok(
       resolvedKeys.some(
-        (r) => r.workspaceId === "ws-a" && r.dedupeKey === "delivery_blocked:20",
+        (r) =>
+          r.workspaceId === "ws-a" && r.dedupeKey === "delivery_blocked:20",
       ),
     );
     assert.ok(
       resolvedKeys.some(
-        (r) => r.workspaceId === "ws-b" && r.dedupeKey === "delivery_degraded:21",
+        (r) =>
+          r.workspaceId === "ws-b" && r.dedupeKey === "delivery_degraded:21",
       ),
     );
   });

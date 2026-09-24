@@ -201,14 +201,30 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
  */
 export async function sendOperationalIncidentEmail(
   client,
-  { notificationId, workspaceId, tokenId = null, category, title, message = null, metadata = {} },
+  {
+    notificationId,
+    workspaceId,
+    tokenId = null,
+    category,
+    title,
+    message = null,
+    metadata = {},
+  },
+  sendEmail = sendEmailNotification,
 ) {
   if (!notificationId || !workspaceId || !category || !title) return;
   const failedChannels = [
-    ...(Array.isArray(metadata?.failed_channels) ? metadata.failed_channels : []),
+    ...(Array.isArray(metadata?.failed_channels)
+      ? metadata.failed_channels
+      : []),
     metadata?.channel,
   ];
-  if (failedChannels.some((channel) => String(channel || "").toLowerCase() === "email")) return;
+  if (
+    failedChannels.some(
+      (channel) => String(channel || "").toLowerCase() === "email",
+    )
+  )
+    return;
   const claimId = randomUUID();
   let claimed = false;
   let delivered = false;
@@ -253,7 +269,7 @@ export async function sendOperationalIncidentEmail(
     });
 
     for (const to of recipients) {
-      const res = await sendEmailNotification({ to, subject, html, text });
+      const res = await sendEmail({ to, subject, html, text });
       if (res.success) {
         delivered = true;
       } else {

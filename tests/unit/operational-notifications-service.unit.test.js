@@ -8,7 +8,10 @@ const {
   raiseOperationalNotification,
   resolveOperationalNotification,
 } = require(
-  path.resolve(__dirname, "../../apps/api/services/operationalNotifications.js"),
+  path.resolve(
+    __dirname,
+    "../../apps/api/services/operationalNotifications.js",
+  ),
 );
 
 function mockClient(handler) {
@@ -71,7 +74,10 @@ describe("operationalNotifications service (API, CJS)", () => {
 
     it("upserts on the open-incident dedupe key and returns the row id", async () => {
       const client = mockClient((sql, params) => {
-        assert.match(sql, /ON CONFLICT \(workspace_id, dedupe_key\) WHERE resolved_at IS NULL/);
+        assert.match(
+          sql,
+          /ON CONFLICT \(workspace_id, dedupe_key\) WHERE resolved_at IS NULL/,
+        );
         assert.equal(params[0], "ws-1");
         assert.equal(params[5], "delivery_blocked:42");
         assert.equal(params[8], JSON.stringify({ alert_queue_id: 42 }));
@@ -129,11 +135,18 @@ describe("operationalNotifications service (API, CJS)", () => {
     it("resolves the open notification matching workspace and dedupe key", async () => {
       const client = mockClient((sql, params) => {
         assert.match(sql, /SET resolved_at = NOW\(\), updated_at = NOW\(\)/);
-        assert.match(sql, /WHERE workspace_id = \$1 AND dedupe_key = \$2 AND resolved_at IS NULL/);
+        assert.match(
+          sql,
+          /WHERE workspace_id = \$1 AND dedupe_key = \$2 AND resolved_at IS NULL/,
+        );
         assert.deepEqual(params, ["ws-1", "delivery_blocked:42"]);
         return { rowCount: 1 };
       });
-      await resolveOperationalNotification(client, "ws-1", "delivery_blocked:42");
+      await resolveOperationalNotification(
+        client,
+        "ws-1",
+        "delivery_blocked:42",
+      );
       assert.equal(client.calls.length, 1);
     });
 

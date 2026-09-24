@@ -230,8 +230,8 @@ export async function recordAutoSyncFailure(
 
 /**
  * Reset the consecutive-failure counter and resolve any open auto-sync
- * notification for this config. Call on a successful (or partial-success)
- * sync run so that the bell incident clears once the integration recovers.
+ * notification for this config. Call on a fully successful sync run so that
+ * the bell incident clears once the integration recovers.
  */
 export async function recordAutoSyncRecovery(client, { configId, workspaceId }) {
   try {
@@ -256,4 +256,3 @@ export async function recordAutoSyncRecovery(client, { configId, workspaceId }) 
     });
   }
 }
-

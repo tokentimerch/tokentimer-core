@@ -206,6 +206,65 @@ describe("autoSyncFailure helpers", () => {
   });
 });
 
+describe("auto-sync operational incidents", () => {
+  it("raises a warning first, then escalates the same dedupe key to critical", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    let failures = 0;
+    const raised = [];
+    const calls = [];
+    const client = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        if (sql.includes("UPDATE auto_sync_configs")) {
+          failures += 1;
+          return { rows: [{ consecutive_failures: failures }] };
+        }
+        if (sql.includes("INSERT INTO operational_notifications")) {
+          raised.push(params);
+          return { rows: [{ id: "same-incident" }] };
+        }
+        if (sql.includes("SET email_claim_id = $2")) return { rows: [{ id: "same-incident" }] };
+        if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: 0 }] };
+        if (sql.includes("wm.role = 'admin'")) return { rows: [{ email: "admin@example.com" }] };
+        if (sql.includes("SET email_sent_at = CASE")) return { rowCount: 1 };
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const incident = {
+      configId: "cfg-1",
+      workspaceId: "ws-1",
+      provider: "github",
+      previousStatus: "failed",
+      errorMessage: "Rate limited",
+      nextSync: new Date(),
+    };
+    await mod.recordAutoSyncFailure(client, incident);
+    await mod.recordAutoSyncFailure(client, incident);
+    await mod.recordAutoSyncFailure(client, incident);
+    assert.deepEqual(raised.map((params) => params[4]), ["warning", "warning", "critical"]);
+    assert.deepEqual(raised.map((params) => params[5]), [
+      "auto_sync_failed:cfg-1",
+      "auto_sync_failed:cfg-1",
+      "auto_sync_failed:cfg-1",
+    ]);
+    assert.equal(calls.filter((call) => call.sql.includes("SET email_claim_id = $2")).length, 1);
+  });
+
+  it("clears the counter and resolves the open incident on recovery", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const calls = [];
+    const client = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        return { rowCount: 1 };
+      },
+    };
+    await mod.recordAutoSyncRecovery(client, { configId: "cfg-1", workspaceId: "ws-1" });
+    assert.match(calls[0].sql, /SET consecutive_failures = 0/);
+    assert.deepEqual(calls[1].params, ["ws-1", "auto_sync_failed:cfg-1"]);
+  });
+});
+
 describe("buildAutoSyncImportBody", () => {
   it("always forwards scan_id when present, even without cleanup", async () => {
     const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");

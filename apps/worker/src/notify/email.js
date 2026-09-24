@@ -307,23 +307,6 @@ ${getEmailFooterText()}
   return { html, text, useEmbeddedLogo: useEmbeddedLogo !== false };
 }
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      default:
-        return "&#39;";
-    }
-  });
-}
-
 // Email escalation for critical operational_notifications rows (delivery
 // blocked/degraded, auto-sync failures). Category drives the CTA link since
 // delivery incidents surface in Control Center while auto-sync incidents

@@ -709,6 +709,20 @@ router.get(
           LIMIT 50`,
         [req.workspace.id, req.user.id, isPrivileged],
       );
+      const persistedSyncProviders = new Set(
+        opRows.rows
+          .filter((row) => row.category === "auto_sync")
+          .map((row) => String(row.metadata?.provider || "").toLowerCase()),
+      );
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const item = items[index];
+        if (
+          item.id.startsWith("auto-sync-failed-") &&
+          persistedSyncProviders.has(String(item.provider || "").toLowerCase())
+        ) {
+          items.splice(index, 1);
+        }
+      }
       let unreadCount = 0;
       for (const row of opRows.rows) {
         if (!row.is_read) unreadCount += 1;
