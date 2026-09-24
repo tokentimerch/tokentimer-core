@@ -19,6 +19,8 @@ import {
 
 const VALID_SEVERITIES = new Set(["info", "warning", "critical"]);
 const VALID_CATEGORIES = new Set(["delivery", "auto_sync"]);
+const EMAIL_RETRY_INTERVAL_MINUTES = 15;
+const EMAIL_RETRY_BATCH_SIZE = 50;
 
 // Safety valve so a storm of incidents cannot flood a workspace's admins.
 // Bell items are still created/updated above this cap; only the email send
@@ -234,6 +236,15 @@ export async function sendOperationalIncidentEmail(
           SET email_claim_id = $2, email_claimed_at = NOW()
         WHERE id = $1 AND workspace_id = $3 AND severity = 'critical'
           AND resolved_at IS NULL AND email_sent_at IS NULL
+          AND LOWER(COALESCE(metadata->>'channel', '')) <> 'email'
+          AND NOT EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements_text(
+                CASE WHEN jsonb_typeof(metadata->'failed_channels') = 'array'
+                  THEN metadata->'failed_channels' ELSE '[]'::jsonb END
+              ) AS failed(channel)
+             WHERE LOWER(failed.channel) = 'email'
+          )
           AND (email_claim_id IS NULL OR email_claimed_at < NOW() - INTERVAL '10 minutes')
       RETURNING id`,
       [notificationId, claimId, workspaceId],
@@ -290,10 +301,13 @@ export async function sendOperationalIncidentEmail(
   } finally {
     if (claimed) {
       try {
+        // Keep the last attempt time after failure to pace retry sweeps;
+        // clearing claim_id still makes the incident retryable.
         await client.query(
           `UPDATE operational_notifications
               SET email_sent_at = CASE WHEN $3 THEN NOW() ELSE email_sent_at END,
-                  email_claim_id = NULL, email_claimed_at = NULL
+                  email_claim_id = NULL,
+                  email_claimed_at = CASE WHEN $3 THEN NULL ELSE NOW() END
             WHERE id = $1 AND email_claim_id = $2`,
           [notificationId, claimId, delivered],
         );
@@ -304,5 +318,49 @@ export async function sendOperationalIncidentEmail(
         });
       }
     }
+  }
+}
+
+/** Retry unsent critical incidents, including terminal delivery alerts. */
+export async function retryPendingOperationalIncidentEmails(
+  client,
+  sendEmail = sendEmailNotification,
+) {
+  const pending = await client.query(
+    `SELECT id, workspace_id, token_id, category, title, message, metadata
+       FROM operational_notifications
+      WHERE severity = 'critical'
+        AND resolved_at IS NULL
+        AND email_sent_at IS NULL
+        AND (email_claimed_at IS NULL OR email_claimed_at < NOW() - ($1 * INTERVAL '1 minute'))
+        AND LOWER(COALESCE(metadata->>'channel', '')) <> 'email'
+        AND NOT EXISTS (
+          SELECT 1
+            FROM jsonb_array_elements_text(
+              CASE WHEN jsonb_typeof(metadata->'failed_channels') = 'array'
+                THEN metadata->'failed_channels' ELSE '[]'::jsonb END
+            ) AS failed(channel)
+           WHERE LOWER(failed.channel) = 'email'
+        )
+      -- Move attempted incidents behind untouched ones so failures cannot monopolize the batch.
+      ORDER BY COALESCE(email_claimed_at, created_at) ASC, created_at ASC
+      LIMIT $2`,
+    [EMAIL_RETRY_INTERVAL_MINUTES, EMAIL_RETRY_BATCH_SIZE],
+  );
+
+  for (const row of pending.rows) {
+    await sendOperationalIncidentEmail(
+      client,
+      {
+        notificationId: row.id,
+        workspaceId: row.workspace_id,
+        tokenId: row.token_id,
+        category: row.category,
+        title: row.title,
+        message: row.message,
+        metadata: row.metadata,
+      },
+      sendEmail,
+    );
   }
 }
