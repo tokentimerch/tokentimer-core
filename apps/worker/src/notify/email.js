@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "url";
 import { logger } from "../logger.js";
 import { pool } from "../db.js";
+import { sanitizeAutoSyncLocation } from "../shared/autoSyncLocation.js";
 import emailAddress from "../../../../packages/email-address/index.js";
 
 const { stripHtmlToText } = emailAddress;
@@ -370,7 +371,10 @@ export function buildOperationalIncidentEmail({
         ["token_name", "Token"],
       ];
   for (const [key, label] of contextFields) {
-    const value = contextValue(meta[key]);
+    const value =
+      isAutoSync && key === "location"
+        ? sanitizeAutoSyncLocation(meta[key])
+        : contextValue(meta[key]);
     if (value) contextLines.push(`${label}: ${value}`);
   }
 

@@ -449,6 +449,27 @@ describe("buildOperationalIncidentEmail", () => {
     expect(html).to.not.include("Project:");
   });
 
+  it("removes credentials and URL parameters from legacy auto-sync email locations", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const { html, text } = email.buildOperationalIncidentEmail({
+      category: "auto_sync",
+      title: "Auto-sync failed: gitlab",
+      message: "Connection failed",
+      metadata: {
+        provider: "gitlab",
+        location:
+          "https://user:password@gitlab.example.com:443/root/path?token=secret#section",
+      },
+    });
+    for (const body of [html, text]) {
+      expect(body).to.include(
+        "Location: https://gitlab.example.com:443/root/path",
+      );
+      for (const secret of ["user", "password", "token=secret", "#section"])
+        expect(body).to.not.include(secret);
+    }
+  });
+
   it("shows region or project only when that provider context exists", async () => {
     const email = await importFresh("apps/worker/src/notify/email.js");
     const aws = email.buildOperationalIncidentEmail({

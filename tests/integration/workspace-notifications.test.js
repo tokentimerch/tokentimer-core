@@ -298,6 +298,122 @@ describe("Persisted operational notifications (bell)", function () {
     expect(item.href).to.equal("/dashboard?import=github&autoSyncManage=1");
   });
 
+  it("links a persisted auto-sync incident to its exact config and current workspace", async () => {
+    const configId = "cfg/one two";
+    const inserted = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, category, type, severity, dedupe_key, title, metadata)
+       VALUES ($1, 'auto_sync', 'auto_sync_failed', 'warning', $2,
+               'Exact GitLab config', $3::jsonb)
+       RETURNING id`,
+      [
+        workspaceId,
+        `auto_sync_failed:href-${Date.now()}`,
+        JSON.stringify({
+          provider: "gitlab",
+          auto_sync_config_id: configId,
+          workspace_id: "stale-workspace-id",
+        }),
+      ],
+    );
+    try {
+      const res = await fetchNotifications(adminCookie).expect(200);
+      const item = res.body.items.find((row) => row.id === inserted.rows[0].id);
+      expect(item.href).to.equal(
+        `/dashboard?import=gitlab&autoSyncManage=1&autoSyncConfigId=cfg%2Fone%20two&workspace=${encodeURIComponent(workspaceId)}`,
+      );
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = $1",
+        [inserted.rows[0].id],
+      );
+    }
+  });
+
+  it("deduplicates computed auto-sync failures by config with a legacy provider fallback", async () => {
+    const config = await client.query(
+      `INSERT INTO auto_sync_configs
+         (workspace_id, provider, credentials_encrypted, frequency, enabled,
+          last_sync_status, last_sync_error, created_by)
+       VALUES ($1, 'gitlab', 'fixture', 'daily', TRUE, 'failed', 'Timeout', $2)
+       RETURNING id`,
+      [workspaceId, adminUserId],
+    );
+    const computedConfigId = config.rows[0].id;
+    const incidentIds = [];
+    const insertIncident = async (configId) => {
+      const inserted = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, category, type, severity, dedupe_key, title, metadata)
+         VALUES ($1, 'auto_sync', 'auto_sync_failed', 'warning', $2,
+                 'GitLab config incident', $3::jsonb)
+         RETURNING id`,
+        [
+          workspaceId,
+          `auto_sync_failed:dedupe-${Date.now()}-${incidentIds.length}`,
+          JSON.stringify({
+            provider: "gitlab",
+            ...(configId ? { auto_sync_config_id: configId } : {}),
+          }),
+        ],
+      );
+      incidentIds.push(inserted.rows[0].id);
+      return inserted.rows[0].id;
+    };
+    try {
+      const otherIncidentId = await insertIncident(
+        "11111111-1111-4111-8111-111111111111",
+      );
+      let res = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        res.body.items.some((item) => item.id === otherIncidentId),
+      ).to.equal(true);
+      const computed = res.body.items.find(
+        (item) => item.id === `auto-sync-failed-${computedConfigId}`,
+      );
+      expect(computed.href).to.equal(
+        `/dashboard?import=gitlab&autoSyncManage=1&autoSyncConfigId=${computedConfigId}&workspace=${workspaceId}`,
+      );
+
+      const matchingIncidentId = await insertIncident(computedConfigId);
+      res = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        res.body.items.some((item) => item.id === otherIncidentId),
+      ).to.equal(true);
+      expect(
+        res.body.items.some((item) => item.id === matchingIncidentId),
+      ).to.equal(true);
+      expect(
+        res.body.items.some(
+          (item) => item.id === `auto-sync-failed-${computedConfigId}`,
+        ),
+      ).to.equal(false);
+
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = $1",
+        [matchingIncidentId],
+      );
+      const legacyIncidentId = await insertIncident(null);
+      res = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        res.body.items.some((item) => item.id === legacyIncidentId),
+      ).to.equal(true);
+      expect(
+        res.body.items.some(
+          (item) => item.id === `auto-sync-failed-${computedConfigId}`,
+        ),
+      ).to.equal(false);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidentIds],
+      );
+      await client.query("DELETE FROM auto_sync_configs WHERE id = $1", [
+        computedConfigId,
+      ]);
+    }
+  });
+
   it("restricts workspace-level incidents to managers while retaining owner-scoped delivery incidents", async () => {
     await client.query(
       "UPDATE workspace_memberships SET role = 'workspace_manager' WHERE workspace_id = $1 AND user_id = $2",
@@ -308,7 +424,9 @@ describe("Persisted operational notifications (bell)", function () {
       expect(
         managerRes.body.items.some((item) => item.id === autoSyncNotifId),
       ).to.equal(true);
-      expect(managerRes.body.items.some((item) => item.id === notifId)).to.equal(true);
+      expect(
+        managerRes.body.items.some((item) => item.id === notifId),
+      ).to.equal(true);
     } finally {
       await client.query(
         "UPDATE workspace_memberships SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2",
@@ -334,7 +452,9 @@ describe("Persisted operational notifications (bell)", function () {
       );
       const ownerIncidentId = ownerIncident.rows[0].id;
       const adminRes = await fetchNotifications(adminCookie).expect(200);
-      expect(adminRes.body.items.some((item) => item.id === ownerIncidentId)).to.equal(true);
+      expect(
+        adminRes.body.items.some((item) => item.id === ownerIncidentId),
+      ).to.equal(true);
       const viewerRes = await fetchNotifications(viewerCookie).expect(200);
       expect(
         viewerRes.body.items.some((item) => item.id === autoSyncNotifId),
@@ -389,10 +509,9 @@ describe("Persisted operational notifications (bell)", function () {
   it("rejects malformed notification IDs without a database error and keeps unknown UUIDs as 404", async () => {
     const malformed = await markRead(adminCookie, "not-a-uuid").expect(400);
     expect(malformed.body.code).to.equal("VALIDATION_ERROR");
-    await markRead(
-      adminCookie,
-      "00000000-0000-4000-8000-000000000000",
-    ).expect(404);
+    await markRead(adminCookie, "00000000-0000-4000-8000-000000000000").expect(
+      404,
+    );
   });
 
   it("404s when marking a notification from a different workspace as read", async () => {

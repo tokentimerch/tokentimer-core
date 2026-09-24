@@ -82,6 +82,13 @@ async function membershipIdsForAssetWrite(client, workspaceId, body) {
 
 const router = require("express").Router();
 
+function autoSyncNotificationHref(provider, configId, workspaceId) {
+  const href = `/dashboard?import=${encodeURIComponent(provider || "")}&autoSyncManage=1`;
+  return typeof configId === "string" && configId.trim()
+    ? `${href}&autoSyncConfigId=${encodeURIComponent(configId.trim())}&workspace=${encodeURIComponent(workspaceId)}`
+    : href;
+}
+
 function publicToolErrors(toolErrors) {
   if (!Array.isArray(toolErrors) || toolErrors.length === 0) return undefined;
   return toolErrors.map((error) => ({
@@ -460,6 +467,7 @@ router.put(
       if (enabled !== undefined) {
         updates.push(`enabled = $${idx++}`);
         values.push(enabled);
+        if (enabled === false) updates.push("consecutive_failures = 0");
       }
       if (cleanup_obsolete !== undefined) {
         updates.push(`cleanup_obsolete = $${idx++}`);
@@ -669,7 +677,7 @@ router.get(
 
       if (isPrivileged) {
         const failedSync = await pool.query(
-          `SELECT provider, last_sync_error, last_sync_at
+          `SELECT id, provider, last_sync_error, last_sync_at
            FROM auto_sync_configs
            WHERE workspace_id = $1 AND enabled = TRUE AND last_sync_status = 'failed'
            ORDER BY last_sync_at DESC NULLS LAST`,
@@ -679,11 +687,12 @@ router.get(
           const provider = row.provider || "integration";
           const errText = String(row.last_sync_error || "Unknown error").trim();
           items.push({
-            id: `auto-sync-failed-${provider}`,
+            id: `auto-sync-failed-${row.id || provider}`,
             kind: "error",
             text: `Auto-sync failed for ${provider}: ${errText}`,
-            href: `/dashboard?import=${encodeURIComponent(provider)}&autoSyncManage=1`,
+            href: autoSyncNotificationHref(provider, row.id, req.workspace.id),
             provider,
+            autoSyncConfigId: row.id,
           });
         }
 
@@ -742,16 +751,29 @@ router.get(
           LIMIT 50`,
         [req.workspace.id, req.user.id, isPrivileged],
       );
-      const persistedSyncProviders = new Set(
+      const incidentConfigId = (row) =>
+        typeof row.metadata?.auto_sync_config_id === "string"
+          ? row.metadata.auto_sync_config_id.trim()
+          : "";
+      const persistedSyncConfigIds = new Set(
         opRows.rows
           .filter((row) => row.category === "auto_sync")
+          .map(incidentConfigId)
+          .filter(Boolean),
+      );
+      const legacySyncProviders = new Set(
+        opRows.rows
+          .filter(
+            (row) => row.category === "auto_sync" && !incidentConfigId(row),
+          )
           .map((row) => String(row.metadata?.provider || "").toLowerCase()),
       );
       for (let index = items.length - 1; index >= 0; index -= 1) {
         const item = items[index];
         if (
           item.id.startsWith("auto-sync-failed-") &&
-          persistedSyncProviders.has(String(item.provider || "").toLowerCase())
+          (persistedSyncConfigIds.has(item.autoSyncConfigId) ||
+            legacySyncProviders.has(String(item.provider || "").toLowerCase()))
         ) {
           items.splice(index, 1);
         }
@@ -760,7 +782,11 @@ router.get(
         const meta = row.metadata || {};
         const href =
           row.category === "auto_sync"
-            ? `/dashboard?import=${encodeURIComponent(meta.provider || "")}&autoSyncManage=1`
+            ? autoSyncNotificationHref(
+                meta.provider,
+                meta.auto_sync_config_id,
+                req.workspace.id,
+              )
             : "/control-center";
         items.push({
           id: row.id,
