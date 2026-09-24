@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { workspaceAPI } from '../utils/apiClient';
 
@@ -30,6 +30,8 @@ export function useDashboardNotifications({
   const navigate = useNavigate();
   const [dashboardNotifications, setDashboardNotifications] = useState([]);
   const [dashboardUnreadCount, setDashboardUnreadCount] = useState(0);
+  const selectedWorkspaceIdRef = useRef(workspace?.id);
+  selectedWorkspaceIdRef.current = workspace?.id;
   const isSystemAdmin = session?.isAdmin === true;
 
   useEffect(() => {
@@ -199,9 +201,11 @@ export function useDashboardNotifications({
         workspace?.id &&
         notification?.id
       ) {
+        const workspaceId = workspace.id;
         workspaceAPI
-          .markNotificationRead(workspace.id, notification.id)
+          .markNotificationRead(workspaceId, notification.id)
           .then(() => {
+            if (selectedWorkspaceIdRef.current !== workspaceId) return;
             setDashboardNotifications(prev =>
               prev.map(item =>
                 item.id === notification.id ? { ...item, isRead: true } : item
@@ -218,9 +222,11 @@ export function useDashboardNotifications({
 
   const onMarkAllNotificationsRead = useCallback(() => {
     if (!workspace?.id) return;
+    const workspaceId = workspace.id;
     workspaceAPI
-      .markAllNotificationsRead(workspace.id)
+      .markAllNotificationsRead(workspaceId)
       .then(() => {
+        if (selectedWorkspaceIdRef.current !== workspaceId) return;
         setDashboardNotifications(prev =>
           prev.map(item => (item.persisted ? { ...item, isRead: true } : item))
         );

@@ -1127,6 +1127,52 @@ export async function raiseDeliveryBlockedIncident(
   }
 }
 
+// Plan-limited alerts are terminal and never enter the delivery claim query.
+// Reconcile a bounded batch so these rows still produce their bell incident.
+async function raiseTerminalPlanLimitedIncidents(client) {
+  await client.query("BEGIN");
+  try {
+    const result = await client.query(
+      `SELECT aq.id, t.id AS token_id, COALESCE(t.name, aq.alert_key) AS name,
+              w.id AS workspace_id, w.name AS workspace_name,
+              aq.error_message
+         FROM alert_queue aq
+         LEFT JOIN tokens t ON t.id = aq.token_id
+         LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+         JOIN workspaces w ON w.id = COALESCE(t.workspace_id, ca.workspace_id)
+        WHERE (aq.status = 'limit_exceeded'
+               OR (aq.status = 'blocked' AND aq.error_message ~* 'PLAN_LIMIT|limit_exceeded'))
+          AND NOT EXISTS (
+            SELECT 1 FROM operational_notifications n
+             WHERE n.workspace_id = w.id
+               AND n.dedupe_key = 'delivery_blocked:' || aq.id
+               AND n.type = 'delivery_plan_limited'
+               AND n.resolved_at IS NULL
+          )
+        ORDER BY aq.created_at DESC
+        LIMIT 100
+        FOR UPDATE OF aq SKIP LOCKED`,
+    );
+    for (const alert of result.rows) {
+      const detail = alert.error_message || "Delivery paused by plan limit";
+      const message = isPlanLimitError(detail)
+        ? detail
+        : `PLAN_LIMIT: ${detail}`;
+      await raiseDeliveryBlockedIncident(
+        client,
+        alert,
+        message,
+        [],
+        "plan_limit",
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
 async function writeAudit(
   client,
   {
@@ -1675,6 +1721,24 @@ export async function deliveryWorkerJob({
               "Skipped no-contacts terminal write: another worker took ownership",
               { alertId: alert.id },
             );
+          } else if (alert.workspace_id) {
+            await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: "delivery_no_contacts",
+              severity: "warning",
+              dedupeKey: `delivery_blocked:${alert.id}`,
+              title: `Delivery has no contacts: ${alert.name || `Token #${alert.token_id}`}`,
+              message:
+                "No email, webhook, or WhatsApp contacts are configured in the selected contact group",
+              metadata: {
+                alert_queue_id: alert.id,
+                reason: "no_contacts",
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
           }
           failed++;
           continue;
@@ -2924,6 +2988,13 @@ export async function deliveryWorkerJob({
       }
     }
   });
+
+  // The alert queue excludes terminal plan-limited rows.
+  try {
+    await withClient(raiseTerminalPlanLimitedIncidents);
+  } catch (err) {
+    logger.warn("Plan-limited incident sweep failed", { error: err.message });
+  }
 
   // The alert queue excludes terminal blocked rows. Sweep their unsent incident
   // emails independently, including on runs with no claimable alerts.
