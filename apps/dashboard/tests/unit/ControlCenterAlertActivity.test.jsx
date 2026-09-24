@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import ControlCenter from '../../src/pages/ControlCenter.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
+window.scrollTo = vi.fn();
+
 const { loadMoreMock, changeEligibilityPageMock } = vi.hoisted(() => ({
   loadMoreMock: vi.fn(),
   changeEligibilityPageMock: vi.fn(),
@@ -15,6 +17,13 @@ vi.mock('../../src/components/DashboardShell', () => ({
 }));
 
 vi.mock('../../src/components/SEO.jsx', () => ({ default: () => null }));
+
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({
+    workspaceId: 'workspace-1',
+    selectWorkspace: vi.fn(),
+  }),
+}));
 
 vi.mock('../../src/hooks/useControlCenterStats', () => ({
   useControlCenterStats: () => ({

@@ -77,6 +77,7 @@ import {
   useControlCenterListPage,
 } from '../hooks/useControlCenterStats';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
+import { useDashboardShellProps } from '../hooks/useDashboardShellProps';
 import { formatDate, API_ENDPOINTS } from '../utils/apiClient';
 import { formatProviderLabel } from '../utils/formatProviderLabel.js';
 
@@ -925,6 +926,14 @@ function useControlCenterShellProps({
   onAccountClick,
 }) {
   const { workspaces, setSelectedWorkspaceId } = alertData;
+  const notificationProps = useDashboardShellProps({
+    session,
+    dashboardWorkspaces: workspaces,
+    dashboardWorkspace: selectedWorkspace,
+    onWorkspaceSelect: workspace => {
+      if (workspace?.id) setSelectedWorkspaceId(workspace.id);
+    },
+  });
 
   return useMemo(() => {
     const sessionName =
@@ -952,7 +961,10 @@ function useControlCenterShellProps({
           setSelectedWorkspaceId(workspace.id);
         }
       },
-      dashboardNotifications: [],
+      dashboardNotifications: notificationProps.dashboardNotifications,
+      dashboardUnreadCount: notificationProps.dashboardUnreadCount,
+      onNotificationClick: notificationProps.onNotificationClick,
+      onMarkAllNotificationsRead: notificationProps.onMarkAllNotificationsRead,
       onLogout,
       onAccountClick,
       dashboardCanSeeManagerNav,
@@ -969,6 +981,10 @@ function useControlCenterShellProps({
     onLogout,
     onAccountClick,
     dashboardCanSeeManagerNav,
+    notificationProps.dashboardNotifications,
+    notificationProps.dashboardUnreadCount,
+    notificationProps.onNotificationClick,
+    notificationProps.onMarkAllNotificationsRead,
   ]);
 }
 

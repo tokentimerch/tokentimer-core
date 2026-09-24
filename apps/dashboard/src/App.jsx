@@ -3484,6 +3484,7 @@ function DashboardView({
   const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
     useState(false);
   const [dashboardNotifications, setDashboardNotifications] = useState([]);
+  const [dashboardUnreadCount, setDashboardUnreadCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -3553,7 +3554,10 @@ function DashboardView({
     let cancelled = false;
     async function loadDashboardNotifications() {
       if (!_session || !dashboardWorkspace?.id) {
-        if (!cancelled) setDashboardNotifications([]);
+        if (!cancelled) {
+          setDashboardNotifications([]);
+          setDashboardUnreadCount(0);
+        }
         return;
       }
 
@@ -3606,19 +3610,25 @@ function DashboardView({
           currentRole === 'workspace_manager';
         const list = [];
 
-        if (canManageWorkspaceAlerts) {
-          const operational = Array.isArray(notificationsRes?.items)
-            ? notificationsRes.items
-            : [];
-          for (const item of operational) {
-            list.push({
-              id: item.id,
-              kind: item.kind === 'error' ? 'error' : 'warning',
-              text: item.text,
-              href: item.href || null,
-            });
-          }
+        const operational = Array.isArray(notificationsRes?.items)
+          ? notificationsRes.items
+          : [];
+        for (const item of operational) {
+          list.push({
+            id: item.id,
+            kind: item.kind === 'error' ? 'error' : 'warning',
+            text: item.text,
+            href:
+              item.href === '/usage' ? '/control-center' : item.href || null,
+            isRead: item.isRead,
+            persisted: item.persisted === true,
+          });
         }
+        setDashboardUnreadCount(
+          Number.isFinite(notificationsRes?.unreadCount)
+            ? notificationsRes.unreadCount
+            : 0
+        );
 
         if (!canManageWorkspaceAlerts) {
           setDashboardNotifications(list);
@@ -3653,7 +3663,10 @@ function DashboardView({
         }
         setDashboardNotifications(list);
       } catch (_) {
-        if (!cancelled) setDashboardNotifications([]);
+        if (!cancelled) {
+          setDashboardNotifications([]);
+          setDashboardUnreadCount(0);
+        }
       }
     }
 
@@ -3665,6 +3678,44 @@ function DashboardView({
       window.removeEventListener('tt:notifications-refresh', refresh);
     };
   }, [_session, dashboardWorkspace, isSystemAdmin]);
+
+  const handleNotificationClick = useCallback(
+    notification => {
+      if (
+        notification?.persisted &&
+        notification?.isRead === false &&
+        dashboardWorkspace?.id &&
+        notification?.id
+      ) {
+        workspaceAPI
+          .markNotificationRead(dashboardWorkspace.id, notification.id)
+          .then(() => {
+            setDashboardNotifications(prev =>
+              prev.map(item =>
+                item.id === notification.id ? { ...item, isRead: true } : item
+              )
+            );
+            setDashboardUnreadCount(prev => Math.max(0, prev - 1));
+          })
+          .catch(() => {});
+      }
+      if (notification?.href) navigate(notification.href);
+    },
+    [dashboardWorkspace, navigate]
+  );
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    if (!dashboardWorkspace?.id) return;
+    workspaceAPI
+      .markAllNotificationsRead(dashboardWorkspace.id)
+      .then(() => {
+        setDashboardNotifications(prev =>
+          prev.map(item => (item.persisted ? { ...item, isRead: true } : item))
+        );
+        setDashboardUnreadCount(0);
+      })
+      .catch(() => {});
+  }, [dashboardWorkspace]);
 
   const commitCreateNotes = useCallback(
     v => {
@@ -5083,6 +5134,9 @@ function DashboardView({
         workspaceLabel={workspaceLabel}
         onWorkspaceSelect={handleDashboardWorkspaceSelect}
         dashboardNotifications={dashboardNotifications}
+        dashboardUnreadCount={dashboardUnreadCount}
+        onNotificationClick={handleNotificationClick}
+        onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
         onLogout={onLogout}
         onAccountClick={handleAccountClick}
         isViewer={isViewer}
