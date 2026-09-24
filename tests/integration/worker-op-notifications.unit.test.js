@@ -144,6 +144,7 @@ describe("opNotifications helpers (worker, ESM)", () => {
       recipients = ["admin@example.com"],
       ownerEmail = null,
       ownerWorkspaceId = null,
+      ownerIsMember = true,
     } = {}) {
       const state = { claim: null, sent: false, completed: [] };
       const client = mockClient((sql, values) => {
@@ -160,9 +161,13 @@ describe("opNotifications helpers (worker, ESM)", () => {
         }
         if (sql.includes("JOIN users u ON u.id = t.user_id")) {
           expect(sql).to.include("t.workspace_id = $2");
+          expect(sql).to.include("JOIN workspace_memberships wm");
+          expect(sql).to.include("wm.workspace_id = t.workspace_id");
+          expect(sql).to.include("wm.user_id = t.user_id");
+          expect(sql).to.include("u.email IS NOT NULL");
           return {
             rows:
-              ownerEmail && values[1] === ownerWorkspaceId
+              ownerEmail && ownerIsMember && values[1] === ownerWorkspaceId
                 ? [{ email: ownerEmail }]
                 : [],
           };
@@ -265,6 +270,23 @@ describe("opNotifications helpers (worker, ESM)", () => {
           call.sql.includes("JOIN users u ON u.id = t.user_id"),
         ).params,
       ).to.deep.equal([7, "ws-1"]);
+
+      const removed = emailClient({
+        ownerEmail: "former@example.com",
+        ownerWorkspaceId: "ws-1",
+        ownerIsMember: false,
+        recipients: ["admin@example.com"],
+      });
+      const removedSentTo = [];
+      await mod.sendOperationalIncidentEmail(
+        removed.client,
+        { ...params, tokenId: 7 },
+        async ({ to }) => {
+          removedSentTo.push(to);
+          return { success: true };
+        },
+      );
+      expect(removedSentTo).to.deep.equal(["admin@example.com"]);
 
       const mismatched = emailClient({
         ownerEmail: "foreign@example.com",
