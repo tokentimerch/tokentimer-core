@@ -736,7 +736,7 @@ describe("Persisted operational notifications (bell)", function () {
     expect(retried.rows[0].email_claim_id).to.equal(null);
   });
 
-  it("scopes token-owner incident email recipients to the incident workspace", async () => {
+  it("emails only current workspace members who own the token, plus admins", async () => {
     const { sendOperationalIncidentEmail } =
       await import("../../apps/worker/src/shared/opNotifications.js");
     const matchingWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
@@ -746,6 +746,11 @@ describe("Persisted operational notifications (bell)", function () {
     const otherWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
       adminCookie,
       "Other incident recipients",
+    );
+    await client.query(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       VALUES ($1, $2, 'viewer', $3)`,
+      [viewerUserId, matchingWorkspaceId, adminUserId],
     );
     const tokens = await client.query(
       `INSERT INTO tokens (user_id, workspace_id, name, type, expiration, created_by)
@@ -764,11 +769,28 @@ describe("Persisted operational notifications (bell)", function () {
     ).id;
     const incidentIds = [];
     try {
-      for (const [incidentWorkspaceId, incidentTokenId, expected] of [
+      for (const [
+        incidentWorkspaceId,
+        incidentTokenId,
+        expected,
+        removeOwner,
+      ] of [
         [matchingWorkspaceId, viewerTokenId, [viewer.email, admin.email]],
         [otherWorkspaceId, viewerTokenId, [admin.email]],
         [matchingWorkspaceId, adminTokenId, [admin.email]],
+        [matchingWorkspaceId, viewerTokenId, [admin.email], true],
       ]) {
+        if (removeOwner) {
+          await client.query(
+            "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+            [matchingWorkspaceId, viewerUserId],
+          );
+          const stillOwned = await client.query(
+            "SELECT user_id FROM tokens WHERE id = $1",
+            [viewerTokenId],
+          );
+          expect(stillOwned.rows[0].user_id).to.equal(viewerUserId);
+        }
         const notification = await client.query(
           `INSERT INTO operational_notifications
              (workspace_id, token_id, category, type, severity, dedupe_key, title)
@@ -809,6 +831,10 @@ describe("Persisted operational notifications (bell)", function () {
       await client.query("DELETE FROM tokens WHERE id = ANY($1::int[])", [
         tokens.rows.map((row) => row.id),
       ]);
+      await client.query(
+        "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [matchingWorkspaceId, viewerUserId],
+      );
     }
   });
 

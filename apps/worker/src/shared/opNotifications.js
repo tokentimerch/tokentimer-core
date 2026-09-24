@@ -139,9 +139,9 @@ export async function resolveOperationalNotification(
   }
 }
 
-// Recipients for a critical incident email: the token's owner (if any) plus
-// every workspace admin, deduplicated. Auto-sync incidents have no token_id
-// (workspace-level), so they go to admins only.
+// Recipients for a critical incident email: the token's owner while still a
+// workspace member, plus every workspace admin, deduplicated. Auto-sync
+// incidents have no token_id (workspace-level), so they go to admins only.
 async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
   const emails = new Set();
   try {
@@ -149,6 +149,8 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
       const ownerRes = await client.query(
         `SELECT u.email FROM tokens t
            JOIN users u ON u.id = t.user_id
+           JOIN workspace_memberships wm
+             ON wm.workspace_id = t.workspace_id AND wm.user_id = t.user_id
           WHERE t.id = $1 AND t.workspace_id = $2 AND u.email IS NOT NULL`,
         [tokenId, workspaceId],
       );
