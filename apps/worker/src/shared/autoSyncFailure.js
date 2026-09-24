@@ -49,9 +49,50 @@ export function formatImportErrorDetail(importErrors, totalErrorCount = 0) {
     .slice(0, 3)
     .map((e) => `${e.item}: ${e.error}`)
     .join("; ");
-  const remaining = Math.max(totalErrorCount, sample.length) - Math.min(3, sample.length);
+  const remaining =
+    Math.max(totalErrorCount, sample.length) - Math.min(3, sample.length);
   const more = remaining > 0 ? ` (+${remaining} more)` : "";
   return `Details: ${shown}${more}`.substring(0, 800);
+}
+
+function nonEmptyText(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text && !/^(undefined|null|n\/a|-)$/i.test(text) ? text : null;
+}
+
+function autoSyncIncidentContext({ configId, workspaceId, provider, config }) {
+  // Only copy known, non-secret scan fields; credentials_encrypted stays out.
+  const scan = config?.scan_params || {};
+  const context = {
+    ...(nonEmptyText(provider) ? { provider: provider.trim() } : {}),
+    ...(nonEmptyText(configId) ? { auto_sync_config_id: configId } : {}),
+    ...(nonEmptyText(workspaceId) ? { workspace_id: workspaceId } : {}),
+    ...(nonEmptyText(config?.connection_key)
+      ? { connection_key: config.connection_key.trim() }
+      : {}),
+  };
+  const location =
+    provider === "github" || provider === "gitlab"
+      ? scan.baseUrl
+      : provider === "vault"
+        ? scan.address
+        : provider === "azure"
+          ? scan.vaultUrl
+          : null;
+  if (nonEmptyText(location)) context.location = location.trim();
+  if (
+    provider === "aws" &&
+    !["all-regions", "global"].includes(scan.scanMode) &&
+    nonEmptyText(scan.region) &&
+    !["all-regions", "global"].includes(scan.region)
+  ) {
+    context.region = scan.region.trim();
+  }
+  if (provider === "gcp" && nonEmptyText(scan.projectId)) {
+    context.project_id = scan.projectId.trim();
+  }
+  return context;
 }
 
 async function resolveAuditSubjectUserId(client, workspaceId, createdBy) {
@@ -154,6 +195,7 @@ export async function recordAutoSyncFailure(
     errorMessage,
     httpStatus = null,
     nextSync,
+    config = null,
   },
   deferIncidentEmail = null,
 ) {
@@ -170,6 +212,18 @@ export async function recordAutoSyncFailure(
 
   if (workspaceId) {
     const critical = consecutiveFailures >= AUTO_SYNC_CRITICAL_THRESHOLD;
+    const context = autoSyncIncidentContext({
+      configId,
+      workspaceId,
+      provider,
+      config,
+    });
+    const incidentMetadata = {
+      ...context,
+      ...(nonEmptyText(configId) ? { config_id: configId } : {}),
+      ...(httpStatus == null ? {} : { http_status: httpStatus }),
+      consecutive_failures: consecutiveFailures,
+    };
     const notifId = await raiseOperationalNotification(client, {
       workspaceId,
       tokenId: null,
@@ -181,12 +235,7 @@ export async function recordAutoSyncFailure(
         ? `Auto-sync failing repeatedly: ${provider}`
         : `Auto-sync failed: ${provider}`,
       message: errorMessage || "Auto-sync run failed",
-      metadata: {
-        config_id: configId,
-        provider,
-        http_status: httpStatus,
-        consecutive_failures: consecutiveFailures,
-      },
+      metadata: incidentMetadata,
     });
     if (notifId && critical) {
       const incidentEmail = {
@@ -196,7 +245,7 @@ export async function recordAutoSyncFailure(
         category: "auto_sync",
         title: `Auto-sync failing repeatedly: ${provider}`,
         message: errorMessage || "Auto-sync run failed",
-        metadata: { provider, consecutive_failures: consecutiveFailures },
+        metadata: incidentMetadata,
       };
       if (deferIncidentEmail) deferIncidentEmail(incidentEmail);
       else await sendOperationalIncidentEmail(client, incidentEmail);
@@ -237,7 +286,10 @@ export async function recordAutoSyncFailure(
  * notification for this config. Call on a fully successful sync run so that
  * the bell incident clears once the integration recovers.
  */
-export async function recordAutoSyncRecovery(client, { configId, workspaceId }) {
+export async function recordAutoSyncRecovery(
+  client,
+  { configId, workspaceId },
+) {
   try {
     await client.query(
       `UPDATE auto_sync_configs

@@ -223,7 +223,8 @@ describe("opNotifications helpers (worker, ESM)", () => {
         client.calls.some((call) => call.sql.includes("pg_advisory_lock(")),
       ).to.equal(true);
       expect(
-        client.calls.find((call) => call.sql.includes("pg_advisory_lock(")).params,
+        client.calls.find((call) => call.sql.includes("pg_advisory_lock("))
+          .params,
       ).to.deep.equal(["ws-1"]);
       expect(
         client.calls.some((call) => call.sql.includes("pg_advisory_unlock(")),
@@ -392,15 +393,112 @@ describe("buildOperationalIncidentEmail", () => {
 
   it("links auto-sync incidents to the import panel with the provider preselected", async () => {
     const email = await importFresh("apps/worker/src/notify/email.js");
-    const { html } = email.buildOperationalIncidentEmail({
+    const { html, text } = email.buildOperationalIncidentEmail({
       category: "auto_sync",
       title: "Auto-sync failing repeatedly: github",
       message: "Auto-sync run failed",
-      metadata: { provider: "github" },
+      metadata: {
+        provider: "github",
+        config_id: "legacy-config",
+        workspace_id: "legacy-workspace",
+      },
     });
     expect(html).to.include("import=github");
     expect(html).to.include("autoSyncManage=1");
+    expect(html).to.not.include("autoSyncConfigId=");
+    expect(html).to.not.include("workspace=");
+    expect(html).to.include("Provider: GitHub");
+    expect(text).to.include("Provider: GitHub");
+    expect(text).to.not.include("Connection:");
+    expect(text).to.not.include("Location:");
+    expect(text).to.not.include("Region:");
+    expect(text).to.not.include("N/A");
     expect(html).to.not.include("/control-center");
+  });
+
+  it("targets the exact config and renders available auto-sync context in HTML and text", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const { html, text } = email.buildOperationalIncidentEmail({
+      category: "auto_sync",
+      title: "Auto-sync failing repeatedly: gitlab",
+      message: "Bad credentials",
+      metadata: {
+        provider: "gitlab",
+        auto_sync_config_id: "cfg/one two",
+        workspace_id: "ws/one two",
+        connection_key: "Production GitLab",
+        location: "gitlab.company.com",
+      },
+    });
+    expect(html).to.include(
+      "?import=gitlab&amp;autoSyncManage=1&amp;autoSyncConfigId=cfg%2Fone%20two&amp;workspace=ws%2Fone%20two",
+    );
+    expect(text).to.include(
+      "?import=gitlab&autoSyncManage=1&autoSyncConfigId=cfg%2Fone%20two&workspace=ws%2Fone%20two",
+    );
+    for (const line of [
+      "Provider: GitLab",
+      "Connection: Production GitLab",
+      "Config ID: cfg/one two",
+      "Location: gitlab.company.com",
+    ]) {
+      expect(html).to.include(line);
+      expect(text).to.include(line);
+    }
+    expect(html).to.not.include("Region:");
+    expect(html).to.not.include("Project:");
+  });
+
+  it("shows region or project only when that provider context exists", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const aws = email.buildOperationalIncidentEmail({
+      category: "auto_sync",
+      title: "AWS sync failed",
+      metadata: { provider: "aws", region: "eu-central-1" },
+    });
+    expect(aws.html).to.include("Region: eu-central-1");
+    expect(aws.text).to.include("Region: eu-central-1");
+    expect(aws.html).to.not.include("Project:");
+    const gcp = email.buildOperationalIncidentEmail({
+      category: "auto_sync",
+      title: "GCP sync failed",
+      metadata: { provider: "gcp", project_id: "project-123" },
+    });
+    expect(gcp.html).to.include("Project: project-123");
+    expect(gcp.text).to.include("Project: project-123");
+    expect(gcp.html).to.not.include("Region:");
+  });
+
+  it("escapes every auto-sync context value and omits placeholder values", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const { html, text } = email.buildOperationalIncidentEmail({
+      category: "auto_sync",
+      title: "Auto-sync failed",
+      message: "<error>",
+      metadata: {
+        provider: "<provider>",
+        auto_sync_config_id: 'cfg"<id>',
+        connection_key: "<connection>",
+        location: "<location>",
+        region: "N/A",
+        project_id: "undefined",
+      },
+    });
+    for (const raw of [
+      "<error>",
+      "<provider>",
+      "<connection>",
+      "<location>",
+      "<id>",
+    ]) {
+      expect(html).to.not.include(raw);
+      expect(html).to.include(raw.replace("<", "&lt;").replace(">", "&gt;"));
+    }
+    expect(html).to.include("autoSyncConfigId=cfg%22%3Cid%3E");
+    expect(html).to.not.include("Region:");
+    expect(html).to.not.include("Project:");
+    expect(text).to.include("Connection: <connection>");
+    expect(text).to.include("Location: <location>");
   });
 
   it("escapes HTML in the message and context lines", async () => {

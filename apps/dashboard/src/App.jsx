@@ -5895,15 +5895,20 @@ function ImportTokensButton({ label = 'Import' }) {
     if (!provider) return;
     if (KNOWN_IMPORT_PROVIDERS.includes(provider)) {
       const autoSyncManage = searchParams.get('autoSyncManage') === '1';
+      const autoSyncConfigId = autoSyncManage
+        ? searchParams.get('autoSyncConfigId')
+        : null;
       setOpenRequest({
         provider,
         integrationSubTab: autoSyncManage ? 'manage' : 'scan',
+        ...(autoSyncConfigId ? { autoSyncConfigId } : {}),
       });
       onOpen();
     }
     const next = new URLSearchParams(searchParams);
     next.delete('import');
     next.delete('autoSyncManage');
+    next.delete('autoSyncConfigId');
     setSearchParams(next, { replace: true });
   }, [searchParams, onOpen, setSearchParams]);
 
