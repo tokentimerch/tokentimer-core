@@ -57,6 +57,45 @@ beforeEach(() => {
 });
 
 describe('useDashboardNotifications', () => {
+  it('keeps persisted incidents when alert settings fail', async () => {
+    getAlertSettings.mockRejectedValue(new Error('settings unavailable'));
+    const { result } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications).toHaveLength(1)
+    );
+    expect(result.current.dashboardNotifications[0]).toMatchObject({
+      id: 'incident-1',
+      persisted: true,
+      isRead: false,
+    });
+    expect(result.current.dashboardUnreadCount).toBe(1);
+  });
+
+  it('keeps settings-based warnings without inventing persisted incidents when notifications fail', async () => {
+    getNotifications.mockRejectedValue(new Error('notifications unavailable'));
+    const { result } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications).toHaveLength(3)
+    );
+    expect(result.current.dashboardNotifications.map(item => item.id)).toEqual([
+      'smtp-not-configured',
+      'alerts-disabled',
+      'no-contacts-defined',
+    ]);
+    expect(result.current.dashboardUnreadCount).toBe(0);
+    expect(
+      result.current.dashboardNotifications.some(item => item.persisted)
+    ).toBe(false);
+  });
+
   it('maps persisted incidents and computed warnings, then marks one incident read', async () => {
     const { result } = renderHook(
       () => useDashboardNotifications({ session, workspace }),

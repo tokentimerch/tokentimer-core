@@ -688,12 +688,21 @@ router.get(
         }
       }
 
-      // Persisted operational_notifications: unresolved incidents (delivery
-      // blocked/degraded, auto-sync failures) raised by the worker, newest
-      // first. Included for every member (not just privileged roles) since a
-      // token owner without a management role should still see incidents
-      // about their own tokens; token-scoped rows are additionally filtered
-      // to the current user unless they are privileged.
+      // Managers see workspace incidents; other members only see incidents
+      // about tokens they own. Count all visible unread rows independently of
+      // the bounded display list.
+      const unreadRes = await pool.query(
+        `SELECT COUNT(*)::int AS count
+           FROM operational_notifications n
+           LEFT JOIN operational_notification_reads r
+             ON r.notification_id = n.id AND r.user_id = $2
+           LEFT JOIN tokens t ON t.id = n.token_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND r.notification_id IS NULL
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
       const opRows = await pool.query(
         `SELECT n.id, n.category, n.type, n.severity, n.title, n.message,
                 n.metadata, n.created_at, n.updated_at, n.token_id,
@@ -704,8 +713,9 @@ router.get(
            LEFT JOIN tokens t ON t.id = n.token_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
-            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $2)
-          ORDER BY n.created_at DESC
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
+          ORDER BY (r.notification_id IS NULL) DESC,
+                   COALESCE(n.updated_at, n.created_at) DESC, n.created_at DESC
           LIMIT 50`,
         [req.workspace.id, req.user.id, isPrivileged],
       );
@@ -723,9 +733,7 @@ router.get(
           items.splice(index, 1);
         }
       }
-      let unreadCount = 0;
       for (const row of opRows.rows) {
-        if (!row.is_read) unreadCount += 1;
         const meta = row.metadata || {};
         const href =
           row.category === "auto_sync"
@@ -746,7 +754,7 @@ router.get(
         });
       }
 
-      res.json({ items, unreadCount });
+      res.json({ items, unreadCount: unreadRes.rows[0]?.count || 0 });
     } catch (e) {
       logger.error("Workspace notifications error", {
         error: e.message,
@@ -774,16 +782,21 @@ router.post(
       const isPrivileged = role === "admin" || role === "workspace_manager";
 
       // Same visibility rule as GET /notifications: non-privileged members
-      // may only mark workspace-level notifications or ones scoped to their
-      // own token as read, even if they somehow learn another notification's id.
+      // may only mark notifications for their own tokens as read.
       const check = await pool.query(
         `SELECT n.id
            FROM operational_notifications n
            LEFT JOIN tokens t ON t.id = n.token_id
           WHERE n.id = $1
             AND n.workspace_id = $2
-            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $4)`,
-        [req.params.notificationId, req.workspace.id, isPrivileged, req.user.id],
+            AND n.resolved_at IS NULL
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $4))`,
+        [
+          req.params.notificationId,
+          req.workspace.id,
+          isPrivileged,
+          req.user.id,
+        ],
       );
       if (check.rows.length === 0) {
         return res.status(404).json({ error: "Notification not found" });
@@ -826,7 +839,7 @@ router.post(
            LEFT JOIN tokens t ON t.id = n.token_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
-            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $2)
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
          ON CONFLICT (notification_id, user_id) DO NOTHING`,
         [req.workspace.id, req.user.id, isPrivileged],
       );

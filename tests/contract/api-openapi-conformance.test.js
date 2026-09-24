@@ -16,6 +16,20 @@ const authCompatPath = path.join(
 );
 
 describe("API OpenAPI conformance contract", () => {
+  it("allows nullable persisted notification messages", () => {
+    const yaml = fs.readFileSync(openApiPath, "utf8");
+    const start = yaml.indexOf("  /api/v1/workspaces/{id}/notifications:");
+    const end = yaml.indexOf(
+      "  /api/v1/workspaces/{id}/notifications/{notificationId}/read:",
+      start,
+    );
+    assert.ok(start >= 0 && end > start);
+    assert.match(
+      yaml.slice(start, end),
+      /\n\s+message:\s*\n\s+type: string\s*\n\s+nullable: true/,
+    );
+  });
+
   it("defines required core and integration paths in static OpenAPI", () => {
     const yaml = fs.readFileSync(openApiPath, "utf8");
     const requiredPaths = [

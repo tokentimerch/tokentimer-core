@@ -186,12 +186,13 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
  * Safeguards:
  * - Uses a separate expiring claim so concurrent workers cannot send twice,
  *   while failures remain retryable and email_sent_at records delivery only.
+ * - Serializes each workspace's cap check and send with a PostgreSQL lock.
  * - Skips silently if the incident's own failing channel is email (recursion
  *   guard: a broken SMTP config would otherwise try to email about itself).
  * - Skips (but keeps the bell item) once the workspace has hit
  *   DAILY_EMAIL_CAP incident emails in the last 24h.
  *
- * @param {import('pg').PoolClient|import('pg').Pool} client
+ * @param {import('pg').PoolClient|import('pg').Client} client - Dedicated connection required for the workspace lock.
  * @param {Object} params
  * @param {string} params.notificationId
  * @param {string} params.workspaceId
@@ -229,8 +230,17 @@ export async function sendOperationalIncidentEmail(
     return;
   const claimId = randomUUID();
   let claimed = false;
+  let workspaceLocked = false;
   let delivered = false;
   try {
+    // Serialize the cap check and final sent timestamp for this workspace.
+    // Lock before claiming so waiting cannot consume the claim timeout.
+    await client.query(
+      "SELECT pg_advisory_lock(hashtextextended($1::text, 140))",
+      [workspaceId],
+    );
+    workspaceLocked = true;
+
     const claim = await client.query(
       `UPDATE operational_notifications
           SET email_claim_id = $2, email_claimed_at = NOW()
@@ -315,6 +325,19 @@ export async function sendOperationalIncidentEmail(
         logger.warn("Operational incident email claim release failed", {
           error: err.message,
           notificationId,
+        });
+      }
+    }
+    if (workspaceLocked) {
+      try {
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1::text, 140))",
+          [workspaceId],
+        );
+      } catch (err) {
+        logger.warn("Operational incident email workspace unlock failed", {
+          error: err.message,
+          workspaceId,
         });
       }
     }
