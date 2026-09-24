@@ -514,6 +514,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Boot published API image
+        run: node scripts/boot-published-images.js api "tokentimer/api:${{ github.sha }}"
+
       - name: Build dashboard image
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
@@ -528,6 +531,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Boot published dashboard image
+        run: node scripts/boot-published-images.js dashboard "tokentimer/dashboard:${{ github.sha }}"
+
       - name: Build worker image
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
@@ -540,6 +546,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Sparse COPY: certops-worker (and the other Helm CronJobs) require
+      # curated apps/api files at import. docker build and Grype do not
+      # execute them. Fail on MODULE_NOT_FOUND; DB refusal after import is ok.
+      - name: Boot published worker entrypoints
+        run: node scripts/boot-published-images.js worker "tokentimer/worker:${{ github.sha }}"
+
       - name: Build Kubernetes controller image
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
@@ -551,6 +563,9 @@ jobs:
           tags: tokentimer/k8s-controller:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Boot published controller image
+        run: node scripts/boot-published-images.js controller "tokentimer/k8s-controller:${{ github.sha }}"
 
       # --- Trivy (disabled 2026-03-22, supply chain compromise) ---
       # Restore when aquasecurity/trivy ecosystem is confirmed safe.
