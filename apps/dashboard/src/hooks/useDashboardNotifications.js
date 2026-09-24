@@ -12,7 +12,9 @@ const SETTINGS_WARNING_IDS = new Set([
 function mapOperationalNotifications(response) {
   return (Array.isArray(response?.items) ? response.items : []).map(item => ({
     id: item.id,
-    kind: item.kind === 'error' ? 'error' : 'warning',
+    kind: ['error', 'warning', 'info'].includes(item.kind)
+      ? item.kind
+      : 'warning',
     text: item.text,
     href: item.href === '/usage' ? '/control-center' : item.href || null,
     isRead: item.isRead,

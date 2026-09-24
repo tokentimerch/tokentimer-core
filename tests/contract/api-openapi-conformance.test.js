@@ -16,6 +16,19 @@ const authCompatPath = path.join(
 );
 
 describe("API OpenAPI conformance contract", () => {
+  it("documents authentication and membership errors for the notification list", () => {
+    const yaml = fs.readFileSync(openApiPath, "utf8");
+    const start = yaml.indexOf("  /api/v1/workspaces/{id}/notifications:");
+    const end = yaml.indexOf(
+      "  /api/v1/workspaces/{id}/notifications/{notificationId}/read:",
+      start,
+    );
+    assert.ok(start >= 0 && end > start);
+    const endpoint = yaml.slice(start, end);
+    assert.match(endpoint, /"401":\s+\$ref: "#\/components\/responses\/Unauthorized"/);
+    assert.match(endpoint, /"403":\s+\$ref: "#\/components\/responses\/Forbidden"/);
+  });
+
   it("declares a UUID notification ID and a validation response for mark-read", () => {
     const yaml = fs.readFileSync(openApiPath, "utf8");
     const start = yaml.indexOf(
