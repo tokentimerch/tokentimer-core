@@ -9,36 +9,19 @@ const alertQueueModulePath = path.resolve(
   __dirname,
   "../../apps/api/services/alertQueue.js",
 );
-const operationalNotificationsModulePath = path.resolve(
-  __dirname,
-  "../../apps/api/services/operationalNotifications.js",
-);
 
-function withPatchedLoad(stubs, fn) {
+function loadAlertQueue(pool) {
   const originalLoad = Module._load;
+  delete require.cache[alertQueueModulePath];
   Module._load = function patchedLoad(request, parent, isMain) {
-    if (Object.prototype.hasOwnProperty.call(stubs, request)) {
-      return stubs[request];
-    }
+    if (request === "../db/database") return { pool };
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
-    return fn();
+    return require(alertQueueModulePath);
   } finally {
     Module._load = originalLoad;
   }
-}
-
-function loadAlertQueue({ pool, resolveOperationalNotification }) {
-  delete require.cache[alertQueueModulePath];
-  delete require.cache[operationalNotificationsModulePath];
-  return withPatchedLoad(
-    {
-      "../db/database": { pool },
-      "./operationalNotifications": { resolveOperationalNotification },
-    },
-    () => require(alertQueueModulePath),
-  );
 }
 
 describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () => {
@@ -48,133 +31,129 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
         throw new Error("should not query");
       },
     };
-    const { requeueAlertsCore } = loadAlertQueue({
-      pool,
-      resolveOperationalNotification: async () => {
-        throw new Error("should not resolve");
-      },
-    });
-    const count = await requeueAlertsCore({ userId: null });
+    const count = await loadAlertQueue(pool).requeueAlertsCore({ userId: null });
     assert.equal(count, 0);
   });
 
-  it("workspace-scoped requeue resolves delivery_blocked/delivery_degraded notifications for each requeued alert", async () => {
-    const resolvedKeys = [];
+  it("batches blocked and degraded cleanup for a workspace-scoped requeue", async () => {
+    const calls = [];
     const pool = {
-      query: async (sql) => {
-        assert.match(sql, /RETURNING aq.id/);
-        return { rowCount: 2, rows: [{ id: 10 }, { id: 11 }] };
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (calls.length === 1) {
+          assert.match(sql, /RETURNING aq.id/);
+          return { rowCount: 2, rows: [{ id: 10 }, { id: 11 }] };
+        }
+        return { rowCount: 4 };
       },
     };
-    const { requeueAlertsCore } = loadAlertQueue({
-      pool,
-      resolveOperationalNotification: async (
-        client,
-        workspaceId,
-        dedupeKey,
-      ) => {
-        resolvedKeys.push({ workspaceId, dedupeKey });
-      },
-    });
-
-    const count = await requeueAlertsCore({
+    const count = await loadAlertQueue(pool).requeueAlertsCore({
       userId: "user-1",
       workspaceId: "ws-1",
     });
 
     assert.equal(count, 2);
-    assert.deepEqual(
-      resolvedKeys.sort((a, b) => a.dedupeKey.localeCompare(b.dedupeKey)),
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].sql, /FROM unnest\(\$1::uuid\[\], \$2::text\[\]\)/);
+    assert.match(calls[1].sql, /n.workspace_id = keys.workspace_id/);
+    assert.match(calls[1].sql, /n.dedupe_key = keys.dedupe_key/);
+    assert.deepEqual(calls[1].params, [
+      ["ws-1", "ws-1", "ws-1", "ws-1"],
       [
-        { workspaceId: "ws-1", dedupeKey: "delivery_blocked:10" },
-        { workspaceId: "ws-1", dedupeKey: "delivery_blocked:11" },
-        { workspaceId: "ws-1", dedupeKey: "delivery_degraded:10" },
-        { workspaceId: "ws-1", dedupeKey: "delivery_degraded:11" },
-      ].sort((a, b) => a.dedupeKey.localeCompare(b.dedupeKey)),
-    );
+        "delivery_blocked:10",
+        "delivery_degraded:10",
+        "delivery_blocked:11",
+        "delivery_degraded:11",
+      ],
+    ]);
   });
 
-  it("account-wide requeue resolves notifications using the workspace_id read off each row", async () => {
-    const resolvedKeys = [];
+  it("pairs each alert with its own workspace in an account-wide requeue", async () => {
+    const calls = [];
     const pool = {
-      query: async (sql) => {
-        assert.match(sql, /RETURNING id, \(SELECT workspace_id/);
-        return {
-          rowCount: 2,
-          rows: [
-            { id: 20, workspace_id: "ws-a" },
-            { id: 21, workspace_id: "ws-b" },
-          ],
-        };
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (calls.length === 1) {
+          assert.match(sql, /RETURNING id, \(SELECT workspace_id/);
+          return {
+            rowCount: 2,
+            rows: [
+              { id: 20, workspace_id: "ws-a" },
+              { id: 21, workspace_id: "ws-b" },
+            ],
+          };
+        }
+        return { rowCount: 4 };
       },
     };
-    const { requeueAlertsCore } = loadAlertQueue({
-      pool,
-      resolveOperationalNotification: async (
-        client,
-        workspaceId,
-        dedupeKey,
-      ) => {
-        resolvedKeys.push({ workspaceId, dedupeKey });
-      },
+    const count = await loadAlertQueue(pool).requeueAlertsCore({
+      userId: "user-1",
     });
-
-    const count = await requeueAlertsCore({ userId: "user-1" });
 
     assert.equal(count, 2);
-    assert.ok(
-      resolvedKeys.some(
-        (r) =>
-          r.workspaceId === "ws-a" && r.dedupeKey === "delivery_blocked:20",
-      ),
-    );
-    assert.ok(
-      resolvedKeys.some(
-        (r) =>
-          r.workspaceId === "ws-b" && r.dedupeKey === "delivery_degraded:21",
-      ),
-    );
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].params, [
+      ["ws-a", "ws-a", "ws-b", "ws-b"],
+      [
+        "delivery_blocked:20",
+        "delivery_degraded:20",
+        "delivery_blocked:21",
+        "delivery_degraded:21",
+      ],
+    ]);
   });
 
-  it("account-wide requeue skips resolving a row whose workspace_id is null", async () => {
-    let resolveCalls = 0;
+  it("skips rows without a workspace and does not query cleanup for them", async () => {
+    let calls = 0;
     const pool = {
-      query: async () => ({
-        rowCount: 1,
-        rows: [{ id: 30, workspace_id: null }],
-      }),
-    };
-    const { requeueAlertsCore } = loadAlertQueue({
-      pool,
-      resolveOperationalNotification: async () => {
-        resolveCalls += 1;
+      query: async () => {
+        calls += 1;
+        return { rowCount: 1, rows: [{ id: 30, workspace_id: null }] };
       },
+    };
+    const count = await loadAlertQueue(pool).requeueAlertsCore({
+      userId: "user-1",
     });
-
-    const count = await requeueAlertsCore({ userId: "user-1" });
-
     assert.equal(count, 1);
-    assert.equal(resolveCalls, 0);
+    assert.equal(calls, 1);
   });
 
   it("does nothing when the requeue affects no rows", async () => {
-    let resolveCalls = 0;
+    let calls = 0;
     const pool = {
-      query: async () => ({ rowCount: 0, rows: [] }),
-    };
-    const { requeueAlertsCore } = loadAlertQueue({
-      pool,
-      resolveOperationalNotification: async () => {
-        resolveCalls += 1;
+      query: async () => {
+        calls += 1;
+        return { rowCount: 0, rows: [] };
       },
-    });
-
-    const count = await requeueAlertsCore({
+    };
+    const count = await loadAlertQueue(pool).requeueAlertsCore({
       userId: "user-1",
       workspaceId: "ws-1",
     });
-
     assert.equal(count, 0);
-    assert.equal(resolveCalls, 0);
+    assert.equal(calls, 1);
+  });
+
+  it("keeps the requeue successful if notification cleanup fails", async () => {
+    let calls = 0;
+    const pool = {
+      query: async () => {
+        calls += 1;
+        if (calls === 1) return { rowCount: 1, rows: [{ id: 40 }] };
+        throw new Error("notification table unavailable");
+      },
+    };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const count = await loadAlertQueue(pool).requeueAlertsCore({
+        userId: "user-1",
+        workspaceId: "ws-1",
+      });
+      assert.equal(count, 1);
+      assert.equal(calls, 2);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });

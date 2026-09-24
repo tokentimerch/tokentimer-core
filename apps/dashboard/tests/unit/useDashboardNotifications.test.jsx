@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { useDashboardNotifications } from '../../src/hooks/useDashboardNotifications.js';
@@ -54,6 +54,10 @@ beforeEach(() => {
   });
   markNotificationRead.mockResolvedValue({});
   markAllNotificationsRead.mockResolvedValue({});
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useDashboardNotifications', () => {
@@ -212,5 +216,112 @@ describe('useDashboardNotifications', () => {
     );
     expect(result.current.dashboardNotifications[0].id).toBe('incident-1');
     expect(result.current.dashboardUnreadCount).toBe(1);
+  });
+
+  it('polls only notifications for background incidents and retains settings warnings', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.dashboardNotifications).toHaveLength(4);
+    getNotifications.mockResolvedValue({
+      unreadCount: 2,
+      items: [{ id: 'background-incident', persisted: true, isRead: false }],
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(45_000);
+    });
+
+    expect(getNotifications).toHaveBeenCalledTimes(2);
+    expect(getAlertSettings).toHaveBeenCalledTimes(1);
+    expect(result.current.dashboardUnreadCount).toBe(2);
+    expect(result.current.dashboardNotifications.map(item => item.id)).toEqual([
+      'background-incident',
+      'smtp-not-configured',
+      'alerts-disabled',
+      'no-contacts-defined',
+    ]);
+  });
+
+  it('skips overlapping polls, queues immediate refresh, and stops after unmount', async () => {
+    vi.useFakeTimers();
+    const { result, unmount } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.dashboardNotifications).toHaveLength(4);
+    let finishPoll;
+    getNotifications.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishPoll = resolve;
+        })
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(90_000);
+    });
+    expect(getNotifications).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      window.dispatchEvent(new Event('tt:notifications-refresh'));
+      finishPoll({ unreadCount: 0, items: [] });
+      await Promise.resolve();
+    });
+    expect(getNotifications).toHaveBeenCalledTimes(3);
+    expect(getAlertSettings).toHaveBeenCalledTimes(2);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(45_000);
+    });
+    expect(getNotifications).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not poll when notifications are disabled', async () => {
+    vi.useFakeTimers();
+    renderHook(
+      () => useDashboardNotifications({ session, workspace, enabled: false }),
+      { wrapper }
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(90_000);
+    });
+    expect(getNotifications).not.toHaveBeenCalled();
+    expect(getAlertSettings).not.toHaveBeenCalled();
+  });
+
+  it('polls only the selected workspace and stops when the workspace is cleared', async () => {
+    vi.useFakeTimers();
+    const { rerender } = renderHook(
+      ({ selectedWorkspace }) =>
+        useDashboardNotifications({ session, workspace: selectedWorkspace }),
+      { initialProps: { selectedWorkspace: workspace }, wrapper }
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    rerender({ selectedWorkspace: { id: 'ws-2', role: 'admin' } });
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(45_000);
+    });
+    expect(getNotifications.mock.calls.map(([id]) => id)).toEqual([
+      'ws-1',
+      'ws-2',
+      'ws-2',
+    ]);
+
+    rerender({ selectedWorkspace: null });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(45_000);
+    });
+    expect(getNotifications).toHaveBeenCalledTimes(3);
   });
 });
