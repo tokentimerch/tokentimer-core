@@ -141,6 +141,7 @@ export async function recordAutoSyncCompleted(
  * consecutive_failures counter and raises a bell notification: warning on the
  * first failure, escalating to critical once AUTO_SYNC_CRITICAL_THRESHOLD
  * consecutive failures are reached.
+ * The worker defers critical email until after its config transaction commits.
  */
 export async function recordAutoSyncFailure(
   client,
@@ -154,6 +155,7 @@ export async function recordAutoSyncFailure(
     httpStatus = null,
     nextSync,
   },
+  deferIncidentEmail = null,
 ) {
   const updateRes = await client.query(
     `UPDATE auto_sync_configs
@@ -187,7 +189,7 @@ export async function recordAutoSyncFailure(
       },
     });
     if (notifId && critical) {
-      await sendOperationalIncidentEmail(client, {
+      const incidentEmail = {
         notificationId: notifId,
         workspaceId,
         tokenId: null,
@@ -195,7 +197,9 @@ export async function recordAutoSyncFailure(
         title: `Auto-sync failing repeatedly: ${provider}`,
         message: errorMessage || "Auto-sync run failed",
         metadata: { provider, consecutive_failures: consecutiveFailures },
-      });
+      };
+      if (deferIncidentEmail) deferIncidentEmail(incidentEmail);
+      else await sendOperationalIncidentEmail(client, incidentEmail);
     }
   }
 

@@ -147,6 +147,8 @@ describe("opNotifications helpers (worker, ESM)", () => {
           state.claim = values[1];
           return { rows: [{ id: values[0] }] };
         }
+        if (sql.includes("pg_advisory_lock(")) return { rows: [{}] };
+        if (sql.includes("pg_advisory_unlock(")) return { rows: [{}] };
         if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: cap }] };
         if (sql.includes("wm.role = 'admin'")) {
           return { rows: recipients.map((email) => ({ email })) };
@@ -205,6 +207,15 @@ describe("opNotifications helpers (worker, ESM)", () => {
       expect(sentTo).to.deep.equal(["a@example.com", "b@example.com"]);
       expect(state.completed).to.deep.equal([true]);
       expect(state.sent).to.equal(true);
+      expect(
+        client.calls.some((call) => call.sql.includes("pg_advisory_lock(")),
+      ).to.equal(true);
+      expect(
+        client.calls.find((call) => call.sql.includes("pg_advisory_lock(")).params,
+      ).to.deep.equal(["ws-1"]);
+      expect(
+        client.calls.some((call) => call.sql.includes("pg_advisory_unlock(")),
+      ).to.equal(true);
       const claim = client.calls.find((call) =>
         call.sql.includes("SET email_claim_id = $2"),
       );
@@ -267,7 +278,14 @@ describe("opNotifications helpers (worker, ESM)", () => {
       await mod.sendOperationalIncidentEmail(client, params, async () => {
         throw new Error("must not send");
       });
-      expect(client.calls).to.have.length(1);
+      expect(
+        client.calls.filter((call) =>
+          call.sql.includes("SET email_claim_id = $2"),
+        ),
+      ).to.have.length(1);
+      expect(
+        client.calls.some((call) => call.sql.includes("COUNT(*)::int AS c")),
+      ).to.equal(false);
       expect(state.claim).to.equal("other-worker");
     });
   });

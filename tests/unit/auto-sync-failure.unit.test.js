@@ -224,6 +224,8 @@ describe("auto-sync operational incidents", () => {
           return { rows: [{ id: "same-incident" }] };
         }
         if (sql.includes("SET email_claim_id = $2")) return { rows: [{ id: "same-incident" }] };
+        if (sql.includes("pg_advisory_lock(")) return { rows: [{}] };
+        if (sql.includes("pg_advisory_unlock(")) return { rows: [{}] };
         if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: 0 }] };
         if (sql.includes("wm.role = 'admin'")) return { rows: [{ email: "admin@example.com" }] };
         if (sql.includes("SET email_sent_at = CASE")) return { rowCount: 1 };
@@ -248,6 +250,42 @@ describe("auto-sync operational incidents", () => {
       "auto_sync_failed:cfg-1",
     ]);
     assert.equal(calls.filter((call) => call.sql.includes("SET email_claim_id = $2")).length, 1);
+  });
+
+  it("defers critical email until the worker commits the incident", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const calls = [];
+    const client = {
+      async query(sql, params) {
+        calls.push(String(sql));
+        if (sql.includes("UPDATE auto_sync_configs")) {
+          return { rows: [{ consecutive_failures: 3 }] };
+        }
+        if (sql.includes("INSERT INTO operational_notifications")) {
+          return { rows: [{ id: "critical-incident" }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const deferred = [];
+    await mod.recordAutoSyncFailure(
+      client,
+      {
+        configId: "cfg-deferred",
+        workspaceId: "ws-deferred",
+        provider: "github",
+        previousStatus: "failed",
+        errorMessage: "Rate limited",
+        nextSync: new Date(),
+      },
+      (incident) => deferred.push(incident),
+    );
+    assert.equal(deferred.length, 1);
+    assert.equal(deferred[0].notificationId, "critical-incident");
+    assert.equal(
+      calls.some((sql) => sql.includes("SET email_claim_id")),
+      false,
+    );
   });
 
   it("clears the counter and resolves the open incident on recovery", async () => {

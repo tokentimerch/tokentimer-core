@@ -27,10 +27,8 @@ export function useDashboardNotifications({
 
       try {
         const [settingsRes, notificationsRes] = await Promise.all([
-          workspaceAPI.getAlertSettings(workspace.id),
-          workspaceAPI
-            .getNotifications(workspace.id)
-            .catch(() => ({ items: [] })),
+          workspaceAPI.getAlertSettings(workspace.id).catch(() => null),
+          workspaceAPI.getNotifications(workspace.id).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -92,6 +90,11 @@ export function useDashboardNotifications({
             ? notificationsRes.unreadCount
             : 0
         );
+
+        if (!settingsRes) {
+          setDashboardNotifications(list);
+          return;
+        }
 
         if (!canManageWorkspaceAlerts) {
           setDashboardNotifications(list);

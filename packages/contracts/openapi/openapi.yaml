@@ -3210,8 +3210,8 @@ paths:
       description: >-
         Returns operational notifications for the dashboard bell, including
         auto-sync failures and alerts waiting for the delivery window.
-        Workspace admins and managers receive provider-specific items; other
-        members receive an empty list.
+        Workspace admins and managers receive workspace-level items; other
+        members receive incidents for tokens they own.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3236,6 +3236,7 @@ paths:
                           type: string
                         message:
                           type: string
+                          nullable: true
                         href:
                           type: string
                           nullable: true

@@ -34,6 +34,7 @@ import {
   buildAutoSyncImportBody,
   gitlabFiltersForAutoSync,
 } from "./shared/autoSyncImportBody.js";
+import { sendOperationalIncidentEmail } from "./shared/opNotifications.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
 const KDF_SALT = "tokentimer-settings-encryption";
@@ -186,6 +187,9 @@ async function runAutoSync() {
   logger.info("Auto-sync worker started");
 
   await withClient(async (client) => {
+    const pendingIncidentEmails = [];
+    const deferIncidentEmail = (incident) =>
+      pendingIncidentEmails.push(incident);
     // Wrap the SELECT FOR UPDATE and the per-config status updates in an
     // explicit transaction so the row locks are held until each UPDATE commits.
     // Without BEGIN/COMMIT the lock is released immediately after SELECT in
@@ -244,7 +248,7 @@ async function runAutoSync() {
             previousStatus,
             errorMessage: message,
             nextSync,
-          });
+          }, deferIncidentEmail);
           logger.warn(message, { workspace_id, provider });
           cAutoSync.inc({ provider, status: "failure" });
           gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
@@ -480,13 +484,18 @@ async function runAutoSync() {
             errorMessage: formatAutoSyncError(syncErr),
             httpStatus: syncErr?.response?.status || null,
             nextSync,
-          });
+          }, deferIncidentEmail);
         }
       }),
     );
 
     // Commit all status updates and release the FOR UPDATE locks atomically.
     await client.query("COMMIT");
+    // The incident rows and sent timestamps must be visible to other workers
+    // before the workspace-scoped email cap is checked.
+    for (const incident of pendingIncidentEmails) {
+      await sendOperationalIncidentEmail(client, incident);
+    }
   });
 
   logger.info("Auto-sync worker finished");

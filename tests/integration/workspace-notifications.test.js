@@ -155,6 +155,7 @@ describe("Persisted operational notifications (bell)", function () {
   let adminUserId;
   let viewer;
   let viewerCookie;
+  let viewerUserId;
   let workspaceId;
   let client;
   let tokenId;
@@ -201,11 +202,12 @@ describe("Persisted operational notifications (bell)", function () {
 
     viewer = await TestUtils.createAuthenticatedUser();
     viewerCookie = viewer.cookie;
+    viewerUserId = viewer.id || viewer.user?.id;
     await client.query(
       `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
        VALUES ($1, $2, 'viewer', $3)
        ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = 'viewer'`,
-      [viewer.id || viewer.user?.id, workspaceId, adminUserId],
+      [viewerUserId, workspaceId, adminUserId],
     );
 
     const tokenRes = await client.query(
@@ -294,6 +296,73 @@ describe("Persisted operational notifications (bell)", function () {
     expect(item).to.exist;
     expect(item.kind).to.equal("warning");
     expect(item.href).to.equal("/dashboard?import=github&autoSyncManage=1");
+  });
+
+  it("restricts workspace-level incidents to managers while retaining owner-scoped delivery incidents", async () => {
+    await client.query(
+      "UPDATE workspace_memberships SET role = 'workspace_manager' WHERE workspace_id = $1 AND user_id = $2",
+      [workspaceId, viewerUserId],
+    );
+    try {
+      const managerRes = await fetchNotifications(viewerCookie).expect(200);
+      expect(
+        managerRes.body.items.some((item) => item.id === autoSyncNotifId),
+      ).to.equal(true);
+      expect(managerRes.body.items.some((item) => item.id === notifId)).to.equal(true);
+    } finally {
+      await client.query(
+        "UPDATE workspace_memberships SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2",
+        [workspaceId, viewerUserId],
+      );
+    }
+
+    const ownerToken = await client.query(
+      `INSERT INTO tokens (user_id, workspace_id, name, type, expiration, created_by)
+       VALUES ($1, $2, 'Viewer-owned notification token', 'ssl_cert',
+               CURRENT_DATE + INTERVAL '7 days', $1)
+       RETURNING id`,
+      [viewerUserId, workspaceId],
+    );
+    const ownerTokenId = ownerToken.rows[0].id;
+    try {
+      const ownerIncident = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title)
+         VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Owner delivery blocked')
+         RETURNING id`,
+        [workspaceId, ownerTokenId, `owner-delivery:${Date.now()}`],
+      );
+      const ownerIncidentId = ownerIncident.rows[0].id;
+      const adminRes = await fetchNotifications(adminCookie).expect(200);
+      expect(adminRes.body.items.some((item) => item.id === ownerIncidentId)).to.equal(true);
+      const viewerRes = await fetchNotifications(viewerCookie).expect(200);
+      expect(
+        viewerRes.body.items.some((item) => item.id === autoSyncNotifId),
+      ).to.equal(false);
+      const visibleOwnerIncident = viewerRes.body.items.find(
+        (item) => item.id === ownerIncidentId,
+      );
+      expect(visibleOwnerIncident).to.exist;
+      expect(visibleOwnerIncident.message).to.equal(null);
+      expect(viewerRes.body.unreadCount).to.equal(1);
+
+      await markRead(viewerCookie, autoSyncNotifId).expect(404);
+      await markAllRead(viewerCookie).expect(200);
+      const reads = await client.query(
+        `SELECT notification_id FROM operational_notification_reads
+          WHERE user_id = $1 AND notification_id = ANY($2::uuid[])`,
+        [viewerUserId, [autoSyncNotifId, ownerIncidentId]],
+      );
+      expect(reads.rows.map((row) => row.notification_id)).to.deep.equal([
+        ownerIncidentId,
+      ]);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE token_id = $1",
+        [ownerTokenId],
+      );
+      await client.query("DELETE FROM tokens WHERE id = $1", [ownerTokenId]);
+    }
   });
 
   it("marking a single notification as read only affects that user's view", async () => {
@@ -389,6 +458,67 @@ describe("Persisted operational notifications (bell)", function () {
     expect(
       repeat.body.items.find((entry) => entry.id === warningId).isRead,
     ).to.equal(true);
+  });
+
+  it("counts every visible unread incident while keeping an old escalated incident in the bounded list", async () => {
+    const before = await fetchNotifications(adminCookie).expect(200);
+    const viewerBefore = await fetchNotifications(viewerCookie).expect(200);
+    const prefix = `limit-test:${Date.now()}`;
+    try {
+      const old = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title,
+            created_at, updated_at)
+         VALUES ($1, $2, 'delivery', 'delivery_degraded', 'warning', $3,
+                 'Old incident', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days')
+         RETURNING id`,
+        [workspaceId, tokenId, `${prefix}:old`],
+      );
+      const oldId = old.rows[0].id;
+      await markRead(adminCookie, oldId).expect(200);
+      await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title,
+            created_at, updated_at)
+         SELECT $1, $2, 'delivery', 'delivery_degraded', 'warning',
+                $3 || ':' || g, 'Recent incident ' || g,
+                NOW() - INTERVAL '1 hour' + g * INTERVAL '1 second',
+                NOW() - INTERVAL '1 hour' + g * INTERVAL '1 second'
+           FROM generate_series(1, 55) AS g`,
+        [workspaceId, tokenId, prefix],
+      );
+      const criticalId = await raiseOperationalNotification(client, {
+        workspaceId,
+        tokenId,
+        category: "delivery",
+        type: "delivery_blocked",
+        severity: "critical",
+        dedupeKey: `${prefix}:old`,
+        title: "Old incident escalated",
+      });
+      expect(criticalId).to.equal(oldId);
+
+      const adminRes = await fetchNotifications(adminCookie).expect(200);
+      const persisted = adminRes.body.items.filter((item) => item.persisted);
+      expect(persisted).to.have.length(50);
+      expect(adminRes.body.unreadCount).to.equal(before.body.unreadCount + 56);
+      expect(persisted[0].id).to.equal(oldId);
+      expect(persisted[0].severity).to.equal("critical");
+      expect(persisted[0].isRead).to.equal(false);
+
+      const viewerRes = await fetchNotifications(viewerCookie).expect(200);
+      expect(viewerRes.body.unreadCount).to.equal(
+        viewerBefore.body.unreadCount,
+      );
+      expect(viewerRes.body.items.some((item) => item.id === oldId)).to.equal(
+        false,
+      );
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE workspace_id = $1 AND dedupe_key LIKE $2",
+        [workspaceId, `${prefix}:%`],
+      );
+    }
   });
 
   it("retries an unsent critical delivery incident on a later sweep", async () => {
@@ -604,6 +734,84 @@ describe("Persisted operational notifications (bell)", function () {
     expect(sent.rows[0].email_sent_at).to.be.a("date");
   });
 
+  it("does not exceed the workspace email cap when different incidents send concurrently", async () => {
+    const capWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Concurrent incident cap",
+    );
+    const inserted = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, 'auto_sync', 'auto_sync_failed', 'critical', $2, 'Concurrent cap A'),
+              ($1, 'auto_sync', 'auto_sync_failed', 'critical', $3, 'Concurrent cap B')
+       RETURNING id, title`,
+      [capWorkspaceId, `cap:a:${Date.now()}`, `cap:b:${Date.now()}`],
+    );
+    const otherClient = new Client({
+      user: process.env.DB_USER || "tokentimer",
+      host: process.env.DB_HOST || "localhost",
+      database: process.env.DB_NAME || "tokentimer",
+      password: process.env.DB_PASSWORD || "password",
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+      ssl: false,
+    });
+    await otherClient.connect();
+    const previousCap = process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP;
+    process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP = "1";
+    const { sendOperationalIncidentEmail } = await import(
+      `../../apps/worker/src/shared/opNotifications.js?cap-concurrent=${Date.now()}`
+    );
+    let sends = 0;
+    const sendEmail = async () => {
+      sends += 1;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return { success: true };
+    };
+    try {
+      await Promise.all(
+        inserted.rows.map((row, index) =>
+          sendOperationalIncidentEmail(
+            index === 0 ? client : otherClient,
+            {
+              notificationId: row.id,
+              workspaceId: capWorkspaceId,
+              category: "auto_sync",
+              title: row.title,
+            },
+            sendEmail,
+          ),
+        ),
+      );
+      const rows = await client.query(
+        `SELECT email_sent_at, email_claim_id, email_claimed_at
+           FROM operational_notifications WHERE id = ANY($1::uuid[])`,
+        [inserted.rows.map((row) => row.id)],
+      );
+      expect(sends).to.equal(1);
+      expect(
+        rows.rows.filter((row) => row.email_sent_at !== null),
+      ).to.have.length(1);
+      expect(
+        rows.rows.filter((row) => row.email_sent_at === null),
+      ).to.have.length(1);
+      expect(rows.rows.every((row) => row.email_claim_id === null)).to.equal(
+        true,
+      );
+      expect(
+        rows.rows.find((row) => row.email_sent_at === null).email_claimed_at,
+      ).to.be.a("date");
+    } finally {
+      if (previousCap === undefined)
+        delete process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP;
+      else process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP = previousCap;
+      await otherClient.end();
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [inserted.rows.map((row) => row.id)],
+      );
+    }
+  });
+
   it("resolving the underlying incident removes it from the bell", async () => {
     await client.query(
       `UPDATE operational_notifications SET resolved_at = NOW() WHERE id = $1`,
@@ -612,6 +820,7 @@ describe("Persisted operational notifications (bell)", function () {
     const res = await fetchNotifications(adminCookie).expect(200);
     const item = res.body.items.find((it) => it.id === notifId);
     expect(item).to.be.undefined;
+    await markRead(adminCookie, notifId).expect(404);
   });
 
   it("requires workspace membership to mark-all-as-read", async () => {
