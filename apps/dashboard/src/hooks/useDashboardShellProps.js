@@ -324,7 +324,7 @@ export function useDashboardShellProps({
       .markAllNotificationsRead(activeWorkspace.id)
       .then(() => {
         setDashboardNotifications(prev =>
-          prev.map(item => ({ ...item, isRead: true }))
+          prev.map(item => (item.persisted ? { ...item, isRead: true } : item))
         );
         setDashboardUnreadCount(0);
       })

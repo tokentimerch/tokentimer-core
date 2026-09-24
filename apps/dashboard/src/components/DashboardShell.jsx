@@ -290,6 +290,16 @@ export default function DashboardShell({
   );
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isTourMenuActive, setIsTourMenuActive] = useState(false);
+  const showNotificationIndicator =
+    dashboardUnreadCount > 0 ||
+    (dashboardUnreadCount === undefined && dashboardNotifications.length > 0) ||
+    dashboardNotifications.some(
+      notification => notification?.persisted !== true
+    );
+  const hasUnreadPersistedNotifications = dashboardNotifications.some(
+    notification =>
+      notification?.persisted === true && notification?.isRead === false
+  );
   const {
     isOpen: isMobileNavOpen,
     onOpen: onMobileNavOpen,
@@ -896,10 +906,9 @@ export default function DashboardShell({
 
             <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
-                {(dashboardUnreadCount !== undefined
-                  ? dashboardUnreadCount > 0
-                  : dashboardNotifications.length > 0) && (
+                {showNotificationIndicator && (
                   <Box
+                    data-testid='notification-attention-indicator'
                     position='absolute'
                     top='7px'
                     right='8px'
@@ -931,25 +940,26 @@ export default function DashboardShell({
                     </Box>
                   ) : (
                     <>
-                      {typeof onMarkAllNotificationsRead === 'function' && (
-                        <Box
-                          px={3}
-                          py={1.5}
-                          borderBottom='1px solid'
-                          borderColor={borderColor}
-                        >
-                          <Text
-                            as='button'
-                            fontSize='xs'
-                            fontWeight='medium'
-                            color={mutedTextColor}
-                            onClick={onMarkAllNotificationsRead}
-                            _hover={{ textDecoration: 'underline' }}
+                      {typeof onMarkAllNotificationsRead === 'function' &&
+                        hasUnreadPersistedNotifications && (
+                          <Box
+                            px={3}
+                            py={1.5}
+                            borderBottom='1px solid'
+                            borderColor={borderColor}
                           >
-                            Mark all as read
-                          </Text>
-                        </Box>
-                      )}
+                            <Text
+                              as='button'
+                              fontSize='xs'
+                              fontWeight='medium'
+                              color={mutedTextColor}
+                              onClick={onMarkAllNotificationsRead}
+                              _hover={{ textDecoration: 'underline' }}
+                            >
+                              Mark all as read
+                            </Text>
+                          </Box>
+                        )}
                       {dashboardNotifications.map(notification => {
                         const isClickable = Boolean(notification?.href);
                         const isUnread = notification?.isRead === false;
