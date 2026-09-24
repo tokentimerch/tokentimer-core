@@ -44,7 +44,11 @@ import {
   raiseOperationalNotification,
   resolveOperationalNotification,
   sendOperationalIncidentEmail,
+  retryPendingOperationalIncidentEmails,
 } from "./shared/opNotifications.js";
+
+const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+let lastOperationalEmailSweepAt = 0;
 
 const { isValidEmail } = emailAddress;
 
@@ -1203,7 +1207,10 @@ export const _test = {
   RENEWAL_PATH_STATE_LABELS,
 };
 
-export async function deliveryWorkerJob({ closePool = true } = {}) {
+export async function deliveryWorkerJob({
+  closePool = true,
+  incidentEmailSender = sendEmailNotification,
+} = {}) {
   const startedAt = Date.now();
   // Owner identity for this run's claims. Every renewal and terminal write
   // is conditional on still holding this claim id, so if the claim marker
@@ -2807,7 +2814,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               alert,
               errorMessages || "Maximum delivery attempts reached",
               failedChannels,
-              blockDueToWhatsApp ? "whatsapp_permanent_failure" : "max_attempts",
+              blockDueToWhatsApp
+                ? "whatsapp_permanent_failure"
+                : "max_attempts",
               {
                 email: newAttemptsEmail,
                 webhooks: newAttemptsWebhooks,
@@ -2915,6 +2924,24 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       }
     }
   });
+
+  // The alert queue excludes terminal blocked rows. Sweep their unsent incident
+  // emails independently, including on runs with no claimable alerts.
+  if (
+    Date.now() - lastOperationalEmailSweepAt >=
+    OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS
+  ) {
+    lastOperationalEmailSweepAt = Date.now();
+    try {
+      await withClient((client) =>
+        retryPendingOperationalIncidentEmails(client, incidentEmailSender),
+      );
+    } catch (err) {
+      logger.warn("Operational incident email retry sweep failed", {
+        error: err.message,
+      });
+    }
+  }
 
   const durationMs = Date.now() - startedAt;
   logger.info(

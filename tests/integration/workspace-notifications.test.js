@@ -1,6 +1,8 @@
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
 const { Client } = require("pg");
-const { raiseOperationalNotification } = require("../../apps/api/services/operationalNotifications");
+const {
+  raiseOperationalNotification,
+} = require("../../apps/api/services/operationalNotifications");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -83,7 +85,13 @@ describe("Workspace operational notifications API", function () {
       `INSERT INTO tokens (user_id, workspace_id, name, type, expiration, created_by)
        VALUES ($1, $2, $3, $4, CURRENT_DATE + INTERVAL '7 days', $5)
        RETURNING id`,
-      [adminUserId, workspaceId, "Notification Test Token", "ssl_cert", adminUserId],
+      [
+        adminUserId,
+        workspaceId,
+        "Notification Test Token",
+        "ssl_cert",
+        adminUserId,
+      ],
     );
     tokenId = tokenRes.rows[0].id;
 
@@ -224,9 +232,10 @@ describe("Persisted operational notifications (bell)", function () {
       await client.query("DELETE FROM tokens WHERE id = $1", [tokenId]);
     }
     if (autoSyncNotifId) {
-      await client.query("DELETE FROM operational_notifications WHERE id = $1", [
-        autoSyncNotifId,
-      ]);
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = $1",
+        [autoSyncNotifId],
+      );
     }
     await client.end();
     await TestUtils.cleanupTestUser(viewer.email, viewerCookie);
@@ -255,7 +264,9 @@ describe("Persisted operational notifications (bell)", function () {
     const item = res.body.items.find((it) => it.id === notifId);
     expect(item).to.exist;
     expect(item.kind).to.equal("error");
-    expect(item.text).to.equal("Delivery blocked: Persisted Notification Token");
+    expect(item.text).to.equal(
+      "Delivery blocked: Persisted Notification Token",
+    );
     expect(item.href).to.equal("/control-center");
     expect(item.isRead).to.equal(false);
     expect(item.persisted).to.equal(true);
@@ -344,7 +355,11 @@ describe("Persisted operational notifications (bell)", function () {
     });
     expect(warningId).to.be.a("string");
     await markRead(adminCookie, warningId).expect(200);
-    expect((await fetchNotifications(adminCookie).expect(200)).body.items.find((item) => item.id === warningId).isRead).to.equal(true);
+    expect(
+      (await fetchNotifications(adminCookie).expect(200)).body.items.find(
+        (item) => item.id === warningId,
+      ).isRead,
+    ).to.equal(true);
 
     const criticalId = await raiseOperationalNotification(client, {
       ...incident,
@@ -371,17 +386,28 @@ describe("Persisted operational notifications (bell)", function () {
       title: "Delivery blocked",
     });
     const repeat = await fetchNotifications(adminCookie).expect(200);
-    expect(repeat.body.items.find((entry) => entry.id === warningId).isRead).to.equal(true);
+    expect(
+      repeat.body.items.find((entry) => entry.id === warningId).isRead,
+    ).to.equal(true);
   });
 
-  it("keeps a failed incident email unsent in the database until a retry succeeds", async () => {
-    const { sendOperationalIncidentEmail } = await import("../../apps/worker/src/shared/opNotifications.js");
+  it("retries an unsent critical delivery incident on a later sweep", async () => {
+    const {
+      sendOperationalIncidentEmail,
+      retryPendingOperationalIncidentEmails,
+    } = await import("../../apps/worker/src/shared/opNotifications.js");
+    const title = `Retry email ${Date.now()}`;
     const result = await client.query(
       `INSERT INTO operational_notifications
          (workspace_id, token_id, category, type, severity, dedupe_key, title)
-       VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Retry email')
+       VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, $4)
        RETURNING id`,
-      [workspaceId, tokenId, `delivery_blocked:email-retry-${Date.now()}`],
+      [
+        workspaceId,
+        tokenId,
+        `delivery_blocked:email-retry-${Date.now()}`,
+        title,
+      ],
     );
     const notificationId = result.rows[0].id;
     const incident = {
@@ -389,23 +415,193 @@ describe("Persisted operational notifications (bell)", function () {
       workspaceId,
       tokenId,
       category: "delivery",
-      title: "Retry email",
+      title,
     };
-    await sendOperationalIncidentEmail(client, incident, async () => ({ success: false, error: "SMTP down" }));
+    await sendOperationalIncidentEmail(client, incident, async () => ({
+      success: false,
+      error: "SMTP down",
+    }));
     const failed = await client.query(
-      "SELECT email_sent_at, email_claim_id FROM operational_notifications WHERE id = $1",
+      "SELECT email_sent_at, email_claim_id, email_claimed_at FROM operational_notifications WHERE id = $1",
       [notificationId],
     );
     expect(failed.rows[0].email_sent_at).to.equal(null);
     expect(failed.rows[0].email_claim_id).to.equal(null);
+    expect(failed.rows[0].email_claimed_at).to.be.a("date");
 
-    await sendOperationalIncidentEmail(client, incident, async () => ({ success: true }));
+    let sends = 0;
+    await retryPendingOperationalIncidentEmails(client, async ({ subject }) => {
+      if (subject.includes(title)) sends += 1;
+      return { success: true };
+    });
+    expect(sends).to.equal(0);
+
+    await client.query(
+      "UPDATE operational_notifications SET email_claimed_at = NOW() - INTERVAL '16 minutes' WHERE id = $1",
+      [notificationId],
+    );
+    await retryPendingOperationalIncidentEmails(client, async () => ({
+      success: false,
+      error: "SMTP still down",
+    }));
+    const retryFailed = await client.query(
+      "SELECT email_sent_at, email_claim_id, email_claimed_at FROM operational_notifications WHERE id = $1",
+      [notificationId],
+    );
+    expect(retryFailed.rows[0].email_sent_at).to.equal(null);
+    expect(retryFailed.rows[0].email_claim_id).to.equal(null);
+    expect(retryFailed.rows[0].email_claimed_at).to.be.a("date");
+
+    await client.query(
+      `UPDATE operational_notifications
+          SET email_claim_id = '00000000-0000-4000-8000-000000000001',
+              email_claimed_at = NOW() - INTERVAL '16 minutes'
+        WHERE id = $1`,
+      [notificationId],
+    );
+    const { deliveryWorkerJob } =
+      await import("../../apps/worker/src/delivery-worker.js");
+    await deliveryWorkerJob({
+      closePool: false,
+      incidentEmailSender: async ({ subject }) => {
+        if (subject.includes(title)) sends += 1;
+        return { success: true };
+      },
+    });
+    expect(sends).to.be.at.least(1);
+
     const retried = await client.query(
       "SELECT email_sent_at, email_claim_id FROM operational_notifications WHERE id = $1",
       [notificationId],
     );
     expect(retried.rows[0].email_sent_at).to.be.a("date");
     expect(retried.rows[0].email_claim_id).to.equal(null);
+  });
+
+  it("skips email failures, resolved incidents, and sent incidents while retrying auto-sync once", async () => {
+    const { retryPendingOperationalIncidentEmails } =
+      await import("../../apps/worker/src/shared/opNotifications.js");
+    const cases = [
+      {
+        title: "Email recursion array",
+        metadata: { failed_channels: ["webhooks", "EMAIL"] },
+      },
+      { title: "Email recursion channel", metadata: { channel: "email" } },
+      { title: "Resolved incident", resolved: true },
+      { title: "Already sent incident", sent: true },
+      { title: "Auto-sync retry", category: "auto_sync" },
+    ];
+    const ids = new Map();
+    for (const testCase of cases) {
+      const result = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title,
+            metadata, resolved_at, email_sent_at)
+         VALUES ($1, $2, $3, $4, 'critical', $5, $6, $7::jsonb, $8, $9)
+         RETURNING id`,
+        [
+          workspaceId,
+          testCase.category === "auto_sync" ? null : tokenId,
+          testCase.category || "delivery",
+          testCase.category === "auto_sync"
+            ? "auto_sync_failed"
+            : "delivery_blocked",
+          `email-sweep:${testCase.title}:${Date.now()}`,
+          testCase.title,
+          JSON.stringify(testCase.metadata || {}),
+          testCase.resolved ? new Date() : null,
+          testCase.sent ? new Date() : null,
+        ],
+      );
+      ids.set(testCase.title, result.rows[0].id);
+    }
+
+    const subjects = [];
+    const sendEmail = async ({ subject }) => {
+      subjects.push(subject);
+      return { success: true };
+    };
+    await retryPendingOperationalIncidentEmails(client, sendEmail);
+    await retryPendingOperationalIncidentEmails(client, sendEmail);
+
+    expect(
+      subjects.filter((subject) => subject.includes("Auto-sync retry")),
+    ).to.have.length(1);
+    for (const title of [
+      "Email recursion array",
+      "Email recursion channel",
+      "Resolved incident",
+      "Already sent incident",
+    ]) {
+      expect(subjects.some((subject) => subject.includes(title))).to.equal(
+        false,
+      );
+    }
+    const rows = await client.query(
+      `SELECT id, email_sent_at, email_claimed_at
+         FROM operational_notifications WHERE id = ANY($1::uuid[])`,
+      [[...ids.values()]],
+    );
+    const byId = new Map(rows.rows.map((row) => [row.id, row]));
+    expect(byId.get(ids.get("Auto-sync retry")).email_sent_at).to.be.a("date");
+    for (const title of [
+      "Email recursion array",
+      "Email recursion channel",
+      "Resolved incident",
+    ]) {
+      expect(byId.get(ids.get(title)).email_sent_at).to.equal(null);
+      expect(byId.get(ids.get(title)).email_claimed_at).to.equal(null);
+    }
+  });
+
+  it("does not double-send when two workers sweep the same critical incident", async () => {
+    const { retryPendingOperationalIncidentEmails } =
+      await import("../../apps/worker/src/shared/opNotifications.js");
+    const title = `Concurrent retry ${Date.now()}`;
+    const result = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, $4)
+       RETURNING id`,
+      [
+        workspaceId,
+        tokenId,
+        `delivery_blocked:concurrent-${Date.now()}`,
+        title,
+      ],
+    );
+    const notificationId = result.rows[0].id;
+    const otherClient = new Client({
+      user: process.env.DB_USER || "tokentimer",
+      host: process.env.DB_HOST || "localhost",
+      database: process.env.DB_NAME || "tokentimer",
+      password: process.env.DB_PASSWORD || "password",
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+      ssl: false,
+    });
+    await otherClient.connect();
+    let targetSends = 0;
+    const sendEmail = async ({ subject }) => {
+      if (subject.includes(title)) {
+        targetSends += 1;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      return { success: true };
+    };
+    try {
+      await Promise.all([
+        retryPendingOperationalIncidentEmails(client, sendEmail),
+        retryPendingOperationalIncidentEmails(otherClient, sendEmail),
+      ]);
+    } finally {
+      await otherClient.end();
+    }
+    expect(targetSends).to.equal(1);
+    const sent = await client.query(
+      "SELECT email_sent_at FROM operational_notifications WHERE id = $1",
+      [notificationId],
+    );
+    expect(sent.rows[0].email_sent_at).to.be.a("date");
   });
 
   it("resolving the underlying incident removes it from the bell", async () => {
