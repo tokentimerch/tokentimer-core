@@ -185,6 +185,86 @@ describe('useDashboardNotifications', () => {
     ).toBe(true);
   });
 
+  it('does not apply a completed mark-all request to a newly selected workspace', async () => {
+    getAlertSettings.mockResolvedValue({
+      email_alerts_enabled: true,
+      smtp_configured: true,
+      contact_groups: [{ email_contact_ids: [1] }],
+    });
+    getNotifications.mockImplementation(id =>
+      Promise.resolve({
+        unreadCount: 1,
+        items: [{ id: `incident-${id}`, persisted: true, isRead: false }],
+      })
+    );
+    let finishMarkAll;
+    markAllNotificationsRead.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishMarkAll = resolve;
+        })
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedWorkspace }) =>
+        useDashboardNotifications({ session, workspace: selectedWorkspace }),
+      { initialProps: { selectedWorkspace: workspace }, wrapper }
+    );
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications[0]?.id).toBe('incident-ws-1')
+    );
+    act(() => result.current.onMarkAllNotificationsRead());
+    expect(markAllNotificationsRead).toHaveBeenCalledWith('ws-1');
+
+    rerender({ selectedWorkspace: { id: 'ws-2', role: 'admin' } });
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications[0]?.id).toBe('incident-ws-2')
+    );
+    await act(async () => finishMarkAll({}));
+    expect(result.current.dashboardNotifications[0].isRead).toBe(false);
+    expect(result.current.dashboardUnreadCount).toBe(1);
+  });
+
+  it('does not decrement the new workspace count after a prior read-one completes', async () => {
+    getAlertSettings.mockResolvedValue({
+      email_alerts_enabled: true,
+      smtp_configured: true,
+      contact_groups: [{ email_contact_ids: [1] }],
+    });
+    getNotifications.mockImplementation(id =>
+      Promise.resolve({
+        unreadCount: 1,
+        items: [{ id: `incident-${id}`, persisted: true, isRead: false }],
+      })
+    );
+    let finishMarkOne;
+    markNotificationRead.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishMarkOne = resolve;
+        })
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedWorkspace }) =>
+        useDashboardNotifications({ session, workspace: selectedWorkspace }),
+      { initialProps: { selectedWorkspace: workspace }, wrapper }
+    );
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications[0]?.id).toBe('incident-ws-1')
+    );
+    act(() =>
+      result.current.onNotificationClick(
+        result.current.dashboardNotifications[0]
+      )
+    );
+    rerender({ selectedWorkspace: { id: 'ws-2', role: 'admin' } });
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications[0]?.id).toBe('incident-ws-2')
+    );
+    await act(async () => finishMarkOne({}));
+    expect(result.current.dashboardNotifications[0].isRead).toBe(false);
+    expect(result.current.dashboardUnreadCount).toBe(1);
+  });
+
   it('loads the selected workspace and refreshes only the current workspace', async () => {
     getAlertSettings.mockResolvedValue({
       email_alerts_enabled: true,

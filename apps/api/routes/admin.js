@@ -42,7 +42,9 @@ const {
   interpretContactGroupWrite,
   canonicalLegacyContactGroupId,
 } = require("../src/shared/contactGroups");
-const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
+const {
+  assertContactGroupIds,
+} = require("../src/shared/assertContactGroupIds");
 
 const DNS_LIVE_CERT_SKIP_DETAILS = new Set([
   "live_certificate_dns_unresolved",
@@ -255,8 +257,8 @@ function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
   if (cleanup_obsolete === false) return false;
   return Boolean(
     scan_params &&
-      typeof scan_params === "object" &&
-      scan_params.cleanupObsolete === true,
+    typeof scan_params === "object" &&
+    scan_params.cleanupObsolete === true,
   );
 }
 
@@ -478,12 +480,23 @@ router.put(
       }
 
       values.push(req.params.configId, req.workspace.id);
-      const result = await pool.query(
-        `UPDATE auto_sync_configs SET ${updates.join(", ")}
-         WHERE id = $${idx++} AND workspace_id = $${idx}
-         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
-        values,
-      );
+      const result = await withDbTransaction(async (client) => {
+        const updated = await client.query(
+          `UPDATE auto_sync_configs SET ${updates.join(", ")}
+           WHERE id = $${idx++} AND workspace_id = $${idx}
+           RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
+          values,
+        );
+        if (updated.rows.length > 0 && enabled === false) {
+          await client.query(
+            `UPDATE operational_notifications
+                SET resolved_at = NOW(), updated_at = NOW()
+              WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+            [req.workspace.id, `auto_sync_failed:${req.params.configId}`],
+          );
+        }
+        return updated;
+      });
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Auto-sync config not found" });
       }
@@ -524,10 +537,21 @@ router.delete(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
-      const result = await pool.query(
-        "DELETE FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 RETURNING provider",
-        [req.params.configId, req.workspace.id],
-      );
+      const result = await withDbTransaction(async (client) => {
+        const deleted = await client.query(
+          "DELETE FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 RETURNING provider",
+          [req.params.configId, req.workspace.id],
+        );
+        if (deleted.rows.length > 0) {
+          await client.query(
+            `UPDATE operational_notifications
+                SET resolved_at = NOW(), updated_at = NOW()
+              WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+            [req.workspace.id, `auto_sync_failed:${req.params.configId}`],
+          );
+        }
+        return deleted;
+      });
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Auto-sync config not found" });
       }
@@ -639,8 +663,7 @@ router.get(
         [req.workspace.id, req.user.id],
       );
       const role = roleRes.rows?.[0]?.role || null;
-      const isPrivileged =
-        role === "admin" || role === "workspace_manager";
+      const isPrivileged = role === "admin" || role === "workspace_manager";
 
       const items = [];
 
@@ -741,7 +764,12 @@ router.get(
             : "/control-center";
         items.push({
           id: row.id,
-          kind: row.severity === "critical" ? "error" : row.severity === "warning" ? "warning" : "info",
+          kind:
+            row.severity === "critical"
+              ? "error"
+              : row.severity === "warning"
+                ? "warning"
+                : "info",
           text: row.title,
           message: row.message,
           href,

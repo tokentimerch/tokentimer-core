@@ -51,12 +51,13 @@ describe("Contact group default fallback", function () {
           [wsId],
         );
         await TestUtils.execQuery(
-          `DELETE FROM alert_queue WHERE workspace_id = $1`,
+          `DELETE FROM alert_queue WHERE token_id IN (SELECT id FROM tokens WHERE workspace_id = $1)`,
           [wsId],
         );
         await TestUtils.execQuery(
-          `DELETE FROM audit_events WHERE target_id IN (SELECT id FROM tokens WHERE workspace_id = $1)`,
-          [wsId],
+          `DELETE FROM audit_events
+            WHERE actor_user_id = $1 OR subject_user_id = $1 OR workspace_id = $2`,
+          [user.id, wsId],
         );
         await TestUtils.execQuery(
           `DELETE FROM tokens WHERE workspace_id = $1`,
@@ -203,6 +204,42 @@ describe("Contact group default fallback", function () {
     const alert = alertRows.rows[0];
     expect(alert.status).to.equal("failed");
     expect(alert.error_message).to.include("NO_CONTACTS_DEFINED");
+
+    const incidents = await TestUtils.execQuery(
+      `SELECT id, token_id, type, severity, email_sent_at
+         FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [wsId, `delivery_blocked:${alert.id}`],
+    );
+    expect(incidents.rows).to.have.length(1);
+    expect(incidents.rows[0]).to.include({
+      token_id: tokenId,
+      type: "delivery_no_contacts",
+      severity: "warning",
+      email_sent_at: null,
+    });
+    const bell = await request(BASE)
+      .get(`/api/v1/workspaces/${wsId}/notifications`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(bell.body.items.map((item) => item.id)).to.include(
+      incidents.rows[0].id,
+    );
+
+    await TestUtils.runNode(
+      "node",
+      ["src/delivery-worker.js"],
+      "apps/worker",
+      process.env,
+      { allowExitCodes: [0, 1] },
+    );
+    const repeated = await TestUtils.execQuery(
+      `SELECT id FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [wsId, `delivery_blocked:${alert.id}`],
+    );
+    expect(repeated.rows).to.have.length(1);
+    expect(repeated.rows[0].id).to.equal(incidents.rows[0].id);
   });
 
   it("retried alert uses newly restored default contact group", async () => {
@@ -358,5 +395,75 @@ describe("Contact group default fallback", function () {
         "blocked",
       ]);
     }
+  });
+
+  it("creates an informational incident for a terminal plan-limited alert", async () => {
+    const tokenRows = await TestUtils.execQuery(
+      "SELECT id FROM tokens WHERE workspace_id = $1 AND name = 'NoGroup-Fallback-Token'",
+      [wsId],
+    );
+    expect(tokenRows.rows).to.have.length(1);
+    const queued = await TestUtils.execQuery(
+      `INSERT INTO alert_queue
+         (user_id, token_id, alert_key, threshold_days, due_date, channels, status, error_message)
+       VALUES ($1, $2, $3, 7, CURRENT_DATE, '[]'::jsonb, 'limit_exceeded', 'Monthly limit reached')
+       RETURNING id`,
+      [user.id, tokenRows.rows[0].id, `plan-limit-test:${Date.now()}`],
+    );
+    const alertId = queued.rows[0].id;
+    const blocked = await TestUtils.execQuery(
+      `INSERT INTO alert_queue
+         (user_id, token_id, alert_key, threshold_days, due_date, channels, status, error_message)
+       VALUES ($1, $2, $3, 7, CURRENT_DATE, '[]'::jsonb, 'blocked', 'PLAN_LIMIT: quota reached')
+       RETURNING id`,
+      [user.id, tokenRows.rows[0].id, `plan-blocked-test:${Date.now()}`],
+    );
+
+    await TestUtils.runNode(
+      "node",
+      ["src/delivery-worker.js"],
+      "apps/worker",
+      process.env,
+      { allowExitCodes: [0, 1] },
+    );
+    const incidents = await TestUtils.execQuery(
+      `SELECT id, type, severity, email_sent_at
+         FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [wsId, `delivery_blocked:${alertId}`],
+    );
+    expect(incidents.rows).to.have.length(1);
+    expect(incidents.rows[0]).to.include({
+      type: "delivery_plan_limited",
+      severity: "info",
+      email_sent_at: null,
+    });
+    const blockedIncident = await TestUtils.execQuery(
+      `SELECT type, severity, email_sent_at
+         FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [wsId, `delivery_blocked:${blocked.rows[0].id}`],
+    );
+    expect(blockedIncident.rows).to.have.length(1);
+    expect(blockedIncident.rows[0]).to.include({
+      type: "delivery_plan_limited",
+      severity: "info",
+      email_sent_at: null,
+    });
+
+    await TestUtils.runNode(
+      "node",
+      ["src/delivery-worker.js"],
+      "apps/worker",
+      process.env,
+      { allowExitCodes: [0, 1] },
+    );
+    const repeated = await TestUtils.execQuery(
+      `SELECT id FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [wsId, `delivery_blocked:${alertId}`],
+    );
+    expect(repeated.rows).to.have.length(1);
+    expect(repeated.rows[0].id).to.equal(incidents.rows[0].id);
   });
 });
