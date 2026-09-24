@@ -216,6 +216,40 @@ describe("autoSyncFailure helpers", () => {
 });
 
 describe("auto-sync operational incidents", () => {
+  it("sanitizes URL locations without changing ordinary or non-URL locations", async () => {
+    const { sanitizeAutoSyncLocation } = await importFresh(
+      "apps/worker/src/shared/autoSyncLocation.js",
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation(
+        "https://user:password@gitlab.example.com:443/root/path?token=secret#section",
+      ),
+      "https://gitlab.example.com:443/root/path",
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation("https://gitlab.example.com/root/path"),
+      "https://gitlab.example.com/root/path",
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation("https://gitlab.example.com"),
+      "https://gitlab.example.com",
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation("vault:secret/prod/cert"),
+      "vault:secret/prod/cert",
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation(
+        "https://user:password@bad host/path?token=secret",
+      ),
+      null,
+    );
+    assert.strictEqual(
+      sanitizeAutoSyncLocation("gitlab.example.com/path?token=secret"),
+      null,
+    );
+  });
+
   it("persists only available config identity and scan context in the incident and deferred email", async () => {
     const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
     const raised = [];
@@ -245,7 +279,10 @@ describe("auto-sync operational incidents", () => {
           id: "cfg-1",
           provider: "gitlab",
           connection_key: "  Production GitLab  ",
-          scan_params: { baseUrl: "https://gitlab.company.com" },
+          scan_params: {
+            baseUrl:
+              "https://user:password@gitlab.company.com/root?token=secret#section",
+          },
         },
       },
       (email) => deferred.push(email),
@@ -255,7 +292,7 @@ describe("auto-sync operational incidents", () => {
       auto_sync_config_id: "cfg-1",
       workspace_id: "ws-1",
       connection_key: "Production GitLab",
-      location: "https://gitlab.company.com",
+      location: "https://gitlab.company.com/root",
       config_id: "cfg-1",
       consecutive_failures: 3,
     });
@@ -326,6 +363,38 @@ describe("auto-sync operational incidents", () => {
       config: { scan_params: { projectId: "project-123" } },
     });
     assert.equal(metadata[3].project_id, "project-123");
+
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-6",
+      workspaceId: "ws-1",
+      provider: "vault",
+      previousStatus: "failed",
+      errorMessage: "Unavailable",
+      nextSync: new Date(),
+      config: {
+        scan_params: {
+          address:
+            "https://user:pass@vault.example.com:8200/root?token=secret#frag",
+        },
+      },
+    });
+    assert.equal(metadata[4].location, "https://vault.example.com:8200/root");
+
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-7",
+      workspaceId: "ws-1",
+      provider: "azure",
+      previousStatus: "failed",
+      errorMessage: "Unavailable",
+      nextSync: new Date(),
+      config: {
+        scan_params: {
+          vaultUrl:
+            "https://user:pass@vault.azure.example/root?sig=secret#frag",
+        },
+      },
+    });
+    assert.equal(metadata[5].location, "https://vault.azure.example/root");
   });
 
   it("keeps two same-provider configs independent through escalation and recovery", async () => {

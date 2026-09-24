@@ -1,4 +1,5 @@
 import { logger } from "../logger.js";
+import { sanitizeAutoSyncLocation } from "./autoSyncLocation.js";
 import {
   raiseOperationalNotification,
   resolveOperationalNotification,
@@ -80,7 +81,8 @@ function autoSyncIncidentContext({ configId, workspaceId, provider, config }) {
         : provider === "azure"
           ? scan.vaultUrl
           : null;
-  if (nonEmptyText(location)) context.location = location.trim();
+  const safeLocation = sanitizeAutoSyncLocation(location);
+  if (safeLocation) context.location = safeLocation;
   if (
     provider === "aws" &&
     !["all-regions", "global"].includes(scan.scanMode) &&
