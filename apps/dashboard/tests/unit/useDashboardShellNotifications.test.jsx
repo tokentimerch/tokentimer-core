@@ -6,8 +6,9 @@ import { MemoryRouter } from 'react-router';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import { useDashboardShellProps } from '../../src/hooks/useDashboardShellProps.js';
 
-const { markAllNotificationsRead } = vi.hoisted(() => ({
+const { markAllNotificationsRead, markNotificationRead } = vi.hoisted(() => ({
   markAllNotificationsRead: vi.fn().mockResolvedValue({}),
+  markNotificationRead: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -29,6 +30,7 @@ vi.mock('../../src/utils/apiClient', () => ({
       ],
     }),
     markAllNotificationsRead,
+    markNotificationRead,
   },
 }));
 
@@ -49,6 +51,27 @@ const shellOptions = {
 };
 
 describe('useDashboardShellProps notification read state', () => {
+  it('marks a clicked persisted incident read and updates the unread count', async () => {
+    const { result } = renderHook(() => useDashboardShellProps(shellOptions), {
+      wrapper,
+    });
+
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications).toHaveLength(2)
+    );
+    await act(async () => {
+      result.current.onNotificationClick(
+        result.current.dashboardNotifications[0]
+      );
+      await markNotificationRead.mock.results.at(-1).value;
+    });
+
+    expect(markNotificationRead).toHaveBeenCalledWith('ws-1', 'incident-1');
+    expect(result.current.dashboardUnreadCount).toBe(0);
+    expect(result.current.dashboardNotifications[0].isRead).toBe(true);
+    expect(result.current.dashboardNotifications[1].isRead).toBeUndefined();
+  });
+
   it('marks persisted incidents read without changing computed warnings', async () => {
     const { result } = renderHook(() => useDashboardShellProps(shellOptions), {
       wrapper,
