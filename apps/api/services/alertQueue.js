@@ -1,5 +1,4 @@
 const { pool } = require("../db/database");
-const { resolveOperationalNotification } = require("./operationalNotifications");
 
 /**
  * Requeue failed/blocked alerts for a user or a specific workspace.
@@ -68,22 +67,30 @@ async function requeueAlertsCore({
  */
 async function resolveRequeuedNotifications(rows, fixedWorkspaceId = null) {
   if (!Array.isArray(rows) || rows.length === 0) return;
-  await Promise.all(
-    rows.map(async (row) => {
-      const wsId = fixedWorkspaceId || row.workspace_id;
-      if (!wsId) return;
-      await resolveOperationalNotification(
-        pool,
-        wsId,
-        `delivery_blocked:${row.id}`,
-      );
-      await resolveOperationalNotification(
-        pool,
-        wsId,
-        `delivery_degraded:${row.id}`,
-      );
-    }),
-  );
+  const workspaceIds = [];
+  const dedupeKeys = [];
+  for (const row of rows) {
+    const wsId = fixedWorkspaceId || row.workspace_id;
+    if (!wsId) continue;
+    for (const type of ["delivery_blocked", "delivery_degraded"]) {
+      workspaceIds.push(wsId);
+      dedupeKeys.push(`${type}:${row.id}`);
+    }
+  }
+  if (dedupeKeys.length === 0) return;
+  try {
+    await pool.query(
+      `UPDATE operational_notifications n
+          SET resolved_at = NOW(), updated_at = NOW()
+         FROM unnest($1::uuid[], $2::text[]) AS keys(workspace_id, dedupe_key)
+        WHERE n.workspace_id = keys.workspace_id
+          AND n.dedupe_key = keys.dedupe_key
+          AND n.resolved_at IS NULL`,
+      [workspaceIds, dedupeKeys],
+    );
+  } catch (err) {
+    console.warn("resolveRequeuedNotifications failed", { error: err.message });
+  }
 }
 
 module.exports = { requeueAlertsCore };

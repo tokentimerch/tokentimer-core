@@ -773,6 +773,16 @@ router.post(
   loadWorkspace,
   requireWorkspaceMembership,
   async (req, res) => {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        req.params.notificationId,
+      )
+    ) {
+      return res.status(400).json({
+        error: "Invalid notification id",
+        code: "VALIDATION_ERROR",
+      });
+    }
     try {
       const roleRes = await pool.query(
         "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",

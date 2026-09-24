@@ -3275,6 +3275,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "200":
           description: Notification marked as read
@@ -3285,6 +3286,12 @@ paths:
                 properties:
                   success:
                     type: boolean
+        "400":
+          description: Invalid notification ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

@@ -2,6 +2,24 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { workspaceAPI } from '../utils/apiClient';
 
+const NOTIFICATION_POLL_INTERVAL_MS = 45_000;
+const SETTINGS_WARNING_IDS = new Set([
+  'smtp-not-configured',
+  'alerts-disabled',
+  'no-contacts-defined',
+]);
+
+function mapOperationalNotifications(response) {
+  return (Array.isArray(response?.items) ? response.items : []).map(item => ({
+    id: item.id,
+    kind: item.kind === 'error' ? 'error' : 'warning',
+    text: item.text,
+    href: item.href === '/usage' ? '/control-center' : item.href || null,
+    isRead: item.isRead,
+    persisted: item.persisted === true,
+  }));
+}
+
 export function useDashboardNotifications({
   session,
   workspace,
@@ -16,7 +34,20 @@ export function useDashboardNotifications({
     if (!enabled) return undefined;
 
     let cancelled = false;
+    let inFlight = false;
+    let refreshQueued = false;
+    function finishRequest() {
+      inFlight = false;
+      if (refreshQueued && !cancelled) {
+        refreshQueued = false;
+        void loadDashboardNotifications();
+      }
+    }
     async function loadDashboardNotifications() {
+      if (inFlight) {
+        refreshQueued = true;
+        return;
+      }
       if (!session || !workspace?.id) {
         if (!cancelled) {
           setDashboardNotifications([]);
@@ -25,6 +56,7 @@ export function useDashboardNotifications({
         return;
       }
 
+      inFlight = true;
       try {
         const [settingsRes, notificationsRes] = await Promise.all([
           workspaceAPI.getAlertSettings(workspace.id).catch(() => null),
@@ -68,23 +100,8 @@ export function useDashboardNotifications({
           isSystemAdmin ||
           currentRole === 'admin' ||
           currentRole === 'workspace_manager';
-        const list = [];
-
         // The server scopes persisted items to the current user's access.
-        const operational = Array.isArray(notificationsRes?.items)
-          ? notificationsRes.items
-          : [];
-        for (const item of operational) {
-          list.push({
-            id: item.id,
-            kind: item.kind === 'error' ? 'error' : 'warning',
-            text: item.text,
-            href:
-              item.href === '/usage' ? '/control-center' : item.href || null,
-            isRead: item.isRead,
-            persisted: item.persisted === true,
-          });
-        }
+        const list = mapOperationalNotifications(notificationsRes);
         setDashboardUnreadCount(
           Number.isFinite(notificationsRes?.unreadCount)
             ? notificationsRes.unreadCount
@@ -133,15 +150,42 @@ export function useDashboardNotifications({
           setDashboardNotifications([]);
           setDashboardUnreadCount(0);
         }
+      } finally {
+        finishRequest();
       }
     }
 
-    loadDashboardNotifications();
+    async function pollNotifications() {
+      if (inFlight || cancelled || !session || !workspace?.id) return;
+      inFlight = true;
+      try {
+        const response = await workspaceAPI
+          .getNotifications(workspace.id)
+          .catch(() => null);
+        if (cancelled || !response) return;
+        setDashboardNotifications(previous => [
+          ...mapOperationalNotifications(response),
+          ...previous.filter(item => SETTINGS_WARNING_IDS.has(item.id)),
+        ]);
+        setDashboardUnreadCount(
+          Number.isFinite(response.unreadCount) ? response.unreadCount : 0
+        );
+      } finally {
+        finishRequest();
+      }
+    }
+
+    void loadDashboardNotifications();
     const refresh = () => loadDashboardNotifications();
     window.addEventListener('tt:notifications-refresh', refresh);
+    const pollTimer =
+      session && workspace?.id
+        ? window.setInterval(pollNotifications, NOTIFICATION_POLL_INTERVAL_MS)
+        : null;
     return () => {
       cancelled = true;
       window.removeEventListener('tt:notifications-refresh', refresh);
+      if (pollTimer !== null) window.clearInterval(pollTimer);
     };
   }, [session, workspace, isSystemAdmin, enabled]);
 

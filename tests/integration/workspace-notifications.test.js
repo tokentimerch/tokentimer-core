@@ -386,6 +386,15 @@ describe("Persisted operational notifications (bell)", function () {
     await markRead(viewerCookie, notifId).expect(404);
   });
 
+  it("rejects malformed notification IDs without a database error and keeps unknown UUIDs as 404", async () => {
+    const malformed = await markRead(adminCookie, "not-a-uuid").expect(400);
+    expect(malformed.body.code).to.equal("VALIDATION_ERROR");
+    await markRead(
+      adminCookie,
+      "00000000-0000-4000-8000-000000000000",
+    ).expect(404);
+  });
+
   it("404s when marking a notification from a different workspace as read", async () => {
     const otherWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
       adminCookie,
@@ -606,6 +615,82 @@ describe("Persisted operational notifications (bell)", function () {
     );
     expect(retried.rows[0].email_sent_at).to.be.a("date");
     expect(retried.rows[0].email_claim_id).to.equal(null);
+  });
+
+  it("scopes token-owner incident email recipients to the incident workspace", async () => {
+    const { sendOperationalIncidentEmail } =
+      await import("../../apps/worker/src/shared/opNotifications.js");
+    const matchingWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Matching incident recipients",
+    );
+    const otherWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Other incident recipients",
+    );
+    const tokens = await client.query(
+      `INSERT INTO tokens (user_id, workspace_id, name, type, expiration, created_by)
+       VALUES ($1, $3, 'Viewer-owned recipient token', 'ssl_cert',
+               CURRENT_DATE + INTERVAL '7 days', $2),
+              ($2, $3, 'Admin-owned recipient token', 'ssl_cert',
+               CURRENT_DATE + INTERVAL '7 days', $2)
+       RETURNING id, user_id`,
+      [viewerUserId, adminUserId, matchingWorkspaceId],
+    );
+    const viewerTokenId = tokens.rows.find(
+      (row) => row.user_id === viewerUserId,
+    ).id;
+    const adminTokenId = tokens.rows.find(
+      (row) => row.user_id === adminUserId,
+    ).id;
+    const incidentIds = [];
+    try {
+      for (const [incidentWorkspaceId, incidentTokenId, expected] of [
+        [matchingWorkspaceId, viewerTokenId, [viewer.email, admin.email]],
+        [otherWorkspaceId, viewerTokenId, [admin.email]],
+        [matchingWorkspaceId, adminTokenId, [admin.email]],
+      ]) {
+        const notification = await client.query(
+          `INSERT INTO operational_notifications
+             (workspace_id, token_id, category, type, severity, dedupe_key, title)
+           VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3,
+                   'Recipient scope test') RETURNING id`,
+          [
+            incidentWorkspaceId,
+            incidentTokenId,
+            `recipient-scope:${Date.now()}:${incidentIds.length}`,
+          ],
+        );
+        const notificationId = notification.rows[0].id;
+        incidentIds.push(notificationId);
+        const recipients = [];
+        await sendOperationalIncidentEmail(
+          client,
+          {
+            notificationId,
+            workspaceId: incidentWorkspaceId,
+            tokenId: incidentTokenId,
+            category: "delivery",
+            title: "Recipient scope test",
+          },
+          async ({ to }) => {
+            recipients.push(to);
+            return { success: true };
+          },
+        );
+        expect(recipients.sort()).to.deep.equal(
+          expected.map((email) => email.toLowerCase()).sort(),
+        );
+      }
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidentIds],
+      );
+      await client.query("DELETE FROM tokens WHERE id = ANY($1::int[])", [
+        tokens.rows.map((row) => row.id),
+      ]);
+    }
   });
 
   it("skips email failures, resolved incidents, and sent incidents while retrying auto-sync once", async () => {

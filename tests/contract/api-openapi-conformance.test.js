@@ -16,6 +16,24 @@ const authCompatPath = path.join(
 );
 
 describe("API OpenAPI conformance contract", () => {
+  it("declares a UUID notification ID and a validation response for mark-read", () => {
+    const yaml = fs.readFileSync(openApiPath, "utf8");
+    const start = yaml.indexOf(
+      "  /api/v1/workspaces/{id}/notifications/{notificationId}/read:",
+    );
+    const end = yaml.indexOf(
+      "  /api/v1/workspaces/{id}/notifications/read-all:",
+      start,
+    );
+    assert.ok(start >= 0 && end > start);
+    const endpoint = yaml.slice(start, end);
+    assert.match(
+      endpoint,
+      /name: notificationId\s+in: path\s+required: true\s+schema:\s+type: string\s+format: uuid/,
+    );
+    assert.match(endpoint, /"400":\s+description: Invalid notification ID/);
+  });
+
   it("allows nullable persisted notification messages", () => {
     const yaml = fs.readFileSync(openApiPath, "utf8");
     const start = yaml.indexOf("  /api/v1/workspaces/{id}/notifications:");

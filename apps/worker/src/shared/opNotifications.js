@@ -149,8 +149,8 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
       const ownerRes = await client.query(
         `SELECT u.email FROM tokens t
            JOIN users u ON u.id = t.user_id
-          WHERE t.id = $1 AND u.email IS NOT NULL`,
-        [tokenId],
+          WHERE t.id = $1 AND t.workspace_id = $2 AND u.email IS NOT NULL`,
+        [tokenId, workspaceId],
       );
       for (const row of ownerRes.rows) {
         if (row.email) emails.add(String(row.email).toLowerCase().trim());

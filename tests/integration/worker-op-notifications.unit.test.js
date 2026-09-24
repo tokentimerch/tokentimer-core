@@ -139,7 +139,12 @@ describe("opNotifications helpers (worker, ESM)", () => {
       title: "Delivery blocked",
     };
 
-    function emailClient({ cap = 0, recipients = ["admin@example.com"] } = {}) {
+    function emailClient({
+      cap = 0,
+      recipients = ["admin@example.com"],
+      ownerEmail = null,
+      ownerWorkspaceId = null,
+    } = {}) {
       const state = { claim: null, sent: false, completed: [] };
       const client = mockClient((sql, values) => {
         if (sql.includes("SET email_claim_id = $2")) {
@@ -153,8 +158,15 @@ describe("opNotifications helpers (worker, ESM)", () => {
         if (sql.includes("wm.role = 'admin'")) {
           return { rows: recipients.map((email) => ({ email })) };
         }
-        if (sql.includes("JOIN users u ON u.id = t.user_id"))
-          return { rows: [] };
+        if (sql.includes("JOIN users u ON u.id = t.user_id")) {
+          expect(sql).to.include("t.workspace_id = $2");
+          return {
+            rows:
+              ownerEmail && values[1] === ownerWorkspaceId
+                ? [{ email: ownerEmail }]
+                : [],
+          };
+        }
         if (sql.includes("SET email_sent_at = CASE")) {
           expect(values[1]).to.equal(state.claim);
           state.sent = state.sent || values[2];
@@ -223,6 +235,51 @@ describe("opNotifications helpers (worker, ESM)", () => {
       expect(claim.sql).to.include(
         "email_claimed_at < NOW() - INTERVAL '10 minutes'",
       );
+    });
+
+    it("includes only an in-workspace token owner, keeps admins, and deduplicates recipients", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const matching = emailClient({
+        ownerEmail: "OWNER@example.com",
+        ownerWorkspaceId: "ws-1",
+        recipients: ["admin@example.com", "owner@example.com"],
+      });
+      const matchingSentTo = [];
+      await mod.sendOperationalIncidentEmail(
+        matching.client,
+        { ...params, tokenId: 7 },
+        async ({ to }) => {
+          matchingSentTo.push(to);
+          return { success: true };
+        },
+      );
+      expect(matchingSentTo).to.deep.equal([
+        "owner@example.com",
+        "admin@example.com",
+      ]);
+      expect(
+        matching.client.calls.find((call) =>
+          call.sql.includes("JOIN users u ON u.id = t.user_id"),
+        ).params,
+      ).to.deep.equal([7, "ws-1"]);
+
+      const mismatched = emailClient({
+        ownerEmail: "foreign@example.com",
+        ownerWorkspaceId: "ws-2",
+        recipients: ["admin@example.com"],
+      });
+      const mismatchedSentTo = [];
+      await mod.sendOperationalIncidentEmail(
+        mismatched.client,
+        { ...params, tokenId: 8 },
+        async ({ to }) => {
+          mismatchedSentTo.push(to);
+          return { success: true };
+        },
+      );
+      expect(mismatchedSentTo).to.deep.equal(["admin@example.com"]);
     });
 
     it("releases the claim after SMTP failure so a later attempt can deliver", async () => {
