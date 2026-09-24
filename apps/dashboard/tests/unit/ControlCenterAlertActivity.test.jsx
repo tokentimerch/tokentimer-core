@@ -1,11 +1,24 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ControlCenter from '../../src/pages/ControlCenter.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
+import { workspaceAPI } from '../../src/utils/apiClient';
 
 window.scrollTo = vi.fn();
+beforeEach(() => {
+  vi.spyOn(workspaceAPI, 'getAlertSettings').mockResolvedValue({
+    email_alerts_enabled: true,
+    smtp_configured: true,
+    contact_groups: [{ email_contact_ids: [1] }],
+  });
+  vi.spyOn(workspaceAPI, 'getNotifications').mockResolvedValue({
+    unreadCount: 0,
+    items: [],
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 const { loadMoreMock, changeEligibilityPageMock } = vi.hoisted(() => ({
   loadMoreMock: vi.fn(),
@@ -13,7 +26,21 @@ const { loadMoreMock, changeEligibilityPageMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/components/DashboardShell', () => ({
-  default: ({ children }) => <div>{children}</div>,
+  default: ({
+    children,
+    dashboardNotifications = [],
+    dashboardUnreadCount,
+  }) => (
+    <div>
+      <output data-testid='shell-notification-count'>
+        {dashboardUnreadCount}
+      </output>
+      {dashboardNotifications.map(item => (
+        <span key={item.id}>{item.text}</span>
+      ))}
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock('../../src/components/SEO.jsx', () => ({ default: () => null }));
@@ -129,6 +156,39 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 }));
 
 describe('Control Center recent alert activity', () => {
+  it('passes persisted notifications and unread count to its shell', async () => {
+    workspaceAPI.getNotifications.mockResolvedValue({
+      unreadCount: 1,
+      items: [
+        {
+          id: 'incident-1',
+          text: 'Delivery blocked for Production key',
+          persisted: true,
+          isRead: false,
+        },
+      ],
+    });
+
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <ControlCenter session={{ displayName: 'Admin', isAdmin: true }} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Delivery blocked for Production key')
+      ).toBeInTheDocument()
+    );
+    expect(screen.getByTestId('shell-notification-count')).toHaveTextContent(
+      '1'
+    );
+  });
+
   it('renders dedicated workspace events with an asset deep link', () => {
     render(
       <ChakraProvider>
