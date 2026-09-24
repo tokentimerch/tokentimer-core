@@ -58,7 +58,9 @@ describe("autoSyncFailure helpers", () => {
       itemsImported: 7,
     });
 
-    const insert = calls.find((c) => c.sql.includes("INSERT INTO audit_events"));
+    const insert = calls.find((c) =>
+      c.sql.includes("INSERT INTO audit_events"),
+    );
     assert.ok(insert, "expected an audit_events INSERT");
     const [subjectUserId, action, metadata, workspaceId] = insert.params;
     assert.strictEqual(subjectUserId, 42);
@@ -96,13 +98,18 @@ describe("autoSyncFailure helpers", () => {
       error: "2 of 5 scanned item(s) failed to import.",
     });
 
-    const insert = calls.find((c) => c.sql.includes("INSERT INTO audit_events"));
+    const insert = calls.find((c) =>
+      c.sql.includes("INSERT INTO audit_events"),
+    );
     assert.ok(insert, "expected an audit_events INSERT");
     const [subjectUserId, action, metadata] = insert.params;
     assert.strictEqual(subjectUserId, 7);
     assert.strictEqual(action, "AUTO_SYNC_COMPLETED");
     assert.strictEqual(metadata.status, "partial");
-    assert.strictEqual(metadata.error, "2 of 5 scanned item(s) failed to import.");
+    assert.strictEqual(
+      metadata.error,
+      "2 of 5 scanned item(s) failed to import.",
+    );
   });
 
   it("recordAutoSyncCompleted never throws when the audit insert fails", async () => {
@@ -195,7 +202,9 @@ describe("autoSyncFailure helpers", () => {
       ],
     });
 
-    const insert = calls.find((c) => c.sql.includes("INSERT INTO audit_events"));
+    const insert = calls.find((c) =>
+      c.sql.includes("INSERT INTO audit_events"),
+    );
     assert.ok(insert, "expected an audit_events INSERT");
     const metadata = insert.params[2];
     assert.deepStrictEqual(metadata.import_errors, [
@@ -207,6 +216,182 @@ describe("autoSyncFailure helpers", () => {
 });
 
 describe("auto-sync operational incidents", () => {
+  it("persists only available config identity and scan context in the incident and deferred email", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const raised = [];
+    const client = {
+      async query(sql, params) {
+        if (sql.includes("UPDATE auto_sync_configs")) {
+          return { rows: [{ consecutive_failures: 3 }] };
+        }
+        if (sql.includes("INSERT INTO operational_notifications")) {
+          raised.push(JSON.parse(params[8]));
+          return { rows: [{ id: "incident-1" }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const deferred = [];
+    await mod.recordAutoSyncFailure(
+      client,
+      {
+        configId: "cfg-1",
+        workspaceId: "ws-1",
+        provider: "gitlab",
+        previousStatus: "failed",
+        errorMessage: "Bad credentials",
+        nextSync: new Date(),
+        config: {
+          id: "cfg-1",
+          provider: "gitlab",
+          connection_key: "  Production GitLab  ",
+          scan_params: { baseUrl: "https://gitlab.company.com" },
+        },
+      },
+      (email) => deferred.push(email),
+    );
+    assert.deepStrictEqual(raised[0], {
+      provider: "gitlab",
+      auto_sync_config_id: "cfg-1",
+      workspace_id: "ws-1",
+      connection_key: "Production GitLab",
+      location: "https://gitlab.company.com",
+      config_id: "cfg-1",
+      consecutive_failures: 3,
+    });
+    assert.deepStrictEqual(deferred[0].metadata, raised[0]);
+  });
+
+  it("omits absent optional fields and does not mislabel an all-regions scan", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const metadata = [];
+    const client = {
+      async query(sql, params) {
+        if (sql.includes("UPDATE auto_sync_configs")) {
+          return { rows: [{ consecutive_failures: 1 }] };
+        }
+        if (sql.includes("INSERT INTO operational_notifications")) {
+          metadata.push(JSON.parse(params[8]));
+          return { rows: [{ id: "incident-1" }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-2",
+      workspaceId: "ws-1",
+      provider: "github",
+      previousStatus: "failed",
+      errorMessage: "Bad credentials",
+      nextSync: new Date(),
+      config: { connection_key: " ", scan_params: { baseUrl: "N/A" } },
+    });
+    assert.deepStrictEqual(metadata[0], {
+      provider: "github",
+      auto_sync_config_id: "cfg-2",
+      workspace_id: "ws-1",
+      config_id: "cfg-2",
+      consecutive_failures: 1,
+    });
+
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-3",
+      workspaceId: "ws-1",
+      provider: "aws",
+      previousStatus: "failed",
+      errorMessage: "Unavailable",
+      nextSync: new Date(),
+      config: { scan_params: { scanMode: "all-regions", region: "us-east-1" } },
+    });
+    assert.equal(Object.hasOwn(metadata[1], "region"), false);
+
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-4",
+      workspaceId: "ws-1",
+      provider: "aws",
+      previousStatus: "failed",
+      errorMessage: "Unavailable",
+      nextSync: new Date(),
+      config: { scan_params: { scanMode: "single", region: "eu-central-1" } },
+    });
+    assert.equal(metadata[2].region, "eu-central-1");
+
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-5",
+      workspaceId: "ws-1",
+      provider: "gcp",
+      previousStatus: "failed",
+      errorMessage: "Unavailable",
+      nextSync: new Date(),
+      config: { scan_params: { projectId: "project-123" } },
+    });
+    assert.equal(metadata[3].project_id, "project-123");
+  });
+
+  it("keeps two same-provider configs independent through escalation and recovery", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const failures = new Map();
+    const raised = [];
+    const resolved = [];
+    const client = {
+      async query(sql, params) {
+        if (
+          sql.includes("UPDATE auto_sync_configs") &&
+          sql.includes("consecutive_failures = consecutive_failures + 1")
+        ) {
+          const count = (failures.get(params[2]) || 0) + 1;
+          failures.set(params[2], count);
+          return { rows: [{ consecutive_failures: count }] };
+        }
+        if (sql.includes("INSERT INTO operational_notifications")) {
+          raised.push({ severity: params[4], key: params[5] });
+          return { rows: [{ id: `incident-${params[5]}` }] };
+        }
+        if (sql.includes("SET consecutive_failures = 0"))
+          return { rowCount: 1 };
+        if (sql.includes("SET resolved_at = NOW()")) {
+          resolved.push(params);
+          return { rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const deferred = [];
+    const failure = (configId) =>
+      mod.recordAutoSyncFailure(
+        client,
+        {
+          configId,
+          workspaceId: "ws-1",
+          provider: "gitlab",
+          previousStatus: "failed",
+          errorMessage: "Bad credentials",
+          nextSync: new Date(),
+        },
+        (email) => deferred.push(email),
+      );
+    await failure("cfg-a");
+    await failure("cfg-b");
+    await failure("cfg-a");
+    await failure("cfg-a");
+    assert.deepStrictEqual(raised, [
+      { severity: "warning", key: "auto_sync_failed:cfg-a" },
+      { severity: "warning", key: "auto_sync_failed:cfg-b" },
+      { severity: "warning", key: "auto_sync_failed:cfg-a" },
+      { severity: "critical", key: "auto_sync_failed:cfg-a" },
+    ]);
+    assert.deepStrictEqual(
+      deferred.map((email) => email.metadata.auto_sync_config_id),
+      ["cfg-a"],
+    );
+
+    await mod.recordAutoSyncRecovery(client, {
+      configId: "cfg-a",
+      workspaceId: "ws-1",
+    });
+    assert.deepStrictEqual(resolved, [["ws-1", "auto_sync_failed:cfg-a"]]);
+  });
+
   it("raises a warning first, then escalates the same dedupe key to critical", async () => {
     const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
     let failures = 0;
@@ -223,11 +408,13 @@ describe("auto-sync operational incidents", () => {
           raised.push(params);
           return { rows: [{ id: "same-incident" }] };
         }
-        if (sql.includes("SET email_claim_id = $2")) return { rows: [{ id: "same-incident" }] };
+        if (sql.includes("SET email_claim_id = $2"))
+          return { rows: [{ id: "same-incident" }] };
         if (sql.includes("pg_advisory_lock(")) return { rows: [{}] };
         if (sql.includes("pg_advisory_unlock(")) return { rows: [{}] };
         if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: 0 }] };
-        if (sql.includes("wm.role = 'admin'")) return { rows: [{ email: "admin@example.com" }] };
+        if (sql.includes("wm.role = 'admin'"))
+          return { rows: [{ email: "admin@example.com" }] };
         if (sql.includes("SET email_sent_at = CASE")) return { rowCount: 1 };
         throw new Error(`unexpected query: ${sql}`);
       },
@@ -240,16 +427,34 @@ describe("auto-sync operational incidents", () => {
       errorMessage: "Rate limited",
       nextSync: new Date(),
     };
-    await mod.recordAutoSyncFailure(client, incident);
-    await mod.recordAutoSyncFailure(client, incident);
-    await mod.recordAutoSyncFailure(client, incident);
-    assert.deepEqual(raised.map((params) => params[4]), ["warning", "warning", "critical"]);
-    assert.deepEqual(raised.map((params) => params[5]), [
-      "auto_sync_failed:cfg-1",
-      "auto_sync_failed:cfg-1",
-      "auto_sync_failed:cfg-1",
-    ]);
-    assert.equal(calls.filter((call) => call.sql.includes("SET email_claim_id = $2")).length, 1);
+    const deferred = [];
+    await mod.recordAutoSyncFailure(client, incident, (email) =>
+      deferred.push(email),
+    );
+    await mod.recordAutoSyncFailure(client, incident, (email) =>
+      deferred.push(email),
+    );
+    await mod.recordAutoSyncFailure(client, incident, (email) =>
+      deferred.push(email),
+    );
+    assert.deepEqual(
+      raised.map((params) => params[4]),
+      ["warning", "warning", "critical"],
+    );
+    assert.deepEqual(
+      raised.map((params) => params[5]),
+      [
+        "auto_sync_failed:cfg-1",
+        "auto_sync_failed:cfg-1",
+        "auto_sync_failed:cfg-1",
+      ],
+    );
+    assert.equal(deferred.length, 1);
+    assert.equal(
+      calls.filter((call) => call.sql.includes("SET email_claim_id = $2"))
+        .length,
+      0,
+    );
   });
 
   it("defers critical email until the worker commits the incident", async () => {
@@ -297,7 +502,10 @@ describe("auto-sync operational incidents", () => {
         return { rowCount: 1 };
       },
     };
-    await mod.recordAutoSyncRecovery(client, { configId: "cfg-1", workspaceId: "ws-1" });
+    await mod.recordAutoSyncRecovery(client, {
+      configId: "cfg-1",
+      workspaceId: "ws-1",
+    });
     assert.match(calls[0].sql, /SET consecutive_failures = 0/);
     assert.deepEqual(calls[1].params, ["ws-1", "auto_sync_failed:cfg-1"]);
   });
@@ -305,7 +513,9 @@ describe("auto-sync operational incidents", () => {
 
 describe("buildAutoSyncImportBody", () => {
   it("always forwards scan_id when present, even without cleanup", async () => {
-    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
     assert.deepStrictEqual(
       mod.buildAutoSyncImportBody({
         items: [{ name: "TEST3" }],
@@ -317,7 +527,9 @@ describe("buildAutoSyncImportBody", () => {
   });
 
   it("omits scan_id when it is missing and still attaches cleanup when set", async () => {
-    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
     assert.deepStrictEqual(
       mod.buildAutoSyncImportBody({
         items: [],
@@ -329,7 +541,9 @@ describe("buildAutoSyncImportBody", () => {
   });
 
   it("normalizes a non-array items value to an empty list", async () => {
-    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
     assert.deepStrictEqual(
       mod.buildAutoSyncImportBody({ items: null, scanId: "scan-1" }),
       { items: [], scan_id: "scan-1" },
@@ -339,7 +553,9 @@ describe("buildAutoSyncImportBody", () => {
 
 describe("gitlabFiltersForAutoSync", () => {
   it("forces includeRevoked off when cleanup is enabled", async () => {
-    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
     assert.deepStrictEqual(
       mod.gitlabFiltersForAutoSync(
         { includePATs: true, includeRevoked: true, includeExpired: true },
@@ -350,7 +566,9 @@ describe("gitlabFiltersForAutoSync", () => {
   });
 
   it("leaves includeRevoked alone when cleanup is off", async () => {
-    const mod = await importFresh("apps/worker/src/shared/autoSyncImportBody.js");
+    const mod = await importFresh(
+      "apps/worker/src/shared/autoSyncImportBody.js",
+    );
     assert.deepStrictEqual(
       mod.gitlabFiltersForAutoSync({ includeRevoked: true }, false),
       { includeRevoked: true },

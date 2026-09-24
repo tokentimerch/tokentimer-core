@@ -768,6 +768,7 @@ const AUTO_SYNC_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 async function pollAutoSyncAfterRun({
   workspaceId,
   provider,
+  configId,
   baselineLastSyncAt,
   onUpdate,
   isCancelled,
@@ -783,7 +784,9 @@ async function pollAutoSyncAfterRun({
       `/api/v1/workspaces/${workspaceId}/auto-sync`
     );
     const configs = res.data?.items || [];
-    const cfg = configs.find(c => c.provider === provider) || false;
+    const cfg = configId
+      ? configs.find(c => c.id === configId && c.provider === provider)
+      : configs.find(c => c.provider === provider);
     onUpdate(cfg);
     if (!cfg || !cfg.id) return 'missing';
     const completed =
@@ -1065,6 +1068,8 @@ export default function ImportTokensModal({
 
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
+  const [requestedAutoSyncConfig, setRequestedAutoSyncConfig] =
+    React.useState(null);
   const [restoredScanParams, setRestoredScanParams] = React.useState(null);
   // Provider the restored scan_params belong to. The GitLab/GitHub forms
   // mount before the auto-sync refetch for the new provider resolves, so
@@ -1104,6 +1109,7 @@ export default function ImportTokensModal({
       return undefined;
     }
     autoSyncPollCancelRef.current = true;
+    setRequestedAutoSyncConfig(null);
     setRunningAutoSyncNow(false);
     return undefined;
   }, [isOpen]);
@@ -1112,15 +1118,23 @@ export default function ImportTokensModal({
   React.useEffect(() => {
     if (!workspaceId || source === 'file' || source === 'cert-pem') {
       setAutoSyncConfig(null);
-      return;
+      return undefined;
     }
+    let cancelled = false;
     (async () => {
       try {
         const res = await apiClient.get(
           `/api/v1/workspaces/${workspaceId}/auto-sync`
         );
+        if (cancelled) return;
         const configs = res.data?.items || [];
-        const existing = configs.find(c => c.provider === source);
+        const requestedId =
+          requestedAutoSyncConfig?.provider === source
+            ? requestedAutoSyncConfig.id
+            : null;
+        const existing = requestedId
+          ? configs.find(c => c.provider === source && c.id === requestedId)
+          : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
 
         // Restore non-secret form fields from scan_params when auto-sync is already configured
@@ -1234,16 +1248,24 @@ export default function ImportTokensModal({
           setRestoredCleanupObsolete(null);
         }
       } catch (_) {
-        setAutoSyncConfig(false);
+        if (!cancelled) setAutoSyncConfig(false);
       }
     })();
-  }, [workspaceId, source]);
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, source, requestedAutoSyncConfig]);
 
   React.useEffect(() => {
     if (!isOpen || !openRequest?.provider) return;
     if (openRequest.integrationSubTab === 'manage') {
       setPendingManageTab(true);
     }
+    setRequestedAutoSyncConfig(
+      openRequest.autoSyncConfigId
+        ? { provider: openRequest.provider, id: openRequest.autoSyncConfigId }
+        : null
+    );
     setSource(openRequest.provider);
     onOpenRequestHandled?.();
   }, [isOpen, openRequest, onOpenRequestHandled]);
@@ -1504,7 +1526,9 @@ export default function ImportTokensModal({
           `/api/v1/workspaces/${workspaceId}/auto-sync`
         );
         const configs = res.data?.items || [];
-        setAutoSyncConfig(configs.find(c => c.provider === source) || false);
+        setAutoSyncConfig(
+          configs.find(c => c.id === autoSyncConfig.id) || false
+        );
         showSuccess(`Auto-sync settings updated for ${source}`);
       } catch (_refreshErr) {
         showWarning(
@@ -1532,6 +1556,7 @@ export default function ImportTokensModal({
       const outcome = await pollAutoSyncAfterRun({
         workspaceId,
         provider: source,
+        configId: autoSyncConfig.id,
         baselineLastSyncAt,
         onUpdate: setAutoSyncConfig,
         isCancelled: () => autoSyncPollCancelRef.current,
@@ -1547,7 +1572,7 @@ export default function ImportTokensModal({
           `/api/v1/workspaces/${workspaceId}/auto-sync`
         );
         const cfg =
-          (res.data?.items || []).find(c => c.provider === source) || null;
+          (res.data?.items || []).find(c => c.id === autoSyncConfig.id) || null;
         if (outcome === 'partial') {
           showWarning(
             cfg?.last_sync_error || 'Auto-sync completed with issues'
@@ -1577,21 +1602,29 @@ export default function ImportTokensModal({
     setSavingAutoSync(true);
     try {
       const { credentials, scanParams } = getAutoSyncCredentials();
-      await apiClient.post(`/api/v1/workspaces/${workspaceId}/auto-sync`, {
-        provider: source,
-        credentials,
-        scan_params: scanParams,
-        frequency: enableSyncFrequency,
-        schedule_time: enableSyncTime,
-        schedule_tz: enableSyncTz,
-        cleanup_obsolete: scanParams?.cleanupObsolete === true,
-      });
+      const created = await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/auto-sync`,
+        {
+          provider: source,
+          credentials,
+          scan_params: scanParams,
+          frequency: enableSyncFrequency,
+          schedule_time: enableSyncTime,
+          schedule_tz: enableSyncTz,
+          cleanup_obsolete: scanParams?.cleanupObsolete === true,
+        }
+      );
       showSuccess(`Auto-sync enabled for ${source}`);
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync`
       );
       const configs = res.data?.items || [];
-      setAutoSyncConfig(configs.find(c => c.provider === source) || false);
+      const createdId = created.data?.id;
+      setAutoSyncConfig(
+        (createdId
+          ? configs.find(c => c.id === createdId)
+          : configs.find(c => c.provider === source)) || false
+      );
       setIntegrationSubTab('manage');
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to enable auto-sync');

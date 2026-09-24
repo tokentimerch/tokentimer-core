@@ -5,11 +5,7 @@ import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
 
-const {
-  apiGetMock,
-  gitlabFormProps,
-  githubFormProps,
-} = vi.hoisted(() => ({
+const { apiGetMock, gitlabFormProps, githubFormProps } = vi.hoisted(() => ({
   apiGetMock: vi.fn(),
   gitlabFormProps: [],
   githubFormProps: [],
@@ -206,9 +202,47 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
     // (previously it mounted with the stale shared restoredScanParams and
     // prefilled the GitHub URL with the GitLab base URL).
     for (const sp of githubFormProps) {
-      expect(sp === null || sp === undefined || sp.baseUrl !== GITLAB_SELF_HOSTED).toBe(
-        true
-      );
+      expect(
+        sp === null || sp === undefined || sp.baseUrl !== GITLAB_SELF_HOSTED
+      ).toBe(true);
     }
+  });
+
+  it('restores the exact requested config when a provider has multiple configs', async () => {
+    const firstUrl = 'https://gitlab.first.example';
+    const secondUrl = 'https://gitlab.second.example';
+    apiGetMock.mockImplementation(url =>
+      Promise.resolve(
+        String(url).includes('/auto-sync')
+          ? {
+              data: {
+                items: [
+                  {
+                    id: 'as-gitlab-1',
+                    provider: 'gitlab',
+                    scan_params: { baseUrl: firstUrl },
+                  },
+                  {
+                    id: 'as-gitlab-2',
+                    provider: 'gitlab',
+                    scan_params: { baseUrl: secondUrl },
+                  },
+                ],
+              },
+            }
+          : { data: {} }
+      )
+    );
+    render(
+      renderModal({
+        provider: 'gitlab',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'as-gitlab-2',
+      })
+    );
+    await waitFor(() => {
+      expect(gitlabFormProps.some(sp => sp?.baseUrl === secondUrl)).toBe(true);
+    });
+    expect(gitlabFormProps.some(sp => sp?.baseUrl === firstUrl)).toBe(false);
   });
 });

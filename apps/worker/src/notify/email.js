@@ -323,14 +323,56 @@ export function buildOperationalIncidentEmail({
   );
   const meta = metadata || {};
   const isAutoSync = category === "auto_sync";
+  const contextValue = (value) => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed && !/^(undefined|null|n\/a|-)$/i.test(trimmed)
+      ? trimmed
+      : null;
+  };
+  const provider = contextValue(meta.provider);
+  const configId = contextValue(meta.auto_sync_config_id);
+  const workspaceId = contextValue(meta.workspace_id);
+  const autoSyncQuery = `import=${encodeURIComponent(provider || "")}&autoSyncManage=1`;
+  const exactConfigQuery = configId
+    ? `&autoSyncConfigId=${encodeURIComponent(configId)}${workspaceId ? `&workspace=${encodeURIComponent(workspaceId)}` : ""}`
+    : "";
   const buttonUrl = isAutoSync
-    ? `${frontendUrl}/dashboard?import=${encodeURIComponent(meta.provider || "")}&autoSyncManage=1`
+    ? `${frontendUrl}/dashboard?${autoSyncQuery}${exactConfigQuery}`
     : `${frontendUrl}/control-center`;
   const buttonText = isAutoSync ? "Manage Auto-Sync" : "Open Control Center";
 
   const contextLines = [];
-  if (meta.workspace_name) contextLines.push(`Workspace: ${meta.workspace_name}`);
-  if (meta.token_name) contextLines.push(`Token: ${meta.token_name}`);
+  if (isAutoSync) {
+    const providerNames = {
+      github: "GitHub",
+      gitlab: "GitLab",
+      aws: "AWS",
+      azure: "Azure",
+      "azure-ad": "Azure AD",
+      gcp: "GCP",
+      vault: "Vault",
+    };
+    if (provider) {
+      contextLines.push(`Provider: ${providerNames[provider] || provider}`);
+    }
+  }
+  const contextFields = isAutoSync
+    ? [
+        ["connection_key", "Connection"],
+        ["auto_sync_config_id", "Config ID"],
+        ["location", "Location"],
+        ["region", "Region"],
+        ["project_id", "Project"],
+      ]
+    : [
+        ["workspace_name", "Workspace"],
+        ["token_name", "Token"],
+      ];
+  for (const [key, label] of contextFields) {
+    const value = contextValue(meta[key]);
+    if (value) contextLines.push(`${label}: ${value}`);
+  }
 
   const contentHtml = `
     <p>${escapeHtml(message || title)}</p>
@@ -340,15 +382,19 @@ export function buildOperationalIncidentEmail({
         : ""
     }`;
 
-  const plainTextContent = [title, "", message || "", ...contextLines].join(
-    "\n",
-  );
+  const plainTextContent = [
+    title,
+    "",
+    message || "",
+    ...contextLines,
+    ...(isAutoSync ? ["", `${buttonText}: ${buttonUrl}`] : []),
+  ].join("\n");
 
   const { html, text } = generateEmailTemplate({
     title,
     content: contentHtml,
     buttonText,
-    buttonUrl,
+    buttonUrl: escapeHtml(buttonUrl),
     plainTextContent,
   });
 

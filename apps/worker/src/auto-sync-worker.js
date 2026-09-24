@@ -238,20 +238,32 @@ async function runAutoSync() {
         // Core rejects providers outside the github/gitlab allowlist without
         // calling the scan API.
         if (!isAutoSyncProviderAllowed(provider)) {
-          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
+          const nextSync = computeNextSync(
+            frequency,
+            schedule_time,
+            schedule_tz,
+          );
           const message = `Auto-sync for ${provider} is not available in this edition.`;
-          await recordAutoSyncFailure(client, {
-            configId: id,
-            workspaceId: workspace_id,
-            provider,
-            createdBy,
-            previousStatus,
-            errorMessage: message,
-            nextSync,
-          }, deferIncidentEmail);
+          await recordAutoSyncFailure(
+            client,
+            {
+              configId: id,
+              workspaceId: workspace_id,
+              provider,
+              createdBy,
+              previousStatus,
+              errorMessage: message,
+              nextSync,
+              config,
+            },
+            deferIncidentEmail,
+          );
           logger.warn(message, { workspace_id, provider });
           cAutoSync.inc({ provider, status: "failure" });
-          gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
+          gAutoSyncLastRun.set(
+            { provider, status: "failure" },
+            Date.now() / 1000,
+          );
           return;
         }
 
@@ -296,7 +308,8 @@ async function runAutoSync() {
             ? scan_params.filterRules
             : undefined;
           const cleanupObsolete =
-            cleanupObsoleteFlag === true || scan_params?.cleanupObsolete === true;
+            cleanupObsoleteFlag === true ||
+            scan_params?.cleanupObsolete === true;
 
           switch (provider) {
             case "github":
@@ -388,7 +401,8 @@ async function runAutoSync() {
             );
             const importResult = importResponse.data || {};
             importedCount =
-              (importResult.created_count || 0) + (importResult.updated_count || 0);
+              (importResult.created_count || 0) +
+              (importResult.updated_count || 0);
             importErrorCount = importResult.error_count || 0;
             importErrors = summarizeImportErrors(importResult.errors);
             deletedCount = importResult.deleted_count || 0;
@@ -422,7 +436,11 @@ async function runAutoSync() {
               : null;
 
           // Update config: success/partial
-          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
+          const nextSync = computeNextSync(
+            frequency,
+            schedule_time,
+            schedule_tz,
+          );
           await client.query(
             `UPDATE auto_sync_configs
              SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2,
@@ -458,7 +476,10 @@ async function runAutoSync() {
 
           cAutoSync.inc({ provider, status: syncStatus });
           cAutoSyncItems.inc({ provider }, importedCount);
-          gAutoSyncLastRun.set({ provider, status: syncStatus }, Date.now() / 1000);
+          gAutoSyncLastRun.set(
+            { provider, status: syncStatus },
+            Date.now() / 1000,
+          );
           logger.info(
             `Auto-sync ${provider} completed: ${importedCount}/${itemsCount} items imported (${syncStatus})`,
             { workspace_id },
@@ -473,18 +494,30 @@ async function runAutoSync() {
           });
 
           cAutoSync.inc({ provider, status: "failure" });
-          gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
-          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
-          await recordAutoSyncFailure(client, {
-            configId: id,
-            workspaceId: workspace_id,
-            provider,
-            createdBy,
-            previousStatus,
-            errorMessage: formatAutoSyncError(syncErr),
-            httpStatus: syncErr?.response?.status || null,
-            nextSync,
-          }, deferIncidentEmail);
+          gAutoSyncLastRun.set(
+            { provider, status: "failure" },
+            Date.now() / 1000,
+          );
+          const nextSync = computeNextSync(
+            frequency,
+            schedule_time,
+            schedule_tz,
+          );
+          await recordAutoSyncFailure(
+            client,
+            {
+              configId: id,
+              workspaceId: workspace_id,
+              provider,
+              createdBy,
+              previousStatus,
+              errorMessage: formatAutoSyncError(syncErr),
+              httpStatus: syncErr?.response?.status || null,
+              nextSync,
+              config,
+            },
+            deferIncidentEmail,
+          );
         }
       }),
     );
