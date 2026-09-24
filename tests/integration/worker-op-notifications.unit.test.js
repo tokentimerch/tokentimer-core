@@ -26,7 +26,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
 
   describe("raiseOperationalNotification", () => {
     it("returns null without querying when required fields are missing", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient(() => {
         throw new Error("should not query");
       });
@@ -39,7 +41,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
     });
 
     it("rejects invalid category/severity before querying", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient(() => {
         throw new Error("should not query");
       });
@@ -56,7 +60,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
     });
 
     it("upserts on the open-incident dedupe key and returns the row id", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient((sql) => {
         expect(sql).to.match(
           /ON CONFLICT \(workspace_id, dedupe_key\) WHERE resolved_at IS NULL/,
@@ -76,7 +82,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
     });
 
     it("swallows DB errors and returns null", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient(() => {
         throw new Error("connection reset");
       });
@@ -94,7 +102,9 @@ describe("opNotifications helpers (worker, ESM)", () => {
 
   describe("resolveOperationalNotification", () => {
     it("is a no-op without workspaceId or dedupeKey", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient(() => {
         throw new Error("should not query");
       });
@@ -104,150 +114,187 @@ describe("opNotifications helpers (worker, ESM)", () => {
     });
 
     it("resolves the open notification for the dedupe key", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
       const client = mockClient((sql, params) => {
         expect(sql).to.match(/resolved_at = NOW\(\)/);
         expect(params).to.deep.equal(["ws-1", "delivery_blocked:42"]);
         return { rowCount: 1 };
       });
-      await mod.resolveOperationalNotification(client, "ws-1", "delivery_blocked:42");
+      await mod.resolveOperationalNotification(
+        client,
+        "ws-1",
+        "delivery_blocked:42",
+      );
       expect(client.calls).to.have.length(1);
     });
   });
 
   describe("sendOperationalIncidentEmail", () => {
+    const params = {
+      notificationId: "notif-1",
+      workspaceId: "ws-1",
+      category: "delivery",
+      title: "Delivery blocked",
+    };
+
+    function emailClient({ cap = 0, recipients = ["admin@example.com"] } = {}) {
+      const state = { claim: null, sent: false, completed: [] };
+      const client = mockClient((sql, values) => {
+        if (sql.includes("SET email_claim_id = $2")) {
+          if (state.claim || state.sent) return { rows: [] };
+          state.claim = values[1];
+          return { rows: [{ id: values[0] }] };
+        }
+        if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: cap }] };
+        if (sql.includes("wm.role = 'admin'")) {
+          return { rows: recipients.map((email) => ({ email })) };
+        }
+        if (sql.includes("JOIN users u ON u.id = t.user_id"))
+          return { rows: [] };
+        if (sql.includes("SET email_sent_at = CASE")) {
+          expect(values[1]).to.equal(state.claim);
+          state.sent = state.sent || values[2];
+          state.claim = null;
+          state.completed.push(values[2]);
+          return { rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      return { client, state };
+    }
+
     it("does nothing when required fields are missing", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      const client = mockClient(() => {
-        throw new Error("should not query");
-      });
-      await mod.sendOperationalIncidentEmail(client, {
-        workspaceId: "ws-1",
-        category: "delivery",
-        // missing notificationId and title
-      });
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client } = emailClient();
+      await mod.sendOperationalIncidentEmail(client, { workspaceId: "ws-1" });
       expect(client.calls).to.have.length(0);
     });
 
-    it("recursion guard: skips when the incident's own failing channel is email", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      const client = mockClient(() => {
-        throw new Error("should not query");
+    it("suppresses recursion when email is one of multiple failed channels", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client } = emailClient();
+      await mod.sendOperationalIncidentEmail(client, {
+        ...params,
+        metadata: { failed_channels: ["webhooks", "EMAIL"] },
       });
       await mod.sendOperationalIncidentEmail(client, {
-        notificationId: "notif-1",
-        workspaceId: "ws-1",
-        category: "delivery",
-        title: "Delivery blocked",
+        ...params,
         metadata: { channel: "email" },
       });
       expect(client.calls).to.have.length(0);
     });
 
-    it("skips silently when the row was already claimed (email_sent_at already set)", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      const client = mockClient((sql) => {
-        expect(sql).to.match(/email_sent_at IS NULL/);
-        return { rows: [] };
+    it("uses a separate claim and marks sent only after successful delivery", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client, state } = emailClient({
+        recipients: ["a@example.com", "b@example.com"],
       });
-      await mod.sendOperationalIncidentEmail(client, {
-        notificationId: "notif-1",
-        workspaceId: "ws-1",
-        category: "delivery",
-        title: "Delivery blocked",
+      const sentTo = [];
+      await mod.sendOperationalIncidentEmail(client, params, async ({ to }) => {
+        sentTo.push(to);
+        return { success: true };
+      });
+      expect(sentTo).to.deep.equal(["a@example.com", "b@example.com"]);
+      expect(state.completed).to.deep.equal([true]);
+      expect(state.sent).to.equal(true);
+      const claim = client.calls.find((call) =>
+        call.sql.includes("SET email_claim_id = $2"),
+      );
+      expect(claim.sql).to.include("email_sent_at IS NULL");
+      expect(claim.sql).to.include(
+        "email_claimed_at < NOW() - INTERVAL '10 minutes'",
+      );
+    });
+
+    it("releases the claim after SMTP failure so a later attempt can deliver", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client, state } = emailClient();
+      await mod.sendOperationalIncidentEmail(client, params, async () => ({
+        success: false,
+        error: "SMTP down",
+      }));
+      expect(state.sent).to.equal(false);
+      expect(state.claim).to.equal(null);
+      await mod.sendOperationalIncidentEmail(client, params, async () => ({
+        success: true,
+      }));
+      expect(state.completed).to.deep.equal([false, true]);
+      expect(state.sent).to.equal(true);
+    });
+
+    it("keeps no-recipient incidents unsent and retryable", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client, state } = emailClient({ recipients: [] });
+      await mod.sendOperationalIncidentEmail(client, params, async () => {
+        throw new Error("must not send");
+      });
+      expect(state.completed).to.deep.equal([false]);
+      expect(state.sent).to.equal(false);
+      expect(state.claim).to.equal(null);
+    });
+
+    it("keeps daily-cap-suppressed incidents unsent and retryable", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client, state } = emailClient({ cap: 10 });
+      await mod.sendOperationalIncidentEmail(client, params, async () => {
+        throw new Error("must not send");
+      });
+      expect(state.completed).to.deep.equal([false]);
+      expect(state.sent).to.equal(false);
+      expect(state.claim).to.equal(null);
+    });
+
+    it("does not claim an incident already claimed by another worker", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client, state } = emailClient();
+      state.claim = "other-worker";
+      await mod.sendOperationalIncidentEmail(client, params, async () => {
+        throw new Error("must not send");
       });
       expect(client.calls).to.have.length(1);
+      expect(state.claim).to.equal("other-worker");
     });
+  });
+});
 
-    it("skips sending once the workspace daily email cap is reached, but still claims the row", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      let recipientsQueried = false;
-      const client = mockClient((sql) => {
-        if (sql.includes("email_sent_at IS NULL")) {
-          return { rows: [{ id: "notif-1" }] };
-        }
-        if (sql.includes("COUNT(*)::int AS c")) {
-          return { rows: [{ c: 999 }] };
-        }
-        recipientsQueried = true;
-        throw new Error("should not resolve recipients past the cap");
-      });
-      await mod.sendOperationalIncidentEmail(client, {
-        notificationId: "notif-1",
-        workspaceId: "ws-1",
-        category: "delivery",
-        title: "Delivery blocked",
-      });
-      expect(recipientsQueried).to.equal(false);
+describe("delivery blocked incident metadata", () => {
+  it("persists every failed channel and suppresses email when email itself failed", async () => {
+    const { raiseDeliveryBlockedIncident } = await importFresh(
+      "apps/worker/src/delivery-worker.js",
+    );
+    let metadata;
+    const client = mockClient((sql, params) => {
+      if (sql.includes("INSERT INTO operational_notifications")) {
+        metadata = JSON.parse(params[8]);
+        return { rows: [{ id: "notif-1" }] };
+      }
+      throw new Error(`incident email must be suppressed: ${sql}`);
     });
-
-    it("sends to the token owner and workspace admins, deduplicated", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      const sentTo = [];
-      const client = mockClient((sql) => {
-        if (sql.includes("email_sent_at IS NULL")) {
-          return { rows: [{ id: "notif-1" }] };
-        }
-        if (sql.includes("COUNT(*)::int AS c")) {
-          return { rows: [{ c: 0 }] };
-        }
-        if (sql.includes("JOIN users u ON u.id = t.user_id")) {
-          return { rows: [{ email: "Owner@Example.com" }] };
-        }
-        if (sql.includes("wm.role = 'admin'")) {
-          return {
-            rows: [{ email: "owner@example.com" }, { email: "admin@example.com" }],
-          };
-        }
-        throw new Error(`unexpected query: ${sql}`);
-      });
-
-      // sendEmailNotification short-circuits to success in NODE_ENV=test, so
-      // stub it via a monkeypatch on the imported module's own dependency by
-      // re-importing email.js and asserting through its test-mode contract
-      // instead: recipients dedupe to 2 (owner + admin), case-insensitively.
-      await mod.sendOperationalIncidentEmail(client, {
-        notificationId: "notif-1",
-        workspaceId: "ws-1",
-        tokenId: 7,
-        category: "delivery",
-        title: "Delivery blocked",
-        message: "Maximum delivery attempts reached",
-        metadata: { workspace_name: "Acme", token_name: "Prod cert" },
-      });
-
-      // No assertion error means all three queries above were matched in
-      // order and no unexpected query fired; sentTo is unused here because
-      // sendEmailNotification is short-circuited in test mode.
-      expect(sentTo).to.deep.equal([]);
-    });
-
-    it("skips sending (but keeps the claim) when there are no resolvable recipients", async () => {
-      const mod = await importFresh("apps/worker/src/shared/opNotifications.js");
-      const client = mockClient((sql) => {
-        if (sql.includes("email_sent_at IS NULL")) {
-          return { rows: [{ id: "notif-1" }] };
-        }
-        if (sql.includes("COUNT(*)::int AS c")) {
-          return { rows: [{ c: 0 }] };
-        }
-        if (sql.includes("JOIN users u ON u.id = t.user_id")) {
-          return { rows: [] };
-        }
-        if (sql.includes("wm.role = 'admin'")) {
-          return { rows: [] };
-        }
-        throw new Error(`unexpected query: ${sql}`);
-      });
-      await mod.sendOperationalIncidentEmail(client, {
-        notificationId: "notif-1",
-        workspaceId: "ws-1",
-        category: "auto_sync",
-        title: "Auto-sync failing repeatedly",
-      });
-      // Reaching here without throwing confirms the early return after an
-      // empty recipient list.
-    });
+    await raiseDeliveryBlockedIncident(
+      client,
+      { id: 42, workspace_id: "ws-1", token_id: 7, name: "Token" },
+      "email: SMTP down; webhooks: 500",
+      ["email", "webhooks"],
+      "max_attempts",
+    );
+    expect(metadata.failed_channels).to.deep.equal(["email", "webhooks"]);
+    expect(client.calls).to.have.length(1);
   });
 });
 
@@ -309,7 +356,7 @@ describe("buildOperationalIncidentEmail", () => {
     const email = await importFresh("apps/worker/src/notify/email.js");
     const { html } = email.buildOperationalIncidentEmail({
       category: "delivery",
-      title: 'Delivery blocked: <img src=x onerror=alert(1)>',
+      title: "Delivery blocked: <img src=x onerror=alert(1)>",
       message: "Maximum delivery attempts reached",
       metadata: {},
     });

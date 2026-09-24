@@ -863,9 +863,7 @@ function buildAgentHealthEmailContent(alert) {
   const htmlContent = `${statusBadge}${detailsTable}${impactedHtml}`;
 
   const { html, text: templateText } = generateEmailTemplate({
-    title: escapeHtml(
-      `Agent ${context.status}: ${singleLineText(context.agentName)}`,
-    ),
+    title: `Agent ${context.status}: ${singleLineText(context.agentName)}`,
     content: htmlContent,
     buttonText: "View Dashboard",
     buttonUrl: frontendUrl,
@@ -1078,7 +1076,14 @@ function isPlanLimitError(errorMessage) {
   return /PLAN_LIMIT|limit_exceeded/i.test(String(errorMessage || ""));
 }
 
-async function raiseDeliveryBlockedIncident(client, alert, message, failedChannels, reason) {
+export async function raiseDeliveryBlockedIncident(
+  client,
+  alert,
+  message,
+  failedChannels,
+  reason,
+  attempts = {},
+) {
   if (!alert.workspace_id) return;
   const planLimited = isPlanLimitError(message);
   const title = planLimited
@@ -1087,6 +1092,9 @@ async function raiseDeliveryBlockedIncident(client, alert, message, failedChanne
   const metadata = {
     alert_queue_id: alert.id,
     failed_channels: failedChannels,
+    attempts_email: attempts.email,
+    attempts_webhooks: attempts.webhooks,
+    attempts_whatsapp: attempts.whatsapp,
     workspace_name: alert.workspace_name,
     token_name: alert.name,
     reason,
@@ -2663,8 +2671,16 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               { alertId: alert.id },
             );
           } else if (alert.workspace_id) {
-            await resolveOperationalNotification(client, alert.workspace_id, `delivery_blocked:${alert.id}`);
-            await resolveOperationalNotification(client, alert.workspace_id, `delivery_degraded:${alert.id}`);
+            await resolveOperationalNotification(
+              client,
+              alert.workspace_id,
+              `delivery_blocked:${alert.id}`,
+            );
+            await resolveOperationalNotification(
+              client,
+              alert.workspace_id,
+              `delivery_degraded:${alert.id}`,
+            );
           }
           // Emit an audit event for partial successes to aid diagnostics
           if (webhookPartialErrors.length > 0) {
@@ -2792,6 +2808,11 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               errorMessages || "Maximum delivery attempts reached",
               failedChannels,
               blockDueToWhatsApp ? "whatsapp_permanent_failure" : "max_attempts",
+              {
+                email: newAttemptsEmail,
+                webhooks: newAttemptsWebhooks,
+                whatsapp: newAttemptsWhatsApp,
+              },
             );
           } else if (
             alert.workspace_id &&
@@ -2807,7 +2828,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               category: "delivery",
               type: "delivery_degraded",
               severity: "warning",
-              dedupeKey: `delivery_degraded:${alert.id}`,
+              // The later blocked state updates this same incident row and
+              // the escalation trigger makes a read warning unread again.
+              dedupeKey: `delivery_blocked:${alert.id}`,
               title: `Delivery retrying: ${alert.name || `Token #${alert.token_id}`}`,
               message: errorMessages || "Delivery attempts are still failing",
               metadata: {

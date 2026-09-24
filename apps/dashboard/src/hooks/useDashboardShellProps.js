@@ -166,7 +166,10 @@ export function useDashboardShellProps({
     let cancelled = false;
     async function loadDashboardNotifications() {
       if (!session || !activeWorkspace?.id) {
-        if (!cancelled) setDashboardNotifications([]);
+        if (!cancelled) {
+          setDashboardNotifications([]);
+          setDashboardUnreadCount(0);
+        }
         return;
       }
 
@@ -292,7 +295,12 @@ export function useDashboardShellProps({
 
   const handleNotificationClick = useCallback(
     notification => {
-      if (notification?.persisted && activeWorkspace?.id && notification?.id) {
+      if (
+        notification?.persisted &&
+        notification?.isRead === false &&
+        activeWorkspace?.id &&
+        notification?.id
+      ) {
         workspaceAPI
           .markNotificationRead(activeWorkspace.id, notification.id)
           .then(() => {

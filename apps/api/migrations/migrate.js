@@ -3854,6 +3854,12 @@ const migrations = [
         email_claimed_at TIMESTAMPTZ NULL
       );
 
+      -- A short-lived earlier deployment may already have created the table
+      -- before this migration was appended. Add claim columns there too.
+      ALTER TABLE operational_notifications
+        ADD COLUMN IF NOT EXISTS email_claim_id UUID NULL,
+        ADD COLUMN IF NOT EXISTS email_claimed_at TIMESTAMPTZ NULL;
+
       CREATE UNIQUE INDEX IF NOT EXISTS uq_operational_notifications_open_dedupe
         ON operational_notifications(workspace_id, dedupe_key)
         WHERE resolved_at IS NULL;

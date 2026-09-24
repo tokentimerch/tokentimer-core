@@ -2943,6 +2943,7 @@ paths:
                           type: string
                         message:
                           type: string
+                          nullable: true
                   meta:
                     type: object
                     properties:

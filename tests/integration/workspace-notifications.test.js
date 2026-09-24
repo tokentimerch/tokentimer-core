@@ -1,5 +1,6 @@
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
 const { Client } = require("pg");
+const { raiseOperationalNotification } = require("../../apps/api/services/operationalNotifications");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -324,6 +325,87 @@ describe("Persisted operational notifications (bell)", function () {
     for (const item of after.body.items) {
       if (item.persisted) expect(item.isRead).to.equal(true);
     }
+  });
+
+  it("makes a read warning unread on critical escalation without duplicating the incident", async () => {
+    const dedupeKey = `delivery_blocked:escalation-${Date.now()}`;
+    const incident = {
+      workspaceId,
+      tokenId,
+      category: "delivery",
+      type: "delivery_degraded",
+      dedupeKey,
+      title: "Delivery retrying",
+      message: "Webhook failing",
+    };
+    const warningId = await raiseOperationalNotification(client, {
+      ...incident,
+      severity: "warning",
+    });
+    expect(warningId).to.be.a("string");
+    await markRead(adminCookie, warningId).expect(200);
+    expect((await fetchNotifications(adminCookie).expect(200)).body.items.find((item) => item.id === warningId).isRead).to.equal(true);
+
+    const criticalId = await raiseOperationalNotification(client, {
+      ...incident,
+      severity: "critical",
+      type: "delivery_blocked",
+      title: "Delivery blocked",
+    });
+    expect(criticalId).to.equal(warningId);
+    const rows = await client.query(
+      "SELECT id FROM operational_notifications WHERE workspace_id = $1 AND dedupe_key = $2",
+      [workspaceId, dedupeKey],
+    );
+    expect(rows.rowCount).to.equal(1);
+    const escalated = await fetchNotifications(adminCookie).expect(200);
+    const item = escalated.body.items.find((entry) => entry.id === warningId);
+    expect(item.severity).to.equal("critical");
+    expect(item.isRead).to.equal(false);
+
+    await markRead(adminCookie, warningId).expect(200);
+    await raiseOperationalNotification(client, {
+      ...incident,
+      severity: "critical",
+      type: "delivery_blocked",
+      title: "Delivery blocked",
+    });
+    const repeat = await fetchNotifications(adminCookie).expect(200);
+    expect(repeat.body.items.find((entry) => entry.id === warningId).isRead).to.equal(true);
+  });
+
+  it("keeps a failed incident email unsent in the database until a retry succeeds", async () => {
+    const { sendOperationalIncidentEmail } = await import("../../apps/worker/src/shared/opNotifications.js");
+    const result = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Retry email')
+       RETURNING id`,
+      [workspaceId, tokenId, `delivery_blocked:email-retry-${Date.now()}`],
+    );
+    const notificationId = result.rows[0].id;
+    const incident = {
+      notificationId,
+      workspaceId,
+      tokenId,
+      category: "delivery",
+      title: "Retry email",
+    };
+    await sendOperationalIncidentEmail(client, incident, async () => ({ success: false, error: "SMTP down" }));
+    const failed = await client.query(
+      "SELECT email_sent_at, email_claim_id FROM operational_notifications WHERE id = $1",
+      [notificationId],
+    );
+    expect(failed.rows[0].email_sent_at).to.equal(null);
+    expect(failed.rows[0].email_claim_id).to.equal(null);
+
+    await sendOperationalIncidentEmail(client, incident, async () => ({ success: true }));
+    const retried = await client.query(
+      "SELECT email_sent_at, email_claim_id FROM operational_notifications WHERE id = $1",
+      [notificationId],
+    );
+    expect(retried.rows[0].email_sent_at).to.be.a("date");
+    expect(retried.rows[0].email_claim_id).to.equal(null);
   });
 
   it("resolving the underlying incident removes it from the bell", async () => {
