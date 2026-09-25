@@ -576,7 +576,87 @@ describe("auto-sync operational incidents", () => {
       workspaceId: "ws-1",
     });
     assert.match(calls[0].sql, /SET consecutive_failures = 0/);
+    assert.match(calls[0].sql, /workspace_id = \$2/);
+    assert.deepEqual(calls[0].params, ["cfg-1", "ws-1"]);
     assert.deepEqual(calls[1].params, ["ws-1", "auto_sync_failed:cfg-1"]);
+  });
+
+  it("does not raise an incident when the config is outside the supplied workspace", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const calls = [];
+    const client = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+    await mod.recordAutoSyncFailure(client, {
+      configId: "cfg-1",
+      workspaceId: "wrong-workspace",
+      provider: "gitlab",
+      previousStatus: "failed",
+      errorMessage: "failed",
+      nextSync: new Date(),
+    });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /WHERE id = \$3 AND workspace_id = \$4/);
+    assert.deepEqual(calls[0].params.slice(2), ["cfg-1", "wrong-workspace"]);
+  });
+
+  it("uses the default critical threshold for missing, empty, zero, negative, and invalid values", async () => {
+    const previous = process.env.AUTO_SYNC_CRITICAL_THRESHOLD;
+    try {
+      for (const value of [
+        undefined,
+        "",
+        "0",
+        "-1",
+        "invalid",
+        "1e2",
+        "1.5",
+        "2",
+      ]) {
+        if (value === undefined)
+          delete process.env.AUTO_SYNC_CRITICAL_THRESHOLD;
+        else process.env.AUTO_SYNC_CRITICAL_THRESHOLD = value;
+        const mod = await importFresh(
+          "apps/worker/src/shared/autoSyncFailure.js",
+        );
+        let severity;
+        const client = {
+          async query(sql, params) {
+            if (sql.includes("UPDATE auto_sync_configs"))
+              return { rows: [{ consecutive_failures: 2 }] };
+            if (sql.includes("INSERT INTO operational_notifications")) {
+              severity = params[4];
+              return { rows: [{ id: "incident" }] };
+            }
+            throw new Error(`unexpected query: ${sql}`);
+          },
+        };
+        await mod.recordAutoSyncFailure(
+          client,
+          {
+            configId: "cfg-1",
+            workspaceId: "ws-1",
+            provider: "gitlab",
+            previousStatus: "failed",
+            errorMessage: "failed",
+            nextSync: new Date(),
+          },
+          () => {},
+        );
+        assert.equal(
+          severity,
+          value === "2" ? "critical" : "warning",
+          `threshold ${String(value)}`,
+        );
+      }
+    } finally {
+      if (previous === undefined)
+        delete process.env.AUTO_SYNC_CRITICAL_THRESHOLD;
+      else process.env.AUTO_SYNC_CRITICAL_THRESHOLD = previous;
+    }
   });
 });
 

@@ -104,7 +104,10 @@ function notificationActionHint(notification) {
   if (notification.id === 'smtp-not-configured') {
     return 'Go to System Settings to configure SMTP.';
   }
-  if (notification.id?.startsWith('auto-sync-failed-')) {
+  if (
+    notification.category === 'auto_sync' ||
+    notification.id?.startsWith('auto-sync-failed-')
+  ) {
     return 'Opens Import tokens on the Manage auto-sync tab.';
   }
   if (notification.id === 'alerts-out-of-window') {
@@ -995,6 +998,16 @@ export default function DashboardShell({
                                 >
                                   {notification.text}
                                 </Text>
+                                {notification.category === 'auto_sync' &&
+                                  notification.message && (
+                                    <Text
+                                      color={mutedTextColor}
+                                      fontSize='xs'
+                                      noOfLines={2}
+                                    >
+                                      {notification.message}
+                                    </Text>
+                                  )}
                                 <Text color={mutedTextColor} fontSize='xs'>
                                   {notificationActionHint(notification)}
                                 </Text>

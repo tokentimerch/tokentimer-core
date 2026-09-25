@@ -3904,6 +3904,70 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 57,
+    name: "operational_notification_lifecycle",
+    sql: `
+      -- Token deletion and workspace transfer end incidents about the old
+      -- workspace before the token FK can be nulled or moved.
+      CREATE OR REPLACE FUNCTION resolve_token_operational_notifications()
+      RETURNS trigger AS $$
+      DECLARE should_resolve BOOLEAN;
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          should_resolve := TRUE;
+        ELSE
+          should_resolve := OLD.workspace_id IS DISTINCT FROM NEW.workspace_id;
+        END IF;
+        IF should_resolve THEN
+          UPDATE operational_notifications
+             SET resolved_at = NOW(), updated_at = NOW()
+           WHERE token_id = OLD.id AND workspace_id = OLD.workspace_id
+             AND category = 'delivery' AND resolved_at IS NULL;
+        END IF;
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_resolve_token_operational_notifications
+        BEFORE DELETE OR UPDATE OF workspace_id ON tokens
+        FOR EACH ROW EXECUTE FUNCTION resolve_token_operational_notifications();
+      CREATE INDEX IF NOT EXISTS idx_operational_notifications_open_delivery_token
+        ON operational_notifications(token_id, workspace_id)
+        WHERE category = 'delivery' AND resolved_at IS NULL AND token_id IS NOT NULL;
+
+      -- Reconcile incidents orphaned before the lifecycle trigger existed.
+      UPDATE operational_notifications n
+         SET resolved_at = NOW(), updated_at = NOW()
+       WHERE n.category = 'delivery' AND n.resolved_at IS NULL
+         AND ((n.token_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM tokens t
+            WHERE t.id = n.token_id AND t.workspace_id = n.workspace_id
+         )) OR (n.token_id IS NULL AND NOT EXISTS (
+           SELECT 1 FROM alert_queue aq
+             JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+            WHERE aq.id::text = n.metadata->>'alert_queue_id'
+              AND ca.workspace_id = n.workspace_id
+         )));
+
+      -- A changed incident type is new information even at equal severity.
+      CREATE OR REPLACE FUNCTION reset_operational_notification_reads_on_escalation()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.type IS DISTINCT FROM OLD.type OR
+           (CASE NEW.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) >
+           (CASE OLD.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) THEN
+          DELETE FROM operational_notification_reads WHERE notification_id = NEW.id;
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER trg_operational_notification_escalation_unread ON operational_notifications;
+      CREATE TRIGGER trg_operational_notification_escalation_unread
+        AFTER UPDATE OF severity, type ON operational_notifications
+        FOR EACH ROW EXECUTE FUNCTION reset_operational_notification_reads_on_escalation();
+    `,
+  },
 ];
 
 async function runMigrations() {

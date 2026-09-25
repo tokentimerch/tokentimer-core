@@ -666,11 +666,7 @@ router.get(
   requireWorkspaceMembership,
   async (req, res) => {
     try {
-      const roleRes = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
-        [req.workspace.id, req.user.id],
-      );
-      const role = roleRes.rows?.[0]?.role || null;
+      const role = req.authz?.workspaceRole;
       const isPrivileged = role === "admin" || role === "workspace_manager";
 
       const items = [];
@@ -728,9 +724,10 @@ router.get(
            FROM operational_notifications n
            LEFT JOIN operational_notification_reads r
              ON r.notification_id = n.id AND r.user_id = $2
-           LEFT JOIN tokens t ON t.id = n.token_id
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
             AND r.notification_id IS NULL
             AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))`,
         [req.workspace.id, req.user.id, isPrivileged],
@@ -742,9 +739,10 @@ router.get(
            FROM operational_notifications n
            LEFT JOIN operational_notification_reads r
              ON r.notification_id = n.id AND r.user_id = $2
-           LEFT JOIN tokens t ON t.id = n.token_id
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
             AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
           ORDER BY (r.notification_id IS NULL) DESC,
                    COALESCE(n.updated_at, n.created_at) DESC, n.created_at DESC
@@ -838,11 +836,7 @@ router.post(
       });
     }
     try {
-      const roleRes = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
-        [req.workspace.id, req.user.id],
-      );
-      const role = roleRes.rows?.[0]?.role || null;
+      const role = req.authz?.workspaceRole;
       const isPrivileged = role === "admin" || role === "workspace_manager";
 
       // Same visibility rule as GET /notifications: non-privileged members
@@ -850,10 +844,11 @@ router.post(
       const check = await pool.query(
         `SELECT n.id
            FROM operational_notifications n
-           LEFT JOIN tokens t ON t.id = n.token_id
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.id = $1
             AND n.workspace_id = $2
             AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
             AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $4))`,
         [
           req.params.notificationId,
@@ -889,20 +884,17 @@ router.post(
   requireWorkspaceMembership,
   async (req, res) => {
     try {
-      const roleRes = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
-        [req.workspace.id, req.user.id],
-      );
-      const role = roleRes.rows?.[0]?.role || null;
+      const role = req.authz?.workspaceRole;
       const isPrivileged = role === "admin" || role === "workspace_manager";
 
       await pool.query(
         `INSERT INTO operational_notification_reads (notification_id, user_id)
          SELECT n.id, $2
            FROM operational_notifications n
-           LEFT JOIN tokens t ON t.id = n.token_id
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
             AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
          ON CONFLICT (notification_id, user_id) DO NOTHING`,
         [req.workspace.id, req.user.id, isPrivileged],
