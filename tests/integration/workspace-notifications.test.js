@@ -1,5 +1,6 @@
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
 const { Client } = require("pg");
+const { randomBytes, randomUUID } = require("node:crypto");
 const {
   raiseOperationalNotification,
 } = require("../../apps/api/services/operationalNotifications");
@@ -1059,6 +1060,303 @@ describe("Persisted operational notifications (bell)", function () {
       await markAllRead(outsider.cookie).expect(403);
     } finally {
       await TestUtils.cleanupTestUser(outsider.email, outsider.cookie);
+    }
+  });
+
+  it("treats the workspace creator without a membership row as admin for list and reads", async () => {
+    await client.query(
+      "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+      [workspaceId, adminUserId],
+    );
+    try {
+      const listed = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        listed.body.items.some((item) => item.id === autoSyncNotifId),
+      ).to.equal(true);
+      await markRead(adminCookie, autoSyncNotifId).expect(200);
+      await markAllRead(adminCookie).expect(200);
+      const { sendOperationalIncidentEmail } =
+        await import("../../apps/worker/src/shared/opNotifications.js");
+      const incident = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, category, type, severity, dedupe_key, title)
+         VALUES ($1, 'auto_sync', 'auto_sync_failed', 'critical', $2, 'Legacy owner email')
+         RETURNING id`,
+        [workspaceId, `legacy-owner:${Date.now()}`],
+      );
+      try {
+        const recipients = [];
+        await sendOperationalIncidentEmail(
+          client,
+          {
+            notificationId: incident.rows[0].id,
+            workspaceId,
+            category: "auto_sync",
+            title: "Legacy owner email",
+          },
+          async ({ to }) => {
+            recipients.push(to);
+            return { success: true };
+          },
+        );
+        expect(recipients).to.deep.equal([admin.email.toLowerCase()]);
+      } finally {
+        await client.query(
+          "DELETE FROM operational_notifications WHERE id = $1",
+          [incident.rows[0].id],
+        );
+      }
+    } finally {
+      await client.query(
+        `INSERT INTO workspace_memberships (user_id, workspace_id, role)
+         VALUES ($1, $2, 'admin') ON CONFLICT (user_id, workspace_id)
+         DO UPDATE SET role = 'admin'`,
+        [adminUserId, workspaceId],
+      );
+    }
+  });
+
+  it("reconciles recovered and missing delivery queues before critical email retry", async () => {
+    const { retryPendingOperationalIncidentEmails } =
+      await import("../../apps/worker/src/shared/opNotifications.js");
+    const queues = await client.query(
+      `INSERT INTO alert_queue
+         (user_id, token_id, alert_key, threshold_days, due_date, channels, status)
+       VALUES ($1, $2, $3, 7, CURRENT_DATE, '[]'::jsonb, 'sent'),
+              ($1, $2, $4, 7, CURRENT_DATE, '[]'::jsonb, 'blocked')
+       RETURNING id, status`,
+      [
+        adminUserId,
+        tokenId,
+        `recovered:${Date.now()}`,
+        `blocked:${Date.now()}`,
+      ],
+    );
+    const recoveredId = queues.rows.find((row) => row.status === "sent").id;
+    const blockedId = queues.rows.find((row) => row.status === "blocked").id;
+    const incidents = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title, metadata)
+       VALUES ($1,$2,'delivery','delivery_blocked','critical',$3,'Recovered queue',$4::jsonb),
+              ($1,$2,'delivery','delivery_blocked','critical',$5,'Active blocked queue',$6::jsonb),
+              ($1,$2,'delivery','delivery_blocked','critical',$7,'Missing queue',$8::jsonb)
+       RETURNING id, title`,
+      [
+        workspaceId,
+        tokenId,
+        `delivery_blocked:${recoveredId}`,
+        JSON.stringify({ alert_queue_id: recoveredId }),
+        `delivery_blocked:${blockedId}`,
+        JSON.stringify({ alert_queue_id: blockedId }),
+        `delivery_blocked:999999999`,
+        JSON.stringify({ alert_queue_id: 999999999 }),
+      ],
+    );
+    try {
+      const sent = [];
+      await retryPendingOperationalIncidentEmails(
+        client,
+        async ({ subject }) => {
+          sent.push(subject);
+          return { success: true };
+        },
+      );
+      const states = await client.query(
+        "SELECT title, resolved_at, email_sent_at FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidents.rows.map((row) => row.id)],
+      );
+      const byTitle = new Map(states.rows.map((row) => [row.title, row]));
+      expect(byTitle.get("Recovered queue").resolved_at).to.be.a("date");
+      expect(byTitle.get("Missing queue").resolved_at).to.be.a("date");
+      expect(byTitle.get("Active blocked queue").email_sent_at).to.be.a("date");
+      expect(sent).to.deep.equal(["Active blocked queue"]);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidents.rows.map((row) => row.id)],
+      );
+      await client.query("DELETE FROM alert_queue WHERE id = ANY($1::int[])", [
+        queues.rows.map((row) => row.id),
+      ]);
+    }
+  });
+
+  it("keeps tokenless agent delivery incidents visible to managers and eligible for retry", async () => {
+    const agentWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Agent notification workspace",
+    );
+    await client.query(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+       VALUES ($1, $2, 'viewer', $3)`,
+      [viewerUserId, agentWorkspaceId, adminUserId],
+    );
+    const credential = randomBytes(32).toString("hex");
+    const agent = await client.query(
+      `INSERT INTO certops_agents
+         (workspace_id, agent_id, agent_version, protocol_version,
+          credential_prefix, credential_hash)
+       VALUES ($1, $2, '1.0.0', '1.0.0', $3, $4) RETURNING id`,
+      [
+        agentWorkspaceId,
+        `notification-${randomUUID()}`,
+        `ttagent_${credential.slice(0, 16)}`,
+        credential,
+      ],
+    );
+    const queue = await client.query(
+      `INSERT INTO alert_queue
+         (user_id, certops_agent_id, alert_key, threshold_days, due_date, channels, status)
+       VALUES ($1, $2, $3, 7, CURRENT_DATE, '[]'::jsonb, 'blocked') RETURNING id`,
+      [adminUserId, agent.rows[0].id, `agent-notification:${randomUUID()}`],
+    );
+    const incident = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, category, type, severity, dedupe_key, title, metadata)
+       VALUES ($1, 'delivery', 'delivery_blocked', 'critical', $2, 'Agent delivery blocked', $3::jsonb)
+       RETURNING id`,
+      [
+        agentWorkspaceId,
+        `delivery_blocked:${queue.rows[0].id}`,
+        JSON.stringify({ alert_queue_id: queue.rows[0].id }),
+      ],
+    );
+    try {
+      const adminBell = await fetchNotifications(
+        adminCookie,
+        agentWorkspaceId,
+      ).expect(200);
+      expect(
+        adminBell.body.items.some((item) => item.id === incident.rows[0].id),
+      ).to.equal(true);
+      const viewerBell = await fetchNotifications(
+        viewerCookie,
+        agentWorkspaceId,
+      ).expect(200);
+      expect(
+        viewerBell.body.items.some((item) => item.id === incident.rows[0].id),
+      ).to.equal(false);
+      const { retryPendingOperationalIncidentEmails } =
+        await import("../../apps/worker/src/shared/opNotifications.js");
+      const subjects = [];
+      await retryPendingOperationalIncidentEmails(
+        client,
+        async ({ subject }) => {
+          subjects.push(subject);
+          return { success: true };
+        },
+      );
+      expect(subjects).to.include("Agent delivery blocked");
+      const emailed = await client.query(
+        "SELECT email_sent_at FROM operational_notifications WHERE id = $1",
+        [incident.rows[0].id],
+      );
+      expect(emailed.rows[0].email_sent_at).to.be.a("date");
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = $1",
+        [incident.rows[0].id],
+      );
+      await client.query("DELETE FROM alert_queue WHERE id = $1", [
+        queue.rows[0].id,
+      ]);
+      await client.query("DELETE FROM certops_agents WHERE id = $1", [
+        agent.rows[0].id,
+      ]);
+      await client.query(
+        "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [agentWorkspaceId, viewerUserId],
+      );
+    }
+  });
+
+  it("resolves delivery incidents before single or bulk token deletion and workspace transfer", async () => {
+    const targetWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Notification Transfer Target",
+    );
+    const tokens = await client.query(
+      `INSERT INTO tokens (user_id, workspace_id, name, type, expiration, created_by)
+       SELECT $1, $2, 'Lifecycle test token', 'ssl_cert', CURRENT_DATE + INTERVAL '7 days', $1
+       FROM generate_series(1, 3) RETURNING id`,
+      [adminUserId, workspaceId],
+    );
+    const tokenIds = tokens.rows.map((row) => row.id);
+    const notifications = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title)
+       SELECT $1, id, 'delivery', 'delivery_blocked', 'critical',
+              'lifecycle:' || id, 'Lifecycle incident'
+         FROM tokens WHERE id = ANY($2::int[]) RETURNING id, token_id`,
+      [workspaceId, tokenIds],
+    );
+    try {
+      await client.query("DELETE FROM tokens WHERE id = $1", [tokenIds[0]]);
+      await client.query("DELETE FROM tokens WHERE id = ANY($1::int[])", [
+        [tokenIds[1]],
+      ]);
+      await client.query(
+        "UPDATE tokens SET workspace_id = $1 WHERE id = $2 AND workspace_id = $3",
+        [targetWorkspaceId, tokenIds[2], workspaceId],
+      );
+      const states = await client.query(
+        "SELECT token_id, resolved_at FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [notifications.rows.map((row) => row.id)],
+      );
+      expect(states.rows).to.have.length(3);
+      expect(
+        states.rows.every((row) => row.resolved_at instanceof Date),
+      ).to.equal(true);
+      const bell = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        bell.body.items.some((item) =>
+          notifications.rows.some((n) => n.id === item.id),
+        ),
+      ).to.equal(false);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [notifications.rows.map((row) => row.id)],
+      );
+      await client.query("DELETE FROM tokens WHERE id = ANY($1::int[])", [
+        tokenIds,
+      ]);
+    }
+  });
+
+  it("makes a read warning unread again when the deduped incident type changes", async () => {
+    const inserted = await client.query(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, $2, 'delivery', 'delivery_no_contacts', 'warning', $3, 'No contacts')
+       RETURNING id`,
+      [workspaceId, tokenId, `type-change:${Date.now()}`],
+    );
+    const id = inserted.rows[0].id;
+    try {
+      await markRead(adminCookie, id).expect(200);
+      await client.query(
+        "UPDATE operational_notifications SET type = 'delivery_degraded' WHERE id = $1",
+        [id],
+      );
+      const changed = await fetchNotifications(adminCookie).expect(200);
+      expect(changed.body.items.find((item) => item.id === id).isRead).to.equal(
+        false,
+      );
+      await markRead(adminCookie, id).expect(200);
+      await client.query(
+        "UPDATE operational_notifications SET message = 'same type retry' WHERE id = $1",
+        [id],
+      );
+      const repeated = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        repeated.body.items.find((item) => item.id === id).isRead,
+      ).to.equal(true);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = $1",
+        [id],
+      );
     }
   });
 });

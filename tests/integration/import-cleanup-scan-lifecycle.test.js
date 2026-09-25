@@ -135,6 +135,13 @@ describe("Import cleanup scan lifecycle (real database)", function () {
       objectId: "secret/data/gone",
       dimensions: { mount: "secret/", path: "gone", category: "generic" },
     });
+    const incident = await TestUtils.execQuery(
+      `INSERT INTO operational_notifications
+         (workspace_id, token_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Import cleanup incident')
+       RETURNING id`,
+      [workspaceId, obsolete.id, `cleanup:${obsolete.id}`],
+    );
 
     const scan = await persistScan({
       workspaceId,
@@ -166,6 +173,11 @@ describe("Import cleanup scan lifecycle (real database)", function () {
     expect(deleted.map((d) => d.id)).to.not.include(survivor.id);
     expect(await tokenStillExists(survivor.id)).to.equal(true);
     expect(await tokenStillExists(obsolete.id)).to.equal(false);
+    const incidentState = await TestUtils.execQuery(
+      "SELECT resolved_at FROM operational_notifications WHERE id = $1",
+      [incident.rows[0].id],
+    );
+    expect(incidentState.rows[0].resolved_at).to.be.a("date");
   });
 
   it("never touches a different instance of the same provider, even with colliding owner keys", async () => {

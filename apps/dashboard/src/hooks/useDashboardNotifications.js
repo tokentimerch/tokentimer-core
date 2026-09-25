@@ -16,6 +16,9 @@ function mapOperationalNotifications(response) {
       ? item.kind
       : 'warning',
     text: item.text,
+    message: item.message,
+    category: item.category,
+    type: item.type,
     href: item.href === '/usage' ? '/control-center' : item.href || null,
     isRead: item.isRead,
     persisted: item.persisted === true,

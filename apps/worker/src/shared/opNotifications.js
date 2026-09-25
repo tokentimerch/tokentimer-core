@@ -25,11 +25,12 @@ const EMAIL_RETRY_BATCH_SIZE = 50;
 // Safety valve so a storm of incidents cannot flood a workspace's admins.
 // Bell items are still created/updated above this cap; only the email send
 // is skipped.
-const DAILY_EMAIL_CAP = Number.isFinite(
-  Number(process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP),
-)
-  ? Number(process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP)
-  : 10;
+const dailyCapText = process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP?.trim();
+const dailyCapNumber = Number(dailyCapText);
+const DAILY_EMAIL_CAP =
+  /^[1-9]\d*$/.test(dailyCapText || "") && Number.isSafeInteger(dailyCapNumber)
+    ? dailyCapNumber
+    : 10;
 
 /**
  * Raise (or escalate/update) an open operational notification.
@@ -140,8 +141,8 @@ export async function resolveOperationalNotification(
 }
 
 // Recipients for a critical incident email: the token's owner while still a
-// workspace member, plus every workspace admin, deduplicated. Auto-sync
-// incidents have no token_id (workspace-level), so they go to admins only.
+// workspace member, plus every workspace admin and the implicit workspace
+// owner, deduplicated. Auto-sync incidents have no token_id.
 async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
   const emails = new Set();
   try {
@@ -165,6 +166,15 @@ async function resolveIncidentRecipients(client, { workspaceId, tokenId }) {
       [workspaceId],
     );
     for (const row of adminRes.rows) {
+      if (row.email) emails.add(String(row.email).toLowerCase().trim());
+    }
+    const creatorRes = await client.query(
+      `SELECT u.email FROM workspaces w
+         JOIN users u ON u.id = w.created_by
+        WHERE w.id = $1 AND u.email IS NOT NULL`,
+      [workspaceId],
+    );
+    for (const row of creatorRes.rows) {
       if (row.email) emails.add(String(row.email).toLowerCase().trim());
     }
   } catch (err) {
@@ -352,7 +362,7 @@ export async function retryPendingOperationalIncidentEmails(
   sendEmail = sendEmailNotification,
 ) {
   const pending = await client.query(
-    `SELECT id, workspace_id, token_id, category, title, message, metadata
+    `SELECT id, workspace_id, token_id, category, dedupe_key, title, message, metadata
        FROM operational_notifications
       WHERE severity = 'critical'
         AND resolved_at IS NULL
@@ -374,6 +384,27 @@ export async function retryPendingOperationalIncidentEmails(
   );
 
   for (const row of pending.rows) {
+    if (row.category === "delivery" && row.metadata?.alert_queue_id != null) {
+      const alertId = Number(row.metadata.alert_queue_id);
+      const queue =
+        Number.isSafeInteger(alertId) && alertId > 0
+          ? await client.query(
+              `SELECT aq.status FROM alert_queue aq
+               LEFT JOIN tokens t ON t.id = aq.token_id
+               LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+              WHERE aq.id = $1 AND COALESCE(t.workspace_id, ca.workspace_id) = $2`,
+              [alertId, row.workspace_id],
+            )
+          : { rows: [] };
+      if (!["blocked", "failed", "partial"].includes(queue.rows[0]?.status)) {
+        await resolveOperationalNotification(
+          client,
+          row.workspace_id,
+          row.dedupe_key,
+        );
+        continue;
+      }
+    }
     await sendOperationalIncidentEmail(
       client,
       {

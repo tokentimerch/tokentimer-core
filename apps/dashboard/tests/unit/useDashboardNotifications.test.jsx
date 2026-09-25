@@ -61,6 +61,36 @@ afterEach(() => {
 });
 
 describe('useDashboardNotifications', () => {
+  it('preserves persisted auto-sync message and identity for the bell', async () => {
+    getNotifications.mockResolvedValue({
+      unreadCount: 1,
+      items: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          persisted: true,
+          isRead: false,
+          kind: 'error',
+          category: 'auto_sync',
+          type: 'auto_sync_failed',
+          text: 'Auto-sync failing repeatedly: gitlab',
+          message: 'Bad credentials',
+          href: '/dashboard?import=gitlab&autoSyncManage=1',
+        },
+      ],
+    });
+    const { result } = renderHook(
+      () => useDashboardNotifications({ session, workspace }),
+      { wrapper }
+    );
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications).toHaveLength(4)
+    );
+    expect(result.current.dashboardNotifications[0]).toMatchObject({
+      category: 'auto_sync',
+      type: 'auto_sync_failed',
+      message: 'Bad credentials',
+    });
+  });
   it('keeps persisted incidents when alert settings fail', async () => {
     getAlertSettings.mockRejectedValue(new Error('settings unavailable'));
     const { result } = renderHook(

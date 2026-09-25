@@ -145,6 +145,7 @@ describe("opNotifications helpers (worker, ESM)", () => {
       ownerEmail = null,
       ownerWorkspaceId = null,
       ownerIsMember = true,
+      creatorEmail = null,
     } = {}) {
       const state = { claim: null, sent: false, completed: [] };
       const client = mockClient((sql, values) => {
@@ -158,6 +159,10 @@ describe("opNotifications helpers (worker, ESM)", () => {
         if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: cap }] };
         if (sql.includes("wm.role = 'admin'")) {
           return { rows: recipients.map((email) => ({ email })) };
+        }
+        if (sql.includes("JOIN users u ON u.id = w.created_by")) {
+          expect(values).to.deep.equal(["ws-1"]);
+          return { rows: creatorEmail ? [{ email: creatorEmail }] : [] };
         }
         if (sql.includes("JOIN users u ON u.id = t.user_id")) {
           expect(sql).to.include("t.workspace_id = $2");
@@ -305,6 +310,65 @@ describe("opNotifications helpers (worker, ESM)", () => {
       expect(mismatchedSentTo).to.deep.equal(["admin@example.com"]);
     });
 
+    it("includes a legacy implicit workspace owner once alongside explicit admins", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const { client } = emailClient({
+        recipients: ["admin@example.com", "creator@example.com"],
+        creatorEmail: "CREATOR@example.com",
+      });
+      const sentTo = [];
+      await mod.sendOperationalIncidentEmail(client, params, async ({ to }) => {
+        sentTo.push(to);
+        return { success: true };
+      });
+      expect(sentTo).to.deep.equal([
+        "admin@example.com",
+        "creator@example.com",
+      ]);
+    });
+
+    it("uses the default daily cap for missing, empty, zero, negative, and invalid values", async () => {
+      const previous = process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP;
+      try {
+        for (const value of [
+          undefined,
+          "",
+          "0",
+          "-1",
+          "invalid",
+          "1e2",
+          "1.5",
+        ]) {
+          if (value === undefined)
+            delete process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP;
+          else process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP = value;
+          const mod = await importFresh(
+            "apps/worker/src/shared/opNotifications.js",
+          );
+          const { client, state } = emailClient({ cap: 2 });
+          await mod.sendOperationalIncidentEmail(client, params, async () => ({
+            success: true,
+          }));
+          expect(state.sent, `cap value ${String(value)}`).to.equal(true);
+        }
+        process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP = "2";
+        const mod = await importFresh(
+          "apps/worker/src/shared/opNotifications.js",
+        );
+        const { client, state } = emailClient({ cap: 2 });
+        await mod.sendOperationalIncidentEmail(client, params, async () => ({
+          success: true,
+        }));
+        expect(state.sent).to.equal(false);
+      } finally {
+        if (previous === undefined)
+          delete process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP;
+        else process.env.OP_NOTIFICATION_EMAIL_DAILY_CAP = previous;
+      }
+    });
+
     it("releases the claim after SMTP failure so a later attempt can deliver", async () => {
       const mod = await importFresh(
         "apps/worker/src/shared/opNotifications.js",
@@ -367,6 +431,109 @@ describe("opNotifications helpers (worker, ESM)", () => {
         client.calls.some((call) => call.sql.includes("COUNT(*)::int AS c")),
       ).to.equal(false);
       expect(state.claim).to.equal("other-worker");
+    });
+  });
+
+  describe("retryPendingOperationalIncidentEmails", () => {
+    it("resolves recovered or missing delivery rows instead of sending, while retaining active and auto-sync retries", async () => {
+      const mod = await importFresh(
+        "apps/worker/src/shared/opNotifications.js",
+      );
+      const rows = [
+        {
+          id: "recovered",
+          workspace_id: "ws-1",
+          category: "delivery",
+          dedupe_key: "delivery_blocked:1",
+          title: "Recovered",
+          metadata: { alert_queue_id: 1 },
+        },
+        {
+          id: "missing",
+          workspace_id: "ws-1",
+          category: "delivery",
+          dedupe_key: "delivery_blocked:2",
+          title: "Missing",
+          metadata: { alert_queue_id: 2 },
+        },
+        {
+          id: "active",
+          workspace_id: "ws-1",
+          category: "delivery",
+          dedupe_key: "delivery_blocked:3",
+          title: "Blocked",
+          metadata: { alert_queue_id: 3 },
+        },
+        {
+          id: "agent",
+          workspace_id: "ws-1",
+          token_id: null,
+          category: "delivery",
+          dedupe_key: "delivery_blocked:4",
+          title: "Agent blocked",
+          metadata: { alert_queue_id: 4 },
+        },
+        {
+          id: "sync",
+          workspace_id: "ws-1",
+          category: "auto_sync",
+          dedupe_key: "auto_sync_failed:cfg",
+          title: "Sync",
+          metadata: {},
+        },
+      ];
+      const resolved = [];
+      const sent = [];
+      const client = mockClient((sql, values) => {
+        if (
+          sql.includes(
+            "SELECT id, workspace_id, token_id, category, dedupe_key",
+          )
+        )
+          return { rows };
+        if (sql.includes("SELECT aq.status FROM alert_queue")) {
+          expect(sql).to.include("LEFT JOIN certops_agents ca");
+          expect(sql).to.include(
+            "COALESCE(t.workspace_id, ca.workspace_id) = $2",
+          );
+          return {
+            rows:
+              values[0] === 2
+                ? []
+                : [{ status: values[0] === 1 ? "sent" : "blocked" }],
+          };
+        }
+        if (sql.includes("SET resolved_at = NOW()")) {
+          resolved.push(values[1]);
+          return { rowCount: 1 };
+        }
+        if (
+          sql.includes("pg_advisory_lock") ||
+          sql.includes("pg_advisory_unlock")
+        )
+          return { rows: [{}] };
+        if (sql.includes("SET email_claim_id = $2"))
+          return { rows: [{ id: values[0] }] };
+        if (sql.includes("COUNT(*)::int AS c")) return { rows: [{ c: 0 }] };
+        if (sql.includes("wm.role = 'admin'"))
+          return { rows: [{ email: "admin@example.com" }] };
+        if (sql.includes("JOIN users u ON u.id = w.created_by"))
+          return { rows: [] };
+        if (sql.includes("SET email_sent_at = CASE")) return { rowCount: 1 };
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await mod.retryPendingOperationalIncidentEmails(
+        client,
+        async ({ subject }) => {
+          sent.push(subject);
+          return { success: true };
+        },
+      );
+      expect(resolved).to.deep.equal([
+        "delivery_blocked:1",
+        "delivery_blocked:2",
+      ]);
+      expect(sent).to.deep.equal(["Blocked", "Agent blocked", "Sync"]);
     });
   });
 });

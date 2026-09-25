@@ -188,6 +188,13 @@ describe("Token Management Integration Tests", () => {
         .expect(201);
 
       const tokenId = createResponse.body.id;
+      const incident = await TestUtils.execQuery(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title)
+         VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Single delete incident')
+         RETURNING id`,
+        [workspaceId2, tokenId, `single-delete:${tokenId}`],
+      );
 
       // Then delete it
       const deleteResponse = await request("http://localhost:4000")
@@ -196,6 +203,11 @@ describe("Token Management Integration Tests", () => {
         .expect(200);
 
       expect(deleteResponse.body.message).to.include("deleted");
+      const incidentState = await TestUtils.execQuery(
+        "SELECT resolved_at FROM operational_notifications WHERE id = $1",
+        [incident.rows[0].id],
+      );
+      expect(incidentState.rows[0].resolved_at).to.be.a("date");
     });
 
     it("should reject deleting non-existent token when authenticated", async () => {

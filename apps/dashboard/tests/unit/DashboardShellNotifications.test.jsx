@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 
@@ -26,6 +26,28 @@ function renderNotifications(notifications, unreadCount) {
 }
 
 describe('DashboardShell notification indicator', () => {
+  it('shows the persisted auto-sync error and Manage auto-sync action', () => {
+    renderNotifications(
+      [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          category: 'auto_sync',
+          type: 'auto_sync_failed',
+          persisted: true,
+          isRead: false,
+          text: 'Auto-sync failing repeatedly: gitlab',
+          message: '<Bad credentials>',
+          href: '/dashboard?import=gitlab&autoSyncManage=1',
+        },
+      ],
+      1
+    );
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    expect(screen.getByText('<Bad credentials>')).toBeInTheDocument();
+    expect(
+      screen.getByText('Opens Import tokens on the Manage auto-sync tab.')
+    ).toBeInTheDocument();
+  });
   it.each([
     [
       {

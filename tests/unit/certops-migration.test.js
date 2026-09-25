@@ -16,10 +16,12 @@ describe("operational notifications migration", () => {
     );
     assert.ok(notificationMigration);
     assert.equal(notificationMigration.version, 56);
-    assert.equal(migrations.at(-1), notificationMigration);
+    const lifecycleMigration = migrations.at(-1);
+    assert.equal(lifecycleMigration.version, 57);
+    assert.equal(lifecycleMigration.name, "operational_notification_lifecycle");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 56 }, (_, index) => index + 1),
+      Array.from({ length: 57 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -33,6 +35,10 @@ describe("operational notifications migration", () => {
     assert.match(notificationMigration.sql, /email_claimed_at TIMESTAMPTZ NULL/);
     assert.match(notificationMigration.sql, /trg_operational_notification_escalation_unread/);
     assert.match(notificationMigration.sql, /DELETE FROM operational_notification_reads WHERE notification_id = NEW.id/);
+    assert.match(lifecycleMigration.sql, /BEFORE DELETE OR UPDATE OF workspace_id ON tokens/);
+    assert.match(lifecycleMigration.sql, /idx_operational_notifications_open_delivery_token/);
+    assert.match(lifecycleMigration.sql, /JOIN certops_agents ca ON ca.id = aq.certops_agent_id/);
+    assert.match(lifecycleMigration.sql, /NEW.type IS DISTINCT FROM OLD.type/);
   });
 });
 const { JOB_OPERATIONS, SUBJECT_TYPES } = require(

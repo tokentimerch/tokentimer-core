@@ -8,11 +8,13 @@ import {
 
 // Consecutive failed runs at/above which an auto-sync incident escalates
 // from a bell-only warning to a critical (emailed) incident.
-const AUTO_SYNC_CRITICAL_THRESHOLD = Number.isFinite(
-  Number(process.env.AUTO_SYNC_CRITICAL_THRESHOLD),
-)
-  ? Number(process.env.AUTO_SYNC_CRITICAL_THRESHOLD)
-  : 3;
+const thresholdText = process.env.AUTO_SYNC_CRITICAL_THRESHOLD?.trim();
+const thresholdNumber = Number(thresholdText);
+const AUTO_SYNC_CRITICAL_THRESHOLD =
+  /^[1-9]\d*$/.test(thresholdText || "") &&
+  Number.isSafeInteger(thresholdNumber)
+    ? thresholdNumber
+    : 3;
 
 /**
  * Prefer API error body over generic Axios message for last_sync_error / audit.
@@ -206,11 +208,12 @@ export async function recordAutoSyncFailure(
      SET last_sync_at = NOW(), last_sync_status = 'failed',
          last_sync_error = $1, next_sync_at = $2, updated_at = NOW(),
          consecutive_failures = consecutive_failures + 1
-     WHERE id = $3
+     WHERE id = $3 AND workspace_id = $4
      RETURNING consecutive_failures`,
-    [errorMessage, nextSync, configId],
+    [errorMessage, nextSync, configId, workspaceId],
   );
-  const consecutiveFailures = updateRes.rows[0]?.consecutive_failures || 1;
+  if (!updateRes.rows[0]) return;
+  const consecutiveFailures = updateRes.rows[0].consecutive_failures;
 
   if (workspaceId) {
     const critical = consecutiveFailures >= AUTO_SYNC_CRITICAL_THRESHOLD;
@@ -296,8 +299,8 @@ export async function recordAutoSyncRecovery(
     await client.query(
       `UPDATE auto_sync_configs
        SET consecutive_failures = 0
-       WHERE id = $1 AND consecutive_failures != 0`,
-      [configId],
+       WHERE id = $1 AND workspace_id = $2 AND consecutive_failures != 0`,
+      [configId, workspaceId],
     );
     if (workspaceId) {
       await resolveOperationalNotification(
