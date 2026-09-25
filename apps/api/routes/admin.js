@@ -42,7 +42,9 @@ const {
   interpretContactGroupWrite,
   canonicalLegacyContactGroupId,
 } = require("../src/shared/contactGroups");
-const { assertContactGroupIds } = require("../src/shared/assertContactGroupIds");
+const {
+  assertContactGroupIds,
+} = require("../src/shared/assertContactGroupIds");
 
 const DNS_LIVE_CERT_SKIP_DETAILS = new Set([
   "live_certificate_dns_unresolved",
@@ -79,6 +81,13 @@ async function membershipIdsForAssetWrite(client, workspaceId, body) {
 }
 
 const router = require("express").Router();
+
+function autoSyncNotificationHref(provider, configId, workspaceId) {
+  const href = `/dashboard?import=${encodeURIComponent(provider || "")}&autoSyncManage=1`;
+  return typeof configId === "string" && configId.trim()
+    ? `${href}&autoSyncConfigId=${encodeURIComponent(configId.trim())}&workspace=${encodeURIComponent(workspaceId)}`
+    : href;
+}
 
 function publicToolErrors(toolErrors) {
   if (!Array.isArray(toolErrors) || toolErrors.length === 0) return undefined;
@@ -255,8 +264,8 @@ function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
   if (cleanup_obsolete === false) return false;
   return Boolean(
     scan_params &&
-      typeof scan_params === "object" &&
-      scan_params.cleanupObsolete === true,
+    typeof scan_params === "object" &&
+    scan_params.cleanupObsolete === true,
   );
 }
 
@@ -458,6 +467,7 @@ router.put(
       if (enabled !== undefined) {
         updates.push(`enabled = $${idx++}`);
         values.push(enabled);
+        if (enabled === false) updates.push("consecutive_failures = 0");
       }
       if (cleanup_obsolete !== undefined) {
         updates.push(`cleanup_obsolete = $${idx++}`);
@@ -478,12 +488,23 @@ router.put(
       }
 
       values.push(req.params.configId, req.workspace.id);
-      const result = await pool.query(
-        `UPDATE auto_sync_configs SET ${updates.join(", ")}
-         WHERE id = $${idx++} AND workspace_id = $${idx}
-         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
-        values,
-      );
+      const result = await withDbTransaction(async (client) => {
+        const updated = await client.query(
+          `UPDATE auto_sync_configs SET ${updates.join(", ")}
+           WHERE id = $${idx++} AND workspace_id = $${idx}
+           RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
+          values,
+        );
+        if (updated.rows.length > 0 && enabled === false) {
+          await client.query(
+            `UPDATE operational_notifications
+                SET resolved_at = NOW(), updated_at = NOW()
+              WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+            [req.workspace.id, `auto_sync_failed:${req.params.configId}`],
+          );
+        }
+        return updated;
+      });
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Auto-sync config not found" });
       }
@@ -524,10 +545,21 @@ router.delete(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
-      const result = await pool.query(
-        "DELETE FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 RETURNING provider",
-        [req.params.configId, req.workspace.id],
-      );
+      const result = await withDbTransaction(async (client) => {
+        const deleted = await client.query(
+          "DELETE FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 RETURNING provider",
+          [req.params.configId, req.workspace.id],
+        );
+        if (deleted.rows.length > 0) {
+          await client.query(
+            `UPDATE operational_notifications
+                SET resolved_at = NOW(), updated_at = NOW()
+              WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+            [req.workspace.id, `auto_sync_failed:${req.params.configId}`],
+          );
+        }
+        return deleted;
+      });
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Auto-sync config not found" });
       }
@@ -624,7 +656,8 @@ router.post(
   },
 );
 
-// Operational notifications for the dashboard bell (auto-sync failures, deferred alerts)
+// Operational notifications for the dashboard bell (auto-sync failures, deferred alerts,
+// and persisted operational_notifications rows raised by delivery-worker/auto-sync-worker)
 router.get(
   "/api/v1/workspaces/:id/notifications",
   getApiLimiter(),
@@ -633,19 +666,14 @@ router.get(
   requireWorkspaceMembership,
   async (req, res) => {
     try {
-      const roleRes = await pool.query(
-        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
-        [req.workspace.id, req.user.id],
-      );
-      const role = roleRes.rows?.[0]?.role || null;
-      const isPrivileged =
-        role === "admin" || role === "workspace_manager";
+      const role = req.authz?.workspaceRole;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
 
       const items = [];
 
       if (isPrivileged) {
         const failedSync = await pool.query(
-          `SELECT provider, last_sync_error, last_sync_at
+          `SELECT id, provider, last_sync_error, last_sync_at
            FROM auto_sync_configs
            WHERE workspace_id = $1 AND enabled = TRUE AND last_sync_status = 'failed'
            ORDER BY last_sync_at DESC NULLS LAST`,
@@ -655,11 +683,12 @@ router.get(
           const provider = row.provider || "integration";
           const errText = String(row.last_sync_error || "Unknown error").trim();
           items.push({
-            id: `auto-sync-failed-${provider}`,
+            id: `auto-sync-failed-${row.id || provider}`,
             kind: "error",
             text: `Auto-sync failed for ${provider}: ${errText}`,
-            href: `/dashboard?import=${encodeURIComponent(provider)}&autoSyncManage=1`,
+            href: autoSyncNotificationHref(provider, row.id, req.workspace.id),
             provider,
+            autoSyncConfigId: row.id,
           });
         }
 
@@ -687,13 +716,193 @@ router.get(
         }
       }
 
-      res.json({ items });
+      // Managers see workspace incidents; other members only see incidents
+      // about tokens they own. Count all visible unread rows independently of
+      // the bounded display list.
+      const unreadRes = await pool.query(
+        `SELECT COUNT(*)::int AS count
+           FROM operational_notifications n
+           LEFT JOIN operational_notification_reads r
+             ON r.notification_id = n.id AND r.user_id = $2
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
+            AND r.notification_id IS NULL
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
+      const opRows = await pool.query(
+        `SELECT n.id, n.category, n.type, n.severity, n.title, n.message,
+                n.metadata, n.created_at, n.updated_at, n.token_id,
+                (r.notification_id IS NOT NULL) AS is_read
+           FROM operational_notifications n
+           LEFT JOIN operational_notification_reads r
+             ON r.notification_id = n.id AND r.user_id = $2
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
+          ORDER BY (r.notification_id IS NULL) DESC,
+                   COALESCE(n.updated_at, n.created_at) DESC, n.created_at DESC
+          LIMIT 50`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
+      const incidentConfigId = (row) =>
+        typeof row.metadata?.auto_sync_config_id === "string"
+          ? row.metadata.auto_sync_config_id.trim()
+          : "";
+      const persistedSyncConfigIds = new Set(
+        opRows.rows
+          .filter((row) => row.category === "auto_sync")
+          .map(incidentConfigId)
+          .filter(Boolean),
+      );
+      const legacySyncProviders = new Set(
+        opRows.rows
+          .filter(
+            (row) => row.category === "auto_sync" && !incidentConfigId(row),
+          )
+          .map((row) => String(row.metadata?.provider || "").toLowerCase()),
+      );
+      for (let index = items.length - 1; index >= 0; index -= 1) {
+        const item = items[index];
+        if (
+          item.id.startsWith("auto-sync-failed-") &&
+          (persistedSyncConfigIds.has(item.autoSyncConfigId) ||
+            legacySyncProviders.has(String(item.provider || "").toLowerCase()))
+        ) {
+          items.splice(index, 1);
+        }
+      }
+      for (const row of opRows.rows) {
+        const meta = row.metadata || {};
+        const href =
+          row.category === "auto_sync"
+            ? autoSyncNotificationHref(
+                meta.provider,
+                meta.auto_sync_config_id,
+                req.workspace.id,
+              )
+            : "/control-center";
+        items.push({
+          id: row.id,
+          kind:
+            row.severity === "critical"
+              ? "error"
+              : row.severity === "warning"
+                ? "warning"
+                : "info",
+          text: row.title,
+          message: row.message,
+          href,
+          category: row.category,
+          type: row.type,
+          severity: row.severity,
+          isRead: row.is_read === true,
+          createdAt: row.created_at,
+          persisted: true,
+        });
+      }
+
+      res.json({ items, unreadCount: unreadRes.rows[0]?.count || 0 });
     } catch (e) {
       logger.error("Workspace notifications error", {
         error: e.message,
         workspaceId: req.workspace.id,
       });
       res.status(500).json({ error: "Failed to load notifications" });
+    }
+  },
+);
+
+// Mark a single persisted operational notification as read for the current user.
+router.post(
+  "/api/v1/workspaces/:id/notifications/:notificationId/read",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        req.params.notificationId,
+      )
+    ) {
+      return res.status(400).json({
+        error: "Invalid notification id",
+        code: "VALIDATION_ERROR",
+      });
+    }
+    try {
+      const role = req.authz?.workspaceRole;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
+
+      // Same visibility rule as GET /notifications: non-privileged members
+      // may only mark notifications for their own tokens as read.
+      const check = await pool.query(
+        `SELECT n.id
+           FROM operational_notifications n
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
+          WHERE n.id = $1
+            AND n.workspace_id = $2
+            AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $4))`,
+        [
+          req.params.notificationId,
+          req.workspace.id,
+          isPrivileged,
+          req.user.id,
+        ],
+      );
+      if (check.rows.length === 0) {
+        return res.status(404).json({ error: "Notification not found" });
+      }
+      await pool.query(
+        `INSERT INTO operational_notification_reads (notification_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (notification_id, user_id) DO NOTHING`,
+        [req.params.notificationId, req.user.id],
+      );
+      res.json({ success: true });
+    } catch (e) {
+      logger.error("Mark notification read error", { error: e.message });
+      res.status(500).json({ error: "Failed to mark notification as read" });
+    }
+  },
+);
+
+// Mark every currently-unresolved operational notification visible to the
+// current user (in this workspace) as read.
+router.post(
+  "/api/v1/workspaces/:id/notifications/read-all",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    try {
+      const role = req.authz?.workspaceRole;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
+
+      await pool.query(
+        `INSERT INTO operational_notification_reads (notification_id, user_id)
+         SELECT n.id, $2
+           FROM operational_notifications n
+           LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
+         ON CONFLICT (notification_id, user_id) DO NOTHING`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
+      res.json({ success: true });
+    } catch (e) {
+      logger.error("Mark all notifications read error", { error: e.message });
+      res.status(500).json({ error: "Failed to mark notifications as read" });
     }
   },
 );

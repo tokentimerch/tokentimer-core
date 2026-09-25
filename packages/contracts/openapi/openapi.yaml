@@ -2943,6 +2943,7 @@ paths:
                           type: string
                         message:
                           type: string
+                          nullable: true
                   meta:
                     type: object
                     properties:
@@ -3209,8 +3210,8 @@ paths:
       description: >-
         Returns operational notifications for the dashboard bell, including
         auto-sync failures and alerts waiting for the delivery window.
-        Workspace admins and managers receive provider-specific items; other
-        members receive an empty list.
+        Workspace admins and managers receive workspace-level items; other
+        members receive incidents for tokens they own.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3233,6 +3234,9 @@ paths:
                           enum: [error, warning, info]
                         text:
                           type: string
+                        message:
+                          type: string
+                          nullable: true
                         href:
                           type: string
                           nullable: true
@@ -3240,6 +3244,94 @@ paths:
                           type: string
                         count:
                           type: integer
+                        category:
+                          type: string
+                        type:
+                          type: string
+                        severity:
+                          type: string
+                        isRead:
+                          type: boolean
+                        createdAt:
+                          type: string
+                        persisted:
+                          type: boolean
+                  unreadCount:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/notifications/{notificationId}/read:
+    post:
+      tags: [Alerts]
+      summary: Mark a persisted operational notification as read
+      operationId: markWorkspaceNotificationRead
+      description: >-
+        Marks a single persisted operational notification (delivery
+        blocked/degraded, auto-sync failed) as read for the current user.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          description: Invalid notification ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/notifications/read-all:
+    post:
+      tags: [Alerts]
+      summary: Mark all persisted operational notifications as read
+      operationId: markAllWorkspaceNotificationsRead
+      description: >-
+        Marks every open persisted operational notification visible to the
+        current user's role as read.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/alert-settings:

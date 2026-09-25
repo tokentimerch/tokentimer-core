@@ -113,6 +113,7 @@ import {
   useDashboardTheme,
 } from './hooks/useDashboardTheme.js';
 import { useDashboardMenuStyles } from './hooks/useDashboardMenuStyles.js';
+import { useDashboardNotifications } from './hooks/useDashboardNotifications.js';
 import { useLoadedAssetMetrics } from './hooks/useLoadedAssetMetrics.js';
 import {
   categoriesEqual,
@@ -3483,7 +3484,6 @@ function DashboardView({
   const [dashboardWorkspace, setDashboardWorkspace] = useState(null);
   const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
     useState(false);
-  const [dashboardNotifications, setDashboardNotifications] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3549,122 +3549,15 @@ function DashboardView({
     } catch (_) {}
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadDashboardNotifications() {
-      if (!_session || !dashboardWorkspace?.id) {
-        if (!cancelled) setDashboardNotifications([]);
-        return;
-      }
-
-      try {
-        const [settingsRes, notificationsRes] = await Promise.all([
-          workspaceAPI.getAlertSettings(dashboardWorkspace.id),
-          workspaceAPI
-            .getNotifications(dashboardWorkspace.id)
-            .catch(() => ({ items: [] })),
-        ]);
-        if (cancelled) return;
-
-        const data = settingsRes?.data || settingsRes || {};
-        const emailEnabled = data.email_alerts_enabled === true;
-        const webhooks = data.webhook_urls;
-        const hasWebhooks = Array.isArray(webhooks) && webhooks.length > 0;
-        const smtpConfigured = data.smtp_configured !== false;
-        const allDisabled = !emailEnabled && !hasWebhooks;
-        const contactGroups = Array.isArray(data.contact_groups)
-          ? data.contact_groups
-          : [];
-        const hasAnyContact = contactGroups.some(group => {
-          const emailIds = Array.isArray(group.email_contact_ids)
-            ? group.email_contact_ids
-            : [];
-          const whatsappIds = Array.isArray(group.whatsapp_contact_ids)
-            ? group.whatsapp_contact_ids
-            : [];
-          // Webhook channels (Slack/Teams/Discord/...) are valid alert
-          // destinations too; also honor the legacy single webhook_name field.
-          const webhookNames = Array.isArray(group.webhook_names)
-            ? group.webhook_names.filter(Boolean)
-            : [];
-          const hasLegacyWebhook =
-            typeof group.webhook_name === 'string' &&
-            group.webhook_name.trim().length > 0;
-          return (
-            emailIds.length > 0 ||
-            whatsappIds.length > 0 ||
-            webhookNames.length > 0 ||
-            hasLegacyWebhook
-          );
-        });
-        const currentRole = String(
-          dashboardWorkspace?.role || ''
-        ).toLowerCase();
-        const canManageWorkspaceAlerts =
-          isSystemAdmin ||
-          currentRole === 'admin' ||
-          currentRole === 'workspace_manager';
-        const list = [];
-
-        if (canManageWorkspaceAlerts) {
-          const operational = Array.isArray(notificationsRes?.items)
-            ? notificationsRes.items
-            : [];
-          for (const item of operational) {
-            list.push({
-              id: item.id,
-              kind: item.kind === 'error' ? 'error' : 'warning',
-              text: item.text,
-              href: item.href || null,
-            });
-          }
-        }
-
-        if (!canManageWorkspaceAlerts) {
-          setDashboardNotifications(list);
-          return;
-        }
-
-        if (!smtpConfigured) {
-          list.push({
-            id: 'smtp-not-configured',
-            kind: 'warning',
-            text: isSystemAdmin
-              ? 'SMTP is not configured. Email notifications will not be sent.'
-              : 'SMTP is not configured. Ask a system administrator to configure email delivery.',
-            href: isSystemAdmin ? '/system-settings' : null,
-          });
-        }
-        if (allDisabled) {
-          list.push({
-            id: 'alerts-disabled',
-            kind: 'warning',
-            text: 'Alerts are disabled until a channel is defined.',
-            href: '/workspace-preferences',
-          });
-        }
-        if (!hasAnyContact) {
-          list.push({
-            id: 'no-contacts-defined',
-            kind: 'warning',
-            text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
-            href: '/workspace-preferences',
-          });
-        }
-        setDashboardNotifications(list);
-      } catch (_) {
-        if (!cancelled) setDashboardNotifications([]);
-      }
-    }
-
-    loadDashboardNotifications();
-    const refresh = () => loadDashboardNotifications();
-    window.addEventListener('tt:notifications-refresh', refresh);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('tt:notifications-refresh', refresh);
-    };
-  }, [_session, dashboardWorkspace, isSystemAdmin]);
+  const {
+    dashboardNotifications,
+    dashboardUnreadCount,
+    onNotificationClick,
+    onMarkAllNotificationsRead,
+  } = useDashboardNotifications({
+    session: _session,
+    workspace: dashboardWorkspace,
+  });
 
   const commitCreateNotes = useCallback(
     v => {
@@ -5083,6 +4976,9 @@ function DashboardView({
         workspaceLabel={workspaceLabel}
         onWorkspaceSelect={handleDashboardWorkspaceSelect}
         dashboardNotifications={dashboardNotifications}
+        dashboardUnreadCount={dashboardUnreadCount}
+        onNotificationClick={onNotificationClick}
+        onMarkAllNotificationsRead={onMarkAllNotificationsRead}
         onLogout={onLogout}
         onAccountClick={handleAccountClick}
         isViewer={isViewer}
@@ -5999,15 +5895,20 @@ function ImportTokensButton({ label = 'Import' }) {
     if (!provider) return;
     if (KNOWN_IMPORT_PROVIDERS.includes(provider)) {
       const autoSyncManage = searchParams.get('autoSyncManage') === '1';
+      const autoSyncConfigId = autoSyncManage
+        ? searchParams.get('autoSyncConfigId')
+        : null;
       setOpenRequest({
         provider,
         integrationSubTab: autoSyncManage ? 'manage' : 'scan',
+        ...(autoSyncConfigId ? { autoSyncConfigId } : {}),
       });
       onOpen();
     }
     const next = new URLSearchParams(searchParams);
     next.delete('import');
     next.delete('autoSyncManage');
+    next.delete('autoSyncConfigId');
     setSearchParams(next, { replace: true });
   }, [searchParams, onOpen, setSearchParams]);
 

@@ -133,11 +133,18 @@ describe("Auto-sync worker integration", function () {
 
     const inserted = await TestUtils.execQuery(
       `INSERT INTO auto_sync_configs
-         (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
+         (workspace_id, provider, credentials_encrypted, scan_params, connection_key,
+          frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
        VALUES
-         ($1, 'github', $2, 'daily', '00:01', 'UTC', TRUE, NOW() - INTERVAL '5 minutes', $3)
+         ($1, 'github', $2, $4::jsonb, 'Production GitHub',
+          'daily', '00:01', 'UTC', TRUE, NOW() - INTERVAL '5 minutes', $3)
        RETURNING id`,
-      [workspaceId, creds, testUser.id],
+      [
+        workspaceId,
+        creds,
+        testUser.id,
+        JSON.stringify({ baseUrl: "https://github.company.com" }),
+      ],
     );
     const configId = inserted.rows[0].id;
 
@@ -162,6 +169,19 @@ describe("Auto-sync worker integration", function () {
       String(first.rows[0].last_sync_error || "").length,
     ).to.be.greaterThan(0);
     const firstSyncAt = String(first.rows[0].last_sync_at);
+    const incident = await TestUtils.execQuery(
+      `SELECT metadata FROM operational_notifications
+        WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+      [workspaceId, `auto_sync_failed:${configId}`],
+    );
+    expect(incident.rows).to.have.length(1);
+    expect(incident.rows[0].metadata).to.include({
+      provider: "github",
+      auto_sync_config_id: configId,
+      workspace_id: workspaceId,
+      connection_key: "Production GitHub",
+      location: "https://github.company.com",
+    });
 
     await TestUtils.runNode(
       "node",

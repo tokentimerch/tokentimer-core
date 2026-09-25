@@ -229,12 +229,25 @@ describe("Auto-Sync CRUD", function () {
   // --- DELETE ---
 
   it("DELETE /auto-sync/:id - should delete the config", async () => {
+    const incident = await TestUtils.execQuery(
+      `INSERT INTO operational_notifications
+         (workspace_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, 'auto_sync', 'auto_sync_failed', 'critical', $2, 'Auto-sync failing repeatedly')
+       RETURNING id`,
+      [workspaceId, `auto_sync_failed:${configId}`],
+    );
     const res = await request(BASE)
       .delete(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
       .set("Cookie", session.cookie)
       .expect(200);
 
     expect(res.body).to.have.property("success", true);
+    const resolved = await TestUtils.execQuery(
+      "SELECT resolved_at, email_sent_at FROM operational_notifications WHERE id = $1",
+      [incident.rows[0].id],
+    );
+    expect(resolved.rows[0].resolved_at).to.not.be.null;
+    expect(resolved.rows[0].email_sent_at).to.be.null;
   });
 
   it("GET /auto-sync - list should be empty after delete", async () => {
@@ -305,6 +318,13 @@ describe("Auto-Sync enable/disable", function () {
   });
 
   it("should disable the config via PUT", async () => {
+    const incident = await TestUtils.execQuery(
+      `INSERT INTO operational_notifications
+         (workspace_id, category, type, severity, dedupe_key, title)
+       VALUES ($1, 'auto_sync', 'auto_sync_failed', 'critical', $2, 'Auto-sync failing repeatedly')
+       RETURNING id`,
+      [workspaceId, `auto_sync_failed:${configId}`],
+    );
     const res = await request(BASE)
       .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
       .set("Cookie", session.cookie)
@@ -313,6 +333,12 @@ describe("Auto-Sync enable/disable", function () {
 
     expect(res.body).to.have.property("id", configId);
     expect(res.body).to.have.property("enabled", false);
+    const resolved = await TestUtils.execQuery(
+      "SELECT resolved_at, email_sent_at FROM operational_notifications WHERE id = $1",
+      [incident.rows[0].id],
+    );
+    expect(resolved.rows[0].resolved_at).to.not.be.null;
+    expect(resolved.rows[0].email_sent_at).to.be.null;
   });
 
   it("should verify the config is disabled in the list", async () => {
@@ -327,6 +353,99 @@ describe("Auto-Sync enable/disable", function () {
     );
     expect(config).to.exist;
     expect(config).to.have.property("enabled", false);
+  });
+
+  it("resets a critical failure streak on disable so re-enable starts with a warning", async () => {
+    const previousThreshold = process.env.AUTO_SYNC_CRITICAL_THRESHOLD;
+    process.env.AUTO_SYNC_CRITICAL_THRESHOLD = "3";
+    const { recordAutoSyncFailure } = await import(
+      `../../apps/worker/src/shared/autoSyncFailure.js?disable-streak=${Date.now()}`
+    );
+    const db = { query: (...args) => TestUtils.execQuery(...args) };
+    const fail = () =>
+      recordAutoSyncFailure(
+        db,
+        {
+          configId,
+          workspaceId,
+          provider: "gitlab",
+          previousStatus: "failed",
+          errorMessage: "Bad credentials",
+          nextSync: new Date(Date.now() + 3600000),
+        },
+        () => {},
+      );
+    try {
+      await request(BASE)
+        .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
+        .set("Cookie", session.cookie)
+        .send({ enabled: true })
+        .expect(200);
+
+      await fail();
+      await fail();
+      await fail();
+      const critical = await TestUtils.execQuery(
+        `SELECT id, severity FROM operational_notifications
+          WHERE workspace_id = $1 AND dedupe_key = $2 AND resolved_at IS NULL`,
+        [workspaceId, `auto_sync_failed:${configId}`],
+      );
+      expect(critical.rows).to.have.length(1);
+      expect(critical.rows[0].severity).to.equal("critical");
+      const beforeDisable = await TestUtils.execQuery(
+        "SELECT consecutive_failures FROM auto_sync_configs WHERE id = $1",
+        [configId],
+      );
+      expect(beforeDisable.rows[0].consecutive_failures).to.equal(3);
+
+      await request(BASE)
+        .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
+        .set("Cookie", session.cookie)
+        .send({ frequency: "weekly" })
+        .expect(200);
+      const afterUnrelatedUpdate = await TestUtils.execQuery(
+        "SELECT consecutive_failures FROM auto_sync_configs WHERE id = $1",
+        [configId],
+      );
+      expect(afterUnrelatedUpdate.rows[0].consecutive_failures).to.equal(3);
+
+      await request(BASE)
+        .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
+        .set("Cookie", session.cookie)
+        .send({ enabled: false })
+        .expect(200);
+      const disabled = await TestUtils.execQuery(
+        `SELECT c.consecutive_failures, n.resolved_at
+           FROM auto_sync_configs c
+           JOIN operational_notifications n ON n.dedupe_key = $2
+          WHERE c.id = $1 AND n.id = $3`,
+        [configId, `auto_sync_failed:${configId}`, critical.rows[0].id],
+      );
+      expect(disabled.rows[0].consecutive_failures).to.equal(0);
+      expect(disabled.rows[0].resolved_at).to.not.be.null;
+
+      await request(BASE)
+        .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${configId}`)
+        .set("Cookie", session.cookie)
+        .send({ enabled: true })
+        .expect(200);
+      await fail();
+      const restarted = await TestUtils.execQuery(
+        `SELECT c.consecutive_failures, n.id, n.severity
+           FROM auto_sync_configs c
+           JOIN operational_notifications n ON n.workspace_id = c.workspace_id
+          WHERE c.id = $1 AND n.dedupe_key = $2 AND n.resolved_at IS NULL`,
+        [configId, `auto_sync_failed:${configId}`],
+      );
+      expect(restarted.rows).to.have.length(1);
+      expect(restarted.rows[0].consecutive_failures).to.equal(1);
+      expect(restarted.rows[0].severity).to.equal("warning");
+      expect(restarted.rows[0].id).to.not.equal(critical.rows[0].id);
+    } finally {
+      if (previousThreshold === undefined)
+        delete process.env.AUTO_SYNC_CRITICAL_THRESHOLD;
+      else process.env.AUTO_SYNC_CRITICAL_THRESHOLD = previousThreshold;
+    }
   });
 });
 

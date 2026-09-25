@@ -28,9 +28,11 @@ async function requeueAlertsCore({
          aq.status IN ('failed','limit_exceeded') OR
          (aq.status = 'partial' AND (aq.error_message IS NULL OR aq.error_message NOT ILIKE '%PLAN_LIMIT%')) OR
          ${blockedCondition}
-       )`,
+       )
+       RETURNING aq.id`,
       [workspaceId, userId],
     );
+    await resolveRequeuedNotifications(r.rows, workspaceId);
     return r.rowCount || 0;
   }
   const blockedCondition = includePlanLimitBlocked
@@ -44,10 +46,51 @@ async function requeueAlertsCore({
        status IN ('failed','limit_exceeded') OR
        (status = 'partial' AND (error_message IS NULL OR error_message NOT ILIKE '%PLAN_LIMIT%')) OR
        ${blockedCondition}
-     )`,
+     )
+     RETURNING id, (SELECT workspace_id FROM tokens WHERE tokens.id = alert_queue.token_id) AS workspace_id`,
     [userId],
   );
+  await resolveRequeuedNotifications(r.rows);
   return r.rowCount || 0;
+}
+
+/**
+ * Clear any open delivery_blocked/delivery_degraded bell notification for
+ * each alert row that was just moved back to 'pending'. Requeuing resets
+ * attempts to 0, so the prior incident is no longer accurate; the delivery
+ * worker will raise a fresh notification if the retry fails again.
+ *
+ * @param {Array<{id: number|string, workspace_id?: string}>} rows
+ * @param {string} [fixedWorkspaceId] - Use this workspace id for every row
+ *   instead of reading it off the row (workspace-scoped call site already
+ *   knows it).
+ */
+async function resolveRequeuedNotifications(rows, fixedWorkspaceId = null) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const workspaceIds = [];
+  const dedupeKeys = [];
+  for (const row of rows) {
+    const wsId = fixedWorkspaceId || row.workspace_id;
+    if (!wsId) continue;
+    for (const type of ["delivery_blocked", "delivery_degraded"]) {
+      workspaceIds.push(wsId);
+      dedupeKeys.push(`${type}:${row.id}`);
+    }
+  }
+  if (dedupeKeys.length === 0) return;
+  try {
+    await pool.query(
+      `UPDATE operational_notifications n
+          SET resolved_at = NOW(), updated_at = NOW()
+         FROM unnest($1::uuid[], $2::text[]) AS keys(workspace_id, dedupe_key)
+        WHERE n.workspace_id = keys.workspace_id
+          AND n.dedupe_key = keys.dedupe_key
+          AND n.resolved_at IS NULL`,
+      [workspaceIds, dedupeKeys],
+    );
+  } catch (err) {
+    console.warn("resolveRequeuedNotifications failed", { error: err.message });
+  }
 }
 
 module.exports = { requeueAlertsCore };

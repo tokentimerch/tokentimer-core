@@ -102,6 +102,14 @@ describe("Token Management Extended Integration Tests", () => {
           });
         ids.push(res.body.id);
       }
+      const incidents = await TestUtils.execQuery(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title)
+         SELECT $1, id, 'delivery', 'delivery_blocked', 'critical',
+                'bulk-delete:' || id, 'Bulk delete incident'
+           FROM tokens WHERE id = ANY($2::int[]) RETURNING id`,
+        [workspaceId, ids],
+      );
 
       // 2. Perform bulk delete
       const bulkRes = await request("http://localhost:4000")
@@ -112,6 +120,14 @@ describe("Token Management Extended Integration Tests", () => {
 
       expect(bulkRes.body.successCount).to.equal(3);
       expect(bulkRes.body.results.success).to.have.members(ids);
+      const incidentStates = await TestUtils.execQuery(
+        "SELECT resolved_at FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidents.rows.map((row) => row.id)],
+      );
+      expect(incidentStates.rows).to.have.length(3);
+      expect(
+        incidentStates.rows.every((row) => row.resolved_at instanceof Date),
+      ).to.equal(true);
 
       // 3. Verify they are gone
       for (const id of ids) {

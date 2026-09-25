@@ -8,6 +8,39 @@ const path = require("node:path");
 const { migrations } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
+
+describe("operational notifications migration", () => {
+  it("appends v56 after the unchanged historical v1-v55 migrations", () => {
+    const notificationMigration = migrations.find(
+      (entry) => entry.name === "operational_notifications_schema",
+    );
+    assert.ok(notificationMigration);
+    assert.equal(notificationMigration.version, 56);
+    const lifecycleMigration = migrations.at(-1);
+    assert.equal(lifecycleMigration.version, 57);
+    assert.equal(lifecycleMigration.name, "operational_notification_lifecycle");
+    assert.deepEqual(
+      migrations.map((entry) => entry.version),
+      Array.from({ length: 57 }, (_, index) => index + 1),
+    );
+    assert.equal(
+      migrations.find((entry) => entry.version === 39)?.name,
+      "certops_agents_capabilities_freshness_epoch",
+    );
+    assert.equal(
+      migrations.find((entry) => entry.version === 55)?.name,
+      "latest_token_expiry_and_historical_enqueue_indexes",
+    );
+    assert.match(notificationMigration.sql, /email_claim_id UUID NULL/);
+    assert.match(notificationMigration.sql, /email_claimed_at TIMESTAMPTZ NULL/);
+    assert.match(notificationMigration.sql, /trg_operational_notification_escalation_unread/);
+    assert.match(notificationMigration.sql, /DELETE FROM operational_notification_reads WHERE notification_id = NEW.id/);
+    assert.match(lifecycleMigration.sql, /BEFORE DELETE OR UPDATE OF workspace_id ON tokens/);
+    assert.match(lifecycleMigration.sql, /idx_operational_notifications_open_delivery_token/);
+    assert.match(lifecycleMigration.sql, /JOIN certops_agents ca ON ca.id = aq.certops_agent_id/);
+    assert.match(lifecycleMigration.sql, /NEW.type IS DISTINCT FROM OLD.type/);
+  });
+});
 const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -1646,7 +1679,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
     }
-    assert.equal(sorted[sorted.length - 1], 55);
+    assert.equal(sorted[sorted.length - 1], 57);
   });
 });
 

@@ -104,7 +104,10 @@ function notificationActionHint(notification) {
   if (notification.id === 'smtp-not-configured') {
     return 'Go to System Settings to configure SMTP.';
   }
-  if (notification.id?.startsWith('auto-sync-failed-')) {
+  if (
+    notification.category === 'auto_sync' ||
+    notification.id?.startsWith('auto-sync-failed-')
+  ) {
     return 'Opens Import tokens on the Manage auto-sync tab.';
   }
   if (notification.id === 'alerts-out-of-window') {
@@ -197,6 +200,9 @@ export default function DashboardShell({
   workspaceLabel,
   onWorkspaceSelect,
   dashboardNotifications = [],
+  dashboardUnreadCount,
+  onNotificationClick,
+  onMarkAllNotificationsRead,
   onLogout,
   onAccountClick,
   isViewer = false,
@@ -287,6 +293,16 @@ export default function DashboardShell({
   );
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isTourMenuActive, setIsTourMenuActive] = useState(false);
+  const showNotificationIndicator =
+    dashboardUnreadCount > 0 ||
+    (dashboardUnreadCount === undefined && dashboardNotifications.length > 0) ||
+    dashboardNotifications.some(
+      notification => notification?.persisted !== true
+    );
+  const hasUnreadPersistedNotifications = dashboardNotifications.some(
+    notification =>
+      notification?.persisted === true && notification?.isRead === false
+  );
   const {
     isOpen: isMobileNavOpen,
     onOpen: onMobileNavOpen,
@@ -893,8 +909,9 @@ export default function DashboardShell({
 
             <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
-                {dashboardNotifications.length > 0 && (
+                {showNotificationIndicator && (
                   <Box
+                    data-testid='notification-attention-indicator'
                     position='absolute'
                     top='7px'
                     right='8px'
@@ -925,34 +942,81 @@ export default function DashboardShell({
                       </Text>
                     </Box>
                   ) : (
-                    dashboardNotifications.map(notification => {
-                      const isClickable = Boolean(notification?.href);
-                      return (
-                        <MenuItem
-                          key={notification.id}
-                          onClick={() => {
-                            if (notification?.href) navigate(notification.href);
-                          }}
-                          cursor={isClickable ? 'pointer' : 'default'}
-                          {...(isClickable
-                            ? userMenuItemStyles
-                            : inactiveMenuItemStyles)}
-                        >
-                          <VStack align='start' spacing={0}>
+                    <>
+                      {typeof onMarkAllNotificationsRead === 'function' &&
+                        hasUnreadPersistedNotifications && (
+                          <Box
+                            px={3}
+                            py={1.5}
+                            borderBottom='1px solid'
+                            borderColor={borderColor}
+                          >
                             <Text
-                              color={textColor}
-                              fontSize='sm'
+                              as='button'
+                              fontSize='xs'
                               fontWeight='medium'
+                              color={mutedTextColor}
+                              onClick={onMarkAllNotificationsRead}
+                              _hover={{ textDecoration: 'underline' }}
                             >
-                              {notification.text}
+                              Mark all as read
                             </Text>
-                            <Text color={mutedTextColor} fontSize='xs'>
-                              {notificationActionHint(notification)}
-                            </Text>
-                          </VStack>
-                        </MenuItem>
-                      );
-                    })
+                          </Box>
+                        )}
+                      {dashboardNotifications.map(notification => {
+                        const isClickable = Boolean(notification?.href);
+                        const isUnread = notification?.isRead === false;
+                        return (
+                          <MenuItem
+                            key={notification.id}
+                            onClick={() => {
+                              if (typeof onNotificationClick === 'function') {
+                                onNotificationClick(notification);
+                              } else if (notification?.href) {
+                                navigate(notification.href);
+                              }
+                            }}
+                            cursor={isClickable ? 'pointer' : 'default'}
+                            {...(isClickable
+                              ? userMenuItemStyles
+                              : inactiveMenuItemStyles)}
+                          >
+                            <HStack align='start' spacing={2} width='100%'>
+                              {isUnread && (
+                                <Circle
+                                  size='6px'
+                                  bg='#f87171'
+                                  mt='6px'
+                                  flexShrink={0}
+                                />
+                              )}
+                              <VStack align='start' spacing={0} flex='1'>
+                                <Text
+                                  color={textColor}
+                                  fontSize='sm'
+                                  fontWeight={isUnread ? 'semibold' : 'medium'}
+                                >
+                                  {notification.text}
+                                </Text>
+                                {notification.category === 'auto_sync' &&
+                                  notification.message && (
+                                    <Text
+                                      color={mutedTextColor}
+                                      fontSize='xs'
+                                      noOfLines={2}
+                                    >
+                                      {notification.message}
+                                    </Text>
+                                  )}
+                                <Text color={mutedTextColor} fontSize='xs'>
+                                  {notificationActionHint(notification)}
+                                </Text>
+                              </VStack>
+                            </HStack>
+                          </MenuItem>
+                        );
+                      })}
+                    </>
                   )}
                 </MenuList>
               </Portal>

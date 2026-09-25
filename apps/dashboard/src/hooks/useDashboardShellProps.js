@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { useDashboardTheme } from './useDashboardTheme';
+import { useDashboardNotifications } from './useDashboardNotifications.js';
 import { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import {
@@ -77,8 +78,6 @@ export function useDashboardShellProps({
   const [dashboardWorkspace, setDashboardWorkspace] = useState(null);
   const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
     useState(false);
-  const [dashboardNotifications, setDashboardNotifications] = useState([]);
-
   const useWorkspaceOverrides = workspacesOverride !== undefined;
 
   useEffect(() => {
@@ -158,124 +157,16 @@ export function useDashboardShellProps({
     ? workspaceOverride
     : dashboardWorkspace;
 
-  useEffect(() => {
-    if (notificationsOverride !== undefined) return undefined;
-
-    let cancelled = false;
-    async function loadDashboardNotifications() {
-      if (!session || !activeWorkspace?.id) {
-        if (!cancelled) setDashboardNotifications([]);
-        return;
-      }
-
-      try {
-        const [settingsRes, notificationsRes] = await Promise.all([
-          workspaceAPI.getAlertSettings(activeWorkspace.id),
-          workspaceAPI
-            .getNotifications(activeWorkspace.id)
-            .catch(() => ({ items: [] })),
-        ]);
-        if (cancelled) return;
-
-        const data = settingsRes?.data || settingsRes || {};
-        const emailEnabled = data.email_alerts_enabled === true;
-        const webhooks = data.webhook_urls;
-        const hasWebhooks = Array.isArray(webhooks) && webhooks.length > 0;
-        const smtpConfigured = data.smtp_configured !== false;
-        const allDisabled = !emailEnabled && !hasWebhooks;
-        const contactGroups = Array.isArray(data.contact_groups)
-          ? data.contact_groups
-          : [];
-        const hasAnyContact = contactGroups.some(group => {
-          const emailIds = Array.isArray(group.email_contact_ids)
-            ? group.email_contact_ids
-            : [];
-          const whatsappIds = Array.isArray(group.whatsapp_contact_ids)
-            ? group.whatsapp_contact_ids
-            : [];
-          // Webhook channels (Slack/Teams/Discord/...) are valid alert
-          // destinations too; also honor the legacy single webhook_name field.
-          const webhookNames = Array.isArray(group.webhook_names)
-            ? group.webhook_names.filter(Boolean)
-            : [];
-          const hasLegacyWebhook =
-            typeof group.webhook_name === 'string' &&
-            group.webhook_name.trim().length > 0;
-          return (
-            emailIds.length > 0 ||
-            whatsappIds.length > 0 ||
-            webhookNames.length > 0 ||
-            hasLegacyWebhook
-          );
-        });
-        const currentRole = String(activeWorkspace?.role || '').toLowerCase();
-        const canManageWorkspaceAlerts =
-          isSystemAdmin ||
-          currentRole === 'admin' ||
-          currentRole === 'workspace_manager';
-        const list = [];
-
-        if (canManageWorkspaceAlerts) {
-          const operational = Array.isArray(notificationsRes?.items)
-            ? notificationsRes.items
-            : [];
-          for (const item of operational) {
-            const href =
-              item.href === '/usage' ? '/control-center' : item.href || null;
-            list.push({
-              id: item.id,
-              kind: item.kind === 'error' ? 'error' : 'warning',
-              text: item.text,
-              href,
-            });
-          }
-        }
-
-        if (!canManageWorkspaceAlerts) {
-          setDashboardNotifications(list);
-          return;
-        }
-
-        if (!smtpConfigured) {
-          list.push({
-            id: 'smtp-not-configured',
-            kind: 'warning',
-            text: isSystemAdmin
-              ? 'SMTP is not configured. Email notifications will not be sent.'
-              : 'SMTP is not configured. Ask a system administrator to configure email delivery.',
-            href: isSystemAdmin ? '/system-settings' : null,
-          });
-        }
-        if (allDisabled) {
-          list.push({
-            id: 'alerts-disabled',
-            kind: 'warning',
-            text: 'Alerts are disabled until a channel is defined.',
-            href: '/workspace-preferences',
-          });
-        }
-        if (!hasAnyContact) {
-          list.push({
-            id: 'no-contacts-defined',
-            kind: 'warning',
-            text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
-            href: '/workspace-preferences',
-          });
-        }
-        setDashboardNotifications(list);
-      } catch (_) {
-        if (!cancelled) setDashboardNotifications([]);
-      }
-    }
-
-    loadDashboardNotifications();
-    const refresh = () => loadDashboardNotifications();
-    window.addEventListener('tt:notifications-refresh', refresh);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('tt:notifications-refresh', refresh);
-    };
-  }, [session, activeWorkspace, isSystemAdmin, notificationsOverride]);
+  const {
+    dashboardNotifications,
+    dashboardUnreadCount,
+    onNotificationClick,
+    onMarkAllNotificationsRead,
+  } = useDashboardNotifications({
+    session,
+    workspace: activeWorkspace,
+    enabled: notificationsOverride === undefined,
+  });
 
   return useMemo(
     () => ({
@@ -308,6 +199,14 @@ export function useDashboardShellProps({
         notificationsOverride !== undefined
           ? notificationsOverride
           : dashboardNotifications,
+      dashboardUnreadCount:
+        notificationsOverride !== undefined ? undefined : dashboardUnreadCount,
+      onNotificationClick:
+        notificationsOverride !== undefined ? undefined : onNotificationClick,
+      onMarkAllNotificationsRead:
+        notificationsOverride !== undefined
+          ? undefined
+          : onMarkAllNotificationsRead,
       onLogout,
       onAccountClick,
       isViewer,
@@ -340,6 +239,9 @@ export function useDashboardShellProps({
       handleDashboardWorkspaceSelect,
       notificationsOverride,
       dashboardNotifications,
+      dashboardUnreadCount,
+      onNotificationClick,
+      onMarkAllNotificationsRead,
       onLogout,
       onAccountClick,
       isViewer,

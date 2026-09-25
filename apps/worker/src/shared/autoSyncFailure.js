@@ -1,4 +1,20 @@
 import { logger } from "../logger.js";
+import { sanitizeAutoSyncLocation } from "./autoSyncLocation.js";
+import {
+  raiseOperationalNotification,
+  resolveOperationalNotification,
+  sendOperationalIncidentEmail,
+} from "./opNotifications.js";
+
+// Consecutive failed runs at/above which an auto-sync incident escalates
+// from a bell-only warning to a critical (emailed) incident.
+const thresholdText = process.env.AUTO_SYNC_CRITICAL_THRESHOLD?.trim();
+const thresholdNumber = Number(thresholdText);
+const AUTO_SYNC_CRITICAL_THRESHOLD =
+  /^[1-9]\d*$/.test(thresholdText || "") &&
+  Number.isSafeInteger(thresholdNumber)
+    ? thresholdNumber
+    : 3;
 
 /**
  * Prefer API error body over generic Axios message for last_sync_error / audit.
@@ -36,9 +52,51 @@ export function formatImportErrorDetail(importErrors, totalErrorCount = 0) {
     .slice(0, 3)
     .map((e) => `${e.item}: ${e.error}`)
     .join("; ");
-  const remaining = Math.max(totalErrorCount, sample.length) - Math.min(3, sample.length);
+  const remaining =
+    Math.max(totalErrorCount, sample.length) - Math.min(3, sample.length);
   const more = remaining > 0 ? ` (+${remaining} more)` : "";
   return `Details: ${shown}${more}`.substring(0, 800);
+}
+
+function nonEmptyText(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text && !/^(undefined|null|n\/a|-)$/i.test(text) ? text : null;
+}
+
+function autoSyncIncidentContext({ configId, workspaceId, provider, config }) {
+  // Only copy known, non-secret scan fields; credentials_encrypted stays out.
+  const scan = config?.scan_params || {};
+  const context = {
+    ...(nonEmptyText(provider) ? { provider: provider.trim() } : {}),
+    ...(nonEmptyText(configId) ? { auto_sync_config_id: configId } : {}),
+    ...(nonEmptyText(workspaceId) ? { workspace_id: workspaceId } : {}),
+    ...(nonEmptyText(config?.connection_key)
+      ? { connection_key: config.connection_key.trim() }
+      : {}),
+  };
+  const location =
+    provider === "github" || provider === "gitlab"
+      ? scan.baseUrl
+      : provider === "vault"
+        ? scan.address
+        : provider === "azure"
+          ? scan.vaultUrl
+          : null;
+  const safeLocation = sanitizeAutoSyncLocation(location);
+  if (safeLocation) context.location = safeLocation;
+  if (
+    provider === "aws" &&
+    !["all-regions", "global"].includes(scan.scanMode) &&
+    nonEmptyText(scan.region) &&
+    !["all-regions", "global"].includes(scan.region)
+  ) {
+    context.region = scan.region.trim();
+  }
+  if (provider === "gcp" && nonEmptyText(scan.projectId)) {
+    context.project_id = scan.projectId.trim();
+  }
+  return context;
 }
 
 async function resolveAuditSubjectUserId(client, workspaceId, createdBy) {
@@ -124,7 +182,11 @@ export async function recordAutoSyncCompleted(
 
 /**
  * Persist auto-sync failure and emit AUTO_SYNC_FAILED audit on first transition
- * into failed state (avoids hourly duplicate audit rows).
+ * into failed state (avoids hourly duplicate audit rows). Also tracks a
+ * consecutive_failures counter and raises a bell notification: warning on the
+ * first failure, escalating to critical once AUTO_SYNC_CRITICAL_THRESHOLD
+ * consecutive failures are reached.
+ * The worker defers critical email until after its config transaction commits.
  */
 export async function recordAutoSyncFailure(
   client,
@@ -137,15 +199,63 @@ export async function recordAutoSyncFailure(
     errorMessage,
     httpStatus = null,
     nextSync,
+    config = null,
   },
+  deferIncidentEmail = null,
 ) {
-  await client.query(
+  const updateRes = await client.query(
     `UPDATE auto_sync_configs
      SET last_sync_at = NOW(), last_sync_status = 'failed',
-         last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
-     WHERE id = $3`,
-    [errorMessage, nextSync, configId],
+         last_sync_error = $1, next_sync_at = $2, updated_at = NOW(),
+         consecutive_failures = consecutive_failures + 1
+     WHERE id = $3 AND workspace_id = $4
+     RETURNING consecutive_failures`,
+    [errorMessage, nextSync, configId, workspaceId],
   );
+  if (!updateRes.rows[0]) return;
+  const consecutiveFailures = updateRes.rows[0].consecutive_failures;
+
+  if (workspaceId) {
+    const critical = consecutiveFailures >= AUTO_SYNC_CRITICAL_THRESHOLD;
+    const context = autoSyncIncidentContext({
+      configId,
+      workspaceId,
+      provider,
+      config,
+    });
+    const incidentMetadata = {
+      ...context,
+      ...(nonEmptyText(configId) ? { config_id: configId } : {}),
+      ...(httpStatus == null ? {} : { http_status: httpStatus }),
+      consecutive_failures: consecutiveFailures,
+    };
+    const notifId = await raiseOperationalNotification(client, {
+      workspaceId,
+      tokenId: null,
+      category: "auto_sync",
+      type: "auto_sync_failed",
+      severity: critical ? "critical" : "warning",
+      dedupeKey: `auto_sync_failed:${configId}`,
+      title: critical
+        ? `Auto-sync failing repeatedly: ${provider}`
+        : `Auto-sync failed: ${provider}`,
+      message: errorMessage || "Auto-sync run failed",
+      metadata: incidentMetadata,
+    });
+    if (notifId && critical) {
+      const incidentEmail = {
+        notificationId: notifId,
+        workspaceId,
+        tokenId: null,
+        category: "auto_sync",
+        title: `Auto-sync failing repeatedly: ${provider}`,
+        message: errorMessage || "Auto-sync run failed",
+        metadata: incidentMetadata,
+      };
+      if (deferIncidentEmail) deferIncidentEmail(incidentEmail);
+      else await sendOperationalIncidentEmail(client, incidentEmail);
+    }
+  }
 
   if (previousStatus === "failed") return;
 
@@ -164,6 +274,7 @@ export async function recordAutoSyncFailure(
         error: errorMessage,
         http_status: httpStatus,
         config_id: configId,
+        consecutive_failures: consecutiveFailures,
       },
     });
   } catch (err) {
@@ -171,6 +282,38 @@ export async function recordAutoSyncFailure(
       error: err.message,
       workspace_id: workspaceId,
       provider,
+    });
+  }
+}
+
+/**
+ * Reset the consecutive-failure counter and resolve any open auto-sync
+ * notification for this config. Call on a fully successful sync run so that
+ * the bell incident clears once the integration recovers.
+ */
+export async function recordAutoSyncRecovery(
+  client,
+  { configId, workspaceId },
+) {
+  try {
+    await client.query(
+      `UPDATE auto_sync_configs
+       SET consecutive_failures = 0
+       WHERE id = $1 AND workspace_id = $2 AND consecutive_failures != 0`,
+      [configId, workspaceId],
+    );
+    if (workspaceId) {
+      await resolveOperationalNotification(
+        client,
+        workspaceId,
+        `auto_sync_failed:${configId}`,
+      );
+    }
+  } catch (err) {
+    logger.warn("recordAutoSyncRecovery failed", {
+      error: err.message,
+      workspace_id: workspaceId,
+      config_id: configId,
     });
   }
 }
