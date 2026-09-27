@@ -1181,6 +1181,185 @@ describe("Persisted operational notifications (bell)", function () {
     }
   });
 
+  it("reconciles stale delivery incidents independently of email state and severity", async () => {
+    const { reconcileStaleDeliveryIncidents } =
+      await import("../../apps/worker/src/shared/opNotifications.js");
+    const otherWorkspace = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Reconciliation isolation",
+    );
+    const credential = randomBytes(32).toString("hex");
+    const agent = await client.query(
+      `INSERT INTO certops_agents
+         (workspace_id, agent_id, agent_version, protocol_version,
+          credential_prefix, credential_hash)
+       VALUES ($1, $2, '1.0.0', '1.0.0', $3, $4) RETURNING id`,
+      [
+        workspaceId,
+        `reconcile-${randomUUID()}`,
+        `ttagent_${credential.slice(0, 16)}`,
+        credential,
+      ],
+    );
+    const cases = [
+      ["sent critical", "sent", "critical", tokenId, null, workspaceId, true],
+      ["sent warning", "sent", "warning", tokenId, null, workspaceId, true],
+      [
+        "requeued pending",
+        "pending",
+        "critical",
+        tokenId,
+        null,
+        workspaceId,
+        true,
+      ],
+      [
+        "active blocked",
+        "blocked",
+        "critical",
+        tokenId,
+        null,
+        workspaceId,
+        false,
+      ],
+      ["active failed", "failed", "warning", tokenId, null, workspaceId, false],
+      [
+        "active partial",
+        "partial",
+        "warning",
+        tokenId,
+        null,
+        workspaceId,
+        false,
+      ],
+      [
+        "plan limited",
+        "limit_exceeded",
+        "info",
+        tokenId,
+        null,
+        workspaceId,
+        false,
+      ],
+      [
+        "agent sent",
+        "sent",
+        "critical",
+        null,
+        agent.rows[0].id,
+        workspaceId,
+        true,
+      ],
+      [
+        "wrong workspace",
+        "blocked",
+        "critical",
+        tokenId,
+        null,
+        otherWorkspace,
+        true,
+      ],
+    ];
+    const queueIds = [];
+    const incidentIds = [];
+    try {
+      for (const [
+        title,
+        status,
+        severity,
+        scopedTokenId,
+        agentId,
+        incidentWorkspace,
+      ] of cases) {
+        const queue = await client.query(
+          `INSERT INTO alert_queue
+             (user_id, token_id, certops_agent_id, alert_key, threshold_days,
+              due_date, channels, status)
+           VALUES ($1,$2,$3,$4,7,CURRENT_DATE,'[]'::jsonb,$5) RETURNING id`,
+          [
+            adminUserId,
+            scopedTokenId,
+            agentId,
+            `reconcile:${randomUUID()}`,
+            status,
+          ],
+        );
+        const queueId = queue.rows[0].id;
+        queueIds.push(queueId);
+        const incident = await client.query(
+          `INSERT INTO operational_notifications
+             (workspace_id, token_id, category, type, severity, dedupe_key,
+              title, metadata, email_sent_at)
+           VALUES ($1,$2,'delivery','delivery_blocked',$3,$4,$5,$6::jsonb,$7)
+           RETURNING id`,
+          [
+            incidentWorkspace,
+            incidentWorkspace === workspaceId ? scopedTokenId : null,
+            severity,
+            `delivery_blocked:${queueId}:${title}`,
+            title,
+            JSON.stringify({ alert_queue_id: queueId }),
+            title === "sent critical" ? new Date() : null,
+          ],
+        );
+        incidentIds.push(incident.rows[0].id);
+      }
+      const missing = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, category, type, severity, dedupe_key, title, metadata)
+         VALUES ($1,'delivery','delivery_degraded','warning',$2,'missing queue',$3::jsonb)
+         RETURNING id`,
+        [
+          workspaceId,
+          `delivery_degraded:missing:${randomUUID()}`,
+          JSON.stringify({ alert_queue_id: 999999999 }),
+        ],
+      );
+      incidentIds.push(missing.rows[0].id);
+      const concurrentClient = new Client({
+        user: process.env.DB_USER || "tokentimer",
+        host: process.env.DB_HOST || "localhost",
+        database: process.env.DB_NAME || "tokentimer",
+        password: process.env.DB_PASSWORD || "password",
+        port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+        ssl: false,
+      });
+      await concurrentClient.connect();
+      try {
+        const counts = await Promise.all([
+          reconcileStaleDeliveryIncidents(client),
+          reconcileStaleDeliveryIncidents(concurrentClient),
+        ]);
+        expect(counts[0] + counts[1]).to.equal(6);
+      } finally {
+        await concurrentClient.end();
+      }
+      expect(await reconcileStaleDeliveryIncidents(client)).to.equal(0);
+      const states = await client.query(
+        "SELECT title, resolved_at FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidentIds],
+      );
+      const byTitle = new Map(states.rows.map((row) => [row.title, row]));
+      for (const [title, , , , , , shouldResolve] of cases) {
+        expect(Boolean(byTitle.get(title).resolved_at), title).to.equal(
+          shouldResolve,
+        );
+      }
+      expect(byTitle.get("missing queue").resolved_at).to.be.a("date");
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+        [incidentIds],
+      );
+      await client.query("DELETE FROM alert_queue WHERE id = ANY($1::int[])", [
+        queueIds,
+      ]);
+      await client.query("DELETE FROM certops_agents WHERE id = $1", [
+        agent.rows[0].id,
+      ]);
+    }
+  });
+
   it("keeps tokenless agent delivery incidents visible to managers and eligible for retry", async () => {
     const agentWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
       adminCookie,

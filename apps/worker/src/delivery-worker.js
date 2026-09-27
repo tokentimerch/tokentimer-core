@@ -48,10 +48,13 @@ import {
   resolveOperationalNotification,
   sendOperationalIncidentEmail,
   retryPendingOperationalIncidentEmails,
+  reconcileStaleDeliveryIncidents,
 } from "./shared/opNotifications.js";
 
 const OPERATIONAL_EMAIL_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 let lastOperationalEmailSweepAt = 0;
+const DELIVERY_INCIDENT_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+let lastDeliveryIncidentReconcileAt = 0;
 
 const { isValidEmail } = emailAddress;
 
@@ -3170,6 +3173,21 @@ export async function deliveryWorkerJob({
     await withClient(raiseTerminalPlanLimitedIncidents);
   } catch (err) {
     logger.warn("Plan-limited incident sweep failed", { error: err.message });
+  }
+
+  // Reconcile stale bell incidents even when no ordinary queue row was claimed.
+  if (
+    Date.now() - lastDeliveryIncidentReconcileAt >=
+    DELIVERY_INCIDENT_RECONCILE_INTERVAL_MS
+  ) {
+    lastDeliveryIncidentReconcileAt = Date.now();
+    try {
+      await withClient(reconcileStaleDeliveryIncidents);
+    } catch (err) {
+      logger.warn("Delivery incident reconciliation failed", {
+        error: err.message,
+      });
+    }
   }
 
   // The alert queue excludes terminal blocked rows. Sweep their unsent incident

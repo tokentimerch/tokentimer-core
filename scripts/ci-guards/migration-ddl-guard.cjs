@@ -241,7 +241,11 @@ function checkTransactionGuarantee(source) {
         "transaction guarantee this guard depends on",
     ];
   }
-  const body = fnMatch[0];
+  // Preflight repair has its own transaction; inspect the migration loop.
+  const loopStart = fnMatch[0].indexOf("for (const migration of migrations)");
+  if (loopStart === -1)
+    return ["per-migration loop not found in runMigrations()"];
+  const body = fnMatch[0].slice(loopStart);
 
   const beginIdx = body.search(/client\.query\(\s*["']BEGIN["']\s*\)/);
   const execIdx = body.search(/client\.query\(\s*\w+\.sql\s*\)/);

@@ -4060,6 +4060,59 @@ function validateMigrationHistory(rows) {
 const observationLocalitySql = migrations.find(
   (migration) => migration.version === 45,
 ).sql;
+const observationLocalityHealthSql = `SELECT
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND (table_name, column_name) IN (
+        ('certificate_targets', 'location_kind'),
+        ('certificate_instances', 'location_kind'),
+        ('certops_agents', 'downtime_alerts_enabled'),
+        ('certops_agents', 'contact_group_id'),
+        ('certops_agent_bootstrap_tokens', 'downtime_alerts_enabled'),
+        ('certops_agent_bootstrap_tokens', 'contact_group_id')
+      )) = 6
+  AND (SELECT COUNT(*) FROM pg_constraint
+    WHERE connamespace = current_schema()::regnamespace
+      AND conname IN ('managed_certificates_source_check',
+      'certificate_targets_source_check', 'certificate_instances_source_check')
+      AND pg_get_constraintdef(oid) LIKE '%agent_windows%') = 3
+  AND (SELECT COUNT(*) FROM pg_indexes
+    WHERE schemaname = current_schema()
+      AND indexname IN ('uq_managed_certificates_workspace_source_ref',
+        'uq_managed_certificates_workspace_fingerprint_import',
+        'uq_certificate_targets_workspace_agent_windows_source_ref')
+      AND indexdef LIKE '%agent_windows%') = 3 AS healthy`;
+const observationLocalityRepairSql = `
+  DROP INDEX IF EXISTS uq_certificate_targets_workspace_agent_windows_source_ref;
+  ${observationLocalitySql}
+`;
+const windowsDescriptorCorrectionSql = `
+  ALTER TABLE certificate_targets
+    DROP CONSTRAINT IF EXISTS certificate_targets_windows_site_check;
+  ALTER TABLE certificate_targets
+    ADD CONSTRAINT certificate_targets_windows_site_check CHECK (
+      windows_site IS NULL OR
+      (windows_site ~ '^[A-Za-z0-9 _.:-]+$' AND char_length(windows_site) BETWEEN 1 AND 256)
+    );
+  ALTER TABLE certificate_targets
+    DROP CONSTRAINT IF EXISTS certificate_targets_target_type_check;
+  ALTER TABLE certificate_targets
+    ADD CONSTRAINT certificate_targets_target_type_check CHECK (
+      target_type IN ('endpoint', 'domain', 'host', 'kubernetes-secret',
+        'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other',
+        'agent-host', 'windows-iis')
+    );
+`;
+const agentKindRepairSql = `
+  ALTER TABLE certops_agents
+    ADD COLUMN IF NOT EXISTS agent_kind TEXT NOT NULL DEFAULT 'normal';
+  ALTER TABLE certops_agents
+    DROP CONSTRAINT IF EXISTS certops_agents_agent_kind_check;
+  ALTER TABLE certops_agents
+    ADD CONSTRAINT certops_agents_agent_kind_check CHECK (agent_kind IN ('normal', 'diagnostic'));
+  CREATE INDEX IF NOT EXISTS idx_certops_agents_workspace_agent_kind
+    ON certops_agents(workspace_id, agent_kind, status);
+`;
 migrations.push({
   version: 58,
   name: "repair_certops_observation_locality_history",
@@ -4091,6 +4144,29 @@ migrations.push({
     $repair$;
   `,
 });
+
+migrations.push({
+  version: 59,
+  name: "repair_partial_pr72_migration_history",
+  sql: `
+    -- v58 may already be recorded by an installation with an incomplete v45
+    -- index or source CHECK. Recheck the full observable v45 schema.
+    DO $repair$
+    BEGIN
+      IF NOT (${observationLocalityHealthSql}) THEN
+        EXECUTE $observation_locality$${observationLocalityRepairSql}$observation_locality$;
+      END IF;
+    END
+    $repair$;
+    CREATE INDEX IF NOT EXISTS idx_operational_notifications_open_delivery_updated
+      ON operational_notifications(updated_at, id)
+      WHERE category = 'delivery' AND resolved_at IS NULL AND metadata ? 'alert_queue_id';
+  `,
+});
+
+// Main may already contain v60 when PR #140's v58-v59 migrations arrive.
+// Apply by version rather than declaration position so each dependency exists.
+migrations.sort((a, b) => a.version - b.version);
 
 async function runMigrations() {
   logger.info("Starting database migrations...");
@@ -4124,29 +4200,57 @@ async function runMigrations() {
       versions: executedVersions,
     });
 
-    // The historical v45 collision omits columns needed by v52. Repair its
-    // physical schema before processing later migrations; v58 records the
-    // append-only repair and can safely reapply the idempotent v45 SQL.
-    if (executedVersions.includes(45) && !executedVersions.includes(58)) {
-      const columnCount = await client.query(`
-        SELECT COUNT(*)::int AS count FROM information_schema.columns
-         WHERE table_schema = current_schema()
-           AND (table_name, column_name) IN (
-             ('certificate_targets', 'location_kind'),
-             ('certificate_instances', 'location_kind'),
-             ('certops_agents', 'downtime_alerts_enabled'),
-             ('certops_agents', 'contact_group_id'),
-             ('certops_agent_bootstrap_tokens', 'downtime_alerts_enabled'),
-             ('certops_agent_bootstrap_tokens', 'contact_group_id')
-           )
-      `);
-      const historicalCollision = result.rows.some(
-        (row) => row.version === 45 && row.name === "certops_trust_anchor_jobs",
-      );
-      if (historicalCollision || columnCount.rows[0].count !== 6) {
+    // PR #72 shifted every CertOps migration by one. An interrupted run can
+    // leave any one current migration v39-v45 masked by an older ledger row.
+    // Restore that effect before later migrations (v48/v52 have dependencies).
+    const historicalPrefixEnd = result.rows
+      .filter((row) => row.name === historicalMigrationAliases.get(row.version))
+      .reduce((end, row) => Math.max(end, row.version), 0);
+    if (historicalPrefixEnd && !executedVersions.includes(59)) {
+      await client.query("BEGIN");
+      try {
+        if (historicalPrefixEnd >= 43) {
+          await client.query(windowsDescriptorCorrectionSql);
+        }
+        if (historicalPrefixEnd === 40 && executedVersions.includes(44)) {
+          // v44 already widened this CHECK for trust jobs; replaying all of
+          // v40 would narrow it back to protocol_smoke only.
+          await client.query(agentKindRepairSql);
+        } else if (
+          historicalPrefixEnd === 43 &&
+          executedVersions.includes(48)
+        ) {
+          // v48 replaced the trust installation identity index. Do not
+          // recreate its older v43 definition on an already-upgraded DB.
+          await client.query(
+            migrations
+              .find((migration) => migration.version === 43)
+              .sql.replace(
+                /CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_trust_anchor_installations_identity[\s\S]*?;/,
+                "",
+              ),
+          );
+        } else {
+          await client.query(
+            migrations.find(
+              (migration) => migration.version === historicalPrefixEnd,
+            ).sql,
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    }
+    // Repair v45 before v52 reads its contact-group columns. It is safe to
+    // replay after v46-v57: none alter these source CHECKs or indexes.
+    if (executedVersions.includes(45) && !executedVersions.includes(59)) {
+      const health = await client.query(observationLocalityHealthSql);
+      if (!health.rows[0].healthy) {
         await client.query("BEGIN");
         try {
-          await client.query(observationLocalitySql);
+          await client.query(observationLocalityRepairSql);
           await client.query("COMMIT");
         } catch (error) {
           await client.query("ROLLBACK");

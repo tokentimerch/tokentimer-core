@@ -21,6 +21,7 @@ const VALID_SEVERITIES = new Set(["info", "warning", "critical"]);
 const VALID_CATEGORIES = new Set(["delivery", "auto_sync"]);
 const EMAIL_RETRY_INTERVAL_MINUTES = 15;
 const EMAIL_RETRY_BATCH_SIZE = 50;
+const DELIVERY_RECONCILE_BATCH_SIZE = 100;
 
 // Safety valve so a storm of incidents cannot flood a workspace's admins.
 // Bell items are still created/updated above this cap; only the email send
@@ -419,4 +420,36 @@ export async function retryPendingOperationalIncidentEmails(
       sendEmail,
     );
   }
+}
+
+/** Resolve delivery incidents whose queue row no longer represents a failure.
+ * This is independent of email eligibility so sent emails and warnings recover
+ * after a transient failure in the normal notification cleanup path.
+ */
+export async function reconcileStaleDeliveryIncidents(client) {
+  const result = await client.query(
+    `WITH stale AS (
+       SELECT n.id
+         FROM operational_notifications n
+         LEFT JOIN alert_queue aq ON aq.id = CASE
+           WHEN n.metadata->>'alert_queue_id' ~ '^[0-9]{1,18}$'
+             THEN (n.metadata->>'alert_queue_id')::bigint
+           ELSE NULL END
+         LEFT JOIN tokens t ON t.id = aq.token_id
+         LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+        WHERE n.category = 'delivery' AND n.resolved_at IS NULL
+          AND n.metadata ? 'alert_queue_id'
+          AND (aq.id IS NULL
+            OR COALESCE(t.workspace_id, ca.workspace_id) IS DISTINCT FROM n.workspace_id
+            OR aq.status NOT IN ('blocked', 'failed', 'partial', 'limit_exceeded'))
+        ORDER BY n.updated_at, n.id
+        LIMIT $1
+        FOR UPDATE OF n SKIP LOCKED
+     )
+     UPDATE operational_notifications n
+        SET resolved_at = NOW(), updated_at = NOW()
+       FROM stale WHERE n.id = stale.id`,
+    [DELIVERY_RECONCILE_BATCH_SIZE],
+  );
+  return result.rowCount || 0;
 }

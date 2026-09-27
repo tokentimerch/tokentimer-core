@@ -19,14 +19,18 @@ describe("operational notifications migration", () => {
     const lifecycleMigration = migrations.find((entry) => entry.version === 57);
     assert.equal(lifecycleMigration.version, 57);
     assert.equal(lifecycleMigration.name, "operational_notification_lifecycle");
-    assert.equal(migrations.at(-1).version, 58);
+    assert.equal(
+      migrations.find((entry) => entry.version === 58).name,
+      "repair_certops_observation_locality_history",
+    );
+    assert.equal(migrations.at(-1).version, 59);
     assert.equal(
       migrations.at(-1).name,
-      "repair_certops_observation_locality_history",
+      "repair_partial_pr72_migration_history",
     );
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 58 }, (_, index) => index + 1),
+      Array.from({ length: 59 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,

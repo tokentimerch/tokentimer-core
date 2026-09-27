@@ -3,6 +3,7 @@ const { Client } = require("pg");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { migrations } = require("../../apps/api/migrations/migrate");
+const historicalMigrations = require("../fixtures/pr72-migrations.json");
 
 const dbConfig = {
   host: process.env.DB_HOST || "localhost",
@@ -66,7 +67,7 @@ async function apply(client, migration) {
 }
 
 describe("operational notification migration history repair", function () {
-  this.timeout(180000);
+  this.timeout(300000);
 
   beforeEach(async () => {
     await withClient(adminDatabase, async (client) => {
@@ -85,11 +86,11 @@ describe("operational notification migration history repair", function () {
     });
   });
 
-  it("migrates a fresh database and safely reapplies v56-v58 SQL", async () => {
+  it("migrates a fresh database and safely reapplies v56-v59 SQL", async () => {
     runMigrations(databaseName);
     runMigrations(databaseName);
     await withClient(databaseName, async (client) => {
-      for (const version of [56, 57, 58]) {
+      for (const version of [56, 57, 58, 59]) {
         await client.query(
           migrations.find((entry) => entry.version === version).sql,
         );
@@ -99,8 +100,15 @@ describe("operational notification migration history repair", function () {
       );
       expect(ledger.rows).to.have.length(migrations.length);
       expect(ledger.rows.at(-1).name).to.equal(
-        "repair_certops_observation_locality_history",
+        "repair_partial_pr72_migration_history",
       );
+      const laterIndex = await client.query(`SELECT indexdef FROM pg_indexes
+        WHERE indexname = 'uq_certops_trust_anchor_installations_identity'`);
+      expect(laterIndex.rows[0].indexdef).to.include("agent_id");
+      const laterConstraint =
+        await client.query(`SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conname = 'certificate_jobs_operation_check'`);
+      expect(laterConstraint.rows[0].definition).to.include("distribute-trust");
     });
   });
 
@@ -165,7 +173,7 @@ describe("operational notification migration history repair", function () {
       expect(ledger.rows.find((row) => row.version === 45).name).to.equal(
         "certops_trust_anchor_jobs",
       );
-      expect(ledger.rows.at(-1).version).to.equal(58);
+      expect(ledger.rows.at(-1).version).to.equal(59);
       for (const [tableName, columnName] of [
         ["certificate_targets", "location_kind"],
         ["certificate_instances", "location_kind"],
@@ -228,6 +236,161 @@ describe("operational notification migration history repair", function () {
       expect(ledger.rows[0].name).to.equal(
         "repair_certops_observation_locality_history",
       );
+    });
+  });
+
+  for (let prefixEnd = 39; prefixEnd <= 45; prefixEnd++) {
+    it(`repairs exact PR #72 history ending at v${prefixEnd}`, async () => {
+      await withClient(databaseName, async (client) => {
+        await client.query(`CREATE TABLE migrations (
+          version INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL,
+          executed_at TIMESTAMP DEFAULT NOW())`);
+        for (const migration of migrations.filter(
+          (entry) => entry.version <= 38,
+        )) {
+          await apply(client, migration);
+        }
+        for (const migration of historicalMigrations.filter(
+          (entry) => entry.version <= prefixEnd,
+        )) {
+          await apply(client, migration);
+        }
+      });
+      runMigrations(databaseName);
+      runMigrations(databaseName);
+      await withClient(databaseName, async (client) => {
+        const ledger = await client.query(
+          "SELECT version, name FROM migrations ORDER BY version",
+        );
+        expect(ledger.rows).to.have.length(migrations.length);
+        expect(ledger.rows.at(-1).version).to.equal(59);
+        expect(
+          ledger.rows.find((row) => row.version === prefixEnd).name,
+        ).to.equal(
+          historicalMigrations.find((entry) => entry.version === prefixEnd)
+            .name,
+        );
+        const columns = await client.query(`SELECT table_name, column_name
+          FROM information_schema.columns WHERE table_schema = current_schema()
+            AND (table_name, column_name) IN (
+              ('certops_agents', 'capabilities_updated_at'),
+              ('certops_agents', 'agent_kind'),
+              ('certificate_targets', 'windows_site'),
+              ('certops_agents', 'contact_group_id'),
+              ('certificate_targets', 'location_kind'))`);
+        expect(columns.rows).to.have.length(5);
+        const constraints =
+          await client.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
+          FROM pg_constraint WHERE conname IN (
+            'certificate_jobs_operation_check',
+            'certificate_targets_target_type_check',
+            'certificate_targets_windows_site_check',
+            'managed_certificates_source_check')`);
+        expect(constraints.rows).to.have.length(4);
+        expect(
+          constraints.rows.find(
+            (row) => row.conname === "certificate_jobs_operation_check",
+          ).definition,
+        ).to.include("distribute-trust");
+        expect(
+          constraints.rows.find(
+            (row) => row.conname === "certificate_targets_target_type_check",
+          ).definition,
+        ).to.include("agent-host");
+        expect(
+          constraints.rows.find(
+            (row) => row.conname === "certificate_targets_windows_site_check",
+          ).definition,
+        ).to.not.include("{1,256}");
+        expect(
+          constraints.rows.find(
+            (row) => row.conname === "managed_certificates_source_check",
+          ).definition,
+        ).to.include("agent_windows");
+        const indexes =
+          await client.query(`SELECT indexname, indexdef FROM pg_indexes
+          WHERE schemaname = current_schema() AND indexname IN (
+            'uq_certops_trust_anchor_installations_identity',
+            'uq_managed_certificates_workspace_source_ref',
+            'uq_certificate_targets_workspace_agent_windows_source_ref')`);
+        expect(indexes.rows).to.have.length(3);
+        expect(
+          indexes.rows.find(
+            (row) =>
+              row.indexname ===
+              "uq_certops_trust_anchor_installations_identity",
+          ).indexdef,
+        ).to.include("agent_id");
+        expect(
+          indexes.rows.find(
+            (row) =>
+              row.indexname === "uq_managed_certificates_workspace_source_ref",
+          ).indexdef,
+        ).to.include("agent_windows");
+      });
+    });
+  }
+
+  it("repairs a missing v45 source index after v58 was already recorded", async () => {
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      await client.query(
+        "DROP INDEX uq_certificate_targets_workspace_agent_windows_source_ref",
+      );
+      await client.query("DELETE FROM migrations WHERE version = 59");
+    });
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      const index = await client.query(`SELECT indexdef FROM pg_indexes
+        WHERE indexname = 'uq_certificate_targets_workspace_agent_windows_source_ref'`);
+      expect(index.rows[0].indexdef).to.include("agent_windows");
+    });
+  });
+
+  it("repairs a missing v45 source CHECK after v58 was already recorded", async () => {
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      await client.query(
+        "ALTER TABLE certificate_targets DROP CONSTRAINT certificate_targets_source_check",
+      );
+      await client.query("DELETE FROM migrations WHERE version = 59");
+    });
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      const constraint =
+        await client.query(`SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conname = 'certificate_targets_source_check'`);
+      expect(constraint.rows[0].definition).to.include("agent_windows");
+    });
+  });
+
+  it("does not narrow trust-job operations when repairing an already-upgraded old v40 ledger", async () => {
+    await withClient(databaseName, async (client) => {
+      await client.query(`CREATE TABLE migrations (
+        version INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL,
+        executed_at TIMESTAMP DEFAULT NOW())`);
+      for (const migration of migrations.filter(
+        (entry) => entry.version <= 38,
+      )) {
+        await apply(client, migration);
+      }
+      for (const migration of historicalMigrations.filter(
+        (entry) => entry.version <= 40,
+      )) {
+        await apply(client, migration);
+      }
+    });
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      await client.query("DELETE FROM migrations WHERE version = 59");
+    });
+    runMigrations(databaseName);
+    await withClient(databaseName, async (client) => {
+      const result =
+        await client.query(`SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conname = 'certificate_jobs_operation_check'`);
+      expect(result.rows[0].definition).to.include("distribute-trust");
+      expect(result.rows[0].definition).to.include("protocol_smoke");
     });
   });
 });
