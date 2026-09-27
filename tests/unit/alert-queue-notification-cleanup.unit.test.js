@@ -42,6 +42,10 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
         calls.push({ sql, params });
         if (calls.length === 1) {
           assert.match(sql, /RETURNING aq.id/);
+          assert.match(
+            sql,
+            /SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id/,
+          );
           return { rowCount: 2, rows: [{ id: 10 }, { id: 11 }] };
         }
         return { rowCount: 4 };
@@ -74,7 +78,11 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
       query: async (sql, params) => {
         calls.push({ sql, params });
         if (calls.length === 1) {
-          assert.match(sql, /RETURNING id, \(SELECT workspace_id/);
+          assert.match(sql, /RETURNING id, COALESCE\(/);
+          assert.match(
+            sql,
+            /SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = alert_queue.certops_agent_id/,
+          );
           return {
             rowCount: 2,
             rows: [

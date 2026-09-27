@@ -3894,6 +3894,7 @@ const migrations = [
         RETURN NEW;
       END;
       $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS trg_operational_notification_escalation_unread ON operational_notifications;
       CREATE TRIGGER trg_operational_notification_escalation_unread
         AFTER UPDATE OF severity ON operational_notifications
         FOR EACH ROW
@@ -3929,6 +3930,7 @@ const migrations = [
         RETURN NEW;
       END;
       $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS trg_resolve_token_operational_notifications ON tokens;
       CREATE TRIGGER trg_resolve_token_operational_notifications
         BEFORE DELETE OR UPDATE OF workspace_id ON tokens
         FOR EACH ROW EXECUTE FUNCTION resolve_token_operational_notifications();
@@ -3962,7 +3964,7 @@ const migrations = [
         RETURN NEW;
       END;
       $$ LANGUAGE plpgsql;
-      DROP TRIGGER trg_operational_notification_escalation_unread ON operational_notifications;
+      DROP TRIGGER IF EXISTS trg_operational_notification_escalation_unread ON operational_notifications;
       CREATE TRIGGER trg_operational_notification_escalation_unread
         AFTER UPDATE OF severity, type ON operational_notifications
         FOR EACH ROW EXECUTE FUNCTION reset_operational_notification_reads_on_escalation();
@@ -4025,6 +4027,71 @@ const migrations = [
   },
 ];
 
+// PR #72 briefly shipped this version/name sequence before PR #139 restored
+// the CertOps numbering. Those installations already have v45 in the ledger,
+// but v45 there was trust-anchor jobs, not observation locality.
+const historicalMigrationAliases = new Map([
+  [39, "operational_notifications_schema"],
+  [40, "certops_agents_capabilities_freshness_epoch"],
+  [41, "certops_diagnostic_agent_isolation"],
+  [42, "certops_diagnostic_bootstrap_requests"],
+  [43, "certops_windows_iis_target_descriptors"],
+  [44, "certops_trust_anchors"],
+  [45, "certops_trust_anchor_jobs"],
+]);
+
+function validateMigrationHistory(rows) {
+  for (const { version, name } of rows) {
+    const current = migrations.find(
+      (migration) => migration.version === version,
+    );
+    if (
+      current &&
+      name !== current.name &&
+      name !== historicalMigrationAliases.get(version)
+    ) {
+      throw new Error(
+        `Migration ${version} has unexpected name ${name}; expected ${current.name}`,
+      );
+    }
+  }
+}
+
+const observationLocalitySql = migrations.find(
+  (migration) => migration.version === 45,
+).sql;
+migrations.push({
+  version: 58,
+  name: "repair_certops_observation_locality_history",
+  sql: `
+    DO $repair$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certificate_targets'
+                           AND column_name = 'location_kind')
+         OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certificate_instances'
+                           AND column_name = 'location_kind')
+         OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certops_agents'
+                           AND column_name = 'downtime_alerts_enabled')
+         OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certops_agents'
+                           AND column_name = 'contact_group_id')
+         OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certops_agent_bootstrap_tokens'
+                           AND column_name = 'downtime_alerts_enabled')
+         OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = 'certops_agent_bootstrap_tokens'
+                           AND column_name = 'contact_group_id')
+      THEN
+        EXECUTE $observation_locality$${observationLocalitySql}$observation_locality$;
+      END IF;
+    END
+    $repair$;
+  `,
+});
+
 async function runMigrations() {
   logger.info("Starting database migrations...");
 
@@ -4049,12 +4116,44 @@ async function runMigrations() {
     `);
 
     const result = await client.query(
-      "SELECT version FROM migrations ORDER BY version",
+      "SELECT version, name FROM migrations ORDER BY version",
     );
+    validateMigrationHistory(result.rows);
     const executedVersions = result.rows.map((row) => row.version);
     logger.info(`Found ${executedVersions.length} executed migrations`, {
       versions: executedVersions,
     });
+
+    // The historical v45 collision omits columns needed by v52. Repair its
+    // physical schema before processing later migrations; v58 records the
+    // append-only repair and can safely reapply the idempotent v45 SQL.
+    if (executedVersions.includes(45) && !executedVersions.includes(58)) {
+      const columnCount = await client.query(`
+        SELECT COUNT(*)::int AS count FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (table_name, column_name) IN (
+             ('certificate_targets', 'location_kind'),
+             ('certificate_instances', 'location_kind'),
+             ('certops_agents', 'downtime_alerts_enabled'),
+             ('certops_agents', 'contact_group_id'),
+             ('certops_agent_bootstrap_tokens', 'downtime_alerts_enabled'),
+             ('certops_agent_bootstrap_tokens', 'contact_group_id')
+           )
+      `);
+      const historicalCollision = result.rows.some(
+        (row) => row.version === 45 && row.name === "certops_trust_anchor_jobs",
+      );
+      if (historicalCollision || columnCount.rows[0].count !== 6) {
+        await client.query("BEGIN");
+        try {
+          await client.query(observationLocalitySql);
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        }
+      }
+    }
 
     let migrationsRun = 0;
     for (const migration of migrations) {
@@ -4097,4 +4196,4 @@ if (require.main === module) {
   runMigrations().finally(() => migrationPool.end());
 }
 
-module.exports = { runMigrations, migrations };
+module.exports = { runMigrations, migrations, validateMigrationHistory };

@@ -36,6 +36,7 @@ if (
   );
 }
 const { writeAudit } = require("./services/audit");
+const { resolveRequeuedNotifications } = require("./services/alertQueue");
 const {
   loadWorkspace,
   requireWorkspaceMembership,
@@ -588,6 +589,9 @@ app.post(
         "UPDATE alert_queue SET status='pending', channels=$1, next_attempt_at=NOW(), updated_at=NOW() WHERE id=$2",
         [JSON.stringify([channel]), alertId],
       );
+      await resolveRequeuedNotifications([
+        { id: alertId, workspace_id: alert.workspace_id },
+      ]);
       await writeAudit({
         actorUserId: req.user?.id || null,
         subjectUserId: alert.user_id,

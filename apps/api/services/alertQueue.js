@@ -23,8 +23,10 @@ async function requeueAlertsCore({
       `UPDATE alert_queue aq
        SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
            error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
-       FROM tokens t
-       WHERE aq.token_id = t.id AND t.workspace_id = $1 AND aq.user_id = $2 AND (
+       WHERE COALESCE(
+         (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+         (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
+       ) = $1 AND aq.user_id = $2 AND (
          aq.status IN ('failed','limit_exceeded') OR
          (aq.status = 'partial' AND (aq.error_message IS NULL OR aq.error_message NOT ILIKE '%PLAN_LIMIT%')) OR
          ${blockedCondition}
@@ -47,7 +49,10 @@ async function requeueAlertsCore({
        (status = 'partial' AND (error_message IS NULL OR error_message NOT ILIKE '%PLAN_LIMIT%')) OR
        ${blockedCondition}
      )
-     RETURNING id, (SELECT workspace_id FROM tokens WHERE tokens.id = alert_queue.token_id) AS workspace_id`,
+     RETURNING id, COALESCE(
+       (SELECT t.workspace_id FROM tokens t WHERE t.id = alert_queue.token_id),
+       (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = alert_queue.certops_agent_id)
+     ) AS workspace_id`,
     [userId],
   );
   await resolveRequeuedNotifications(r.rows);
@@ -93,4 +98,4 @@ async function resolveRequeuedNotifications(rows, fixedWorkspaceId = null) {
   }
 }
 
-module.exports = { requeueAlertsCore };
+module.exports = { requeueAlertsCore, resolveRequeuedNotifications };

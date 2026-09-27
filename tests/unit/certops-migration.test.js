@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { migrations } = require(
+const { migrations, validateMigrationHistory } = require(
   path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
 );
 
@@ -16,12 +16,17 @@ describe("operational notifications migration", () => {
     );
     assert.ok(notificationMigration);
     assert.equal(notificationMigration.version, 56);
-    const lifecycleMigration = migrations.at(-1);
+    const lifecycleMigration = migrations.find((entry) => entry.version === 57);
     assert.equal(lifecycleMigration.version, 57);
     assert.equal(lifecycleMigration.name, "operational_notification_lifecycle");
+    assert.equal(migrations.at(-1).version, 58);
+    assert.equal(
+      migrations.at(-1).name,
+      "repair_certops_observation_locality_history",
+    );
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 57 }, (_, index) => index + 1),
+      Array.from({ length: 58 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -39,6 +44,27 @@ describe("operational notifications migration", () => {
     assert.match(lifecycleMigration.sql, /idx_operational_notifications_open_delivery_token/);
     assert.match(lifecycleMigration.sql, /JOIN certops_agents ca ON ca.id = aq.certops_agent_id/);
     assert.match(lifecycleMigration.sql, /NEW.type IS DISTINCT FROM OLD.type/);
+  });
+
+  it("accepts only the documented PR #72 migration aliases", () => {
+    assert.doesNotThrow(() =>
+      validateMigrationHistory([
+        { version: 39, name: "operational_notifications_schema" },
+        { version: 45, name: "certops_trust_anchor_jobs" },
+      ]),
+    );
+    assert.doesNotThrow(() =>
+      validateMigrationHistory([
+        {
+          version: 45,
+          name: "certops_agent_observation_locality_and_downtime_alerts",
+        },
+      ]),
+    );
+    assert.throws(
+      () => validateMigrationHistory([{ version: 45, name: "unrecognized_migration" }]),
+      /Migration 45 has unexpected name/,
+    );
   });
 });
 const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
