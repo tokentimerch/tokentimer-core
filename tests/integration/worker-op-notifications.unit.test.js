@@ -72,6 +72,43 @@ describe("delivery incident configuration and labels", () => {
     expect(label({ token_id: null })).to.equal("asset");
   });
 
+  it("preserves display punctuation while normalizing and bounding incident labels", async () => {
+    const { _test } = await importFresh("apps/worker/src/delivery-worker.js");
+    const label = _test.incidentAssetLabel;
+    for (const name of [
+      "Prod & DR Certificate",
+      "API Key #2",
+      "agent@server",
+      "Certificate?Backup",
+    ]) {
+      expect(label({ name, token_id: null })).to.equal(name);
+    }
+    expect(label({ metadata: { agentName: "agent@server" } })).to.equal(
+      "agent@server",
+    );
+    expect(label({ name: "Line one\r\nLine two\tcontrol" })).to.equal(
+      "Line one Line two control",
+    );
+    expect(label({ name: "Line one\u2028Line two" })).to.equal(
+      "Line one Line two",
+    );
+    expect(label({ name: "😀".repeat(121) })).to.equal("😀".repeat(120));
+    expect(label({ token_id: null })).to.equal("asset");
+    expect(label({ token_id: null, alert_key: "arbitrary:key" })).to.equal(
+      "asset",
+    );
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const title = `Delivery blocked: ${label({ name: "Prod & <DR> Certificate" })}`;
+    const rendered = email.buildOperationalIncidentEmail({
+      category: "delivery",
+      title,
+      message: "Delivery failed",
+    });
+    expect(rendered.html).to.include("Prod &amp; &lt;DR&gt; Certificate");
+    expect(rendered.html).to.not.include("Prod & <DR> Certificate");
+    expect(rendered.text).to.include("Prod & <DR> Certificate");
+  });
+
   it("uses agent identity in blocked and plan-limited incident titles", async () => {
     const { raiseDeliveryBlockedIncident } = await importFresh(
       "apps/worker/src/delivery-worker.js",

@@ -1247,23 +1247,31 @@ const DEGRADED_ATTEMPTS_THRESHOLD =
 
 function incidentAssetLabel(alert) {
   const metadata = alert.metadata || {};
-  const candidates = [
+  const displayCandidates = [
     alert.name,
     metadata.agentName,
     metadata.hostname,
     metadata.agentId,
     alert.certops_agent_id,
     alert.token_id != null ? `Token #${alert.token_id}` : null,
-    /^agent_health:[a-z0-9_-]+:(down|recovered)$/i.test(
-      String(alert.alert_key || ""),
-    )
-      ? alert.alert_key
-      : null,
   ];
-  for (const candidate of candidates) {
-    const label = singleLineText(candidate);
-    if (label && !/[?&#@]/.test(label)) return label.slice(0, 120);
+  const boundedLabel = (value) =>
+    Array.from(
+      singleLineText(value)
+        .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
+        .trim(),
+    )
+      .slice(0, 120)
+      .join("");
+  for (const candidate of displayCandidates) {
+    const label = boundedLabel(candidate);
+    if (label) return label;
   }
+  // Only accept a known, identifier-only shape from the raw queue key.
+  if (
+    /^agent_health:[a-z0-9_-]+:(down|recovered)$/i.test(alert.alert_key || "")
+  )
+    return boundedLabel(alert.alert_key);
   return "asset";
 }
 
