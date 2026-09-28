@@ -229,10 +229,7 @@ jobs:
 
       - name: Run agent package tests
         run: pnpm run test:agent
-
-      - name: Validate package.json
-        run: pnpm --filter @tokentimer/api validate || echo "No validate script found"
-
+        
   coverage_backend:
     name: Coverage Backend
     runs-on: ubuntu-latest
@@ -279,7 +276,6 @@ jobs:
     name: Coverage Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

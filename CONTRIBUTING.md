@@ -22,12 +22,27 @@ See [QUICKSTART.md](QUICKSTART.md) for deployment options.
    pnpm run build
    pnpm run test:contracts
    ```
+   If the dashboard is affected, also run the relevant Prettier checks.
+   For a complete pre-merge validation, you can run:
+   ```bash
+   pnpm run test:ci
+   ```
 4. Commit using [Conventional Commits](https://www.conventionalcommits.org/) format:
    ```
    feat(core-api): add new endpoint for X
    fix(core-ui): resolve rendering issue in Y
    ```
 5. Open a Pull Request against `main`
+
+### Maintainer pre-merge validation
+
+Contributor pull-request Actions are intentionally disabled to avoid executing untrusted contributor code in GitHub Actions.
+
+Local validation is the normal pre-merge path. Maintainers should run the relevant local checks before merging. For a complete validation, `pnpm run test:ci` can be used.
+
+A maintainer may use `workflow_dispatch` for a validation run only when the selected code/ref has already been reviewed and is considered trusted. It must not be used to execute unreviewed contributor code.
+
+After a change is merged, the push CI run on `main` remains the authoritative post-merge validation and must be green before a release.
 
 ## Code Style
 
