@@ -40,6 +40,7 @@ const { resolveRequeuedNotifications } = require("./services/alertQueue");
 const {
   loadWorkspace,
   requireWorkspaceMembership,
+  currentWorkspaceAccessSql,
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
@@ -475,7 +476,9 @@ app.post(
            FROM alert_queue aq
            LEFT JOIN tokens t ON t.id = aq.token_id
            LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
-          WHERE aq.id = $1 AND aq.user_id = $2`,
+          WHERE aq.id = $1 AND aq.user_id = $2
+            AND (${currentWorkspaceAccessSql("COALESCE(t.workspace_id, ca.workspace_id)", "$2")}
+                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))`,
         [alertId, req.user.id],
       );
       if (r.rows.length === 0)
@@ -585,12 +588,28 @@ app.post(
       }
 
       // Set to pending and only this channel
-      await pool.query(
-        "UPDATE alert_queue SET status='pending', channels=$1, next_attempt_at=NOW(), updated_at=NOW() WHERE id=$2",
-        [JSON.stringify([channel]), alertId],
+      const currentAnchor = `COALESCE(
+        (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+        (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
+      )`;
+      const updated = await pool.query(
+        `UPDATE alert_queue aq
+            SET status='pending', channels=$1, next_attempt_at=NOW(), updated_at=NOW()
+          WHERE aq.id=$2 AND aq.user_id=$3
+            AND (${currentWorkspaceAccessSql(currentAnchor, "$3")}
+                 OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))
+          RETURNING aq.id, ${currentAnchor} AS workspace_id`,
+        [JSON.stringify([channel]), alertId, req.user.id],
       );
+      if (updated.rowCount === 0)
+        return res.status(404).json({
+          error:
+            "We couldn't find this alert. It may have been processed or deleted.",
+          code: "ALERT_NOT_FOUND",
+        });
+      const workspaceId = updated.rows[0].workspace_id;
       await resolveRequeuedNotifications([
-        { id: alertId, workspace_id: alert.workspace_id },
+        { id: alertId, workspace_id: workspaceId },
       ]);
       await writeAudit({
         actorUserId: req.user?.id || null,
@@ -599,7 +618,7 @@ app.post(
         targetType: "alert",
         targetId: alertId,
         channel,
-        workspaceId: alert.workspace_id,
+        workspaceId,
         metadata: {
           reason: "user_initiated",
           alert_id: alert.id,

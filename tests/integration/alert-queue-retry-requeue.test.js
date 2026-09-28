@@ -16,12 +16,12 @@ describe("Alert Queue Retry and Requeue", function () {
     ws = await TestUtils.ensureTestWorkspace(cookie);
   });
 
-  async function insertFailedAlert(tokenId) {
+  async function insertFailedAlert(tokenId, alertUserId = user.id) {
     const result = await TestUtils.execQuery(
       `INSERT INTO alert_queue (user_id, token_id, alert_key, threshold_days, due_date, channels, status, attempts, error_message, next_attempt_at)
        VALUES ($1, $2, $3, 7, CURRENT_DATE, '["email"]', 'failed', 3, 'SMTP timeout', NOW() - INTERVAL '1 hour')
        RETURNING id`,
-      [user.id, tokenId, `test_retry:${tokenId}:${Date.now()}`],
+      [alertUserId, tokenId, `test_retry:${tokenId}:${Date.now()}`],
     );
     return result.rows[0].id;
   }
@@ -179,6 +179,250 @@ describe("Alert Queue Retry and Requeue", function () {
   });
 
   describe("POST /api/alert-queue/requeue", () => {
+    it("denies a former owner retry and requeue after transfer while preserving current workspace access", async () => {
+      const formerOwner = await TestUtils.createVerifiedTestUser();
+      const ownerSession = await TestUtils.loginTestUser(
+        formerOwner.email,
+        formerOwner.password,
+      );
+      const destinationAdmin = await TestUtils.createVerifiedTestUser();
+      const adminSession = await TestUtils.loginTestUser(
+        destinationAdmin.email,
+        destinationAdmin.password,
+      );
+      const unrelatedAdmin = await TestUtils.createVerifiedTestUser();
+      const unrelatedSession = await TestUtils.loginTestUser(
+        unrelatedAdmin.email,
+        unrelatedAdmin.password,
+      );
+      const source = await TestUtils.ensureDedicatedTestWorkspace(
+        adminSession.cookie,
+        "Transfer retry source",
+      );
+      const destination = await TestUtils.ensureDedicatedTestWorkspace(
+        adminSession.cookie,
+        "Transfer retry destination",
+      );
+      await TestUtils.ensureDedicatedTestWorkspace(
+        unrelatedSession.cookie,
+        "Unrelated retry workspace",
+      );
+      const tokenIds = [];
+      const alertIds = [];
+      const incidentIds = [];
+      const agentIds = [];
+      try {
+        await TestUtils.execQuery(
+          `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+           VALUES ($1, $2, 'viewer', $3)`,
+          [formerOwner.id, source, destinationAdmin.id],
+        );
+        const transferredToken = await TestUtils.execQuery(
+          `INSERT INTO tokens (user_id, workspace_id, created_by, name, type, expiration)
+           VALUES ($1, $2, $1, 'Transferred retry token', 'api_key', CURRENT_DATE + 7)
+           RETURNING id`,
+          [formerOwner.id, source],
+        );
+        const transferredTokenId = transferredToken.rows[0].id;
+        tokenIds.push(transferredTokenId);
+        const transferredAlertId = await insertFailedAlert(
+          transferredTokenId,
+          formerOwner.id,
+        );
+        alertIds.push(transferredAlertId);
+        const sourceIncident = await TestUtils.execQuery(
+          `INSERT INTO operational_notifications
+             (workspace_id, token_id, category, type, severity, dedupe_key, title)
+           VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Source incident')
+           RETURNING id`,
+          [
+            source,
+            transferredTokenId,
+            `delivery_blocked:${transferredAlertId}`,
+          ],
+        );
+        incidentIds.push(sourceIncident.rows[0].id);
+
+        await request(BASE)
+          .post(`/api/v1/workspaces/${destination}/transfer-tokens`)
+          .set("Cookie", adminSession.cookie)
+          .send({ from_workspace_id: source, token_ids: [transferredTokenId] })
+          .expect(200);
+        const moved = await TestUtils.execQuery(
+          `SELECT t.workspace_id, aq.user_id
+             FROM tokens t JOIN alert_queue aq ON aq.token_id = t.id
+            WHERE aq.id = $1`,
+          [transferredAlertId],
+        );
+        expect(moved.rows[0].workspace_id).to.equal(destination);
+        expect(Number(moved.rows[0].user_id)).to.equal(Number(formerOwner.id));
+        const sourceState = await TestUtils.execQuery(
+          "SELECT resolved_at FROM operational_notifications WHERE id = $1",
+          [sourceIncident.rows[0].id],
+        );
+        expect(sourceState.rows[0].resolved_at).to.be.a("date");
+
+        const destinationIncident = await TestUtils.execQuery(
+          `INSERT INTO operational_notifications
+             (workspace_id, token_id, category, type, severity, dedupe_key, title)
+           VALUES ($1, $2, 'delivery', 'delivery_blocked', 'critical', $3, 'Destination incident')
+           RETURNING id`,
+          [
+            destination,
+            transferredTokenId,
+            `delivery_blocked:${transferredAlertId}`,
+          ],
+        );
+        incidentIds.push(destinationIncident.rows[0].id);
+
+        const credential = randomBytes(32).toString("hex");
+        const agent = await TestUtils.execQuery(
+          `INSERT INTO certops_agents
+             (workspace_id, agent_id, agent_version, protocol_version, credential_prefix, credential_hash)
+           VALUES ($1, $2, '1.0.0', '1.0.0', $3, $4) RETURNING id`,
+          [
+            destination,
+            `transferred-retry-${randomUUID()}`,
+            `ttagent_${credential.slice(0, 16)}`,
+            credential,
+          ],
+        );
+        agentIds.push(agent.rows[0].id);
+        const agentAlert = await TestUtils.execQuery(
+          `INSERT INTO alert_queue
+             (user_id, certops_agent_id, alert_key, threshold_days, due_date, channels, status, error_message)
+           VALUES ($1, $2, $3, 7, CURRENT_DATE, '["email"]'::jsonb, 'failed', 'SMTP timeout')
+           RETURNING id`,
+          [formerOwner.id, agent.rows[0].id, `stale-agent:${randomUUID()}`],
+        );
+        const agentAlertId = agentAlert.rows[0].id;
+        alertIds.push(agentAlertId);
+        const agentIncident = await TestUtils.execQuery(
+          `INSERT INTO operational_notifications
+             (workspace_id, category, type, severity, dedupe_key, title)
+           VALUES ($1, 'delivery', 'delivery_blocked', 'critical', $2, 'Agent incident')
+           RETURNING id`,
+          [destination, `delivery_blocked:${agentAlertId}`],
+        );
+        incidentIds.push(agentIncident.rows[0].id);
+
+        const currentToken = await TestUtils.execQuery(
+          `INSERT INTO tokens (user_id, workspace_id, created_by, name, type, expiration)
+           VALUES ($1, $2, $1, 'Current retry token', 'api_key', CURRENT_DATE + 7)
+           RETURNING id`,
+          [formerOwner.id, source],
+        );
+        tokenIds.push(currentToken.rows[0].id);
+        const currentAlertId = await insertFailedAlert(
+          currentToken.rows[0].id,
+          formerOwner.id,
+        );
+        alertIds.push(currentAlertId);
+
+        const staleRetry = await request(BASE)
+          .post(`/api/alert-queue/${transferredAlertId}/retry`)
+          .set("Cookie", ownerSession.cookie)
+          .send({ channel: "email" });
+        expect(staleRetry.status).to.equal(404);
+        await request(BASE)
+          .post(`/api/alert-queue/${agentAlertId}/retry`)
+          .set("Cookie", ownerSession.cookie)
+          .send({ channel: "email" })
+          .expect(404);
+        const accountWide = await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", ownerSession.cookie)
+          .send({})
+          .expect(200);
+        expect(accountWide.body.updated).to.equal(1);
+        await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", unrelatedSession.cookie)
+          .send({ workspace_id: destination })
+          .expect(403);
+
+        const beforeAdmin = await TestUtils.execQuery(
+          `SELECT aq.id, aq.status, n.resolved_at
+             FROM alert_queue aq JOIN operational_notifications n
+               ON n.dedupe_key = 'delivery_blocked:' || aq.id
+              AND n.workspace_id = $2
+            WHERE aq.id = ANY($1::int[]) ORDER BY aq.id`,
+          [[transferredAlertId, agentAlertId], destination],
+        );
+        expect(beforeAdmin.rows).to.have.length(2);
+        for (const row of beforeAdmin.rows) {
+          expect(row.status).to.equal("failed");
+          expect(row.resolved_at).to.equal(null);
+        }
+        const currentState = await TestUtils.execQuery(
+          "SELECT status FROM alert_queue WHERE id = $1",
+          [currentAlertId],
+        );
+        expect(currentState.rows[0].status).to.equal("pending");
+
+        // The creator is an implicit admin even after their explicit row is removed.
+        await TestUtils.execQuery(
+          "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+          [destination, destinationAdmin.id],
+        );
+        const destinationRequeue = await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", adminSession.cookie)
+          .send({ workspace_id: destination })
+          .expect(200);
+        expect(destinationRequeue.body.updated).to.equal(2);
+        const afterAdmin = await TestUtils.execQuery(
+          `SELECT aq.status, n.resolved_at
+             FROM alert_queue aq JOIN operational_notifications n
+               ON n.dedupe_key = 'delivery_blocked:' || aq.id
+              AND n.workspace_id = $2
+            WHERE aq.id = ANY($1::int[])`,
+          [[transferredAlertId, agentAlertId], destination],
+        );
+        for (const row of afterAdmin.rows) {
+          expect(row.status).to.equal("pending");
+          expect(row.resolved_at).to.be.a("date");
+        }
+
+        await TestUtils.execQuery(
+          "UPDATE alert_queue SET user_id = $1, status = 'failed' WHERE id = $2",
+          [destinationAdmin.id, transferredAlertId],
+        );
+        const creatorAccountWide = await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", adminSession.cookie)
+          .send({})
+          .expect(200);
+        expect(creatorAccountWide.body.updated).to.equal(1);
+      } finally {
+        await TestUtils.execQuery(
+          "DELETE FROM operational_notifications WHERE id = ANY($1::uuid[])",
+          [incidentIds],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM alert_queue WHERE id = ANY($1::int[])",
+          [alertIds],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM tokens WHERE id = ANY($1::int[])",
+          [tokenIds],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM certops_agents WHERE id = ANY($1::uuid[])",
+          [agentIds],
+        );
+        await TestUtils.cleanupTestUser(formerOwner.email, ownerSession.cookie);
+        await TestUtils.cleanupTestUser(
+          destinationAdmin.email,
+          adminSession.cookie,
+        );
+        await TestUtils.cleanupTestUser(
+          unrelatedAdmin.email,
+          unrelatedSession.cookie,
+        );
+      }
+    });
+
     it("requeues all failed alerts for user", async () => {
       const soon = new Date();
       soon.setDate(soon.getDate() + 3);

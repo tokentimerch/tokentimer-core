@@ -132,6 +132,47 @@ describe("Workspace operational notifications API", function () {
     ]);
   });
 
+  it("counts out-of-window tokenless agent alerts in their workspace", async () => {
+    const agentWorkspace = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Agent deferred notifications",
+    );
+    const credential = randomBytes(32).toString("hex");
+    const agent = await client.query(
+      `INSERT INTO certops_agents
+         (workspace_id, agent_id, agent_version, protocol_version, credential_prefix, credential_hash)
+       VALUES ($1, $2, '1.0.0', '1.0.0', $3, $4) RETURNING id`,
+      [
+        agentWorkspace,
+        `deferred-${randomUUID()}`,
+        `ttagent_${credential.slice(0, 16)}`,
+        credential,
+      ],
+    );
+    const agentId = agent.rows[0].id;
+    const alert = await client.query(
+      `INSERT INTO alert_queue
+         (user_id, certops_agent_id, alert_key, threshold_days, due_date, channels, status, error_message)
+       VALUES ($1, $2, $3, 7, CURRENT_DATE, '["email"]'::jsonb, 'pending', 'OUT_OF_WINDOW')
+       RETURNING id`,
+      [adminUserId, agentId, `deferred-agent:${randomUUID()}`],
+    );
+    try {
+      const res = await fetchNotifications(adminCookie, agentWorkspace).expect(
+        200,
+      );
+      const deferred = res.body.items.find(
+        (item) => item.id === "alerts-out-of-window",
+      );
+      expect(deferred?.count).to.equal(1);
+    } finally {
+      await client.query("DELETE FROM alert_queue WHERE id = $1", [
+        alert.rows[0].id,
+      ]);
+      await client.query("DELETE FROM certops_agents WHERE id = $1", [agentId]);
+    }
+  });
+
   it("hides deferred alerts from viewers", async () => {
     const res = await fetchNotifications(viewerCookie).expect(200);
     expect(res.body.items).to.be.an("array").that.is.empty;

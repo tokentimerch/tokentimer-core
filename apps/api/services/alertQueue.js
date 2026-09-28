@@ -1,4 +1,5 @@
 const { pool } = require("../db/database");
+const { currentWorkspaceAccessSql } = require("./rbac");
 
 /**
  * Requeue failed/blocked alerts for a user or a specific workspace.
@@ -38,21 +39,25 @@ async function requeueAlertsCore({
     return r.rowCount || 0;
   }
   const blockedCondition = includePlanLimitBlocked
-    ? `status = 'blocked'`
-    : `(status = 'blocked' AND error_message IS NOT NULL AND error_message <> 'PLAN_LIMIT' AND error_message NOT ILIKE '%PLAN_LIMIT%')`;
+    ? `aq.status = 'blocked'`
+    : `(aq.status = 'blocked' AND aq.error_message IS NOT NULL AND aq.error_message <> 'PLAN_LIMIT' AND aq.error_message NOT ILIKE '%PLAN_LIMIT%')`;
+  const workspaceAnchor = `COALESCE(
+    (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
+    (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
+  )`;
   const r = await pool.query(
-    `UPDATE alert_queue
+    `UPDATE alert_queue aq
      SET status = 'pending', attempts = 0, attempts_email = 0, attempts_webhooks = 0, attempts_whatsapp = 0,
          error_message = NULL, next_attempt_at = NOW(), updated_at = NOW()
-     WHERE user_id = $1 AND (
-       status IN ('failed','limit_exceeded') OR
-       (status = 'partial' AND (error_message IS NULL OR error_message NOT ILIKE '%PLAN_LIMIT%')) OR
+     WHERE aq.user_id = $1
+       AND (${currentWorkspaceAccessSql(workspaceAnchor, "$1")}
+            OR (aq.token_id IS NULL AND aq.certops_agent_id IS NULL))
+       AND (
+       aq.status IN ('failed','limit_exceeded') OR
+       (aq.status = 'partial' AND (aq.error_message IS NULL OR aq.error_message NOT ILIKE '%PLAN_LIMIT%')) OR
        ${blockedCondition}
      )
-     RETURNING id, COALESCE(
-       (SELECT t.workspace_id FROM tokens t WHERE t.id = alert_queue.token_id),
-       (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = alert_queue.certops_agent_id)
-     ) AS workspace_id`,
+     RETURNING aq.id, ${workspaceAnchor} AS workspace_id`,
     [userId],
   );
   await resolveRequeuedNotifications(r.rows);

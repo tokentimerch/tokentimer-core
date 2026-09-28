@@ -24,6 +24,21 @@ function hasAtLeastRole(userRole, minimumRole) {
   return (roleRank[userRole] || 0) >= (roleRank[minimumRole] || 0);
 }
 
+// SQL counterpart of loadWorkspace/requireWorkspaceMembership for queries
+// that mutate rows belonging to several current workspaces at once.
+// Both arguments must be fixed SQL expressions supplied by server code.
+function currentWorkspaceAccessSql(workspaceIdSql, userIdSql) {
+  return `EXISTS (
+    SELECT 1 FROM workspaces access_workspace
+    WHERE access_workspace.id = ${workspaceIdSql}
+      AND (access_workspace.created_by = ${userIdSql} OR EXISTS (
+        SELECT 1 FROM workspace_memberships access_membership
+        WHERE access_membership.workspace_id = access_workspace.id
+          AND access_membership.user_id = ${userIdSql}
+      ))
+  )`;
+}
+
 // Action -> minimum role mapping
 const actionPolicy = {
   "workspace.view": "viewer",
@@ -425,6 +440,7 @@ async function requireNotViewer(req, res, next) {
 
 module.exports = {
   can,
+  currentWorkspaceAccessSql,
   loadWorkspace,
   loadSection,
   requireWorkspaceMembership,

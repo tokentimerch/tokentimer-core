@@ -78,10 +78,13 @@ describe("alertQueue.requeueAlertsCore (operational notification cleanup)", () =
       query: async (sql, params) => {
         calls.push({ sql, params });
         if (calls.length === 1) {
-          assert.match(sql, /RETURNING id, COALESCE\(/);
+          assert.match(sql, /WHERE aq\.user_id = \$1/);
+          assert.match(sql, /access_workspace\.created_by = \$1/);
+          assert.match(sql, /access_membership\.user_id = \$1/);
+          assert.match(sql, /RETURNING aq\.id, COALESCE\(/);
           assert.match(
             sql,
-            /SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = alert_queue.certops_agent_id/,
+            /SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id/,
           );
           return {
             rowCount: 2,

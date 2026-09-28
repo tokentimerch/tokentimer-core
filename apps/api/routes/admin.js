@@ -695,8 +695,9 @@ router.get(
         const deferred = await pool.query(
           `SELECT COUNT(*)::int AS count
            FROM alert_queue aq
-           JOIN tokens t ON t.id = aq.token_id
-           WHERE t.workspace_id = $1
+           LEFT JOIN tokens t ON t.id = aq.token_id
+           LEFT JOIN certops_agents ca ON ca.id = aq.certops_agent_id
+           WHERE COALESCE(t.workspace_id, ca.workspace_id) = $1
              AND aq.status = 'pending'
              AND aq.error_message = 'OUT_OF_WINDOW'`,
           [req.workspace.id],
