@@ -46,6 +46,24 @@ describe("cert_renewal_failed webhook content", () => {
     assert.match(dumped, /LIMITED/);
   });
 
+  it("escapes the title, certificate name, and job id in Slack fallback text", async () => {
+    const { _test } = await import(deliveryWorkerUrl);
+    const payload = _test.buildCertRenewalFailedWebhookPayload(
+      "slack",
+      { ...alert, name: "@here <prod> & *cert*" },
+      {
+        title: "@channel <renewal> & *urgent*",
+        job: { ...job, id: "@channel-job" },
+      },
+    );
+
+    assert.equal(
+      payload.text,
+      "@\u200bchannel &lt;renewal&gt; &amp; *\u200burgent*\u200b: " +
+        "@\u200bhere &lt;prod&gt; &amp; *\u200bcert*\u200b (job @\u200bchannel-job)",
+    );
+  });
+
   it("renders Discord and Teams without expiry language", async () => {
     const { _test } = await import(deliveryWorkerUrl);
     const discord = _test.buildCertRenewalFailedWebhookPayload(

@@ -331,7 +331,7 @@ function buildCertRenewalFailedWebhookPayload(
 
   if (kind === "slack") {
     return {
-      text: `${selectedTitle}: ${context.name} (job ${context.jobId})`,
+      text: `${escapeSlackMrkdwn(selectedTitle)}: ${escapeSlackMrkdwn(context.name)} (job ${escapeSlackMrkdwn(context.jobId)})`,
       blocks: [
         {
           type: "header",
