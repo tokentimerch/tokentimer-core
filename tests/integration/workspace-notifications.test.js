@@ -536,6 +536,70 @@ describe("Persisted operational notifications (bell)", function () {
     }
   });
 
+  it("deduplicates a computed failure against an open incident beyond the 50-row display limit", async () => {
+    const prefix = `sync-overflow:${randomUUID()}`;
+    const config = await client.query(
+      `INSERT INTO auto_sync_configs
+         (workspace_id, provider, credentials_encrypted, frequency, enabled,
+          last_sync_status, last_sync_error, created_by)
+       VALUES ($1, 'gitlab', 'fixture', 'daily', TRUE, 'failed', 'Timeout', $2)
+       RETURNING id`,
+      [workspaceId, adminUserId],
+    );
+    const configId = config.rows[0].id;
+    try {
+      const old = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, category, type, severity, dedupe_key, title,
+            metadata, created_at, updated_at)
+         VALUES ($1, 'auto_sync', 'auto_sync_failed', 'warning', $2,
+                 'Old GitLab failure', $3::jsonb,
+                 NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')
+         RETURNING id`,
+        [
+          workspaceId,
+          `${prefix}:old`,
+          JSON.stringify({ provider: "gitlab", auto_sync_config_id: configId }),
+        ],
+      );
+      await markRead(adminCookie, old.rows[0].id).expect(200);
+      await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, category, type, severity, dedupe_key, title)
+         SELECT $1, 'delivery', 'delivery_degraded', 'warning',
+                $2 || ':' || g, 'New failure ' || g
+           FROM generate_series(1, 55) AS g`,
+        [workspaceId, prefix],
+      );
+      const res = await fetchNotifications(adminCookie).expect(200);
+      expect(
+        res.body.items.some((item) => item.id === old.rows[0].id),
+      ).to.equal(false);
+      expect(
+        res.body.items.some(
+          (item) => item.id === `auto-sync-failed-${configId}`,
+        ),
+      ).to.equal(false);
+      expect(res.body.unreadCount).to.be.at.least(55);
+      await markAllRead(adminCookie).expect(200);
+      const after = await fetchNotifications(adminCookie).expect(200);
+      expect(after.body.unreadCount).to.equal(0);
+      expect(
+        after.body.items.some(
+          (item) => item.id === `auto-sync-failed-${configId}`,
+        ),
+      ).to.equal(false);
+    } finally {
+      await client.query(
+        "DELETE FROM operational_notifications WHERE workspace_id = $1 AND dedupe_key LIKE $2",
+        [workspaceId, `${prefix}:%`],
+      );
+      await client.query("DELETE FROM auto_sync_configs WHERE id = $1", [
+        configId,
+      ]);
+    }
+  });
+
   it("makes a read warning unread on critical escalation without duplicating the incident", async () => {
     const dedupeKey = `delivery_blocked:escalation-${Date.now()}`;
     const incident = {
@@ -587,6 +651,103 @@ describe("Persisted operational notifications (bell)", function () {
     expect(
       repeat.body.items.find((entry) => entry.id === warningId).isRead,
     ).to.equal(true);
+  });
+
+  it("serializes mark-one and mark-all with escalation so the critical incident stays unread", async () => {
+    for (const mode of ["one", "all"]) {
+      const key = `read-race:${mode}:${randomUUID()}`;
+      const row = await client.query(
+        `INSERT INTO operational_notifications
+           (workspace_id, token_id, category, type, severity, dedupe_key, title)
+         VALUES ($1, $2, 'delivery', 'delivery_degraded', 'warning', $3,
+                 'Retrying') RETURNING id`,
+        [workspaceId, tokenId, key],
+      );
+      const notificationId = row.rows[0].id;
+      const gate = new Client({
+        user: process.env.DB_USER || "tokentimer",
+        host: process.env.DB_HOST || "localhost",
+        database: process.env.DB_NAME || "tokentimer",
+        password: process.env.DB_PASSWORD || "password",
+        port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+        ssl: false,
+      });
+      await gate.connect();
+      try {
+        await gate.query("BEGIN");
+        await gate.query(
+          "SELECT id FROM operational_notifications WHERE id = $1 FOR UPDATE",
+          [notificationId],
+        );
+        const readRequest =
+          mode === "one"
+            ? markRead(adminCookie, notificationId)
+            : markAllRead(adminCookie);
+        const readPromise = readRequest.then((response) => response);
+        let waiting = false;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const activity = await client.query(
+            `SELECT 1 FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock'
+                AND query LIKE $1 LIMIT 1`,
+            [
+              mode === "one"
+                ? "%FOR UPDATE OF n%"
+                : "%WITH visible AS MATERIALIZED%",
+            ],
+          );
+          if (activity.rowCount > 0) {
+            waiting = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(
+          waiting,
+          `${mode} read must wait on the incident row lock`,
+        ).to.equal(true);
+        const escalator = new Client({
+          user: process.env.DB_USER || "tokentimer",
+          host: process.env.DB_HOST || "localhost",
+          database: process.env.DB_NAME || "tokentimer",
+          password: process.env.DB_PASSWORD || "password",
+          port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+          ssl: false,
+        });
+        await escalator.connect();
+        try {
+          const escalatePromise = escalator.query(
+            `UPDATE operational_notifications
+                SET severity = 'critical', type = 'delivery_blocked',
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [notificationId],
+          );
+          await gate.query("COMMIT");
+          expect((await readPromise).status).to.equal(200);
+          await escalatePromise;
+          const state = await client.query(
+            `SELECT n.severity, r.notification_id
+               FROM operational_notifications n
+               LEFT JOIN operational_notification_reads r
+                 ON r.notification_id = n.id AND r.user_id = $2
+              WHERE n.id = $1`,
+            [notificationId, adminUserId],
+          );
+          expect(state.rows[0].severity).to.equal("critical");
+          expect(state.rows[0].notification_id).to.equal(null);
+        } finally {
+          await escalator.end();
+        }
+      } finally {
+        await gate.query("ROLLBACK");
+        await gate.end();
+        await client.query(
+          "DELETE FROM operational_notifications WHERE id = $1",
+          [notificationId],
+        );
+      }
+    }
   });
 
   it("counts every visible unread incident while keeping an old escalated incident in the bounded list", async () => {

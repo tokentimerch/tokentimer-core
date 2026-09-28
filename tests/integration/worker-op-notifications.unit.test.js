@@ -19,6 +19,98 @@ function mockClient(handler) {
   };
 }
 
+describe("delivery incident configuration and labels", () => {
+  it("defaults invalid degraded thresholds and accepts positive integers", async () => {
+    const previous = process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD;
+    try {
+      for (const [value, expected] of [
+        [undefined, 5],
+        ["", 5],
+        ["0", 5],
+        ["-1", 5],
+        ["abc", 5],
+        ["1", 1],
+        ["5", 5],
+      ]) {
+        if (value === undefined)
+          delete process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD;
+        else process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD = value;
+        const mod = await importFresh("apps/worker/src/delivery-worker.js");
+        expect(mod._test.DEGRADED_ATTEMPTS_THRESHOLD).to.equal(expected);
+      }
+    } finally {
+      if (previous === undefined)
+        delete process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD;
+      else process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD = previous;
+    }
+  });
+
+  it("uses safe agent context and never prints Token #null", async () => {
+    const mod = await importFresh("apps/worker/src/delivery-worker.js");
+    const label = mod._test.incidentAssetLabel;
+    expect(label({ name: "Certificate", token_id: null })).to.equal(
+      "Certificate",
+    );
+    expect(
+      label({ token_id: null, metadata: { agentName: "Agent One" } }),
+    ).to.equal("Agent One");
+    expect(
+      label({ token_id: null, metadata: { hostname: "host.example" } }),
+    ).to.equal("host.example");
+    expect(
+      label({ token_id: null, metadata: { agentId: "agent-1" } }),
+    ).to.equal("agent-1");
+    expect(
+      label({ token_id: null, alert_key: "agent_health:1:down" }),
+    ).to.equal("agent_health:1:down");
+    expect(
+      label({ token_id: null, alert_key: "secret?token=hidden" }),
+    ).to.equal("asset");
+    expect(label({ token_id: null, alert_key: "secret:tokenhidden" })).to.equal(
+      "asset",
+    );
+    expect(label({ token_id: null })).to.equal("asset");
+  });
+
+  it("uses agent identity in blocked and plan-limited incident titles", async () => {
+    const { raiseDeliveryBlockedIncident } = await importFresh(
+      "apps/worker/src/delivery-worker.js",
+    );
+    const titles = [];
+    const client = mockClient((sql, params) => {
+      if (sql.includes("INSERT INTO operational_notifications")) {
+        titles.push(params[6]);
+        return { rows: [{ id: "notif-1" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const alert = {
+      id: 42,
+      workspace_id: "ws-1",
+      token_id: null,
+      metadata: { agentName: "Production agent" },
+    };
+    await raiseDeliveryBlockedIncident(
+      client,
+      alert,
+      "SMTP failed",
+      ["email"],
+      "max_attempts",
+    );
+    await raiseDeliveryBlockedIncident(
+      client,
+      alert,
+      "PLAN_LIMIT",
+      [],
+      "plan_limit",
+    );
+    expect(titles).to.deep.equal([
+      "Delivery blocked: Production agent",
+      "Delivery paused (plan limit): Production agent",
+    ]);
+  });
+});
+
 describe("opNotifications helpers (worker, ESM)", () => {
   before(() => {
     process.env.NODE_ENV = "test";

@@ -749,22 +749,28 @@ router.get(
           LIMIT 50`,
         [req.workspace.id, req.user.id, isPrivileged],
       );
-      const incidentConfigId = (row) =>
-        typeof row.metadata?.auto_sync_config_id === "string"
-          ? row.metadata.auto_sync_config_id.trim()
-          : "";
+      // The display list is bounded; deduplication must consider every open
+      // incident, including ones older than the first 50 displayed rows.
+      const syncIncidents =
+        isPrivileged && items.some((item) => item.autoSyncConfigId)
+          ? await pool.query(
+              `SELECT NULLIF(BTRIM(metadata->>'auto_sync_config_id'), '') AS auto_sync_config_id,
+                    metadata->>'provider' AS provider
+               FROM operational_notifications
+              WHERE workspace_id = $1 AND category = 'auto_sync'
+                AND resolved_at IS NULL`,
+              [req.workspace.id],
+            )
+          : { rows: [] };
       const persistedSyncConfigIds = new Set(
-        opRows.rows
-          .filter((row) => row.category === "auto_sync")
-          .map(incidentConfigId)
+        syncIncidents.rows
+          .map((row) => row.auto_sync_config_id)
           .filter(Boolean),
       );
       const legacySyncProviders = new Set(
-        opRows.rows
-          .filter(
-            (row) => row.category === "auto_sync" && !incidentConfigId(row),
-          )
-          .map((row) => String(row.metadata?.provider || "").toLowerCase()),
+        syncIncidents.rows
+          .filter((row) => !row.auto_sync_config_id)
+          .map((row) => String(row.provider || "").toLowerCase()),
       );
       for (let index = items.length - 1; index >= 0; index -= 1) {
         const item = items[index];
@@ -838,35 +844,47 @@ router.post(
     try {
       const role = req.authz?.workspaceRole;
       const isPrivileged = role === "admin" || role === "workspace_manager";
+      const client = await pool.connect();
 
       // Same visibility rule as GET /notifications: non-privileged members
       // may only mark notifications for their own tokens as read.
-      const check = await pool.query(
-        `SELECT n.id
+      try {
+        await client.query("BEGIN");
+        const check = await client.query(
+          `SELECT n.id
            FROM operational_notifications n
            LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.id = $1
             AND n.workspace_id = $2
             AND n.resolved_at IS NULL
             AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
-            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $4))`,
-        [
-          req.params.notificationId,
-          req.workspace.id,
-          isPrivileged,
-          req.user.id,
-        ],
-      );
-      if (check.rows.length === 0) {
-        return res.status(404).json({ error: "Notification not found" });
-      }
-      await pool.query(
-        `INSERT INTO operational_notification_reads (notification_id, user_id)
+            AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $4))
+          FOR UPDATE OF n`,
+          [
+            req.params.notificationId,
+            req.workspace.id,
+            isPrivileged,
+            req.user.id,
+          ],
+        );
+        if (check.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({ error: "Notification not found" });
+        }
+        await client.query(
+          `INSERT INTO operational_notification_reads (notification_id, user_id)
          VALUES ($1, $2)
          ON CONFLICT (notification_id, user_id) DO NOTHING`,
-        [req.params.notificationId, req.user.id],
-      );
-      res.json({ success: true });
+          [req.params.notificationId, req.user.id],
+        );
+        await client.query("COMMIT");
+        res.json({ success: true });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     } catch (e) {
       logger.error("Mark notification read error", { error: e.message });
       res.status(500).json({ error: "Failed to mark notification as read" });
@@ -888,14 +906,18 @@ router.post(
       const isPrivileged = role === "admin" || role === "workspace_manager";
 
       await pool.query(
-        `INSERT INTO operational_notification_reads (notification_id, user_id)
-         SELECT n.id, $2
+        `WITH visible AS MATERIALIZED (
+         SELECT n.id
            FROM operational_notifications n
            LEFT JOIN tokens t ON t.id = n.token_id AND t.workspace_id = n.workspace_id
           WHERE n.workspace_id = $1
             AND n.resolved_at IS NULL
             AND (n.category <> 'delivery' OR n.token_id IS NULL OR t.id IS NOT NULL)
             AND ($3 = TRUE OR (n.category <> 'auto_sync' AND t.user_id = $2))
+          FOR UPDATE OF n
+         )
+         INSERT INTO operational_notification_reads (notification_id, user_id)
+         SELECT id, $2 FROM visible
          ON CONFLICT (notification_id, user_id) DO NOTHING`,
         [req.workspace.id, req.user.id, isPrivileged],
       );

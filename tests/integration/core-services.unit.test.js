@@ -241,7 +241,8 @@ describe("Core services unit coverage", () => {
 
     it("honors WEBHOOK_EXTRA_PROVIDER_HOSTS for the provider allowlist", async () => {
       const original = process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
-      process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = "hooks.custom-extra.example.com";
+      process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS =
+        "hooks.custom-extra.example.com";
       try {
         const constants = loadConstantsWith(
           (raw, defaults) => defaults,
@@ -267,7 +268,8 @@ describe("Core services unit coverage", () => {
         expect(stillDisallowed.success).to.equal(false);
         expect(stillDisallowed.error).to.match(/not allowed/i);
       } finally {
-        if (original === undefined) delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
+        if (original === undefined)
+          delete process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS;
         else process.env.WEBHOOK_EXTRA_PROVIDER_HOSTS = original;
       }
     });
@@ -323,7 +325,11 @@ describe("Core services unit coverage", () => {
       });
 
       expect(count).to.equal(4);
-      expect(capturedParams).to.deep.equal(["ws1", "u1"]);
+      expect(capturedParams).to.deep.equal(["ws1"]);
+      expect(capturedSql).to.include(
+        "SELECT ca.workspace_id FROM certops_agents",
+      );
+      expect(capturedSql).to.not.include("aq.user_id =");
       expect(capturedSql).to.include(
         "aq.status = 'blocked' AND aq.error_message IS NOT NULL",
       );
@@ -456,9 +462,10 @@ describe("Core services unit coverage", () => {
         ),
       ).to.equal(true);
       expect(
-        queryLog.some((q) =>
-          q.text.includes("DELETE FROM workspace_invitations") &&
-          q.text.includes("id = ANY($1::uuid[])"),
+        queryLog.some(
+          (q) =>
+            q.text.includes("DELETE FROM workspace_invitations") &&
+            q.text.includes("id = ANY($1::uuid[])"),
         ),
       ).to.equal(true);
       expect(

@@ -290,6 +290,7 @@ services:
       # Delivery tuning
       ALERT_THRESHOLDS: ${ALERT_THRESHOLDS:-}
       ALERT_MAX_ATTEMPTS: ${ALERT_MAX_ATTEMPTS:-}
+      ALERT_DEGRADED_ATTEMPTS_THRESHOLD: ${ALERT_DEGRADED_ATTEMPTS_THRESHOLD:-}
       ALERT_RETRY_DELAY_MS: ${ALERT_RETRY_DELAY_MS:-}
       DELIVERY_WINDOW_DEFAULT_START: ${DELIVERY_WINDOW_DEFAULT_START:-}
       DELIVERY_WINDOW_DEFAULT_END: ${DELIVERY_WINDOW_DEFAULT_END:-}
@@ -585,7 +586,8 @@ services:
     ports:
       - "${DASHBOARD_PORT:-5173}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      test:
+        ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 10s

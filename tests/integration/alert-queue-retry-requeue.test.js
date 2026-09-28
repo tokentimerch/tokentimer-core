@@ -217,6 +217,121 @@ describe("Alert Queue Retry and Requeue", function () {
       expect(res.body).to.have.property("updated");
     });
 
+    it("lets a manager requeue another user's token and agent alerts only in the selected workspace", async () => {
+      const owner = await TestUtils.createVerifiedTestUser();
+      const ownerSession = await TestUtils.loginTestUser(
+        owner.email,
+        owner.password,
+      );
+      const workspaceA = await TestUtils.ensureDedicatedTestWorkspace(
+        ownerSession.cookie,
+        "Manager requeue A",
+      );
+      const workspaceB = await TestUtils.ensureDedicatedTestWorkspace(
+        ownerSession.cookie,
+        "Manager requeue B",
+      );
+      const ids = { tokens: [], agents: [], alerts: [] };
+      try {
+        await TestUtils.execQuery(
+          `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+           VALUES ($1, $2, 'workspace_manager', $3)
+           ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = 'workspace_manager'`,
+          [user.id, workspaceA, owner.id],
+        );
+        for (const workspaceId of [workspaceA, workspaceB]) {
+          const token = await TestUtils.execQuery(
+            `INSERT INTO tokens (user_id, workspace_id, created_by, name, type, expiration)
+             VALUES ($1, $2, $1, 'Other owner token', 'api_key', CURRENT_DATE + 7) RETURNING id`,
+            [owner.id, workspaceId],
+          );
+          ids.tokens.push(token.rows[0].id);
+          const credential = randomBytes(32).toString("hex");
+          const agent = await TestUtils.execQuery(
+            `INSERT INTO certops_agents
+               (workspace_id, agent_id, agent_version, protocol_version, credential_prefix, credential_hash)
+             VALUES ($1, $2, '1.0.0', '1.0.0', $3, $4) RETURNING id`,
+            [
+              workspaceId,
+              `manager-${randomUUID()}`,
+              `ttagent_${credential.slice(0, 16)}`,
+              credential,
+            ],
+          );
+          ids.agents.push(agent.rows[0].id);
+          for (const [tokenId, agentId] of [
+            [token.rows[0].id, null],
+            [null, agent.rows[0].id],
+          ]) {
+            const alert = await TestUtils.execQuery(
+              `INSERT INTO alert_queue
+                 (user_id, token_id, certops_agent_id, alert_key, threshold_days,
+                  due_date, channels, status, error_message)
+               VALUES ($1, $2, $3, $4, 7, CURRENT_DATE, '["email"]'::jsonb,
+                       'failed', 'SMTP timeout') RETURNING id`,
+              [owner.id, tokenId, agentId, `manager-requeue:${randomUUID()}`],
+            );
+            ids.alerts.push(alert.rows[0].id);
+          }
+        }
+        const requeue = await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", cookie)
+          .send({ workspace_id: workspaceA })
+          .expect(200);
+        expect(requeue.body.updated).to.equal(2);
+        const state = await TestUtils.execQuery(
+          "SELECT id, status FROM alert_queue WHERE id = ANY($1::int[])",
+          [ids.alerts],
+        );
+        const byId = new Map(state.rows.map((row) => [row.id, row.status]));
+        expect(ids.alerts.slice(0, 2).map((id) => byId.get(id))).to.deep.equal([
+          "pending",
+          "pending",
+        ]);
+        expect(ids.alerts.slice(2).map((id) => byId.get(id))).to.deep.equal([
+          "failed",
+          "failed",
+        ]);
+
+        // An implicit workspace creator remains an admin even without a membership row.
+        await TestUtils.execQuery(
+          "DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+          [workspaceB, owner.id],
+        );
+        const creatorRequeue = await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", ownerSession.cookie)
+          .send({ workspace_id: workspaceB })
+          .expect(200);
+        expect(creatorRequeue.body.updated).to.equal(2);
+
+        await TestUtils.execQuery(
+          "UPDATE workspace_memberships SET role = 'viewer' WHERE workspace_id = $1 AND user_id = $2",
+          [workspaceA, user.id],
+        );
+        await request(BASE)
+          .post("/api/alert-queue/requeue")
+          .set("Cookie", cookie)
+          .send({ workspace_id: workspaceA })
+          .expect(403);
+      } finally {
+        await TestUtils.execQuery(
+          "DELETE FROM alert_queue WHERE id = ANY($1::int[])",
+          [ids.alerts],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM tokens WHERE id = ANY($1::int[])",
+          [ids.tokens],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM certops_agents WHERE id = ANY($1::uuid[])",
+          [ids.agents],
+        );
+        await TestUtils.cleanupTestUser(owner.email, ownerSession.cookie);
+      }
+    });
+
     it("requeues tokenless agent alerts in the selected workspace and cleans up account-wide incidents", async () => {
       const workspaceA = await TestUtils.ensureDedicatedTestWorkspace(
         cookie,

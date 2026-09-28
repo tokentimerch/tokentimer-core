@@ -26,13 +26,13 @@ async function requeueAlertsCore({
        WHERE COALESCE(
          (SELECT t.workspace_id FROM tokens t WHERE t.id = aq.token_id),
          (SELECT ca.workspace_id FROM certops_agents ca WHERE ca.id = aq.certops_agent_id)
-       ) = $1 AND aq.user_id = $2 AND (
+       ) = $1 AND (
          aq.status IN ('failed','limit_exceeded') OR
          (aq.status = 'partial' AND (aq.error_message IS NULL OR aq.error_message NOT ILIKE '%PLAN_LIMIT%')) OR
          ${blockedCondition}
        )
        RETURNING aq.id`,
-      [workspaceId, userId],
+      [workspaceId],
     );
     await resolveRequeuedNotifications(r.rows, workspaceId);
     return r.rowCount || 0;

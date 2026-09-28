@@ -1235,11 +1235,37 @@ const MAX_ATTEMPTS_PER_CHANNEL = Number.isFinite(
   ? Number(process.env.ALERT_MAX_ATTEMPTS)
   : 20;
 
-const DEGRADED_ATTEMPTS_THRESHOLD = Number.isFinite(
-  Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD),
-)
-  ? Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD)
-  : 5;
+const configuredDegradedThreshold = String(
+  process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD || "",
+).trim();
+const parsedDegradedThreshold = Number(configuredDegradedThreshold);
+const DEGRADED_ATTEMPTS_THRESHOLD =
+  /^[1-9]\d*$/.test(configuredDegradedThreshold) &&
+  Number.isSafeInteger(parsedDegradedThreshold)
+    ? parsedDegradedThreshold
+    : 5;
+
+function incidentAssetLabel(alert) {
+  const metadata = alert.metadata || {};
+  const candidates = [
+    alert.name,
+    metadata.agentName,
+    metadata.hostname,
+    metadata.agentId,
+    alert.certops_agent_id,
+    alert.token_id != null ? `Token #${alert.token_id}` : null,
+    /^agent_health:[a-z0-9_-]+:(down|recovered)$/i.test(
+      String(alert.alert_key || ""),
+    )
+      ? alert.alert_key
+      : null,
+  ];
+  for (const candidate of candidates) {
+    const label = singleLineText(candidate);
+    if (label && !/[?&#@]/.test(label)) return label.slice(0, 120);
+  }
+  return "asset";
+}
 
 function isPlanLimitError(errorMessage) {
   return /PLAN_LIMIT|limit_exceeded/i.test(String(errorMessage || ""));
@@ -1255,9 +1281,10 @@ export async function raiseDeliveryBlockedIncident(
 ) {
   if (!alert.workspace_id) return;
   const planLimited = isPlanLimitError(message);
+  const assetLabel = incidentAssetLabel(alert);
   const title = planLimited
-    ? `Delivery paused (plan limit): ${alert.name || `Token #${alert.token_id}`}`
-    : `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`;
+    ? `Delivery paused (plan limit): ${assetLabel}`
+    : `Delivery blocked: ${assetLabel}`;
   const metadata = {
     alert_queue_id: alert.id,
     failed_channels: failedChannels,
@@ -1298,7 +1325,8 @@ async function raiseTerminalPlanLimitedIncidents(client) {
   await client.query("BEGIN");
   try {
     const result = await client.query(
-      `SELECT aq.id, t.id AS token_id, COALESCE(t.name, aq.alert_key) AS name,
+      `SELECT aq.id, aq.certops_agent_id, aq.alert_key, aq.metadata,
+              t.id AS token_id, t.name,
               w.id AS workspace_id, w.name AS workspace_name,
               aq.error_message
          FROM alert_queue aq
@@ -1407,6 +1435,8 @@ const shutdown = async (signal) => {
 
 // Exported for direct unit testing without spinning up the full worker job.
 export const _test = {
+  DEGRADED_ATTEMPTS_THRESHOLD,
+  incidentAssetLabel,
   writeAlertAudit,
   buildAgentHealthEmailContent,
   buildAgentHealthWebhookPayload,
@@ -1896,7 +1926,7 @@ export async function deliveryWorkerJob({
               type: "delivery_no_contacts",
               severity: "warning",
               dedupeKey: `delivery_blocked:${alert.id}`,
-              title: `Delivery has no contacts: ${alert.name || `Token #${alert.token_id}`}`,
+              title: `Delivery has no contacts: ${incidentAssetLabel(alert)}`,
               message:
                 "No email, webhook, or WhatsApp contacts are configured in the selected contact group",
               metadata: {
@@ -3083,7 +3113,7 @@ export async function deliveryWorkerJob({
               // The later blocked state updates this same incident row and
               // the escalation trigger makes a read warning unread again.
               dedupeKey: `delivery_blocked:${alert.id}`,
-              title: `Delivery retrying: ${alert.name || `Token #${alert.token_id}`}`,
+              title: `Delivery retrying: ${incidentAssetLabel(alert)}`,
               message: errorMessages || "Delivery attempts are still failing",
               metadata: {
                 alert_queue_id: alert.id,

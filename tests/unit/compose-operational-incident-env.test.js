@@ -39,10 +39,16 @@ describe("Compose operational incident worker environment", () => {
     });
 
     it(`${file} wires the delivery incident email cap`, () => {
-      assert.match(
-        serviceBlock(file, "worker-delivery"),
-        /\bOP_NOTIFICATION_EMAIL_DAILY_CAP[:=]/,
-      );
+      const block = serviceBlock(file, "worker-delivery");
+      assert.match(block, /\bOP_NOTIFICATION_EMAIL_DAILY_CAP[:=]/);
+      assert.match(block, /\bALERT_DEGRADED_ATTEMPTS_THRESHOLD[:=]/);
     });
   }
+
+  it("documents the degraded warning threshold", () => {
+    assert.match(
+      readFileSync(path.join(root, "deploy/compose/.env.example"), "utf8"),
+      /# ALERT_DEGRADED_ATTEMPTS_THRESHOLD=5/,
+    );
+  });
 });

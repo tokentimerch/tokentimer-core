@@ -6,6 +6,7 @@ const { getApiLimiter } = require("../middleware/rateLimit");
 const {
   loadWorkspace,
   requireWorkspaceMembership,
+  requireWorkspaceManager,
 } = require("../services/rbac");
 const { TOKEN_LIMITS, ALERT_LIMITS } = require("../config/constants");
 const {
@@ -52,12 +53,7 @@ function parseAuditLocalDateTime(value) {
   const minute = Number(minutePart);
   const second = Number(secondPart);
 
-  if (
-    !isValidDateOnly(datePart) ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59
-  ) {
+  if (!isValidDateOnly(datePart) || hour > 23 || minute > 59 || second > 59) {
     return null;
   }
 
@@ -585,13 +581,16 @@ router.get(
           );
           if (roleCheck.rowCount === 0) {
             return res.status(403).json({
-              error: "Forbidden: audit export requires manager, admin, or system admin role",
+              error:
+                "Forbidden: audit export requires manager, admin, or system admin role",
             });
           }
         }
       } catch (_err) {
         logger.warn("Audit export role check failed", { error: _err.message });
-        return res.status(503).json({ error: "Audit export temporarily unavailable" });
+        return res
+          .status(503)
+          .json({ error: "Audit export temporarily unavailable" });
       }
 
       // Core: organization scope is available to all users (no plan gating)
@@ -946,21 +945,13 @@ router.post(
   "/api/alert-queue/requeue",
   getApiLimiter(),
   requireAuth,
+  (req, res, next) =>
+    req.body?.workspace_id ? loadWorkspace(req, res, next) : next(),
+  (req, res, next) =>
+    req.body?.workspace_id ? requireWorkspaceManager(req, res, next) : next(),
   async (req, res) => {
     try {
       const workspaceId = req.body?.workspace_id || null;
-      // If workspace specified, ensure caller is admin or manager
-      if (workspaceId) {
-        const roleRes = await pool.query(
-          "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
-          [workspaceId, req.user.id],
-        );
-        const role = roleRes.rows?.[0]?.role || null;
-        if (!role || !["admin", "workspace_manager"].includes(String(role))) {
-          return res.status(403).json({ error: "Forbidden" });
-        }
-      }
-
       try {
         const plan = "oss";
         const monthUsageRes = await pool.query(
@@ -1059,13 +1050,16 @@ router.get(
           );
           if (roleCheck.rowCount === 0) {
             return res.status(403).json({
-              error: "Forbidden: audit requires manager, admin, or system admin role",
+              error:
+                "Forbidden: audit requires manager, admin, or system admin role",
             });
           }
         }
       } catch (_err) {
         logger.warn("Audit events role check failed", { error: _err.message });
-        return res.status(503).json({ error: "Audit events temporarily unavailable" });
+        return res
+          .status(503)
+          .json({ error: "Audit events temporarily unavailable" });
       }
 
       if (scope === "organization") {
