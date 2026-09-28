@@ -39,7 +39,10 @@ import {
   parseCertRenewalFailedJobId,
   shouldDiscardRetiredCertificateAlert,
 } from "./shared/retiredCertificateAlerts.js";
-import { detectWebhookProviderKind } from "./shared/webhookProviderKind.js";
+import {
+  detectWebhookProviderKind,
+  resolveWebhookProviderKind,
+} from "./shared/webhookProviderKind.js";
 
 const { isValidEmail } = emailAddress;
 
@@ -1995,21 +1998,10 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 );
 
                 for (const wh of webhooks) {
-                  let kind = String(wh?.kind || "generic");
+                  const kind = resolveWebhookProviderKind(wh);
                   const url = String(wh?.url || "");
                   const routingKey = String(wh?.routingKey || "");
                   if (!url) continue;
-                  // Auto-detect provider kind by hostname when not explicitly set
-                  try {
-                    const host = new URL(url).hostname.toLowerCase();
-                    if (!wh?.kind || kind === "generic") {
-                      kind = detectWebhookProviderKind(host) || kind;
-                    }
-                  } catch (_err) {
-                    logger.debug("Non-critical operation failed", {
-                      error: _err.message,
-                    });
-                  }
 
                   // Compute a stable hash for the URL to identify unique endpoints without storing the raw URL
                   const urlHash = crypto

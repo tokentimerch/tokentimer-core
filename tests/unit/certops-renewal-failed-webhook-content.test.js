@@ -80,6 +80,64 @@ describe("cert_renewal_failed webhook content", () => {
     assert.doesNotMatch(JSON.stringify(teams), /Token Expiry Alert/);
   });
 
+  it("uses provider-specific Discord and Teams fields", async () => {
+    const { _test } = await import(deliveryWorkerUrl);
+    const discord = _test.buildCertRenewalFailedWebhookPayload(
+      "discord",
+      alert,
+      { job, title: "Renewal needs attention" },
+    );
+    assert.equal(discord.content, "⚠️ **Renewal needs attention**");
+    assert.deepEqual(discord.allowed_mentions, { parse: [] });
+    assert.equal(discord.embeds[0].title, "win\\.hardgates\\-az\\.tokentimer\\.io");
+    assert.deepEqual(discord.embeds[0].fields[0], {
+      name: "Job",
+      value: "07acbb05\\-3f66\\-43fc\\-89ce\\-9fdb65ed4f8f",
+      inline: true,
+    });
+
+    const teams = _test.buildCertRenewalFailedWebhookPayload("teams", alert, {
+      job,
+    });
+    assert.equal(teams["@type"], "MessageCard");
+    assert.equal(teams.summary, "Certificate Renewal Failed");
+    assert.deepEqual(teams.sections[0].facts[2], {
+      name: "Error code",
+      value: "ACME\\_RATE\\_LIMITED",
+    });
+  });
+
+  it("uses the Events API shape for PagerDuty and semantic fields for generic webhooks", async () => {
+    const { _test } = await import(deliveryWorkerUrl);
+    const pagerduty = _test.buildCertRenewalFailedWebhookPayload(
+      "pagerduty",
+      alert,
+      { job, routingKey: "routing-key", severity: "warning" },
+    );
+    assert.equal(pagerduty.routing_key, "routing-key");
+    assert.equal(pagerduty.event_action, "trigger");
+    assert.equal(pagerduty.payload.severity, "warning");
+    assert.equal(pagerduty.payload.custom_details.type, "cert_renewal_failed");
+    assert.equal(pagerduty.payload.custom_details.job_id, job.id);
+    assert.equal(pagerduty.payload.custom_details.error_code, job.error_code);
+    assert.doesNotMatch(pagerduty.payload.summary, /expires in/);
+
+    const generic = _test.buildCertRenewalFailedWebhookPayload(
+      "generic",
+      alert,
+      { job },
+    );
+    assert.equal(generic.type, "cert_renewal_failed");
+    assert.equal(generic.certificate.job_id, job.id);
+    assert.equal(generic.certificate.error_code, job.error_code);
+    assert.match(generic.text, /Certificate Renewal Failed/);
+    assert.equal(
+      generic.message,
+      `The automated renewal job for ${alert.name} reached a terminal failure.`,
+    );
+    assert.doesNotMatch(JSON.stringify(generic), /expires in|days remaining/);
+  });
+
   it("falls back to the alert_key job id when the job row is missing", async () => {
     const { _test } = await import(deliveryWorkerUrl);
     const context = _test.getCertRenewalFailedContext(alert, null);

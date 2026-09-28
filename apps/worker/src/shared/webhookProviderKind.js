@@ -23,3 +23,14 @@ export function detectWebhookProviderKind(host) {
   }
   return null;
 }
+
+export function resolveWebhookProviderKind(webhook) {
+  const kind =
+    String(webhook?.kind || "generic").trim().toLowerCase() || "generic";
+  if (kind !== "generic") return kind;
+  try {
+    return detectWebhookProviderKind(new URL(webhook?.url).hostname) || kind;
+  } catch (_err) {
+    return kind;
+  }
+}
