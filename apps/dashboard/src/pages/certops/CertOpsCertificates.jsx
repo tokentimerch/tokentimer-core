@@ -26,7 +26,13 @@ import {
   VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { Archive, CalendarClock, MoreVertical, Unlink } from 'lucide-react';
+import {
+  Archive,
+  CalendarClock,
+  MoreVertical,
+  Plus,
+  Unlink,
+} from 'lucide-react';
 import CopyableId from '../../components/CopyableId.jsx';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
@@ -796,16 +802,17 @@ export default function CertOpsCertificates() {
                             </Tooltip>
                             {!retired ? (
                               <>
-                                <Button
-                                  size='sm'
-                                  variant='ghost'
-                                  onClick={() => {
-                                    setCsrCertificateId(certificate.id);
-                                    setCsrModalOpen(true);
-                                  }}
-                                >
-                                  New CSR
-                                </Button>
+                                <Tooltip label='Add new CSR'>
+                                  <IconButton
+                                    {...actionButtonProps}
+                                    aria-label='Add new CSR'
+                                    icon={<Plus size={16} />}
+                                    onClick={() => {
+                                      setCsrCertificateId(certificate.id);
+                                      setCsrModalOpen(true);
+                                    }}
+                                  />
+                                </Tooltip>
                                 {certificate.renewal?.profileId ? (
                                   <Tooltip label='Detach renewal profile'>
                                     <IconButton

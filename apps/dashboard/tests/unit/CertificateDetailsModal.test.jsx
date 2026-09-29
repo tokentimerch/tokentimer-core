@@ -130,7 +130,7 @@ describe('CertificateDetailsModal', () => {
     updateTokenMock.mockReset();
   });
 
-  it('shows a compact CSR registration source without a workflow action', () => {
+  it('shows the full CSR reference beside its source without a workflow action', () => {
     const sourceRef = 'csr:00544aa5-5e4c-4c77-8cc2-4bbdbd11537e';
     renderModal({
       certOps: {
@@ -143,8 +143,7 @@ describe('CertificateDetailsModal', () => {
       .getByText('Registration source')
       .closest('[data-detail-row]');
     expect(within(sourceRow).getByText('API')).toBeInTheDocument();
-    expect(within(sourceRow).getByText('CSR workflow')).toBeInTheDocument();
-    expect(sourceRow).not.toHaveTextContent(sourceRef);
+    expect(within(sourceRow).getByText(sourceRef)).toBeInTheDocument();
     expect(within(sourceRow).getByTitle(sourceRef)).toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'Start CSR workflow' })

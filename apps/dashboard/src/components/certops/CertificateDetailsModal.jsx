@@ -949,13 +949,6 @@ export default function CertificateDetailsModal({
                       {certificate.sourceRef ? (
                         <CopyableId
                           id={certificate.sourceRef}
-                          display={
-                            certificate.sourceRef.startsWith('csr:')
-                              ? 'CSR workflow'
-                              : certificate.sourceRef.length > 24
-                                ? `${certificate.sourceRef.slice(0, 21)}…`
-                                : certificate.sourceRef
-                          }
                           size='xs'
                           color='dashboard.modal.text'
                         />
