@@ -5,6 +5,7 @@ const { isIP } = require("node:net");
 const asn1js = require("asn1js");
 const pkijs = require("pkijs");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const { assertSafeDnsIdentity, assertSafeIpIdentity } = require("./identitySafety");
 
 const MAX_CSR_BYTES = 64 * 1024;
 const CSR_PEM = /^\s*-----BEGIN CERTIFICATE REQUEST-----\s*([A-Za-z0-9+/=\s]+?)\s*-----END CERTIFICATE REQUEST-----\s*$/;
@@ -65,7 +66,9 @@ function requestedNamesFrom(csr) {
   const names = [];
   for (const item of csr.subject.typesAndValues || []) {
     if (item.type === COMMON_NAME_OID && typeof item.value?.valueBlock?.value === "string") {
-      names.push(item.value.valueBlock.value);
+      const commonName = item.value.valueBlock.value;
+      assertSafeDnsIdentity(commonName, { field: "CSR commonName" });
+      names.push(commonName);
     }
   }
   const attributes = csr.attributes || [];
@@ -84,7 +87,15 @@ function requestedNamesFrom(csr) {
       const san = new pkijs.GeneralNames({ schema: decoded.result });
       for (const name of san.names) {
         if (name.type !== 2 && name.type !== 7) throw new CsrParseError("CSR contains unsupported SAN type");
-        names.push(name.type === 7 ? ipName(name.value) : String(name.value));
+        if (name.type === 7) {
+          const ip = ipName(name.value);
+          assertSafeIpIdentity(ip, { field: "CSR IP SAN" });
+          names.push(ip);
+        } else {
+          const dns = String(name.value);
+          assertSafeDnsIdentity(dns, { field: "CSR DNS SAN" });
+          names.push(dns);
+        }
       }
     }
   }

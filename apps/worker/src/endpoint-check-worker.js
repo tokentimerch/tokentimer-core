@@ -30,6 +30,9 @@ const require = createRequire(import.meta.url);
 const { bridgeEndpointCertificateObservation } = require(
   "../../api/services/certops/monitorBridge.js",
 );
+const { shouldDeferCsrMonitorTokenUpdate } = require(
+  "../../api/services/certops/csrWorkflow.js",
+);
 const { evaluateCertOpsMonitorBridgeGate } = require(
   "../../api/services/certops/bridgeGates.js",
 );
@@ -467,7 +470,13 @@ async function runEndpointChecks() {
 
               // Update linked token expiration if cert changed
               if (currentTokenId && sslData.ssl_valid_to) {
-                const newExpiry = formatDateYmd(sslData.ssl_valid_to);
+                const deferTokenUpdate = await shouldDeferCsrMonitorTokenUpdate(client, {
+                  workspaceId: workspace_id,
+                  domainMonitorId: id,
+                  tokenId: currentTokenId,
+                  fingerprintSha256: sslData.ssl_fingerprint,
+                });
+                const newExpiry = deferTokenUpdate ? null : formatDateYmd(sslData.ssl_valid_to);
                 if (newExpiry) {
                   await client.query(
                     `UPDATE tokens SET expiration = $1, issuer = $2, serial_number = $3,

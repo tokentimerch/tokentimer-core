@@ -4306,6 +4306,8 @@ paths:
       operationId: listCertOpsCsrs
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
       responses:
         "200":
           description: Workspace CSR workflows without PEM material
@@ -4423,6 +4425,7 @@ paths:
       tags: [CertOps]
       summary: Cancel a pending CSR workflow
       operationId: cancelCertOpsCsr
+      description: Cancellation releases an unshared provisioning identity. Re-importing the same CSR for the same target restarts this workflow and records a new audit event.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/csrIdParam"

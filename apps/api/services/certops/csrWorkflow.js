@@ -159,12 +159,15 @@ async function createCsrWorkflow({ workspaceId, actorUserId, csrPem, targetId, t
     }
     const existing = await client.query(
       `SELECT * FROM certificate_csr_workflows
-       WHERE workspace_id = $1 AND target_id = $2 AND csr_der_sha256 = $3`,
+       WHERE workspace_id = $1 AND target_id = $2 AND csr_der_sha256 = $3 FOR UPDATE`,
       [workspaceId, resolvedTargetId, csr.csrDerSha256],
     );
     if (existing.rows[0]) {
       if ((existing.rows[0].existing_certificate_id || null) !== (existingCertificateId || null)) {
         fail("CSR already belongs to another certificate identity", "CERTOPS_CSR_IDENTITY_CONFLICT", 409);
+      }
+      if (existing.rows[0].status === "cancelled") {
+        return restartCancelledCsr(client, existing.rows[0], actorUserId);
       }
       return publicWorkflow(existing.rows[0], true);
     }
@@ -181,11 +184,14 @@ async function createCsrWorkflow({ workspaceId, actorUserId, csrPem, targetId, t
     if (!result.rows[0]) {
       const raced = await client.query(
         `SELECT * FROM certificate_csr_workflows
-         WHERE workspace_id = $1 AND target_id = $2 AND csr_der_sha256 = $3`,
+         WHERE workspace_id = $1 AND target_id = $2 AND csr_der_sha256 = $3 FOR UPDATE`,
         [workspaceId, resolvedTargetId, csr.csrDerSha256],
       );
       if ((raced.rows[0]?.existing_certificate_id || null) !== (existingCertificateId || null)) {
         fail("CSR already belongs to another certificate identity", "CERTOPS_CSR_IDENTITY_CONFLICT", 409);
+      }
+      if (raced.rows[0]?.status === "cancelled") {
+        return restartCancelledCsr(client, raced.rows[0], actorUserId);
       }
       return publicWorkflow(raced.rows[0], true);
     }
@@ -197,11 +203,33 @@ async function createCsrWorkflow({ workspaceId, actorUserId, csrPem, targetId, t
   });
 }
 
+async function restartCancelledCsr(client, row, actorUserId) {
+  const restarted = await client.query(
+    `UPDATE certificate_csr_workflows SET status = 'pending_signature',
+      managed_certificate_id = NULL, signed_leaf_pem = NULL, signed_chain_pem = NULL,
+      signed_fingerprint_sha256 = NULL, issued_names = '{}', name_additions = '{}',
+      name_omissions = '{}', names_acknowledged_at = NULL, names_acknowledged_by = NULL,
+      observed_instance_id = NULL, identity_conflict_at = NULL,
+      identity_conflict_instance_id = NULL, identity_conflict_certificate_id = NULL,
+      confirmed_at = NULL, confirmed_by = NULL, confirmation_method = NULL,
+      updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [row.id],
+  );
+  await audit(client, row.workspace_id, actorUserId, row.id, "CERTOPS_CSR_RESTARTED");
+  return publicWorkflow(restarted.rows[0], true);
+}
+
 async function listCsrWorkflows({ workspaceId, limit, offset }) {
   const pageSize = normalizeLimit(limit);
   const skip = normalizeOffset(offset);
   const result = await pool.query(
-    `SELECT * FROM certificate_csr_workflows WHERE workspace_id = $1
+    `SELECT id, workspace_id, target_id, existing_certificate_id, managed_certificate_id,
+      csr_der_sha256, spki_fingerprint_sha256, subject, requested_names, status,
+      signed_fingerprint_sha256, issued_names, name_additions, name_omissions,
+      names_acknowledged_at, names_acknowledged_by, observed_instance_id,
+      identity_conflict_at, identity_conflict_instance_id, identity_conflict_certificate_id,
+      confirmed_at, confirmed_by, confirmation_method, created_by, created_at, updated_at
+     FROM certificate_csr_workflows WHERE workspace_id = $1
      ORDER BY updated_at DESC, id DESC LIMIT $2 OFFSET $3`,
     [workspaceId, pageSize, skip],
   );
@@ -395,11 +423,36 @@ function cancelCsrWorkflow({ workspaceId, workflowId, actorUserId }) {
     const row = await workflowRow(client, workspaceId, workflowId, true);
     if (row.status === "completed") fail("Completed CSR cannot be cancelled", "CERTOPS_CSR_STATE_CONFLICT", 409);
     if (row.status === "cancelled") return publicWorkflow(row, true);
+    if (row.managed_certificate_id && !row.existing_certificate_id) {
+      // Serialize cancellation of workflows sharing one provisional row. The
+      // last cancellation can then reliably release it after references clear.
+      await client.query(
+        `SELECT id FROM managed_certificates
+          WHERE workspace_id = $1 AND id = $2 AND status = 'provisioning' FOR UPDATE`,
+        [workspaceId, row.managed_certificate_id],
+      );
+    }
     const result = await client.query(
-      `UPDATE certificate_csr_workflows SET status = 'cancelled', updated_at = NOW()
+      `UPDATE certificate_csr_workflows SET status = 'cancelled',
+        managed_certificate_id = NULL, updated_at = NOW()
        WHERE workspace_id = $1 AND id = $2 RETURNING *`,
       [workspaceId, workflowId],
     );
+    if (row.managed_certificate_id && !row.existing_certificate_id) {
+      await client.query(
+        `DELETE FROM managed_certificates cert
+          WHERE cert.workspace_id = $1 AND cert.id = $2
+            AND cert.status = 'provisioning' AND cert.token_id IS NULL
+            AND cert.source = 'api' AND cert.source_ref LIKE 'csr:%'
+            AND NOT EXISTS (SELECT 1 FROM certificate_csr_workflows csr
+              WHERE csr.workspace_id = cert.workspace_id
+                AND csr.managed_certificate_id = cert.id)
+            AND NOT EXISTS (SELECT 1 FROM certificate_instances instance
+              WHERE instance.workspace_id = cert.workspace_id
+                AND instance.managed_certificate_id = cert.id)`,
+        [workspaceId, row.managed_certificate_id],
+      );
+    }
     await audit(client, workspaceId, actorUserId, workflowId, "CERTOPS_CSR_CANCELLED");
     return publicWorkflow(result.rows[0], true);
   });
@@ -514,6 +567,50 @@ async function recordCsrObservation(client, { workspaceId, targetId, fingerprint
   }
 }
 
+async function pendingCsrObservationCertificate(client, { workspaceId, targetId, fingerprintSha256 }) {
+  if (!targetId || !fingerprintSha256) return null;
+  const result = await client.query(
+    `SELECT cert.* FROM certificate_csr_workflows csr
+       JOIN managed_certificates cert
+         ON cert.workspace_id = csr.workspace_id AND cert.id = csr.existing_certificate_id
+      WHERE csr.workspace_id = $1 AND csr.target_id = $2
+        AND csr.signed_fingerprint_sha256 = $3
+        AND csr.status = 'signed_pending_install'
+      ORDER BY csr.created_at, csr.id LIMIT 1`,
+    [workspaceId, targetId, fingerprintSha256],
+  );
+  const selected = result.rows[0];
+  if (!selected) return null;
+  // A later importer may have assigned this leaf to B. The observation must
+  // remain B-owned and record the conflict, never silently update A.
+  const otherOwner = await client.query(
+    `SELECT * FROM managed_certificates
+      WHERE workspace_id = $1 AND fingerprint_sha256 = $2 AND id <> $3
+      ORDER BY updated_at DESC LIMIT 1`,
+    [workspaceId, fingerprintSha256, selected.id],
+  );
+  return otherOwner.rows[0] || selected;
+}
+
+async function shouldDeferCsrMonitorTokenUpdate(client, {
+  workspaceId, domainMonitorId, tokenId, fingerprintSha256,
+}) {
+  const fingerprint = String(fingerprintSha256 || "").replace(/[:\s-]/g, "").toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(fingerprint) || !tokenId) return false;
+  const result = await client.query(
+    `SELECT 1 FROM certificate_csr_workflows csr
+       JOIN certificate_targets target
+         ON target.workspace_id = csr.workspace_id AND target.id = csr.target_id
+       JOIN managed_certificates cert
+         ON cert.workspace_id = csr.workspace_id AND cert.id = csr.existing_certificate_id
+      WHERE csr.workspace_id = $1 AND target.domain_monitor_id = $2
+        AND cert.token_id = $3 AND csr.signed_fingerprint_sha256 = $4
+        AND csr.status = 'signed_pending_install' LIMIT 1`,
+    [workspaceId, domainMonitorId, tokenId, fingerprint],
+  );
+  return result.rows.length > 0;
+}
+
 module.exports = {
   CsrWorkflowError,
   acknowledgeCsrNames,
@@ -523,5 +620,7 @@ module.exports = {
   getCsrWorkflow,
   importSignedCertificate,
   listCsrWorkflows,
+  pendingCsrObservationCertificate,
   recordCsrObservation,
+  shouldDeferCsrMonitorTokenUpdate,
 };

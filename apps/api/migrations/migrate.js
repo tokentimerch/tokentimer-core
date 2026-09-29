@@ -3825,7 +3825,9 @@ const migrations = [
     `,
   },
   {
-    version: 56,
+    // Versions 56-59 are owned by PR #140. The runner applies missing
+    // versions by identity, so those independent migrations can arrive later.
+    version: 60,
     name: "certops_public_csr_workflows",
     sql: `
       CREATE TABLE IF NOT EXISTS certificate_csr_workflows (

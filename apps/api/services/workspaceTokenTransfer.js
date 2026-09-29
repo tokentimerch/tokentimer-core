@@ -16,6 +16,7 @@ class TransferAssociationConflictError extends Error {
 }
 
 const RELOCATABLE_TABLES = new Set([
+  "certificate_csr_workflows",
   "certificate_instances",
   "certificate_job_log",
   "certificate_evidence",
@@ -239,6 +240,100 @@ async function listIds(client, sql, params) {
   return (res.rows || []).map((row) => row.id);
 }
 
+async function collectCsrTransferDependencies(client, {
+  fromWorkspaceId, certIds, targetIds,
+}) {
+  const workflowIds = new Set();
+  const certSet = new Set(certIds.map(String));
+  const targetSet = new Set(targetIds.map(String));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const result = await client.query(
+      `SELECT csr.id, csr.target_id, csr.existing_certificate_id,
+              csr.managed_certificate_id, csr.identity_conflict_certificate_id,
+              target.token_id AS target_token_id,
+              target.domain_monitor_id AS target_monitor_id,
+              managed.status AS managed_status, managed.token_id AS managed_token_id
+         FROM certificate_csr_workflows csr
+         JOIN certificate_targets target
+           ON target.workspace_id = csr.workspace_id AND target.id = csr.target_id
+         LEFT JOIN managed_certificates managed
+           ON managed.workspace_id = csr.workspace_id AND managed.id = csr.managed_certificate_id
+        WHERE csr.workspace_id = $1
+          AND (csr.target_id = ANY($2::uuid[])
+            OR csr.existing_certificate_id = ANY($3::uuid[])
+            OR csr.managed_certificate_id = ANY($3::uuid[]))`,
+      [fromWorkspaceId, [...targetSet], [...certSet]],
+    );
+    for (const row of result.rows) {
+      workflowIds.add(String(row.id));
+      if (!targetSet.has(String(row.target_id))) {
+        if (row.target_token_id || row.target_monitor_id) {
+          throw new TransferAssociationConflictError(
+            "A CSR workflow target is linked to a token or monitor outside this transfer",
+            [{ csr_workflow_id: row.id }],
+          );
+        }
+        targetSet.add(String(row.target_id));
+        changed = true;
+      }
+      if (row.existing_certificate_id && !certSet.has(String(row.existing_certificate_id))) {
+        throw new TransferAssociationConflictError(
+          "A CSR workflow references a certificate outside this transfer",
+          [{ csr_workflow_id: row.id }],
+        );
+      }
+      if (row.managed_certificate_id && !certSet.has(String(row.managed_certificate_id))) {
+        if (row.managed_status !== "provisioning" || row.managed_token_id) {
+          throw new TransferAssociationConflictError(
+            "A CSR workflow references a certificate outside this transfer",
+            [{ csr_workflow_id: row.id }],
+          );
+        }
+        const deployed = await client.query(
+          `SELECT 1 FROM certificate_instances
+            WHERE workspace_id = $1 AND managed_certificate_id = $2 LIMIT 1`,
+          [fromWorkspaceId, row.managed_certificate_id],
+        );
+        if (deployed.rows.length) {
+          throw new TransferAssociationConflictError(
+            "A CSR provisioning certificate has an instance outside this transfer",
+            [{ csr_workflow_id: row.id }],
+          );
+        }
+        certSet.add(String(row.managed_certificate_id));
+        changed = true;
+      }
+      if (row.identity_conflict_certificate_id && !certSet.has(String(row.identity_conflict_certificate_id))) {
+        throw new TransferAssociationConflictError(
+          "A CSR identity conflict references a certificate outside this transfer",
+          [{ csr_workflow_id: row.id }],
+        );
+      }
+    }
+  }
+  if (workflowIds.size > 0 && targetSet.size > 0) {
+    const outsideInstances = await client.query(
+      `SELECT id FROM certificate_instances
+        WHERE workspace_id = $1 AND target_id = ANY($2::uuid[])
+          AND managed_certificate_id <> ALL($3::uuid[]) LIMIT 1`,
+      [fromWorkspaceId, [...targetSet], [...certSet]],
+    );
+    if (outsideInstances.rows.length) {
+      throw new TransferAssociationConflictError(
+        "A CSR target has a certificate instance outside this transfer",
+        [{ certificate_instance_id: outsideInstances.rows[0].id }],
+      );
+    }
+  }
+  const originalCertIds = new Set(certIds.map(String));
+  const originalTargetIds = new Set(targetIds.map(String));
+  certIds.push(...[...certSet].filter((id) => !originalCertIds.has(id)));
+  targetIds.push(...[...targetSet].filter((id) => !originalTargetIds.has(id)));
+  return [...workflowIds];
+}
+
 /**
  * Move tokens and the workspace-scoped records operators treat as part of
  * the token. Call inside an open transaction.
@@ -314,6 +409,9 @@ async function transferTokenAssociations(
   const targetIds = [
     ...new Set([...linkedTargetIds, ...instanceTargetIds].map(String)),
   ];
+  const csrWorkflowIds = await collectCsrTransferDependencies(client, {
+    fromWorkspaceId, certIds, targetIds,
+  });
 
   const certIdTexts = certIds.map(String);
   const tokenIdTexts = tokenIds.map(String);
@@ -364,6 +462,15 @@ async function transferTokenAssociations(
     tokenIds,
     fromWorkspaceId,
   );
+
+  const heldCsrWorkflows = csrWorkflowIds.length === 0
+    ? []
+    : await takeWorkspaceScopedRows(client, {
+      table: "certificate_csr_workflows",
+      fromWorkspaceId,
+      whereSql: "id = ANY($2::uuid[])",
+      whereParams: [csrWorkflowIds],
+    });
 
   const heldInstances =
     certIds.length === 0
@@ -463,6 +570,11 @@ async function transferTokenAssociations(
     table: "certificate_instances",
     toWorkspaceId,
     rows: heldInstances,
+  });
+  await putWorkspaceScopedRows(client, {
+    table: "certificate_csr_workflows",
+    toWorkspaceId,
+    rows: heldCsrWorkflows,
   });
   await putWorkspaceScopedRows(client, {
     table: "certificate_controller_observations",

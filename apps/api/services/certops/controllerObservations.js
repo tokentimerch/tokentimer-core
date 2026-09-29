@@ -11,10 +11,11 @@ const {
 } = require("../../utils/secretMaterial");
 const {
   ensureManagedCertificateToken,
+  toInventoryRecord,
   upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { createControllerObservationEvidence } = require("./evidence");
-const { recordCsrObservation } = require("./csrWorkflow");
+const { pendingCsrObservationCertificate, recordCsrObservation } = require("./csrWorkflow");
 const {
   MAX_PUBLIC_PEM_BYTES,
   MAX_PUBLIC_SAN_ENTRIES,
@@ -711,28 +712,39 @@ async function persistControllerObservation({
       prior && previousCertificateUid(prior) && previousCertificateUid(prior) !== observation.certificateUid,
     );
     const certificate = certificateFor(observation);
-    const tokenId = await resolveControllerObservationTokenId(client, observation, certificate, prior);
-    const managedCertificate = await upsertManagedCertificateByMonitorSource(
-      client,
-      certificate,
-      {
-        workspaceId: observation.workspaceId,
-        tokenId,
-        status: observation.ready ? "active" : "discovered",
-        source: "cert_manager",
-        sourceRef: sourceRefFor(observation),
-        name: observation.certificateName,
-        keyMode: "cert-manager-managed",
-        keyReference: observation.secretName
-          ? `k8s://${observation.clusterId}/${observation.namespace}/secret/${observation.secretName}/tls.key`
-          : null,
-        controllerObservationMetadata: observationMetadata(observation, resourceRecreated),
-      },
-      0,
-    );
     const target = observation.secretName
       ? await upsertControllerTarget(client, observation)
       : null;
+    const pendingIdentity = target
+      ? await pendingCsrObservationCertificate(client, {
+        workspaceId: observation.workspaceId,
+        targetId: target.id,
+        fingerprintSha256: certificate.fingerprintSha256,
+      })
+      : null;
+    const tokenId = pendingIdentity
+      ? pendingIdentity.token_id
+      : await resolveControllerObservationTokenId(client, observation, certificate, prior);
+    const managedCertificate = pendingIdentity
+      ? toInventoryRecord(pendingIdentity)
+      : await upsertManagedCertificateByMonitorSource(
+        client,
+        certificate,
+        {
+          workspaceId: observation.workspaceId,
+          tokenId,
+          status: observation.ready ? "active" : "discovered",
+          source: "cert_manager",
+          sourceRef: sourceRefFor(observation),
+          name: observation.certificateName,
+          keyMode: "cert-manager-managed",
+          keyReference: observation.secretName
+            ? `k8s://${observation.clusterId}/${observation.namespace}/secret/${observation.secretName}/tls.key`
+            : null,
+          controllerObservationMetadata: observationMetadata(observation, resourceRecreated),
+        },
+        0,
+      );
     const instance = target
       ? await upsertControllerInstance(client, observation, certificate, managedCertificate, target)
       : null;

@@ -284,14 +284,18 @@ describe("CertOps inventory migration", () => {
     const tailVersions = migrations
       .slice(10)
       .map((migration) => migration.version);
+    const notificationVersions = [56, 57, 58, 59];
+    const notificationCount = notificationVersions.filter((version) => tailVersions.includes(version)).length;
+    assert.ok(notificationCount === 0 || notificationCount === 4,
+      "PR #140 migration versions 56-59 must arrive together");
     const expectedTailVersions = Array.from(
-      { length: tailVersions.length },
+      { length: Math.max(...tailVersions) - 10 },
       (_, index) => 11 + index,
-    );
+    ).filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(
       tailVersions,
       expectedTailVersions,
-      "migration versions from 11 onward must be sequential with no gaps or duplicates",
+      "migration versions from 11 onward may omit only PR #140's reserved 56-59",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -1639,14 +1643,17 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     assert.doesNotMatch(migration.sql, /DROP COLUMN/i);
   });
 
-  it("keeps every migration version sequential with no gaps", () => {
+  it("keeps migration versions sequential except PR #140's reserved 56-59", () => {
     const versions = migrations.map((entry) => entry.version);
     const sorted = [...versions].sort((a, b) => a - b);
     assert.deepEqual(versions, sorted, "migrations array must be declared in version order");
-    for (let i = 1; i < sorted.length; i += 1) {
-      assert.equal(sorted[i], sorted[i - 1] + 1, `migration versions must be sequential (gap before version ${sorted[i]})`);
-    }
-    assert.equal(sorted[sorted.length - 1], 55);
+    const notificationVersions = [56, 57, 58, 59];
+    const notificationCount = notificationVersions.filter((version) => sorted.includes(version)).length;
+    assert.ok(notificationCount === 0 || notificationCount === 4);
+    const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
+      .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
+    assert.deepEqual(sorted, expected);
+    assert.equal(sorted[sorted.length - 1], 60);
   });
 });
 

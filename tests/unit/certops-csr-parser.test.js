@@ -43,4 +43,19 @@ describe("public CSR parser", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("rejects unsafe CSR common names and DNS SANs", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-csr-identity-"));
+    try {
+      const keyPath = path.join(dir, "local.key.pem");
+      generateKeyPairToFile({ keyPath });
+      const unsafeCn = generateCsr({ keyPath, subject: { commonName: "safe\u202E.example.test" } });
+      await assert.rejects(parsePublicCsr(unsafeCn.csrPem), { code: "CERTOPS_CSR_INVALID" });
+      const unsafeSan = generateCsr({ keyPath,
+        subject: { commonName: "safe.example.test" }, altNames: ["xn--!.example.test"] });
+      await assert.rejects(parsePublicCsr(unsafeSan.csrPem), { code: "CERTOPS_CSR_INVALID" });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

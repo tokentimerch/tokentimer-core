@@ -98,8 +98,10 @@ the shared detector scans every outbound envelope.
   `completed`, and `cancelled`. The CSR DER digest is the idempotency identity
   within a target; the SPKI digest verifies the returned leaf's public key.
   Importing a signed leaf does not assert deployment or change an existing
-  certificate's active material. A real matching observation always updates
-  `certificate_instances`, even when name changes await manager acknowledgement;
+  certificate's active material or linked token expiry. A monitor observation
+  while review is pending preserves that current material and expiry. A real
+  matching observation always updates `certificate_instances`, even when name
+  changes await manager acknowledgement;
   only promotion waits. Manual installation confirmation is an audited
   attestation on the workflow (`confirmed_at`, `confirmed_by`, `manual`) and
   never creates an observed instance. New identities use `provisioning` until
@@ -111,6 +113,10 @@ the shared detector scans every outbound envelope.
   Name acknowledgement can still be recorded, but neither that acknowledgement
   nor manual confirmation promotes A from B's instance. An operator must
   reconcile the two managed identities explicitly or cancel the workflow.
+  Cancellation releases an unshared provisional identity; submitting the same
+  CSR for the same target restarts that workflow with a new audit event.
+  Workspace token transfer moves an attached CSR workflow with its target and
+  certificate; an association outside the selected transfer is a conflict.
 - **Target** - a place a certificate is deployed (host, path, k8s secret ref).
 - **Agent** - the execution-plane process that performs key-bearing work.
 - **Proxy-agent** - an agent acting on behalf of targets it can reach.
