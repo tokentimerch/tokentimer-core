@@ -202,6 +202,11 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
+The three operational notification settings accept integers of at least `1`.
+`ALERT_DEGRADED_ATTEMPTS_THRESHOLD` is read by the delivery worker,
+`AUTO_SYNC_CRITICAL_THRESHOLD` by the auto-sync worker, and
+`OP_NOTIFICATION_EMAIL_DAILY_CAP` by both workers.
+
 ## Vault AppRole authentication
 
 Inventory import can authenticate to Vault with a static token **or**

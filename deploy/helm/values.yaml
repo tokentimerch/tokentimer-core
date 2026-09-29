@@ -165,6 +165,12 @@ worker:
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
   env: {}
+  # First-class tuning for the workers that raise and email operational incidents.
+  # These values take precedence over matching keys in worker.env.
+  operationalNotifications:
+    emailDailyCap: 10
+    degradedAttemptsThreshold: 5
+    autoSyncCriticalThreshold: 3
   # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
   # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []

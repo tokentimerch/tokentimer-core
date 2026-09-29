@@ -572,4 +572,56 @@ assert_not_contains "${controller_with_proxy_deployment}" 'NODE_USE_ENV_PROXY' "
 assert_not_contains "${controller_with_proxy_deployment}" 'name: corporate-proxy' "controller Deployment excluded from proxy secretRef"
 assert_not_contains "${controller_with_proxy_policy}" '192.0.2.50/32' "controller NetworkPolicy excluded from proxy egress"
 
+echo "==> assert operational notification worker tuning"
+render_worker_job() {
+  helm template "${RELEASE_NAME}" "${CHART}" \
+    --set config.adminEmail=ci@example.com \
+    --show-only "templates/cronjob-$1.yaml" "${@:2}"
+}
+delivery_defaults="$(render_worker_job delivery)"
+auto_sync_defaults="$(render_worker_job auto-sync)"
+discovery_defaults="$(render_worker_job discovery)"
+assert_contains "${delivery_defaults}" $'- name: OP_NOTIFICATION_EMAIL_DAILY_CAP\n                  value: "10"' "delivery daily cap default"
+assert_contains "${delivery_defaults}" $'- name: ALERT_DEGRADED_ATTEMPTS_THRESHOLD\n                  value: "5"' "delivery degraded threshold default"
+assert_not_contains "${delivery_defaults}" 'AUTO_SYNC_CRITICAL_THRESHOLD' "delivery excludes auto-sync threshold"
+assert_contains "${auto_sync_defaults}" $'- name: OP_NOTIFICATION_EMAIL_DAILY_CAP\n                  value: "10"' "auto-sync daily cap default"
+assert_contains "${auto_sync_defaults}" $'- name: AUTO_SYNC_CRITICAL_THRESHOLD\n                  value: "3"' "auto-sync critical threshold default"
+assert_not_contains "${auto_sync_defaults}" 'ALERT_DEGRADED_ATTEMPTS_THRESHOLD' "auto-sync excludes degraded threshold"
+for setting in OP_NOTIFICATION_EMAIL_DAILY_CAP AUTO_SYNC_CRITICAL_THRESHOLD ALERT_DEGRADED_ATTEMPTS_THRESHOLD; do
+  assert_not_contains "${discovery_defaults}" "${setting}" "discovery excludes operational tuning"
+done
+
+delivery_custom="$(render_worker_job delivery \
+  --set worker.operationalNotifications.emailDailyCap=20 \
+  --set worker.operationalNotifications.degradedAttemptsThreshold=7 \
+  --set worker.env.OP_NOTIFICATION_EMAIL_DAILY_CAP=99 \
+  --set worker.env.AUTO_SYNC_CRITICAL_THRESHOLD=99 \
+  --set worker.env.UNRELATED_WORKER_SETTING=enabled)"
+auto_sync_custom="$(render_worker_job auto-sync \
+  --set worker.operationalNotifications.emailDailyCap=20 \
+  --set worker.operationalNotifications.autoSyncCriticalThreshold=4 \
+  --set worker.env.AUTO_SYNC_CRITICAL_THRESHOLD=99 \
+  --set worker.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD=99)"
+discovery_custom="$(render_worker_job discovery \
+  --set worker.env.OP_NOTIFICATION_EMAIL_DAILY_CAP=99 \
+  --set worker.env.UNRELATED_WORKER_SETTING=enabled)"
+assert_contains "${delivery_custom}" $'- name: OP_NOTIFICATION_EMAIL_DAILY_CAP\n                  value: "20"' "custom delivery cap precedence"
+assert_contains "${delivery_custom}" $'- name: ALERT_DEGRADED_ATTEMPTS_THRESHOLD\n                  value: "7"' "custom degraded threshold"
+assert_contains "${delivery_custom}" $'- name: UNRELATED_WORKER_SETTING\n                  value: "enabled"' "generic worker env preserved"
+assert_not_contains "${delivery_custom}" 'AUTO_SYNC_CRITICAL_THRESHOLD' "custom delivery excludes auto-sync threshold"
+assert_contains "${auto_sync_custom}" $'- name: OP_NOTIFICATION_EMAIL_DAILY_CAP\n                  value: "20"' "custom auto-sync cap"
+assert_contains "${auto_sync_custom}" $'- name: AUTO_SYNC_CRITICAL_THRESHOLD\n                  value: "4"' "custom auto-sync threshold precedence"
+assert_not_contains "${auto_sync_custom}" 'ALERT_DEGRADED_ATTEMPTS_THRESHOLD' "custom auto-sync excludes degraded threshold"
+assert_contains "${discovery_custom}" $'- name: UNRELATED_WORKER_SETTING\n                  value: "enabled"' "generic discovery env preserved"
+assert_not_contains "${discovery_custom}" 'OP_NOTIFICATION_EMAIL_DAILY_CAP' "discovery excludes generic operational tuning"
+[[ "$(grep -c 'name: OP_NOTIFICATION_EMAIL_DAILY_CAP' <<< "${delivery_custom}")" -eq 1 ]] || fail "delivery cap env duplicated"
+[[ "$(grep -c 'name: AUTO_SYNC_CRITICAL_THRESHOLD' <<< "${auto_sync_custom}")" -eq 1 ]] || fail "auto-sync threshold env duplicated"
+for setting in emailDailyCap degradedAttemptsThreshold autoSyncCriticalThreshold; do
+  for invalid in 0 -1 garbage; do
+    if render_worker_job delivery --set-string "worker.operationalNotifications.${setting}=${invalid}" >/dev/null 2>&1; then
+      fail "accepted invalid ${setting}=${invalid}"
+    fi
+  done
+done
+
 echo "helm-template-verify: ok -> ${OUT}"

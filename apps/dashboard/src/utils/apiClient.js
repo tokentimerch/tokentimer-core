@@ -109,6 +109,11 @@ const showErrorToastOnce = message => {
   showGlobalError(message);
 };
 
+const isCanceledRequest = error =>
+  axios.isCancel(error) ||
+  error?.code === 'ERR_CANCELED' ||
+  error?.name === 'AbortError';
+
 // Request interceptor for authentication and logging
 apiClient.interceptors.request.use(
   async config => {
@@ -183,6 +188,12 @@ apiClient.interceptors.response.use(
     return response;
   },
   async error => {
+    // Workspace changes abort in-flight requests. Their callers still receive
+    // the cancellation so they can ignore stale results, but it is not an API
+    // failure and must not be logged or turned into a user-facing error.
+    if (isCanceledRequest(error)) {
+      return Promise.reject(error);
+    }
     // Log error in development/staging (based on domain since env vars are not available at runtime)
     const shouldLog =
       (typeof import.meta !== 'undefined' &&
@@ -304,6 +315,7 @@ const invalidateCache = urlPrefix => {
 
 // Error handling utilities
 export const handleApiError = (error, customMessage = null) => {
+  if (isCanceledRequest(error)) return null;
   let message = customMessage;
   let suppressToast = false;
 

@@ -112,6 +112,20 @@ In practice this means:
 
 The chart exposes first-class values for the most common settings (database, SMTP, Twilio, monitoring, ingress). For the full list of environment variables the app supports (rate limits, delivery windows, webhook security, auth tuning, etc.), see the [configuration reference](../../docs/CONFIGURATION.md).
 
+Operational incident tuning uses positive integers (minimum `1`):
+
+```yaml
+worker:
+  operationalNotifications:
+    emailDailyCap: 10              # delivery and auto-sync workers
+    degradedAttemptsThreshold: 5  # delivery worker
+    autoSyncCriticalThreshold: 3  # auto-sync worker
+```
+
+These values render the matching worker environment variables. A matching
+`worker.env` key is ignored in the delivery or auto-sync CronJob in favor of
+the first-class value; `worker.env` remains available for other worker settings.
+
 Any env var not exposed as a dedicated values key can be passed through:
 - `api.env` / `api.envFrom` for the API deployment (`envFrom` ref names support Helm `tpl`)
 - `worker.env` / `worker.envFrom` for all CronJob workers (same `tpl` behavior)

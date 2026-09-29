@@ -14,9 +14,9 @@ overrides:
   # GHSA-5p4m-2wfm-xmqj), fixed 4.3.1. GHSA-2883-xcg3-v3hh (merge-key CPU
   # DoS) is fixed in 4.3.2. Pin exact per repo policy.
   js-yaml: 4.3.2
-  # GHSA-2x7j-588g-ccc2 (addressparser CPU DoS, High) plus 9.1.0 Mediums
-  # GHSA-8m3c-c648-2xjj / GHSA-cc9r-2j5m-2m83 / GHSA-wmmp-3585-3rmp.
-  nodemailer: 9.1.1
+  # GHSA-6vj9-mwq6-2f5v (SMTP TLS servername cross-transport reuse),
+  # plus earlier addressparser and SMTP parser advisories.
+  nodemailer: 10.0.2
   # GHSA-rgj7-g3m4-5g8c: libheif issues in sharp < 0.35.4.
   sharp: 0.35.4
   # GHSA-82fw-gwwq-j7x9: @vitest/mocker redirect mock path traversal; fixed 4.1.11.
@@ -51,7 +51,8 @@ overrides:
   # GHSA-4mjr-xmp4-gh2g (stringify throw on attacker-controlled isBuffer),
   # both fixed in 6.16.0. express/body-parser pull qs transitively.
   qs: 6.16.0
-  ip-address: 10.4.0
+  # GHSA-rpw4-54j3-4h4q / GHSA-2vr4-cq9g-pvrc (IPv6 local-use classification).
+  ip-address: 10.5.1
   form-data: 4.0.6
   ws: 8.21.0
   # Low-severity DoS when an invalid limit silently disables size enforcement

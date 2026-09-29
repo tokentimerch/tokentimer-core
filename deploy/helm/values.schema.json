@@ -50,6 +50,14 @@
     "worker": {
       "type": "object",
       "properties": {
+        "operationalNotifications": {
+          "type": "object",
+          "properties": {
+            "emailDailyCap": { "type": "integer", "minimum": 1 },
+            "degradedAttemptsThreshold": { "type": "integer", "minimum": 1 },
+            "autoSyncCriticalThreshold": { "type": "integer", "minimum": 1 }
+          }
+        },
         "image": {
           "type": "object",
           "properties": {

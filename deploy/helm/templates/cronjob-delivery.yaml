@@ -57,13 +57,17 @@ spec:
                 {{- with .Values.worker.envFrom }}
                 {{- include "tokentimer.renderEnvFromExtras" (dict "root" $ "entries" .) | nindent 16 }}
                 {{- end }}
-              {{- if .Values.worker.env }}
               env:
+                - name: OP_NOTIFICATION_EMAIL_DAILY_CAP
+                  value: {{ .Values.worker.operationalNotifications.emailDailyCap | quote }}
+                - name: ALERT_DEGRADED_ATTEMPTS_THRESHOLD
+                  value: {{ .Values.worker.operationalNotifications.degradedAttemptsThreshold | quote }}
                 {{- range $key, $value := .Values.worker.env }}
+                {{- if not (has $key (list "OP_NOTIFICATION_EMAIL_DAILY_CAP" "ALERT_DEGRADED_ATTEMPTS_THRESHOLD" "AUTO_SYNC_CRITICAL_THRESHOLD")) }}
                 - name: {{ $key }}
                   value: {{ $value | quote }}
                 {{- end }}
-              {{- end }}
+                {{- end }}
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp

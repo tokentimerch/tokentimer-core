@@ -148,9 +148,11 @@ export async function postJson(webhookUrl, body, kind = "generic") {
             error: `PagerDuty responded ${result.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
           };
     }
+    const success = result.status >= 200 && result.status < 300;
     return {
-      success: result.status >= 200 && result.status < 300,
+      success,
       status: result.status,
+      ...(!success ? { error: `HTTP ${result.status}` } : {}),
     };
   } catch (e) {
     if (e && e.code === "WEBHOOK_PRIVATE_IP_BLOCKED") {

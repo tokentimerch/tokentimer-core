@@ -332,6 +332,39 @@ describe('useDashboardNotifications', () => {
     ]);
   });
 
+  it('ignores a late notification response from the previous workspace', async () => {
+    let finishOldWorkspace;
+    getNotifications.mockImplementation(id =>
+      id === 'ws-1'
+        ? new Promise(resolve => {
+            finishOldWorkspace = resolve;
+          })
+        : Promise.resolve({
+            unreadCount: 2,
+            items: [{ id: 'incident-ws-2', persisted: true, isRead: false }],
+          })
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedWorkspace }) =>
+        useDashboardNotifications({ session, workspace: selectedWorkspace }),
+      { initialProps: { selectedWorkspace: workspace }, wrapper }
+    );
+    await waitFor(() => expect(finishOldWorkspace).toBeTypeOf('function'));
+
+    rerender({ selectedWorkspace: { id: 'ws-2', role: 'admin' } });
+    await waitFor(() =>
+      expect(result.current.dashboardNotifications[0]?.id).toBe('incident-ws-2')
+    );
+    await act(async () =>
+      finishOldWorkspace({
+        unreadCount: 1,
+        items: [{ id: 'incident-ws-1', persisted: true, isRead: false }],
+      })
+    );
+    expect(result.current.dashboardNotifications[0].id).toBe('incident-ws-2');
+    expect(result.current.dashboardUnreadCount).toBe(2);
+  });
+
   it('keeps server-scoped incidents for viewers without manager warnings', async () => {
     const { result } = renderHook(
       () =>

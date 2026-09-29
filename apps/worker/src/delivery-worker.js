@@ -3107,7 +3107,6 @@ export async function deliveryWorkerJob({
           } else if (
             alert.workspace_id &&
             !isPlanLimitError(errorMessages) &&
-            nextAttemptTimestamp &&
             (newAttemptsEmail >= DEGRADED_ATTEMPTS_THRESHOLD ||
               newAttemptsWebhooks >= DEGRADED_ATTEMPTS_THRESHOLD ||
               newAttemptsWhatsApp >= DEGRADED_ATTEMPTS_THRESHOLD)
@@ -3129,7 +3128,9 @@ export async function deliveryWorkerJob({
                 attempts_email: newAttemptsEmail,
                 attempts_webhooks: newAttemptsWebhooks,
                 attempts_whatsapp: newAttemptsWhatsApp,
-                next_attempt_at: nextAttemptTimestamp.toISOString(),
+                ...(nextAttemptTimestamp
+                  ? { next_attempt_at: nextAttemptTimestamp.toISOString() }
+                  : {}),
                 workspace_name: alert.workspace_name,
                 token_name: alert.name,
               },

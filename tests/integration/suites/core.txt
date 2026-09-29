@@ -44,6 +44,7 @@ tests/integration/alert-bug-fixes.test.js
 tests/integration/alert-delivery-email-routing.test.js
 tests/integration/alert-stats-whatsapp-channel.test.js
 tests/integration/backoff-and-cooldown.test.js
+tests/integration/delivery-degraded-threshold.test.js
 tests/integration/cooldown-and-retry-ui.test.js
 tests/integration/contact-group-default-fallback.test.js
 tests/integration/channel-selection.test.js
