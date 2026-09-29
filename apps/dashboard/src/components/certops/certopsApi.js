@@ -204,16 +204,25 @@ export async function listCsrWorkflows(workspaceId) {
 }
 
 export async function getCsrWorkflow(workspaceId, csrId) {
-  const res = await apiClient.get(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}`);
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}`
+  );
   return res.data;
 }
 
 export async function createCsrWorkflow(workspaceId, payload) {
-  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs`, payload);
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/csrs`,
+    payload
+  );
   return res.data;
 }
 
-export async function importCsrSignedCertificate(workspaceId, csrId, certificatePem) {
+export async function importCsrSignedCertificate(
+  workspaceId,
+  csrId,
+  certificatePem
+) {
   const res = await apiClient.post(
     `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/signed-certificate`,
     { certificatePem }
@@ -222,18 +231,27 @@ export async function importCsrSignedCertificate(workspaceId, csrId, certificate
 }
 
 export async function acknowledgeCsrNames(workspaceId, csrId) {
-  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/acknowledge-names`, {});
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/acknowledge-names`,
+    {}
+  );
   return res.data;
 }
 
 export async function confirmCsrInstallation(workspaceId, csrId) {
-  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/confirm-installation`, {});
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/confirm-installation`,
+    {}
+  );
   invalidateCertOpsInventoryCache(workspaceId);
   return res.data;
 }
 
 export async function cancelCsrWorkflow(workspaceId, csrId) {
-  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/cancel`, {});
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/cancel`,
+    {}
+  );
   return res.data;
 }
 

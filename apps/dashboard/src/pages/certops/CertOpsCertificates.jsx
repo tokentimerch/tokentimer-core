@@ -386,10 +386,16 @@ export default function CertOpsCertificates() {
         description='Managed certificate inventory for this workspace'
         action={
           <HStack>
-            {canManage ? <DashboardActionButton onClick={() => {
-              setCsrCertificateId(null);
-              setCsrModalOpen(true);
-            }}>CSR workflows</DashboardActionButton> : null}
+            {canManage ? (
+              <DashboardActionButton
+                onClick={() => {
+                  setCsrCertificateId(null);
+                  setCsrModalOpen(true);
+                }}
+              >
+                CSR workflows
+              </DashboardActionButton>
+            ) : null}
             <DashboardActionButton
               variant='outline'
               onClick={refresh}
@@ -773,10 +779,14 @@ export default function CertOpsCertificates() {
                             </Tooltip>
                             {!retired ? (
                               <>
-                                <Button size='sm' variant='ghost' onClick={() => {
-                                  setCsrCertificateId(certificate.id);
-                                  setCsrModalOpen(true);
-                                }}>
+                                <Button
+                                  size='sm'
+                                  variant='ghost'
+                                  onClick={() => {
+                                    setCsrCertificateId(certificate.id);
+                                    setCsrModalOpen(true);
+                                  }}
+                                >
                                   New CSR
                                 </Button>
                                 {certificate.renewal?.profileId ? (
@@ -897,24 +907,37 @@ export default function CertOpsCertificates() {
         tokenId={detailsTarget?.tokenId}
         canManage={canManage}
       />
-      {canManage ? <Modal isOpen={csrModalOpen} onClose={closeCsrModal} size='3xl' scrollBehavior='inside'>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Public CSR workflows</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
-            {csrCertificateId ? <Button size='sm' mb={3} onClick={() => setCsrCertificateId(null)}>
-              Start a new certificate CSR
-            </Button> : null}
-            <CsrWorkflowPanel
-              key={csrCertificateId || 'new'}
-              workspaceId={workspaceId}
-              existingCertificateId={csrCertificateId}
-              onChanged={refresh}
-            />
-          </ModalBody>
-        </ModalContent>
-      </Modal> : null}
+      {canManage ? (
+        <Modal
+          isOpen={csrModalOpen}
+          onClose={closeCsrModal}
+          size='3xl'
+          scrollBehavior='inside'
+        >
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Public CSR workflows</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody pb={6}>
+              {csrCertificateId ? (
+                <Button
+                  size='sm'
+                  mb={3}
+                  onClick={() => setCsrCertificateId(null)}
+                >
+                  Start a new certificate CSR
+                </Button>
+              ) : null}
+              <CsrWorkflowPanel
+                key={csrCertificateId || 'new'}
+                workspaceId={workspaceId}
+                existingCertificateId={csrCertificateId}
+                onChanged={refresh}
+              />
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+      ) : null}
     </DashboardPanel>
   );
 }

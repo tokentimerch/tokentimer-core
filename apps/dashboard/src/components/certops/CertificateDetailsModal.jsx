@@ -645,14 +645,16 @@ export default function CertificateDetailsModal({
         <ModalCloseButton {...closeButtonProps} top={{ base: 3, md: 3 }} />
 
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
-          {!isViewer && certificate?.id ? <Button
-            as={RouterLink}
-            to={`/certops/certificates?csrCertificateId=${encodeURIComponent(certificate.id)}`}
-            size='sm'
-            mb={3}
-          >
-            Start CSR workflow
-          </Button> : null}
+          {!isViewer && certificate?.id ? (
+            <Button
+              as={RouterLink}
+              to={`/certops/certificates?csrCertificateId=${encodeURIComponent(certificate.id)}`}
+              size='sm'
+              mb={3}
+            >
+              Start CSR workflow
+            </Button>
+          ) : null}
           <DashboardDetailsSummary items={summaryItems} />
 
           {certOpsLoading ? (
