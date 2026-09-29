@@ -7,7 +7,6 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Badge,
   Box,
@@ -75,14 +74,6 @@ function hasValue(value) {
 
 function hasAnyValue(...values) {
   return values.some(hasValue);
-}
-
-function csrWorkflowHref(certificateId, search) {
-  const params = new URLSearchParams();
-  const workspaceId = new URLSearchParams(search).get('workspace');
-  if (workspaceId) params.set('workspace', workspaceId);
-  params.set('csrCertificateId', certificateId);
-  return `/certops/certificates?${params.toString()}`;
 }
 
 function listLabel(value) {
@@ -375,7 +366,6 @@ export default function CertificateDetailsModal({
   compactTableSections = false,
   propertyValueRows = false,
 }) {
-  const location = useLocation();
   const {
     headerProps,
     bodyProps,
@@ -654,16 +644,6 @@ export default function CertificateDetailsModal({
         <ModalCloseButton {...closeButtonProps} top={{ base: 3, md: 3 }} />
 
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
-          {!isViewer && certificate?.id ? (
-            <Button
-              as={RouterLink}
-              to={csrWorkflowHref(certificate.id, location.search)}
-              size='sm'
-              mb={3}
-            >
-              Start CSR workflow
-            </Button>
-          ) : null}
           <DashboardDetailsSummary items={summaryItems} />
 
           {certOpsLoading ? (
@@ -955,20 +935,32 @@ export default function CertificateDetailsModal({
                 ) : null}
                 {hasAnyValue(certificate?.source, certificate?.sourceRef) ? (
                   <DetailRow label='Registration source'>
-                    <VStack align='start' spacing={1}>
+                    <HStack spacing={2} minW={0} whiteSpace='nowrap'>
                       {hasValue(certificate.source) ? (
-                        <Text fontSize='sm'>
+                        <Text fontSize='sm' flexShrink={0}>
                           {sourceLabel(certificate.source)}
+                        </Text>
+                      ) : null}
+                      {hasValue(certificate.source) && certificate.sourceRef ? (
+                        <Text as='span' color='dashboard.modal.muted'>
+                          ·
                         </Text>
                       ) : null}
                       {certificate.sourceRef ? (
                         <CopyableId
                           id={certificate.sourceRef}
+                          display={
+                            certificate.sourceRef.startsWith('csr:')
+                              ? 'CSR workflow'
+                              : certificate.sourceRef.length > 24
+                                ? `${certificate.sourceRef.slice(0, 21)}…`
+                                : certificate.sourceRef
+                          }
                           size='xs'
                           color='dashboard.modal.text'
                         />
                       ) : null}
-                    </VStack>
+                    </HStack>
                   </DetailRow>
                 ) : null}
                 {hasValue(certificate?.serialNumber) ? (

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import { MemoryRouter } from 'react-router';
 
@@ -122,6 +128,27 @@ function renderModal(overrides = {}) {
 describe('CertificateDetailsModal', () => {
   beforeEach(() => {
     updateTokenMock.mockReset();
+  });
+
+  it('shows a compact CSR registration source without a workflow action', () => {
+    const sourceRef = 'csr:00544aa5-5e4c-4c77-8cc2-4bbdbd11537e';
+    renderModal({
+      certOps: {
+        certificate: { ...certificate, source: 'api', sourceRef },
+        certificateCount: 1,
+      },
+    });
+
+    const sourceRow = screen
+      .getByText('Registration source')
+      .closest('[data-detail-row]');
+    expect(within(sourceRow).getByText('API')).toBeInTheDocument();
+    expect(within(sourceRow).getByText('CSR workflow')).toBeInTheDocument();
+    expect(sourceRow).not.toHaveTextContent(sourceRef);
+    expect(within(sourceRow).getByTitle(sourceRef)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Start CSR workflow' })
+    ).not.toBeInTheDocument();
   });
 
   it('presents certificate identity, lifecycle summary, and compact vertical content', () => {

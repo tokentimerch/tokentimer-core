@@ -13,7 +13,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **CertOps operator-supplied CSR workflow** (#245). Managers can upload and export a public CSR, import the signed public certificate, review issued-name changes, and complete installation through a matching observation or audited manual attestation. A viewport-sized dialog can also start the workflow from an existing certificate’s details. The workflow preserves certificate identity and deployment history; private keys and key packages remain rejected. Database migration 60 adds the workflow records.
+- **CertOps operator-supplied CSR workflow** (#245). Managers can upload and export a public CSR, import the signed public certificate, review issued-name changes, and complete installation through a matching observation or audited manual attestation. CSR controls live in the CertOps Certificates tab, including a viewport-sized dialog. The workflow preserves certificate identity and deployment history; private keys and key packages remain rejected. Database migration 60 adds the workflow records.
 - **Published images are boot-tested in CI** (#273). The API, dashboard, worker entrypoints, and Kubernetes controller must start from their built images, catching missing runtime files before release.
 
 ### Fixed
