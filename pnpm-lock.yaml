@@ -13,7 +13,7 @@ overrides:
   path-to-regexp: 8.4.0
   yaml: 1.10.3
   js-yaml: 4.3.2
-  nodemailer: 10.0.2
+  nodemailer: 10.0.12
   sharp: 0.35.4
   vitest: 4.1.11
   '@vitest/mocker': 4.1.11
@@ -32,7 +32,7 @@ overrides:
   nanoid: 3.3.18
   '@babel/core': 7.29.6
   qs: 6.16.0
-  ip-address: 10.5.1
+  ip-address: 10.7.2
   form-data: 4.0.6
   ws: 8.21.0
   body-parser: 2.3.0
@@ -157,8 +157,8 @@ importers:
         specifier: 9.0.3
         version: 9.0.3
       nodemailer:
-        specifier: 10.0.2
-        version: 10.0.2
+        specifier: 10.0.12
+        version: 10.0.12
       otplib:
         specifier: 13.3.0
         version: 13.3.0
@@ -367,8 +367,8 @@ importers:
         specifier: 1.18.0
         version: 1.18.0
       nodemailer:
-        specifier: 10.0.2
-        version: 10.0.2
+        specifier: 10.0.12
+        version: 10.0.12
       pg:
         specifier: 8.18.0
         version: 8.18.0
@@ -3103,8 +3103,8 @@ packages:
   invariant@2.2.4:
     resolution: {integrity: sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==}
 
-  ip-address@10.5.1:
-    resolution: {integrity: sha512-EXujUp9jyOI/chPgtqk6uy7fDq8AeCB/WlfEuPg9LN0fN9lzKAKfuDYi60SMhHwgUiEhZvVYsbGZN+RUU1INiA==}
+  ip-address@10.7.2:
+    resolution: {integrity: sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -3583,8 +3583,8 @@ packages:
     resolution: {integrity: sha512-mIrE/Cw9y+9Au6dS5vDKDhQza9YvG6w+ZrS6X+ZzA7yFW/soAeaups4Qzn1bL6g5FVy8WtP79+0j82oPIbqRjQ==}
     engines: {node: '>=18'}
 
-  nodemailer@10.0.2:
-    resolution: {integrity: sha512-83mO0TnWXySiJXdMAIUYmlXYdJ2KUq/w8EJgc4ogKU2UssaHf7ZPeuHcb4YCxeNiM0DDshnm291U0/ClrSZZsg==}
+  nodemailer@10.0.12:
+    resolution: {integrity: sha512-PQ46oNbNMuH/Sno7B5IWIU9etytwrO0xdTFvWXpIQFRXhBAXtzD48243AS+BCbQQTPD8y3fqUrgLn0tSo77gvg==}
     engines: {node: '>=20.0.0'}
 
   nodemon@3.1.11:
@@ -7830,7 +7830,7 @@ snapshots:
   express-rate-limit@8.5.1(express@5.2.1):
     dependencies:
       express: 5.2.1
-      ip-address: 10.5.1
+      ip-address: 10.7.2
 
   express-session@1.19.0:
     dependencies:
@@ -8267,7 +8267,7 @@ snapshots:
     dependencies:
       loose-envify: 1.4.0
 
-  ip-address@10.5.1: {}
+  ip-address@10.7.2: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -8744,7 +8744,7 @@ snapshots:
 
   node-releases@2.0.55: {}
 
-  nodemailer@10.0.2: {}
+  nodemailer@10.0.12: {}
 
   nodemon@3.1.11:
     dependencies:
@@ -9511,7 +9511,7 @@ snapshots:
 
   socks@2.8.9:
     dependencies:
-      ip-address: 10.5.1
+      ip-address: 10.7.2
       smart-buffer: 4.2.0
 
   source-map-js@1.2.1: {}
