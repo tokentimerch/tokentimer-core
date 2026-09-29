@@ -5,7 +5,8 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const https = require("node:https");
+const { spawn, spawnSync } = require("node:child_process");
 const { pool } = require("../../apps/api/db/database");
 const {
   acknowledgeCsrNames, confirmCsrInstallation, createCsrWorkflow,
@@ -38,8 +39,33 @@ function generatePublicMaterial(dir, label) {
   return { csrPem: fs.readFileSync(csr, "utf8"), certificatePem: fs.readFileSync(cert, "utf8") };
 }
 
+function runEndpointWorker() {
+  return new Promise((resolve, reject) => {
+    const worker = spawn(process.execPath, ["src/endpoint-check-worker.js"], {
+      cwd: path.resolve(__dirname, "../../apps/worker"),
+      env: { ...process.env, NODE_ENV: "test", CERTOPS_ENABLED: "true" },
+    });
+    let output = "";
+    worker.stdout.on("data", (chunk) => { output += chunk; });
+    worker.stderr.on("data", (chunk) => { output += chunk; });
+    worker.once("error", reject);
+    worker.once("close", (code) => code === 0 ? resolve() : reject(new Error(`Endpoint worker exited ${code}: ${output.slice(-4000)}`)));
+  });
+}
+
+function serveCertificate(key, cert) {
+  return new Promise((resolve, reject) => {
+    const server = https.createServer({ key, cert }, (_request, response) => response.end("ok"));
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve({
+      server,
+      url: `https://127.0.0.1:${server.address().port}`,
+    }));
+  });
+}
+
 describe("operator supplied CSR workflow", function () {
-  this.timeout(30000);
+  this.timeout(120000);
   let workspaceId;
   let userId;
   let fixtureDir;
@@ -106,6 +132,78 @@ describe("operator supplied CSR workflow", function () {
     const promoted = await pool.query("SELECT status, token_id FROM managed_certificates WHERE id = $1", [signed.managedCertificateId]);
     assert.equal(promoted.rows[0].status, "active");
     assert.ok(promoted.rows[0].token_id);
+  });
+
+  it("observes a certificate actually served by a host before promoting the CSR", async () => {
+    const previousMaterial = generatePublicMaterial(fixtureDir, "live-host-previous");
+    const hostMaterial = generatePublicMaterial(fixtureDir, "live-host");
+    const parsed = require("../../apps/api/services/certops/parser").parsePublicCertificateMaterial(hostMaterial.certificatePem)[0];
+    const { server, url } = await serveCertificate(
+      fs.readFileSync(path.join(fixtureDir, "live-host-previous.key"), "utf8"),
+      previousMaterial.certificatePem,
+    );
+    try {
+      const monitor = await pool.query(
+        `INSERT INTO domain_monitors (workspace_id, url, health_check_enabled, check_interval, created_by)
+         VALUES ($1, $2, FALSE, '1min', $3) RETURNING id`,
+        [workspaceId, url, userId],
+      );
+      const monitorId = monitor.rows[0].id;
+      const target = await pool.query(
+        `INSERT INTO certificate_targets (workspace_id, domain_monitor_id, name, target_type, source, source_ref)
+         VALUES ($1, $2, 'Live HTTPS host', 'endpoint', 'endpoint_monitor', $3) RETURNING id`,
+        [workspaceId, monitorId, monitorId],
+      );
+      const workflow = await createCsrWorkflow({ workspaceId, actorUserId: userId,
+        csrPem: hostMaterial.csrPem, targetId: target.rows[0].id });
+      const signed = await importSignedCertificate({ workspaceId, workflowId: workflow.id,
+        actorUserId: userId, certificatePem: hostMaterial.certificatePem });
+      assert.equal(signed.status, "signed_pending_install");
+      assert.equal(signed.namesChanged, true);
+      const before = await pool.query(
+        "SELECT count(*)::int AS count FROM certificate_instances WHERE workspace_id = $1 AND target_id = $2",
+        [workspaceId, target.rows[0].id],
+      );
+      assert.equal(before.rows[0].count, 0);
+
+      // The operator installs the signed leaf on the host after import.
+      server.setSecureContext({
+        key: fs.readFileSync(path.join(fixtureDir, "live-host.key"), "utf8"),
+        cert: hostMaterial.certificatePem,
+      });
+      await runEndpointWorker();
+
+      const observed = await pool.query(
+        `SELECT ci.id, ci.managed_certificate_id, ci.observed_fingerprint_sha256,
+                ci.observed_at, dm.ssl_fingerprint
+           FROM certificate_instances ci
+           JOIN domain_monitors dm ON dm.id = ci.domain_monitor_id
+          WHERE ci.workspace_id = $1 AND ci.target_id = $2`,
+        [workspaceId, target.rows[0].id],
+      );
+      assert.equal(observed.rows.length, 1);
+      assert.equal(observed.rows[0].observed_fingerprint_sha256, parsed.fingerprintSha256);
+      assert.ok(observed.rows[0].observed_at);
+      assert.ok(observed.rows[0].ssl_fingerprint);
+      const pending = await getCsrWorkflow({ workspaceId, workflowId: workflow.id });
+      assert.equal(pending.status, "signed_pending_install");
+      assert.equal(pending.observedInstanceId, observed.rows[0].id);
+      assert.equal(pending.confirmedAt, null);
+
+      const completed = await acknowledgeCsrNames({ workspaceId, workflowId: workflow.id, actorUserId: userId });
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.confirmationMethod, null);
+      const promoted = await pool.query(
+        "SELECT id, status, fingerprint_sha256, token_id FROM managed_certificates WHERE id = $1",
+        [completed.managedCertificateId],
+      );
+      assert.equal(promoted.rows[0].status, "active");
+      assert.equal(promoted.rows[0].fingerprint_sha256, parsed.fingerprintSha256);
+      assert.equal(observed.rows[0].managed_certificate_id, promoted.rows[0].id);
+      assert.ok(promoted.rows[0].token_id);
+    } finally {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 
   it("rejects private PEM before creating a workflow or target", async () => {
