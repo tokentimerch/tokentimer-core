@@ -23,14 +23,15 @@ describe("operational notifications migration", () => {
       migrations.find((entry) => entry.version === 58).name,
       "repair_certops_observation_locality_history",
     );
-    assert.equal(migrations.at(-1).version, 59);
     assert.equal(
-      migrations.at(-1).name,
+      migrations.find((entry) => entry.version === 59).name,
       "repair_partial_pr72_migration_history",
     );
+    assert.equal(migrations.at(-1).version, 60);
+    assert.equal(migrations.at(-1).name, "certops_public_csr_workflows");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 59 }, (_, index) => index + 1),
+      Array.from({ length: 60 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,

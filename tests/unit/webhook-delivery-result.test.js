@@ -81,3 +81,66 @@ it("returns a safe error for HTTP failure, refusal, and timeout", async () => {
     }
   }
 });
+
+it("keeps PagerDuty response bodies out of failed delivery results", async () => {
+  const keys = [
+    "NODE_ENV",
+    "WEBHOOK_ALLOW_PRIVATE_IPS",
+    "WEBHOOK_EXTRA_PROVIDER_HOSTS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+  ];
+  const previous = Object.fromEntries(
+    keys.map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, {
+    NODE_ENV: "development",
+    WEBHOOK_ALLOW_PRIVATE_IPS: "true",
+    WEBHOOK_EXTRA_PROVIDER_HOSTS: "127.0.0.1",
+    HTTP_PROXY: "",
+    HTTPS_PROXY: "",
+    NO_PROXY: "127.0.0.1,localhost",
+  });
+  const secret = "provider-response-secret";
+  const server = http.createServer((request, response) => {
+    if (request.url === "/success") {
+      response.setHeader("Content-Type", "application/json");
+      response.writeHead(200);
+      response.end('{"status":"success"}');
+    } else if (request.url === "/plain") {
+      response.setHeader("Content-Type", "text/plain");
+      response.writeHead(503);
+      response.end(secret);
+    } else {
+      response.setHeader("Content-Type", "application/json");
+      response.writeHead(503);
+      response.end(JSON.stringify({ status: "error", detail: secret }));
+    }
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { postJson } =
+      await import("../../apps/worker/src/notify/webhooks.js");
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const failed = await postJson(`${base}/failure`, {}, "pagerduty");
+    assert.deepEqual(failed, {
+      success: false,
+      status: 503,
+      error: "PagerDuty responded HTTP 503",
+    });
+    assert.doesNotMatch(JSON.stringify(failed), /provider-response-secret/);
+    const plainFailed = await postJson(`${base}/plain`, {}, "pagerduty");
+    assert.deepEqual(plainFailed, failed);
+    assert.deepEqual(await postJson(`${base}/success`, {}, "pagerduty"), {
+      success: true,
+      status: 200,
+    });
+  } finally {
+    if (server.listening) await new Promise((resolve) => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

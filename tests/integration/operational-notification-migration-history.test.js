@@ -99,9 +99,10 @@ describe("operational notification migration history repair", function () {
         "SELECT version, name FROM migrations ORDER BY version",
       );
       expect(ledger.rows).to.have.length(migrations.length);
-      expect(ledger.rows.at(-1).name).to.equal(
+      expect(ledger.rows.find((row) => row.version === 59).name).to.equal(
         "repair_partial_pr72_migration_history",
       );
+      expect(ledger.rows.at(-1).version).to.equal(migrations.at(-1).version);
       const laterIndex = await client.query(`SELECT indexdef FROM pg_indexes
         WHERE indexname = 'uq_certops_trust_anchor_installations_identity'`);
       expect(laterIndex.rows[0].indexdef).to.include("agent_id");
@@ -173,7 +174,7 @@ describe("operational notification migration history repair", function () {
       expect(ledger.rows.find((row) => row.version === 45).name).to.equal(
         "certops_trust_anchor_jobs",
       );
-      expect(ledger.rows.at(-1).version).to.equal(59);
+      expect(ledger.rows.at(-1).version).to.equal(migrations.at(-1).version);
       for (const [tableName, columnName] of [
         ["certificate_targets", "location_kind"],
         ["certificate_instances", "location_kind"],
@@ -263,7 +264,7 @@ describe("operational notification migration history repair", function () {
           "SELECT version, name FROM migrations ORDER BY version",
         );
         expect(ledger.rows).to.have.length(migrations.length);
-        expect(ledger.rows.at(-1).version).to.equal(59);
+        expect(ledger.rows.at(-1).version).to.equal(migrations.at(-1).version);
         expect(
           ledger.rows.find((row) => row.version === prefixEnd).name,
         ).to.equal(

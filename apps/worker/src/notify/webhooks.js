@@ -134,7 +134,7 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       try {
         data = JSON.parse(result.bodyText || "{}");
       } catch (_err) {
-        logger.debug("Parse failed", { error: _err.message });
+        logger.debug("PagerDuty response was not JSON");
       }
       const ok =
         result.status >= 200 &&
@@ -145,7 +145,8 @@ export async function postJson(webhookUrl, body, kind = "generic") {
         ? { success: true, status: result.status }
         : {
             success: false,
-            error: `PagerDuty responded ${result.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
+            status: result.status,
+            error: `PagerDuty responded HTTP ${result.status}`,
           };
     }
     const success = result.status >= 200 && result.status < 300;
