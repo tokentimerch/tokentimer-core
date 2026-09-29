@@ -915,7 +915,7 @@ export default function CertOpsCertificates() {
           scrollBehavior='inside'
         >
           <ModalOverlay />
-          <ModalContent>
+          <ModalContent my={0} maxH='calc(100dvh - 4rem)' overflow='hidden'>
             <ModalHeader>Public CSR workflows</ModalHeader>
             <ModalCloseButton />
             <ModalBody pb={6}>

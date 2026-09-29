@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-17 against main `fe1cfb82` (0.16.1 release).
+Last reviewed: 2026-09-29 for the 0.17.0 release candidate.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -9,10 +9,10 @@ live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadm
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
 criteria, and evidence live in the linked GitHub issues.
 
-**Now** is the next release-candidate scope. **Before v1.0.0** is 0.x work
-asked by pilot operators; it is a prerequisite for calling v1.0.0 stable,
-not a substitute for the RBAC contract below. **v1.0.0** is the
-compatibility-stable major: explicit ownership plus compatible upgrades.
+**Before v1.0.0** is 0.x work asked by pilot operators; it is a prerequisite
+for calling v1.0.0 stable, not a substitute for the RBAC contract below.
+**v1.0.0** is the compatibility-stable major: explicit ownership plus
+compatible upgrades.
 Review this page in each release PR; move shipped outcomes into the
 changelog.
 
@@ -23,17 +23,6 @@ trust-anchor reconciliation have shipped; see [CHANGELOG.md](CHANGELOG.md)
 and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0.
 Airgap operator packages, proxy-agents, appliance connectors, and
 compliance reporting are not deliverables of this repository.
-
----
-
-## Now -- next release candidate
-
-- **Make existing CI quality gates dependable**
-  ([#227](https://github.com/tokentimerch/tokentimer-core/issues/227)).
-  No contributor PR-triggered Actions. Tighten the existing
-  push/dispatch pipeline. Post-merge CI is not a pre-merge gate;
-  document how maintainers verify before merge, and require successful
-  CI on the release commit before publishing.
 
 ---
 
@@ -51,9 +40,6 @@ called stable while they are open.
 - **Optional notification for already-expired imports**
   ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231)).
   Quiet historical imports remain the default.
-- **CertOps CSR import and signed-certificate import**
-  ([#245](https://github.com/tokentimerch/tokentimer-core/issues/245)).
-  Public CSR/PEM and metadata only. Private-key packages stay rejected.
 - **CertOps destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
   Name filesystem, IIS, or customer Vault locations on a certificate.

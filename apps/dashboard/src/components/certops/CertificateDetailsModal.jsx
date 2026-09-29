@@ -955,7 +955,6 @@ export default function CertificateDetailsModal({
                       {certificate.sourceRef ? (
                         <CopyableId
                           id={certificate.sourceRef}
-                          label='Reference'
                           size='xs'
                           color='dashboard.modal.text'
                         />
