@@ -16,7 +16,7 @@
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
-const crypto = require("node:crypto");
+const { execFileSync } = require("node:child_process");
 
 const { expect } = require("./setup");
 const {
@@ -101,31 +101,30 @@ function makeTempDir(label) {
   return dir;
 }
 
-// Runtime-generated certificate-shaped PEM. Never a committed fixture: the
-// body is a fresh Ed25519 PUBLIC key DER (real, valid base64 DER bytes, no
-// key custody risk) wrapped in CERTIFICATE markers. Both the deploy module
-// (opaque public payload) and computeCertificateFingerprint (base64 DER
-// digest) accept it without parsing X.509 internals.
-function generateRuntimeCertificatePem() {
-  const { publicKey } = crypto.generateKeyPairSync("ed25519");
-  const der = publicKey.export({ type: "spki", format: "der" });
-  const body = der.toString("base64").replace(/(.{64})/g, "$1\n").trim();
-  return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----\n`;
-}
-
-// Fake certbot: an execFile-shaped stub that writes `certificatePem` to the
-// path following --cert-path in the argv and exits 0. Anything else about
-// the argv is recorded for assertions.
-function makeFakeCertbotExecFile(certificatePem, recordedInvocations) {
+// Fake certbot signs the agent's runtime CSR with its local key. This keeps
+// the certificate parseable and tied to the key without exporting either.
+function makeFakeCertbotExecFile(keysDir, issuance, recordedInvocations) {
   return (file, args, _options, callback) => {
     recordedInvocations.push({ file, args: [...args] });
     const flagIndex = args.indexOf("--cert-path");
-    if (flagIndex === -1 || flagIndex + 1 >= args.length) {
-      callback(new Error("fake certbot: no --cert-path in argv"), "", "");
+    const csrIndex = args.indexOf("--csr");
+    if (flagIndex === -1 || flagIndex + 1 >= args.length || csrIndex === -1) {
+      callback(new Error("fake certbot: missing certificate or CSR path"), "", "");
       return;
     }
-    fs.writeFileSync(args[flagIndex + 1], certificatePem, "utf8");
-    callback(null, "fake certbot: certificate issued\n", "");
+    try {
+      const keyName = fs.readdirSync(keysDir).find((name) => name.endsWith(".key.pem"));
+      if (!keyName) throw new Error("fake certbot: local key missing");
+      execFileSync("openssl", [
+        "x509", "-req", "-in", args[csrIndex + 1],
+        "-signkey", path.join(keysDir, keyName),
+        "-out", args[flagIndex + 1], "-days", "30", "-copy_extensions", "copy",
+      ], { stdio: "pipe" });
+      issuance.certificatePem = fs.readFileSync(args[flagIndex + 1], "utf8");
+      callback(null, "fake certbot: certificate issued\n", "");
+    } catch (error) {
+      callback(error, "", "");
+    }
   };
 }
 
@@ -134,6 +133,13 @@ function makeFakeCertbotExecFile(certificatePem, recordedInvocations) {
 // message the harness records (and the custody assertion can inspect).
 function makeHarnessBackedClient(agent) {
   return {
+    renewLease: async ({ jobId, claimId }) => ({
+      ok: true,
+      status: "running",
+      jobId,
+      claimId,
+      leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
     reportResult: async ({ jobId, attemptId, status, rejectionReason, keyRotated, errorMessage }) => {
       const response = await agent.reportResult({
         jobId,
@@ -200,7 +206,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       { declaredTargetSelectors: ["renewal.example.com"] },
     );
 
-    const certificatePem = generateRuntimeCertificatePem();
+    const issuance = { certificatePem: null };
     const acmeInvocations = [];
     const executionContext = buildExecutionContext({
       config: {
@@ -208,16 +214,19 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
           enabled: true,
           dryRun,
           keysDir,
+          outboxDir: path.join(workDir, "outbox"),
           replayStorePath: path.join(workDir, "replay-store.json"),
           clockDriftToleranceMs: 30000,
         },
         pinnedSigningKey,
       },
-      acmeExecFileImpl: makeFakeCertbotExecFile(certificatePem, acmeInvocations),
+      acmeExecFileImpl: makeFakeCertbotExecFile(keysDir, issuance, acmeInvocations),
     });
 
     app.dispatchSignedJob({
+      agentId: agent.agentId,
       action: "renew",
+      mode: dryRun ? "dry_run" : "real",
       target: { type: "domain", reference: "renewal.example.com" },
       commandRef: "certbot-renew",
       caEndpoint,
@@ -236,7 +245,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       policyEngine,
       executionContext,
       client: makeHarnessBackedClient(agent),
-      certificatePem,
+      issuance,
       acmeInvocations,
       keysDir,
       deployDir,
@@ -257,7 +266,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       boundAgentId: world.agent.agentId,
       log: silentLog,
     });
-    expect(outcome.status).to.equal("succeeded");
+    expect(outcome.status, JSON.stringify({ outcome, results: world.app.state.results })).to.equal("succeeded");
 
     // Terminal result: succeeded, keyRotated true (no pre-existing key, so
     // a new one was generated on this first renewal).
@@ -270,7 +279,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
     // Deployed file exists with exactly the PEM the fake certbot issued.
     expect(fs.existsSync(world.certPath)).to.equal(true);
     expect(fs.readFileSync(world.certPath, "utf8")).to.equal(
-      world.certificatePem,
+      world.issuance.certificatePem,
     );
 
     // The private key stayed local, under keysDir, and never left.
@@ -359,7 +368,7 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
     }
   });
 
-  it("dry-run renew reports a plan and succeeds with zero side effects", async () => {
+  it("dry-run renew reports a plan and completes with zero side effects", async () => {
     const world = await setupRenewalWorld({ dryRun: true });
 
     const outcome = await handleClaimedJob({
@@ -370,11 +379,11 @@ describe("agent renewal execution (signed dispatch, end to end)", function () {
       boundAgentId: world.agent.agentId,
       log: silentLog,
     });
-    expect(outcome.status).to.equal("succeeded");
+    expect(outcome.status, JSON.stringify({ outcome, results: world.app.state.results })).to.equal("dry_run_complete");
 
     const results = world.app.state.results;
     expect(results).to.have.length(1);
-    expect(results[0].body.status).to.equal("succeeded");
+    expect(results[0].body.status).to.equal("dry_run_complete");
     // No key was generated or rotated in a dry run.
     expect(results[0].body.keyRotated).to.equal(null);
 

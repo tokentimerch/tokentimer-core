@@ -13,10 +13,8 @@
 //
 // validateStartupConfig() runs synchronously before any database code
 // (main()'s waitForDatabase() call), so these assertions never require a
-// live Postgres: a failing case exits within a second or two, and a passing
-// case is asserted by "still running after a few seconds, no CertOps fatal
-// logged" rather than waiting for a full app.listen() (which would need a
-// real DB connection this test intentionally does not stand up).
+// live Postgres. Failing cases must exit with the expected error; passing
+// cases must reach the first database connection attempt without that error.
 const path = require("path");
 const { spawn } = require("child_process");
 const { expect } = require("chai");
@@ -24,7 +22,8 @@ const { expect } = require("chai");
 const VALID_KEY_A = "a".repeat(64);
 const VALID_KEY_B = "b".repeat(64);
 
-const SURVIVAL_WINDOW_MS = 3000;
+const STARTUP_WINDOW_MS = 120000;
+const DATABASE_STARTUP_MARKER = /Database connection attempt/;
 
 function spawnApi(envOverrides = {}) {
   const mergedEnv = { ...process.env, ...envOverrides };
@@ -38,30 +37,38 @@ function spawnApi(envOverrides = {}) {
   });
 }
 
-// Resolves once the child either exits or survives the window without
-// exiting - whichever happens first - collecting stdout/stderr either way.
-function observe(child, windowMs) {
+// Resolve on exit, the post-validation database marker, or a bounded timeout.
+function observe(child, windowMs, readyPattern = null) {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    let timer;
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      if (!settled && readyPattern?.test(stdout)) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ exited: false, ready: true, exitCode: null, stdout: () => stdout, stderr: () => stderr });
+      }
+    });
     child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
     child.once("exit", (code) => {
       if (settled) return;
       settled = true;
-      resolve({ exited: true, exitCode: code, stdout: () => stdout, stderr: () => stderr });
+      clearTimeout(timer);
+      resolve({ exited: true, ready: false, exitCode: code, stdout: () => stdout, stderr: () => stderr });
     });
-    setTimeout(() => {
+    timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      resolve({ exited: false, exitCode: null, stdout: () => stdout, stderr: () => stderr });
+      resolve({ exited: false, ready: false, exitCode: null, stdout: () => stdout, stderr: () => stderr });
     }, windowMs);
   });
 }
 
 describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_REGISTRATION_ENCRYPTION_KEY", function () {
-  this.timeout(20000);
+  this.timeout(130000);
 
   const PROD_BASE_ENV = {
     NODE_ENV: "production",
@@ -76,7 +83,7 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         CERTOPS_SIGNING_ENCRYPTION_KEY: "",
         CERTOPS_REGISTRATION_ENCRYPTION_KEY: "",
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS);
       if (!result.exited) child.kill();
       expect(result.exited).to.equal(true);
       expect(result.exitCode).to.not.equal(0);
@@ -91,7 +98,7 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         CERTOPS_SIGNING_ENCRYPTION_KEY: "not-hex-and-way-too-short",
         CERTOPS_REGISTRATION_ENCRYPTION_KEY: VALID_KEY_B,
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS);
       if (!result.exited) child.kill();
       expect(result.exited).to.equal(true);
       expect(result.exitCode).to.not.equal(0);
@@ -107,7 +114,7 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         // 64 characters long, but "g" is not a hex digit.
         CERTOPS_REGISTRATION_ENCRYPTION_KEY: "g".repeat(64),
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS);
       if (!result.exited) child.kill();
       expect(result.exited).to.equal(true);
       expect(result.exitCode).to.not.equal(0);
@@ -125,10 +132,10 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         // before waitForDatabase(), not a fast real DB connection.
         DB_HOST: "192.0.2.1",
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS, DATABASE_STARTUP_MARKER);
       child.kill();
       expect(result.stdout()).to.not.match(/Startup configuration error/);
-      expect(result.exited).to.equal(false);
+      expect(result.ready).to.equal(true);
     });
   });
 
@@ -141,10 +148,10 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         CERTOPS_REGISTRATION_ENCRYPTION_KEY: "",
         DB_HOST: "192.0.2.1",
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS, DATABASE_STARTUP_MARKER);
       child.kill();
       expect(result.stdout()).to.not.match(/Startup configuration error/);
-      expect(result.exited).to.equal(false);
+      expect(result.ready).to.equal(true);
     });
   });
 
@@ -158,10 +165,10 @@ describe("CertOps startup validation: CERTOPS_SIGNING_ENCRYPTION_KEY / CERTOPS_R
         CERTOPS_REGISTRATION_ENCRYPTION_KEY: "",
         DB_HOST: "192.0.2.1",
       });
-      const result = await observe(child, SURVIVAL_WINDOW_MS);
+      const result = await observe(child, STARTUP_WINDOW_MS, DATABASE_STARTUP_MARKER);
       child.kill();
       expect(result.stdout()).to.not.match(/Startup configuration error/);
-      expect(result.exited).to.equal(false);
+      expect(result.ready).to.equal(true);
     });
   });
 });

@@ -72,6 +72,7 @@ describe("fake-agent harness self-test", function () {
         envelopeFor("evidence", {
           evidenceItems: [
             {
+              evidenceId: "evidence-envelope-1",
               eventType: "certificate.observed",
               observedAt: new Date().toISOString(),
             },
@@ -163,6 +164,7 @@ describe("fake-agent harness self-test", function () {
         jobId: "job-abc",
         evidenceItems: [
           {
+            evidenceId: "evidence-report-1",
             eventType: "validation.failed",
             observedAt: new Date().toISOString(),
             summary: "Target out of declared scope",

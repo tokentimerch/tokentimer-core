@@ -101,7 +101,7 @@ function createIdentityStore() {
   // Emulate the retire-first status CASE only when the query text actually contains it,
   // so tests exercise the production SQL rather than mock behavior.
   function sqlPreservesRetiredStatus(normalizedSql) {
-    return /status = CASE\s+WHEN managed_certificates\.status IN \('revoked', 'decommissioned'\)\s+THEN managed_certificates\.status\s+ELSE .+? END/.test(
+    return /status = CASE\s+WHEN managed_certificates\.status IN \('revoked', 'decommissioned'\)\s+THEN managed_certificates\.status\b/.test(
       normalizedSql,
     );
   }
@@ -110,6 +110,12 @@ function createIdentityStore() {
     if (
       sqlPreservesRetiredStatus(normalizedSql) &&
       isRetiredStatus(currentStatus)
+    ) {
+      return currentStatus;
+    }
+    if (
+      currentStatus === "active" &&
+      /WHEN managed_certificates\.status = 'active' THEN 'active'/.test(normalizedSql)
     ) {
       return currentStatus;
     }
@@ -122,6 +128,12 @@ function createIdentityStore() {
       const normalized = sql.replace(/\s+/g, " ").trim();
 
       if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
+        return { rows: [] };
+      }
+
+      // These monitor-only fixtures have no operator CSR workflows. Preserve
+      // the new lookup so ordinary observations still exercise the bridge.
+      if (normalized.includes("FROM certificate_csr_workflows")) {
         return { rows: [] };
       }
 

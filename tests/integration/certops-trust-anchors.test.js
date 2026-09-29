@@ -3457,6 +3457,7 @@ describe("CertOps trust-anchor orchestration (real database, ADR-0012 decision 2
             "lastAttemptAt",
             "lastError",
             "nextReconcileAt",
+            "pendingReason",
             "publicMetadata",
             "createdAt",
             "updatedAt",
