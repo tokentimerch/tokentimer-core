@@ -6,6 +6,12 @@ import {
   Flex,
   HStack,
   IconButton,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalHeader,
+  ModalOverlay,
   Select,
   Table,
   TableContainer,
@@ -28,6 +34,7 @@ import RetireCertificateModal from '../../components/certops/RetireCertificateMo
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
 import CertificateTokenDetailModal from '../../components/certops/CertificateTokenDetailModal.jsx';
+import CsrWorkflowPanel from '../../components/certops/CsrWorkflowPanel.jsx';
 import {
   listCertificates,
   retireCertificate,
@@ -291,6 +298,19 @@ export default function CertOpsCertificates() {
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
+  const [csrCertificateId, setCsrCertificateId] = useState(() =>
+    new URLSearchParams(window.location.search).get('csrCertificateId')
+  );
+  const [csrModalOpen, setCsrModalOpen] = useState(() =>
+    Boolean(new URLSearchParams(window.location.search).get('csrCertificateId'))
+  );
+  const closeCsrModal = () => {
+    setCsrModalOpen(false);
+    setCsrCertificateId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('csrCertificateId');
+    window.history.replaceState(window.history.state, '', url);
+  };
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);
   const handleSort = key => {
@@ -365,13 +385,19 @@ export default function CertOpsCertificates() {
         title='Certificates'
         description='Managed certificate inventory for this workspace'
         action={
-          <DashboardActionButton
-            variant='outline'
-            onClick={refresh}
-            isLoading={loading}
-          >
-            Refresh
-          </DashboardActionButton>
+          <HStack>
+            {canManage ? <DashboardActionButton onClick={() => {
+              setCsrCertificateId(null);
+              setCsrModalOpen(true);
+            }}>CSR workflows</DashboardActionButton> : null}
+            <DashboardActionButton
+              variant='outline'
+              onClick={refresh}
+              isLoading={loading}
+            >
+              Refresh
+            </DashboardActionButton>
+          </HStack>
         }
       />
 
@@ -747,6 +773,12 @@ export default function CertOpsCertificates() {
                             </Tooltip>
                             {!retired ? (
                               <>
+                                <Button size='sm' variant='ghost' onClick={() => {
+                                  setCsrCertificateId(certificate.id);
+                                  setCsrModalOpen(true);
+                                }}>
+                                  New CSR
+                                </Button>
                                 {certificate.renewal?.profileId ? (
                                   <Tooltip label='Detach renewal profile'>
                                     <IconButton
@@ -865,6 +897,24 @@ export default function CertOpsCertificates() {
         tokenId={detailsTarget?.tokenId}
         canManage={canManage}
       />
+      {canManage ? <Modal isOpen={csrModalOpen} onClose={closeCsrModal} size='3xl' scrollBehavior='inside'>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Public CSR workflows</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            {csrCertificateId ? <Button size='sm' mb={3} onClick={() => setCsrCertificateId(null)}>
+              Start a new certificate CSR
+            </Button> : null}
+            <CsrWorkflowPanel
+              key={csrCertificateId || 'new'}
+              workspaceId={workspaceId}
+              existingCertificateId={csrCertificateId}
+              onChanged={refresh}
+            />
+          </ModalBody>
+        </ModalContent>
+      </Modal> : null}
     </DashboardPanel>
   );
 }

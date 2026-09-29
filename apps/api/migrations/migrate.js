@@ -3824,6 +3824,59 @@ const migrations = [
         WHERE action = 'ALERT_SENT' AND target_type = 'token';
     `,
   },
+  {
+    version: 56,
+    name: "certops_public_csr_workflows",
+    sql: `
+      CREATE TABLE IF NOT EXISTS certificate_csr_workflows (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        target_id UUID NOT NULL,
+        existing_certificate_id UUID NULL,
+        managed_certificate_id UUID NULL,
+        csr_der_sha256 TEXT NOT NULL CHECK (csr_der_sha256 ~ '^[a-f0-9]{64}$'),
+        spki_fingerprint_sha256 TEXT NOT NULL CHECK (spki_fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        csr_pem TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        requested_names TEXT[] NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'pending_signature'
+          CHECK (status IN ('pending_signature', 'signed_pending_install', 'completed', 'cancelled')),
+        signed_leaf_pem TEXT NULL,
+        signed_chain_pem TEXT NULL,
+        signed_fingerprint_sha256 TEXT NULL,
+        issued_names TEXT[] NOT NULL DEFAULT '{}',
+        name_additions TEXT[] NOT NULL DEFAULT '{}',
+        name_omissions TEXT[] NOT NULL DEFAULT '{}',
+        names_acknowledged_at TIMESTAMPTZ NULL,
+        names_acknowledged_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        observed_instance_id UUID NULL REFERENCES certificate_instances(id) ON DELETE SET NULL,
+        identity_conflict_at TIMESTAMPTZ NULL,
+        identity_conflict_instance_id UUID NULL REFERENCES certificate_instances(id) ON DELETE SET NULL,
+        identity_conflict_certificate_id UUID NULL REFERENCES managed_certificates(id) ON DELETE SET NULL,
+        confirmed_at TIMESTAMPTZ NULL,
+        confirmed_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        confirmation_method TEXT NULL CHECK (confirmation_method = 'manual'),
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_csr_target FOREIGN KEY (workspace_id, target_id)
+          REFERENCES certificate_targets(workspace_id, id),
+        CONSTRAINT fk_csr_existing_certificate FOREIGN KEY (workspace_id, existing_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id),
+        CONSTRAINT fk_csr_managed_certificate FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id),
+        CONSTRAINT uq_csr_workspace_target_der UNIQUE (workspace_id, target_id, csr_der_sha256)
+      );
+      CREATE INDEX IF NOT EXISTS idx_csr_workflows_workspace_status
+        ON certificate_csr_workflows(workspace_id, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_csr_workflows_pending_observation
+        ON certificate_csr_workflows(workspace_id, target_id, signed_fingerprint_sha256)
+        WHERE status = 'signed_pending_install';
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_csr_created_target_identity
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'api' AND source_ref LIKE 'csr-target:%';
+    `,
+  },
 ];
 
 async function runMigrations() {

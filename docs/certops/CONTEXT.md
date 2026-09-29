@@ -92,6 +92,25 @@ the shared detector scans every outbound envelope.
   `packages/contracts/certops/certops-inventory.schema.json`).
 - **Certificate instance** - a deployed copy of a managed certificate on a
   target.
+- **Operator CSR workflow** - a workspace and target scoped record for a public
+  PKCS#10 request, its signed public certificate, name review, and installation
+  evidence. Its states are `pending_signature`, `signed_pending_install`,
+  `completed`, and `cancelled`. The CSR DER digest is the idempotency identity
+  within a target; the SPKI digest verifies the returned leaf's public key.
+  Importing a signed leaf does not assert deployment or change an existing
+  certificate's active material. A real matching observation always updates
+  `certificate_instances`, even when name changes await manager acknowledgement;
+  only promotion waits. Manual installation confirmation is an audited
+  attestation on the workflow (`confirmed_at`, `confirmed_by`, `manual`) and
+  never creates an observed instance. New identities use `provisioning` until
+  promotion. A retired fingerprint and an A-to-B identity collision are
+  conflicts, not opportunities to reactivate or rebind certificate identity.
+  If an observer creates identity B after a workflow was signed for existing
+  identity A, the real B-owned instance remains in deployment history and the
+  workflow records an identity conflict while staying `signed_pending_install`.
+  Name acknowledgement can still be recorded, but neither that acknowledgement
+  nor manual confirmation promotes A from B's instance. An operator must
+  reconcile the two managed identities explicitly or cancel the workflow.
 - **Target** - a place a certificate is deployed (host, path, k8s secret ref).
 - **Agent** - the execution-plane process that performs key-bearing work.
 - **Proxy-agent** - an agent acting on behalf of targets it can reach.

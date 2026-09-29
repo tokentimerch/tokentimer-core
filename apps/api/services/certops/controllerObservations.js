@@ -14,6 +14,7 @@ const {
   upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { createControllerObservationEvidence } = require("./evidence");
+const { recordCsrObservation } = require("./csrWorkflow");
 const {
   MAX_PUBLIC_PEM_BYTES,
   MAX_PUBLIC_SAN_ENTRIES,
@@ -735,6 +736,14 @@ async function persistControllerObservation({
     const instance = target
       ? await upsertControllerInstance(client, observation, certificate, managedCertificate, target)
       : null;
+    if (instance) {
+      await recordCsrObservation(client, {
+        workspaceId: observation.workspaceId,
+        targetId: target.id,
+        fingerprintSha256: certificate.fingerprintSha256,
+        instanceId: instance.id,
+      });
+    }
     const statusSummary = publicStatusSummary(observation, redaction);
     await createControllerObservationEvidence({
       client,

@@ -29,6 +29,7 @@ const {
   findManagedCertificateByDeployedPath,
 } = require("./inventory");
 const { createControllerObservationEvidence, createCertificateEvidence } = require("./evidence");
+const { recordCsrObservation } = require("./csrWorkflow");
 const {
   enforceAgentSequence,
   assertEvidenceClaimOwnership,
@@ -776,6 +777,15 @@ async function upsertInventoryForObservation(client, observation) {
       observedAtServer: observation.observedAtServer,
     },
   });
+
+  if (instance) {
+    await recordCsrObservation(client, {
+      workspaceId: observation.workspaceId,
+      targetId: target.id,
+      fingerprintSha256: observation.fingerprintSha256,
+      instanceId: instance.id,
+    });
+  }
 
   return { managedCertificate, target, instance };
 }

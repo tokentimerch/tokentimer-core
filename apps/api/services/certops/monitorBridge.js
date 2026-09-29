@@ -7,6 +7,7 @@ const {
   upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { isCertOpsEnabled } = require("./settings");
+const { recordCsrObservation } = require("./csrWorkflow");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const {
   assertSafeHostname,
@@ -599,6 +600,15 @@ async function bridgeEndpointCertificateObservation(options = {}) {
       target,
       options,
     );
+
+    if (instance) {
+      await recordCsrObservation(client, {
+        workspaceId: options.workspaceId,
+        targetId: target.id,
+        fingerprintSha256: certificate.fingerprintSha256,
+        instanceId: instance.id,
+      });
+    }
 
     return {
       skipped: false,

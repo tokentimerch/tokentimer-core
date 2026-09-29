@@ -198,6 +198,45 @@ export async function importCertificateMaterial(
   return { result, items, existingCount, newCount };
 }
 
+export async function listCsrWorkflows(workspaceId) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/csrs`);
+  return res.data;
+}
+
+export async function getCsrWorkflow(workspaceId, csrId) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}`);
+  return res.data;
+}
+
+export async function createCsrWorkflow(workspaceId, payload) {
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs`, payload);
+  return res.data;
+}
+
+export async function importCsrSignedCertificate(workspaceId, csrId, certificatePem) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/signed-certificate`,
+    { certificatePem }
+  );
+  return res.data;
+}
+
+export async function acknowledgeCsrNames(workspaceId, csrId) {
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/acknowledge-names`, {});
+  return res.data;
+}
+
+export async function confirmCsrInstallation(workspaceId, csrId) {
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/confirm-installation`, {});
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+export async function cancelCsrWorkflow(workspaceId, csrId) {
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/csrs/${encodeURIComponent(csrId)}/cancel`, {});
+  return res.data;
+}
+
 /**
  * Retire a managed certificate (soft lifecycle transition, not a row delete).
  *

@@ -44,6 +44,15 @@ const {
 } = require("../services/certops/inventory");
 const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
+  acknowledgeCsrNames,
+  cancelCsrWorkflow,
+  confirmCsrInstallation,
+  createCsrWorkflow,
+  getCsrWorkflow,
+  importSignedCertificate,
+  listCsrWorkflows,
+} = require("../services/certops/csrWorkflow");
+const {
   CERTOPS_API_TOKEN_INVALID,
   CERTOPS_API_TOKEN_NAME_INVALID,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
@@ -3851,6 +3860,83 @@ router.post(
   requireCertOpsEnabled,
   requireCertOpsWriteRole,
   (req, res) => importCertificatesHandler(req, res, "import", 202),
+);
+
+function csrRoute(work) {
+  return async (req, res) => {
+    try {
+      const result = await work(req);
+      return res.status(result?.statusCode || 200).json(result?.body ?? result);
+    } catch (err) {
+      if (err?.status && err?.code) {
+        return res.status(err.status).json({ error: err.message, code: err.code });
+      }
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps CSR workflow failed", {
+        code: err.code || null,
+        error_name: err.name || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({ error: "CSR workflow failed", code: "INTERNAL_ERROR" });
+    }
+  };
+}
+
+const csrReadGuards = [getApiLimiter(), requireCertOpsEnabled, requireCertOpsWriteRole];
+const csrWriteGuards = [getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole];
+
+router.get(
+  "/api/v1/workspaces/:id/certops/csrs",
+  ...csrReadGuards,
+  csrRoute((req) => listCsrWorkflows({ workspaceId: req.workspace.id, limit: req.query.limit, offset: req.query.offset })),
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/csrs",
+  ...csrWriteGuards,
+  csrRoute(async (req) => ({ statusCode: 201, body: await createCsrWorkflow({
+    workspaceId: req.workspace.id,
+    actorUserId: req.user?.id,
+    csrPem: req.body?.csrPem,
+    targetId: req.body?.targetId,
+    target: req.body?.target,
+    existingCertificateId: req.body?.existingCertificateId,
+  }) })),
+);
+router.get(
+  "/api/v1/workspaces/:id/certops/csrs/:csrId",
+  ...csrReadGuards,
+  csrRoute((req) => getCsrWorkflow({ workspaceId: req.workspace.id, workflowId: req.params.csrId })),
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/csrs/:csrId/signed-certificate",
+  ...csrWriteGuards,
+  csrRoute((req) => importSignedCertificate({
+    workspaceId: req.workspace.id, workflowId: req.params.csrId,
+    actorUserId: req.user?.id, certificatePem: req.body?.certificatePem,
+  })),
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/csrs/:csrId/acknowledge-names",
+  ...csrWriteGuards,
+  csrRoute((req) => acknowledgeCsrNames({
+    workspaceId: req.workspace.id, workflowId: req.params.csrId, actorUserId: req.user?.id,
+  })),
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/csrs/:csrId/confirm-installation",
+  ...csrWriteGuards,
+  csrRoute((req) => confirmCsrInstallation({
+    workspaceId: req.workspace.id, workflowId: req.params.csrId, actorUserId: req.user?.id,
+  })),
+);
+router.post(
+  "/api/v1/workspaces/:id/certops/csrs/:csrId/cancel",
+  ...csrWriteGuards,
+  csrRoute((req) => cancelCsrWorkflow({
+    workspaceId: req.workspace.id, workflowId: req.params.csrId, actorUserId: req.user?.id,
+  })),
 );
 
 module.exports = router;

@@ -4299,6 +4299,139 @@ paths:
                 code: NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/csrs:
+    get:
+      tags: [CertOps]
+      summary: List public CSR workflows
+      operationId: listCertOpsCsrs
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Workspace CSR workflows without PEM material
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+                  pagination: { type: object }
+    post:
+      tags: [CertOps]
+      summary: Import one signed public CSR
+      operationId: createCertOpsCsr
+      description: Manager scoped. JSON PEM transport; the complete body is rejected when it contains private key material.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csrPem]
+              properties:
+                csrPem: { type: string, description: One CERTIFICATE REQUEST PEM block, at most 64 KB }
+                targetId: { type: string, format: uuid }
+                target:
+                  type: object
+                  required: [name, type]
+                  properties:
+                    name: { type: string, maxLength: 120 }
+                    type: { type: string, enum: [host, load-balancer, appliance, other] }
+                existingCertificateId: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Public CSR workflow, including exportable CSR PEM
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+        "409": { description: CSR target or certificate identity conflict }
+        "422": { description: Private key material rejected }
+  /api/v1/workspaces/{id}/certops/csrs/{csrId}:
+    get:
+      tags: [CertOps]
+      summary: Read and export a public CSR workflow
+      operationId: getCertOpsCsr
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/csrIdParam"
+      responses:
+        "200":
+          description: Public CSR and signed material; export fails closed on detected private material
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+  /api/v1/workspaces/{id}/certops/csrs/{csrId}/signed-certificate:
+    post:
+      tags: [CertOps]
+      summary: Import CA-signed public leaf and optional chain
+      operationId: importCertOpsCsrCertificate
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/csrIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [certificatePem]
+              properties:
+                certificatePem: { type: string, description: Public leaf PEM followed by optional public chain }
+      responses:
+        "200":
+          description: Signed CSR awaiting installation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+        "409": { description: Retired fingerprint or managed certificate identity conflict }
+        "422": { description: Public key mismatch or private material rejected }
+  /api/v1/workspaces/{id}/certops/csrs/{csrId}/acknowledge-names:
+    post:
+      tags: [CertOps]
+      summary: Acknowledge requested versus issued name changes
+      operationId: acknowledgeCertOpsCsrNames
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/csrIdParam"
+      responses:
+        "200":
+          description: Name review recorded; an existing matching observation may complete the workflow
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+  /api/v1/workspaces/{id}/certops/csrs/{csrId}/confirm-installation:
+    post:
+      tags: [CertOps]
+      summary: Manually attest installation without creating an observation
+      operationId: confirmCertOpsCsrInstallation
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/csrIdParam"
+      responses:
+        "200":
+          description: Completed workflow with manager attestation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
+        "409": { description: Name changes still require acknowledgement }
+  /api/v1/workspaces/{id}/certops/csrs/{csrId}/cancel:
+    post:
+      tags: [CertOps]
+      summary: Cancel a pending CSR workflow
+      operationId: cancelCertOpsCsr
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/csrIdParam"
+      responses:
+        "200":
+          description: Cancelled workflow
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsCsrWorkflow" }
   /api/v1/workspaces/{id}/certops/imports:
     post:
       tags: [CertOps]
@@ -6816,6 +6949,13 @@ components:
       scheme: bearer
       description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
   parameters:
+    csrIdParam:
+      in: path
+      name: csrId
+      required: true
+      schema:
+        type: string
+        format: uuid
     workspaceIdParam:
       in: path
       name: id
@@ -7028,6 +7168,46 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    CertOpsCsrWorkflow:
+      type: object
+      description: Workspace-scoped public CSR workflow. PEM fields appear on create, detail, and mutation responses, but not list responses.
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        targetId: { type: string, format: uuid }
+        existingCertificateId: { type: string, format: uuid, nullable: true }
+        managedCertificateId: { type: string, format: uuid, nullable: true }
+        csrDerSha256: { type: string }
+        spkiFingerprintSha256: { type: string }
+        csrPem: { type: string, description: Public PKCS#10 CSR PEM }
+        subject: { type: string }
+        requestedNames: { type: array, items: { type: string } }
+        status: { type: string, enum: [pending_signature, signed_pending_install, completed, cancelled] }
+        signedLeafPem: { type: string, nullable: true }
+        signedChainPem: { type: string, nullable: true }
+        signedFingerprintSha256: { type: string, nullable: true }
+        issuedNames: { type: array, items: { type: string } }
+        nameAdditions: { type: array, items: { type: string } }
+        nameOmissions: { type: array, items: { type: string } }
+        namesChanged: { type: boolean }
+        namesAcknowledgedAt: { type: string, format: date-time, nullable: true }
+        namesAcknowledgedBy: { type: integer, nullable: true }
+        observedInstanceId: { type: string, format: uuid, nullable: true }
+        identityConflict:
+          type: object
+          nullable: true
+          description: A matching observation was persisted under a different managed certificate; promotion remains blocked without identity reconciliation.
+          properties:
+            code: { type: string, enum: [CERTOPS_CSR_OBSERVED_IDENTITY_CONFLICT] }
+            observedAt: { type: string, format: date-time }
+            observedInstanceId: { type: string, format: uuid, nullable: true }
+            observedCertificateId: { type: string, format: uuid, nullable: true }
+        confirmedAt: { type: string, format: date-time, nullable: true }
+        confirmedBy: { type: integer, nullable: true }
+        confirmationMethod: { type: string, enum: [manual], nullable: true }
+        createdBy: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     CertOpsRenewalProfile:
       type: object
       additionalProperties: false
