@@ -6,7 +6,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { Link, MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import CertOpsCertificates from '../../src/pages/certops/CertOpsCertificates.jsx';
@@ -42,6 +42,12 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOpsCertificates.js', () => ({
   useCertOpsCertificates: useCertOpsCertificatesMock,
+}));
+
+vi.mock('../../src/components/certops/CsrWorkflowPanel.jsx', () => ({
+  default: ({ existingCertificateId }) => (
+    <div data-testid='csr-workflow-panel' data-existing-certificate-id={existingCertificateId} />
+  ),
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', async () => {
@@ -127,6 +133,36 @@ beforeEach(() => {
   // manual entry without an extra click in tests that don't care about the
   // preset picker.
   listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
+});
+
+it('opens an existing-certificate CSR when a same-page link changes the URL', async () => {
+  const certificateId = 'cert-11111111-1111-1111-1111-111111111111';
+  render(
+    <ChakraProvider>
+      <DashboardThemeProvider>
+        <MemoryRouter initialEntries={['/certops/certificates?workspace=ws-1']}>
+          <Link to={`/certops/certificates?workspace=ws-1&csrCertificateId=${certificateId}`}>
+            Start CSR workflow
+          </Link>
+          <CertOpsCertificates />
+        </MemoryRouter>
+      </DashboardThemeProvider>
+    </ChakraProvider>
+  );
+
+  fireEvent.click(screen.getByRole('link', { name: 'Start CSR workflow' }));
+  expect(await screen.findByText('Public CSR workflows')).toBeInTheDocument();
+  expect(screen.getByTestId('csr-workflow-panel')).toHaveAttribute(
+    'data-existing-certificate-id',
+    certificateId
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await waitFor(() =>
+    expect(screen.queryByText('Public CSR workflows')).not.toBeInTheDocument()
+  );
+  fireEvent.click(screen.getByRole('link', { name: 'Start CSR workflow' }));
+  expect(await screen.findByText('Public CSR workflows')).toBeInTheDocument();
 });
 
 describe('CertOpsCertificates list states', () => {

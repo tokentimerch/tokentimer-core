@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import {
   Badge,
   Box,
@@ -220,6 +221,11 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
  * the total and pagination stay correct for whichever population is shown.
  */
 export default function CertOpsCertificates() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const csrIdInUrl = new URLSearchParams(location.search).get(
+    'csrCertificateId'
+  );
   const { muted, dashboard } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
@@ -298,18 +304,29 @@ export default function CertOpsCertificates() {
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
-  const [csrCertificateId, setCsrCertificateId] = useState(() =>
-    new URLSearchParams(window.location.search).get('csrCertificateId')
-  );
-  const [csrModalOpen, setCsrModalOpen] = useState(() =>
-    Boolean(new URLSearchParams(window.location.search).get('csrCertificateId'))
-  );
+  const [csrCertificateId, setCsrCertificateId] = useState(csrIdInUrl);
+  const [csrModalOpen, setCsrModalOpen] = useState(Boolean(csrIdInUrl));
+  useEffect(() => {
+    if (!csrIdInUrl) return;
+    setDetailsTarget(null);
+    setCsrCertificateId(csrIdInUrl);
+    setCsrModalOpen(true);
+  }, [csrIdInUrl]);
   const closeCsrModal = () => {
     setCsrModalOpen(false);
     setCsrCertificateId(null);
-    const url = new URL(window.location.href);
-    url.searchParams.delete('csrCertificateId');
-    window.history.replaceState(window.history.state, '', url);
+    const params = new URLSearchParams(location.search);
+    if (params.has('csrCertificateId')) {
+      params.delete('csrCertificateId');
+      navigate(
+        {
+          pathname: location.pathname,
+          search: params.toString(),
+          hash: location.hash,
+        },
+        { replace: true }
+      );
+    }
   };
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);

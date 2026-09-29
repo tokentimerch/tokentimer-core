@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { Link as RouterLink } from 'react-router';
+import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Badge,
   Box,
@@ -75,6 +75,14 @@ function hasValue(value) {
 
 function hasAnyValue(...values) {
   return values.some(hasValue);
+}
+
+function csrWorkflowHref(certificateId, search) {
+  const params = new URLSearchParams();
+  const workspaceId = new URLSearchParams(search).get('workspace');
+  if (workspaceId) params.set('workspace', workspaceId);
+  params.set('csrCertificateId', certificateId);
+  return `/certops/certificates?${params.toString()}`;
 }
 
 function listLabel(value) {
@@ -367,6 +375,7 @@ export default function CertificateDetailsModal({
   compactTableSections = false,
   propertyValueRows = false,
 }) {
+  const location = useLocation();
   const {
     headerProps,
     bodyProps,
@@ -648,7 +657,7 @@ export default function CertificateDetailsModal({
           {!isViewer && certificate?.id ? (
             <Button
               as={RouterLink}
-              to={`/certops/certificates?csrCertificateId=${encodeURIComponent(certificate.id)}`}
+              to={csrWorkflowHref(certificate.id, location.search)}
               size='sm'
               mb={3}
             >
