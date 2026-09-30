@@ -24,7 +24,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
-- Updated Nodemailer to 10.0.12 and the transitive `ip-address` pin to 10.7.2 to address [GHSA-6vj9-mwq6-2f5v](https://github.com/advisories/GHSA-6vj9-mwq6-2f5v), [GHSA-rpw4-54j3-4h4q](https://github.com/advisories/GHSA-rpw4-54j3-4h4q), and [GHSA-2vr4-cq9g-pvrc](https://github.com/advisories/GHSA-2vr4-cq9g-pvrc). **Operator action:** rebuild and roll the API and worker images with this release.
+- Updated Nodemailer to 10.0.12 and the transitive `ip-address` pin to 10.7.2 to address [GHSA-6vj9-mwq6-2f5v](https://github.com/advisories/GHSA-6vj9-mwq6-2f5v), [GHSA-rpw4-54j3-4h4q](https://github.com/advisories/GHSA-rpw4-54j3-4h4q), and [GHSA-2vr4-cq9g-pvrc](https://github.com/advisories/GHSA-2vr4-cq9g-pvrc). Also update the `brace-expansion` and `fast-uri` transitive pins to 5.0.12 and 3.1.8 to clear the release dependency audit. **Operator action:** rebuild and roll the API and worker images with this release.
 
 ## [0.16.1] - 2026-09-17
 

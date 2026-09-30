@@ -7,28 +7,16 @@ overrides:
   fast-xml-builder: 1.2.0
   fast-xml-parser: 5.7.3
   minimatch: 10.2.5
-  # GHSA-q2hr-2g5m-vwhr / GHSA-qhr7-859c-m2p7 / GHSA-6j4f-fj2g-mc7p; patched in 5.0.12.
   brace-expansion: 5.0.12
   path-to-regexp: 8.4.0
   yaml: 1.10.3
-  # Quadratic CPU consumption in !!omap resolution (CVE-2026-59870 /
-  # GHSA-5p4m-2wfm-xmqj), fixed 4.3.1. GHSA-2883-xcg3-v3hh (merge-key CPU
-  # DoS) is fixed in 4.3.2. Pin exact per repo policy.
   js-yaml: 4.3.2
-  # GHSA-6vj9-mwq6-2f5v: cross-transport DNS cache could reuse the wrong TLS
-  # servername. Nodemailer 10 requires Node >=20 (Core supports >=22).
   nodemailer: 10.0.12
-  # GHSA-rgj7-g3m4-5g8c: libheif issues in sharp < 0.35.4.
   sharp: 0.35.4
-  # GHSA-82fw-gwwq-j7x9: @vitest/mocker redirect mock path traversal; fixed 4.1.11.
   vitest: 4.1.11
   "@vitest/mocker": 4.1.11
-  # GHSA-c83g-rgw3-j3cx (unbounded memory) and GHSA-73wf-gq98-2v4g
-  # (uncaught crash / prototype write); both fixed 4.28.7.
   browserslist: 4.28.7
-  # GHSA-w5vr-8v7q-w6rv: process termination on invalid input; fixed 2.11.0.
   baseline-browser-mapping: 2.11.0
-  # GHSA-p498-v437-472g: recursive copy follows symlinked files; fixed 0.16.8.
   "@humanfs/node": 0.16.8
   rollup: 4.60.0
   flatted: 3.4.2
@@ -38,30 +26,14 @@ overrides:
   "ajv@6": 6.15.0
   lodash: 4.18.1
   follow-redirects: 1.16.0
-  # GHSA-r28c-9q8g-f849 / GHSA-fxqj-rqcc-2cmp: path traversal in previous
-  # source map auto-loading (sourceMappingURL) leaks arbitrary .map files;
-  # fixed 8.5.18, incomplete-fix follow-up fixed 8.5.23.
   postcss: 8.5.26
-  # GHSA-2v37-7h3g-55p8 (size 0, customAlphabet/customRandom, fixed 3.3.18) /
-  # GHSA-28wg-ghj8-5hjv (negative size, non-secure module, fixed 3.3.16).
   nanoid: 3.3.18
-  # GHSA-4x5r-pxfx-6jf8: arbitrary source map file read via sourceMappingURL
-  # comment when compiling untrusted input; fixed 7.29.6.
   "@babel/core": 7.29.6
-  # GHSA-x5fp-wj9c-mxmx (arrayLimit bypass on bracket-key comma parse) and
-  # GHSA-4mjr-xmp4-gh2g (stringify throw on attacker-controlled isBuffer),
-  # both fixed in 6.16.0. express/body-parser pull qs transitively.
   qs: 6.16.0
-  # GHSA-rpw4-54j3-4h4q / GHSA-2vr4-cq9g-pvrc: classify IPv6 link-local
-  # and NAT64 local-use ranges correctly in transitive proxy dependencies.
   ip-address: 10.7.2
   form-data: 4.0.6
   ws: 8.21.0
-  # Low-severity DoS when an invalid limit silently disables size enforcement
-  # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
   body-parser: 2.3.0
-  # AJV pulls fast-uri. GHSA-hrr3-gc8f-f4qj (host case normalization) is fixed in 3.1.8; earlier host-confusion/SSRF advisories are fixed in 3.1.6.
-  # Stay on 3.x so AJV's declared range is not jumped to 4.x by the override.
   fast-uri: 3.1.8
 
 allowBuilds:
