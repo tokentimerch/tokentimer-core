@@ -19,7 +19,7 @@ const REQUIRED_PINS = {
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
   minimatch: { "*": "10.2.5" },
-  "brace-expansion": { "*": "5.0.9" },
+  "brace-expansion": { "*": "5.0.12" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
   "js-yaml": { "*": "4.3.2" },
@@ -44,7 +44,7 @@ const REQUIRED_PINS = {
   "ip-address": { "*": "10.7.2" },
   "form-data": { "*": "4.0.6" },
   ws: { "*": "8.21.0" },
-  "fast-uri": { "*": "3.1.7" },
+  "fast-uri": { "*": "3.1.8" },
 };
 
 function fail(message) {

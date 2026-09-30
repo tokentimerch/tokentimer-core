@@ -7,7 +7,8 @@ overrides:
   fast-xml-builder: 1.2.0
   fast-xml-parser: 5.7.3
   minimatch: 10.2.5
-  brace-expansion: 5.0.9
+  # GHSA-q2hr-2g5m-vwhr / GHSA-qhr7-859c-m2p7 / GHSA-6j4f-fj2g-mc7p; patched in 5.0.12.
+  brace-expansion: 5.0.12
   path-to-regexp: 8.4.0
   yaml: 1.10.3
   # Quadratic CPU consumption in !!omap resolution (CVE-2026-59870 /
@@ -59,12 +60,9 @@ overrides:
   # Low-severity DoS when an invalid limit silently disables size enforcement
   # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
   body-parser: 2.3.0
-  # AJV pulls fast-uri. 3.1.5 left four later host-confusion / SSRF
-  # advisories open (GHSA-5jgf-p345-68v8 / GHSA-f65p-4m7j-42xc /
-  # GHSA-fph4-wmhf-6fwf / GHSA-jqff-g426-hqxp); 3.1.6 patched them and
-  # 3.1.7 is the current 3.x follow-up. Stay on 3.x so AJV's declared
-  # range is not jumped to 4.x by the override.
-  fast-uri: 3.1.7
+  # AJV pulls fast-uri. GHSA-hrr3-gc8f-f4qj (host case normalization) is fixed in 3.1.8; earlier host-confusion/SSRF advisories are fixed in 3.1.6.
+  # Stay on 3.x so AJV's declared range is not jumped to 4.x by the override.
+  fast-uri: 3.1.8
 
 allowBuilds:
   esbuild: true
