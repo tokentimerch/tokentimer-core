@@ -1,21 +1,24 @@
 import crypto from "crypto";
+import { computeNextSync } from "./autoSyncSchedule.js";
 import { pool } from "../db.js";
 
-function settingsSnapshot(config) {
+export function settingsSnapshot(config) {
   const params = config.scan_params || {};
-  return {
-    cleanup_obsolete: config.cleanup_obsolete === true,
-    include: Object.fromEntries(Object.entries(params.include || {})
-      .filter(([, value]) => typeof value === "boolean")),
-    scan_mode: ["global", "all-regions", "regional"].includes(params.scanMode)
-      ? params.scanMode : null,
-    region: typeof params.region === "string" && /^[a-z0-9-]{1,50}$/i.test(params.region)
-      ? params.region : null,
-    max_items: Number.isSafeInteger(params.maxItems) ? params.maxItems : null,
-    max_items_per_mount: Number.isSafeInteger(params.maxItemsPerMount)
-      ? params.maxItemsPerMount : null,
-    filter_rule_count: Array.isArray(params.filterRules) ? params.filterRules.length : 0,
-  };
+  const snapshot = { cleanup_obsolete: config.cleanup_obsolete === true };
+  // Values are scope/filter metadata, never the credential object or arbitrary scan_params keys.
+  for (const key of ["scanMode", "region", "projectId", "subscriptionId", "tenantId", "pathPrefix", "namespace", "authMount", "authMethod"])
+    if (typeof params[key] === "string") snapshot[key] = params[key].slice(0, 500);
+  for (const key of ["maxItems", "maxItemsPerMount"])
+    if (Number.isSafeInteger(params[key])) snapshot[key] = params[key];
+  for (const key of ["mounts", "categories", "detectedRegions"])
+    if (Array.isArray(params[key])) snapshot[key] = params[key].filter((v) => typeof v === "string").map((v) => v.slice(0, 500));
+  snapshot.include = Object.fromEntries(Object.entries(params.include || {}).filter(([, v]) => typeof v === "boolean"));
+  snapshot.filters = Object.fromEntries(Object.entries(params.filters || {}).filter(([k, v]) =>
+    (typeof v === "boolean" || (["search", "projectIds", "groupIds"].includes(k) &&
+    (typeof v === "string" || (Array.isArray(v) && v.every((item) => typeof item === "string" || Number.isSafeInteger(item))))))));
+  snapshot.filterRules = (Array.isArray(params.filterRules) ? params.filterRules : []).map((rule) =>
+    Object.fromEntries(Object.entries(rule || {}).filter(([k, v]) => ["field", "matchType", "value", "action"].includes(k) && typeof v === "string").map(([k, v]) => [k, v.slice(0, 500)])));
+  return snapshot;
 }
 
 export async function claimDueAutoSyncRuns(limit = 10) {
@@ -126,11 +129,14 @@ export async function finishAutoSyncRun(client, config, result) {
       result.updated || 0, result.detached || 0, result.deleted || 0,
       result.errors || 0, result.error || null],
   );
+  const current = await client.query("SELECT frequency, schedule_time, schedule_tz FROM auto_sync_configs WHERE id = $1 FOR UPDATE", [config.id]);
+  const schedule = current.rows[0];
+  const nextSync = computeNextSync(schedule.frequency, schedule.schedule_time, schedule.schedule_tz);
   await client.query(
     `UPDATE auto_sync_configs SET active_run_id = NULL, lease_owner = NULL,
        lease_until = NULL, next_sync_at = CASE
          WHEN pending_manual_run OR pending_replacement_run THEN NOW()
          ELSE $2 END, updated_at = NOW() WHERE id = $1`,
-    [config.id, result.nextSync],
+    [config.id, nextSync],
   );
 }

@@ -1071,6 +1071,10 @@ export default function ImportTokensModal({
   const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
   const [autoSyncName, setAutoSyncName] = React.useState('');
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
+  const [autoSyncRunsCursor, setAutoSyncRunsCursor] = React.useState(null);
+  const [loadingAutoSyncRuns, setLoadingAutoSyncRuns] = React.useState(false);
+  const autoSyncHistoryConfigRef = React.useRef(null);
+  autoSyncHistoryConfigRef.current = autoSyncConfig?.id;
   const [requestedAutoSyncConfig, setRequestedAutoSyncConfig] =
     React.useState(null);
   const [restoredScanParams, setRestoredScanParams] = React.useState(null);
@@ -1136,13 +1140,18 @@ export default function ImportTokensModal({
           requestedAutoSyncConfig?.provider === source
             ? requestedAutoSyncConfig.id
             : null;
-        const existing = requestedAutoSyncConfig?.create
+        const creating =
+          requestedAutoSyncConfig?.provider === source &&
+          requestedAutoSyncConfig?.create;
+        const existing = creating
           ? null
           : requestedId
-          ? configs.find(c => c.provider === source && c.id === requestedId)
-          : configs.find(c => c.provider === source);
+            ? configs.find(c => c.provider === source && c.id === requestedId)
+            : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
-        setAutoSyncName(existing?.name || source);
+        setAutoSyncName(
+          existing?.name || (creating ? requestedAutoSyncConfig.name : source)
+        );
 
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
@@ -1266,18 +1275,44 @@ export default function ImportTokensModal({
   React.useEffect(() => {
     if (!workspaceId || !autoSyncConfig?.id) {
       setAutoSyncRuns([]);
+      setAutoSyncRunsCursor(null);
       return undefined;
     }
     let cancelled = false;
-    apiClient.get(
-      `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
-    ).then(res => {
-      if (!cancelled) setAutoSyncRuns(res.data?.items || []);
-    }).catch(() => {
-      if (!cancelled) setAutoSyncRuns([]);
-    });
-    return () => { cancelled = true; };
+    apiClient
+      .get(
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
+      )
+      .then(res => {
+        if (!cancelled) {
+          setAutoSyncRuns(res.data?.items || []);
+          setAutoSyncRunsCursor(res.data?.next_cursor || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAutoSyncRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workspaceId, autoSyncConfig?.id, autoSyncConfig?.last_sync_at]);
+
+  const loadEarlierAutoSyncRuns = async () => {
+    if (!autoSyncRunsCursor || !autoSyncConfig?.id) return;
+    const configId = autoSyncConfig.id;
+    setLoadingAutoSyncRuns(true);
+    try {
+      const res = await apiClient.get(
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${configId}/runs?limit=10&cursor=${encodeURIComponent(autoSyncRunsCursor)}`
+      );
+      if (autoSyncHistoryConfigRef.current === configId) {
+        setAutoSyncRuns(previous => [...previous, ...(res.data?.items || [])]);
+        setAutoSyncRunsCursor(res.data?.next_cursor || null);
+      }
+    } finally {
+      setLoadingAutoSyncRuns(false);
+    }
+  };
 
   React.useEffect(() => {
     if (!isOpen || !openRequest?.provider) return;
@@ -1647,6 +1682,8 @@ export default function ImportTokensModal({
       const configs = res.data?.items || [];
       setAutoSyncConfigs(configs.filter(c => c.provider === source));
       const createdId = created.data?.id;
+      if (createdId)
+        setRequestedAutoSyncConfig({ provider: source, id: createdId });
       setAutoSyncConfig(
         (createdId
           ? configs.find(c => c.id === createdId)
@@ -2615,26 +2652,51 @@ export default function ImportTokensModal({
                     <HStack spacing={3} align='flex-end'>
                       <FormControl>
                         <FormLabel fontSize='sm'>Configuration</FormLabel>
-                        <Select size='sm' value={autoSyncConfig.id}
-                          onChange={e => setRequestedAutoSyncConfig({ provider: source, id: e.target.value })}>
+                        <Select
+                          size='sm'
+                          value={autoSyncConfig.id}
+                          onChange={e =>
+                            setRequestedAutoSyncConfig({
+                              provider: source,
+                              id: e.target.value,
+                            })
+                          }
+                        >
                           {autoSyncConfigs.map(config => (
                             <option key={config.id} value={config.id}>
-                              {config.name || config.connection_key || config.provider}
+                              {config.name ||
+                                config.connection_key ||
+                                config.provider}
                             </option>
                           ))}
                         </Select>
                       </FormControl>
-                      <Button size='sm' variant='outline' onClick={() => {
-                        setRequestedAutoSyncConfig({ provider: source, create: true });
-                        setAutoSyncConfig(false);
-                        setAutoSyncName(`${source} ${autoSyncConfigs.length + 1}`);
-                        setIntegrationSubTab('scan');
-                      }}>Add another</Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => {
+                          setRequestedAutoSyncConfig({
+                            provider: source,
+                            create: true,
+                            name: `${source} ${autoSyncConfigs.length + 1}`,
+                          });
+                          setAutoSyncConfig(false);
+                          setAutoSyncName(
+                            `${source} ${autoSyncConfigs.length + 1}`
+                          );
+                          setIntegrationSubTab('scan');
+                        }}
+                      >
+                        Add another
+                      </Button>
                     </HStack>
                     <FormControl>
                       <FormLabel fontSize='sm'>Name</FormLabel>
-                      <Input size='sm' value={autoSyncName}
-                        onChange={e => setAutoSyncName(e.target.value)} />
+                      <Input
+                        size='sm'
+                        value={autoSyncName}
+                        onChange={e => setAutoSyncName(e.target.value)}
+                      />
                     </FormControl>
                     {autoSyncConfig.last_sync_status === 'failed' ||
                     autoSyncConfig.last_sync_status === 'partial' ? (
@@ -2664,7 +2726,8 @@ export default function ImportTokensModal({
                         Status
                       </Text>
                       <Text fontSize='sm'>
-                        Provider: {autoSyncConfig.provider} · {autoSyncConfig.name}
+                        Provider: {autoSyncConfig.provider} ·{' '}
+                        {autoSyncConfig.name}
                       </Text>
                       {autoSyncConfig.last_sync_at ? (
                         <Text fontSize='sm'>
@@ -2683,18 +2746,38 @@ export default function ImportTokensModal({
                       )}
                     </Box>
                     <Box>
-                      <Text fontSize='sm' fontWeight='semibold' mb={2}>Recent runs</Text>
+                      <Text fontSize='sm' fontWeight='semibold' mb={2}>
+                        Recent runs
+                      </Text>
                       {autoSyncRuns.length === 0 ? (
-                        <Text fontSize='sm' color={muted}>No runs yet</Text>
-                      ) : autoSyncRuns.map(run => (
-                        <Text key={run.run_id} fontSize='xs'>
-                          {new Date(run.started_at).toLocaleString()} · {run.trigger} · {run.status}
-                          {' · '}found {run.discovered_count}, created {run.created_count},
-                          updated {run.updated_count}, detached {run.detached_count},
-                          deleted {run.deleted_count}, errors {run.error_count}
-                          {run.error ? ` · ${run.error}` : ''}
+                        <Text fontSize='sm' color={muted}>
+                          No runs yet
                         </Text>
-                      ))}
+                      ) : (
+                        autoSyncRuns.map(run => (
+                          <Text key={run.run_id} fontSize='xs'>
+                            {new Date(run.started_at).toLocaleString()} ·{' '}
+                            {run.trigger} · {run.status}
+                            {' · '}found {run.discovered_count}, created{' '}
+                            {run.created_count}, updated {run.updated_count},
+                            detached {run.detached_count}, deleted{' '}
+                            {run.deleted_count}, errors {run.error_count}
+                            {run.error ? ` · ${run.error}` : ''}
+                          </Text>
+                        ))
+                      )}
+                      {autoSyncRunsCursor ? (
+                        <Button
+                          size='xs'
+                          mt={2}
+                          isLoading={loadingAutoSyncRuns}
+                          onClick={() => {
+                            void loadEarlierAutoSyncRuns().catch(() => {});
+                          }}
+                        >
+                          Earlier runs
+                        </Button>
+                      ) : null}
                     </Box>
                     <Divider />
                     <Box>
@@ -3799,8 +3882,11 @@ export default function ImportTokensModal({
               </Box>
               <FormControl>
                 <FormLabel fontSize='sm'>Configuration name</FormLabel>
-                <Input size='sm' value={autoSyncName}
-                  onChange={e => setAutoSyncName(e.target.value)} />
+                <Input
+                  size='sm'
+                  value={autoSyncName}
+                  onChange={e => setAutoSyncName(e.target.value)}
+                />
               </FormControl>
               <HStack spacing={4} align='flex-end'>
                 <FormControl flex='1'>

@@ -40,6 +40,7 @@
     "lint:agent": "pnpm --filter @tokentimer/agent lint",
     "// --- Tests ---": "",
     "test:unit": "node scripts/run-unit-tests.js",
+    "test:auto-sync:postgres": "node --test --test-force-exit tests/postgres/auto-sync-fencing.test.js",
     "test:controller": "pnpm --filter @tokentimer/k8s-controller test",
     "test:agent": "pnpm --filter @tokentimer/agent test",
     "test:core": "node scripts/run-tests-local.js core",

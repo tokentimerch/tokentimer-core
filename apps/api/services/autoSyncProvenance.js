@@ -19,6 +19,19 @@ function normalizeConnectionName(value) {
   return name.length >= 1 && name.length <= 100 ? name : null;
 }
 
+function validateAutoSyncSettings(body) {
+  if (body.frequency !== undefined && !["daily", "weekly", "monthly"].includes(body.frequency)) return "Invalid frequency";
+  if (body.schedule_time !== undefined && (typeof body.schedule_time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(body.schedule_time))) return "Invalid schedule time";
+  if (body.schedule_tz !== undefined) {
+    if (typeof body.schedule_tz !== "string" || body.schedule_tz.length > 100) return "Invalid schedule timezone";
+    try { new Intl.DateTimeFormat("en", { timeZone: body.schedule_tz }).format(); }
+    catch (_) { return "Invalid schedule timezone"; }
+  }
+  for (const key of ["enabled", "cleanup_obsolete"]) if (body[key] !== undefined && typeof body[key] !== "boolean") return `Invalid ${key}`;
+  if (body.scan_params !== undefined && (!body.scan_params || typeof body.scan_params !== "object" || Array.isArray(body.scan_params))) return "Invalid scan parameters";
+  return null;
+}
+
 function canonicalJson(value) {
   if (Array.isArray(value)) return value.map(canonicalJson);
   if (value && typeof value === "object") {
@@ -33,14 +46,12 @@ function scanSettingsEqual(left, right) {
     JSON.stringify(canonicalJson(right || {}));
 }
 
+// Public errors are controlled messages, never provider response bodies or item names.
 function sanitizePublicAutoSyncError(value) {
   if (value == null) return null;
-  return String(value)
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
-    .replace(/https?:\/\/[^\s,;]+/gi, "[URL]")
-    .replace(/\b(token|secret|password|authorization|api[_-]?key|client[_-]?secret)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[redacted]")
-    .substring(0, 1000);
+  const text = String(value);
+  const safe = /^(?:Provider request failed \(HTTP \d{3}\)\.|Provider request timed out\.|Auto-sync failed; review provider access and scan settings\.|Scan or import was incomplete; associations were retained\.|Scan found \d+ item\(s\) but none were imported \(all failed validation or were rejected\)\.|\d+ of \d+ scanned item\(s\) failed to import\.)$/;
+  return safe.test(text) ? text : "Auto-sync failed; review provider access and scan settings.";
 }
 
 async function assertRunFence(db, context) {
@@ -74,50 +85,52 @@ async function assertRunFence(db, context) {
   return rows[0];
 }
 
-async function resolveAutoSyncImportContext(req, workspaceId, provider, scanId) {
-  const enabled = await multiConfigEnabled();
+function parseAutoSyncContext(req, workspaceId, provider) {
   const body = req.body?.auto_sync_run;
-  if (!body) {
-    if (enabled && req.isWorkerCall) {
+  if (!body) return null;
+  const context = { configId: body.config_id, runId: body.run_id,
+    generation: Number(body.generation), scanVersion: Number(body.scan_version),
+    leaseOwner: body.lease_owner, workspaceId, provider };
+  if (!req.isWorkerCall || !UUID.test(String(context.configId)) ||
+      !UUID.test(String(context.runId)) || !UUID.test(String(context.leaseOwner)) ||
+      !Number.isSafeInteger(context.generation) || context.generation < 1 ||
+      !Number.isSafeInteger(context.scanVersion) || context.scanVersion < 1) {
+    const error = new Error("Invalid auto-sync run context");
+    error.code = "AUTO_SYNC_RUN_INVALID";
+    throw error;
+  }
+  return context;
+}
+
+async function resolveAutoSyncImportContext(req, workspaceId, provider, scanId) {
+  const context = parseAutoSyncContext(req, workspaceId, provider);
+  if (!context) {
+    if (req.isWorkerCall && await multiConfigEnabled()) {
       const error = new Error("Fenced auto-sync run is required");
       error.code = "AUTO_SYNC_RUN_REQUIRED";
       throw error;
     }
     return null;
   }
-  if (!req.isWorkerCall || !scanId || !UUID.test(String(scanId))) {
-    const error = new Error("Invalid auto-sync run context");
-    error.code = "AUTO_SYNC_RUN_INVALID";
-    throw error;
-  }
-  const context = {
-    configId: body.config_id,
-    runId: body.run_id,
-    generation: body.generation,
-    scanVersion: body.scan_version,
-    leaseOwner: body.lease_owner,
-    workspaceId,
-    provider,
-    scanId,
-  };
-  if (
-    !UUID.test(String(context.configId)) ||
-    !UUID.test(String(context.runId)) ||
-    !UUID.test(String(context.leaseOwner)) ||
-    !Number.isSafeInteger(Number(context.generation)) ||
-    !Number.isSafeInteger(Number(context.scanVersion))
-  ) {
-    const error = new Error("Invalid auto-sync run context");
-    error.code = "AUTO_SYNC_RUN_INVALID";
-    throw error;
-  }
-  const scan = await getScan({ scanId, workspaceId, provider });
-  if (!scan || !scan.completed_at) {
-    const error = new Error("Auto-sync scan is incomplete or unavailable");
+  if (!UUID.test(String(scanId))) {
+    const error = new Error("Invalid auto-sync scan");
     error.code = "AUTO_SYNC_SCAN_INVALID";
     throw error;
   }
-  await assertRunFence(pool, context);
+  context.scanId = scanId;
+  await withFencedImport(context, async (client) => {
+    const scan = await getScan({ scanId, workspaceId, provider, client });
+    const bound = await client.query(
+      "SELECT 1 FROM auto_sync_run_scans WHERE run_id = $1 AND scan_id = $2",
+      [context.runId, scanId]);
+    if (!scan?.completed_at || !bound.rowCount) {
+      const error = new Error("Auto-sync scan is incomplete or does not belong to this run");
+      error.code = "AUTO_SYNC_SCAN_INVALID";
+      throw error;
+    }
+    const scopes = scan.cleanup_scope?.subScopes;
+    context.scanComplete = Array.isArray(scopes) && scopes.length > 0 && scopes.every(scope => scope.complete === true);
+  });
   return context;
 }
 
@@ -125,7 +138,7 @@ async function withFencedImport(context, work) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await assertRunFence(client, context);
+    if (context) await assertRunFence(client, context);
     const result = await work(client);
     await client.query("COMMIT");
     return result;
@@ -135,6 +148,42 @@ async function withFencedImport(context, work) {
   } finally {
     client.release();
   }
+}
+
+async function upsertImportedToken({ context, payload, workspaceId, userId, manual, assignMembership }) {
+  const Token = require("../db/models/Token");
+  return withFencedImport(context, async (client) => {
+    if (context && !payload.source_object_id) throw new Error("Auto-sync item is not part of its persisted scan");
+    const keys = [JSON.stringify([workspaceId, "name", payload.name, payload.location])];
+    if (payload.source_object_id) keys.push(JSON.stringify([workspaceId, "source",
+      payload.source_provider, payload.source_instance, payload.source_owner_key,
+      payload.source_kind, payload.source_object_id]));
+    for (const key of keys.sort()) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [key]);
+    }
+    let existing = payload.source_object_id ? await Token.findBySourceIdentity({
+      workspaceId, sourceProvider: payload.source_provider, sourceInstance: payload.source_instance,
+      sourceOwnerKey: payload.source_owner_key, sourceKind: payload.source_kind,
+      sourceObjectId: payload.source_object_id,
+    }, { client }) : await Token.findByNameLocationAndWorkspace(payload.name, payload.location, workspaceId, { client });
+    if (!existing && payload.source_object_id) {
+      existing = await Token.findUnattributedByNameLocation(payload.name, payload.location, workspaceId, { client });
+    }
+    assignMembership(payload, { isCreate: !existing });
+    const token = existing ? await Token.update(existing.id, {
+      ...payload, ...(manual ? { auto_sync_managed: false } : {}),
+    }, { client }) : await Token.create({ ...payload, userId, workspaceId,
+      created_by: userId, imported_at: new Date() }, { client });
+    if (context) await attachObservedToken(context, token.id, !existing, { client });
+    return { token, created: !existing };
+  });
+}
+
+async function recordAutoSyncImportErrors(context, count) {
+  if (!context || count === 0) return;
+  await withFencedImport(context, (client) => client.query(
+    "UPDATE auto_sync_runs SET import_error_count = import_error_count + $2 WHERE run_id = $1",
+    [context.runId, count]));
 }
 
 async function attachObservedToken(context, tokenId, created, { client } = {}) {
@@ -185,6 +234,15 @@ async function reconcileAutoSyncRun(context, scanIds = [context.scanId]) {
         !scanIds.includes(context.scanId)) {
       throw new Error("Invalid auto-sync scan set");
     }
+    const bound = await client.query("SELECT scan_id FROM auto_sync_run_scans WHERE run_id = $1", [context.runId]);
+    if (bound.rows.length !== scanIds.length || bound.rows.some((row) => !scanIds.includes(row.scan_id))) {
+      throw new Error("Cleanup must include every scan belonging to this run");
+    }
+    const importState = await client.query("SELECT import_error_count FROM auto_sync_runs WHERE run_id = $1", [context.runId]);
+    if (Number(importState.rows[0]?.import_error_count) > 0) {
+      await client.query("COMMIT");
+      return result;
+    }
     const scans = [];
     for (const scanId of scanIds) {
       const scan = await getScan({
@@ -194,6 +252,19 @@ async function reconcileAutoSyncRun(context, scanIds = [context.scanId]) {
       const scopes = scan?.cleanup_scope?.subScopes;
       if (!scan?.completed_at || !Array.isArray(scopes) || scopes.length === 0 ||
           scopes.some((scope) => scope?.complete !== true)) {
+        await client.query("COMMIT");
+        return result;
+      }
+      // Completeness includes importing every observed item, across every request/batch.
+      const missing = await client.query(`SELECT 1 FROM integration_scan_items si
+        WHERE si.scan_id = $1 AND NOT EXISTS (
+          SELECT 1 FROM tokens t JOIN auto_sync_token_links l ON l.token_id = t.id
+          WHERE l.config_id = $2 AND l.last_seen_generation = $3 AND t.workspace_id = $4
+            AND t.source_provider = $5 AND t.source_instance = $6 AND t.source_owner_key = $7
+            AND t.source_kind = si.source_kind AND t.source_object_id = si.source_object_id) LIMIT 1`,
+        [scan.id, context.configId, context.generation, context.workspaceId,
+          context.provider, scan.source_instance, scan.source_owner_key]);
+      if (missing.rowCount) {
         await client.query("COMMIT");
         return result;
       }
@@ -273,12 +344,16 @@ async function reconcileAutoSyncRun(context, scanIds = [context.scanId]) {
 
 module.exports = {
   multiConfigEnabled,
+  parseAutoSyncContext,
   normalizeConnectionName,
+  validateAutoSyncSettings,
   scanSettingsEqual,
   sanitizePublicAutoSyncError,
   assertRunFence,
   resolveAutoSyncImportContext,
   attachObservedToken,
   withFencedImport,
+  upsertImportedToken,
+  recordAutoSyncImportErrors,
   reconcileAutoSyncRun,
 };

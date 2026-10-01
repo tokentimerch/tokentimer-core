@@ -4217,6 +4217,22 @@ migrations.push({
       activated_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL
     );
     INSERT INTO auto_sync_feature_state(id) VALUES (TRUE) ON CONFLICT DO NOTHING;
+    -- Old API nodes must also respect the pre-activation single-config boundary.
+    CREATE OR REPLACE FUNCTION auto_sync_enforce_activation()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended(NEW.workspace_id::text || ':' || NEW.provider, 0));
+      IF NOT (SELECT multi_config_enabled FROM auto_sync_feature_state WHERE id = TRUE)
+         AND EXISTS (SELECT 1 FROM auto_sync_configs
+           WHERE workspace_id = NEW.workspace_id AND provider = NEW.provider AND id <> NEW.id) THEN
+        RAISE EXCEPTION 'Multiple configurations require operator activation' USING ERRCODE = '23514';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER trg_auto_sync_enforce_activation BEFORE INSERT OR UPDATE OF workspace_id, provider
+      ON auto_sync_configs FOR EACH ROW EXECUTE FUNCTION auto_sync_enforce_activation();
+
 
     CREATE TABLE IF NOT EXISTS auto_sync_runs (
       run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4240,10 +4256,17 @@ migrations.push({
       deleted_count INTEGER NOT NULL DEFAULT 0,
       error_count INTEGER NOT NULL DEFAULT 0,
       error_text TEXT NULL,
+      import_error_count INTEGER NOT NULL DEFAULT 0,
       UNIQUE (config_id_snapshot, generation)
     );
     CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_config_page
       ON auto_sync_runs(config_id_snapshot, started_at DESC, run_id DESC);
+
+    CREATE TABLE IF NOT EXISTS auto_sync_run_scans (
+      run_id UUID NOT NULL REFERENCES auto_sync_runs(run_id) ON DELETE CASCADE,
+      scan_id UUID NOT NULL UNIQUE REFERENCES integration_scans(id) ON DELETE CASCADE,
+      PRIMARY KEY (run_id, scan_id)
+    );
 
     CREATE TABLE IF NOT EXISTS auto_sync_token_links (
       config_id UUID NOT NULL REFERENCES auto_sync_configs(id) ON DELETE CASCADE,
@@ -4269,6 +4292,20 @@ migrations.push({
     );
     CREATE INDEX IF NOT EXISTS idx_auto_sync_token_link_events_token
       ON auto_sync_token_link_events(token_id, occurred_at DESC);
+    CREATE OR REPLACE FUNCTION auto_sync_link_event_immutable()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' THEN
+        IF NOT EXISTS (SELECT 1 FROM workspaces WHERE id = OLD.workspace_id) THEN RETURN OLD; END IF;
+      ELSIF NEW.token_id IS NULL AND NOT EXISTS (SELECT 1 FROM tokens WHERE id = OLD.token_id)
+        AND (to_jsonb(NEW) - 'token_id') = (to_jsonb(OLD) - 'token_id') THEN RETURN NEW;
+      END IF;
+      RAISE EXCEPTION 'Auto-sync association lifecycle events are immutable';
+    END;
+    $$;
+    CREATE TRIGGER trg_auto_sync_link_event_immutable BEFORE UPDATE OR DELETE
+      ON auto_sync_token_link_events FOR EACH ROW EXECUTE FUNCTION auto_sync_link_event_immutable();
+
   `,
 });
 

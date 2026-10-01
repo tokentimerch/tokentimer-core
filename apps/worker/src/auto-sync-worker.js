@@ -338,7 +338,7 @@ async function runAutoSync() {
           }
 
           // 1. Scan: discover items from the provider
-          const scanResponse = await axios.post(scanUrl, scanBody, {
+          const scanResponse = await axios.post(scanUrl, { ...scanBody, auto_sync_run: runContext(config) }, {
             timeout: 120000,
             headers: authHeaders,
           });
@@ -360,6 +360,7 @@ async function runAutoSync() {
           let createdCount = 0;
           let updatedCount = 0;
           let cleanupComplete = true;
+          let scanComplete = false;
           // A scan that legitimately finds zero items in a fully-scanned,
           // complete scope is still a real "everything here is now obsolete"
           // result -- it must still reach the import endpoint (with an empty
@@ -409,6 +410,7 @@ async function runAutoSync() {
             importErrors = summarizeImportErrors(importResult.errors);
             deletedCount = importResult.deleted_count || 0;
             detachedCount = importResult.detached_count || 0;
+            scanComplete = importResult.scan_complete === true;
             cleanupComplete = !cleanupObsolete || importResult.cleanup_complete === true;
             if (deletedCount > 0) {
               logger.info(
@@ -422,7 +424,7 @@ async function runAutoSync() {
           // status so the discrepancy between "sync completed" and "no tokens
           // visible" is visible to the user instead of silently reporting success.
           const syncStatus =
-            !cleanupComplete || (itemsCount > 0 && importedCount === 0)
+            !cleanupComplete || !scanComplete || (itemsCount > 0 && importedCount === 0)
               ? "partial"
               : importErrorCount > 0
                 ? "partial"
@@ -430,7 +432,7 @@ async function runAutoSync() {
           const syncError =
             syncStatus === "partial"
               ? sanitizeAutoSyncError([
-                  !cleanupComplete
+                  !cleanupComplete || !scanComplete
                     ? "Scan or import was incomplete; associations were retained."
                     : itemsCount > 0 && importedCount === 0
                     ? `Scan found ${itemsCount} item(s) but none were imported (all failed validation or were rejected).`

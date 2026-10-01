@@ -3,9 +3,9 @@ const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const {
   resolveAutoSyncImportContext,
-  attachObservedToken,
   reconcileAutoSyncRun,
-  withFencedImport,
+  upsertImportedToken,
+  recordAutoSyncImportErrors,
 } = require("../services/autoSyncProvenance");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
@@ -68,6 +68,10 @@ const {
 const { bindImportItemsToScan } = require("../services/scanBinding");
 
 const router = require("express").Router();
+router.use((req, _res, next) => {
+  req.integrationScanStartedAt = new Date();
+  next();
+});
 
 function hasBodyField(body, key) {
   return Object.prototype.hasOwnProperty.call(body || {}, key);
@@ -273,6 +277,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "vault",
             identityContext: {
@@ -749,42 +754,11 @@ router.post(
           // later scan-bound import (like auto-sync), leaving a permanent
           // duplicate cleanup can never reach.
           let tok;
-          let existingToken = tokenPayload.source_object_id
-            ? await Token.findBySourceIdentity({
-                workspaceId,
-                sourceProvider: tokenPayload.source_provider,
-                sourceInstance: tokenPayload.source_instance,
-                sourceOwnerKey: tokenPayload.source_owner_key,
-                sourceKind: tokenPayload.source_kind,
-                sourceObjectId: tokenPayload.source_object_id,
-              })
-            : await Token.findByNameLocationAndWorkspace(
-                tokenPayload.name,
-                tokenPayload.location,
-                workspaceId,
-              );
-          if (!existingToken && tokenPayload.source_object_id) {
-            existingToken = await Token.findUnattributedByNameLocation(
-              tokenPayload.name,
-              tokenPayload.location,
-              workspaceId,
-            );
-          }
-
-          if (existingToken) {
-            assignTokenContactGroups(tokenPayload, membership, {
-              isCreate: false,
-            });
-            // Update existing token with new characteristics
-            const writeUpdate = async (client) => {
-              const updatedToken = await Token.update(existingToken.id, {
-                ...tokenPayload,
-                ...(!req.isWorkerCall ? { auto_sync_managed: false } : {}),
-              }, client ? { client } : undefined);
-              if (autoSyncRun) await attachObservedToken(autoSyncRun, updatedToken.id, false, { client });
-              return updatedToken;
-            };
-            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeUpdate) : await writeUpdate();
+          const imported = await upsertImportedToken({ context: autoSyncRun,
+            payload: tokenPayload, workspaceId, userId: req.user.id, manual: !req.isWorkerCall,
+            assignMembership: (payload, options) => assignTokenContactGroups(payload, membership, options) });
+          tok = imported.token;
+          if (!imported.created) {
             updated.push(tok);
             // Audit per-token update (best-effort)
             try {
@@ -810,22 +784,6 @@ router.post(
               logger.warn("Audit write failed", { error: _err.message });
             }
           } else {
-            assignTokenContactGroups(tokenPayload, membership, {
-              isCreate: true,
-            });
-            // Create new token
-            const writeCreate = async (client) => {
-              const createdToken = await Token.create({
-                ...tokenPayload,
-                userId: req.user.id,
-                workspaceId,
-                created_by: req.user.id,
-                imported_at: new Date(),
-              }, client ? { client } : undefined);
-              if (autoSyncRun) await attachObservedToken(autoSyncRun, createdToken.id, true, { client });
-              return createdToken;
-            };
-            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeCreate) : await writeCreate();
             created.push(tok);
             // Audit per-token import (best-effort)
             try {
@@ -863,6 +821,7 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
           if (autoSyncRun) {
@@ -922,6 +881,7 @@ router.post(
         deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
+        scan_complete: autoSyncRun?.scanComplete ?? null,
         deleted: cleanupDeleted,
         created,
         updated,
@@ -1043,6 +1003,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId && result.host && result.ownerKey) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "gitlab",
             identityContext: { host: result.host, ownerKey: result.ownerKey },
@@ -1260,6 +1221,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId && result.host && result.ownerKey) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "github",
             identityContext: { host: result.host, ownerKey: result.ownerKey },
@@ -1566,6 +1528,7 @@ router.post(
             region || "us-east-1",
           );
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "aws",
             identityContext: { accountId: result.accountId },
@@ -1779,6 +1742,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "azure",
             identityContext: { vaultUrl },
@@ -1910,6 +1874,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "gcp",
             identityContext: { projectId },
@@ -2107,6 +2072,7 @@ router.post(
         const workspaceId = req.workspace?.id || req.integrationQuota?.workspaceId;
         if (workspaceId && result.tenantId) {
           const scan = await persistScan({
+            request: req,
             workspaceId,
             provider: "azure-ad",
             identityContext: { tenantId: result.tenantId },
@@ -2741,42 +2707,11 @@ router.post(
           // token that a prior manual import created without one (e.g. a
           // stale/missing client scan_id), rather than shadowing it forever.
           let tok;
-          let existingToken = tokenPayload.source_object_id
-            ? await Token.findBySourceIdentity({
-                workspaceId,
-                sourceProvider: tokenPayload.source_provider,
-                sourceInstance: tokenPayload.source_instance,
-                sourceOwnerKey: tokenPayload.source_owner_key,
-                sourceKind: tokenPayload.source_kind,
-                sourceObjectId: tokenPayload.source_object_id,
-              })
-            : await Token.findByNameLocationAndWorkspace(
-                tokenPayload.name,
-                tokenPayload.location,
-                workspaceId,
-              );
-          if (!existingToken && tokenPayload.source_object_id) {
-            existingToken = await Token.findUnattributedByNameLocation(
-              tokenPayload.name,
-              tokenPayload.location,
-              workspaceId,
-            );
-          }
-
-          if (existingToken) {
-            assignTokenContactGroups(tokenPayload, membership, {
-              isCreate: false,
-            });
-            // Update existing token with new characteristics
-            const writeUpdate = async (client) => {
-              const updatedToken = await Token.update(existingToken.id, {
-                ...tokenPayload,
-                ...(!req.isWorkerCall ? { auto_sync_managed: false } : {}),
-              }, client ? { client } : undefined);
-              if (autoSyncRun) await attachObservedToken(autoSyncRun, updatedToken.id, false, { client });
-              return updatedToken;
-            };
-            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeUpdate) : await writeUpdate();
+          const imported = await upsertImportedToken({ context: autoSyncRun,
+            payload: tokenPayload, workspaceId, userId: req.user.id, manual: !req.isWorkerCall,
+            assignMembership: (payload, options) => assignTokenContactGroups(payload, membership, options) });
+          tok = imported.token;
+          if (!imported.created) {
             updated.push(tok);
             try {
               await writeAudit({
@@ -2799,22 +2734,6 @@ router.post(
               logger.warn("Audit write failed", { error: _err.message });
             }
           } else {
-            assignTokenContactGroups(tokenPayload, membership, {
-              isCreate: true,
-            });
-            // Create new token
-            const writeCreate = async (client) => {
-              const createdToken = await Token.create({
-                ...tokenPayload,
-                userId: req.user.id,
-                workspaceId,
-                created_by: req.user.id,
-                imported_at: new Date(),
-              }, client ? { client } : undefined);
-              if (autoSyncRun) await attachObservedToken(autoSyncRun, createdToken.id, true, { client });
-              return createdToken;
-            };
-            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeCreate) : await writeCreate();
             created.push(tok);
             try {
               await writeAudit({
@@ -2860,6 +2779,7 @@ router.post(
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
       let autoCleanupResult = null;
+      await recordAutoSyncImportErrors(autoSyncRun, errors.length);
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
           if (autoSyncRun) {
@@ -2920,6 +2840,7 @@ router.post(
         deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
         detached_count: autoCleanupResult?.detached || 0,
         cleanup_complete: autoCleanupResult?.complete ?? null,
+        scan_complete: autoSyncRun?.scanComplete ?? null,
         deleted: cleanupDeleted,
         created,
         updated,

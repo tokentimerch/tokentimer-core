@@ -25,20 +25,31 @@
 const { pool } = require("../db/database");
 const { resolveSourceIdentity } = require("./sourceIdentity");
 
+function snapshotIdentity(value) {
+  const text = String(value);
+  if (!/^https?:\/\//i.test(text)) return text;
+  try {
+    const url = new URL(text);
+    url.username = ""; url.password = ""; url.search = ""; url.hash = "";
+    return url.toString();
+  } catch (_) { return "[unavailable]"; }
+}
+
 async function createScan({
   workspaceId,
   provider,
   instance,
   ownerKey,
   createdBy = null,
+  startedAt = new Date(),
   client = null,
 }) {
   const db = client || pool;
   const res = await db.query(
-    `INSERT INTO integration_scans (workspace_id, provider, source_instance, source_owner_key, created_by)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO integration_scans (workspace_id, provider, source_instance, source_owner_key, created_by, started_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, started_at`,
-    [workspaceId, provider, instance, ownerKey, createdBy],
+    [workspaceId, provider, instance, ownerKey, createdBy, startedAt],
   );
   return { id: res.rows[0].id, startedAt: res.rows[0].started_at };
 }
@@ -203,37 +214,31 @@ async function getScan({ scanId, workspaceId, provider, client = null }) {
  * @param {Array<{sourceKind, dimensions, complete, reason}>} subScopes - Per-kind/dimension completeness.
  * @returns {Promise<{scanId: string, startedAt: Date, instance: string, ownerKey: string, ownerDisplay: string|null}>}
  */
-async function persistScan({
-  workspaceId,
-  provider,
-  identityContext,
-  items,
-  subScopes,
-  createdBy = null,
-}) {
-  const identity = resolveSourceIdentity(provider, identityContext);
-  const scan = await createScan({
-    workspaceId,
-    provider,
-    instance: identity.instance,
-    ownerKey: identity.ownerKey,
-    createdBy,
+async function persistScan({ workspaceId, provider, identityContext, items, subScopes,
+  createdBy = null, request = null }) {
+  const { parseAutoSyncContext, multiConfigEnabled, withFencedImport } = require("./autoSyncProvenance");
+  const context = request ? parseAutoSyncContext(request, workspaceId, provider) : null;
+  if (!context && request?.isWorkerCall && await multiConfigEnabled()) {
+    const error = new Error("Fenced auto-sync run is required");
+    error.code = "AUTO_SYNC_RUN_REQUIRED";
+    throw error;
+  }
+  return withFencedImport(context, async (client) => {
+    const identity = resolveSourceIdentity(provider, identityContext);
+    const scan = await createScan({ workspaceId, provider, instance: identity.instance,
+      ownerKey: identity.ownerKey, createdBy, startedAt: request?.integrationScanStartedAt || new Date(), client });
+    if (context) {
+      await client.query("INSERT INTO auto_sync_run_scans(run_id, scan_id) VALUES ($1, $2)", [context.runId, scan.id]);
+      await client.query(`UPDATE auto_sync_runs SET settings_snapshot = jsonb_set(settings_snapshot,
+        '{source_instances}', COALESCE(settings_snapshot->'source_instances', '[]'::jsonb) || $2::jsonb)
+        WHERE run_id = $1`, [context.runId, JSON.stringify([{ instance: snapshotIdentity(identity.instance), owner_key: snapshotIdentity(identity.ownerKey) }])]);
+    }
+    await recordScanItems(scan.id, items, { workspaceId, provider,
+      instance: identity.instance, ownerKey: identity.ownerKey, observedAt: scan.startedAt, client });
+    await finalizeScan(scan.id, subScopes, { client });
+    return { scanId: scan.id, startedAt: scan.startedAt, instance: identity.instance,
+      ownerKey: identity.ownerKey, ownerDisplay: identity.ownerDisplay };
   });
-  await recordScanItems(scan.id, items, {
-    workspaceId,
-    provider,
-    instance: identity.instance,
-    ownerKey: identity.ownerKey,
-    observedAt: scan.startedAt,
-  });
-  await finalizeScan(scan.id, subScopes);
-  return {
-    scanId: scan.id,
-    startedAt: scan.startedAt,
-    instance: identity.instance,
-    ownerKey: identity.ownerKey,
-    ownerDisplay: identity.ownerDisplay,
-  };
 }
 
 module.exports = {

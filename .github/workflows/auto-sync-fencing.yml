@@ -1,0 +1,52 @@
+name: Auto-sync PostgreSQL regressions
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "apps/api/**"
+      - "apps/worker/src/**"
+      - "tests/postgres/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/auto-sync-fencing.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fencing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.4-alpine
+        env:
+          POSTGRES_DB: tokentimer_issue71_test
+          POSTGRES_USER: tokentimer
+          POSTGRES_PASSWORD: local-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tokentimer -d tokentimer_issue71_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: tokentimer
+      DB_PASSWORD: local-test-only
+      DB_NAME: tokentimer_issue71_test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node apps/api/migrations/migrate.js
+      - run: pnpm test:auto-sync:postgres

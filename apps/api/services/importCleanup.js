@@ -223,9 +223,14 @@ async function cleanupObsoleteTokens({
 
       for (const row of res.rows) {
         try {
+          // Recheck with a fresh statement snapshot after acquiring the token lock.
+          const tracked = await client.query(
+            "SELECT 1 FROM auto_sync_token_links WHERE token_id = $1 LIMIT 1", [row.id]);
+          if (tracked.rowCount) continue;
           await client.query("DELETE FROM alert_queue WHERE token_id = $1", [row.id]);
           await client.query("DELETE FROM domain_monitors WHERE token_id = $1", [row.id]);
-          await client.query("DELETE FROM tokens WHERE id = $1", [row.id]);
+          await client.query(`DELETE FROM tokens t WHERE id = $1
+            AND NOT EXISTS (SELECT 1 FROM auto_sync_token_links l WHERE l.token_id = t.id)`, [row.id]);
           deleted.push({ id: row.id, name: row.name, location: row.location });
           await writeAudit({
             client,

@@ -1076,6 +1076,57 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/tokens/{id}/auto-sync-provenance:
+    get:
+      tags: [Tokens]
+      summary: Read active configurations and immutable association history
+      operationId: getTokenAutoSyncProvenance
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - in: query
+          name: before
+          description: Opaque event ID returned by next_before
+          schema: { type: string, pattern: '^[1-9][0-9]{0,18}$' }
+      responses:
+        "200":
+          description: Provenance page, including former configuration names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  managed: { type: boolean }
+                  configurations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        config_id: { type: string, format: uuid }
+                        name: { type: string }
+                        provider: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        config_id: { type: string, format: uuid }
+                        config_name: { type: string }
+                        run_id: { type: string, format: uuid, nullable: true }
+                        event: { type: string, enum: [attached, detached] }
+                        reason: { type: string }
+                        occurred_at: { type: string, format: date-time }
+                  next_before: { type: string, nullable: true }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/tokens/{id}/alert-timeline:
     get:
       tags: [Tokens]
@@ -2331,7 +2382,7 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 100 }
       responses:
         "200":
-          description: Stable keyset page of runs
+          description: Stable keyset page of runs ordered by descending generation
           content:
             application/json:
               schema:
@@ -2341,7 +2392,22 @@ paths:
                     type: array
                     items:
                       type: object
-                      additionalProperties: true
+                      properties:
+                        run_id: { type: string, format: uuid }
+                        trigger: { type: string, enum: [schedule, manual, replacement] }
+                        generation: { type: string, description: Monotonic PostgreSQL bigint fencing token }
+                        scan_version: { type: string }
+                        started_at: { type: string, format: date-time }
+                        finished_at: { type: string, format: date-time, nullable: true }
+                        status: { type: string, enum: [running, success, partial, failed, superseded] }
+                        settings_snapshot: { type: object, additionalProperties: true }
+                        discovered_count: { type: integer }
+                        created_count: { type: integer }
+                        updated_count: { type: integer }
+                        detached_count: { type: integer }
+                        deleted_count: { type: integer }
+                        error_count: { type: integer }
+                        error: { type: string, nullable: true, description: Controlled public message without provider response bodies }
                   next_cursor: { type: string, nullable: true }
         "400":
           $ref: "#/components/responses/BadRequest"

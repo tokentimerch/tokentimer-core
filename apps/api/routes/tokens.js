@@ -443,6 +443,31 @@ router.get(
   },
 );
 
+// Former configuration identities remain readable after configuration deletion.
+router.get("/api/tokens/:id/auto-sync-provenance", getTestApiLimiter(), requireAuth, async (req, res) => {
+  try {
+    const tokenId = Number(req.params.id);
+    const limit = req.query.limit === undefined ? 25 : Number(req.query.limit);
+    const before = req.query.before === undefined ? null : String(req.query.before);
+    if (!Number.isSafeInteger(tokenId) || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+        (before !== null && !/^[1-9]\d{0,18}$/.test(before))) return res.status(400).json({ error: "Invalid pagination" });
+    const token = await Token.findById(tokenId);
+    if (!token || !(await canReadToken(token, req.user.id))) return res.status(404).json({ error: "Token not found" });
+    const active = await pool.query(`SELECT c.id AS config_id, c.connection_key AS name, c.provider
+      FROM auto_sync_token_links l JOIN auto_sync_configs c ON c.id = l.config_id
+      WHERE l.token_id = $1 AND c.workspace_id = $2 ORDER BY c.connection_key, c.id`, [tokenId, token.workspace_id]);
+    const events = await pool.query(`SELECT id, config_id, config_name, run_id, event, reason, occurred_at
+      FROM auto_sync_token_link_events WHERE token_id_snapshot = $1 AND workspace_id = $2
+      AND ($3::bigint IS NULL OR id < $3) ORDER BY id DESC LIMIT $4`, [tokenId, token.workspace_id, before, limit + 1]);
+    const items = events.rows.slice(0, limit);
+    res.json({ managed: token.auto_sync_managed === true, configurations: active.rows, items,
+      next_before: events.rows.length > limit ? String(items.at(-1).id) : null });
+  } catch (error) {
+    logger.error("Auto-sync provenance lookup failed", { error: error.message });
+    res.status(500).json({ error: "Failed to fetch auto-sync provenance" });
+  }
+});
+
 // Get specific token by ID
 router.get(
   "/api/tokens/:id",
@@ -738,9 +763,10 @@ router.post(
           throw err;
         }
         applyMembershipToTokenData(tokenData, updateMembership);
-        // If confirmed, update the existing token instead
+        // A confirmed manual import adopts inventory from auto-sync management.
         const updatedToken = await Token.update(existingToken.id, {
           ...tokenData,
+          auto_sync_managed: false,
           expiration,
           created_at: tokenData.created_at, // Allow updating to null if not found in latest import
         });

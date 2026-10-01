@@ -382,7 +382,7 @@ client-credential mint uses the tenant GUID or domain as supplied.
 Configuration names are editable and unique without regard to case within a
 workspace and provider. Each configuration has its own schedule, credentials,
 scan settings, run history, and token associations. A token discovered by
-several configurations remains one inventory row. Only tokens originally
+several configurations with the same canonical source identity remains one inventory row. Only tokens originally
 created by a fenced auto-sync run are eligible for automatic deletion after
 all associations disappear; manual imports make an existing token unmanaged.
 Deleting a configuration detaches its tokens and retains them in inventory.
@@ -397,7 +397,7 @@ The corresponding GET route reports activation state. From activation onward,
 worker imports without a current fenced run ID are rejected. Run-now clicks
 during a run are persisted as one follow-up manual run. A scan setting or
 enabled-state edit supersedes the current run and queues a replacement.
-An incomplete scan never removes associations.
+An incomplete scan never removes associations. See [Auto-sync lifecycle and rollout](AUTO_SYNC.md) for the exact identity, fencing, cleanup, history, and verification contracts.
 
 Once multiple configurations exist, older API and worker images cannot be
 rolled back into that installation. Restore from a pre-activation backup or

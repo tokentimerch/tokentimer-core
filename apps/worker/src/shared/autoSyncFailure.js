@@ -20,23 +20,17 @@ const AUTO_SYNC_CRITICAL_THRESHOLD =
  * Prefer API error body over generic Axios message for last_sync_error / audit.
  */
 export function sanitizeAutoSyncError(value) {
-  return String(value || "Auto-sync failed")
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
-    .replace(/https?:\/\/[^\s,;]+/gi, "[URL]")
-    .replace(/\b(token|secret|password|authorization|api[_-]?key|client[_-]?secret)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[redacted]")
-    .substring(0, 1000);
+  if (value == null) return null;
+  const text = String(value);
+  const safe = /^(?:Provider request failed \(HTTP \d{3}\)\.|Provider request timed out\.|Auto-sync failed; review provider access and scan settings\.|Scan or import was incomplete; associations were retained\.|Scan found \d+ item\(s\) but none were imported \(all failed validation or were rejected\)\.|\d+ of \d+ scanned item\(s\) failed to import\.)$/;
+  return safe.test(text) ? text : "Auto-sync failed; review provider access and scan settings.";
 }
 
 export function formatAutoSyncError(err) {
-  const body = err?.response?.data;
-  if (body && typeof body.error === "string" && body.error.trim()) {
-    return sanitizeAutoSyncError(body.error.trim());
-  }
-  if (body && typeof body.message === "string" && body.message.trim()) {
-    return sanitizeAutoSyncError(body.message.trim());
-  }
-  return sanitizeAutoSyncError(err?.message || err);
+  const status = Number(err?.response?.status);
+  if (Number.isInteger(status) && status >= 400 && status <= 599) return `Provider request failed (HTTP ${status}).`;
+  if (["ECONNABORTED", "ETIMEDOUT"].includes(err?.code)) return "Provider request timed out.";
+  return "Auto-sync failed; review provider access and scan settings.";
 }
 
 /**
@@ -45,7 +39,7 @@ export function formatAutoSyncError(err) {
  */
 export function summarizeImportErrors(errors) {
   return (Array.isArray(errors) ? errors : []).slice(0, 5).map((e) => ({
-    item: sanitizeAutoSyncError(e?.item || "unknown").substring(0, 200),
+    item: "Imported item",
     error: sanitizeAutoSyncError(e?.error || "unknown error").substring(0, 300),
   }));
 }

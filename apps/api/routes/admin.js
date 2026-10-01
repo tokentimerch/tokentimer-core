@@ -10,6 +10,7 @@ const systemSettings = require("../services/systemSettings");
 const {
   multiConfigEnabled,
   normalizeConnectionName,
+  validateAutoSyncSettings,
   scanSettingsEqual,
   sanitizePublicAutoSyncError,
 } = require("../services/autoSyncProvenance");
@@ -332,13 +333,14 @@ router.get(
   "/api/v1/workspaces/:id/auto-sync/:configId/runs",
   getApiLimiter(), requireAuth, loadWorkspace, requireWorkspaceMembership,
   async (req, res) => {
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+    const limit = req.query.limit === undefined ? 25 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ error: "Invalid limit" });
     const cursor = req.query.cursor ? String(req.query.cursor) : null;
     let before = null;
     if (cursor) {
       try {
         const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-        if (!parsed.started_at || !parsed.run_id) throw new Error("invalid");
+        if (!Number.isSafeInteger(parsed.generation) || parsed.generation < 1) throw new Error("invalid");
         before = parsed;
       } catch (_) { return res.status(400).json({ error: "Invalid cursor" }); }
     }
@@ -349,13 +351,12 @@ router.get(
     if (!config.rowCount) return res.status(404).json({ error: "Auto-sync config not found" });
     const result = await pool.query(
       `SELECT run_id, trigger, generation, scan_version, started_at, finished_at,
-              status, discovered_count, created_count, updated_count,
+              status, settings_snapshot, discovered_count, created_count, updated_count,
               detached_count, deleted_count, error_count, error_text AS error
          FROM auto_sync_runs WHERE config_id_snapshot = $1 AND workspace_id = $2
-           AND ($3::timestamptz IS NULL OR (started_at, run_id) < ($3::timestamptz, $4::uuid))
-        ORDER BY started_at DESC, run_id DESC LIMIT $5`,
-      [req.params.configId, req.workspace.id, before?.started_at || null,
-        before?.run_id || null, limit + 1],
+           AND ($3::bigint IS NULL OR generation < $3)
+        ORDER BY generation DESC LIMIT $4`,
+      [req.params.configId, req.workspace.id, before?.generation || null, limit + 1],
     );
     const hasMore = result.rows.length > limit;
     const items = result.rows.slice(0, limit);
@@ -363,7 +364,7 @@ router.get(
     res.json({ items: items.map((row) => ({
       ...row, error: sanitizePublicAutoSyncError(row.error),
     })), next_cursor: hasMore
-      ? Buffer.from(JSON.stringify({ started_at: tail.started_at, run_id: tail.run_id })).toString("base64url")
+      ? Buffer.from(JSON.stringify({ generation: Number(tail.generation) })).toString("base64url")
       : null });
   },
 );
@@ -378,6 +379,8 @@ router.post(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
+      const settingsError = validateAutoSyncSettings(req.body || {});
+      if (settingsError) return res.status(400).json({ error: settingsError });
       const {
         provider,
         credentials,
@@ -501,119 +504,123 @@ router.put(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
-      const existing = await pool.query(
-        `SELECT provider, scan_params, enabled, cleanup_obsolete FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
-        [req.params.configId, req.workspace.id],
-      );
-      if (existing.rows.length === 0) {
-        return res.status(404).json({ error: "Auto-sync config not found" });
-      }
-      if (!isCoreAutoSyncProvider(existing.rows[0].provider)) {
-        return res.status(403).json({
-          error: `Auto-sync for ${existing.rows[0].provider} is not available in this edition.`,
-          code: "FEATURE_NOT_AVAILABLE",
-        });
-      }
-
-      const {
-        credentials,
-        scan_params,
-        frequency,
-        schedule_time,
-        schedule_tz,
-        enabled,
-        cleanup_obsolete,
-        name,
-      } = req.body || {};
-      const updates = [];
-      const values = [];
-      let idx = 1;
-      let scanAffecting = false;
-
-      if (credentials !== undefined) {
-        const credError = validateAutoSyncCredentials(
-          existing.rows[0].provider,
-          credentials,
-        );
-        if (credError) {
-          return res.status(400).json({ error: credError });
-        }
-        const credJson =
-          typeof credentials === "string"
-            ? credentials
-            : JSON.stringify(credentials);
-        const encrypted = systemSettings.encrypt
-          ? systemSettings.encrypt(credJson)
-          : require("../services/systemSettings").encrypt(credJson);
-        updates.push(`credentials_encrypted = $${idx++}`);
-        values.push(encrypted);
-        scanAffecting = true;
-      }
-      if (scan_params !== undefined) {
-        updates.push(`scan_params = $${idx++}`);
-        values.push(scan_params);
-        scanAffecting = !scanSettingsEqual(scan_params, existing.rows[0].scan_params) || scanAffecting;
-      }
-      if (frequency !== undefined) {
-        updates.push(`frequency = $${idx++}`);
-        values.push(frequency);
-      }
-      if (schedule_time !== undefined) {
-        updates.push(`schedule_time = $${idx++}`);
-        values.push(schedule_time);
-      }
-      if (schedule_tz !== undefined) {
-        updates.push(`schedule_tz = $${idx++}`);
-        values.push(schedule_tz);
-      }
-      if (enabled !== undefined) {
-        updates.push(`enabled = $${idx++}`);
-        values.push(enabled);
-        if (enabled === false) updates.push("consecutive_failures = 0");
-        scanAffecting = enabled !== existing.rows[0].enabled || scanAffecting;
-      }
-      if (cleanup_obsolete !== undefined) {
-        updates.push(`cleanup_obsolete = $${idx++}`);
-        values.push(cleanup_obsolete === true);
-        scanAffecting = (cleanup_obsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
-      } else if (
-        scan_params !== undefined &&
-        scan_params &&
-        typeof scan_params === "object" &&
-        typeof scan_params.cleanupObsolete === "boolean"
-      ) {
-        updates.push(`cleanup_obsolete = $${idx++}`);
-        values.push(scan_params.cleanupObsolete === true);
-        scanAffecting = (scan_params.cleanupObsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
-      }
-      if (name !== undefined) {
-        const normalizedName = normalizeConnectionName(name);
-        if (!normalizedName) return res.status(400).json({ error: "Name must contain 1–100 characters" });
-        updates.push(`connection_key = $${idx++}`);
-        values.push(normalizedName);
-      }
-      if (scanAffecting) {
-        updates.push("scan_version = scan_version + 1");
-        updates.push("active_run_id = NULL");
-        updates.push("lease_owner = NULL");
-        updates.push("lease_until = NULL");
-        if (enabled !== false) {
-          updates.push("pending_replacement_run = TRUE");
-          updates.push("next_sync_at = NOW()");
-        }
-      }
-      updates.push(`updated_at = NOW()`);
-
-      if (updates.length <= 1) {
-        return res.status(400).json({ error: "No fields to update" });
-      }
-
-      values.push(req.params.configId, req.workspace.id);
+      const settingsError = validateAutoSyncSettings(req.body || {});
+      if (settingsError) return res.status(400).json({ error: settingsError });
       const result = await withDbTransaction(async (client) => {
-        await client.query(
-          "SELECT id FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+        const existing = await client.query(
+          `SELECT provider, scan_params, enabled, cleanup_obsolete, frequency, schedule_time, schedule_tz, active_run_id FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
           [req.params.configId, req.workspace.id],
         );
+        if (existing.rows.length === 0) {
+          return res.status(404).json({ error: "Auto-sync config not found" });
+        }
+        if (!isCoreAutoSyncProvider(existing.rows[0].provider)) {
+          return res.status(403).json({
+            error: `Auto-sync for ${existing.rows[0].provider} is not available in this edition.`,
+            code: "FEATURE_NOT_AVAILABLE",
+          });
+        }
+
+        const {
+          credentials,
+          scan_params,
+          frequency,
+          schedule_time,
+          schedule_tz,
+          enabled,
+          cleanup_obsolete,
+          name,
+        } = req.body || {};
+        const updates = [];
+        const values = [];
+        let idx = 1;
+        let scanAffecting = false;
+
+        if (credentials !== undefined) {
+          const credError = validateAutoSyncCredentials(
+            existing.rows[0].provider,
+            credentials,
+          );
+          if (credError) {
+            return res.status(400).json({ error: credError });
+          }
+          const credJson =
+            typeof credentials === "string"
+              ? credentials
+              : JSON.stringify(credentials);
+          const encrypted = systemSettings.encrypt
+            ? systemSettings.encrypt(credJson)
+            : require("../services/systemSettings").encrypt(credJson);
+          updates.push(`credentials_encrypted = $${idx++}`);
+          values.push(encrypted);
+          scanAffecting = true;
+        }
+        if (scan_params !== undefined) {
+          updates.push(`scan_params = $${idx++}`);
+          values.push(scan_params);
+          scanAffecting = !scanSettingsEqual(scan_params, existing.rows[0].scan_params) || scanAffecting;
+        }
+        if (frequency !== undefined) {
+          updates.push(`frequency = $${idx++}`);
+          values.push(frequency);
+        }
+        if (schedule_time !== undefined) {
+          updates.push(`schedule_time = $${idx++}`);
+          values.push(schedule_time);
+        }
+        if (schedule_tz !== undefined) {
+          updates.push(`schedule_tz = $${idx++}`);
+          values.push(schedule_tz);
+        }
+        if (enabled !== undefined) {
+          updates.push(`enabled = $${idx++}`);
+          values.push(enabled);
+          if (enabled === false) updates.push("consecutive_failures = 0");
+          scanAffecting = enabled !== existing.rows[0].enabled || scanAffecting;
+        }
+        if (cleanup_obsolete !== undefined) {
+          updates.push(`cleanup_obsolete = $${idx++}`);
+          values.push(cleanup_obsolete === true);
+          scanAffecting = (cleanup_obsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
+        } else if (
+          scan_params !== undefined &&
+          scan_params &&
+          typeof scan_params === "object" &&
+          typeof scan_params.cleanupObsolete === "boolean"
+        ) {
+          updates.push(`cleanup_obsolete = $${idx++}`);
+          values.push(scan_params.cleanupObsolete === true);
+          scanAffecting = (scan_params.cleanupObsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
+        }
+        if (name !== undefined) {
+          const normalizedName = normalizeConnectionName(name);
+          if (!normalizedName) return res.status(400).json({ error: "Name must contain 1–100 characters" });
+          updates.push(`connection_key = $${idx++}`);
+          values.push(normalizedName);
+        }
+        if (scanAffecting) {
+          updates.push("scan_version = scan_version + 1");
+          updates.push("active_run_id = NULL");
+          updates.push("lease_owner = NULL");
+          updates.push("lease_until = NULL");
+          if ((enabled ?? existing.rows[0].enabled) === true) {
+            updates.push("pending_replacement_run = TRUE");
+            updates.push("next_sync_at = NOW()");
+          }
+        }
+        if (!scanAffecting && (frequency !== undefined || schedule_time !== undefined || schedule_tz !== undefined)
+            && !existing.rows[0].active_run_id) {
+          updates.push(`next_sync_at = CASE WHEN pending_manual_run OR pending_replacement_run THEN NOW() ELSE $${idx++} END`);
+          values.push(computeNextSyncAt(frequency ?? existing.rows[0].frequency,
+            schedule_time ?? existing.rows[0].schedule_time, schedule_tz ?? existing.rows[0].schedule_tz));
+        }
+        updates.push(`updated_at = NOW()`);
+
+        if (updates.length <= 1) {
+          return res.status(400).json({ error: "No fields to update" });
+        }
+
+        values.push(req.params.configId, req.workspace.id);
         if (scanAffecting) {
           await client.query(
             `UPDATE auto_sync_runs SET status = 'superseded', finished_at = NOW()
@@ -638,6 +645,7 @@ router.put(
         }
         return updated;
       });
+      if (res.headersSent) return;
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Auto-sync config not found" });
       }

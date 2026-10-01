@@ -616,7 +616,7 @@ const findByDomain = async (userId, domain) => {
 };
 
 // Find token by name, location, and workspaceId (for deduplication during imports)
-const findByNameLocationAndWorkspace = async (name, location, workspaceId) => {
+const findByNameLocationAndWorkspace = async (name, location, workspaceId, { client = pool } = {}) => {
   // Both name AND location are required for deduplication
   if (!name) return null;
   if (location === null || location === undefined || location === "")
@@ -627,11 +627,11 @@ const findByNameLocationAndWorkspace = async (name, location, workspaceId) => {
     WHERE name = $1 
       AND workspace_id = $2
       AND location = $3
-    LIMIT 1
+    LIMIT 1 FOR UPDATE
   `;
   const values = [name, workspaceId, location];
 
-  const result = await pool.query(query, values);
+  const result = await client.query(query, values);
   const token = result.rows[0];
 
   // Convert numeric fields from strings to numbers
@@ -649,7 +649,7 @@ const findBySourceIdentity = async ({
   sourceOwnerKey,
   sourceKind,
   sourceObjectId,
-}) => {
+}, { client = pool } = {}) => {
   if (!sourceObjectId) return null;
   const query = `
     SELECT * FROM tokens
@@ -659,9 +659,9 @@ const findBySourceIdentity = async ({
       AND source_owner_key = $4
       AND source_kind = $5
       AND source_object_id = $6
-    LIMIT 1
+    LIMIT 1 FOR UPDATE
   `;
-  const result = await pool.query(query, [
+  const result = await client.query(query, [
     workspaceId,
     sourceProvider,
     sourceInstance,
@@ -681,7 +681,7 @@ const findBySourceIdentity = async ({
 // source_object_id IS NULL keeps this from ever touching an already
 // provenance-attributed row -- adoption never overrides existing provenance,
 // it only fills in provenance that was missing.
-const findUnattributedByNameLocation = async (name, location, workspaceId) => {
+const findUnattributedByNameLocation = async (name, location, workspaceId, { client = pool } = {}) => {
   if (!name) return null;
   if (location === null || location === undefined || location === "")
     return null;
@@ -692,9 +692,9 @@ const findUnattributedByNameLocation = async (name, location, workspaceId) => {
       AND workspace_id = $2
       AND location = $3
       AND source_object_id IS NULL
-    LIMIT 1
+    LIMIT 1 FOR UPDATE
   `;
-  const result = await pool.query(query, [name, workspaceId, location]);
+  const result = await client.query(query, [name, workspaceId, location]);
   const token = result.rows[0];
   return token ? convertNumericFields(token) : null;
 };

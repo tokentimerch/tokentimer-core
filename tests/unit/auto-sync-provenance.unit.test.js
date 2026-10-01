@@ -20,6 +20,7 @@ function fakeClient(handler, calls) {
   return {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (sql.includes("SELECT scan_id FROM auto_sync_run_scans")) return { rows: [{ scan_id: scanId }], rowCount: 1 };
       return handler(sql, params);
     },
     release() {},
@@ -106,6 +107,19 @@ describe("auto-sync provenance transaction boundaries", () => {
     const result = await withPoolClient(client, () => provenance.reconcileAutoSyncRun(context));
     assert.equal(result.complete, false);
     assert.equal(calls.some((call) => call.sql.includes("DELETE FROM auto_sync_token_links")), false);
+  });
+
+  it("snapshots effective scope metadata without credential objects", async () => {
+    const { settingsSnapshot } = await import("../../apps/worker/src/shared/autoSyncRuns.js");
+    const snapshot = settingsSnapshot({cleanup_obsolete:true,credentials_encrypted:"do-not-copy",scan_params:{
+      token:"do-not-copy",region:"eu-west-1",include:{tokens:true,secret:"do-not-copy"},
+      filters:{includeProjectTokens:true,includeRevoked:false},
+      filterRules:[{field:"name",matchType:"regex",value:"^prod",action:"include",token:"do-not-copy"},
+        {value:{token:"do-not-copy"}}]}});
+    assert.equal(snapshot.filters.includeProjectTokens,true);
+    assert.equal(snapshot.filterRules[0].value,"^prod");
+    assert.equal(snapshot.region,"eu-west-1");
+    assert.ok(!JSON.stringify(snapshot).includes("do-not-copy"));
   });
 
   it("normalizes names before PostgreSQL uniqueness enforcement", () => {

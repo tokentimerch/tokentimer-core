@@ -1,3 +1,4 @@
+import AutoSyncProvenance from './AutoSyncProvenance.jsx';
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   Modal,
@@ -502,9 +503,15 @@ function TokenDetailModal({
                   : renderDateField('Asset expiration', token.expiresAt)}
                 {renderDateField('Created', token.created_at)}
                 {renderDateField('Imported', token.imported_at)}
-                {renderField('Auto-sync ownership', token.auto_sync_managed
-                  ? 'Managed'
-                  : token.auto_sync_observed ? 'Observed' : 'Manual or legacy')}
+                {renderField(
+                  'Auto-sync ownership',
+                  token.auto_sync_managed
+                    ? 'Managed'
+                    : token.auto_sync_observed
+                      ? 'Observed'
+                      : 'Manual or legacy'
+                )}
+                <AutoSyncProvenance tokenId={token.id} />
                 {renderDateField('Last used', token.last_used)}
                 {renderDateField('Last updated', token.updated_at)}
               </DashboardModalDataSection>
