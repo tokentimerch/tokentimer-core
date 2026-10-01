@@ -684,6 +684,7 @@ async function upsertInventoryForObservation(client, observation) {
       source: observation.source,
       sourceRef: certSourceRef,
       reuseCertificateId: existingManagedCertificate?.id,
+      observedAt: observation.observedAt,
       name: displayName,
       // os-store-managed only when the agent actually
       // observed a private key at this location (observation.keyPresent ===

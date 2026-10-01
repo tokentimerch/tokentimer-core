@@ -23,6 +23,7 @@ function createMockClient(handler) {
   const state = { queries: [] };
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
@@ -314,6 +315,7 @@ function createMockPool(handler) {
   const state = { queries: [], released: false, transaction: [], audits: [], jobLogs: [] };
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
@@ -598,6 +600,7 @@ function createReaperClient(rows) {
   return {
     queries,
     async query(sql, params = []) {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const normalized = normalizeSql(sql);
       queries.push({ sql: normalized, params });
       if (
@@ -802,6 +805,7 @@ function createDrainPool(rows, { alertThrows = false, alertOutcome = null } = {}
   return {
     queries,
     async query(sql, params = []) {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const normalized = normalizeSql(sql);
       queries.push({ sql: normalized, params });
       if (normalized.startsWith("WITH due AS")) return { rows };

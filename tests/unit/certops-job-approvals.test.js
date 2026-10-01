@@ -57,6 +57,7 @@ function createMockDb(handler) {
   return {
     state,
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ text: sql, params });
       return handler(sql, params, state);
@@ -514,6 +515,7 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
     const state = { queries: [], transaction: [], released: false };
     const client = {
       query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         const sql = typeof text === "string" ? text : text?.text || "";
         state.queries.push({ text: sql, params });
         const trimmed = sql.trim().toUpperCase();

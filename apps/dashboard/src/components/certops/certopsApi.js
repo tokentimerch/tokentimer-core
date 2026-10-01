@@ -271,13 +271,24 @@ export async function cancelCsrWorkflow(workspaceId, csrId) {
 export async function retireCertificate(
   workspaceId,
   certificateId,
-  { status, reason, identityId, fingerprintSha256, acknowledgeUncertainty = false } = {}
+  {
+    status,
+    reason,
+    identityId,
+    fingerprintSha256,
+    acknowledgeUncertainty = false,
+  } = {}
 ) {
   const res = await apiClient.post(
     identityId
       ? `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/retire`
       : `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(certificateId)}/retire`,
-    { status, reason, expectedFingerprintSha256: fingerprintSha256, acknowledgeUncertainty }
+    {
+      status,
+      reason,
+      expectedFingerprintSha256: fingerprintSha256,
+      acknowledgeUncertainty,
+    }
   );
   invalidateCertOpsInventoryCache(workspaceId);
   return res.data;
@@ -298,9 +309,11 @@ export async function stopManagingSource(workspaceId, periodId) {
   return res.data;
 }
 
-export async function readdManagingSource(workspaceId, managedCertificateId, {
-  renewalProfileId = null, automationEnabled = false,
-} = {}) {
+export async function readdManagingSource(
+  workspaceId,
+  managedCertificateId,
+  { renewalProfileId = null, automationEnabled = false } = {}
+) {
   const res = await apiClient.post(
     `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(managedCertificateId)}/readd`,
     { renewalProfileId, automationEnabled }

@@ -285,6 +285,7 @@ async function updateManagedCertificateFromObservation(
             serial_number = COALESCE($9, serial_number),
             certificate_pem = COALESCE($10, certificate_pem),
             fingerprint_sha256 = COALESCE($11, fingerprint_sha256),
+            identity_observed_at = COALESCE($16::timestamptz, clock_timestamp()),
             spki_fingerprint_sha256 = COALESCE($12, spki_fingerprint_sha256),
             not_before = COALESCE($13, not_before),
             not_after = COALESCE($14, not_after),
@@ -309,6 +310,7 @@ async function updateManagedCertificateFromObservation(
       certificate.notBefore,
       certificate.notAfter,
       JSON.stringify(metadata),
+      options.observedAt || null,
     ],
   );
   return toInventoryRecord(result.rows[0]);
@@ -362,6 +364,7 @@ async function upsertObservedManagedCertificate(client, certificate, options, ta
     {
       workspaceId: options.workspaceId,
       status: options.status || "discovered",
+      observedAt: options.observedAt,
       source: bridgeSource(options),
       sourceRef: bridgeSourceRef(options),
       name: options.name || options.hostname,

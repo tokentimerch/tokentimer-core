@@ -189,9 +189,12 @@ export default function RetireCertificateModal({
             {status === 'decommissioned' ? (
               <Checkbox
                 isChecked={acknowledgeUncertainty}
-                onChange={event => setAcknowledgeUncertainty(event.target.checked)}
+                onChange={event =>
+                  setAcknowledgeUncertainty(event.target.checked)
+                }
               >
-                I understand CertOps may not see every location where this certificate is in use.
+                I understand CertOps may not see every location where this
+                certificate is in use.
               </Checkbox>
             ) : null}
 

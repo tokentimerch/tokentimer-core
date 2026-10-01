@@ -3376,7 +3376,9 @@ function DashboardView({
       const cert = retireTarget?.certificate;
       if (!cert?.id) return;
       await retireCertificate(workspaceId, cert.id, {
-        status, reason, acknowledgeUncertainty,
+        status,
+        reason,
+        acknowledgeUncertainty,
         fingerprintSha256: cert.fingerprintSha256,
       });
       refreshCertOps();

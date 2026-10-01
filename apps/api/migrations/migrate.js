@@ -4560,6 +4560,11 @@ const migrations = [
         FOR EACH ROW EXECUTE FUNCTION certops_replace_service_binding();
     `,
   },
+  {
+    version: 63,
+    name: "certops_identity_invariants_hardening",
+    sql: fs.readFileSync(require("path").join(__dirname, "063-certops-identity-invariants.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
@@ -4848,6 +4853,26 @@ migrations.push({
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);
 
+// The caller owns the migration transaction. v62's historic SQL attempts to
+// import retirement audit rows even after workspace erasure has nulled their
+// workspace_id. A connection-local view excludes those unattributable rows
+// only during that backfill. The shipped SQL and immutable audit rows remain
+// unchanged. The caller's rollback also removes the temporary view on failure.
+async function applyMigrationSql(client, migration) {
+  if (migration.version === 62) {
+    const relation = (await client.query(`
+      SELECT quote_ident(n.nspname) || '.' || quote_ident(c.relname) AS name
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.oid = 'audit_events'::regclass
+    `)).rows[0].name;
+    await client.query(
+      `CREATE TEMP VIEW audit_events AS SELECT * FROM ${relation} WHERE workspace_id IS NOT NULL`,
+    );
+  }
+  await client.query(migration.sql);
+  if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
+}
+
 async function runMigrations() {
   logger.info("Starting database migrations...");
 
@@ -4947,7 +4972,7 @@ async function runMigrations() {
         );
         await client.query("BEGIN");
         try {
-          await client.query(migration.sql);
+          await applyMigrationSql(client, migration);
           await client.query(
             "INSERT INTO migrations (version, name) VALUES ($1, $2)",
             [migration.version, migration.name],
@@ -4980,4 +5005,4 @@ if (require.main === module) {
   runMigrations().finally(() => migrationPool.end());
 }
 
-module.exports = { runMigrations, migrations, validateMigrationHistory };
+module.exports = { runMigrations, migrations, validateMigrationHistory, applyMigrationSql };

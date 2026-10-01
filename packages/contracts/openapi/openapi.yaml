@@ -3548,13 +3548,35 @@ paths:
       tags: [CertOps]
       summary: List certificates grouped by workspace and SHA-256 fingerprint
       operationId: listCertOpsCertificateIdentities
+      description: >-
+        One row per workspace fingerprint, with fingerprintless sources included
+        as provisional rows in the same globally sorted page. Stable row-kind
+        and UUID tie-breakers apply to every sort. Page and total use one database
+        snapshot. Source and location summaries contain up to 20 records each,
+        with sourceCount and locationCount reporting the full counts. Viewer
+        responses omit key, source and deployment references. Lifecycle does not
+        determine whether an identity is managed or consumes quota.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/certOpsReadLimitParam"
         - $ref: "#/components/parameters/certOpsReadOffsetParam"
+        - $ref: "#/components/parameters/certOpsCertificateStatusFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateSourceFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateExcludeRetiredParam"
+        - in: query
+          name: unmanaged
+          description: true selects identities with no open period; false selects currently managed identities.
+          schema: { type: boolean }
+        - in: query
+          name: sort
+          schema: { type: string, enum: [expiry, name, certificate, status, source, keyLocality, created], default: expiry }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [asc, desc], default: asc }
       responses:
         "200":
           description: Grouped certificate identities, source periods, and observations
+        "400": { description: Invalid filter or sort }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3564,6 +3586,7 @@ paths:
       tags: [CertOps]
       summary: Read a certificate identity and its locations and management history
       operationId: getCertOpsCertificateIdentity
+      description: Returns complete source-period history and up to 20 location observations with the full locationCount. Viewer responses redact sensitive references.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3572,6 +3595,8 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200": { description: Certificate identity detail }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}/retire:
     post:
@@ -3591,13 +3616,24 @@ paths:
             schema: { $ref: "#/components/schemas/CertOpsCertificateRetireRequest" }
       responses:
         "200": { description: Updated fingerprint lifecycle }
+        "400": { description: Invalid lifecycle or reason }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: Fresh service use or conflicting mutation }
+        "412": { description: Fingerprint precondition failed }
+        "422": { description: Private key material rejected }
         "428": { description: Missing fingerprint precondition or visibility acknowledgment }
   /api/v1/workspaces/{id}/certops/management-periods/{periodId}/stop:
     post:
       tags: [CertOps]
       summary: Permanently end one management period
       operationId: stopCertOpsManagementPeriod
+      description: >-
+        Idempotently closes the period and cancels unstarted pending, approved
+        and pending_approval work. Claimed and running work remains auditable and
+        requires reconciliation. A closed period is terminal; re-add creates a
+        different period. Certificate lifecycle is unchanged.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3606,11 +3642,21 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200": { description: Period closed and unclaimed automation cancelled }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/readd:
     post:
       tags: [CertOps]
       summary: Start a new management period with explicit automation settings
       operationId: readdCertOpsManagementSource
+      description: >-
+        Requires manager permission and explicit renewal configuration. Admission
+        uses the same workspace lock and distinct-identity quota as every other
+        period opening. Another source of an already-managed fingerprint costs
+        no extra unit. Core defaults to unlimited unless the installation sets
+        a workspace managed-identity limit. Rediscovery alone does not re-add.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3629,6 +3675,12 @@ paths:
                 renewalProfileId: { type: string, format: uuid, nullable: true }
       responses:
         "201": { description: New management period }
+        "400": { description: Invalid or missing explicit renewal configuration }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Quota exceeded, source already managed, or source unavailable }
+        "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/certificates:
     get:
       tags: [CertOps]
@@ -8039,6 +8091,8 @@ components:
         managedCertificateId:
           type: string
           format: uuid
+          nullable: true
+          description: Null when the management source was deleted; observation facts and location provenance remain available.
         targetId:
           type: string
           format: uuid

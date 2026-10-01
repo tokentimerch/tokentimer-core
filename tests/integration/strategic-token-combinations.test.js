@@ -187,7 +187,10 @@ describe("Strategic Token Testing Suite", () => {
     logger.info(`Strategic test user created: ${testUser.email}`);
     session = await TestUtils.loginTestUser(testUser.email, "SecureTest123!@#");
     logger.info("Strategic test user logged in successfully");
-    workspaceId = await TestUtils.ensureTestWorkspace(session.cookie);
+    workspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      session.cookie,
+      "Strategic token fields",
+    );
   });
 
   afterEach(async () => {

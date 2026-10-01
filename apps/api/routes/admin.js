@@ -2138,33 +2138,6 @@ router.delete(
           "DELETE FROM domain_monitors WHERE id = $1 AND workspace_id = $2 RETURNING url",
           [req.params.domainId, req.workspace.id],
         );
-        if (result.rows.length) {
-          const closed = await client.query(
-            `UPDATE certops_management_periods p
-                SET ended_at = NOW(), ended_reason = 'endpoint_monitor_deleted'
-               FROM managed_certificates mc
-              WHERE p.workspace_id = $1 AND p.managed_certificate_id = mc.id
-                AND p.ended_at IS NULL AND mc.workspace_id = $1
-                AND mc.source = 'endpoint_monitor' AND mc.source_ref = $2
-              RETURNING p.id`,
-            [req.workspace.id, String(req.params.domainId)],
-          );
-          const periodIds = closed.rows.map((row) => row.id);
-          if (periodIds.length) {
-            await client.query(
-              `UPDATE certops_management_associations SET superseded_at = NOW()
-                WHERE period_id = ANY($1::uuid[]) AND superseded_at IS NULL`,
-              [periodIds],
-            );
-            await client.query(
-              `UPDATE certificate_jobs SET status = 'cancelled', canceled_at = NOW(),
-                  updated_at = NOW()
-                WHERE workspace_id = $1 AND management_period_id = ANY($2::uuid[])
-                  AND status IN ('pending_approval', 'approved', 'pending')`,
-              [req.workspace.id, periodIds],
-            );
-          }
-        }
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

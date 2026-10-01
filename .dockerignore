@@ -10,6 +10,8 @@ node_modules
 # Build artifacts
 apps/dashboard/dist
 apps/dashboard/.vite
+# Local Windows service-host build outputs are not Linux runtime dependencies.
+packages/agent/bin/tokentimer-agent-host-*.exe
 
 # Development files
 *.log

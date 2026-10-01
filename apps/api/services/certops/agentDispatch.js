@@ -55,6 +55,7 @@ const {
 } = require("./outbox");
 const {
   linkReconciledCertificateToken,
+  acquireManagedCertificateImportLock,
 } = require("./inventory");
 const {
   DERIVATION_REASON_ALREADY_LINKED,
@@ -978,6 +979,7 @@ async function claimJobs({
   const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
+    await acquireManagedCertificateImportLock(client, agent.workspaceId);
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
@@ -1130,6 +1132,7 @@ async function claimJobs({
           AND executor_kind = 'agent'
           AND (
             cj.subject_type IS DISTINCT FROM 'managed_certificate'
+            OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
             OR EXISTS (
               SELECT 1 FROM certops_management_periods period
               LEFT JOIN certops_certificate_identities identity
@@ -1359,11 +1362,11 @@ async function claimJobs({
                 updated_at = NOW()
           WHERE id = $1
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
-                    subject_type, subject_id, payload, mode, created_at`,
+                    subject_type, subject_id, payload, mode, created_at, status`,
         [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
-      if (!job) continue;
+      if (!job || (job.status && job.status !== "claimed")) continue;
 
       const payload =
         job.payload && typeof job.payload === "object"
@@ -1631,8 +1634,13 @@ async function reconcileProvisionedCertificate({
       WHERE workspace_id = $1
         AND id = $2::uuid
         AND status = 'provisioning'
+      AND EXISTS (SELECT 1 FROM certificate_jobs j
+        JOIN certops_management_periods p ON p.id = j.management_period_id
+        WHERE j.workspace_id = $1 AND j.id = $3 AND p.ended_at IS NULL
+          AND p.managed_certificate_id = managed_certificates.id
+          AND (j.certificate_identity_id IS NULL OR j.certificate_identity_id = p.current_identity_id))
       FOR UPDATE`,
-    [workspaceId, job.subject_id],
+    [workspaceId, job.subject_id, job.id],
   );
   const certificate = locked.rows[0];
   if (!certificate) return null;
@@ -1706,7 +1714,7 @@ async function reconcileProvisionedCertificate({
 
   await client.query(
     `UPDATE managed_certificates
-        SET status = 'active',
+        SET status = 'active', identity_observed_at = clock_timestamp(),
             fingerprint_sha256 = $3,
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
@@ -1936,8 +1944,13 @@ async function refreshRenewedCertificateEvidence({
       WHERE workspace_id = $1
         AND id = $2::uuid
         AND status = 'active'
+      AND EXISTS (SELECT 1 FROM certificate_jobs j
+        JOIN certops_management_periods p ON p.id = j.management_period_id
+        WHERE j.workspace_id = $1 AND j.id = $3 AND p.ended_at IS NULL
+          AND p.managed_certificate_id = managed_certificates.id
+          AND (j.certificate_identity_id IS NULL OR j.certificate_identity_id = p.current_identity_id))
       FOR UPDATE`,
-    [workspaceId, job.subject_id],
+    [workspaceId, job.subject_id, job.id],
   );
   const certificate = locked.rows[0];
   if (!certificate) return null;
@@ -2024,7 +2037,7 @@ async function refreshRenewedCertificateEvidence({
 
   await client.query(
     `UPDATE managed_certificates
-        SET fingerprint_sha256 = $3,
+        SET fingerprint_sha256 = $3, identity_observed_at = clock_timestamp(),
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
             issuer = COALESCE($6, issuer),
@@ -2120,6 +2133,7 @@ async function ingestResult({
   }
 
   return await withTransaction(dbPool, async (client) => {
+    await acquireManagedCertificateImportLock(client, agent.workspaceId);
     // Lock the agent row before the job row. claimJobs/renewJobLease both
     // lock the agent row (inside enforceAgentSequence) before any job row;
     // ingestResult used to lock the job row first and the agent row only
@@ -2137,7 +2151,7 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              source, payload, assigned_agent_id
+              source, payload, assigned_agent_id, management_period_id, certificate_identity_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2

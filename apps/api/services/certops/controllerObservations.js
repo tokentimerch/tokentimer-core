@@ -734,6 +734,7 @@ async function persistControllerObservation({
           workspaceId: observation.workspaceId,
           tokenId,
           status: observation.ready ? "active" : "discovered",
+          observedAt: observation.observedAt,
           source: "cert_manager",
           sourceRef: sourceRefFor(observation),
           name: observation.certificateName,

@@ -203,7 +203,7 @@ describe("CertOps inventory import transaction helpers", function () {
     }
   });
 
-  it("countActiveManagedCertificatesWithClient excludes retired certificates", async () => {
+  it("countActiveManagedCertificatesWithClient retains retired open management units", async () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -211,7 +211,7 @@ describe("CertOps inventory import transaction helpers", function () {
         client,
         workspaceId,
       );
-      expect(activeCount).to.equal(1);
+      expect(activeCount).to.equal(3);
       await client.query("ROLLBACK");
     } finally {
       client.release();

@@ -412,6 +412,13 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.detail === "CERTOPS_MANAGED_CERT_LIMIT") {
+    return res.status(409).json({ error: "Managed certificate quota exceeded", code: "CERTOPS_MANAGED_CERT_LIMIT" });
+  }
+  if (err?.code === CERTOPS_CERTIFICATE_STATUS_INVALID || err?.code === CERTOPS_CERTIFICATE_SOURCE_INVALID ||
+      err?.code === CERTOPS_CERTIFICATE_FILTER_INVALID) {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
   if (err?.code === "CERTOPS_IDENTITY_PRECONDITION_REQUIRED") {
     return res.status(428).json({ error: err.message, code: err.code });
   }
@@ -2918,14 +2925,17 @@ async function retireCertificateHandler(req, res) {
         code: "CERTOPS_IDENTITY_PRECONDITION_REQUIRED" });
     }
     const linked = await pool.query(
-      `SELECT identity.id FROM managed_certificates mc
-       JOIN certops_certificate_identities identity
+      `SELECT identity.id, identity.fingerprint_sha256 FROM managed_certificates mc
+       LEFT JOIN certops_certificate_identities identity
          ON identity.workspace_id = mc.workspace_id
-        AND identity.fingerprint_sha256 = lower(replace(mc.fingerprint_sha256, ':', ''))
-       WHERE mc.workspace_id = $1 AND mc.id = $2 AND identity.fingerprint_sha256 = $3`,
-      [req.workspace.id, req.params.certId, fingerprint],
+        AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+       WHERE mc.workspace_id = $1 AND mc.id = $2`,
+      [req.workspace.id, req.params.certId],
     );
     if (!linked.rowCount) {
+      return res.status(404).json({ error: "Certificate not found", code: CERTOPS_CERTIFICATE_NOT_FOUND });
+    }
+    if (linked.rows[0].fingerprint_sha256 !== fingerprint) {
       return res.status(412).json({ error: "Certificate identity changed; refresh and retry",
         code: "CERTOPS_IDENTITY_PRECONDITION_FAILED" });
     }
@@ -3412,7 +3422,7 @@ router.post(
 
 router.post(
   "/api/v1/workspaces/:id/certops/management-periods/:periodId/stop",
-  getApiLimiter(), requireCertOpsEnabled, requireCertOpsWriteRole,
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
   async (req, res) => {
     try {
       return res.json(await stopManagingSource({

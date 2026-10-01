@@ -196,8 +196,10 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
     ])
       .then(([revoked, decommissioned]) => {
         if (cancelled) return;
-        setCount(Number(revoked?.pagination?.total ?? 0) +
-          Number(decommissioned?.pagination?.total ?? 0));
+        setCount(
+          Number(revoked?.pagination?.total ?? 0) +
+            Number(decommissioned?.pagination?.total ?? 0)
+        );
       })
       .catch(() => {
         // The count is a convenience on the toggle label, not something the
@@ -485,9 +487,16 @@ export default function CertOpsCertificates() {
             </Box>
           ) : null}
         </Button>
-        <Button size='sm' variant={unmanagedOnly ? 'solid' : 'outline'}
-          colorScheme='gray' aria-pressed={unmanagedOnly}
-          onClick={() => { setUnmanagedOnly(value => !value); setPage({ offset: 0 }); }}>
+        <Button
+          size='sm'
+          variant={unmanagedOnly ? 'solid' : 'outline'}
+          colorScheme='gray'
+          aria-pressed={unmanagedOnly}
+          onClick={() => {
+            setUnmanagedOnly(value => !value);
+            setPage({ offset: 0 });
+          }}
+        >
           Unmanaged only
         </Button>
       </HStack>
@@ -680,7 +689,8 @@ export default function CertOpsCertificates() {
                           textTransform='none'
                           fontWeight='medium'
                         >
-                          {certificate.lifecycleDisplay || statusLabel(certificate.status)}
+                          {certificate.lifecycleDisplay ||
+                            statusLabel(certificate.status)}
                         </Badge>
                         {certificate.reconciliationReason ? (
                           <Tooltip
@@ -845,7 +855,8 @@ export default function CertOpsCertificates() {
                                 ) : null}
                               </>
                             ) : null}
-                            {certificate.identityId && certificate.lifecycleStatus !== 'revoked' ? (
+                            {certificate.identityId &&
+                            certificate.lifecycleStatus !== 'revoked' ? (
                               <Tooltip label='Change lifecycle'>
                                 <IconButton
                                   {...actionButtonProps}

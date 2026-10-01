@@ -16,6 +16,7 @@ loadRootEnv();
 
 const { runMigrations } = requireMigrateModule();
 const certOpsRouter = require("../../apps/api/routes/certops");
+const { retireCertificateIdentity } = require("../../apps/api/services/certops/certificateIdentity");
 const {
   createCertOpsExecutorRouter,
 } = require("../../apps/api/routes/certops-executor");
@@ -642,7 +643,7 @@ describe("CertOps controller end-to-end composition", function () {
     }
   });
 
-  it("preserves source identity through replay, rotation, UID replacement, and both terminal removal states", async () => {
+  it("preserves source history through rotation, UID replacement, sticky rediscovery and independent retirement", async () => {
     const fixture = await createWorkspace("controller-e2e-inventory");
     const server = await startApiServer(fixture.ownerId);
     let tokenFile;
@@ -718,14 +719,15 @@ describe("CertOps controller end-to-end composition", function () {
           }));
           managedCertificateId = created.managedCertificateId;
         }
-        await TestUtils.execQuery(
-          "UPDATE managed_certificates SET status = $1 WHERE id = $2",
-          [terminalStatus, managedCertificateId],
-        );
+        const fingerprint = index === 0 ? "b".repeat(64) : "c".repeat(64);
+        const identity = (await TestUtils.execQuery("SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [fixture.workspaceId, fingerprint])).rows[0];
+        await retireCertificateIdentity({ workspaceId: fixture.workspaceId, identityId: identity.id,
+          expectedFingerprintSha256: fingerprint, status: terminalStatus,
+          reason: "Controller identity retirement", acknowledgeUncertainty: true });
         const later = await reporter.report(observation({
           workspaceId: fixture.workspaceId,
           certificateName,
-          fingerprint: index === 0 ? "d".repeat(64) : "e".repeat(64),
+          fingerprint,
           resourceVersion: index === 0 ? "5" : "2",
           uid: crypto.randomUUID(),
         }));
@@ -753,6 +755,12 @@ describe("CertOps controller end-to-end composition", function () {
         );
         expect(provisionResponse.status).to.equal(409);
         expect(provisionResponse.body.code).to.equal("CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY");
+        const rotatedFingerprint = index === 0 ? "d".repeat(64) : "e".repeat(64);
+        await reporter.report(observation({ workspaceId: fixture.workspaceId, certificateName,
+          fingerprint: rotatedFingerprint, resourceVersion: index === 0 ? "6" : "3", uid: crypto.randomUUID() }));
+        const independent = await TestUtils.execQuery("SELECT lifecycle_status FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2", [fixture.workspaceId, rotatedFingerprint]);
+        expect(independent.rows[0].lifecycle_status).to.equal("active");
+        expect((await TestUtils.execQuery("SELECT lifecycle_status FROM certops_certificate_identities WHERE id=$1", [identity.id])).rows[0].lifecycle_status).to.equal(terminalStatus);
       }
 
       await expectRejectedCode(() => reporter.report(observation({
