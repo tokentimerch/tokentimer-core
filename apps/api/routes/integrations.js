@@ -562,7 +562,7 @@ router.post(
       // array is only rejected when cleanup isn't the reason for the call.
       const cleanupWillRun =
         effectiveCleanup && effectiveCleanup.enabled === true;
-      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun && !(req.isWorkerCall && req.body?.auto_sync_run))) {
         return res.status(400).json({ error: "items array required" });
       }
 
@@ -826,7 +826,8 @@ router.post(
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else {
+          } else if (!req.isWorkerCall) {
+            // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,
               actorUserId: req.user.id,
@@ -2248,7 +2249,7 @@ router.post(
       // array is only rejected when cleanup isn't the reason for the call.
       const cleanupWillRun =
         effectiveCleanup && effectiveCleanup.enabled === true;
-      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun)) {
+      if (!Array.isArray(items) || (items.length === 0 && !cleanupWillRun && !(req.isWorkerCall && req.body?.auto_sync_run))) {
         return res.status(400).json({ error: "items array required" });
       }
       // Issue #69: apply include/exclude rules at import time too, so
@@ -2784,7 +2785,8 @@ router.post(
         try {
           if (autoSyncRun) {
             if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
-          } else {
+          } else if (!req.isWorkerCall) {
+            // Unfenced legacy workers may import before activation, but never delete inventory.
             const cleanupResult = await cleanupObsoleteTokens({
               workspaceId,
               actorUserId: req.user.id,

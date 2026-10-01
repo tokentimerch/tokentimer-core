@@ -38,7 +38,7 @@ Provider error bodies, raw exception messages and import item names are not pers
 
 Migration leaves the persisted activation flag off. PostgreSQL also rejects a second configuration before activation, including inserts from an old API node after the first config was renamed. Deploy the new API fleet, drain every old worker, deploy and verify the fencing-aware worker image, then activate as a system administrator with `POST /api/v1/admin/auto-sync/activation` and `{"workers_drained":true,"worker_image_verified":true}`. These attestations are an operator requirement; the API cannot inspect an external worker fleet. GET reports persisted state.
 
-From activation onward, legacy worker scans/imports lacking fenced run context fail closed on the new API. Older API or worker versions are unsupported after activation and must never rejoin a multi-configuration installation. Roll forward or restore a pre-activation backup; do not merely downgrade images. Cloud has no auto-sync worker or management UI and requires no issue-specific implementation PR.
+Before activation, legacy worker imports can update inventory but the new API suppresses their unfenced destructive cleanup. From activation onward, legacy worker scans/imports lacking fenced run context fail closed on the new API. Older API or worker versions are unsupported after activation and must never rejoin a multi-configuration installation. Roll forward or restore a pre-activation backup; do not merely downgrade images. Cloud has no auto-sync worker or management UI and requires no issue-specific implementation PR.
 
 ## Verification
 

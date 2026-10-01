@@ -65,12 +65,14 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
-      req.user = { id: userId, email_verified: true };
+      req.user = req.get("Authorization") === "Bearer issue71-test-worker" ? null : { id: userId, email_verified: true };
       req.isAuthenticated = () => true;
       next();
     });
     app.use(require("../../apps/api/routes/admin"));
     app.use(require("../../apps/api/routes/tokens"));
+    process.env.WORKER_API_KEY = "issue71-test-worker";
+    app.use(require("../../apps/api/routes/integrations"));
   });
   beforeEach(async () => {
     if (workspaceId) await pool.query("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
@@ -84,6 +86,33 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     // Audit history is immutable; the disposable database owns the user fixture.
     await workerPool?.end();
     await pool.end();
+  });
+
+  it("accepts fenced zero-item imports with cleanup disabled and rejects legacy imports on activation", async () => {
+    const run=await start(await configuration());await scan(run);
+    const url=`/api/v1/integrations/import?workspace_id=${workspaceId}`;
+    const response=await request(app).post(url).set("Authorization","Bearer issue71-test-worker").send({items:[],scan_id:run.context.scanId,auto_sync_run:runs.runContext(run.config)});
+    assert.equal(response.status,201,JSON.stringify(response.body));
+    assert.equal(response.body.scan_complete,true);
+    const legacy=await request(app).post(url).set("Authorization","Bearer issue71-test-worker").send({items:[{name:"Legacy",source:"gitlab",type:"api_key"}]});
+    assert.equal(legacy.status,409,JSON.stringify(legacy.body));
+    assert.equal(legacy.body.code,"AUTO_SYNC_RUN_REQUIRED");
+  });
+
+  it("worker HTTP discovery creates managed inventory; legacy cleanup never deletes before activation", async () => {
+    const run=await start(await configuration());await scan(run,["42"]);
+    const url=`/api/v1/integrations/import?workspace_id=${workspaceId}`;
+    const response=await request(app).post(url).set("Authorization","Bearer issue71-test-worker").send({
+      items:[{name:"Worker token",location:"gitlab.example",source:"gitlab",sourceKind:"gitlab-pat",sourceObjectId:"42",type:"api_key",expiresAt:"2028-01-01"}],
+      scan_id:run.context.scanId,auto_sync_run:runs.runContext(run.config)});
+    assert.equal(response.status,201,JSON.stringify(response.body));assert.equal(response.body.error_count,0,JSON.stringify(response.body));
+    assert.equal(response.body.created_count,1);
+    const tokenId=response.body.created[0].id;assert.equal((await inventory(tokenId)).auto_sync_managed,true);
+    await pool.query("UPDATE auto_sync_feature_state SET multi_config_enabled=FALSE WHERE id=TRUE");
+    await pool.query("DELETE FROM auto_sync_token_links WHERE token_id=$1",[tokenId]);
+    const legacyScan=await persistScan({workspaceId,provider:"gitlab",identityContext:{host:source.source_instance,ownerKey:source.source_owner_key},items:[],subScopes:[{sourceKind:source.source_kind,complete:true}]});
+    const legacy=await request(app).post(url).set("Authorization","Bearer issue71-test-worker").send({items:[],cleanup:{enabled:true,provider:"gitlab",scanId:legacyScan.scanId}});
+    assert.equal(legacy.status,201,JSON.stringify(legacy.body));assert.equal(legacy.body.deleted_count,0);assert.ok(await inventory(tokenId));
   });
 
   it("Vault prefix scopes treat wildcard characters as literal path characters", async () => {
