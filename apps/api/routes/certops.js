@@ -40,8 +40,14 @@ const {
   listCertificateTargets,
   listManagedCertificates,
   listWorkspaceCertificateInstances,
-  retireManagedCertificate,
 } = require("../services/certops/inventory");
+const {
+  listCertificateIdentities,
+  normalizeFingerprint,
+  retireCertificateIdentity,
+  stopManagingSource,
+  readdManagingSource,
+} = require("../services/certops/certificateIdentity");
 const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
   acknowledgeCsrNames,
@@ -264,6 +270,18 @@ function redactDeploymentPathForViewers(req, certificateOrList) {
     : strip(certificateOrList);
 }
 
+function redactIdentityLocationsForViewers(req, items) {
+  if (req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager")) {
+    return items;
+  }
+  return items.map((item) => ({ ...item,
+    keyReference: undefined,
+    sources: item.sources.map((source) => ({ ...source, sourceRef: undefined })),
+    locations: item.locations.map((location) => ({ ...location,
+      sourceRef: undefined, deploymentReference: undefined })),
+  }));
+}
+
 /**
  * Strips `claimId` from a job-detail projection before it reaches anyone
  * below admin/owner.
@@ -394,6 +412,31 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === "CERTOPS_IDENTITY_PRECONDITION_REQUIRED") {
+    return res.status(428).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_IDENTITY_PRECONDITION_FAILED") {
+    return res.status(412).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
+      err?.code === "CERTOPS_MUTATION_RUNNING" ||
+      err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||
+      err?.code === "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_VISIBILITY_ACK_REQUIRED") {
+    return res.status(428).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE") {
+    return res.status(409).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND") {
+    return res.status(404).json({ error: err.message, code: err.code });
+  }
+  if (err?.code === "CERTOPS_MANAGEMENT_CONFIG_REQUIRED" ||
+      err?.code === "CERTOPS_MANAGEMENT_CONFIG_INVALID") {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
   if (err?.code === CERTOPS_LIST_SORT_INVALID) {
     return res.status(400).json({
       error: err.message,
@@ -2869,13 +2912,31 @@ async function retireCertificateHandler(req, res) {
   }
 
   try {
-    const certificate = await retireManagedCertificate({
+    const fingerprint = normalizeFingerprint(req.body?.expectedFingerprintSha256);
+    if (!fingerprint) {
+      return res.status(428).json({ error: "Certificate fingerprint precondition required",
+        code: "CERTOPS_IDENTITY_PRECONDITION_REQUIRED" });
+    }
+    const linked = await pool.query(
+      `SELECT identity.id FROM managed_certificates mc
+       JOIN certops_certificate_identities identity
+         ON identity.workspace_id = mc.workspace_id
+        AND identity.fingerprint_sha256 = lower(replace(mc.fingerprint_sha256, ':', ''))
+       WHERE mc.workspace_id = $1 AND mc.id = $2 AND identity.fingerprint_sha256 = $3`,
+      [req.workspace.id, req.params.certId, fingerprint],
+    );
+    if (!linked.rowCount) {
+      return res.status(412).json({ error: "Certificate identity changed; refresh and retry",
+        code: "CERTOPS_IDENTITY_PRECONDITION_FAILED" });
+    }
+    const certificate = await retireCertificateIdentity({
       workspaceId: req.workspace.id,
-      certificateId: req.params.certId,
+      identityId: linked.rows[0].id,
+      expectedFingerprintSha256: fingerprint,
       status: req.body?.status,
       reason: req.body?.reason,
+      acknowledgeUncertainty: req.body?.acknowledgeUncertainty === true,
       actorUserId: req.user?.id || null,
-      createdBy: req.user?.id || null,
     });
 
     return res.json({ certificate });
@@ -3284,6 +3345,105 @@ async function withRenewalState({
       : {}),
   }));
 }
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificate-identities",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listCertificateIdentities({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit, offset: req.query.offset,
+        status: req.query.status, source: req.query.source,
+        excludeRetired: req.query.excludeRetired === "true",
+        unmanaged: req.query.unmanaged,
+        sort: req.query.sort, direction: req.query.direction,
+      });
+      const enriched = await withRenewalState({
+        workspaceId: req.workspace.id, certificates: result.items,
+      });
+      return res.json({ ...result,
+        items: redactIdentityLocationsForViewers(req, enriched) });
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to list certificate identities", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificate-identities/:identityId",
+  getApiLimiter(), requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listCertificateIdentities({
+        workspaceId: req.workspace.id, identityId: req.params.identityId, limit: 1,
+      });
+      if (!result.items.length) return res.status(404).json({
+        error: "Certificate not found", code: CERTOPS_CERTIFICATE_NOT_FOUND });
+      return res.json({ certificate: redactIdentityLocationsForViewers(req, result.items)[0] });
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to load certificate identity", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/certificate-identities/:identityId/retire",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const certificate = await retireCertificateIdentity({
+        workspaceId: req.workspace.id, identityId: req.params.identityId,
+        expectedFingerprintSha256: req.body?.expectedFingerprintSha256,
+        status: req.body?.status, reason: req.body?.reason,
+        acknowledgeUncertainty: req.body?.acknowledgeUncertainty === true,
+        actorUserId: req.user?.id || null,
+      });
+      return res.json({ certificate });
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to change certificate lifecycle", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/management-periods/:periodId/stop",
+  getApiLimiter(), requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      return res.json(await stopManagingSource({
+        workspaceId: req.workspace.id, periodId: req.params.periodId,
+        actorUserId: req.user?.id || null,
+      }));
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to stop managing source", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/readd",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      return res.status(201).json(await readdManagingSource({
+        workspaceId: req.workspace.id,
+        managedCertificateId: req.params.managedCertificateId,
+        renewalProfileId: req.body?.renewalProfileId,
+        automationEnabled: req.body?.automationEnabled,
+        actorUserId: req.user?.id || null,
+      }));
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to re-add source", code: "INTERNAL_ERROR" });
+    }
+  },
+);
 
 router.get(
   "/api/v1/workspaces/:id/certops/certificates",

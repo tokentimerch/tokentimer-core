@@ -1109,7 +1109,8 @@ async function claimJobs({
     // without the capability keeps claiming ordinary renewals of active
     // certificates exactly as before.
     const selected = await client.query(
-      `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
+      `SELECT id, workspace_id, operation, subject_type, subject_id,
+              management_period_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
@@ -1127,6 +1128,26 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND status = 'pending'
           AND executor_kind = 'agent'
+          AND (
+            cj.subject_type IS DISTINCT FROM 'managed_certificate'
+            OR EXISTS (
+              SELECT 1 FROM certops_management_periods period
+              LEFT JOIN certops_certificate_identities identity
+                ON identity.id = COALESCE(cj.certificate_identity_id,
+                  period.current_identity_id)
+              WHERE period.workspace_id = cj.workspace_id
+                AND period.managed_certificate_id::text = cj.subject_id
+                AND period.ended_at IS NULL
+                AND (cj.management_period_id IS NULL OR cj.management_period_id = period.id)
+                AND (identity.lifecycle_status IS NULL
+                  OR identity.lifecycle_status = 'active'
+                  OR cj.operation NOT IN ('renew', 'deploy', 'reload')
+                  OR (lower(cj.payload->>'targetFingerprintSha256')
+                        IS DISTINCT FROM identity.fingerprint_sha256
+                    AND cj.payload->>'targetFingerprintSha256' IS NOT NULL
+                    AND cj.payload->>'canRestoreOriginal' = 'false'))
+            )
+          )
           AND (scheduled_for IS NULL OR scheduled_for <= NOW())
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
@@ -1199,6 +1220,15 @@ async function claimJobs({
     };
     const jobs = [];
     for (const row of selected.rows) {
+      if (row.subject_type === "managed_certificate" && row.management_period_id) {
+        const ownership = await client.query(
+          `SELECT 1 FROM certops_management_periods
+            WHERE id = $1 AND workspace_id = $2 AND ended_at IS NULL
+            FOR SHARE`,
+          [row.management_period_id, agent.workspaceId],
+        );
+        if (!ownership.rowCount) continue;
+      }
       // SQL above is a lock-efficient prefilter. This shared pure predicate
       // is authoritative and is also used by renewal-path health, preventing
       // the UI from calling a path healthy that dispatch would reject.

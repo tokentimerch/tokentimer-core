@@ -238,10 +238,10 @@ async function acquireManagedCertificateImportLock(client, workspaceId) {
 
 async function countActiveManagedCertificatesWithClient(client, workspaceId) {
   const result = await client.query(
-    `SELECT COUNT(*)::int AS c
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND status NOT IN ('revoked', 'decommissioned')`,
+    `SELECT (COUNT(DISTINCT current_identity_id) +
+             COUNT(*) FILTER (WHERE current_identity_id IS NULL))::int AS c
+       FROM certops_management_periods
+      WHERE workspace_id = $1 AND ended_at IS NULL`,
     [workspaceId],
   );
   return Number(result.rows[0]?.c || 0);
@@ -252,26 +252,21 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
   if (unique.length === 0) return 0;
 
   const result = await client.query(
-    `SELECT fingerprint_sha256, status
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND fingerprint_sha256 = ANY($2::text[])`,
+    `SELECT identity.fingerprint_sha256
+       FROM certops_management_periods period
+       JOIN certops_certificate_identities identity
+         ON identity.id = period.current_identity_id
+      WHERE period.workspace_id = $1 AND period.ended_at IS NULL
+        AND identity.fingerprint_sha256 = ANY($2::text[])`,
     [workspaceId, unique],
   );
-  const byFingerprint = new Map(
-    result.rows.map((row) => [row.fingerprint_sha256, row.status]),
-  );
+  const managed = new Set(result.rows.map((row) => row.fingerprint_sha256));
 
   let consuming = 0;
   for (const fingerprint of unique) {
-    const status = byFingerprint.get(fingerprint);
-    if (!status) {
+    if (!managed.has(fingerprint)) {
       consuming += 1;
-      continue;
     }
-    // Existing fingerprints are idempotent regardless of lifecycle status.
-    // A retired certificate stays retired on re-import and cannot consume a
-    // second managed-certificate quota slot.
   }
   return consuming;
 }
@@ -1427,15 +1422,7 @@ async function importPublicCertificates(options) {
 }
 
 async function countActiveManagedCertificates({ workspaceId }) {
-  const result = await pool.query(
-    `SELECT COUNT(*)::int AS count
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND status NOT IN (${RETIRE_STATUS_SQL_LIST})`,
-    [workspaceId],
-  );
-
-  return result.rows[0].count;
+  return countActiveManagedCertificatesWithClient(pool, workspaceId);
 }
 
 const MANAGED_CERTIFICATE_LIST_FROM = `

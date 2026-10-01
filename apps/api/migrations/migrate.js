@@ -4025,6 +4025,541 @@ const migrations = [
         WHERE source = 'api' AND source_ref LIKE 'csr-target:%';
     `,
   },
+  {
+    version: 61,
+    name: "certops_certificate_identity_and_management_periods",
+    sql: `
+      CREATE TABLE IF NOT EXISTS certops_certificate_identities (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        fingerprint_sha256 TEXT NOT NULL CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        lifecycle_status TEXT NOT NULL DEFAULT 'active'
+          CHECK (lifecycle_status IN ('active', 'revoked', 'decommissioned')),
+        lifecycle_reason TEXT NULL,
+        retired_at TIMESTAMPTZ NULL,
+        common_name TEXT NULL,
+        issuer TEXT NULL,
+        not_after TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (workspace_id, fingerprint_sha256),
+        UNIQUE (workspace_id, id)
+      );
+      CREATE OR REPLACE FUNCTION certops_keep_certificate_identity_immutable()
+      RETURNS trigger AS $certops$
+      BEGIN
+        IF NEW.workspace_id IS DISTINCT FROM OLD.workspace_id
+          OR NEW.fingerprint_sha256 IS DISTINCT FROM OLD.fingerprint_sha256 THEN
+          RAISE EXCEPTION 'CertOps certificate identity is immutable';
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_keep_certificate_identity_immutable
+        BEFORE UPDATE OF workspace_id, fingerprint_sha256 ON certops_certificate_identities
+        FOR EACH ROW EXECUTE FUNCTION certops_keep_certificate_identity_immutable();
+      CREATE TABLE IF NOT EXISTS certops_management_periods (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL,
+        managed_certificate_id UUID NOT NULL,
+        current_identity_id UUID NULL,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ended_at TIMESTAMPTZ NULL,
+        ended_reason TEXT NULL,
+        renewal_profile_id UUID NULL,
+        automation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id, current_identity_id)
+          REFERENCES certops_certificate_identities(workspace_id, id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_open_management_period
+        ON certops_management_periods(workspace_id, managed_certificate_id)
+        WHERE ended_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_certops_management_identity_open
+        ON certops_management_periods(workspace_id, current_identity_id)
+        WHERE ended_at IS NULL;
+      CREATE TABLE IF NOT EXISTS certops_management_associations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL,
+        period_id UUID NOT NULL REFERENCES certops_management_periods(id) ON DELETE CASCADE,
+        identity_id UUID NOT NULL,
+        associated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        superseded_at TIMESTAMPTZ NULL,
+        FOREIGN KEY (workspace_id, identity_id)
+          REFERENCES certops_certificate_identities(workspace_id, id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_current_association
+        ON certops_management_associations(period_id) WHERE superseded_at IS NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS management_period_id UUID NULL
+          REFERENCES certops_management_periods(id) ON DELETE SET NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS certificate_identity_id UUID NULL
+          REFERENCES certops_certificate_identities(id) ON DELETE SET NULL;
+      ALTER TABLE certificate_instances
+        ADD COLUMN IF NOT EXISTS presence_state TEXT NOT NULL DEFAULT 'unknown'
+          CHECK (presence_state IN ('confirmed_present', 'confirmed_absent', 'unknown'));
+      ALTER TABLE certificate_instances
+        ADD COLUMN IF NOT EXISTS evidence_kind TEXT NULL
+          CHECK (evidence_kind IN ('service_binding', 'stored_copy', 'unknown'));
+      ALTER TABLE certificate_instances
+        ADD COLUMN IF NOT EXISTS captured_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_instances
+        ADD COLUMN IF NOT EXISTS scan_interval_seconds INTEGER NULL
+          CHECK (scan_interval_seconds IS NULL OR scan_interval_seconds > 0);
+      CREATE INDEX IF NOT EXISTS idx_certops_instance_presence
+        ON certificate_instances(workspace_id, observed_fingerprint_sha256, captured_at DESC)
+        WHERE presence_state = 'confirmed_present';
+      CREATE TABLE IF NOT EXISTS certops_unmanaged_observations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
+        source_ref TEXT NOT NULL,
+        fingerprint_sha256 TEXT NOT NULL CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        captured_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (workspace_id, source_ref, fingerprint_sha256)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_unmanaged_observation_identity
+        ON certops_unmanaged_observations(workspace_id, fingerprint_sha256, captured_at DESC);
+      CREATE TABLE IF NOT EXISTS certops_slot_observations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        target_id UUID NULL REFERENCES certificate_targets(id) ON DELETE SET NULL,
+        fingerprint_sha256 TEXT NOT NULL CHECK (fingerprint_sha256 ~ '^[a-f0-9]{64}$'),
+        location_ref TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'agent_filesystem',
+        location_kind TEXT NOT NULL DEFAULT 'filesystem',
+        source_ref TEXT NULL,
+        captured_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (workspace_id, target_id, fingerprint_sha256, location_ref)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_slot_observation_identity
+        ON certops_slot_observations(workspace_id, fingerprint_sha256, captured_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_unmanaged_agent_slot
+        ON certops_slot_observations(workspace_id, source_ref, fingerprint_sha256)
+        WHERE target_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_certops_association_identity_time
+        ON certops_management_associations(identity_id, associated_at DESC);
+      CREATE TABLE IF NOT EXISTS certops_identity_backfill_issues (
+        managed_certificate_id UUID PRIMARY KEY REFERENCES managed_certificates(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        issue TEXT NOT NULL,
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      INSERT INTO certops_certificate_identities(workspace_id, fingerprint_sha256)
+      SELECT DISTINCT workspace_id, lower(replace(fingerprint_sha256, ':', ''))
+        FROM managed_certificates
+       WHERE lower(replace(fingerprint_sha256, ':', '')) ~ '^[a-f0-9]{64}$'
+      ON CONFLICT (workspace_id, fingerprint_sha256) DO NOTHING;
+      INSERT INTO certops_certificate_identities(workspace_id, fingerprint_sha256)
+      SELECT DISTINCT workspace_id, lower(replace(observed_fingerprint_sha256, ':', ''))
+        FROM certificate_instances
+       WHERE lower(replace(observed_fingerprint_sha256, ':', '')) ~ '^[a-f0-9]{64}$'
+      ON CONFLICT (workspace_id, fingerprint_sha256) DO NOTHING;
+      INSERT INTO certops_certificate_identities(workspace_id, fingerprint_sha256)
+      SELECT DISTINCT workspace_id, lower(replace(metadata->>'fingerprintSha256', ':', ''))
+        FROM audit_events
+       WHERE action = 'CERTOPS_CERTIFICATE_RETIRED'
+         AND lower(replace(metadata->>'fingerprintSha256', ':', '')) ~ '^[a-f0-9]{64}$'
+      ON CONFLICT (workspace_id, fingerprint_sha256) DO NOTHING;
+      UPDATE certops_certificate_identities ci
+         SET common_name = mc.common_name,
+             issuer = mc.issuer,
+             not_after = mc.not_after
+        FROM managed_certificates mc
+       WHERE ci.workspace_id = mc.workspace_id
+         AND ci.fingerprint_sha256 = lower(replace(mc.fingerprint_sha256, ':', ''));
+      UPDATE certops_certificate_identities ci
+         SET common_name = COALESCE(ci.common_name, instance.observed_subject),
+             issuer = COALESCE(ci.issuer, instance.observed_issuer),
+             not_after = COALESCE(ci.not_after, instance.observed_not_after)
+        FROM (
+          SELECT DISTINCT ON (workspace_id, lower(replace(observed_fingerprint_sha256, ':', '')))
+                 workspace_id,
+                 lower(replace(observed_fingerprint_sha256, ':', '')) AS fingerprint,
+                 observed_subject, observed_issuer, observed_not_after
+            FROM certificate_instances
+           WHERE observed_fingerprint_sha256 IS NOT NULL
+           ORDER BY workspace_id, lower(replace(observed_fingerprint_sha256, ':', '')),
+                    observed_at DESC NULLS LAST, id DESC
+        ) instance
+       WHERE ci.workspace_id = instance.workspace_id
+         AND ci.fingerprint_sha256 = instance.fingerprint;
+
+      -- Audit metadata names the fingerprint at retirement time. The mutable
+      -- managed row may now point at a different certificate after rotation.
+      WITH historical AS (
+        SELECT DISTINCT ON (ae.workspace_id, lower(replace(ae.metadata->>'fingerprintSha256', ':', '')))
+          ae.workspace_id,
+          lower(replace(ae.metadata->>'fingerprintSha256', ':', '')) AS fingerprint,
+          ae.metadata->>'status' AS status,
+          ae.metadata->>'reason' AS reason,
+          ae.occurred_at
+        FROM audit_events ae
+        WHERE ae.action = 'CERTOPS_CERTIFICATE_RETIRED'
+          AND lower(replace(ae.metadata->>'fingerprintSha256', ':', '')) ~ '^[a-f0-9]{64}$'
+          AND ae.metadata->>'status' IN ('revoked', 'decommissioned')
+        ORDER BY ae.workspace_id, lower(replace(ae.metadata->>'fingerprintSha256', ':', '')),
+                 (ae.metadata->>'status' = 'revoked') DESC,
+                 ae.occurred_at DESC, ae.id DESC
+      )
+      UPDATE certops_certificate_identities ci
+         SET lifecycle_status = h.status,
+             lifecycle_reason = h.reason,
+             retired_at = h.occurred_at,
+             updated_at = NOW()
+        FROM historical h
+       WHERE ci.workspace_id = h.workspace_id AND ci.fingerprint_sha256 = h.fingerprint;
+      INSERT INTO certops_identity_backfill_issues(managed_certificate_id, workspace_id, issue)
+      SELECT mc.id, mc.workspace_id, 'retired_source_without_verifiable_retirement_fingerprint'
+        FROM managed_certificates mc
+       WHERE mc.status IN ('revoked', 'decommissioned')
+         AND NOT EXISTS (
+           SELECT 1 FROM audit_events ae
+            WHERE ae.workspace_id = mc.workspace_id
+              AND ae.action = 'CERTOPS_CERTIFICATE_RETIRED'
+              AND ae.metadata->>'managedCertificateId' = mc.id::text
+              AND lower(replace(ae.metadata->>'fingerprintSha256', ':', '')) ~ '^[a-f0-9]{64}$'
+         )
+      ON CONFLICT (managed_certificate_id) DO NOTHING;
+
+      UPDATE certificate_instances instance
+         SET captured_at = instance.observed_at,
+             presence_state = 'confirmed_present',
+             evidence_kind = CASE
+               WHEN instance.source IN ('endpoint_monitor', 'domain_checker')
+                 OR instance.location_kind IN ('iis_binding', 'http_sys')
+                 THEN 'service_binding'
+               WHEN instance.location_kind IS NOT NULL THEN 'stored_copy'
+               ELSE 'unknown' END
+       WHERE instance.observed_fingerprint_sha256 IS NOT NULL
+         AND instance.observed_at IS NOT NULL
+         AND instance.observed_at <= NOW() + INTERVAL '5 minutes';
+      INSERT INTO certops_slot_observations(
+        workspace_id, target_id, fingerprint_sha256, location_ref, source_ref, captured_at)
+      SELECT instance.workspace_id, instance.target_id,
+             lower(replace(instance.observed_fingerprint_sha256, ':', '')),
+             COALESCE(NULLIF(instance.deployment_reference, ''), instance.source_ref, instance.id::text),
+             instance.source_ref, instance.observed_at
+        FROM certificate_instances instance
+       WHERE instance.source = 'agent_filesystem'
+         AND lower(replace(instance.observed_fingerprint_sha256, ':', '')) ~ '^[a-f0-9]{64}$'
+         AND instance.observed_at IS NOT NULL
+         AND instance.observed_at <= NOW() + INTERVAL '5 minutes'
+      ON CONFLICT (workspace_id, target_id, fingerprint_sha256, location_ref)
+      DO UPDATE SET captured_at = GREATEST(certops_slot_observations.captured_at, EXCLUDED.captured_at);
+
+      INSERT INTO certops_management_periods(
+        workspace_id, managed_certificate_id, current_identity_id,
+        started_at, ended_at, ended_reason, renewal_profile_id,
+        automation_enabled, created_by
+      )
+      SELECT mc.workspace_id, mc.id, ci.id, mc.created_at,
+             CASE WHEN mc.source = 'endpoint_monitor' AND NOT EXISTS (
+               SELECT 1 FROM domain_monitors dm
+                WHERE dm.workspace_id = mc.workspace_id AND dm.id::text = mc.source_ref
+             ) THEN NOW() ELSE NULL END,
+             CASE WHEN mc.source = 'endpoint_monitor' AND NOT EXISTS (
+               SELECT 1 FROM domain_monitors dm
+                WHERE dm.workspace_id = mc.workspace_id AND dm.id::text = mc.source_ref
+             ) THEN 'endpoint_monitor_deleted' ELSE NULL END,
+             mc.profile_id, mc.profile_id IS NOT NULL, mc.created_by
+        FROM managed_certificates mc
+        LEFT JOIN certops_certificate_identities ci
+          ON ci.workspace_id = mc.workspace_id
+         AND ci.fingerprint_sha256 = lower(replace(mc.fingerprint_sha256, ':', ''));
+      INSERT INTO certops_management_associations(
+        workspace_id, period_id, identity_id, associated_at, superseded_at
+      )
+      SELECT p.workspace_id, p.id, p.current_identity_id, p.started_at, p.ended_at
+        FROM certops_management_periods p
+       WHERE p.current_identity_id IS NOT NULL;
+      UPDATE certificate_jobs cj
+         SET management_period_id = p.id
+        FROM certops_management_periods p
+       WHERE cj.workspace_id = p.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = p.managed_certificate_id::text
+         AND cj.created_at >= p.started_at
+         AND (p.ended_at IS NULL OR cj.created_at < p.ended_at);
+      UPDATE certificate_jobs cj
+         SET certificate_identity_id = a.identity_id
+        FROM certops_management_associations a
+       WHERE cj.management_period_id = a.period_id
+         AND cj.created_at >= a.associated_at
+         AND (a.superseded_at IS NULL OR cj.created_at < a.superseded_at);
+
+      CREATE OR REPLACE FUNCTION certops_tag_management_job()
+      RETURNS trigger AS $certops$
+      BEGIN
+        IF NEW.subject_type = 'managed_certificate' AND NEW.subject_id ~
+          '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
+          SELECT id, current_identity_id
+            INTO NEW.management_period_id, NEW.certificate_identity_id
+            FROM certops_management_periods
+           WHERE workspace_id = NEW.workspace_id
+             AND managed_certificate_id = NEW.subject_id::uuid
+             AND ended_at IS NULL;
+          IF NEW.management_period_id IS NULL THEN
+            RAISE EXCEPTION 'CertOps management source is stopped';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_tag_management_job
+        BEFORE INSERT ON certificate_jobs
+        FOR EACH ROW EXECUTE FUNCTION certops_tag_management_job();
+
+      -- The database boundary covers agent, controller, and executor claim
+      -- paths, including a claim racing with an operator stopping management.
+      CREATE OR REPLACE FUNCTION certops_guard_management_job_claim()
+      RETURNS trigger AS $certops$
+      DECLARE period_row RECORD;
+      DECLARE fingerprint TEXT;
+      DECLARE lifecycle TEXT;
+      BEGIN
+        IF NEW.status NOT IN ('claimed', 'running')
+          OR NEW.status IS NOT DISTINCT FROM OLD.status
+          OR NEW.subject_type IS DISTINCT FROM 'managed_certificate' THEN
+          RETURN NEW;
+        END IF;
+        SELECT p.*, identity.fingerprint_sha256, identity.lifecycle_status
+          INTO period_row
+          FROM certops_management_periods p
+          LEFT JOIN certops_certificate_identities identity
+            ON identity.id = COALESCE(NEW.certificate_identity_id, p.current_identity_id)
+         WHERE p.id = NEW.management_period_id
+           AND p.workspace_id = NEW.workspace_id
+         FOR SHARE OF p;
+        IF NOT FOUND OR period_row.ended_at IS NOT NULL THEN
+          RAISE EXCEPTION 'CertOps management period is closed';
+        END IF;
+        fingerprint := period_row.fingerprint_sha256;
+        lifecycle := period_row.lifecycle_status;
+        IF lifecycle IN ('revoked', 'decommissioned')
+          AND NEW.operation IN ('renew', 'deploy', 'reload')
+          AND NOT (
+            NEW.payload->>'targetFingerprintSha256' IS NOT NULL
+            AND lower(NEW.payload->>'targetFingerprintSha256') IS DISTINCT FROM fingerprint
+            AND NEW.payload->>'canRestoreOriginal' = 'false'
+          ) THEN
+          RAISE EXCEPTION 'CertOps certificate lifecycle blocks this operation';
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_guard_management_job_claim
+        BEFORE UPDATE OF status ON certificate_jobs
+        FOR EACH ROW EXECUTE FUNCTION certops_guard_management_job_claim();
+
+      -- Every ingestion path writes managed_certificates, including issuance
+      -- and reconciliation. Keep the identity and open period synchronized at
+      -- this boundary so no observer can bypass the lifecycle separation.
+      CREATE OR REPLACE FUNCTION certops_prepare_managed_identity()
+      RETURNS trigger AS $certops$
+      DECLARE lifecycle TEXT;
+      BEGIN
+        IF NEW.fingerprint_sha256 IS NULL THEN
+          IF TG_OP = 'UPDATE'
+            AND OLD.fingerprint_sha256 IS NOT NULL
+            AND OLD.status IN ('revoked', 'decommissioned') THEN
+            NEW.status := 'discovered';
+          END IF;
+          RETURN NEW;
+        END IF;
+        NEW.fingerprint_sha256 := lower(replace(NEW.fingerprint_sha256, ':', ''));
+        IF NEW.fingerprint_sha256 !~ '^[a-f0-9]{64}$' THEN
+          IF TG_OP = 'UPDATE'
+            AND OLD.fingerprint_sha256 IS DISTINCT FROM NEW.fingerprint_sha256
+            AND OLD.status IN ('revoked', 'decommissioned') THEN
+            NEW.status := 'discovered';
+          END IF;
+          RETURN NEW;
+        END IF;
+        INSERT INTO certops_certificate_identities(workspace_id, fingerprint_sha256)
+          VALUES (NEW.workspace_id, NEW.fingerprint_sha256)
+          ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE
+            SET common_name = COALESCE(certops_certificate_identities.common_name, NEW.common_name),
+                issuer = COALESCE(certops_certificate_identities.issuer, NEW.issuer),
+                not_after = COALESCE(certops_certificate_identities.not_after, NEW.not_after);
+        SELECT lifecycle_status INTO lifecycle
+          FROM certops_certificate_identities
+         WHERE workspace_id = NEW.workspace_id
+           AND fingerprint_sha256 = NEW.fingerprint_sha256;
+        IF lifecycle IN ('revoked', 'decommissioned') THEN
+          NEW.status := lifecycle;
+        ELSIF TG_OP = 'UPDATE'
+          AND OLD.fingerprint_sha256 IS DISTINCT FROM NEW.fingerprint_sha256
+          AND OLD.status IN ('revoked', 'decommissioned') THEN
+          NEW.status := CASE WHEN NEW.source = 'agent_issuance' THEN 'active' ELSE 'discovered' END;
+        ELSIF TG_OP = 'UPDATE'
+          AND OLD.fingerprint_sha256 IS NOT DISTINCT FROM NEW.fingerprint_sha256
+          AND OLD.status IN ('revoked', 'decommissioned') THEN
+          NEW.status := OLD.status;
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_prepare_managed_identity
+        BEFORE INSERT OR UPDATE OF fingerprint_sha256, status ON managed_certificates
+        FOR EACH ROW EXECUTE FUNCTION certops_prepare_managed_identity();
+
+      CREATE OR REPLACE FUNCTION certops_track_management_period()
+      RETURNS trigger AS $certops$
+      DECLARE identity_uuid UUID;
+      DECLARE period_uuid UUID;
+      DECLARE previous_uuid UUID;
+      BEGIN
+        SELECT id INTO identity_uuid
+          FROM certops_certificate_identities
+         WHERE workspace_id = NEW.workspace_id
+           AND fingerprint_sha256 = NEW.fingerprint_sha256;
+        IF TG_OP = 'INSERT' THEN
+          INSERT INTO certops_management_periods(
+            workspace_id, managed_certificate_id, current_identity_id, created_by
+          ) VALUES (NEW.workspace_id, NEW.id, identity_uuid, NEW.created_by)
+          RETURNING id INTO period_uuid;
+        ELSE
+          SELECT id, current_identity_id INTO period_uuid, previous_uuid
+            FROM certops_management_periods
+           WHERE workspace_id = NEW.workspace_id
+             AND managed_certificate_id = NEW.id AND ended_at IS NULL
+           FOR UPDATE;
+          -- A closed period is terminal. Rediscovery may update observations
+          -- but cannot silently resume management.
+          IF period_uuid IS NULL THEN RETURN NEW; END IF;
+          IF previous_uuid IS NOT DISTINCT FROM identity_uuid THEN RETURN NEW; END IF;
+          UPDATE certops_management_associations
+             SET superseded_at = NOW()
+           WHERE period_id = period_uuid AND superseded_at IS NULL;
+          UPDATE certops_management_periods
+             SET current_identity_id = identity_uuid
+           WHERE id = period_uuid;
+        END IF;
+        IF identity_uuid IS NOT NULL THEN
+          INSERT INTO certops_management_associations(
+            workspace_id, period_id, identity_id
+          ) VALUES (NEW.workspace_id, period_uuid, identity_uuid);
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_track_management_period
+        AFTER INSERT OR UPDATE OF fingerprint_sha256 ON managed_certificates
+        FOR EACH ROW EXECUTE FUNCTION certops_track_management_period();
+
+      CREATE OR REPLACE FUNCTION certops_sync_open_management_automation()
+      RETURNS trigger AS $certops$
+      BEGIN
+        UPDATE certops_management_periods
+           SET renewal_profile_id = NEW.profile_id,
+               automation_enabled = NEW.profile_id IS NOT NULL
+         WHERE workspace_id = NEW.workspace_id
+           AND managed_certificate_id = NEW.id AND ended_at IS NULL;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_sync_open_management_automation
+        AFTER UPDATE OF profile_id ON managed_certificates
+        FOR EACH ROW EXECUTE FUNCTION certops_sync_open_management_automation();
+
+      CREATE OR REPLACE FUNCTION certops_record_positive_observation()
+      RETURNS trigger AS $certops$
+      DECLARE previous_capture TIMESTAMPTZ;
+      BEGIN
+        IF NEW.observed_fingerprint_sha256 IS NULL THEN RETURN NEW; END IF;
+        NEW.observed_fingerprint_sha256 :=
+          lower(replace(NEW.observed_fingerprint_sha256, ':', ''));
+        IF NEW.observed_fingerprint_sha256 !~ '^[a-f0-9]{64}$' THEN RETURN NEW; END IF;
+        INSERT INTO certops_certificate_identities(
+          workspace_id, fingerprint_sha256, common_name, issuer, not_after)
+          VALUES (NEW.workspace_id, NEW.observed_fingerprint_sha256,
+            NEW.observed_subject, NEW.observed_issuer, NEW.observed_not_after)
+          ON CONFLICT (workspace_id, fingerprint_sha256) DO UPDATE
+            SET common_name = COALESCE(certops_certificate_identities.common_name,
+                  EXCLUDED.common_name),
+                issuer = COALESCE(certops_certificate_identities.issuer,
+                  EXCLUDED.issuer),
+                not_after = COALESCE(certops_certificate_identities.not_after,
+                  EXCLUDED.not_after);
+        IF TG_OP = 'UPDATE' THEN
+          previous_capture := OLD.captured_at;
+        END IF;
+        IF NEW.observed_at IS NOT NULL
+          AND NEW.observed_at <= NOW() + INTERVAL '5 minutes'
+          AND (previous_capture IS NULL OR NEW.observed_at > previous_capture) THEN
+          NEW.captured_at := NEW.observed_at;
+          NEW.presence_state := 'confirmed_present';
+          NEW.evidence_kind := CASE
+            WHEN NEW.source IN ('endpoint_monitor', 'domain_checker')
+              OR NEW.location_kind IN ('iis_binding', 'http_sys')
+              THEN 'service_binding'
+            WHEN NEW.location_kind IS NOT NULL THEN 'stored_copy'
+            ELSE 'unknown' END;
+        ELSIF TG_OP = 'UPDATE' THEN
+          NEW.captured_at := OLD.captured_at;
+          NEW.presence_state := OLD.presence_state;
+          NEW.evidence_kind := OLD.evidence_kind;
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_record_positive_observation
+        BEFORE INSERT OR UPDATE OF observed_at ON certificate_instances
+        FOR EACH ROW EXECUTE FUNCTION certops_record_positive_observation();
+
+      CREATE OR REPLACE FUNCTION certops_record_slot_observation()
+      RETURNS trigger AS $certops$
+      BEGIN
+        IF NEW.source = 'agent_filesystem'
+          AND NEW.observed_fingerprint_sha256 ~ '^[a-f0-9]{64}$'
+          AND NEW.observed_at IS NOT NULL
+          AND NEW.observed_at <= NOW() + INTERVAL '5 minutes' THEN
+          INSERT INTO certops_slot_observations(
+            workspace_id, target_id, fingerprint_sha256, location_ref, source_ref, captured_at)
+          VALUES (NEW.workspace_id, NEW.target_id, NEW.observed_fingerprint_sha256,
+            COALESCE(NULLIF(NEW.deployment_reference, ''), NEW.source_ref, NEW.id::text),
+            NEW.source_ref, NEW.observed_at)
+          ON CONFLICT (workspace_id, target_id, fingerprint_sha256, location_ref)
+          DO UPDATE SET captured_at = EXCLUDED.captured_at,
+                        source_ref = EXCLUDED.source_ref
+          WHERE certops_slot_observations.captured_at < EXCLUDED.captured_at;
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_record_slot_observation
+        BEFORE INSERT OR UPDATE OF observed_at ON certificate_instances
+        FOR EACH ROW EXECUTE FUNCTION certops_record_slot_observation();
+
+      CREATE OR REPLACE FUNCTION certops_replace_service_binding()
+      RETURNS trigger AS $certops$
+      BEGIN
+        IF NEW.presence_state = 'confirmed_present'
+          AND NEW.evidence_kind = 'service_binding'
+          AND NEW.location_kind IN ('iis_binding', 'http_sys') THEN
+          UPDATE certificate_instances previous
+             SET presence_state = 'confirmed_absent',
+                 captured_at = NEW.captured_at
+           WHERE previous.workspace_id = NEW.workspace_id
+             AND previous.target_id = NEW.target_id
+             AND previous.source_ref IS NOT DISTINCT FROM NEW.source_ref
+             AND previous.id <> NEW.id
+             AND previous.observed_fingerprint_sha256 IS DISTINCT FROM NEW.observed_fingerprint_sha256
+             AND (previous.captured_at IS NULL OR previous.captured_at <= NEW.captured_at);
+        END IF;
+        RETURN NEW;
+      END;
+      $certops$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_certops_replace_service_binding
+        AFTER INSERT OR UPDATE OF observed_at ON certificate_instances
+        FOR EACH ROW EXECUTE FUNCTION certops_replace_service_binding();
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
