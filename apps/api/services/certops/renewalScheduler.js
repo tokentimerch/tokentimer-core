@@ -266,6 +266,10 @@ async function findCertificatesDueForRenewal({
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.not_after IS NOT NULL
+        AND EXISTS (SELECT 1 FROM certops_management_periods period
+          WHERE period.workspace_id = mc.workspace_id
+            AND period.managed_certificate_id = mc.id
+            AND period.ended_at IS NULL AND period.automation_enabled = TRUE)
         AND mc.not_after <= NOW()
               + (COALESCE(cp.renew_before_days, $1) || ' days')::interval
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
@@ -321,6 +325,10 @@ async function countCertificatesWithAutoRenewDisabled({
        JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.not_after IS NOT NULL
+        AND EXISTS (SELECT 1 FROM certops_management_periods period
+          WHERE period.workspace_id = mc.workspace_id
+            AND period.managed_certificate_id = mc.id
+            AND period.ended_at IS NULL AND period.automation_enabled = TRUE)
         AND mc.not_after <= NOW()
               + (COALESCE(cp.renew_before_days, $1) || ' days')::interval
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(

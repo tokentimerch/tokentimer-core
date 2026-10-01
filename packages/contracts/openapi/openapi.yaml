@@ -3543,6 +3543,92 @@ paths:
   # schemas below. Machine, token, job, and agent namespaces remain frozen
   # skeletons so downstream overlays can build without route churn.
   # ----------------------------------------------------------------------------
+  /api/v1/workspaces/{id}/certops/certificate-identities:
+    get:
+      tags: [CertOps]
+      summary: List certificates grouped by workspace and SHA-256 fingerprint
+      operationId: listCertOpsCertificateIdentities
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Grouped certificate identities, source periods, and observations
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}:
+    get:
+      tags: [CertOps]
+      summary: Read a certificate identity and its locations and management history
+      operationId: getCertOpsCertificateIdentity
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: identityId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Certificate identity detail }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/workspaces/{id}/certops/certificate-identities/{identityId}/retire:
+    post:
+      tags: [CertOps]
+      summary: Record revocation or decommission by immutable certificate identity
+      operationId: retireCertOpsCertificateIdentity
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: identityId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertOpsCertificateRetireRequest" }
+      responses:
+        "200": { description: Updated fingerprint lifecycle }
+        "409": { description: Fresh service use or conflicting mutation }
+        "428": { description: Missing fingerprint precondition or visibility acknowledgment }
+  /api/v1/workspaces/{id}/certops/management-periods/{periodId}/stop:
+    post:
+      tags: [CertOps]
+      summary: Permanently end one management period
+      operationId: stopCertOpsManagementPeriod
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: periodId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Period closed and unclaimed automation cancelled }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/readd:
+    post:
+      tags: [CertOps]
+      summary: Start a new management period with explicit automation settings
+      operationId: readdCertOpsManagementSource
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: managedCertificateId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [automationEnabled, renewalProfileId]
+              properties:
+                automationEnabled: { type: boolean }
+                renewalProfileId: { type: string, format: uuid, nullable: true }
+      responses:
+        "201": { description: New management period }
   /api/v1/workspaces/{id}/certops/certificates:
     get:
       tags: [CertOps]
@@ -8342,19 +8428,26 @@ components:
     CertOpsCertificateRetireRequest:
       type: object
       additionalProperties: false
-      required: [status]
+      required: [status, reason, expectedFingerprintSha256]
       properties:
         status:
           type: string
           enum:
             - revoked
             - decommissioned
-          description: Soft-retire lifecycle status to apply to the managed certificate and linked token.
+          description: Lifecycle status for the exact fingerprint in this workspace.
         reason:
           type: string
-          nullable: true
+          minLength: 1
           maxLength: 512
-          description: Optional non-secret retirement reason. Private-key material, PEM markers, and secret-looking assignments are rejected.
+          description: Non-secret audit reason.
+        expectedFingerprintSha256:
+          type: string
+          pattern: '^[a-fA-F0-9:]{64,95}$'
+          description: Immutable identity precondition; legacy record actions require it.
+        acknowledgeUncertainty:
+          type: boolean
+          description: Required for decommission when visibility is uncertain or stored copies remain.
     CertOpsCertificateWriteResponse:
       type: object
       additionalProperties: false

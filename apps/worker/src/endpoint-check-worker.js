@@ -450,13 +450,13 @@ async function runEndpointChecks() {
               };
 
               // Update endpoint monitor with cert data
-              await client.query(
+              const monitorUpdated = await client.query(
                 `UPDATE domain_monitors
                  SET ssl_issuer = $1, ssl_subject = $2, ssl_valid_from = $3,
                      ssl_valid_to = $4, ssl_serial = $5, ssl_fingerprint = $6,
                      validated = TRUE, validated_at = COALESCE(validated_at, NOW()),
                      updated_at = NOW()
-                 WHERE id = $7`,
+                 WHERE id = $7 AND check_claim_id = $8`,
                 [
                   sslData.ssl_issuer,
                   sslData.ssl_subject,
@@ -465,8 +465,10 @@ async function runEndpointChecks() {
                   sslData.ssl_serial,
                   sslData.ssl_fingerprint,
                   id,
+                  claimId,
                 ],
               );
+              if (!monitorUpdated.rowCount) continue;
 
               // Update linked token expiration if cert changed
               if (currentTokenId && sslData.ssl_valid_to) {
@@ -481,13 +483,17 @@ async function runEndpointChecks() {
                   await client.query(
                     `UPDATE tokens SET expiration = $1, issuer = $2, serial_number = $3,
                             subject = $4, updated_at = NOW()
-                     WHERE id = $5`,
+                     WHERE id = $5 AND EXISTS (
+                       SELECT 1 FROM domain_monitors dm
+                        WHERE dm.id = $6 AND dm.check_claim_id = $7)`,
                     [
                       newExpiry,
                       sslData.ssl_issuer,
                       sslData.ssl_serial,
                       sslData.ssl_subject,
                       currentTokenId,
+                      id,
+                      claimId,
                     ],
                   );
                 }
@@ -520,8 +526,8 @@ async function runEndpointChecks() {
                     defaultContactGroupId: defaultCgId,
                   });
                   await client.query(
-                    "UPDATE domain_monitors SET token_id = $1 WHERE id = $2",
-                    [tokenId, id],
+                    "UPDATE domain_monitors SET token_id = $1 WHERE id = $2 AND check_claim_id = $3",
+                    [tokenId, id, claimId],
                   );
                   currentTokenId = tokenId;
                 } catch (tokenErr) {
@@ -541,6 +547,16 @@ async function runEndpointChecks() {
                   // plain BEGIN/COMMIT is legal again).
                   await client.query("BEGIN");
                   try {
+                    const liveMonitor = await client.query(
+                      `SELECT 1 FROM domain_monitors
+                        WHERE id = $1 AND workspace_id = $2 AND check_claim_id = $3
+                        FOR SHARE`,
+                      [id, workspace_id, claimId],
+                    );
+                    if (!liveMonitor.rowCount) {
+                      await client.query("ROLLBACK");
+                      continue;
+                    }
                     const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
                       client,
                       workspaceId: workspace_id,
@@ -605,7 +621,7 @@ async function runEndpointChecks() {
           // last_health_status from the SELECT is the PREVIOUS check's result
           const prevStatus = domain.last_health_status;
 
-          await client.query(
+          const healthUpdated = await client.query(
             `UPDATE domain_monitors
              SET last_health_status = $1,
                  last_health_status_code = $2, last_health_error = $3,
@@ -613,7 +629,7 @@ async function runEndpointChecks() {
                  previous_health_status = last_health_status,
                  consecutive_failures = $5,
                  updated_at = NOW()
-             WHERE id = $6`,
+             WHERE id = $6 AND check_claim_id = $7`,
             [
               health.status,
               health.statusCode,
@@ -621,8 +637,10 @@ async function runEndpointChecks() {
               health.responseMs,
               newFailures,
               id,
+              claimId,
             ],
           );
+          if (!healthUpdated.rowCount) continue;
 
           // --- Alert on STATE TRANSITION only ---
           // Queue alert immediately on transition. The delivery worker will
@@ -674,19 +692,19 @@ async function runEndpointChecks() {
         const newFailures = (domain.consecutive_failures || 0) + 1;
         const prevStatus = domain.last_health_status;
 
-        await client.query(
+        const errorUpdated = await client.query(
           `UPDATE domain_monitors
            SET last_health_status = 'error',
                last_health_error = $1,
                previous_health_status = last_health_status,
                consecutive_failures = $2,
                updated_at = NOW()
-           WHERE id = $3`,
-          [String(domainErr.message).substring(0, 500), newFailures, id],
+           WHERE id = $3 AND check_claim_id = $4`,
+          [String(domainErr.message).substring(0, 500), newFailures, id, claimId],
         );
 
         // Queue alert on transition healthy -> error
-        if (prevStatus && prevStatus === "healthy") {
+        if (errorUpdated.rowCount && prevStatus && prevStatus === "healthy") {
           await queueEndpointAlert(
             client,
             domain,

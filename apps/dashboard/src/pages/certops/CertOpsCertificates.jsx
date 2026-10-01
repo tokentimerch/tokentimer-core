@@ -40,7 +40,7 @@ import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
-import CertificateTokenDetailModal from '../../components/certops/CertificateTokenDetailModal.jsx';
+import CertificateIdentityDetailModal from '../../components/certops/CertificateIdentityDetailModal.jsx';
 import CsrWorkflowPanel from '../../components/certops/CsrWorkflowPanel.jsx';
 import {
   listCertificates,
@@ -163,11 +163,8 @@ function RenewalSetupStatus({ renewalSetup, onRetry, retrying, canManage }) {
  * Counts retired (revoked/decommissioned) certificates, independent of the
  * page the "Retired" toggle currently shows.
  *
- * The list route only takes one `excludeRetired` boolean, so this is the
- * difference of two lightweight (`limit: 1`) totals rather than a row scan:
- * every certificate matching the current source filter, minus the active
- * ones. Scoped to `source` only (not `status`), matching the toggle itself,
- * which stays orthogonal to a specific status pick.
+ * Sum two lightweight grouped totals, one for each retired lifecycle state.
+ * Scoped to source only, matching the toggle independently of status filters.
  */
 function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
   const [count, setCount] = useState(null);
@@ -181,25 +178,26 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
     const controller = new AbortController();
     Promise.all([
       listCertificates(workspaceId, {
+        grouped: true,
         limit: 1,
         offset: 0,
         source,
-        excludeRetired: false,
+        status: 'revoked',
         signal: controller.signal,
       }),
       listCertificates(workspaceId, {
+        grouped: true,
         limit: 1,
         offset: 0,
         source,
-        excludeRetired: true,
+        status: 'decommissioned',
         signal: controller.signal,
       }),
     ])
-      .then(([all, active]) => {
+      .then(([revoked, decommissioned]) => {
         if (cancelled) return;
-        const allTotal = Number(all?.pagination?.total ?? 0);
-        const activeTotal = Number(active?.pagination?.total ?? 0);
-        setCount(Math.max(0, allTotal - activeTotal));
+        setCount(Number(revoked?.pagination?.total ?? 0) +
+          Number(decommissioned?.pagination?.total ?? 0));
       })
       .catch(() => {
         // The count is a convenience on the toggle label, not something the
@@ -290,6 +288,7 @@ export default function CertOpsCertificates() {
   } = useCertOpsListUrlState({ filters: CERTOPS_CERTIFICATE_FILTERS });
 
   const showRetired = filters.showRetired === 'true';
+  const [unmanagedOnly, setUnmanagedOnly] = useState(false);
   // An explicit status pick is more precise than the coarse retired toggle;
   // let it through even if that status happens to be revoked/decommissioned.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
@@ -302,6 +301,7 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
+      unmanaged: unmanagedOnly || undefined,
       sort: sort.key,
       direction: sort.direction,
     });
@@ -352,12 +352,15 @@ export default function CertOpsCertificates() {
     pagination && pagination.total > 0 && offset >= pagination.total
   );
 
-  const handleRetire = async ({ status, reason }) => {
+  const handleRetire = async ({ status, reason, acknowledgeUncertainty }) => {
     if (!retireTarget?.id || !workspaceId) return;
     try {
       await retireCertificate(workspaceId, retireTarget.id, {
         status,
         reason,
+        identityId: retireTarget.identityId,
+        fingerprintSha256: retireTarget.fingerprintSha256,
+        acknowledgeUncertainty,
       });
       showSuccess(
         status === 'revoked'
@@ -481,6 +484,11 @@ export default function CertOpsCertificates() {
               {retiredCount}
             </Box>
           ) : null}
+        </Button>
+        <Button size='sm' variant={unmanagedOnly ? 'solid' : 'outline'}
+          colorScheme='gray' aria-pressed={unmanagedOnly}
+          onClick={() => { setUnmanagedOnly(value => !value); setPage({ offset: 0 }); }}>
+          Unmanaged only
         </Button>
       </HStack>
 
@@ -610,7 +618,7 @@ export default function CertOpsCertificates() {
                   const retired = isRetiredStatus(certificate.status);
                   return (
                     <Tr
-                      key={certificate.id}
+                      key={certificate.identityId || certificate.id}
                       data-certificate-mobile-card
                       display={{ base: 'grid', lg: 'table-row' }}
                       gridTemplateColumns={{
@@ -672,7 +680,7 @@ export default function CertOpsCertificates() {
                           textTransform='none'
                           fontWeight='medium'
                         >
-                          {statusLabel(certificate.status)}
+                          {certificate.lifecycleDisplay || statusLabel(certificate.status)}
                         </Badge>
                         {certificate.reconciliationReason ? (
                           <Tooltip
@@ -757,7 +765,9 @@ export default function CertOpsCertificates() {
                           Source
                         </MobileFieldLabel>
                         <Text fontSize='sm'>
-                          {sourceLabel(certificate.source)}
+                          {certificate.sourceCount > 1
+                            ? `${certificate.sourceCount} sources · ${certificate.locationCount} locations`
+                            : sourceLabel(certificate.source)}
                         </Text>
                       </Td>
                       {canManage ? (
@@ -791,12 +801,6 @@ export default function CertOpsCertificates() {
                                 {...actionButtonProps}
                                 aria-label='Details'
                                 icon={<MoreVertical size={16} />}
-                                isDisabled={!certificate.tokenId}
-                                title={
-                                  certificate.tokenId
-                                    ? undefined
-                                    : 'No linked token to show'
-                                }
                                 onClick={() => setDetailsTarget(certificate)}
                               />
                             </Tooltip>
@@ -839,15 +843,17 @@ export default function CertOpsCertificates() {
                                     />
                                   </Tooltip>
                                 ) : null}
-                                <Tooltip label='Retire'>
-                                  <IconButton
-                                    {...actionButtonProps}
-                                    aria-label='Retire'
-                                    icon={<Archive size={16} />}
-                                    onClick={() => setRetireTarget(certificate)}
-                                  />
-                                </Tooltip>
                               </>
+                            ) : null}
+                            {certificate.identityId && certificate.lifecycleStatus !== 'revoked' ? (
+                              <Tooltip label='Change lifecycle'>
+                                <IconButton
+                                  {...actionButtonProps}
+                                  aria-label='Change lifecycle'
+                                  icon={<Archive size={16} />}
+                                  onClick={() => setRetireTarget(certificate)}
+                                />
+                              </Tooltip>
                             ) : null}
                           </HStack>
                         </Td>
@@ -869,12 +875,6 @@ export default function CertOpsCertificates() {
                               w={{ base: '100%', lg: '32px' }}
                               h={{ base: '38px', lg: '32px' }}
                               borderRadius={{ base: 0, lg: 'md' }}
-                              isDisabled={!certificate.tokenId}
-                              title={
-                                certificate.tokenId
-                                  ? undefined
-                                  : 'No linked token to show'
-                              }
                               onClick={() => setDetailsTarget(certificate)}
                             />
                           </Tooltip>
@@ -924,12 +924,13 @@ export default function CertOpsCertificates() {
         }}
       />
 
-      <CertificateTokenDetailModal
+      <CertificateIdentityDetailModal
         isOpen={Boolean(detailsTarget)}
         onClose={() => setDetailsTarget(null)}
         workspaceId={workspaceId}
-        tokenId={detailsTarget?.tokenId}
+        certificate={detailsTarget}
         canManage={canManage}
+        onChanged={refresh}
       />
       {canManage ? (
         <Modal

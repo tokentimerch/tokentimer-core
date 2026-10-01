@@ -26,6 +26,8 @@ export async function listCertificates(
     status,
     source,
     excludeRetired,
+    grouped = false,
+    unmanaged,
     sort,
     direction,
     signal,
@@ -35,10 +37,11 @@ export async function listCertificates(
   if (status) params.status = status;
   if (source) params.source = source;
   if (excludeRetired !== undefined) params.excludeRetired = excludeRetired;
+  if (unmanaged !== undefined) params.unmanaged = unmanaged;
   if (sort) params.sort = sort;
   if (direction) params.direction = direction;
   const res = await apiClient.get(
-    `${workspaceBase(workspaceId)}/certificates`,
+    `${workspaceBase(workspaceId)}/${grouped ? 'certificate-identities' : 'certificates'}`,
     {
       params,
       signal,
@@ -268,16 +271,49 @@ export async function cancelCsrWorkflow(workspaceId, csrId) {
 export async function retireCertificate(
   workspaceId,
   certificateId,
-  { status, reason } = {}
+  { status, reason, identityId, fingerprintSha256, acknowledgeUncertainty = false } = {}
 ) {
   const res = await apiClient.post(
-    `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(
-      certificateId
-    )}/retire`,
-    { status, reason }
+    identityId
+      ? `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/retire`
+      : `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(certificateId)}/retire`,
+    { status, reason, expectedFingerprintSha256: fingerprintSha256, acknowledgeUncertainty }
   );
   invalidateCertOpsInventoryCache(workspaceId);
   return res.data;
+}
+
+export async function getCertificateIdentity(workspaceId, identityId) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}`
+  );
+  return res.data.certificate;
+}
+
+export async function stopManagingSource(workspaceId, periodId) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/management-periods/${encodeURIComponent(periodId)}/stop`
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+export async function readdManagingSource(workspaceId, managedCertificateId, {
+  renewalProfileId = null, automationEnabled = false,
+} = {}) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(managedCertificateId)}/readd`,
+    { renewalProfileId, automationEnabled }
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+export async function listCertOpsRenewalProfiles(workspaceId) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/profiles`, {
+    params: { limit: 100, offset: 0 },
+  });
+  return res.data.items || [];
 }
 
 /**

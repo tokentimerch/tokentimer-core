@@ -3372,10 +3372,13 @@ function DashboardView({
   );
 
   const handleRetireConfirm = useCallback(
-    async ({ status, reason }) => {
+    async ({ status, reason, acknowledgeUncertainty }) => {
       const cert = retireTarget?.certificate;
       if (!cert?.id) return;
-      await retireCertificate(workspaceId, cert.id, { status, reason });
+      await retireCertificate(workspaceId, cert.id, {
+        status, reason, acknowledgeUncertainty,
+        fingerprintSha256: cert.fingerprintSha256,
+      });
       refreshCertOps();
       onRetireModalClose();
       setRetireTarget(null);

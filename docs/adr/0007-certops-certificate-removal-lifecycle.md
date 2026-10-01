@@ -84,3 +84,30 @@ endpoint (see PR #47). That is acceptable under this decision when:
   other non-terminal status: it retires to `revoked` or `decommissioned` through
   the retire route with token status mirroring, is never row-deleted, and counts
   as active for quota.
+
+## Addendum: fingerprint identity and management periods (2026-10-01)
+
+This addendum supersedes the 1:1 source-row lifecycle and default retired
+visibility rules above. A certificate is identified by its normalized SHA-256
+fingerprint within a workspace. `managed_certificates` remains a historical
+source record. An open `certops_management_periods` row denotes current
+management; rotation changes its current certificate association without
+moving lifecycle from A to B. Closing a period is terminal. Re-adding a source
+starts another period, and observations cannot reopen management.
+
+The grouped inventory displays one fingerprint once, with its source history
+and location evidence. Fingerprintless provisioning rows stay separate until
+identified. Lifecycle changes target `certops_certificate_identities` and
+require the expected fingerprint; the legacy record route requires the same
+precondition. Revocation records CertOps state and does not contact the CA.
+Decommission is an operator declaration made with the best available evidence:
+fresh confirmed service use blocks it; stored copies or unknown visibility
+require a reason and explicit acknowledgment. Subsequent observations leave
+lifecycle unchanged and show the conflict. Revoked/decommissioned certificates
+with fresh presence remain visible by default.
+
+Lifecycle does not end management and does not release quota. Quota consumes
+one unit per distinct fingerprint with an open period, plus one per open
+fingerprintless source. Closing the last period releases the unit. Token status
+and alert suppression must respect other active fingerprints sharing a token.
+Historical source records, jobs, observations, and audit rows remain intact.

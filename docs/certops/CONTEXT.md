@@ -87,8 +87,15 @@ the shared detector scans every outbound envelope.
 
 ## Ubiquitous language (CertOps)
 
-- **Managed certificate** - a tracked certificate identity in a workspace.
-  Inventory stores public material only (see
+- **Certificate identity** - one exact certificate, keyed by normalized
+  SHA-256 fingerprint within a workspace. Lifecycle belongs to this identity.
+- **Management period** - a bounded interval when CertOps manages one source.
+  A source may have multiple historical periods, but only one open period.
+- **Observation** - timestamped evidence at an actual endpoint, path, store
+  slot, or service binding. Presence, authoritative absence, and unknown are
+  distinct; a stored copy alone does not prove service use.
+- **Managed certificate** - the historical source record and public material
+  associated with a management period (see
   `packages/contracts/certops/certops-inventory.schema.json`).
 - **Certificate instance** - a deployed copy of a managed certificate on a
   target.
@@ -334,16 +341,28 @@ Token surfaces retain linked expiry and metadata. Certificate operations has Job
 
 ## Certificate removal
 
-Removing a tracked certificate is retire-first, not row delete. See ADR-0007.
+Removing a tracked certificate is retire-first, not row delete. The 2026-10-01
+addendum to ADR-0007 supersedes its earlier source-row lifecycle description.
 
-- **Retire** - `POST .../certops/certificates/:certId/retire` with
-  `revoked` or `decommissioned`; rows, instances, and evidence preserved;
-  linked token lifecycle status mirrors the certificate. Retiring also stops
+- **Retire** - `POST .../certops/certificate-identities/:identityId/retire`
+  with the exact SHA-256 fingerprint precondition, `revoked` or
+  `decommissioned`, and a reason. The old record-based route also requires the
+  fingerprint precondition. Rows, instances, and evidence are preserved;
+  linked token lifecycle status is updated only when no independently active
+  fingerprint shares that token. Retiring also stops
   expiry and renewal-failure alerts for that certificate: pending
   renewal-failure alerts are dropped immediately; pending expiry alerts are
   dropped once no live sibling remains on the shared token. New ones are
   not queued, and weekly digests omit a token whose lifecycle is retired.
   Endpoint-down alerts are unchanged.
+- **Decommission** - blocked by fresh confirmed TLS or service-binding use.
+  Stored copies and uncertain visibility require acknowledgment; later use
+  appears as **Decommissioned · Still observed**. It is an operator declaration,
+  not proof of absence.
+- **Stop managing** - closes one management period without changing the
+  fingerprint lifecycle or observations. Explicit re-add opens a new period.
+  Quota counts distinct fingerprints with an open period, plus each open
+  fingerprintless source, regardless of revoked or decommissioned lifecycle.
 - **Hard purge** - only for manually created cert tokens not backed by a
   `managed_certificate`; managed-backed certs route to Retire from the token
   surface.

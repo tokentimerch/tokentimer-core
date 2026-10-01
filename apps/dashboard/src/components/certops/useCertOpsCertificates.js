@@ -21,6 +21,7 @@ export function useCertOpsCertificates(filters = {}) {
     status,
     source,
     excludeRetired,
+    unmanaged,
     sort,
     direction,
   } = filters;
@@ -50,11 +51,13 @@ export function useCertOpsCertificates(filters = {}) {
     setError('');
 
     listCertificates(workspaceId, {
+      grouped: true,
       limit,
       offset,
       status,
       source,
       excludeRetired,
+      unmanaged,
       sort,
       direction,
       signal: controller.signal,
@@ -92,6 +95,7 @@ export function useCertOpsCertificates(filters = {}) {
     status,
     source,
     excludeRetired,
+    unmanaged,
     sort,
     direction,
   ]);

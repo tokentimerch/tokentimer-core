@@ -5,6 +5,7 @@ import {
   AlertIcon,
   Badge,
   Button,
+  Checkbox,
   Flex,
   Modal,
   ModalBody,
@@ -30,12 +31,12 @@ const RETIRE_OPTIONS = [
   {
     value: 'decommissioned',
     label: 'Decommission',
-    hint: 'Planned retirement. The certificate is no longer in service but was not compromised.',
+    hint: 'Record that, to your knowledge, this certificate is no longer in use.',
   },
   {
     value: 'revoked',
-    label: 'Revoke',
-    hint: 'The certificate is no longer trusted (compromise, mis-issuance). Mark it revoked.',
+    label: 'Mark revoked',
+    hint: 'Record revocation in CertOps. This does not contact the certificate authority.',
   },
 ];
 
@@ -69,6 +70,7 @@ export default function RetireCertificateModal({
 
   const [status, setStatus] = useState('decommissioned');
   const [reason, setReason] = useState('');
+  const [acknowledgeUncertainty, setAcknowledgeUncertainty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -76,6 +78,7 @@ export default function RetireCertificateModal({
     if (isOpen) {
       setStatus('decommissioned');
       setReason('');
+      setAcknowledgeUncertainty(false);
       setSubmitting(false);
       setError('');
     }
@@ -83,10 +86,18 @@ export default function RetireCertificateModal({
 
   const handleConfirm = async () => {
     if (submitting) return;
+    if (!reason.trim()) {
+      setError('Enter a reason for this lifecycle change.');
+      return;
+    }
+    if (status === 'decommissioned' && !acknowledgeUncertainty) {
+      setError('Confirm that you understand visibility may be incomplete.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
-      await onRetire({ status, reason: reason.trim() || undefined });
+      await onRetire({ status, reason: reason.trim(), acknowledgeUncertainty });
     } catch (err) {
       const code = err?.response?.status;
       if (code === 404) {
@@ -171,10 +182,18 @@ export default function RetireCertificateModal({
             <Textarea
               value={reason}
               onChange={event => setReason(event.target.value)}
-              placeholder='Reason (optional, recorded in the audit trail)'
+              placeholder='Reason (required, recorded in the audit trail)'
               size='sm'
               rows={2}
             />
+            {status === 'decommissioned' ? (
+              <Checkbox
+                isChecked={acknowledgeUncertainty}
+                onChange={event => setAcknowledgeUncertainty(event.target.checked)}
+              >
+                I understand CertOps may not see every location where this certificate is in use.
+              </Checkbox>
+            ) : null}
 
             {error ? (
               <Alert status='error' borderRadius='12px'>

@@ -28,11 +28,12 @@ describe("operational notifications migration", () => {
       "repair_partial_pr72_migration_history",
     );
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
-    assert.equal(migrations.at(-1).version, 61);
-    assert.equal(migrations.at(-1).name, "auto_sync_multi_configuration");
+    assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
+    assert.equal(migrations.at(-1).version, 62);
+    assert.equal(migrations.at(-1).name, "certops_certificate_identity_and_management_periods");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 61 }, (_, index) => index + 1),
+      Array.from({ length: 62 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
