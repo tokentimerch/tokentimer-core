@@ -8,6 +8,12 @@ const {
 } = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
+  multiConfigEnabled,
+  normalizeConnectionName,
+  scanSettingsEqual,
+  sanitizePublicAutoSyncError,
+} = require("../services/autoSyncProvenance");
+const {
   loadWorkspace,
   requireWorkspaceMembership,
   authorize,
@@ -269,6 +275,32 @@ function resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params) {
   );
 }
 
+// Activation is an operator action after draining old workers and verifying
+// the fenced worker image. It cannot be reversed while multiple configs exist.
+router.get("/api/v1/admin/auto-sync/activation", getApiLimiter(), requireAuth,
+  async (req, res) => {
+    const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
+    if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
+    res.json({ enabled: await multiConfigEnabled() });
+  });
+
+router.post("/api/v1/admin/auto-sync/activation", getApiLimiter(), requireAuth,
+  async (req, res) => {
+    const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
+    if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
+    if (req.body?.workers_drained !== true || req.body?.worker_image_verified !== true) {
+      return res.status(400).json({ error: "Confirm workers_drained and worker_image_verified" });
+    }
+    const result = await pool.query(
+      `UPDATE auto_sync_feature_state SET multi_config_enabled = TRUE,
+         activated_at = COALESCE(activated_at, NOW()),
+         activated_by = COALESCE(activated_by, $1)
+       WHERE id = TRUE RETURNING multi_config_enabled, activated_at`,
+      [req.user.id],
+    );
+    res.json({ enabled: result.rows[0]?.multi_config_enabled, activated_at: result.rows[0]?.activated_at });
+  });
+
 // List auto-sync configs for a workspace
 router.get(
   "/api/v1/workspaces/:id/auto-sync",
@@ -279,18 +311,60 @@ router.get(
   async (req, res) => {
     try {
       const result = await pool.query(
-        `SELECT id, provider, scan_params, frequency, schedule_time, schedule_tz,
+        `SELECT id, provider, connection_key AS name, scan_params, frequency, schedule_time, schedule_tz,
                 enabled, last_sync_at, last_sync_status, last_sync_error,
                 last_sync_items_count, next_sync_at, created_at, updated_at,
-                cleanup_obsolete, connection_key
-         FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider`,
+                cleanup_obsolete, scan_version, run_generation, pending_manual_run
+         FROM auto_sync_configs WHERE workspace_id = $1 ORDER BY provider, LOWER(connection_key), id`,
         [req.workspace.id],
       );
-      res.json({ items: result.rows });
+      res.json({ items: result.rows.map((row) => ({
+        ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
+      })) });
     } catch (e) {
       logger.error("Auto-sync list error", { error: e.message });
       res.status(500).json({ error: "Failed to list auto-sync configs" });
     }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/auto-sync/:configId/runs",
+  getApiLimiter(), requireAuth, loadWorkspace, requireWorkspaceMembership,
+  async (req, res) => {
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+    const cursor = req.query.cursor ? String(req.query.cursor) : null;
+    let before = null;
+    if (cursor) {
+      try {
+        const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+        if (!parsed.started_at || !parsed.run_id) throw new Error("invalid");
+        before = parsed;
+      } catch (_) { return res.status(400).json({ error: "Invalid cursor" }); }
+    }
+    const config = await pool.query(
+      "SELECT 1 FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2",
+      [req.params.configId, req.workspace.id],
+    );
+    if (!config.rowCount) return res.status(404).json({ error: "Auto-sync config not found" });
+    const result = await pool.query(
+      `SELECT run_id, trigger, generation, scan_version, started_at, finished_at,
+              status, discovered_count, created_count, updated_count,
+              detached_count, deleted_count, error_count, error_text AS error
+         FROM auto_sync_runs WHERE config_id_snapshot = $1 AND workspace_id = $2
+           AND ($3::timestamptz IS NULL OR (started_at, run_id) < ($3::timestamptz, $4::uuid))
+        ORDER BY started_at DESC, run_id DESC LIMIT $5`,
+      [req.params.configId, req.workspace.id, before?.started_at || null,
+        before?.run_id || null, limit + 1],
+    );
+    const hasMore = result.rows.length > limit;
+    const items = result.rows.slice(0, limit);
+    const tail = items.at(-1);
+    res.json({ items: items.map((row) => ({
+      ...row, error: sanitizePublicAutoSyncError(row.error),
+    })), next_cursor: hasMore
+      ? Buffer.from(JSON.stringify({ started_at: tail.started_at, run_id: tail.run_id })).toString("base64url")
+      : null });
   },
 );
 
@@ -312,6 +386,7 @@ router.post(
         schedule_time,
         schedule_tz,
         cleanup_obsolete,
+        name,
       } = req.body || {};
       if (!provider || !credentials) {
         return res
@@ -345,12 +420,30 @@ router.post(
       const effTime = schedule_time || "09:00";
       const effTz = schedule_tz || "UTC";
       const nextSync = computeNextSyncAt(effFreq, effTime, effTz);
+      const normalizedName = normalizeConnectionName(name || provider);
+      if (!normalizedName) {
+        return res.status(400).json({ error: "Name must contain 1–100 characters" });
+      }
 
-      const result = await pool.query(
+      const result = await withDbTransaction(async (client) => {
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext($1))",
+          [`auto-sync:${req.workspace.id}:${provider}`],
+        );
+        const { rows: existing } = await client.query(
+          `SELECT id FROM auto_sync_configs WHERE workspace_id = $1 AND provider = $2 FOR UPDATE`,
+          [req.workspace.id, provider],
+        );
+        if (existing.length > 0 && !(await multiConfigEnabled(client))) {
+          const error = new Error("Multiple configurations require operator activation");
+          error.code = "MULTI_CONFIG_DISABLED";
+          throw error;
+        }
+        return client.query(
         `INSERT INTO auto_sync_configs
-          (workspace_id, provider, credentials_encrypted, scan_params, frequency, schedule_time, schedule_tz, next_sync_at, created_by, cleanup_obsolete)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_at, cleanup_obsolete`,
+          (workspace_id, provider, credentials_encrypted, scan_params, frequency, schedule_time, schedule_tz, next_sync_at, created_by, cleanup_obsolete, connection_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id, provider, connection_key AS name, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_at, cleanup_obsolete`,
         [
           req.workspace.id,
           provider,
@@ -362,8 +455,10 @@ router.post(
           nextSync,
           req.user.id,
           resolveCleanupObsoleteFlag(cleanup_obsolete, scan_params),
+          normalizedName,
         ],
-      );
+        );
+      });
       try {
         await writeAudit({
           actorUserId: req.user.id,
@@ -382,9 +477,12 @@ router.post(
       }
       res.status(201).json(result.rows[0]);
     } catch (e) {
+      if (e.code === "MULTI_CONFIG_DISABLED") {
+        return res.status(409).json({ error: e.message, code: e.code });
+      }
       if (e.code === "23505") {
         return res.status(409).json({
-          error: "Auto-sync for this provider already exists in this workspace",
+          error: "A configuration with this name already exists for this provider",
         });
       }
       logger.error("Auto-sync create error", { error: e.message });
@@ -404,7 +502,7 @@ router.put(
   async (req, res) => {
     try {
       const existing = await pool.query(
-        `SELECT provider FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
+        `SELECT provider, scan_params, enabled, cleanup_obsolete FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
         [req.params.configId, req.workspace.id],
       );
       if (existing.rows.length === 0) {
@@ -425,10 +523,12 @@ router.put(
         schedule_tz,
         enabled,
         cleanup_obsolete,
+        name,
       } = req.body || {};
       const updates = [];
       const values = [];
       let idx = 1;
+      let scanAffecting = false;
 
       if (credentials !== undefined) {
         const credError = validateAutoSyncCredentials(
@@ -447,10 +547,12 @@ router.put(
           : require("../services/systemSettings").encrypt(credJson);
         updates.push(`credentials_encrypted = $${idx++}`);
         values.push(encrypted);
+        scanAffecting = true;
       }
       if (scan_params !== undefined) {
         updates.push(`scan_params = $${idx++}`);
         values.push(scan_params);
+        scanAffecting = !scanSettingsEqual(scan_params, existing.rows[0].scan_params) || scanAffecting;
       }
       if (frequency !== undefined) {
         updates.push(`frequency = $${idx++}`);
@@ -468,10 +570,12 @@ router.put(
         updates.push(`enabled = $${idx++}`);
         values.push(enabled);
         if (enabled === false) updates.push("consecutive_failures = 0");
+        scanAffecting = enabled !== existing.rows[0].enabled || scanAffecting;
       }
       if (cleanup_obsolete !== undefined) {
         updates.push(`cleanup_obsolete = $${idx++}`);
         values.push(cleanup_obsolete === true);
+        scanAffecting = (cleanup_obsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
       } else if (
         scan_params !== undefined &&
         scan_params &&
@@ -480,6 +584,23 @@ router.put(
       ) {
         updates.push(`cleanup_obsolete = $${idx++}`);
         values.push(scan_params.cleanupObsolete === true);
+        scanAffecting = (scan_params.cleanupObsolete === true) !== existing.rows[0].cleanup_obsolete || scanAffecting;
+      }
+      if (name !== undefined) {
+        const normalizedName = normalizeConnectionName(name);
+        if (!normalizedName) return res.status(400).json({ error: "Name must contain 1–100 characters" });
+        updates.push(`connection_key = $${idx++}`);
+        values.push(normalizedName);
+      }
+      if (scanAffecting) {
+        updates.push("scan_version = scan_version + 1");
+        updates.push("active_run_id = NULL");
+        updates.push("lease_owner = NULL");
+        updates.push("lease_until = NULL");
+        if (enabled !== false) {
+          updates.push("pending_replacement_run = TRUE");
+          updates.push("next_sync_at = NOW()");
+        }
       }
       updates.push(`updated_at = NOW()`);
 
@@ -489,10 +610,22 @@ router.put(
 
       values.push(req.params.configId, req.workspace.id);
       const result = await withDbTransaction(async (client) => {
+        await client.query(
+          "SELECT id FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+          [req.params.configId, req.workspace.id],
+        );
+        if (scanAffecting) {
+          await client.query(
+            `UPDATE auto_sync_runs SET status = 'superseded', finished_at = NOW()
+              WHERE run_id = (SELECT active_run_id FROM auto_sync_configs
+                WHERE id = $1 AND workspace_id = $2) AND status = 'running'`,
+            [req.params.configId, req.workspace.id],
+          );
+        }
         const updated = await client.query(
           `UPDATE auto_sync_configs SET ${updates.join(", ")}
            WHERE id = $${idx++} AND workspace_id = $${idx}
-           RETURNING id, provider, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete`,
+           RETURNING id, provider, connection_key AS name, scan_params, frequency, schedule_time, schedule_tz, enabled, next_sync_at, updated_at, cleanup_obsolete, scan_version`,
           values,
         );
         if (updated.rows.length > 0 && enabled === false) {
@@ -529,6 +662,9 @@ router.put(
       }
       res.json(result.rows[0]);
     } catch (e) {
+      if (e.code === "23505" || e.code === "23514") {
+        return res.status(409).json({ error: "Configuration name is already in use or invalid" });
+      }
       logger.error("Auto-sync update error", { error: e.message });
       res.status(500).json({ error: "Failed to update auto-sync config" });
     }
@@ -546,6 +682,41 @@ router.delete(
   async (req, res) => {
     try {
       const result = await withDbTransaction(async (client) => {
+        const config = await client.query(
+          `SELECT id, provider, connection_key, active_run_id FROM auto_sync_configs
+            WHERE id = $1 AND workspace_id = $2 FOR UPDATE`,
+          [req.params.configId, req.workspace.id],
+        );
+        if (!config.rowCount) return { rows: [] };
+        const links = await client.query(
+          `SELECT l.token_id FROM auto_sync_token_links l
+            JOIN tokens t ON t.id = l.token_id
+           WHERE l.config_id = $1 ORDER BY l.token_id FOR UPDATE OF t`,
+          [req.params.configId],
+        );
+        for (const link of links.rows) {
+          await client.query(
+            `INSERT INTO auto_sync_token_link_events
+              (token_id, token_id_snapshot, workspace_id, config_id, config_name, event, reason)
+             VALUES ($1,$1,$2,$3,$4,'detached','configuration_deleted')`,
+            [link.token_id, req.workspace.id, req.params.configId, config.rows[0].connection_key],
+          );
+        }
+        await client.query(
+          `DELETE FROM auto_sync_token_links WHERE config_id = $1`,
+          [req.params.configId],
+        );
+        await client.query(
+          `UPDATE tokens SET auto_sync_managed = FALSE
+            WHERE id = ANY($1::integer[]) AND auto_sync_managed = TRUE
+              AND NOT EXISTS (SELECT 1 FROM auto_sync_token_links l WHERE l.token_id = tokens.id)`,
+          [links.rows.map((row) => row.token_id)],
+        );
+        await client.query(
+          `UPDATE auto_sync_runs SET status = 'superseded', finished_at = NOW()
+            WHERE run_id = $1 AND status = 'running'`,
+          [config.rows[0].active_run_id],
+        );
         const deleted = await client.query(
           "DELETE FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2 RETURNING provider",
           [req.params.configId, req.workspace.id],
@@ -616,11 +787,13 @@ router.post(
         });
       }
 
-      // Mark next_sync_at as NOW so the worker picks it up immediately
+      // A running job keeps one durable, coalesced follow-up request.
       const result = await pool.query(
-        `UPDATE auto_sync_configs SET next_sync_at = NOW(), updated_at = NOW()
+        `UPDATE auto_sync_configs SET pending_manual_run = TRUE,
+             next_sync_at = CASE WHEN active_run_id IS NULL THEN NOW() ELSE next_sync_at END,
+             updated_at = NOW()
          WHERE id = $1 AND workspace_id = $2 AND enabled = TRUE
-         RETURNING id, provider, next_sync_at`,
+         RETURNING id, provider, next_sync_at, pending_manual_run`,
         [req.params.configId, req.workspace.id],
       );
       if (result.rows.length === 0) {

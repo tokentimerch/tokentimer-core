@@ -1068,6 +1068,9 @@ export default function ImportTokensModal({
 
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
+  const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
+  const [autoSyncName, setAutoSyncName] = React.useState('');
+  const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
   const [requestedAutoSyncConfig, setRequestedAutoSyncConfig] =
     React.useState(null);
   const [restoredScanParams, setRestoredScanParams] = React.useState(null);
@@ -1128,14 +1131,18 @@ export default function ImportTokensModal({
         );
         if (cancelled) return;
         const configs = res.data?.items || [];
+        setAutoSyncConfigs(configs.filter(c => c.provider === source));
         const requestedId =
           requestedAutoSyncConfig?.provider === source
             ? requestedAutoSyncConfig.id
             : null;
-        const existing = requestedId
+        const existing = requestedAutoSyncConfig?.create
+          ? null
+          : requestedId
           ? configs.find(c => c.provider === source && c.id === requestedId)
           : configs.find(c => c.provider === source);
         setAutoSyncConfig(existing || false);
+        setAutoSyncName(existing?.name || source);
 
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
@@ -1255,6 +1262,22 @@ export default function ImportTokensModal({
       cancelled = true;
     };
   }, [workspaceId, source, requestedAutoSyncConfig]);
+
+  React.useEffect(() => {
+    if (!workspaceId || !autoSyncConfig?.id) {
+      setAutoSyncRuns([]);
+      return undefined;
+    }
+    let cancelled = false;
+    apiClient.get(
+      `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
+    ).then(res => {
+      if (!cancelled) setAutoSyncRuns(res.data?.items || []);
+    }).catch(() => {
+      if (!cancelled) setAutoSyncRuns([]);
+    });
+    return () => { cancelled = true; };
+  }, [workspaceId, autoSyncConfig?.id, autoSyncConfig?.last_sync_at]);
 
   React.useEffect(() => {
     if (!isOpen || !openRequest?.provider) return;
@@ -1492,6 +1515,7 @@ export default function ImportTokensModal({
     }
     const { credentials, scanParams } = getAutoSyncCredentials();
     const payload = {
+      name: autoSyncName,
       frequency: enableSyncFrequency,
       schedule_time: enableSyncTime,
       schedule_tz: enableSyncTz,
@@ -1526,6 +1550,7 @@ export default function ImportTokensModal({
           `/api/v1/workspaces/${workspaceId}/auto-sync`
         );
         const configs = res.data?.items || [];
+        setAutoSyncConfigs(configs.filter(c => c.provider === source));
         setAutoSyncConfig(
           configs.find(c => c.id === autoSyncConfig.id) || false
         );
@@ -1606,6 +1631,7 @@ export default function ImportTokensModal({
         `/api/v1/workspaces/${workspaceId}/auto-sync`,
         {
           provider: source,
+          name: autoSyncName,
           credentials,
           scan_params: scanParams,
           frequency: enableSyncFrequency,
@@ -1619,6 +1645,7 @@ export default function ImportTokensModal({
         `/api/v1/workspaces/${workspaceId}/auto-sync`
       );
       const configs = res.data?.items || [];
+      setAutoSyncConfigs(configs.filter(c => c.provider === source));
       const createdId = created.data?.id;
       setAutoSyncConfig(
         (createdId
@@ -2585,6 +2612,30 @@ export default function ImportTokensModal({
                   p={4}
                 >
                   <VStack align='stretch' spacing={4}>
+                    <HStack spacing={3} align='flex-end'>
+                      <FormControl>
+                        <FormLabel fontSize='sm'>Configuration</FormLabel>
+                        <Select size='sm' value={autoSyncConfig.id}
+                          onChange={e => setRequestedAutoSyncConfig({ provider: source, id: e.target.value })}>
+                          {autoSyncConfigs.map(config => (
+                            <option key={config.id} value={config.id}>
+                              {config.name || config.connection_key || config.provider}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <Button size='sm' variant='outline' onClick={() => {
+                        setRequestedAutoSyncConfig({ provider: source, create: true });
+                        setAutoSyncConfig(false);
+                        setAutoSyncName(`${source} ${autoSyncConfigs.length + 1}`);
+                        setIntegrationSubTab('scan');
+                      }}>Add another</Button>
+                    </HStack>
+                    <FormControl>
+                      <FormLabel fontSize='sm'>Name</FormLabel>
+                      <Input size='sm' value={autoSyncName}
+                        onChange={e => setAutoSyncName(e.target.value)} />
+                    </FormControl>
                     {autoSyncConfig.last_sync_status === 'failed' ||
                     autoSyncConfig.last_sync_status === 'partial' ? (
                       <Alert
@@ -2613,7 +2664,7 @@ export default function ImportTokensModal({
                         Status
                       </Text>
                       <Text fontSize='sm'>
-                        Provider: {autoSyncConfig.provider}
+                        Provider: {autoSyncConfig.provider} · {autoSyncConfig.name}
                       </Text>
                       {autoSyncConfig.last_sync_at ? (
                         <Text fontSize='sm'>
@@ -2630,6 +2681,20 @@ export default function ImportTokensModal({
                           No sync run yet
                         </Text>
                       )}
+                    </Box>
+                    <Box>
+                      <Text fontSize='sm' fontWeight='semibold' mb={2}>Recent runs</Text>
+                      {autoSyncRuns.length === 0 ? (
+                        <Text fontSize='sm' color={muted}>No runs yet</Text>
+                      ) : autoSyncRuns.map(run => (
+                        <Text key={run.run_id} fontSize='xs'>
+                          {new Date(run.started_at).toLocaleString()} · {run.trigger} · {run.status}
+                          {' · '}found {run.discovered_count}, created {run.created_count},
+                          updated {run.updated_count}, detached {run.detached_count},
+                          deleted {run.deleted_count}, errors {run.error_count}
+                          {run.error ? ` · ${run.error}` : ''}
+                        </Text>
+                      ))}
                     </Box>
                     <Divider />
                     <Box>
@@ -3732,6 +3797,11 @@ export default function ImportTokensModal({
                   Provider: {source}
                 </Text>
               </Box>
+              <FormControl>
+                <FormLabel fontSize='sm'>Configuration name</FormLabel>
+                <Input size='sm' value={autoSyncName}
+                  onChange={e => setAutoSyncName(e.target.value)} />
+              </FormControl>
               <HStack spacing={4} align='flex-end'>
                 <FormControl flex='1'>
                   <FormLabel fontSize='sm'>Frequency</FormLabel>

@@ -4,11 +4,12 @@
  * imports stay unattributed and a later cleanup-on run used to insert
  * a duplicate the cleanup engine could never reach.
  */
-export function buildAutoSyncImportBody({ items, scanId, cleanup }) {
+export function buildAutoSyncImportBody({ items, scanId, cleanup, autoSyncRun }) {
   return {
     items: Array.isArray(items) ? items : [],
     ...(scanId ? { scan_id: scanId } : {}),
     ...(cleanup ? { cleanup } : {}),
+    ...(autoSyncRun ? { auto_sync_run: autoSyncRun } : {}),
   };
 }
 

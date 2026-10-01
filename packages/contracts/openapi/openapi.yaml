@@ -2229,6 +2229,9 @@ paths:
               type: object
               required: [provider, credentials]
               properties:
+                name:
+                  type: string
+                  maxLength: 100
                 provider:
                   type: string
                 credentials:
@@ -2263,6 +2266,87 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/admin/auto-sync/activation:
+    get:
+      tags: [Workspaces]
+      summary: Read multi-configuration activation state
+      operationId: getAutoSyncActivation
+      description: System admin only; self-hosted and Enterprise deployments.
+      responses:
+        "200":
+          description: Activation state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Workspaces]
+      summary: Activate multiple auto-sync configurations
+      operationId: activateMultiConfigAutoSync
+      description: System admin confirms old workers are drained and the fenced worker image is verified.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workers_drained, worker_image_verified]
+              properties:
+                workers_drained: { type: boolean }
+                worker_image_verified: { type: boolean }
+      responses:
+        "200":
+          description: Activation state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  activated_at: { type: string, format: date-time }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/workspaces/{id}/auto-sync/{configId}/runs:
+    get:
+      tags: [Workspaces]
+      summary: List auto-sync run history
+      operationId: listAutoSyncRuns
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: configId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Stable keyset page of runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  next_cursor: { type: string, nullable: true }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/workspaces/{id}/auto-sync/{configId}:
     put:
       tags: [Workspaces]
@@ -4427,7 +4511,7 @@ paths:
               type: object
               required: [csrPem]
               properties:
-                csrPem: { type: string, description: One CERTIFICATE REQUEST PEM block, at most 64 KB }
+                csrPem: { type: string, description: "One CERTIFICATE REQUEST PEM block, at most 64 KB" }
                 targetId: { type: string, format: uuid }
                 target:
                   type: object

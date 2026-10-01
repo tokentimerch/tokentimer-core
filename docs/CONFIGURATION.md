@@ -377,6 +377,32 @@ OpenID discovery (`/{tenant}/v2.0/.well-known/openid-configuration`); a
 tenant domain is canonicalized to that GUID before minting. Key Vault
 client-credential mint uses the tenant GUID or domain as supplied.
 
+### Multiple auto-sync configurations
+
+Configuration names are editable and unique without regard to case within a
+workspace and provider. Each configuration has its own schedule, credentials,
+scan settings, run history, and token associations. A token discovered by
+several configurations remains one inventory row. Only tokens originally
+created by a fenced auto-sync run are eligible for automatic deletion after
+all associations disappear; manual imports make an existing token unmanaged.
+Deleting a configuration detaches its tokens and retains them in inventory.
+Legacy tokens start unmanaged and are associated only when rediscovered.
+
+The multi-configuration capability is off after migration. The operator must
+drain all old auto-sync workers, deploy and verify a worker image containing
+run fencing, then activate it as a system admin with
+`POST /api/v1/admin/auto-sync/activation` and JSON
+`{"workers_drained":true,"worker_image_verified":true}`.
+The corresponding GET route reports activation state. From activation onward,
+worker imports without a current fenced run ID are rejected. Run-now clicks
+during a run are persisted as one follow-up manual run. A scan setting or
+enabled-state edit supersedes the current run and queues a replacement.
+An incomplete scan never removes associations.
+
+Once multiple configurations exist, older API and worker images cannot be
+rolled back into that installation. Restore from a pre-activation backup or
+roll forward to a fencing-aware image instead.
+
 Pasted-token scans still work. Existing auto-sync configs keep their stored
 token until you use **Replace credentials**. Core scheduled auto-sync stays
 GitHub and GitLab; Azure Key Vault and Entra auto-sync remain an Enterprise

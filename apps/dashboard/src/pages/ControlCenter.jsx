@@ -90,10 +90,11 @@ const PRIVILEGE_LEVEL_TOOLTIP =
   'owner (+40), delete (+25), write/manage (+20), full (+15), and wildcards or "all" (+30). ' +
   'High: score 40+, medium: 15-39, low: below 15.';
 
-function buildImportAutoSyncManagePath(provider, workspaceId) {
+function buildImportAutoSyncManagePath(provider, workspaceId, configId) {
   const params = new URLSearchParams();
   if (workspaceId) params.set('workspace', workspaceId);
   if (provider) params.set('import', provider);
+  if (configId) params.set('autoSyncConfigId', configId);
   params.set('autoSyncManage', '1');
   return `/dashboard?${params.toString()}`;
 }
@@ -1621,7 +1622,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                     key={row.id || row.provider}
                                     accent={getAutoSyncAccent(row.health)}
                                     icon={RefreshCw}
-                                    title={formatProviderLabel(row.provider)}
+                                    title={row.name || formatProviderLabel(row.provider)}
                                     subtitle={row.scheduleLabel}
                                     trailing={getAutoSyncHealthBadge(
                                       row.health
@@ -1656,7 +1657,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                       <InsightPanelFooterLink
                                         to={buildImportAutoSyncManagePath(
                                           row.provider,
-                                          alertData.selectedWorkspaceId
+                                          alertData.selectedWorkspaceId,
+                                          row.id
                                         )}
                                       >
                                         Manage auto-sync in Import tokens

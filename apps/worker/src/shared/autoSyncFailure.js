@@ -19,15 +19,24 @@ const AUTO_SYNC_CRITICAL_THRESHOLD =
 /**
  * Prefer API error body over generic Axios message for last_sync_error / audit.
  */
+export function sanitizeAutoSyncError(value) {
+  return String(value || "Auto-sync failed")
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+    .replace(/https?:\/\/[^\s,;]+/gi, "[URL]")
+    .replace(/\b(token|secret|password|authorization|api[_-]?key|client[_-]?secret)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[redacted]")
+    .substring(0, 1000);
+}
+
 export function formatAutoSyncError(err) {
   const body = err?.response?.data;
   if (body && typeof body.error === "string" && body.error.trim()) {
-    return body.error.trim().substring(0, 1000);
+    return sanitizeAutoSyncError(body.error.trim());
   }
   if (body && typeof body.message === "string" && body.message.trim()) {
-    return body.message.trim().substring(0, 1000);
+    return sanitizeAutoSyncError(body.message.trim());
   }
-  return String(err?.message || err).substring(0, 1000);
+  return sanitizeAutoSyncError(err?.message || err);
 }
 
 /**
@@ -36,8 +45,8 @@ export function formatAutoSyncError(err) {
  */
 export function summarizeImportErrors(errors) {
   return (Array.isArray(errors) ? errors : []).slice(0, 5).map((e) => ({
-    item: String(e?.item || "unknown").substring(0, 200),
-    error: String(e?.error || "unknown error").substring(0, 300),
+    item: sanitizeAutoSyncError(e?.item || "unknown").substring(0, 200),
+    error: sanitizeAutoSyncError(e?.error || "unknown error").substring(0, 300),
   }));
 }
 

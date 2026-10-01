@@ -326,7 +326,10 @@ router.get(
 
       // 1. Fetch items page (with endpoint monitor health data)
       const itemsSql = `
-      SELECT tokens.*, dm.last_health_status AS monitor_health_status,
+      SELECT tokens.*, EXISTS (
+               SELECT 1 FROM auto_sync_token_links l WHERE l.token_id = tokens.id
+             ) AS auto_sync_observed,
+             dm.last_health_status AS monitor_health_status,
              dm.last_health_response_ms AS monitor_response_ms, dm.url AS monitor_url
       FROM tokens
       LEFT JOIN domain_monitors dm ON dm.token_id = tokens.id

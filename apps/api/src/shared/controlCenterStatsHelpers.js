@@ -193,6 +193,7 @@ function formatAutoSyncStatusRow(row) {
   return {
     id: row.id,
     provider: row.provider,
+    name: row.name || row.provider,
     frequency,
     scheduleLabel: scheduleTime
       ? `${frequency} · ${scheduleTime} ${scheduleTz}`

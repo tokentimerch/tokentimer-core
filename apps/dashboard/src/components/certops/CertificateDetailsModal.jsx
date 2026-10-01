@@ -757,6 +757,12 @@ export default function CertificateDetailsModal({
                   value={formatDate(token.created_at)}
                 />
               ) : null}
+              <DetailRow
+                label='Auto-sync ownership'
+                value={token.auto_sync_managed
+                  ? 'Managed'
+                  : token.auto_sync_observed ? 'Observed' : 'Manual or legacy'}
+              />
               {token.imported_at ? (
                 <DetailRow
                   label='Imported'

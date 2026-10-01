@@ -28,6 +28,7 @@ import {
   recordAutoSyncCompleted,
   recordAutoSyncFailure,
   recordAutoSyncRecovery,
+  sanitizeAutoSyncError,
   summarizeImportErrors,
 } from "./shared/autoSyncFailure.js";
 import {
@@ -35,6 +36,13 @@ import {
   gitlabFiltersForAutoSync,
 } from "./shared/autoSyncImportBody.js";
 import { sendOperationalIncidentEmail } from "./shared/opNotifications.js";
+import {
+  claimDueAutoSyncRuns,
+  finishAutoSyncRun,
+  renewAutoSyncLease,
+  runContext,
+  withCurrentRun,
+} from "./shared/autoSyncRuns.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
 const KDF_SALT = "tokentimer-settings-encryption";
@@ -185,40 +193,23 @@ function computeNextSync(frequency, scheduleTime, scheduleTz) {
 
 async function runAutoSync() {
   logger.info("Auto-sync worker started");
-
-  await withClient(async (client) => {
+  const configs = await claimDueAutoSyncRuns();
+  if (configs.length === 0) {
+    logger.info("No auto-sync configs due");
+    return;
+  }
+  logger.info(`Processing ${configs.length} auto-sync configs`);
+  await Promise.allSettled(configs.map(async (config) => {
     const pendingIncidentEmails = [];
     const deferIncidentEmail = (incident) =>
       pendingIncidentEmails.push(incident);
-    // Wrap the SELECT FOR UPDATE and the per-config status updates in an
-    // explicit transaction so the row locks are held until each UPDATE commits.
-    // Without BEGIN/COMMIT the lock is released immediately after SELECT in
-    // autocommit mode, making SKIP LOCKED useless against concurrent workers.
-    await client.query("BEGIN");
-
-    // Pick up due configs with row-level locking
-    const dueResult = await client.query(
-      `SELECT * FROM auto_sync_configs
-       WHERE enabled = TRUE AND next_sync_at <= NOW()
-       ORDER BY next_sync_at ASC
-       LIMIT 10
-       FOR UPDATE SKIP LOCKED`,
-    );
-
-    if (dueResult.rows.length === 0) {
-      await client.query("ROLLBACK");
-      logger.info("No auto-sync configs due");
-      return;
-    }
-
-    logger.info(`Processing ${dueResult.rows.length} auto-sync configs`);
-
-    // Run all due configs concurrently. The HTTP calls (scan + import) are
-    // independent of each other; only the final status UPDATE needs the
-    // shared client, but since we serialise those writes and they are fast,
-    // sharing the client is safe here.
-    await Promise.allSettled(
-      dueResult.rows.map(async (config) => {
+    let leaseLost = false;
+    const leaseTimer = setInterval(() => {
+      void renewAutoSyncLease(config).then((renewed) => {
+        if (!renewed) leaseLost = true;
+      }).catch(() => { leaseLost = true; });
+    }, 60000);
+    try {
         const {
           id,
           workspace_id,
@@ -244,9 +235,8 @@ async function runAutoSync() {
             schedule_tz,
           );
           const message = `Auto-sync for ${provider} is not available in this edition.`;
-          await recordAutoSyncFailure(
-            client,
-            {
+          await withCurrentRun(config, async (client) => {
+            await recordAutoSyncFailure(client, {
               configId: id,
               workspaceId: workspace_id,
               provider,
@@ -255,9 +245,11 @@ async function runAutoSync() {
               errorMessage: message,
               nextSync,
               config,
-            },
-            deferIncidentEmail,
-          );
+            }, deferIncidentEmail);
+            await finishAutoSyncRun(client, config, {
+              status: "failed", error: message, errors: 1, nextSync,
+            });
+          });
           logger.warn(message, { workspace_id, provider });
           cAutoSync.inc({ provider, status: "failure" });
           gAutoSyncLastRun.set(
@@ -353,6 +345,9 @@ async function runAutoSync() {
           const scanResult = scanResponse.data;
           const itemsCount = scanResult?.items?.length || 0;
           const scanId = scanResult?.scan_id || null;
+          if (!scanId || leaseLost) {
+            throw new Error("Scan did not produce a current persisted scan");
+          }
 
           // 2. Import: delegate to the existing import endpoint so deduplication,
           //    sanitization, type validation, and audit logging are identical to
@@ -361,12 +356,16 @@ async function runAutoSync() {
           let importErrorCount = 0;
           let importErrors = [];
           let deletedCount = 0;
+          let detachedCount = 0;
+          let createdCount = 0;
+          let updatedCount = 0;
+          let cleanupComplete = true;
           // A scan that legitimately finds zero items in a fully-scanned,
           // complete scope is still a real "everything here is now obsolete"
           // result -- it must still reach the import endpoint (with an empty
           // items array) so the cleanup engine gets a chance to run, not be
           // silently skipped just because there was nothing new to import.
-          if (itemsCount > 0 || (cleanupObsolete && scanId)) {
+          if (scanId) {
             const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
             // The cleanup request itself is fully provider-agnostic: it just
             // points the shared cleanup engine at this scan's scan_id,
@@ -396,6 +395,7 @@ async function runAutoSync() {
                 items: scanResult.items,
                 scanId,
                 cleanup,
+                autoSyncRun: runContext(config),
               }),
               { timeout: 60000, headers: authHeaders },
             );
@@ -403,9 +403,13 @@ async function runAutoSync() {
             importedCount =
               (importResult.created_count || 0) +
               (importResult.updated_count || 0);
+            createdCount = importResult.created_count || 0;
+            updatedCount = importResult.updated_count || 0;
             importErrorCount = importResult.error_count || 0;
             importErrors = summarizeImportErrors(importResult.errors);
             deletedCount = importResult.deleted_count || 0;
+            detachedCount = importResult.detached_count || 0;
+            cleanupComplete = !cleanupObsolete || importResult.cleanup_complete === true;
             if (deletedCount > 0) {
               logger.info(
                 `Auto-sync cleanup removed ${deletedCount} obsolete token(s) for config ${config.id}`,
@@ -418,21 +422,23 @@ async function runAutoSync() {
           // status so the discrepancy between "sync completed" and "no tokens
           // visible" is visible to the user instead of silently reporting success.
           const syncStatus =
-            itemsCount > 0 && importedCount === 0
+            !cleanupComplete || (itemsCount > 0 && importedCount === 0)
               ? "partial"
               : importErrorCount > 0
                 ? "partial"
                 : "success";
           const syncError =
             syncStatus === "partial"
-              ? [
-                  itemsCount > 0 && importedCount === 0
+              ? sanitizeAutoSyncError([
+                  !cleanupComplete
+                    ? "Scan or import was incomplete; associations were retained."
+                    : itemsCount > 0 && importedCount === 0
                     ? `Scan found ${itemsCount} item(s) but none were imported (all failed validation or were rejected).`
                     : `${importErrorCount} of ${itemsCount} scanned item(s) failed to import.`,
                   formatImportErrorDetail(importErrors, importErrorCount),
                 ]
                   .filter(Boolean)
-                  .join(" ")
+                  .join(" "))
               : null;
 
           // Update config: success/partial
@@ -441,13 +447,14 @@ async function runAutoSync() {
             schedule_time,
             schedule_tz,
           );
-          await client.query(
+          await withCurrentRun(config, async (client) => {
+            await client.query(
             `UPDATE auto_sync_configs
              SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2,
-                 last_sync_items_count = $3, next_sync_at = $4, updated_at = NOW()
-             WHERE id = $5`,
-            [syncStatus, syncError, importedCount, nextSync, id],
-          );
+                 last_sync_items_count = $3, updated_at = NOW()
+             WHERE id = $4`,
+            [syncStatus, syncError, importedCount, id],
+            );
 
           // Scheduled runs must leave an audit trail like manual runs do
           // (AUTO_SYNC_TRIGGERED is only written by the API "run now" path).
@@ -473,6 +480,12 @@ async function runAutoSync() {
               workspaceId: workspace_id,
             });
           }
+          await finishAutoSyncRun(client, config, {
+            status: syncStatus, discovered: itemsCount, created: createdCount,
+            updated: updatedCount, detached: detachedCount, deleted: deletedCount,
+            errors: importErrorCount, error: syncError, nextSync,
+          });
+          });
 
           cAutoSync.inc({ provider, status: syncStatus });
           cAutoSyncItems.inc({ provider }, importedCount);
@@ -487,10 +500,8 @@ async function runAutoSync() {
         } catch (syncErr) {
           logger.error(`Auto-sync ${provider} failed`, {
             workspace_id,
-            error: syncErr?.message || String(syncErr),
+            error: formatAutoSyncError(syncErr),
             httpStatus: syncErr?.response?.status,
-            httpBody: syncErr?.response?.data,
-            stack: syncErr?.stack,
           });
 
           cAutoSync.inc({ provider, status: "failure" });
@@ -503,9 +514,8 @@ async function runAutoSync() {
             schedule_time,
             schedule_tz,
           );
-          await recordAutoSyncFailure(
-            client,
-            {
+          await withCurrentRun(config, async (client) => {
+            await recordAutoSyncFailure(client, {
               configId: id,
               workspaceId: workspace_id,
               provider,
@@ -515,21 +525,22 @@ async function runAutoSync() {
               httpStatus: syncErr?.response?.status || null,
               nextSync,
               config,
-            },
-            deferIncidentEmail,
-          );
+            }, deferIncidentEmail);
+            await finishAutoSyncRun(client, config, {
+              status: "failed", errors: 1,
+              error: formatAutoSyncError(syncErr), nextSync,
+            });
+          });
         }
-      }),
-    );
-
-    // Commit all status updates and release the FOR UPDATE locks atomically.
-    await client.query("COMMIT");
+    } finally {
+      clearInterval(leaseTimer);
+    }
     // The incident rows and sent timestamps must be visible to other workers
     // before the workspace-scoped email cap is checked.
     for (const incident of pendingIncidentEmails) {
-      await sendOperationalIncidentEmail(client, incident);
+      await withClient((client) => sendOperationalIncidentEmail(client, incident));
     }
-  });
+  }));
 
   logger.info("Auto-sync worker finished");
   await pushMetrics("auto-sync").catch((e) =>

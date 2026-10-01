@@ -4164,6 +4164,114 @@ migrations.push({
   `,
 });
 
+// Multi-configuration auto-sync is additive until explicitly activated.
+migrations.push({
+  version: 61,
+  name: "auto_sync_multi_configuration",
+  sql: `
+    ALTER TABLE tokens
+      ADD COLUMN IF NOT EXISTS auto_sync_managed BOOLEAN NOT NULL DEFAULT FALSE;
+
+    ALTER TABLE auto_sync_configs
+      ADD COLUMN IF NOT EXISTS scan_version BIGINT NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS run_generation BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS active_run_id UUID NULL,
+      ADD COLUMN IF NOT EXISTS lease_owner UUID NULL,
+      ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ NULL,
+      ADD COLUMN IF NOT EXISTS pending_manual_run BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS pending_replacement_run BOOLEAN NOT NULL DEFAULT FALSE;
+
+    UPDATE auto_sync_configs
+       SET connection_key = INITCAP(REPLACE(provider, '-', ' '))
+     WHERE connection_key IS NULL OR BTRIM(connection_key) = '';
+    UPDATE auto_sync_configs
+       SET connection_key = REGEXP_REPLACE(BTRIM(connection_key), '[[:space:]]+', ' ', 'g');
+    ALTER TABLE auto_sync_configs
+      ALTER COLUMN connection_key SET NOT NULL;
+    CREATE OR REPLACE FUNCTION auto_sync_default_connection_name()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.connection_key IS NULL OR BTRIM(NEW.connection_key) = '' THEN
+        NEW.connection_key := INITCAP(REPLACE(NEW.provider, '-', ' '));
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    DROP TRIGGER IF EXISTS trg_auto_sync_default_connection_name ON auto_sync_configs;
+    CREATE TRIGGER trg_auto_sync_default_connection_name
+      BEFORE INSERT ON auto_sync_configs
+      FOR EACH ROW EXECUTE FUNCTION auto_sync_default_connection_name();
+    ALTER TABLE auto_sync_configs
+      ADD CONSTRAINT auto_sync_configs_name_canonical
+        CHECK (connection_key = REGEXP_REPLACE(BTRIM(connection_key), '[[:space:]]+', ' ', 'g')
+               AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 100);
+    ALTER TABLE auto_sync_configs
+      DROP CONSTRAINT IF EXISTS auto_sync_configs_workspace_id_provider_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_sync_config_name
+      ON auto_sync_configs(workspace_id, provider, LOWER(connection_key));
+
+    CREATE TABLE IF NOT EXISTS auto_sync_feature_state (
+      id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id = TRUE),
+      multi_config_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      activated_at TIMESTAMPTZ NULL,
+      activated_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL
+    );
+    INSERT INTO auto_sync_feature_state(id) VALUES (TRUE) ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS auto_sync_runs (
+      run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      config_id UUID NULL REFERENCES auto_sync_configs(id) ON DELETE SET NULL,
+      config_id_snapshot UUID NOT NULL,
+      workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      name_snapshot TEXT NOT NULL,
+      trigger TEXT NOT NULL CHECK (trigger IN ('schedule', 'manual', 'replacement')),
+      generation BIGINT NOT NULL,
+      scan_version BIGINT NOT NULL,
+      settings_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMPTZ NULL,
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'success', 'partial', 'failed', 'superseded')),
+      discovered_count INTEGER NOT NULL DEFAULT 0,
+      created_count INTEGER NOT NULL DEFAULT 0,
+      updated_count INTEGER NOT NULL DEFAULT 0,
+      detached_count INTEGER NOT NULL DEFAULT 0,
+      deleted_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      error_text TEXT NULL,
+      UNIQUE (config_id_snapshot, generation)
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_config_page
+      ON auto_sync_runs(config_id_snapshot, started_at DESC, run_id DESC);
+
+    CREATE TABLE IF NOT EXISTS auto_sync_token_links (
+      config_id UUID NOT NULL REFERENCES auto_sync_configs(id) ON DELETE CASCADE,
+      token_id INTEGER NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+      last_seen_generation BIGINT NOT NULL,
+      attached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (config_id, token_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_sync_token_links_token
+      ON auto_sync_token_links(token_id);
+
+    CREATE TABLE IF NOT EXISTS auto_sync_token_link_events (
+      id BIGSERIAL PRIMARY KEY,
+      token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+      token_id_snapshot INTEGER NOT NULL,
+      workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      config_id UUID NOT NULL,
+      config_name TEXT NOT NULL,
+      run_id UUID NULL,
+      event TEXT NOT NULL CHECK (event IN ('attached', 'detached')),
+      reason TEXT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_auto_sync_token_link_events_token
+      ON auto_sync_token_link_events(token_id, occurred_at DESC);
+  `,
+});
+
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);

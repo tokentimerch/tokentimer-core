@@ -1,4 +1,5 @@
 const { pool } = require("../db/database");
+const { sanitizePublicAutoSyncError } = require("./autoSyncProvenance");
 const {
   resolveTimeZone,
   classifyExpiryBucket,
@@ -262,6 +263,7 @@ async function fetchControlCenterStats(workspaceId) {
     pool.query(
       `SELECT id,
               provider,
+              connection_key AS name,
               frequency,
               schedule_time,
               schedule_tz,
@@ -310,7 +312,9 @@ async function fetchControlCenterStats(workspaceId) {
     };
   });
 
-  const autoSync = autoSyncRes.rows.map(formatAutoSyncStatusRow);
+  const autoSync = autoSyncRes.rows.map((row) => formatAutoSyncStatusRow({
+    ...row, last_sync_error: sanitizePublicAutoSyncError(row.last_sync_error),
+  }));
 
   return {
     totalAssets: Number(totalRes.rows[0]?.total) || 0,

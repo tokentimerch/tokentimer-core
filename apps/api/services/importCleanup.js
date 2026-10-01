@@ -206,6 +206,9 @@ async function cleanupObsoleteTokens({
            AND t.source_instance = $3
            AND t.source_owner_key = $4
            AND t.source_kind = $5
+           AND NOT EXISTS (
+             SELECT 1 FROM auto_sync_token_links l WHERE l.token_id = t.id
+           )
            AND (t.source_observed_at IS NULL OR t.source_observed_at <= $7)
            ${dimensionSql}
            AND NOT EXISTS (

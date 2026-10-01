@@ -1,6 +1,12 @@
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
+const {
+  resolveAutoSyncImportContext,
+  attachObservedToken,
+  reconcileAutoSyncRun,
+  withFencedImport,
+} = require("../services/autoSyncProvenance");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
   generateErrorReference,
@@ -580,6 +586,14 @@ router.post(
         provider: "vault",
         pairs: bindingPairs,
       });
+      let autoSyncRun;
+      try {
+        autoSyncRun = await resolveAutoSyncImportContext(
+          req, workspaceId, "vault", effectiveCleanup?.scanId || scanId || null,
+        );
+      } catch (error) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
 
       // Reuse core validation constraints for type/category; allow past expiration for imports
       const ALLOWED_TYPES = [
@@ -762,7 +776,15 @@ router.post(
               isCreate: false,
             });
             // Update existing token with new characteristics
-            tok = await Token.update(existingToken.id, tokenPayload);
+            const writeUpdate = async (client) => {
+              const updatedToken = await Token.update(existingToken.id, {
+                ...tokenPayload,
+                ...(!req.isWorkerCall ? { auto_sync_managed: false } : {}),
+              }, client ? { client } : undefined);
+              if (autoSyncRun) await attachObservedToken(autoSyncRun, updatedToken.id, false, { client });
+              return updatedToken;
+            };
+            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeUpdate) : await writeUpdate();
             updated.push(tok);
             // Audit per-token update (best-effort)
             try {
@@ -792,13 +814,18 @@ router.post(
               isCreate: true,
             });
             // Create new token
-            tok = await Token.create({
-              ...tokenPayload,
-              userId: req.user.id,
-              workspaceId,
-              created_by: req.user.id,
-              imported_at: new Date(),
-            });
+            const writeCreate = async (client) => {
+              const createdToken = await Token.create({
+                ...tokenPayload,
+                userId: req.user.id,
+                workspaceId,
+                created_by: req.user.id,
+                imported_at: new Date(),
+              }, client ? { client } : undefined);
+              if (autoSyncRun) await attachObservedToken(autoSyncRun, createdToken.id, true, { client });
+              return createdToken;
+            };
+            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeCreate) : await writeCreate();
             created.push(tok);
             // Audit per-token import (best-effort)
             try {
@@ -835,23 +862,31 @@ router.post(
       // persisted scan_id (see importCleanup.js for the full safety
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
+      let autoCleanupResult = null;
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
-          const cleanupResult = await cleanupObsoleteTokens({
-            workspaceId,
-            actorUserId: req.user.id,
-            cleanup: { ...effectiveCleanup, provider: "vault" },
-            reason:
-              effectiveCleanup.reason === "auto_sync_cleanup"
-                ? "auto_sync_cleanup"
-                : "import_cleanup",
-          });
-          cleanupDeleted = cleanupResult.deleted;
+          if (autoSyncRun) {
+            if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
+          } else {
+            const cleanupResult = await cleanupObsoleteTokens({
+              workspaceId,
+              actorUserId: req.user.id,
+              cleanup: { ...effectiveCleanup, provider: "vault" },
+              reason: "import_cleanup",
+            });
+            cleanupDeleted = cleanupResult.deleted;
+          }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
             error: cleanupErr.message,
             workspaceId,
           });
+          if (autoSyncRun) {
+            return res.status(409).json({
+              error: "Auto-sync reconciliation failed; associations were retained",
+              code: "AUTO_SYNC_RECONCILIATION_FAILED",
+            });
+          }
         }
       }
 
@@ -872,7 +907,8 @@ router.post(
             ...(errors.length > 0
               ? { errors: summarizeImportErrors(errors) }
               : {}),
-            deleted_count: cleanupDeleted.length,
+            deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
+            detached_count: autoCleanupResult?.detached || 0,
             source: "vault",
           },
         });
@@ -883,7 +919,9 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
-        deleted_count: cleanupDeleted.length,
+        deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
+        detached_count: autoCleanupResult?.detached || 0,
+        cleanup_complete: autoCleanupResult?.complete ?? null,
         deleted: cleanupDeleted,
         created,
         updated,
@@ -2307,6 +2345,21 @@ router.post(
         }
       }
 
+      let autoSyncRun;
+      try {
+        if (req.body?.auto_sync_run && providersPresent.length > 1) {
+          return res.status(400).json({ error: "Auto-sync import must contain one provider" });
+        }
+        autoSyncRun = await resolveAutoSyncImportContext(
+          req,
+          workspaceId,
+          providersPresent[0] || effectiveCleanup?.provider || req.body?.auto_sync_run?.provider,
+          effectiveCleanup?.scanId || scanId || null,
+        );
+      } catch (error) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
+
       const ALLOWED_TYPES = [
         "ssl_cert",
         "tls_cert",
@@ -2715,7 +2768,15 @@ router.post(
               isCreate: false,
             });
             // Update existing token with new characteristics
-            tok = await Token.update(existingToken.id, tokenPayload);
+            const writeUpdate = async (client) => {
+              const updatedToken = await Token.update(existingToken.id, {
+                ...tokenPayload,
+                ...(!req.isWorkerCall ? { auto_sync_managed: false } : {}),
+              }, client ? { client } : undefined);
+              if (autoSyncRun) await attachObservedToken(autoSyncRun, updatedToken.id, false, { client });
+              return updatedToken;
+            };
+            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeUpdate) : await writeUpdate();
             updated.push(tok);
             try {
               await writeAudit({
@@ -2742,13 +2803,18 @@ router.post(
               isCreate: true,
             });
             // Create new token
-            tok = await Token.create({
-              ...tokenPayload,
-              userId: req.user.id,
-              workspaceId,
-              created_by: req.user.id,
-              imported_at: new Date(),
-            });
+            const writeCreate = async (client) => {
+              const createdToken = await Token.create({
+                ...tokenPayload,
+                userId: req.user.id,
+                workspaceId,
+                created_by: req.user.id,
+                imported_at: new Date(),
+              }, client ? { client } : undefined);
+              if (autoSyncRun) await attachObservedToken(autoSyncRun, createdToken.id, true, { client });
+              return createdToken;
+            };
+            tok = autoSyncRun ? await withFencedImport(autoSyncRun, writeCreate) : await writeCreate();
             created.push(tok);
             try {
               await writeAudit({
@@ -2793,22 +2859,31 @@ router.post(
       // persisted scan_id (see importCleanup.js for the full safety
       // contract) rather than a client-reconstructed scope.
       let cleanupDeleted = [];
+      let autoCleanupResult = null;
       if (effectiveCleanup && effectiveCleanup.enabled === true) {
         try {
-          const cleanupResult = await cleanupObsoleteTokens({
-            workspaceId,
-            actorUserId: req.user.id,
-            cleanup: effectiveCleanup,
-            reason: effectiveCleanup.reason === "auto_sync_cleanup"
-              ? "auto_sync_cleanup"
-              : "import_cleanup",
-          });
-          cleanupDeleted = cleanupResult.deleted;
+          if (autoSyncRun) {
+            if (errors.length === 0) autoCleanupResult = await reconcileAutoSyncRun(autoSyncRun, req.body?.auto_sync_scan_ids);
+          } else {
+            const cleanupResult = await cleanupObsoleteTokens({
+              workspaceId,
+              actorUserId: req.user.id,
+              cleanup: effectiveCleanup,
+              reason: "import_cleanup",
+            });
+            cleanupDeleted = cleanupResult.deleted;
+          }
         } catch (cleanupErr) {
           logger.error("Obsolete token cleanup failed", {
             error: cleanupErr.message,
             workspaceId,
           });
+          if (autoSyncRun) {
+            return res.status(409).json({
+              error: "Auto-sync reconciliation failed; associations were retained",
+              code: "AUTO_SYNC_RECONCILIATION_FAILED",
+            });
+          }
         }
       }
 
@@ -2829,7 +2904,8 @@ router.post(
               ? { errors: summarizeImportErrors(errors) }
               : {}),
             filtered_out_count: filteredOutCount,
-            deleted_count: cleanupDeleted.length,
+            deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
+            detached_count: autoCleanupResult?.detached || 0,
             source: "integration",
           },
         });
@@ -2841,7 +2917,9 @@ router.post(
         updated_count: updated.length,
         error_count: errors.length,
         filtered_out_count: filteredOutCount,
-        deleted_count: cleanupDeleted.length,
+        deleted_count: autoCleanupResult?.deleted ?? cleanupDeleted.length,
+        detached_count: autoCleanupResult?.detached || 0,
+        cleanup_complete: autoCleanupResult?.complete ?? null,
         deleted: cleanupDeleted,
         created,
         updated,

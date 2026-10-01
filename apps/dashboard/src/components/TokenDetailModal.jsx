@@ -502,6 +502,9 @@ function TokenDetailModal({
                   : renderDateField('Asset expiration', token.expiresAt)}
                 {renderDateField('Created', token.created_at)}
                 {renderDateField('Imported', token.imported_at)}
+                {renderField('Auto-sync ownership', token.auto_sync_managed
+                  ? 'Managed'
+                  : token.auto_sync_observed ? 'Observed' : 'Manual or legacy')}
                 {renderDateField('Last used', token.last_used)}
                 {renderDateField('Last updated', token.updated_at)}
               </DashboardModalDataSection>

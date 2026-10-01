@@ -38,6 +38,17 @@ describe("autoSyncFailure helpers", () => {
     );
   });
 
+  it("redacts credential-like values and URLs from run history errors", async () => {
+    const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
+    const message = mod.formatAutoSyncError(new Error(
+      "Request to https://example.test/path?token=abc failed; Authorization: Bearer xyz; client_secret=hidden",
+    ));
+    assert.ok(!message.includes("abc"));
+    assert.ok(!message.includes("xyz"));
+    assert.ok(!message.includes("hidden"));
+    assert.ok(!message.includes("example.test"));
+  });
+
   it("recordAutoSyncCompleted writes an AUTO_SYNC_COMPLETED audit event for scheduled runs", async () => {
     const mod = await importFresh("apps/worker/src/shared/autoSyncFailure.js");
     const calls = [];
