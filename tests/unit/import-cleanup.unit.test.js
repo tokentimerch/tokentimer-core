@@ -136,8 +136,8 @@ describe("importCleanup.buildDimensionFilterSql", () => {
       { pathPrefix: "staging/db" },
       2,
     );
-    assert.match(sql, /\(t\.source_dimensions->>'path'\) LIKE \$2/);
-    assert.deepStrictEqual(params, ["staging/db%"]);
+    assert.match(sql, /starts_with\(t\.source_dimensions->>'path', \$2\)/);
+    assert.deepStrictEqual(params, ["staging/db"]);
   });
 
   it("combines multiple dimensions with AND and sequential placeholders", () => {
@@ -149,7 +149,7 @@ describe("importCleanup.buildDimensionFilterSql", () => {
     assert.match(sql, /\$1/);
     assert.match(sql, /\$2/);
     assert.match(sql, /\$3/);
-    assert.deepStrictEqual(params, ["secret/", "app1%", "cert"]);
+    assert.deepStrictEqual(params, ["secret/", "app1", "cert"]);
   });
 
   it("sanitizes non-pathPrefix dimension keys to a safe identifier", () => {

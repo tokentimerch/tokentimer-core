@@ -98,8 +98,8 @@ function buildDimensionFilterSql(dimensions, paramOffset) {
   for (const [key, value] of Object.entries(dims)) {
     if (value === null || value === undefined || value === "") continue;
     if (key === "pathPrefix") {
-      clauses.push(`(t.source_dimensions->>'path') LIKE $${p}`);
-      params.push(`${String(value)}%`);
+      clauses.push(`starts_with(t.source_dimensions->>'path', $${p})`);
+      params.push(String(value));
       p++;
     } else if (key === "categories") {
       const list = Array.isArray(value) ? value : [value];

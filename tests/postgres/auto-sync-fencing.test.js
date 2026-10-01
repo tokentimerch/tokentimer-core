@@ -86,6 +86,17 @@ describe("PostgreSQL auto-sync ownership and fencing", { concurrency: false }, (
     await pool.end();
   });
 
+  it("Vault prefix scopes treat wildcard characters as literal path characters", async () => {
+    const {buildDimensionFilterSql} = require("../../apps/api/services/importCleanup");
+    for(const prefix of ["prod_", "prod%", "prod\\"]) {
+      const {sql,params} = buildDimensionFilterSql({pathPrefix:prefix},4);
+      const result = await pool.query(`SELECT source_dimensions->>'path' AS path
+        FROM (VALUES($1::jsonb),($2::jsonb),($3::jsonb)) t(source_dimensions) WHERE TRUE ${sql}`,
+        [JSON.stringify({path:prefix+"db/a"}),JSON.stringify({path:"prodXdb/b"}),JSON.stringify({path:"prod/db/c"}),...params]);
+      assert.deepEqual(result.rows.map(row=>row.path),[prefix+"db/a"]);
+    }
+  });
+
   it("migrates a legacy schema without changing IDs or inventing ownership", async () => {
     const {migrations} = require("../../apps/api/migrations/migrate");
     const client = await pool.connect();
