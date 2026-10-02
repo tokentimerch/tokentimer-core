@@ -38,8 +38,8 @@ if (!Array.isArray(providers) || providers.length === 0) {
 
 const problems = [];
 
-// --- docs/certops/agent.md: id list + per-provider credentials table ---
-const agentDocRel = "docs/certops/agent.md";
+// --- docs/certops/agent/dns-and-acme.md: id list + per-provider credentials table ---
+const agentDocRel = "docs/certops/agent/dns-and-acme.md";
 const agentDocPath = path.join(repoRoot, agentDocRel);
 if (!fs.existsSync(agentDocPath)) {
   fail(`${agentDocRel} is missing`);
