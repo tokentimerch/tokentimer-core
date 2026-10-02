@@ -171,6 +171,11 @@ the focused dashboard suite passes 34 tests including a regression for the
 active-source label. A disposable local workspace also imported two real
 self-signed X.509 certificates through the API, creating corresponding token
 assets; one certificate is shared by two source records and one token.
+After the active-source query change, the same disposable 5,100-entry workload
+was rerun: grouped expiry page 127.468 ms, 50-identity source history 10.729 ms,
+locations 10.829 ms, quota count 7.333 ms, and new-identity admission function
+5.228 ms. These warm-cache local timings varied between runs and do not set a
+production performance target.
 
 ## PostgreSQL performance evidence
 
