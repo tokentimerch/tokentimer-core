@@ -31,12 +31,6 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **Multiple auto-sync configurations per provider in a workspace**
-  ([#71](https://github.com/tokentimerch/tokentimer-core/issues/71)).
-  Two GitLab instances (or two Vaults) in one workspace, without a
-  major-version requirement unless an API break is identified. Existing
-  single-config workspaces must keep working. One configuration's
-  failure or cleanup must not affect another's assets.
 - **Optional notification for already-expired imports**
   ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231)).
   Quiet historical imports remain the default.
