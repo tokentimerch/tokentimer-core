@@ -389,6 +389,17 @@ hold at least **2** workspace memberships in total. Otherwise the request is
 rejected with `403 FORBIDDEN`. The move is transactional and audited as
 `TOKENS_TRANSFERRED_BETWEEN_WORKSPACES`.
 
+Linked domain monitors and managed certificates move with the token, together
+with their associated targets, instances, jobs, and evidence. Destination
+identity or idempotency conflicts can block the transfer. Renewal profiles stay
+in the source workspace, and transferred certificate/target profile links are
+cleared. Agent enrollment and private keys are not transferred.
+
+Contact-group assignments keep an ID already present in the destination;
+otherwise they are matched by case-insensitive group name. Unmatched assignments
+are removed. Check destination recipients and configure renewal profiles and an
+eligible agent before relying on alerts or automatic renewal.
+
 ## Contact
 
 - General: support@tokentimer.ch
