@@ -135,6 +135,40 @@ describe('CertificateDetailsModal', () => {
     updateTokenMock.mockReset();
   });
 
+  it('hides location observations in the dashboard token view even when populated', () => {
+    renderModal({ showObservedLocations: false });
+    expect(
+      screen.queryByRole('heading', { name: 'Observed locations' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('certificate-instances')
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Valid from')).toBeInTheDocument();
+  });
+
+  it('orders key locality before renewal and renewal-path badges', () => {
+    renderModal({
+      certOps: {
+        certificate: {
+          ...certificate,
+          renewal: { state: 'not-configured' },
+          renewalPathState: 'unavailable',
+        },
+      },
+    });
+    const header = screen
+      .getByRole('heading', { name: token.name })
+      .closest('.chakra-modal__header');
+    const text = header.textContent;
+    expect(text.indexOf('Agent-local')).toBeGreaterThan(text.indexOf('Active'));
+    expect(text.indexOf('Agent-local')).toBeLessThan(
+      text.indexOf('No auto-renewal')
+    );
+    expect(text.indexOf('No auto-renewal')).toBeLessThan(
+      text.indexOf('Renewal path')
+    );
+  });
+
   it('shows the full CSR reference beside its source without a workflow action', () => {
     const sourceRef = 'csr:00544aa5-5e4c-4c77-8cc2-4bbdbd11537e';
     renderModal({
@@ -318,10 +352,15 @@ describe('CertificateDetailsModal', () => {
       ),
     });
 
-    const notesSection = screen.getByRole('heading', { name: 'Notes' }).closest('section');
+    const notesSection = screen
+      .getByRole('heading', { name: 'Notes' })
+      .closest('section');
     const identityPanel = screen.getByTestId('identity-panel');
     expect(notesSection).toHaveTextContent('No notes added.');
-    expect(notesSection.compareDocumentPosition(identityPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      notesSection.compareDocumentPosition(identityPanel) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('keeps certificate and operational fields visible without a technical-details section', () => {

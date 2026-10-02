@@ -1,5 +1,5 @@
 import { ChakraProvider } from '@chakra-ui/react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import CertificateIdentityDetailModal from '../../src/components/certops/CertificateIdentityDetailModal.jsx';
 
@@ -69,7 +69,7 @@ it('shows one linked token together with all certificate sources and locations',
     fingerprintSha256: 'a'.repeat(64),
     lifecycleStatus: 'active',
     status: 'discovered',
-    locationCount: 2,
+    locationCount: 3,
     sourceCount: 2,
     activeSourceCount: 2,
     locations: [
@@ -82,6 +82,15 @@ it('shows one linked token together with all certificate sources and locations',
         id: 'loc-2',
         sourceRef: 'file:///b.pem',
         presenceState: 'confirmed_present',
+      },
+      {
+        id: 'loc-tls',
+        source: 'endpoint_monitor',
+        locationKind: 'tls_endpoint',
+        sourceRef: 'https://shared.example.test:443',
+        evidenceKind: 'service_binding',
+        capturedAt: '2026-10-02T12:00:00Z',
+        presenceState: 'unknown',
       },
     ],
     sources: [
@@ -139,6 +148,19 @@ it('shows one linked token together with all certificate sources and locations',
   expect(await screen.findByText('Shared token asset')).toBeInTheDocument();
   expect(screen.getByText('file:///a.pem')).toBeInTheDocument();
   expect(screen.getByText('file:///b.pem')).toBeInTheDocument();
+  const locations = screen.getByRole('table', { name: 'Observed locations' });
+  expect(
+    within(locations).getByRole('columnheader', { name: 'Last observed' })
+  ).toBeInTheDocument();
+  expect(within(locations).getAllByRole('row')).toHaveLength(4);
+  expect(within(locations).getByText('TLS endpoint')).toBeInTheDocument();
+  expect(within(locations).getByText('Service use')).toBeInTheDocument();
+  expect(within(within(locations).getByText('https://shared.example.test:443').closest('tr')).getByText('Unknown')).toBeInTheDocument();
+  const sources = screen.getByRole('table', { name: 'Management sources' });
+  expect(
+    within(sources).getByRole('columnheader', { name: 'Management period' })
+  ).toBeInTheDocument();
+  expect(within(sources).getAllByRole('row')).toHaveLength(3);
   expect(
     screen.getByRole('heading', { name: 'Management sources' })
   ).toBeInTheDocument();

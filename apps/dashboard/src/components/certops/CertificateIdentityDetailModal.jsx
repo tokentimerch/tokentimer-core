@@ -5,7 +5,14 @@ import {
   Button,
   HStack,
   Select,
+  Table,
+  TableContainer,
+  Tbody,
+  Td,
   Text,
+  Th,
+  Thead,
+  Tr,
   VStack,
 } from '@chakra-ui/react';
 import apiClient, { tokenAPI, workspaceAPI } from '../../utils/apiClient';
@@ -20,7 +27,12 @@ import {
   readdManagingSource,
   stopManagingSource,
 } from './certopsApi';
-import { sourceLabel } from './certopsFormat.js';
+import {
+  formatDate,
+  formatDateTime,
+  locationKindLabel,
+  sourceLabel,
+} from './certopsFormat.js';
 
 function SectionContent({ children }) {
   return (
@@ -34,7 +46,11 @@ function LocationStatus({ location }) {
   const present = location.presenceState === 'confirmed_present';
   const absent = location.presenceState === 'confirmed_absent';
   return (
-    <Badge colorScheme={present ? 'green' : absent ? 'gray' : 'orange'}>
+    <Badge
+      textTransform='none'
+      whiteSpace='normal'
+      colorScheme={present ? 'green' : absent ? 'gray' : 'orange'}
+    >
       {present ? 'Observed' : absent ? 'No longer observed' : 'Unknown'}
     </Badge>
   );
@@ -268,32 +284,73 @@ export default function CertificateIdentityDetailModal({
       >
         <SectionContent>
           {(detail.locations || []).length ? (
-            detail.locations.map(location => (
-              <HStack
-                key={location.id}
-                align='start'
-                justify='space-between'
-                flexWrap='wrap'
-                py={2}
-                borderBottomWidth='1px'
-                borderColor='dashboard.modal.border'
+            <TableContainer overflowX='auto' whiteSpace='normal'>
+              <Table
+                aria-label='Observed locations'
+                size='sm'
+                tableLayout='fixed'
+                minW='640px'
+                sx={{
+                  'th, td': {
+                    borderColor: 'dashboard.modal.border',
+                    verticalAlign: 'top',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                  },
+                  th: { color: 'dashboard.modal.muted' },
+                }}
               >
-                <Box minW={0} flex='1'>
-                  <Text fontSize='sm' overflowWrap='anywhere'>
-                    {location.deploymentReference ||
-                      location.sourceRef ||
-                      location.locationKind ||
-                      'Location'}
-                  </Text>
-                  <Text fontSize='xs' color='dashboard.modal.muted'>
-                    {location.capturedAt
-                      ? `Last seen ${new Date(location.capturedAt).toLocaleString()}`
-                      : 'Observation time unknown'}
-                  </Text>
-                </Box>
-                <LocationStatus location={location} />
-              </HStack>
-            ))
+                <Thead>
+                  <Tr>
+                    <Th w='32%'>Location</Th>
+                    <Th w='17%'>Type / evidence</Th>
+                    <Th w='16%'>Source</Th>
+                    <Th w='20%'>Last observed</Th>
+                    <Th w='15%'>State</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {detail.locations.map(location => (
+                    <Tr key={location.id}>
+                      <Td>
+                        {location.deploymentReference ||
+                          location.sourceRef ||
+                          'Location'}
+                      </Td>
+                      <Td>
+                        <Text fontSize='sm'>
+                          {location.locationKind === 'tls_endpoint' ||
+                          ['endpoint_monitor', 'domain_checker'].includes(
+                            location.source
+                          )
+                            ? 'TLS endpoint'
+                            : locationKindLabel(
+                                location.locationKind,
+                                location
+                              )}
+                        </Text>
+                        <Text fontSize='xs' color='dashboard.modal.muted'>
+                          {location.evidenceKind === 'service_binding'
+                            ? 'Service use'
+                            : location.evidenceKind === 'stored_copy'
+                              ? 'Stored copy'
+                              : 'Evidence unknown'}
+                        </Text>
+                      </Td>
+                      <Td>{sourceLabel(location.source)}</Td>
+                      <Td>
+                        <Text fontSize='xs' color='dashboard.modal.muted'>
+                          {formatDateTime(location.capturedAt)}
+                        </Text>
+                      </Td>
+                      <Td>
+                        <LocationStatus location={location} />
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+            </TableContainer>
           ) : (
             <Text fontSize='sm'>No location observations recorded.</Text>
           )}
@@ -313,86 +370,137 @@ export default function CertificateIdentityDetailModal({
       >
         <SectionContent>
           {(detail.sources || []).length ? (
-            detail.sources.map(source => {
-              const current = activeSources.includes(source);
-              const canReadd =
-                source.periodEndedAt &&
-                source.endedReason !== 'endpoint_monitor_deleted' &&
-                !(detail.sources || []).some(
-                  other =>
-                    other.managedCertificateId ===
-                      source.managedCertificateId && !other.periodEndedAt
-                );
-              return (
-                <Box
-                  key={`${source.periodId}-${source.startedAt}`}
-                  py={2}
-                  borderBottomWidth='1px'
-                  borderColor='dashboard.modal.border'
-                >
-                  <HStack
-                    justify='space-between'
-                    align='start'
-                    flexWrap='wrap'
-                    spacing={3}
-                  >
-                    <Box minW={0} flex='1'>
-                      <HStack spacing={2} flexWrap='wrap'>
-                        <Text fontSize='sm' fontWeight='semibold'>
-                          {sourceLabel(source.source)}
-                        </Text>
-                        <Badge colorScheme={current ? 'green' : 'gray'}>
-                          {current ? 'Managing' : 'Ended'}
-                        </Badge>
-                      </HStack>
-                      {source.sourceRef ? (
-                        <Box maxW='100%' overflowWrap='anywhere'>
-                          <CopyableId id={source.sourceRef} size='xs' />
-                        </Box>
-                      ) : null}
-                      <Text fontSize='xs' color='dashboard.modal.muted'>
-                        {new Date(source.startedAt).toLocaleDateString()} –{' '}
-                        {source.endedAt
-                          ? new Date(source.endedAt).toLocaleDateString()
-                          : 'present'}
-                      </Text>
-                    </Box>
-                    {canManage && current ? (
-                      <Button
-                        size='xs'
-                        isDisabled={busy}
-                        onClick={() => stop(source.periodId)}
-                      >
-                        Stop managing
-                      </Button>
-                    ) : null}
-                  </HStack>
-                  {canManage && canReadd ? (
-                    <HStack mt={2}>
-                      <Select
-                        size='xs'
-                        value={profileId}
-                        onChange={event => setProfileId(event.target.value)}
-                      >
-                        <option value=''>No renewal automation</option>
-                        {profiles.map(profile => (
-                          <option key={profile.id} value={profile.id}>
-                            {profile.name || profile.id}
-                          </option>
-                        ))}
-                      </Select>
-                      <Button
-                        size='xs'
-                        isDisabled={busy}
-                        onClick={() => readd(source.managedCertificateId)}
-                      >
-                        Re-add
-                      </Button>
-                    </HStack>
-                  ) : null}
-                </Box>
-              );
-            })
+            <TableContainer overflowX='auto' whiteSpace='normal'>
+              <Table
+                aria-label='Management sources'
+                size='sm'
+                tableLayout='fixed'
+                minW='640px'
+                sx={{
+                  'th, td': {
+                    borderColor: 'dashboard.modal.border',
+                    verticalAlign: 'top',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                  },
+                  th: { color: 'dashboard.modal.muted' },
+                }}
+              >
+                <Thead>
+                  <Tr>
+                    <Th w='32%'>Source</Th>
+                    <Th w='21%'>Management period</Th>
+                    <Th w='13%'>State</Th>
+                    <Th w='16%'>Renewal</Th>
+                    <Th w='18%'>Actions</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {detail.sources.map(source => {
+                    const current = activeSources.includes(source);
+                    const canReadd =
+                      source.periodEndedAt &&
+                      source.endedReason !== 'endpoint_monitor_deleted' &&
+                      !(detail.sources || []).some(
+                        other =>
+                          other.managedCertificateId ===
+                            source.managedCertificateId && !other.periodEndedAt
+                      );
+                    return (
+                      <Tr key={`${source.periodId}-${source.startedAt}`}>
+                        <Td>
+                          <Text fontSize='sm' fontWeight='semibold'>
+                            {sourceLabel(source.source)}
+                          </Text>
+                          {source.sourceRef ? (
+                            <Box
+                              maxW='100%'
+                              overflowWrap='anywhere'
+                              sx={{
+                                '& .chakra-text': {
+                                  whiteSpace: 'normal',
+                                  overflowWrap: 'anywhere',
+                                },
+                              }}
+                            >
+                              <CopyableId id={source.sourceRef} size='xs' />
+                            </Box>
+                          ) : null}
+                        </Td>
+                        <Td>
+                          <Text fontSize='xs' color='dashboard.modal.muted'>
+                            {formatDate(source.startedAt)} –{' '}
+                            {source.endedAt || source.periodEndedAt
+                              ? formatDate(
+                                  source.endedAt || source.periodEndedAt
+                                )
+                              : 'present'}
+                          </Text>
+                        </Td>
+                        <Td>
+                          <Badge
+                            textTransform='none'
+                            whiteSpace='normal'
+                            colorScheme={current ? 'green' : 'gray'}
+                          >
+                            {current ? 'Managing' : 'Ended'}
+                          </Badge>
+                        </Td>
+                        <Td>
+                          <Text fontSize='xs'>
+                            {source.renewalProfileId
+                              ? profiles.find(
+                                  profile =>
+                                    profile.id === source.renewalProfileId
+                                )?.name || 'Renewal profile assigned'
+                              : 'Monitored only'}
+                          </Text>
+                        </Td>
+                        <Td>
+                          {canManage && current ? (
+                            <Button
+                              size='xs'
+                              isDisabled={busy}
+                              onClick={() => stop(source.periodId)}
+                            >
+                              Stop managing
+                            </Button>
+                          ) : null}
+                          {canManage && canReadd ? (
+                            <VStack align='stretch' spacing={2}>
+                              <Select
+                                aria-label={`Renewal settings for ${source.sourceRef || source.managedCertificateId}`}
+                                size='xs'
+                                value={profileId}
+                                onChange={event =>
+                                  setProfileId(event.target.value)
+                                }
+                              >
+                                <option value=''>No renewal automation</option>
+                                {profiles.map(profile => (
+                                  <option key={profile.id} value={profile.id}>
+                                    {profile.name || profile.id}
+                                  </option>
+                                ))}
+                              </Select>
+                              <Button
+                                size='xs'
+                                isDisabled={busy}
+                                onClick={() =>
+                                  readd(source.managedCertificateId)
+                                }
+                              >
+                                Re-add
+                              </Button>
+                            </VStack>
+                          ) : null}
+                        </Td>
+                      </Tr>
+                    );
+                  })}
+                </Tbody>
+              </Table>
+            </TableContainer>
           ) : (
             <Text fontSize='sm'>No management history recorded.</Text>
           )}

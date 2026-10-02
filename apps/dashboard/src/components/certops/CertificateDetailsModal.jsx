@@ -207,6 +207,7 @@ export default function CertificateDetailsModal({
   propertyValueRows = false,
   managedCertificateId,
   identityPanel,
+  showObservedLocations = true,
   titleOverride,
 }) {
   const {
@@ -450,14 +451,14 @@ export default function CertificateDetailsModal({
                     status={certificate?.status}
                     expiry={hasValue(expiresAt) ? expiry : null}
                   />
-                  {hasRenewalData ? (
-                    <RenewalBadge renewal={certificate.renewal} />
-                  ) : null}
                   {hasKeyLocality ? (
                     <KeyLocalityBadge
                       keyMode={certificate.keyMode}
                       keyReference={certificate.keyReference}
                     />
+                  ) : null}
+                  {hasRenewalData ? (
+                    <RenewalBadge renewal={certificate.renewal} />
                   ) : null}
                   {certificate?.renewalPathState &&
                   certificate.renewalPathState !== 'healthy' ? (
@@ -870,7 +871,7 @@ export default function CertificateDetailsModal({
               </Section>
             ) : null}
             {identityPanel || null}
-            {hasObservedLocations ? (
+            {showObservedLocations && hasObservedLocations ? (
               <Section
                 title='Observed locations'
                 enclosed

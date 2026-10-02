@@ -9,6 +9,7 @@ function DashboardCertificateDetailModal(props) {
     <CertificateDetailsModal
       {...props}
       certOps={certOps}
+      showObservedLocations={false}
       compactTableSections
       propertyValueRows
     />

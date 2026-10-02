@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- CertOps groups certificates by normalized SHA-256 fingerprint within each workspace. Certificate details show linked token fields, observed locations and management history in column layouts. Stop managing closes a source's management period; explicit re-add creates a new period without deleting history.
+
+### Changed
+
+- Revocation and decommissioning belong to the certificate fingerprint, independently of its sources. Fresh confirmed service use blocks decommissioning; stored copies and uncertain visibility require acknowledgment and a reason. Recording revocation in CertOps does not contact the CA.
+- Apply additive identity migrations before enabling the new lifecycle actions. Upgrade API, workers and ingestion together; legacy record retirement requires a certificate-identity precondition. Preserve ambiguous historical retirement evidence for review rather than assigning it to a rotated fingerprint.
+
+### Fixed
+
+- Endpoint deletion and re-add join the existing certificate identity while preserving separate management periods. Rotation cannot transfer a retired certificate's lifecycle to its replacement. History and alerts remain scoped to the selected workspace and fingerprint.
+- Dashboard token details omit location tables; CertOps retains grouped location and source tables beneath Notes. Certificate summaries share validity and renewal fields, expiry uses severity colors, long references wrap, and key locality precedes renewal badges.
+- Preserve Vault permission and forward-proxy rejection status without retrying a 403 as token expiry.
+
 ## [0.17.0] - 2026-09-29
 
 ### Added

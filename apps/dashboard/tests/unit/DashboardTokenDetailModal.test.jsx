@@ -12,6 +12,7 @@ vi.mock('../../src/components/certops/CertificateDetailsModal.jsx', () => ({
       data-testid='dashboard-certificate-details'
       data-compact-table-sections={String(Boolean(props.compactTableSections))}
       data-property-value-rows={String(Boolean(props.propertyValueRows))}
+      data-show-observed-locations={String(props.showObservedLocations)}
     >
       Certificate inspection details
     </div>
@@ -44,6 +45,10 @@ describe('DashboardTokenDetailModal', () => {
     expect(screen.getByTestId('dashboard-certificate-details')).toHaveAttribute(
       'data-property-value-rows',
       'true'
+    );
+    expect(screen.getByTestId('dashboard-certificate-details')).toHaveAttribute(
+      'data-show-observed-locations',
+      'false'
     );
   });
 

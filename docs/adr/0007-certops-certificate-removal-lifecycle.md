@@ -128,3 +128,11 @@ one unit per distinct fingerprint with an open period, plus one per open
 fingerprintless source. Closing the last period releases the unit. Token status
 and alert suppression must respect other active fingerprints sharing a token.
 Historical source records, jobs, observations, and audit rows remain intact.
+
+Certificate detail layout is shared with dashboard token details. Both use the
+same validity, expiry, renewal, key-locality, Notes and alert sections. CertOps
+adds column-based observed locations and management periods beneath Notes;
+dashboard token details omit those location tables. Source actions remain tied
+to a specific management period, and evidence state is separate from evidence
+type. Edition overlays retain this shared layout; hosted Cloud excludes
+auto-sync provenance because that feature and its schema are not available.
