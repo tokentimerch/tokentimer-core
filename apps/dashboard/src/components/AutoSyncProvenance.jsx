@@ -105,13 +105,18 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
             <VStack align='stretch' spacing={1}>
               {configurations.length ? (
                 configurations.map(config => (
-                  <Text
-                    fontSize='sm'
-                    overflowWrap='anywhere'
-                    key={config.config_id}
-                  >
-                    {config.name}
-                  </Text>
+                  <Box key={config.config_id}>
+                    <Text fontSize='sm' overflowWrap='anywhere'>
+                      {config.name}
+                    </Text>
+                    <Text
+                      fontSize='xs'
+                      color={tokens.muted}
+                      overflowWrap='anywhere'
+                    >
+                      ID: {config.config_id}
+                    </Text>
+                  </Box>
                 ))
               ) : (
                 <Text fontSize='sm'>None active</Text>
