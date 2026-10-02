@@ -136,3 +136,10 @@ dashboard token details omit those location tables. Source actions remain tied
 to a specific management period, and evidence state is separate from evidence
 type. Edition overlays retain this shared layout; hosted Cloud excludes
 auto-sync provenance because that feature and its schema are not available.
+
+The UI calls the source-period section **Certificate management** and explains
+registrations separately from deployment evidence. Current and restartable
+registrations appear by default; **Show ended periods** reveals earlier periods
+and associations. **Start managing again** opens a new period with explicitly
+selected renewal settings, never a second fingerprint entry. See
+[Certificate details](../certops/certificate-details.md).

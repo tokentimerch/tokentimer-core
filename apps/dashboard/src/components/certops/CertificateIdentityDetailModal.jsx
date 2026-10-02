@@ -3,8 +3,11 @@ import {
   Badge,
   Box,
   Button,
+  FormControl,
+  FormLabel,
   HStack,
   Select,
+  Switch,
   Table,
   TableContainer,
   Tbody,
@@ -72,7 +75,8 @@ export default function CertificateIdentityDetailModal({
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);
   const [profiles, setProfiles] = useState([]);
-  const [profileId, setProfileId] = useState('');
+  const [profileIds, setProfileIds] = useState({});
+  const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -83,6 +87,8 @@ export default function CertificateIdentityDetailModal({
     setToken(null);
     setCertificateFields(null);
     setError('');
+    setShowHistory(false);
+    setProfileIds({});
     if (certificate.identityId) {
       getCertificateIdentity(workspaceId, certificate.identityId)
         .then(value => {
@@ -204,6 +210,7 @@ export default function CertificateIdentityDetailModal({
     setBusy(true);
     setError('');
     try {
+      const profileId = profileIds[managedCertificateId] || '';
       await readdManagingSource(workspaceId, managedCertificateId, {
         renewalProfileId: profileId || null,
         automationEnabled: Boolean(profileId),
@@ -235,6 +242,34 @@ export default function CertificateIdentityDetailModal({
       !source.periodEndedAt &&
       (!detail.identityId || source.currentIdentityId === detail.identityId)
   );
+  // Keep one current/latest period per registration in the default view.
+  // A stopped registration remains available to restart without exposing all
+  // its older periods. Rotation history cannot restart the old fingerprint.
+  const latestSources = new Map();
+  const openSourceIds = new Set();
+  for (const source of detail.sources || []) {
+    if (!source.periodEndedAt) openSourceIds.add(source.managedCertificateId);
+    const previous = latestSources.get(source.managedCertificateId);
+    if (
+      !previous ||
+      new Date(source.startedAt) > new Date(previous.startedAt)
+    ) {
+      latestSources.set(source.managedCertificateId, source);
+    }
+  }
+  const canRestart = source =>
+    Boolean(source.periodEndedAt) &&
+    latestSources.get(source.managedCertificateId) === source &&
+    source.endedReason !== 'endpoint_monitor_deleted' &&
+    (!detail.identityId || source.currentIdentityId === detail.identityId) &&
+    !openSourceIds.has(source.managedCertificateId);
+  const visibleSources = showHistory
+    ? detail.sources || []
+    : (detail.sources || []).filter(
+        source => activeSources.includes(source) || canRestart(source)
+      );
+  const hiddenPeriodCount =
+    (detail.sources || []).length - visibleSources.length;
   const certificateFacts = {
     ...certificateFields,
     status:
@@ -253,7 +288,8 @@ export default function CertificateIdentityDetailModal({
           {detail.locationCount ?? (detail.locations || []).length} locations
         </Badge>
         <Badge colorScheme='purple'>
-          {detail.activeSourceCount ?? activeSources.length} managing sources
+          {detail.activeSourceCount ?? activeSources.length} active
+          registrations
         </Badge>
         {detail.lifecycleDisplay ? (
           <Badge colorScheme={detail.stillObserved ? 'red' : 'gray'}>
@@ -278,6 +314,7 @@ export default function CertificateIdentityDetailModal({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
+        description='Where this certificate has been seen: endpoints, service bindings, or stored copies. Being observed does not mean automatic renewal is configured.'
         icon={MapPin}
         enclosed
         mb={0}
@@ -363,16 +400,32 @@ export default function CertificateIdentityDetailModal({
         </SectionContent>
       </DashboardDetailsSection>
       <DashboardDetailsSection
-        title='Management sources'
+        title='Certificate management'
+        description='Registrations through which CertOps tracks this certificate and can automate renewal. Stopping management ends that registration’s automation; it does not remove the certificate or stop location observations.'
         icon={Settings}
         enclosed
         mb={0}
       >
         <SectionContent>
-          {(detail.sources || []).length ? (
+          <FormControl display='flex' alignItems='center' mb={3}>
+            <Switch
+              id='certificate-management-history'
+              isChecked={showHistory}
+              onChange={event => setShowHistory(event.target.checked)}
+              mr={2}
+            />
+            <FormLabel
+              htmlFor='certificate-management-history'
+              mb={0}
+              fontSize='sm'
+            >
+              Show ended periods
+            </FormLabel>
+          </FormControl>
+          {visibleSources.length ? (
             <TableContainer overflowX='auto' whiteSpace='normal'>
               <Table
-                aria-label='Management sources'
+                aria-label='Certificate management'
                 size='sm'
                 tableLayout='fixed'
                 minW='640px'
@@ -388,7 +441,7 @@ export default function CertificateIdentityDetailModal({
               >
                 <Thead>
                   <Tr>
-                    <Th w='32%'>Source</Th>
+                    <Th w='32%'>Registration</Th>
                     <Th w='21%'>Management period</Th>
                     <Th w='13%'>State</Th>
                     <Th w='16%'>Renewal</Th>
@@ -396,16 +449,9 @@ export default function CertificateIdentityDetailModal({
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {detail.sources.map(source => {
+                  {visibleSources.map(source => {
                     const current = activeSources.includes(source);
-                    const canReadd =
-                      source.periodEndedAt &&
-                      source.endedReason !== 'endpoint_monitor_deleted' &&
-                      !(detail.sources || []).some(
-                        other =>
-                          other.managedCertificateId ===
-                            source.managedCertificateId && !other.periodEndedAt
-                      );
+                    const canReadd = canRestart(source);
                     return (
                       <Tr key={`${source.periodId}-${source.startedAt}`}>
                         <Td>
@@ -443,7 +489,11 @@ export default function CertificateIdentityDetailModal({
                             whiteSpace='normal'
                             colorScheme={current ? 'green' : 'gray'}
                           >
-                            {current ? 'Managing' : 'Ended'}
+                            {current
+                              ? 'Managing'
+                              : canReadd
+                                ? 'Stopped'
+                                : 'Ended'}
                           </Badge>
                         </Td>
                         <Td>
@@ -453,7 +503,7 @@ export default function CertificateIdentityDetailModal({
                                   profile =>
                                     profile.id === source.renewalProfileId
                                 )?.name || 'Renewal profile assigned'
-                              : 'Monitored only'}
+                              : 'No automatic renewal'}
                           </Text>
                         </Td>
                         <Td>
@@ -471,12 +521,20 @@ export default function CertificateIdentityDetailModal({
                               <Select
                                 aria-label={`Renewal settings for ${source.sourceRef || source.managedCertificateId}`}
                                 size='xs'
-                                value={profileId}
+                                value={
+                                  profileIds[source.managedCertificateId] || ''
+                                }
                                 onChange={event =>
-                                  setProfileId(event.target.value)
+                                  setProfileIds(previous => ({
+                                    ...previous,
+                                    [source.managedCertificateId]:
+                                      event.target.value,
+                                  }))
                                 }
                               >
-                                <option value=''>No renewal automation</option>
+                                <option value=''>
+                                  Track without automatic renewal
+                                </option>
                                 {profiles.map(profile => (
                                   <option key={profile.id} value={profile.id}>
                                     {profile.name || profile.id}
@@ -485,13 +543,21 @@ export default function CertificateIdentityDetailModal({
                               </Select>
                               <Button
                                 size='xs'
+                                whiteSpace='normal'
+                                h='auto'
+                                minH={6}
+                                py={1}
                                 isDisabled={busy}
                                 onClick={() =>
                                   readd(source.managedCertificateId)
                                 }
                               >
-                                Re-add
+                                Start managing again
                               </Button>
+                              <Text fontSize='xs' color='dashboard.modal.muted'>
+                                Starts a new period for this registration.
+                                Earlier periods stay in history.
+                              </Text>
                             </VStack>
                           ) : null}
                         </Td>
@@ -502,8 +568,16 @@ export default function CertificateIdentityDetailModal({
               </Table>
             </TableContainer>
           ) : (
-            <Text fontSize='sm'>No management history recorded.</Text>
+            <Text fontSize='sm'>
+              No active registrations. Show ended periods to view past
+              management.
+            </Text>
           )}
+          {hiddenPeriodCount > 0 ? (
+            <Text fontSize='xs' mt={2} color='dashboard.modal.muted'>
+              {hiddenPeriodCount} earlier or ended period(s) hidden.
+            </Text>
+          ) : null}
           {detail.sourceCount > (detail.sources || []).length ? (
             <Text fontSize='xs' mt={2}>
               Showing {(detail.sources || []).length} of {detail.sourceCount}{' '}

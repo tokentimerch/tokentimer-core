@@ -485,3 +485,7 @@ flows use this path when `certops.enabled` is on.
   the index and which records carry amendments).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).
+
+For the user-facing distinction between observed locations and management
+registrations, including stopping, restarting, and history visibility, see
+[Certificate details](certificate-details.md).

@@ -15,6 +15,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Certificate management explains registrations separately from observed locations. Show ended periods hides earlier history by default; Start managing again creates a new period without duplicating the certificate. Renewal choices are explicit and independent per registration.
+
 - Revocation and decommissioning belong to the certificate fingerprint, independently of its sources. Fresh confirmed service use blocks decommissioning; stored copies and uncertain visibility require acknowledgment and a reason. Recording revocation in CertOps does not contact the CA.
 - Apply additive identity migrations before enabling the new lifecycle actions. Upgrade API, workers and ingestion together; legacy record retirement requires a certificate-identity precondition. Preserve ambiguous historical retirement evidence for review rather than assigning it to a rotated fingerprint.
 

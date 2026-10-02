@@ -347,7 +347,7 @@ describe('CertificateDetailsModal', () => {
       identityPanel: (
         <section data-testid='identity-panel'>
           <h3>Observed locations</h3>
-          <h3>Management sources</h3>
+          <h3>Certificate management</h3>
         </section>
       ),
     });
