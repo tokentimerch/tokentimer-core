@@ -33,9 +33,16 @@ export function useDashboardNotifications({
   const navigate = useNavigate();
   const [dashboardNotifications, setDashboardNotifications] = useState([]);
   const [dashboardUnreadCount, setDashboardUnreadCount] = useState(0);
-  const selectedWorkspaceIdRef = useRef(workspace?.id);
-  selectedWorkspaceIdRef.current = workspace?.id;
   const isSystemAdmin = session?.isAdmin === true;
+  const ownerKey = JSON.stringify([
+    session?.id,
+    workspace?.id,
+    workspace?.role,
+    isSystemAdmin,
+  ]);
+  const [loadedOwnerKey, setLoadedOwnerKey] = useState(null);
+  const selectedOwnerKeyRef = useRef(ownerKey);
+  selectedOwnerKeyRef.current = ownerKey;
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -70,6 +77,7 @@ export function useDashboardNotifications({
           workspaceAPI.getNotifications(workspace.id).catch(() => null),
         ]);
         if (cancelled) return;
+        setLoadedOwnerKey(ownerKey);
 
         const data = settingsRes?.data || settingsRes || {};
         const emailEnabled = data.email_alerts_enabled === true;
@@ -194,7 +202,7 @@ export function useDashboardNotifications({
       window.removeEventListener('tt:notifications-refresh', refresh);
       if (pollTimer !== null) window.clearInterval(pollTimer);
     };
-  }, [session, workspace, isSystemAdmin, enabled]);
+  }, [session, workspace, isSystemAdmin, enabled, ownerKey]);
 
   const onNotificationClick = useCallback(
     notification => {
@@ -208,7 +216,7 @@ export function useDashboardNotifications({
         workspaceAPI
           .markNotificationRead(workspaceId, notification.id)
           .then(() => {
-            if (selectedWorkspaceIdRef.current !== workspaceId) return;
+            if (selectedOwnerKeyRef.current !== ownerKey) return;
             setDashboardNotifications(prev =>
               prev.map(item =>
                 item.id === notification.id ? { ...item, isRead: true } : item
@@ -220,7 +228,7 @@ export function useDashboardNotifications({
       }
       if (notification?.href) navigate(notification.href);
     },
-    [workspace, navigate]
+    [workspace, navigate, ownerKey]
   );
 
   const onMarkAllNotificationsRead = useCallback(() => {
@@ -229,18 +237,22 @@ export function useDashboardNotifications({
     workspaceAPI
       .markAllNotificationsRead(workspaceId)
       .then(() => {
-        if (selectedWorkspaceIdRef.current !== workspaceId) return;
+        if (selectedOwnerKeyRef.current !== ownerKey) return;
         setDashboardNotifications(prev =>
           prev.map(item => (item.persisted ? { ...item, isRead: true } : item))
         );
         setDashboardUnreadCount(0);
       })
       .catch(() => {});
-  }, [workspace]);
+  }, [workspace, ownerKey]);
 
+  // Hide the previous owner's data during the render that changes selection,
+  // before the replacement effect/request can finish.
+  const hasCurrentOwner =
+    enabled && session && workspace?.id && loadedOwnerKey === ownerKey;
   return {
-    dashboardNotifications,
-    dashboardUnreadCount,
+    dashboardNotifications: hasCurrentOwner ? dashboardNotifications : [],
+    dashboardUnreadCount: hasCurrentOwner ? dashboardUnreadCount : 0,
     onNotificationClick,
     onMarkAllNotificationsRead,
   };

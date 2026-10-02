@@ -61,6 +61,34 @@ afterEach(() => {
 });
 
 describe('useDashboardNotifications', () => {
+  it('hides prior workspace notifications immediately while the replacement request is pending', async () => {
+    let finishNextWorkspace;
+    getNotifications.mockImplementation(id =>
+      id === 'ws-1'
+        ? Promise.resolve({
+            unreadCount: 1,
+            items: [{ id: 'prior-incident', persisted: true, isRead: false }],
+          })
+        : new Promise(resolve => {
+            finishNextWorkspace = resolve;
+          })
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedWorkspace }) =>
+        useDashboardNotifications({ session, workspace: selectedWorkspace }),
+      { initialProps: { selectedWorkspace: workspace }, wrapper }
+    );
+    await waitFor(() => expect(result.current.dashboardUnreadCount).toBe(1));
+
+    rerender({ selectedWorkspace: { id: 'ws-2', role: 'admin' } });
+    expect(result.current.dashboardNotifications).toEqual([]);
+    expect(result.current.dashboardUnreadCount).toBe(0);
+    await act(async () => finishNextWorkspace({ unreadCount: 0, items: [] }));
+    expect(
+      result.current.dashboardNotifications.some(item => item.persisted)
+    ).toBe(false);
+  });
+
   it('preserves persisted auto-sync message and identity for the bell', async () => {
     getNotifications.mockResolvedValue({
       unreadCount: 1,
