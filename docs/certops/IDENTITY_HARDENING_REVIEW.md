@@ -163,6 +163,15 @@ HTTP 200 from `/health`. The complete Core unit suite passed 2,260 tests across
 346 suites. The focused dashboard component suite passed 33 tests, and the
 dashboard production build passed. These checks used the rebased PR branch.
 
+Manual UI testing then found that the inventory source summary counted all
+historical management associations as current sources after stop/re-add. The
+API now returns a separate active source count, retaining the historical count
+and detail history. The PostgreSQL invariant suite still passes 36 tests, and
+the focused dashboard suite passes 34 tests including a regression for the
+active-source label. A disposable local workspace also imported two real
+self-signed X.509 certificates through the API, creating corresponding token
+assets; one certificate is shared by two source records and one token.
+
 ## PostgreSQL performance evidence
 
 The reproducible `scripts/certops-identity-performance.cjs` creates and drops its

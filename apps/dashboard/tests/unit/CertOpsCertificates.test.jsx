@@ -143,6 +143,18 @@ beforeEach(() => {
   listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
 });
 
+it('shows active source count while retaining historical management periods', () => {
+  useCertOpsCertificatesMock.mockReturnValue(certState({
+    certificates: [certificate({
+      sourceCount: 3,
+      activeSourceCount: 2,
+      locationCount: 2,
+    })],
+  }));
+  renderPage();
+  expect(screen.getByText('2 sources · 2 locations')).toBeInTheDocument();
+});
+
 it('opens an existing-certificate CSR when a same-page link changes the URL', async () => {
   const certificateId = 'cert-11111111-1111-1111-1111-111111111111';
   render(

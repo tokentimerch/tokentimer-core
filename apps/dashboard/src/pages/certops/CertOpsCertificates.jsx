@@ -775,8 +775,8 @@ export default function CertOpsCertificates() {
                           Source
                         </MobileFieldLabel>
                         <Text fontSize='sm'>
-                          {certificate.sourceCount > 1
-                            ? `${certificate.sourceCount} sources · ${certificate.locationCount} locations`
+                          {(certificate.activeSourceCount ?? certificate.sourceCount) > 1
+                            ? `${certificate.activeSourceCount ?? certificate.sourceCount} sources · ${certificate.locationCount} locations`
                             : sourceLabel(certificate.source)}
                         </Text>
                       </Td>

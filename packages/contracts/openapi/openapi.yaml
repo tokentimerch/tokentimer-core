@@ -3553,7 +3553,9 @@ paths:
         as provisional rows in the same globally sorted page. Stable row-kind
         and UUID tie-breakers apply to every sort. Page and total use one database
         snapshot. Source and location summaries contain up to 20 records each,
-        with sourceCount and locationCount reporting the full counts. Viewer
+        with sourceCount reporting all historical associations,
+        activeSourceCount reporting current managed sources, and locationCount
+        reporting the full observation count. Viewer
         responses omit key, source and deployment references. Lifecycle does not
         determine whether an identity is managed or consumes quota.
       parameters:

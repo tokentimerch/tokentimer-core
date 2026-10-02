@@ -89,6 +89,7 @@ function identityRecord(row) {
     sources: row.sources || [],
     locations: row.locations || [],
     sourceCount: Number(row.source_count || 0),
+    activeSourceCount: Number(row.active_source_count || 0),
     locationCount: Number(row.location_count || 0),
     stillObserved: Boolean(row.still_observed),
     visibilityUnknown:
@@ -235,6 +236,10 @@ async function listCertificateIdentities({
               COALESCE(a.superseded_at, p.ended_at) AS ended_at,
               p.source, p.source_ref,
               COUNT(*) OVER (PARTITION BY a.identity_id)::int AS total,
+              COUNT(*) FILTER (WHERE p.ended_at IS NULL
+                AND p.current_identity_id = a.identity_id
+                AND a.superseded_at IS NULL)
+                OVER (PARTITION BY a.identity_id)::int AS active_total,
               ROW_NUMBER() OVER (PARTITION BY a.identity_id
                 ORDER BY a.associated_at DESC, a.id DESC) AS rn
          FROM certops_management_associations a
@@ -333,6 +338,10 @@ async function listCertificateIdentities({
         sources.rows.find((sourceRow) => sourceRow.identity_id === row.id)
           ?.total || 0,
       );
+      row.active_source_count = Number(
+        sources.rows.find((sourceRow) => sourceRow.identity_id === row.id)
+          ?.active_total || 0,
+      );
       row.locations = locationMap.get(row.id) || [];
       row.location_count = Number(
         locations.rows.find((location) => location.identity_id === row.id)
@@ -361,6 +370,7 @@ async function listCertificateIdentities({
           managed: Boolean(row.open_period_id),
           managedCertificateId: row.id,
           sourceCount: row.period_id ? 1 : 0,
+          activeSourceCount: row.open_period_id ? 1 : 0,
           locationCount: 0,
           locations: [],
           sources: row.period_id

@@ -454,6 +454,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     });
     assert.equal(list.items.length, 1);
     assert.equal(list.items[0].sourceCount, 2);
+    assert.equal(list.items[0].activeSourceCount, 1);
     assert(
       list.items[0].sources.some(
         (s) => s.periodId === old.id && s.periodEndedAt,
@@ -1459,6 +1460,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     ).items[0];
     assert.equal(list.sources.length, 20);
     assert.equal(list.sourceCount, 23);
+    assert.equal(list.activeSourceCount, 1);
     assert.equal(detail.sources.length, 23);
   });
   it("identity and legacy retirement helpers preserve a caller-owned PostgreSQL transaction", async () => {
