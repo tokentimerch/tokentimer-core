@@ -52,7 +52,6 @@ export default function CertificateTokenDetailModal({
   tokenId,
   managedCertificateId,
   canManage,
-  onBackToCertificate,
 }) {
   const {
     headerProps,
@@ -128,7 +127,6 @@ export default function CertificateTokenDetailModal({
         contactGroups={contactGroups}
         workspaceContacts={workspaceContacts}
         onTokenUpdated={updated => setToken(updated)}
-        onBackToCertificate={onBackToCertificate}
       />
     );
   }

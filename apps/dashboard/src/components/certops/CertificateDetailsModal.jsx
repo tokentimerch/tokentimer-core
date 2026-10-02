@@ -11,7 +11,6 @@ import {
 import {
   Badge,
   Box,
-  Button,
   Grid,
   Heading,
   HStack,
@@ -366,8 +365,9 @@ export default function CertificateDetailsModal({
   certOps = {},
   compactTableSections = false,
   propertyValueRows = false,
-  onBackToCertificate,
   managedCertificateId,
+  identityPanel,
+  titleOverride,
 }) {
   const {
     headerProps,
@@ -593,7 +593,7 @@ export default function CertificateDetailsModal({
       <DashboardDetailsModalFrame>
         <ModalHeader {...headerProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsModalHeader
-            title={token.name}
+            title={titleOverride || token.name}
             subtitle={`${categoryLabel} · ${typeLabel}`}
             badgeLabel={categoryLabel}
             badgeColorScheme='blue'
@@ -648,16 +648,7 @@ export default function CertificateDetailsModal({
 
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
-          {onBackToCertificate ? (
-            <Button
-              size='sm'
-              variant='outline'
-              mb={4}
-              onClick={onBackToCertificate}
-            >
-              Back to certificate locations and sources
-            </Button>
-          ) : null}
+          {identityPanel || null}
 
           {certOpsLoading ? (
             <HStack mb={4} spacing={2} color='dashboard.modal.muted'>
@@ -793,16 +784,18 @@ export default function CertificateDetailsModal({
               ) : null}
             </Section>
 
-            <AutoSyncProvenance
-              tokenId={token.id}
-              ownership={
-                token.auto_sync_managed
-                  ? 'Managed'
-                  : token.auto_sync_observed
-                    ? 'Observed'
-                    : 'Manual or legacy'
-              }
-            />
+            {token.id ? (
+              <AutoSyncProvenance
+                tokenId={token.id}
+                ownership={
+                  token.auto_sync_managed
+                    ? 'Managed'
+                    : token.auto_sync_observed
+                      ? 'Observed'
+                      : 'Manual or legacy'
+                }
+              />
+            ) : null}
 
             {isEditing || hasCertificateDetails ? (
               <Section
@@ -959,6 +952,24 @@ export default function CertificateDetailsModal({
                     </VStack>
                   </DetailRow>
                 ) : null}
+                {hasAnyValue(certificate?.source, certificate?.sourceRef) ? (
+                  <DetailRow label='Registration source'>
+                    <VStack align='start' spacing={1} minW={0}>
+                      {hasValue(certificate.source) ? (
+                        <Text fontSize='sm'>
+                          {sourceLabel(certificate.source)}
+                        </Text>
+                      ) : null}
+                      {certificate.sourceRef ? (
+                        <CopyableId
+                          id={certificate.sourceRef}
+                          size='xs'
+                          color='dashboard.modal.text'
+                        />
+                      ) : null}
+                    </VStack>
+                  </DetailRow>
+                ) : null}
                 {hasValue(certificate?.serialNumber) ? (
                   <DetailRow label='Serial number (managed)'>
                     <CopyableId
@@ -1014,38 +1025,6 @@ export default function CertificateDetailsModal({
                     />
                   </DetailRow>
                 ) : null}
-              </Section>
-            ) : null}
-
-            {hasAnyValue(certificate?.source, certificate?.sourceRef) ? (
-              <Section title='Registration source'>
-                <VStack
-                  data-detail-row
-                  align='start'
-                  spacing={2}
-                  minW={0}
-                  p={3}
-                >
-                  {hasValue(certificate.source) ? (
-                    <Badge colorScheme='blue' textTransform='none'>
-                      {sourceLabel(certificate.source)}
-                    </Badge>
-                  ) : null}
-                  {certificate.sourceRef ? (
-                    <Box
-                      minW={0}
-                      maxW='100%'
-                      whiteSpace='normal'
-                      overflowWrap='anywhere'
-                    >
-                      <CopyableId
-                        id={certificate.sourceRef}
-                        size='xs'
-                        color='dashboard.modal.text'
-                      />
-                    </Box>
-                  ) : null}
-                </VStack>
               </Section>
             ) : null}
 
@@ -1105,7 +1084,9 @@ export default function CertificateDetailsModal({
                 )}
               />
             ) : null}
-            <AlertingDetails token={token} enabled={isOpen} />
+            {token.id ? (
+              <AlertingDetails token={token} enabled={isOpen} />
+            ) : null}
           </Box>
 
           <datalist id='certificate-workspace-contacts'>

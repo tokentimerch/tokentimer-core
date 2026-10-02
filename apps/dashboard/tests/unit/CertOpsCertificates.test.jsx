@@ -57,16 +57,6 @@ vi.mock('../../src/components/certops/CsrWorkflowPanel.jsx', () => ({
   ),
 }));
 
-vi.mock('../../src/components/certops/CertificateTokenDetailModal.jsx', () => ({
-  default: ({ isOpen, tokenId, managedCertificateId, onBackToCertificate }) =>
-    isOpen ? (
-      <div data-testid='full-token-details'>
-        Token {tokenId} source {managedCertificateId}
-        <button onClick={onBackToCertificate}>Back to certificate</button>
-      </div>
-    ) : null,
-}));
-
 vi.mock('../../src/components/certops/certopsApi.js', async () => {
   const actual = await vi.importActual(
     '../../src/components/certops/certopsApi.js'
@@ -163,9 +153,9 @@ beforeEach(() => {
   listCertOpsRenewalProfilesMock.mockResolvedValue([]);
 });
 
-it('opens full token details for a selected source and returns to grouped locations', async () => {
+it('opens one certificate detail with token fields, sources, and all locations', async () => {
   const item = certificate({
-    tokenId: 'token-1',
+    tokenId: null,
     locationCount: 2,
     sourceCount: 2,
     activeSourceCount: 2,
@@ -224,16 +214,14 @@ it('opens full token details for a selected source and returns to grouped locati
   expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
   expect(screen.getByText(/api-b\.pem/)).toBeInTheDocument();
   expect(
-    screen.getAllByRole('button', { name: 'View token details' })
-  ).toHaveLength(2);
-  fireEvent.click(
-    screen.getAllByRole('button', { name: 'View token details' })[1]
-  );
-  expect(screen.getByTestId('full-token-details')).toHaveTextContent(
-    'token-2 source cert-2'
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Back to certificate' }));
-  expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
+    screen.getByRole('heading', { name: 'Management sources' })
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('heading', { name: 'Basic information' })
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'View token details' })
+  ).not.toBeInTheDocument();
 });
 
 it('shows active source count while retaining historical management periods', () => {

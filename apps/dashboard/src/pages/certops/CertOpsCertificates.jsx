@@ -41,7 +41,6 @@ import RetireCertificateModal from '../../components/certops/RetireCertificateMo
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
 import CertificateIdentityDetailModal from '../../components/certops/CertificateIdentityDetailModal.jsx';
-import CertificateTokenDetailModal from '../../components/certops/CertificateTokenDetailModal.jsx';
 import CsrWorkflowPanel from '../../components/certops/CsrWorkflowPanel.jsx';
 import {
   listCertificates,
@@ -313,13 +312,11 @@ export default function CertOpsCertificates() {
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
-  const [detailSource, setDetailSource] = useState(null);
   const [csrCertificateId, setCsrCertificateId] = useState(csrIdInUrl);
   const [csrModalOpen, setCsrModalOpen] = useState(Boolean(csrIdInUrl));
   useEffect(() => {
     if (!csrIdInUrl) return;
     setDetailsTarget(null);
-    setDetailSource(null);
     setCsrCertificateId(csrIdInUrl);
     setCsrModalOpen(true);
   }, [csrIdInUrl]);
@@ -940,28 +937,12 @@ export default function CertOpsCertificates() {
       />
 
       <CertificateIdentityDetailModal
-        isOpen={Boolean(detailsTarget) && !detailSource}
-        onClose={() => {
-          setDetailsTarget(null);
-          setDetailSource(null);
-        }}
+        isOpen={Boolean(detailsTarget)}
+        onClose={() => setDetailsTarget(null)}
         workspaceId={workspaceId}
         certificate={detailsTarget}
         canManage={canManage}
         onChanged={refresh}
-        onViewToken={setDetailSource}
-      />
-      <CertificateTokenDetailModal
-        isOpen={Boolean(detailsTarget && detailSource)}
-        onClose={() => {
-          setDetailsTarget(null);
-          setDetailSource(null);
-        }}
-        onBackToCertificate={() => setDetailSource(null)}
-        workspaceId={workspaceId}
-        tokenId={detailSource?.tokenId}
-        managedCertificateId={detailSource?.managedCertificateId}
-        canManage={canManage}
       />
       {canManage ? (
         <Modal

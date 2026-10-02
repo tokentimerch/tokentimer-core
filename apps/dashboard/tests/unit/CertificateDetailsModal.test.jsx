@@ -144,15 +144,15 @@ describe('CertificateDetailsModal', () => {
       },
     });
 
-    const sourceSection = screen
-      .getByRole('heading', { name: 'Registration source' })
-      .closest('section');
-    expect(within(sourceSection).getByText('API')).toBeInTheDocument();
-    expect(within(sourceSection).getByText(sourceRef)).toBeInTheDocument();
-    expect(within(sourceSection).getByTitle(sourceRef)).toBeInTheDocument();
+    const sourceRow = screen
+      .getByText('Registration source')
+      .closest('[data-detail-row]');
+    expect(within(sourceRow).getByText('API')).toBeInTheDocument();
+    expect(within(sourceRow).getByText(sourceRef)).toBeInTheDocument();
+    expect(within(sourceRow).getByTitle(sourceRef)).toBeInTheDocument();
     expect(
-      sourceSection.querySelector('[data-detail-columns="1"]')
-    ).toBeInTheDocument();
+      screen.queryByRole('heading', { name: 'Registration source' })
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'Start CSR workflow' })
     ).not.toBeInTheDocument();
