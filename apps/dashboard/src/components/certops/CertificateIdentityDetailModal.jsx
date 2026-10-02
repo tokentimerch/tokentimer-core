@@ -29,6 +29,7 @@ export default function CertificateIdentityDetailModal({
   onClose,
   canManage,
   onChanged,
+  onViewToken,
 }) {
   const [detail, setDetail] = useState(null);
   const [profiles, setProfiles] = useState([]);
@@ -171,8 +172,8 @@ export default function CertificateIdentityDetailModal({
               )}
               {detail?.locationCount > (detail?.locations || []).length ? (
                 <Text fontSize='xs'>
-                  Showing {detail.locations.length} of {detail.locationCount}{' '}
-                  locations.
+                  Showing {(detail.locations || []).length} of{' '}
+                  {detail.locationCount} locations.
                 </Text>
               ) : null}
             </Box>
@@ -200,7 +201,11 @@ export default function CertificateIdentityDetailModal({
                       py={2}
                       borderTopWidth='1px'
                     >
-                      <HStack justify='space-between' align='start'>
+                      <HStack
+                        justify='space-between'
+                        align='start'
+                        flexWrap='wrap'
+                      >
                         <Box minW={0}>
                           <Text fontSize='sm' overflowWrap='anywhere'>
                             {source.source}:{' '}
@@ -213,15 +218,26 @@ export default function CertificateIdentityDetailModal({
                               : 'present'}
                           </Text>
                         </Box>
-                        {canManage && current ? (
-                          <Button
-                            size='xs'
-                            isDisabled={busy}
-                            onClick={() => stop(source.periodId)}
-                          >
-                            Stop managing
-                          </Button>
-                        ) : null}
+                        <HStack flexWrap='wrap'>
+                          {current && source.tokenId && onViewToken ? (
+                            <Button
+                              size='xs'
+                              variant='outline'
+                              onClick={() => onViewToken(source)}
+                            >
+                              View token details
+                            </Button>
+                          ) : null}
+                          {canManage && current ? (
+                            <Button
+                              size='xs'
+                              isDisabled={busy}
+                              onClick={() => stop(source.periodId)}
+                            >
+                              Stop managing
+                            </Button>
+                          ) : null}
+                        </HStack>
                       </HStack>
                       {canManage && canReadd ? (
                         <HStack mt={2}>

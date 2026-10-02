@@ -32,7 +32,7 @@ export default function CopyableId({ id, label, display, size = 'xs', color }) {
   };
 
   return (
-    <HStack spacing={1} display='inline-flex' align='center'>
+    <HStack spacing={1} display='inline-flex' align='center' maxW='100%'>
       {label ? (
         <Text fontSize={size} color={labelColor} flexShrink={0}>
           {label}
@@ -45,6 +45,7 @@ export default function CopyableId({ id, label, display, size = 'xs', color }) {
         color={color || idColor}
         title={value}
         overflowWrap='anywhere'
+        minW={0}
       >
         {shown}
       </Text>

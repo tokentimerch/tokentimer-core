@@ -429,7 +429,7 @@ export function useWorkspaceCertOps() {
  * `certificates` and `certificateCount` expose the full set so callers can
  * surface a multi-cert notice.
  */
-export function useCertOpsForToken(tokenId) {
+export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [certificate, setCertificate] = useState(null);
@@ -466,12 +466,21 @@ export function useCertOpsForToken(tokenId) {
           { signal: controller.signal }
         );
         if (cancelled) return;
-        const managed = pickPrimaryCertificate(linked);
+        const managed = preferredCertificateId
+          ? linked.find(
+              cert => String(cert.id) === String(preferredCertificateId)
+            )
+          : pickPrimaryCertificate(linked);
         setCertificates(Array.isArray(linked) ? linked : []);
-        setCertificate(managed);
+        setCertificate(managed || null);
         if (!managed?.id) {
           setInstances([]);
           setInstancesAvailable(true);
+          if (preferredCertificateId) {
+            setError(
+              'The selected source certificate is no longer linked to this token.'
+            );
+          }
           setLoading(false);
           return;
         }
@@ -520,7 +529,7 @@ export function useCertOpsForToken(tokenId) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, tokenId, enabled]);
+  }, [workspaceId, tokenId, preferredCertificateId, enabled]);
 
   return {
     enabled,

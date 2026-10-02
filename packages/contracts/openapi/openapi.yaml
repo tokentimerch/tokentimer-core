@@ -3556,7 +3556,8 @@ paths:
         with sourceCount reporting all historical associations,
         activeSourceCount reporting current managed sources, and locationCount
         reporting the full observation count. Viewer
-        responses omit key, source and deployment references. Lifecycle does not
+        responses omit key, source and deployment references. Each source period
+        includes its linked tokenId when a token exists. Lifecycle does not
         determine whether an identity is managed or consumes quota.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"

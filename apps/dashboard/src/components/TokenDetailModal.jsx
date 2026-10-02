@@ -823,13 +823,22 @@ function TokenDetailModal({
               <>
                 {renderSectionTitle('Notes')}
 
-                {renderEditable('Notes', 'notes', token.notes, {
-                  multiline: true,
-                  inputProps: {
-                    maxLength: 500,
-                    placeholder: 'Additional information',
-                  },
-                })}
+                <GridItem gridColumn='1 / -1'>
+                  {isEditing ? (
+                    <Textarea
+                      aria-label='Notes'
+                      value={editData.notes ?? ''}
+                      onChange={e =>
+                        setEditData(d => ({ ...d, notes: e.target.value }))
+                      }
+                      {...commonInputProps}
+                      maxLength={500}
+                      placeholder='Additional information'
+                    />
+                  ) : (
+                    renderValueText(token.notes, true)
+                  )}
+                </GridItem>
               </>
             )}
             <AlertingDetails

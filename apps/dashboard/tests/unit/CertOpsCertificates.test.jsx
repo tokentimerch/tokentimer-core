@@ -21,6 +21,8 @@ const {
   retryRenewalSetupIntentMock,
   listCertificatesMock,
   listRenewalProfilesMock,
+  getCertificateIdentityMock,
+  listCertOpsRenewalProfilesMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -30,6 +32,8 @@ const {
   retryRenewalSetupIntentMock: vi.fn(),
   listCertificatesMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
+  getCertificateIdentityMock: vi.fn(),
+  listCertOpsRenewalProfilesMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -53,6 +57,16 @@ vi.mock('../../src/components/certops/CsrWorkflowPanel.jsx', () => ({
   ),
 }));
 
+vi.mock('../../src/components/certops/CertificateTokenDetailModal.jsx', () => ({
+  default: ({ isOpen, tokenId, managedCertificateId, onBackToCertificate }) =>
+    isOpen ? (
+      <div data-testid='full-token-details'>
+        Token {tokenId} source {managedCertificateId}
+        <button onClick={onBackToCertificate}>Back to certificate</button>
+      </div>
+    ) : null,
+}));
+
 vi.mock('../../src/components/certops/certopsApi.js', async () => {
   const actual = await vi.importActual(
     '../../src/components/certops/certopsApi.js'
@@ -64,6 +78,8 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     detachCertificateRenewalProfile: detachCertificateRenewalProfileMock,
     retryRenewalSetupIntent: retryRenewalSetupIntentMock,
     listCertificates: listCertificatesMock,
+    getCertificateIdentity: getCertificateIdentityMock,
+    listCertOpsRenewalProfiles: listCertOpsRenewalProfilesMock,
   };
 });
 
@@ -129,6 +145,8 @@ beforeEach(() => {
   retryRenewalSetupIntentMock.mockReset();
   listCertificatesMock.mockReset();
   listRenewalProfilesMock.mockReset();
+  getCertificateIdentityMock.mockReset();
+  listCertOpsRenewalProfilesMock.mockReset();
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
   // Default: the retired-count probe (two limit:1 list calls) sees no
@@ -141,16 +159,95 @@ beforeEach(() => {
   // manual entry without an extra click in tests that don't care about the
   // preset picker.
   listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
+  getCertificateIdentityMock.mockResolvedValue(null);
+  listCertOpsRenewalProfilesMock.mockResolvedValue([]);
+});
+
+it('opens full token details for a selected source and returns to grouped locations', async () => {
+  const item = certificate({
+    tokenId: 'token-1',
+    locationCount: 2,
+    sourceCount: 2,
+    activeSourceCount: 2,
+  });
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [item] })
+  );
+  getCertificateIdentityMock.mockResolvedValue({
+    ...item,
+    sources: [
+      {
+        periodId: 'period-1',
+        managedCertificateId: item.id,
+        source: 'manual',
+        sourceRef: 'first source',
+        tokenId: 'token-1',
+        startedAt: '2026-01-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+      {
+        periodId: 'period-2',
+        managedCertificateId: 'cert-2',
+        source: 'manual',
+        sourceRef: 'second source',
+        tokenId: 'token-2',
+        startedAt: '2026-02-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+      {
+        periodId: 'period-old',
+        managedCertificateId: 'cert-rotated',
+        source: 'manual',
+        sourceRef: 'rotated source',
+        tokenId: 'token-3',
+        startedAt: '2025-01-01T00:00:00Z',
+        endedAt: '2025-06-01T00:00:00Z',
+        periodEndedAt: '2025-06-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+    ],
+    locations: [
+      {
+        id: 'location-1',
+        presenceState: 'confirmed_present',
+        sourceRef: 'api-a.pem',
+      },
+      {
+        id: 'location-2',
+        presenceState: 'confirmed_present',
+        sourceRef: 'api-b.pem',
+      },
+    ],
+  });
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
+  expect(screen.getByText(/api-b\.pem/)).toBeInTheDocument();
+  expect(
+    screen.getAllByRole('button', { name: 'View token details' })
+  ).toHaveLength(2);
+  fireEvent.click(
+    screen.getAllByRole('button', { name: 'View token details' })[1]
+  );
+  expect(screen.getByTestId('full-token-details')).toHaveTextContent(
+    'token-2 source cert-2'
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Back to certificate' }));
+  expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
 });
 
 it('shows active source count while retaining historical management periods', () => {
-  useCertOpsCertificatesMock.mockReturnValue(certState({
-    certificates: [certificate({
-      sourceCount: 3,
-      activeSourceCount: 2,
-      locationCount: 2,
-    })],
-  }));
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          sourceCount: 3,
+          activeSourceCount: 2,
+          locationCount: 2,
+        }),
+      ],
+    })
+  );
   renderPage();
   expect(screen.getByText('2 sources · 2 locations')).toBeInTheDocument();
 });

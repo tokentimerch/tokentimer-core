@@ -18,11 +18,9 @@ const { updateTokenMock } = vi.hoisted(() => ({
 
 vi.mock('../../src/utils/apiClient', () => ({
   default: {
-    get: vi
-      .fn()
-      .mockResolvedValue({
-        data: { managed: false, configurations: [], items: [] },
-      }),
+    get: vi.fn().mockResolvedValue({
+      data: { managed: false, configurations: [], items: [] },
+    }),
   },
   tokenAPI: { updateToken: updateTokenMock },
 }));
@@ -146,15 +144,30 @@ describe('CertificateDetailsModal', () => {
       },
     });
 
-    const sourceRow = screen
-      .getByText('Registration source')
-      .closest('[data-detail-row]');
-    expect(within(sourceRow).getByText('API')).toBeInTheDocument();
-    expect(within(sourceRow).getByText(sourceRef)).toBeInTheDocument();
-    expect(within(sourceRow).getByTitle(sourceRef)).toBeInTheDocument();
+    const sourceSection = screen
+      .getByRole('heading', { name: 'Registration source' })
+      .closest('section');
+    expect(within(sourceSection).getByText('API')).toBeInTheDocument();
+    expect(within(sourceSection).getByText(sourceRef)).toBeInTheDocument();
+    expect(within(sourceSection).getByTitle(sourceRef)).toBeInTheDocument();
+    expect(
+      sourceSection.querySelector('[data-detail-columns="1"]')
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'Start CSR workflow' })
     ).not.toBeInTheDocument();
+  });
+
+  it('identifies the selected source when a token references several certificates', () => {
+    renderModal({
+      managedCertificateId: 'cert-2',
+      certOps: { certificate, certificateCount: 2 },
+    });
+    expect(
+      screen.getByText(
+        '2 certificates reference this token. Showing the certificate for the selected source.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('presents certificate identity, lifecycle summary, and compact vertical content', () => {
@@ -263,6 +276,7 @@ describe('CertificateDetailsModal', () => {
     const notesSection = screen
       .getByRole('heading', { name: 'Notes' })
       .closest('section');
+    expect(within(notesSection).getAllByText('Notes')).toHaveLength(1);
     expect(
       notesSection.querySelector('[data-detail-columns="1"]')
     ).toBeInTheDocument();

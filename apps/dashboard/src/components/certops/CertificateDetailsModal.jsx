@@ -11,6 +11,7 @@ import {
 import {
   Badge,
   Box,
+  Button,
   Grid,
   Heading,
   HStack,
@@ -365,6 +366,8 @@ export default function CertificateDetailsModal({
   certOps = {},
   compactTableSections = false,
   propertyValueRows = false,
+  onBackToCertificate,
+  managedCertificateId,
 }) {
   const {
     headerProps,
@@ -645,6 +648,16 @@ export default function CertificateDetailsModal({
 
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
+          {onBackToCertificate ? (
+            <Button
+              size='sm'
+              variant='outline'
+              mb={4}
+              onClick={onBackToCertificate}
+            >
+              Back to certificate locations and sources
+            </Button>
+          ) : null}
 
           {certOpsLoading ? (
             <HStack mb={4} spacing={2} color='dashboard.modal.muted'>
@@ -659,8 +672,10 @@ export default function CertificateDetailsModal({
           ) : null}
           {certificateCount > 1 ? (
             <Text mb={4} fontSize='xs' color='dashboard.modal.muted'>
-              {certificateCount} certificates reference this token. Showing the
-              most recently updated active certificate.
+              {certificateCount} certificates reference this token. Showing{' '}
+              {managedCertificateId
+                ? 'the certificate for the selected source.'
+                : 'the most recently updated active certificate.'}
             </Text>
           ) : null}
 
@@ -944,29 +959,6 @@ export default function CertificateDetailsModal({
                     </VStack>
                   </DetailRow>
                 ) : null}
-                {hasAnyValue(certificate?.source, certificate?.sourceRef) ? (
-                  <DetailRow label='Registration source'>
-                    <HStack spacing={2} minW={0} whiteSpace='nowrap'>
-                      {hasValue(certificate.source) ? (
-                        <Text fontSize='sm' flexShrink={0}>
-                          {sourceLabel(certificate.source)}
-                        </Text>
-                      ) : null}
-                      {hasValue(certificate.source) && certificate.sourceRef ? (
-                        <Text as='span' color='dashboard.modal.muted'>
-                          ·
-                        </Text>
-                      ) : null}
-                      {certificate.sourceRef ? (
-                        <CopyableId
-                          id={certificate.sourceRef}
-                          size='xs'
-                          color='dashboard.modal.text'
-                        />
-                      ) : null}
-                    </HStack>
-                  </DetailRow>
-                ) : null}
                 {hasValue(certificate?.serialNumber) ? (
                   <DetailRow label='Serial number (managed)'>
                     <CopyableId
@@ -1025,11 +1017,44 @@ export default function CertificateDetailsModal({
               </Section>
             ) : null}
 
+            {hasAnyValue(certificate?.source, certificate?.sourceRef) ? (
+              <Section title='Registration source'>
+                <VStack
+                  data-detail-row
+                  align='start'
+                  spacing={2}
+                  minW={0}
+                  p={3}
+                >
+                  {hasValue(certificate.source) ? (
+                    <Badge colorScheme='blue' textTransform='none'>
+                      {sourceLabel(certificate.source)}
+                    </Badge>
+                  ) : null}
+                  {certificate.sourceRef ? (
+                    <Box
+                      minW={0}
+                      maxW='100%'
+                      whiteSpace='normal'
+                      overflowWrap='anywhere'
+                    >
+                      <CopyableId
+                        id={certificate.sourceRef}
+                        size='xs'
+                        color='dashboard.modal.text'
+                      />
+                    </Box>
+                  ) : null}
+                </VStack>
+              </Section>
+            ) : null}
+
             {isEditing || hasValue(token.notes) ? (
               <Section title='Notes'>
-                <DetailRow label='Notes'>
+                <Box data-detail-row p={3}>
                   {isEditing ? (
                     <Textarea
+                      aria-label='Notes'
                       {...commonInputProps}
                       minH='72px'
                       value={editData.notes}
@@ -1042,7 +1067,7 @@ export default function CertificateDetailsModal({
                       {token.notes}
                     </Text>
                   )}
-                </DetailRow>
+                </Box>
               </Section>
             ) : null}
             {hasObservedLocations ? (

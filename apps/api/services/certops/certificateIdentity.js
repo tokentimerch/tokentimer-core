@@ -234,7 +234,7 @@ async function listCertificateIdentities({
               p.current_identity_id, p.renewal_profile_id,
               a.associated_at AS started_at,
               COALESCE(a.superseded_at, p.ended_at) AS ended_at,
-              p.source, p.source_ref,
+              p.source, p.source_ref, mc.token_id,
               COUNT(*) OVER (PARTITION BY a.identity_id)::int AS total,
               COUNT(*) FILTER (WHERE p.ended_at IS NULL
                 AND p.current_identity_id = a.identity_id
@@ -244,6 +244,7 @@ async function listCertificateIdentities({
                 ORDER BY a.associated_at DESC, a.id DESC) AS rn
          FROM certops_management_associations a
          JOIN certops_management_periods p ON p.id = a.period_id
+         JOIN managed_certificates mc ON mc.id = p.managed_certificate_id
         WHERE a.identity_id = ANY($1::uuid[])) ranked
         WHERE ${identityId ? "TRUE" : "rn <= 20"} ORDER BY started_at DESC`,
       [ids],
@@ -256,6 +257,7 @@ async function listCertificateIdentities({
         managedCertificateId: sourceRow.managed_certificate_id,
         source: sourceRow.source,
         sourceRef: sourceRow.source_ref,
+        tokenId: sourceRow.token_id,
         startedAt: sourceRow.started_at,
         endedAt: sourceRow.ended_at,
         periodEndedAt: sourceRow.period_ended_at,
@@ -380,6 +382,7 @@ async function listCertificateIdentities({
                   managedCertificateId: row.id,
                   source: row.source,
                   sourceRef: row.source_ref,
+                  tokenId: row.token_id,
                   startedAt: row.period_started_at,
                   endedAt: row.period_ended_at,
                   periodEndedAt: row.period_ended_at,
