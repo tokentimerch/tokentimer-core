@@ -58,6 +58,7 @@ the certificate status change. Exact column name is an implementation detail.
 
 Frontend retire UI (dashboard PR #48) may land ahead of the backend retire
 endpoint (see PR #47). That is acceptable under this decision when:
+
 - OpenAPI, route-compat contract, migration, token status column, audit row, and
   tests are tracked in the paired backend PR or an immediately following one.
 - Callers handle 404 on the retire route until the backend ships.
@@ -105,6 +106,22 @@ fresh confirmed service use blocks it; stored copies or unknown visibility
 require a reason and explicit acknowledgment. Subsequent observations leave
 lifecycle unchanged and show the conflict. Revoked/decommissioned certificates
 with fresh presence remain visible by default.
+
+Historical source provenance comes from the management period's `source` and
+`source_ref` snapshots and survives physical source deletion or workspace
+transfer. Current source fields such as `tokenId` are hydrated only when the
+source and period belong to the same workspace; otherwise they are null.
+Observation matching normalizes legacy instance fingerprints on reads with
+`certops_normalize_fingerprint`, including the decommission safety check.
+Slot and unmanaged observations enforce canonical fingerprints with database
+constraints. The same normalizer checks job targets before permitting a
+replacement operation to bypass retirement restrictions.
+
+Grouped list and detail responses return at most 20 locations, with a full
+`locationCount`. PostgreSQL computes `visibilityUnknown` over all matching
+locations using their effective presence and freshness rules before applying
+the display limit. No observations means unknown visibility; fresh confirmed
+absence is known visibility.
 
 Lifecycle does not end management and does not release quota. Quota consumes
 one unit per distinct fingerprint with an open period, plus one per open

@@ -1033,7 +1033,8 @@ describe("CertOps identity invariants on PostgreSQL", function () {
   });
   it("physical source deletion preserves immutable periods, observations and identity", async () => {
     const ws = await workspace(),
-      mc = await source(ws, A),
+      tid = await token(ws),
+      mc = await source(ws, A, { tokenId: tid }),
       p = await period(mc);
     const observed = await observation(ws, mc, A, time(10));
     const pending = await job(ws, mc);
@@ -1069,8 +1070,35 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       identityId: (await identity(ws, A)).id,
       client: db,
     });
-    assert.equal(detail.items[0].sources[0].periodId, p.id);
-    assert.equal(detail.items[0].managed, false);
+    const certificate = detail.items[0];
+    assert.equal(certificate.sourceCount, 1);
+    assert.deepEqual(certificate.sources[0], {
+      periodId: p.id,
+      managedCertificateId: mc.id,
+      source: p.source,
+      sourceRef: p.source_ref,
+      tokenId: null,
+      startedAt: p.started_at,
+      endedAt: history.ended_at,
+      periodEndedAt: history.ended_at,
+      endedReason: "management_source_deleted",
+      currentIdentityId: p.current_identity_id,
+      renewalProfileId: p.renewal_profile_id,
+    });
+    assert.equal(certificate.managed, false);
+    assert.equal(certificate.tokenId, null);
+    assert.equal(certificate.locationCount, 1);
+    assert.equal(
+      certificate.locations[0].capturedAt.getTime(),
+      observed.captured_at.getTime(),
+    );
+    assert(certificate.sources.every((source) => source.tokenId === null));
+    const stopped = await stopManagingSource({
+      workspaceId: ws,
+      periodId: p.id,
+      client: db,
+    });
+    assert.equal(stopped.endedAt.getTime(), history.ended_at.getTime());
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 0);
   });
   it("equal timestamps fail closed, and controller resource versions cannot regress the current fingerprint", async () => {
@@ -1207,6 +1235,243 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert(old.every((r) => r.presence_state === "confirmed_absent"));
     assert.equal((await retire()).lifecycleStatus, "decommissioned");
     assert.equal((await identity(ws, B)).lifecycle_status, "active");
+  });
+  it("legacy raw service-binding fingerprints block decommission on the safety read path", async () => {
+    const ws = await workspace(),
+      dm = await endpoint(ws),
+      mc = await source(ws, A, {
+        source: "endpoint_monitor",
+        sourceRef: dm.id,
+      }),
+      identityA = await identity(ws, A),
+      observed = await observation(ws, mc, A, time(5), {
+        source: "endpoint_monitor",
+        domainMonitorId: dm.id,
+        locationKind: "iis_binding",
+      });
+    const rawFingerprint = `  ${A.match(/../g).join(":").toUpperCase()}  `;
+    const legacy = await db.connect();
+    try {
+      await legacy.query("BEGIN");
+      // Preserve a pre-migration format while leaving every other trigger active.
+      await legacy.query(
+        "ALTER TABLE certificate_instances DISABLE TRIGGER trg_certops_record_positive_observation",
+      );
+      await legacy.query(
+        "UPDATE certificate_instances SET observed_fingerprint_sha256=$2 WHERE id=$1",
+        [observed.id, rawFingerprint],
+      );
+      await legacy.query(
+        "ALTER TABLE certificate_instances ENABLE TRIGGER trg_certops_record_positive_observation",
+      );
+      await legacy.query("COMMIT");
+    } catch (error) {
+      await legacy.query("ROLLBACK");
+      throw error;
+    } finally {
+      legacy.release();
+    }
+    const readObservation = async () =>
+      (
+        await db.query("SELECT * FROM certificate_instances WHERE id=$1", [
+          observed.id,
+        ])
+      ).rows[0];
+    const raw = await readObservation();
+    assert.equal(raw.observed_fingerprint_sha256, rawFingerprint);
+    assert.equal(raw.presence_state, "confirmed_present");
+    assert.equal(raw.evidence_kind, "service_binding");
+    assert.equal(raw.captured_at.getTime(), observed.captured_at.getTime());
+    assert.equal(
+      (
+        await db.query(
+          "SELECT tgenabled FROM pg_trigger WHERE tgrelid='certificate_instances'::regclass AND tgname='trg_certops_record_positive_observation'",
+        )
+      ).rows[0].tgenabled,
+      "O",
+    );
+    await assert.rejects(
+      retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: identityA.id,
+        expectedFingerprintSha256: A,
+        status: "decommissioned",
+        reason: "Legacy service still uses this certificate",
+        acknowledgeUncertainty: true,
+        client: db,
+      }),
+      { code: "CERTOPS_CERTIFICATE_STILL_SERVING" },
+    );
+    assert.equal((await identity(ws, A)).lifecycle_status, "active");
+    assert.equal(
+      (await readObservation()).observed_fingerprint_sha256,
+      rawFingerprint,
+    );
+  });
+  for (const jobStatus of ["running", "pending"]) {
+    it(`retirement normalizes ${jobStatus} job targets and keeps invalid targets conservative`, async () => {
+      for (const targetFingerprint of [
+        A.match(/../g).join(":").toUpperCase(),
+        "invalid",
+        B,
+      ]) {
+        const ws = await workspace(),
+          mc = await source(ws, A),
+          identityA = await identity(ws, A),
+          mutation = await job(ws, mc, jobStatus, "deploy");
+        await db.query(
+          "UPDATE certificate_jobs SET payload=$2::jsonb WHERE id=$1",
+          [
+            mutation.id,
+            JSON.stringify({
+              targetFingerprintSha256: targetFingerprint,
+              canRestoreOriginal: false,
+            }),
+          ],
+        );
+        const retire = () =>
+          retireCertificateIdentity({
+            workspaceId: ws,
+            identityId: identityA.id,
+            expectedFingerprintSha256: A,
+            status: "decommissioned",
+            reason: "Check job target identity",
+            acknowledgeUncertainty: true,
+            client: db,
+          });
+        if (jobStatus === "running" && targetFingerprint !== B) {
+          await assert.rejects(retire(), { code: "CERTOPS_MUTATION_RUNNING" });
+          assert.equal((await identity(ws, A)).lifecycle_status, "active");
+        } else {
+          await retire();
+        }
+        const expectedStatus =
+          jobStatus === "pending" && targetFingerprint !== B
+            ? "cancelled"
+            : jobStatus;
+        assert.equal(
+          (
+            await db.query("SELECT status FROM certificate_jobs WHERE id=$1", [
+              mutation.id,
+            ])
+          ).rows[0].status,
+          expectedStatus,
+        );
+      }
+    });
+  }
+  for (const unknownSource of ["instance", "unmanaged endpoint", "slot"]) {
+    it(`visibility includes an unknown ${unknownSource} beyond the first 20 locations in list and detail`, async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        identityA = await identity(ws, A);
+      for (let n = 0; n < 20; n++) {
+        await observation(ws, mc, A, time(n), {
+          locationRef: `file:///fresh-${n}.pem`,
+        });
+      }
+      let unknown;
+      if (unknownSource === "instance") {
+        unknown = await observation(
+          ws,
+          mc,
+          A,
+          new Date(Date.now() - 30 * 60000),
+          {
+            source: "cert_manager",
+            locationRef: "file:///stale.pem",
+          },
+        );
+        await db.query(
+          "UPDATE certificate_instances SET scan_interval_seconds=60 WHERE id=$1",
+          [unknown.id],
+        );
+      } else if (unknownSource === "unmanaged endpoint") {
+        unknown = (
+          await db.query(
+            `INSERT INTO certops_unmanaged_observations(workspace_id,source_ref,fingerprint_sha256,captured_at)
+           VALUES($1,'deleted endpoint',$2,NOW()-INTERVAL '2 minutes') RETURNING id`,
+            [ws, A],
+          )
+        ).rows[0];
+      } else {
+        unknown = (
+          await db.query(
+            `INSERT INTO certops_slot_observations(workspace_id,source_ref,fingerprint_sha256,location_ref,captured_at)
+           VALUES($1,'stale slot',$2,'file:///stale.pem',NOW()-INTERVAL '2 days') RETURNING id`,
+            [ws, A],
+          )
+        ).rows[0];
+      }
+      for (const selectedIdentity of [undefined, identityA.id]) {
+        const certificate = (
+          await listCertificateIdentities({
+            workspaceId: ws,
+            identityId: selectedIdentity,
+            client: db,
+          })
+        ).items[0];
+        assert.equal(certificate.locations.length, 20);
+        assert.equal(certificate.locationCount, 21);
+        assert(
+          certificate.locations.every(
+            (location) => location.presenceState === "confirmed_present",
+          ),
+        );
+        assert(
+          !certificate.locations.some((location) => location.id === unknown.id),
+        );
+        assert.equal(certificate.stillObserved, true);
+        assert.equal(certificate.visibilityUnknown, true);
+      }
+    });
+  }
+  it("visibility is known when all 21 locations are fresh in list and detail", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      identityA = await identity(ws, A);
+    for (let n = 0; n < 21; n++) {
+      await observation(ws, mc, A, time(n), {
+        locationRef: `file:///fresh-${n}.pem`,
+      });
+    }
+    for (const selectedIdentity of [undefined, identityA.id]) {
+      const certificate = (
+        await listCertificateIdentities({
+          workspaceId: ws,
+          identityId: selectedIdentity,
+          client: db,
+        })
+      ).items[0];
+      assert.equal(certificate.locations.length, 20);
+      assert.equal(certificate.locationCount, 21);
+      assert.equal(certificate.visibilityUnknown, false);
+    }
+  });
+  it("visibility distinguishes no evidence from fresh confirmed absence", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      identityA = await identity(ws, A);
+    const detail = async () =>
+      (
+        await listCertificateIdentities({
+          workspaceId: ws,
+          identityId: identityA.id,
+          client: db,
+        })
+      ).items[0];
+    assert.equal((await detail()).visibilityUnknown, true);
+    const observed = await observation(ws, mc, A, time(5), {
+      source: "cert_manager",
+    });
+    await db.query(
+      "UPDATE certificate_instances SET presence_state='confirmed_absent' WHERE id=$1",
+      [observed.id],
+    );
+    const certificate = await detail();
+    assert.equal(certificate.stillObserved, false);
+    assert.equal(certificate.locations[0].presenceState, "confirmed_absent");
+    assert.equal(certificate.visibilityUnknown, false);
   });
   it("stored-copy uncertainty requires acknowledgment and decommissioned rediscovery stays visible", async () => {
     const ws = await workspace(),
@@ -1396,6 +1661,86 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await db.query("DELETE FROM workspaces WHERE id=$1", [from]);
     assert(await identity(to, B));
     await db.query("DELETE FROM workspaces WHERE id=$1", [to]);
+  });
+  it("workspace transfer preserves source snapshots without hydrating destination token or source data", async () => {
+    const from = await workspace(),
+      to = await workspace(1),
+      tid = await token(from),
+      mc = await source(from, A, { tokenId: tid }),
+      original = await period(mc),
+      identityA = await identity(from, A);
+    await source(to, A);
+    const before = (
+      await listCertificateIdentities({
+        workspaceId: from,
+        identityId: identityA.id,
+        client: db,
+      })
+    ).items[0];
+    assert.equal(before.sources[0].tokenId, tid);
+    await db.query(
+      "SELECT certops_transfer_management_sources($1,$2,$3::uuid[])",
+      [from, to, [mc.id]],
+    );
+    await db.query("UPDATE tokens SET workspace_id=$2 WHERE id=$1", [tid, to]);
+    const destinationRef = `destination-${randomUUID()}`;
+    await db.query(
+      "UPDATE managed_certificates SET source_ref=$2,name=$2 WHERE id=$1",
+      [mc.id, destinationRef],
+    );
+    for (const selectedIdentity of [undefined, identityA.id]) {
+      const certificate = (
+        await listCertificateIdentities({
+          workspaceId: from,
+          identityId: selectedIdentity,
+          client: db,
+        })
+      ).items[0];
+      assert.equal(certificate.sourceCount, 1);
+      assert.equal(certificate.managed, false);
+      assert.equal(certificate.tokenId, null);
+      assert.equal(certificate.sources[0].periodId, original.id);
+      assert.equal(certificate.sources[0].managedCertificateId, mc.id);
+      assert.equal(certificate.sources[0].source, original.source);
+      assert.equal(certificate.sources[0].sourceRef, original.source_ref);
+      assert.equal(certificate.sources[0].tokenId, null);
+      assert.equal(certificate.sources[0].currentIdentityId, identityA.id);
+      assert.equal(certificate.sources[0].endedReason, "workspace_transfer");
+      assert(certificate.sources[0].endedAt);
+      assert(certificate.sources.every((source) => source.tokenId === null));
+      assert(!JSON.stringify(certificate).includes(destinationRef));
+    }
+    const destinationIdentity = await identity(to, A);
+    const destination = (
+      await listCertificateIdentities({
+        workspaceId: to,
+        identityId: destinationIdentity.id,
+        client: db,
+      })
+    ).items[0];
+    assert.equal(destination.managed, true);
+    assert.equal(destination.tokenId, tid);
+    assert.equal(destination.activeSourceCount, 2);
+    const currentSource = destination.sources.find(
+      (source) => source.managedCertificateId === mc.id && !source.endedAt,
+    );
+    assert(currentSource);
+    assert.equal(currentSource.tokenId, tid);
+    assert.equal(currentSource.currentIdentityId, destinationIdentity.id);
+    assert.notEqual(currentSource.periodId, original.id);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, to), 1);
+    assert.equal(
+      (await db.query("SELECT workspace_id FROM tokens WHERE id=$1", [tid]))
+        .rows[0].workspace_id,
+      to,
+    );
+    const stopped = await stopManagingSource({
+      workspaceId: from,
+      periodId: original.id,
+      client: db,
+    });
+    assert(stopped.endedAt);
+    assert.equal(stopped.runningJobs, 0);
   });
   it("workspace transfer rolls back completely on quota denial or in-flight work", async () => {
     const from = await workspace(),

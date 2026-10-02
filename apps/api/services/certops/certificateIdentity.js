@@ -148,7 +148,7 @@ async function listCertificateIdentities({
     params.push(normalizedSource);
     conditions.push(`(source = $${params.length} OR (kind = 'identity' AND EXISTS (
       SELECT 1 FROM certops_management_associations a
-      JOIN certops_management_periods p ON p.id = a.period_id
+      JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
       WHERE a.identity_id = candidates.id AND a.workspace_id = $1 AND p.source = $${params.length})))`);
   }
   if (unmanagedOnly !== null)
@@ -185,7 +185,8 @@ async function listCertificateIdentities({
     `WITH representatives AS (
     SELECT DISTINCT ON (a.identity_id) a.identity_id, mc.*,
       CASE WHEN p.ended_at IS NULL AND p.current_identity_id = a.identity_id THEN p.id ELSE NULL END AS open_period_id
-    FROM certops_management_associations a JOIN certops_management_periods p ON p.id = a.period_id
+    FROM certops_management_associations a JOIN certops_management_periods p
+      ON p.id = a.period_id AND p.workspace_id = a.workspace_id
     JOIN managed_certificates mc ON mc.id = p.managed_certificate_id AND mc.workspace_id = p.workspace_id
     WHERE a.workspace_id = $1 ${identityId ? "AND a.identity_id = $2" : ""}
     ORDER BY a.identity_id, (p.ended_at IS NULL AND p.current_identity_id = a.identity_id) DESC,
@@ -243,11 +244,12 @@ async function listCertificateIdentities({
               ROW_NUMBER() OVER (PARTITION BY a.identity_id
                 ORDER BY a.associated_at DESC, a.id DESC) AS rn
          FROM certops_management_associations a
-         JOIN certops_management_periods p ON p.id = a.period_id
-         JOIN managed_certificates mc ON mc.id = p.managed_certificate_id
-        WHERE a.identity_id = ANY($1::uuid[])) ranked
+         JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
+         LEFT JOIN managed_certificates mc
+           ON mc.id = p.managed_certificate_id AND mc.workspace_id = p.workspace_id
+        WHERE a.identity_id = ANY($1::uuid[]) AND a.workspace_id = $2) ranked
         WHERE ${identityId ? "TRUE" : "rn <= 20"} ORDER BY started_at DESC`,
-      [ids],
+      [ids, workspaceId],
     );
     const sourceMap = new Map();
     for (const sourceRow of sources.rows) {
@@ -271,6 +273,7 @@ async function listCertificateIdentities({
       `SELECT * FROM (
          SELECT all_locations.*,
                 COUNT(*) OVER (PARTITION BY identity_id)::int AS total,
+                BOOL_OR(presence_state = 'unknown') OVER (PARTITION BY identity_id) AS visibility_unknown,
                 ROW_NUMBER() OVER (PARTITION BY identity_id
                   ORDER BY captured_at DESC NULLS LAST, id) AS rn
          FROM (
@@ -288,7 +291,7 @@ async function listCertificateIdentities({
            JOIN certificate_instances observed
              ON observed.workspace_id = identity.workspace_id
             AND certops_normalize_fingerprint(observed.observed_fingerprint_sha256) = identity.fingerprint_sha256
-          WHERE identity.id = ANY($1::uuid[])
+          WHERE identity.id = ANY($1::uuid[]) AND identity.workspace_id = $2
             AND observed.source <> 'agent_filesystem'
          UNION ALL
          SELECT identity.id, observed.id, 'endpoint_monitor',
@@ -301,7 +304,7 @@ async function listCertificateIdentities({
            JOIN certops_unmanaged_observations observed
              ON observed.workspace_id = identity.workspace_id
             AND observed.fingerprint_sha256 = identity.fingerprint_sha256
-          WHERE identity.id = ANY($1::uuid[])
+          WHERE identity.id = ANY($1::uuid[]) AND identity.workspace_id = $2
          UNION ALL
          SELECT identity.id, observed.id, observed.source,
                 observed.source_ref, observed.location_kind, observed.location_ref,
@@ -314,10 +317,10 @@ async function listCertificateIdentities({
            JOIN certops_slot_observations observed
              ON observed.workspace_id = identity.workspace_id
             AND observed.fingerprint_sha256 = identity.fingerprint_sha256
-          WHERE identity.id = ANY($1::uuid[])
+          WHERE identity.id = ANY($1::uuid[]) AND identity.workspace_id = $2
          ) all_locations
         ) ranked WHERE rn <= 20`,
-      [ids],
+      [ids, workspaceId],
     );
     const locationMap = new Map();
     for (const location of locations.rows) {
@@ -345,10 +348,11 @@ async function listCertificateIdentities({
           ?.active_total || 0,
       );
       row.locations = locationMap.get(row.id) || [];
-      row.location_count = Number(
-        locations.rows.find((location) => location.identity_id === row.id)
-          ?.total || 0,
+      const locationSummary = locations.rows.find(
+        (location) => location.identity_id === row.id,
       );
+      row.location_count = Number(locationSummary?.total || 0);
+      row.visibility_unknown = locationSummary?.visibility_unknown ?? true;
     }
   }
   const items = rows.map((row) =>
@@ -458,7 +462,8 @@ async function retireCertificateIdentity({
         `SELECT p.id AS open_period_id, mc.id AS managed_id,
         mc.name AS managed_name, mc.status AS managed_status, mc.token_id, mc.source,
         mc.profile_id, mc.key_mode, mc.key_reference FROM certops_management_periods p
-        JOIN managed_certificates mc ON mc.id = p.managed_certificate_id
+        JOIN managed_certificates mc
+          ON mc.id = p.managed_certificate_id AND mc.workspace_id = p.workspace_id
         WHERE p.workspace_id = $1 AND p.current_identity_id = $2 AND p.ended_at IS NULL
         ORDER BY p.started_at DESC, p.id DESC LIMIT 1`,
         [workspaceId, identityId],
@@ -479,7 +484,8 @@ async function retireCertificateIdentity({
                   AND (ci.source NOT IN ('endpoint_monitor', 'domain_checker')
                     OR ci.domain_monitor_id IS NOT NULL) AS fresh
            FROM certificate_instances ci
-          WHERE ci.workspace_id = $1 AND ci.observed_fingerprint_sha256 = $2
+          WHERE ci.workspace_id = $1
+            AND certops_normalize_fingerprint(ci.observed_fingerprint_sha256) = $2
             AND ci.source <> 'agent_filesystem'
          UNION ALL
          SELECT observed.id, observed.source_ref, 'service_binding',
@@ -546,8 +552,8 @@ async function retireCertificateIdentity({
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('claimed', 'running')
            AND cj.operation IN ('renew', 'deploy', 'reload')
-           AND NOT (cj.payload->>'targetFingerprintSha256' IS NOT NULL
-             AND lower(cj.payload->>'targetFingerprintSha256') <> $3
+           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
+             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
              AND cj.payload->>'canRestoreOriginal' = 'false')
          LIMIT 1`,
         [workspaceId, identityId, fingerprint],
@@ -582,8 +588,8 @@ async function retireCertificateIdentity({
         AND cj.status IN ('pending_approval', 'approved', 'pending')
         AND cj.id IN (SELECT id FROM certificate_jobs WHERE workspace_id = $1 FOR UPDATE SKIP LOCKED)
          AND cj.operation IN ('renew', 'deploy', 'reload')
-         AND NOT (cj.payload->>'targetFingerprintSha256' IS NOT NULL
-           AND lower(cj.payload->>'targetFingerprintSha256') <> $3
+         AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
+           AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
            AND cj.payload->>'canRestoreOriginal' = 'false')`,
       [workspaceId, identityId, fingerprint],
     );
@@ -650,9 +656,8 @@ async function stopManagingSource({
   return inTransaction(client, async (tx) => {
     await acquireManagedCertificateImportLock(tx, workspaceId);
     const result = await tx.query(
-      `SELECT p.*, mc.source, mc.source_ref
+      `SELECT p.*
          FROM certops_management_periods p
-         JOIN managed_certificates mc ON mc.id = p.managed_certificate_id
         WHERE p.workspace_id = $1 AND p.id = $2 FOR UPDATE OF p`,
       [workspaceId, periodId],
     );

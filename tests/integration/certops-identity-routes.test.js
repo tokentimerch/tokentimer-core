@@ -324,4 +324,165 @@ describe("CertOps identity HTTP authorization and admission", function () {
       0,
     );
   });
+  it("keeps deleted-source snapshots in manager and viewer HTTP history", async () => {
+    const sourceRef = `file:///private/deleted-${randomUUID()}.pem`;
+    const deleted = await source(B, sourceRef);
+    const historicalPeriod = (
+      await TestUtils.execQuery(
+        "SELECT * FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [deleted],
+      )
+    ).rows[0];
+    const historicalIdentity = historicalPeriod.current_identity_id;
+    await TestUtils.execQuery("DELETE FROM managed_certificates WHERE id=$1", [
+      deleted,
+    ]);
+    for (const who of [manager, viewer]) {
+      for (const suffix of [
+        "certificate-identities",
+        `certificate-identities/${historicalIdentity}`,
+      ]) {
+        const res = await request(BASE)
+          .get(path(suffix))
+          .set("Cookie", who.cookie)
+          .expect(200);
+        const certificate =
+          res.body.certificate ||
+          res.body.items.find((item) => item.identityId === historicalIdentity);
+        const history = certificate.sources.find(
+          (item) => item.periodId === historicalPeriod.id,
+        );
+        assert(history);
+        assert.equal(history.managedCertificateId, deleted);
+        assert.equal(history.source, historicalPeriod.source);
+        assert.equal(history.tokenId, null);
+        assert.equal(history.currentIdentityId, historicalIdentity);
+        assert.equal(history.endedReason, "management_source_deleted");
+        assert(history.startedAt);
+        assert(history.endedAt);
+        assert(certificate.sourceCount >= 2);
+        assert.equal(
+          history.sourceRef,
+          who === manager ? sourceRef : undefined,
+        );
+        if (who === viewer) assert(!res.text.includes(sourceRef));
+      }
+    }
+  });
+  it("isolates transferred token and source data in original-workspace HTTP history", async () => {
+    const sourceRef = `file:///private/transferred-${randomUUID()}.pem`;
+    const moved = await source(B, sourceRef);
+    const movedToken = (
+      await TestUtils.execQuery(
+        `INSERT INTO tokens(workspace_id,user_id,name,type,expiration)
+         VALUES($1,$2,'Transferred certificate','ssl_cert','2027-01-01') RETURNING id`,
+        [ws, owner.user.id],
+      )
+    ).rows[0].id;
+    await TestUtils.execQuery(
+      "UPDATE managed_certificates SET token_id=$2 WHERE id=$1",
+      [moved, movedToken],
+    );
+    const historicalPeriod = (
+      await TestUtils.execQuery(
+        "SELECT * FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [moved],
+      )
+    ).rows[0];
+    await TestUtils.execQuery(
+      "SELECT certops_transfer_management_sources($1,$2,$3::uuid[])",
+      [ws, otherWs, [moved]],
+    );
+    await TestUtils.execQuery("UPDATE tokens SET workspace_id=$2 WHERE id=$1", [
+      movedToken,
+      otherWs,
+    ]);
+    const destinationRef = `file:///destination/${randomUUID()}.pem`;
+    await TestUtils.execQuery(
+      "UPDATE managed_certificates SET source_ref=$2,name=$2 WHERE id=$1",
+      [moved, destinationRef],
+    );
+    for (const suffix of [
+      "certificate-identities",
+      `certificate-identities/${historicalPeriod.current_identity_id}`,
+    ]) {
+      const res = await request(BASE)
+        .get(path(suffix))
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const certificate =
+        res.body.certificate ||
+        res.body.items.find(
+          (item) => item.identityId === historicalPeriod.current_identity_id,
+        );
+      const history = certificate.sources.find(
+        (item) => item.periodId === historicalPeriod.id,
+      );
+      assert(history);
+      assert.equal(history.sourceRef, sourceRef);
+      assert.equal(history.tokenId, null);
+      assert.equal(history.endedReason, "workspace_transfer");
+      assert.notEqual(certificate.tokenId, movedToken);
+      assert(certificate.sources.every((item) => item.tokenId !== movedToken));
+      assert(!res.text.includes(destinationRef));
+    }
+    const destinationIdentity = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [otherWs, B],
+      )
+    ).rows[0].id;
+    const destination = await request(BASE)
+      .get(path(`certificate-identities/${destinationIdentity}`, otherWs))
+      .set("Cookie", outsider.cookie)
+      .expect(200);
+    assert.equal(destination.body.certificate.tokenId, movedToken);
+    const currentSource = destination.body.certificate.sources.find(
+      (item) => item.managedCertificateId === moved && !item.endedAt,
+    );
+    assert.equal(currentSource.tokenId, movedToken);
+  });
+  it("returns global visibility and full counts with only 20 HTTP locations", async () => {
+    const selectedIdentity = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [ws, B],
+      )
+    ).rows[0].id;
+    const prefix = randomUUID();
+    await TestUtils.execQuery(
+      `INSERT INTO certops_slot_observations(workspace_id,fingerprint_sha256,source_ref,location_ref,captured_at)
+       SELECT $1,$2,$3::text || n::text,'file:///fresh-' || n::text || '.pem',NOW()-n*INTERVAL '1 second'
+       FROM generate_series(1,21) n`,
+      [ws, B, prefix],
+    );
+    for (const visibilityUnknown of [false, true]) {
+      if (visibilityUnknown) {
+        await TestUtils.execQuery(
+          "UPDATE certops_slot_observations SET captured_at=NOW()-INTERVAL '2 days' WHERE workspace_id=$1 AND source_ref=$2",
+          [ws, `${prefix}21`],
+        );
+      }
+      for (const suffix of [
+        "certificate-identities",
+        `certificate-identities/${selectedIdentity}`,
+      ]) {
+        const res = await request(BASE)
+          .get(path(suffix))
+          .set("Cookie", manager.cookie)
+          .expect(200);
+        const certificate =
+          res.body.certificate ||
+          res.body.items.find((item) => item.identityId === selectedIdentity);
+        assert.equal(certificate.locations.length, 20);
+        assert.equal(certificate.locationCount, 21);
+        assert(
+          certificate.locations.every(
+            (item) => item.presenceState === "confirmed_present",
+          ),
+        );
+        assert.equal(certificate.visibilityUnknown, visibilityUnknown);
+      }
+    }
+  });
 });
