@@ -139,10 +139,13 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | | |
 |---|---|
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
+| [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
 | [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
-| [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, verification, and trust-anchor (CA) distribution/revocation |
+| [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
+| [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
+| [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |

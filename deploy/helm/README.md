@@ -98,15 +98,13 @@ Several settings can be configured at multiple levels. The app resolves them wit
 
 | Setting | DB (System Settings UI) | DB (per-workspace) | Env var (Helm values) | Code default |
 |---|---|---|---|---|
-| SMTP config (incl. `smtp.secure`, `smtp.requireTls`) | **Wins** | -- | Fallback | `localhost:587` |
-| Twilio credentials + SIDs | **Wins** | -- | Fallback | Disabled |
-| Alert thresholds | -- | **Wins** | Fallback | `30,14,7,1,0` |
-| Delivery window | -- | **Wins** | Fallback | `00:00-23:59 UTC` |
-| Admin bootstrap (`config.adminEmail` / `config.disableAdminBootstrap`) | -- | -- | **Only source** | Skip if admin exists |
+| SMTP config (including TLS) | Fallback | -- | **Wins per supplied field; locks UI** | Configured defaults |
+| Twilio credentials + SIDs | Fallback | -- | **Wins per supplied field; locks UI** | Disabled |
+| Alert thresholds | -- | **Wins** | Global fallback | `30,14,7,1,0` |
+| Delivery window | -- | **Wins** | Global fallback | `00:00-23:59 UTC` |
+| Admin bootstrap | -- | -- | **Only source** | Skip if admin exists |
 
-In practice this means:
-- **SMTP / Twilio** values set in the Helm chart are the initial bootstrap config. Once an admin configures them in the System Settings UI, the DB values take over and the env vars are ignored.
-- **Alert thresholds** and **delivery windows** from the chart are global defaults. Each workspace can override them through its own Alert Preferences in the dashboard.
+Environment-supplied SMTP and Twilio fields override database values and appear locked in System Settings. Workspace alert preferences can override global defaults. See [Configuration basics](../../docs/CONFIGURATION_BASICS.md) before the exhaustive reference.
 
 ## Configuration
 
@@ -171,7 +169,10 @@ config:
   certopsRegistrationEncryptionKey: "<64 hex chars>"
 ```
 
-These wrap, at rest, the job-signing private keys and the agent registration-replay credentials. **Rotating either value makes the data it wrapped unreadable**: signing keys must be re-issued and agents must re-register. Treat them like `SESSION_SECRET`, back them up, and set them explicitly in any GitOps or `helm template` workflow.
+- `CERTOPS_SIGNING_ENCRYPTION_KEY` wraps the stored job-signing private keys. Preserve the matching key; replacing it alone makes those records unreadable. Operational signing-key rotation does not rotate this wrapping key; replacing it requires a separate encrypted-record migration.
+- `CERTOPS_REGISTRATION_ENCRYPTION_KEY` wraps only short-lived registration-replay credentials for lost-response recovery. Changing it can invalidate outstanding replay recovery. Existing enrolled-agent credentials are stored as hashes, so this does not inherently require the fleet to re-register.
+
+Back up both matching values and set them explicitly in GitOps or `helm template` workflows.
 
 For production, use pre-existing secrets instead of setting plaintext values:
 
@@ -238,7 +239,7 @@ Deployment with:
 kubectl rollout restart deployment/<release>-tokentimer-api -n <namespace>
 ```
 
-The six worker CronJobs need no equivalent restart: each scheduled run
+The worker CronJobs need no equivalent restart: each scheduled run
 starts a fresh Pod that reads the Secret's current data, so a rotated value
 takes effect on the next trigger automatically. Also sufficient: a
 `helm upgrade` (bumps `.Release.Revision`, which restarts the API via
@@ -246,7 +247,7 @@ takes effect on the next trigger automatically. Also sufficient: a
 or an external Secret-reloader controller (e.g. Stakater Reloader) watching
 the Secret named in `proxyExistingSecret`.
 
-Proxy env vars are injected into the API Deployment and all six worker
+Proxy env vars are injected into the API Deployment and all worker
 CronJobs. The optional CertOps controller and the dashboard are deliberately
 excluded: the dashboard serves static assets with no outbound calls, and the
 controller talks only to the Kubernetes API and the TokenTimer API
@@ -501,6 +502,9 @@ ingress:
         - path: /
           pathType: Prefix
           service: dashboard
+        - path: /auth
+          pathType: Prefix
+          service: api
         - path: /api
           pathType: Prefix
           service: api
@@ -593,11 +597,15 @@ Pods read ConfigMap/Secret env vars only at start; a rollout is required after c
 
 ## Uninstalling
 
+Do not rely on uninstall preserving the database: deleting the release's
+CloudNativePG Cluster can delete its PVCs and underlying storage. Take and verify
+a separate backup and preserve the matching encryption keys before uninstalling.
+See [Backup and restore](../../docs/BACKUP_RESTORE.md#kubernetes) for recovery and
+explicit storage-preservation procedures for your operator version.
+
 ```bash
 helm uninstall tokentimer -n tokentimer
 ```
-
-CloudNativePG PVCs are retained by default. Delete them manually if no longer needed.
 
 ## Example Values
 

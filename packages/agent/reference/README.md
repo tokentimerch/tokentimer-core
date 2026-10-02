@@ -146,9 +146,9 @@ real workspace; the diagnostic-bootstrap route always assigns
 This route is an operator action, not a machine-credential call: it
 requires the same session cookie and CSRF token an operator's browser
 session already carries, not a bootstrap token. An operator obtains
-these out of band, for example by driving `POST /auth/login` and then
-`GET /api/csrf-token` against the target deployment with the same
-session, and passes the results to `--session-cookie-file`/
+these out of band, for example by fetching `GET /api/csrf-token` into a cookie jar before login, sending
+its paired cookie and `X-CSRF-Token` to `POST /auth/login`, and refreshing
+both CSRF credentials after authentication with the same session, and passes the results to `--session-cookie-file`/
 `-SessionCookieFile` and `--csrf-token-file`/`-CsrfTokenFile`. Neither
 client automates the login step itself. The route assigns both the
 `agentId` and the credential; there is no client-side candidate-id
