@@ -24,8 +24,11 @@ Common terminal states and what to look for:
   not carry `signingKeyId`/`signingPublicKeyPem`). Re-register the agent
   against a control plane that dispatches signing key info. The heartbeat's
   `pinnedSigningKeyId` will be null until then.
-- **Job `blocked`, "does not execute jobs yet" message**: `execution.enabled` is not
-  true. This is the expected observe-only behavior, not an error.
+- **Agent registers and heartbeats, but never claims a pending job**: check
+  `execution.enabled`. When it is not true, the agent is observe-only and
+  never polls for jobs, so no job result is expected from it. Enable claims
+  with `execution.enabled: true` while retaining `execution.dryRun: true`
+  to test signed dry-run jobs before allowing real work.
 - **No result at all, lease expired, `job_integrity_failed` in the agent log**:
   missing/malformed signed fields, a signing key id mismatch (rotation lag or
   forgery), a signature that does not verify against the canonical payload, or

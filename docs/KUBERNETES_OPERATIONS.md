@@ -23,7 +23,7 @@ Egress CIDRs default to `0.0.0.0/0` to preserve out-of-the-box behavior; narrow 
 
 > **Warning**
 >
-> Leaving `ingressNamespace` empty renders the API policy with `ingress: []`, which means the Ingress controller cannot reach the API and the app appears down even though every pod is `Ready`.
+> Leaving `ingressNamespace` empty omits the rule allowing the Ingress controller to reach the API. Internal dashboard and auto-sync rules still exist, but external API calls through the Ingress controller can fail even though every pod is `Ready`.
 
 ### Autoscaling and pod disruption budgets
 

@@ -1,6 +1,6 @@
 # Agent configuration reference
 
-Prepare the local allowlists before enrolling an agent for certificate work. These settings control the host; control-plane requests cannot broaden them. Start with execution disabled, test a signed dry-run, and opt into real work only after checking the intended destinations.
+Prepare the local allowlists before enrolling an agent for certificate work. These settings control the host; control-plane requests cannot broaden them. Start with `execution.enabled: false` while preparing policy. For a signed dry-run, set `execution.enabled: true` and keep `execution.dryRun: true`, restart, and request a job with `mode: "dry_run"`. Set `execution.dryRun: false` only after checking the plan and intended destinations; a real job is refused while it is true.
 
 <a id="config-directory"></a>
 
@@ -152,7 +152,7 @@ any mutation, on every platform including Windows: a "renew-only" agent (no
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `enabled` | boolean | false | Opt-in; an upgraded agent never starts executing without it. |
-| `dryRun` | boolean | true | Plan-only execution with zero side effects (see [Execution](execution.md)). |
+| `dryRun` | boolean | true | Refuses real jobs. Planning requires a signed job with `mode: "dry_run"` and `enabled: true`; it does not convert real jobs into plans (see [Execution](execution.md)). |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
 | `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. Retention-capped (5000 entries / 7 days); see the [state-directory table](configuration.md#config-directory) for the `dead-letter/` quarantine subdirectory and its own retention. |

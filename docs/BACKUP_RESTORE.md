@@ -86,7 +86,7 @@ If you pointed the chart at an external database (`postgresql.external`), use yo
 
 ### PVCs on uninstall
 
-`helm uninstall` retains the CloudNativePG PVCs by default. Your data survives an accidental uninstall, but a retained PVC is not a backup: it lives on the same storage as the cluster. Delete retained PVCs manually only once you have confirmed backups elsewhere.
+Do not rely on `helm uninstall` to preserve the database. The release owns the CloudNativePG `Cluster`; deleting it can also delete its PVCs and underlying storage, depending on ownership and the volume reclaim policy. Take and verify a separate backup before uninstalling. If you need to preserve cluster storage, follow the [CloudNativePG procedures for your operator version](https://cloudnative-pg.io/docs/1.25/kubectl-plugin/#cluster-hibernation) and verify the result before deleting the release. Retained volumes are not a substitute for a backup.
 
 <a id="cadence"></a>
 

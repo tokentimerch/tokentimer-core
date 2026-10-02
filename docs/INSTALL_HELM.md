@@ -39,7 +39,7 @@ postgresql:
 
 ## Step 2 - Install the chart
 
-Select a published chart version and save it with your deployment configuration.
+Select a published chart version and save it with your deployment configuration. Point DNS at your Ingress controller, create the `tokentimer` namespace, and create a TLS Secret named `tokentimer-tls` in the `tokentimer` namespace for your hostname before installing. Replace the example hostname and secret name consistently. The chart does not issue the Ingress certificate for you.
 
 ```bash
 read -r -p 'Core chart version: ' CORE_CHART_VERSION
@@ -53,7 +53,9 @@ helm install tokentimer oci://ghcr.io/tokentimerch/charts/tokentimer \
   --set config.sessionSecret="replace-with-long-random-value" \
   --set postgresql.auth.password="your-db-password" \
   --set ingress.enabled=true \
-  --set ingress.hosts[0].host="tokentimer.your-domain.com"
+  --set 'ingress.hosts[0].host=tokentimer.example.com' \
+  --set 'ingress.tls[0].hosts[0]=tokentimer.example.com' \
+  --set 'ingress.tls[0].secretName=tokentimer-tls'
 ```
 
 For production, prefer a values file (`cp deploy/helm/values.yaml my-values.yaml`, edit, then `-f my-values.yaml`) and pre-existing Kubernetes Secrets instead of plaintext values:
@@ -87,7 +89,10 @@ Setting any `existingSecret` makes the chart stop emitting that group's generate
 > | `CERTOPS_SIGNING_ENCRYPTION_KEY` | While CertOps is enabled (`config.certopsEnabled` defaults to `true`) |
 > | `CERTOPS_REGISTRATION_ENCRYPTION_KEY` | While CertOps is enabled |
 > | `ADMIN_PASSWORD` | When you bootstrap an admin with `config.adminEmail` |
-> | `DB_PASSWORD` | Unless the password comes from `postgresql.auth.existingSecret` or `postgresql.external.existingSecret` |
+> | `DB_PASSWORD` | Unless supplied through `postgresql.external.existingSecret`; a CNPG `postgresql.auth.existingSecret` does not provide the application environment |
+> | `SMTP_PASS` | When `smtp.password` is set and `smtp.existingSecret` is absent |
+> | `TWILIO_AUTH_TOKEN` | When `twilio.authToken` is set and `twilio.existingSecret` is absent |
+> | `WEEKLY_DIGEST_RECIPIENT_KEY` | When `config.weeklyDigestRecipientKey` is set |
 >
 > The CertOps pair is the easy one to miss: `CERTOPS_ENABLED` still renders as `"true"`, so the deployment comes up looking healthy and then fails closed on every agent register and job dispatch. Verify with `kubectl get secret my-tokentimer-secrets -n tokentimer -o jsonpath='{.data}'` before cutting over, or set `config.certopsEnabled=false` if you are not using CertOps.
 

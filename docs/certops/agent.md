@@ -8,7 +8,7 @@ The agent runs on the host that holds certificate keys. TokenTimer plans and aud
 2. Follow [Install on Linux](agent/install-linux.md) or [Install on Windows](agent/install-windows.md).
 3. Prepare [local policy and configuration](agent/configuration.md), verify a signed dry-run, then opt into real execution.
 
-An agent with execution disabled observes certificates and reports allowed jobs as blocked. Enabling execution does not bypass local policy.
+An agent with `execution.enabled: false` registers, heartbeats, and can report configured certificate discovery; it does not poll for or claim jobs. To test signed jobs, set `execution.enabled: true` and keep `execution.dryRun: true`, then restart and request a job with `mode: "dry_run"`. Real jobs are refused while that local safety switch is on. Enabling execution does not bypass local policy.
 
 ## Task guides
 

@@ -6,7 +6,7 @@ Install on the host that holds the certificate keys. Use Node.js 22 or 24 and a 
 2. Download the matching released agent package and verify its checksum against the release before extracting it. Use the package installer, not an unreviewed copy of a script.
 3. Run the generated command as root. Prefer the hidden bootstrap-token prompt. Keep initial execution disabled while you configure [local policy](configuration.md).
 4. Check `systemctl status tokentimer-agent` and `journalctl -u tokentimer-agent -n 50 --no-pager`. Confirm registration and a fresh heartbeat in the fleet panel.
-5. Prepare the command, path, CA, and DNS allowlists before requesting work. Verify a signed dry-run, then enable real execution deliberately. The complete [public Linux walkthrough](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) includes package and policy examples.
+5. Prepare the command, path, CA, and DNS allowlists before requesting work. Set `execution.enabled: true` with `execution.dryRun: true`, restart, and verify a signed job with `mode: "dry_run"`. After checking its plan, set `execution.dryRun: false` and restart to allow real work. The complete [public Linux walkthrough](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) includes package and policy examples.
 
 The flags below explain what the installer changes. State/enrollment details live in [Configuration](configuration.md); upgrades and removal live in [Operations](operations.md).
 
