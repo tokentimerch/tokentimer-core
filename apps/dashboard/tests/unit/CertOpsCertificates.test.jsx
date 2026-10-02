@@ -214,7 +214,7 @@ it('opens one certificate detail with token fields, sources, and all locations',
   expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
   expect(screen.getByText(/api-b\.pem/)).toBeInTheDocument();
   expect(
-    screen.getByRole('heading', { name: 'Management sources' })
+    screen.getByRole('heading', { name: 'Certificate management' })
   ).toBeInTheDocument();
   expect(
     screen.getByRole('heading', { name: 'Basic information' })
