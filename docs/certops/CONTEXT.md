@@ -489,3 +489,5 @@ flows use this path when `certops.enabled` is on.
 For the user-facing distinction between observed locations and management
 registrations, including stopping, restarting, and history visibility, see
 [Certificate details](certificate-details.md).
+
+Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.

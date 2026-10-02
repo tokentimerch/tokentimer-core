@@ -22,6 +22,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Allow existing management-period rotation to exceed the fingerprint quota temporarily when other sources retain the old certificate; additive migration 64 repairs already-upgraded installations while preserving new-enrollment admission.
+
 - Group recreated endpoint monitors into one observed location before counting and pagination. Preserve previous observations behind an optional history switch and explain uncertain presence with Monitoring ended, Not checked recently, or Needs verification. Raw evidence and decommission safety remain intact.
 
 - Restore the accessible alert-history region and remove an unused certificate-modal import detected by clean CI.

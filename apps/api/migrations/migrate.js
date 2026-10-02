@@ -4565,6 +4565,11 @@ const migrations = [
     name: "certops_identity_invariants_hardening",
     sql: fs.readFileSync(require("path").join(__dirname, "063-certops-identity-invariants.sql"), "utf8"),
   },
+  {
+    version: 64,
+    name: "certops_rotation_quota_overage",
+    sql: fs.readFileSync(require("path").join(__dirname, "064-certops-rotation-quota-overage.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

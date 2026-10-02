@@ -393,6 +393,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       "SELECT * FROM certops_management_periods ORDER BY id",
     );
     await db.query(migrations.find((m) => m.version === 63).sql);
+    await db.query(migrations.find((m) => m.version === 64).sql);
     assert.deepEqual(
       (await db.query("SELECT * FROM certops_management_periods ORDER BY id"))
         .rows,
@@ -732,27 +733,35 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     );
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
   });
-  it("rotation passes the same admission gate and accounts for a remaining A source", async () => {
-    const ws = await workspace(1),
-      first = await source(ws, A),
-      second = await source(ws, A);
-    await assert.rejects(
-      db.query(
-        "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
-        [first.id, B],
-      ),
-      { detail: "CERTOPS_MANAGED_CERT_LIMIT" },
-    );
-    await stopManagingSource({
-      workspaceId: ws,
-      periodId: (await period(second)).id,
-      client: db,
-    });
-    await db.query(
-      "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
-      [first.id, B],
-    );
+  it("existing-source rotation allows temporary overage while new enrollment remains blocked", async () => {
+    const ws = await workspace(1), first = await source(ws, A), second = await source(ws, A);
+    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
+    assert.equal((await period(first)).current_identity_id, (await identity(ws, B)).id);
+    await assert.rejects(source(ws, C), { detail: "CERTOPS_MANAGED_CERT_LIMIT" });
+    await source(ws, B);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
+    await stopManagingSource({workspaceId: ws, periodId: (await period(second)).id, client: db});
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
+  });
+  it("v64 repairs already-applied v63 without exempting closed or foreign periods from admission", async () => {
+    const ws = await workspace(1), first = await source(ws, A), second = await source(ws, A);
+    const originalPeriod = await period(first);
+    await db.query(migrations.find(m => m.version === 63).sql);
+    await assert.rejects(db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
+    const repair = migrations.find(m => m.version === 64);
+    await db.query(repair.sql);
+    await db.query(repair.sql);
+    const foreign = await source(await workspace(), C);
+    await assert.rejects(db.query("SELECT certops_admit_management($1,$2,$3)", [ws, null, (await period(foreign)).id]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
+    const closed = await period(second);
+    await stopManagingSource({workspaceId: ws, periodId: closed.id, client: db});
+    await assert.rejects(db.query("SELECT certops_admit_management($1,$2,$3)", [ws, null, closed.id]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
+    await source(ws, A);
+    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]);
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
+    assert.equal((await period(first)).id, originalPeriod.id);
+    assert((await period(second)).ended_at);
   });
   it("closing cancels only unstarted period jobs and preserves claimed/running reconciliation", async () => {
     const ws = await workspace(),
@@ -1994,6 +2003,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       )
     ).rows[0].n;
     await db.query(migrations.find((m) => m.version === 63).sql);
+    await db.query(migrations.find((m) => m.version === 64).sql);
     assert.equal(
       (
         await db.query(

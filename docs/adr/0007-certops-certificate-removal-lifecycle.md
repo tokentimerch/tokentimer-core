@@ -152,3 +152,5 @@ Historical summaries contain no deployment paths or source references. Genuine
 current visibility gaps are retained; the lifecycle action continues checking
 all raw evidence independently of the display projection. Other observation
 slots are not merged merely because two hosts use the same file path.
+
+Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.
