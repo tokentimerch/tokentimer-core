@@ -516,7 +516,7 @@ async function scanGitLab({
       const error = new Error(
         "Not a valid GitLab API response. Check the instance URL, including any installation path, and use a Personal Access Token with read_api scope.",
       );
-      error.status = 400;
+      error.status = 502;
       throw error;
     }
     logger.info("GitLab user authenticated", {
