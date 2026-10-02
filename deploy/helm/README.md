@@ -169,7 +169,10 @@ config:
   certopsRegistrationEncryptionKey: "<64 hex chars>"
 ```
 
-These wrap, at rest, the job-signing private keys and the agent registration-replay credentials. **Rotating either value makes the data it wrapped unreadable**: restore the matching key or perform an explicit encrypted-record migration; changing a value alone is not a rotation procedure. Treat them like `SESSION_SECRET`, back them up, and set them explicitly in any GitOps or `helm template` workflow.
+- `CERTOPS_SIGNING_ENCRYPTION_KEY` wraps the stored job-signing private keys. Preserve the matching key; replacing it alone makes those records unreadable. Operational signing-key rotation does not rotate this wrapping key; replacing it requires a separate encrypted-record migration.
+- `CERTOPS_REGISTRATION_ENCRYPTION_KEY` wraps only short-lived registration-replay credentials for lost-response recovery. Changing it can invalidate outstanding replay recovery. Existing enrolled-agent credentials are stored as hashes, so this does not inherently require the fleet to re-register.
+
+Back up both matching values and set them explicitly in GitOps or `helm template` workflows.
 
 For production, use pre-existing secrets instead of setting plaintext values:
 
@@ -594,11 +597,15 @@ Pods read ConfigMap/Secret env vars only at start; a rollout is required after c
 
 ## Uninstalling
 
+Do not rely on uninstall preserving the database: deleting the release's
+CloudNativePG Cluster can delete its PVCs and underlying storage. Take and verify
+a separate backup and preserve the matching encryption keys before uninstalling.
+See [Backup and restore](../../docs/BACKUP_RESTORE.md#kubernetes) for recovery and
+explicit storage-preservation procedures for your operator version.
+
 ```bash
 helm uninstall tokentimer -n tokentimer
 ```
-
-CloudNativePG PVCs are retained by default. Delete them manually if no longer needed.
 
 ## Example Values
 

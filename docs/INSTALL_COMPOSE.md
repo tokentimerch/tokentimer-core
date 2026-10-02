@@ -112,6 +112,6 @@ TokenTimer creates the admin user automatically on first startup from `ADMIN_EMA
 >
 > After first login, remove `ADMIN_PASSWORD` from your `.env` file (or values). It is only needed for the bootstrap on first start.
 
-Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens/index), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts/index), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
+Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
 
 Continue with [First asset and alert check](FIRST_ASSET.md). For settings and restarts, see [Configuration basics](CONFIGURATION_BASICS.md).

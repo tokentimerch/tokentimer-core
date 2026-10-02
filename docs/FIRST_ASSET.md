@@ -25,7 +25,7 @@ In your workspace alert settings:
 3. Select that group as the workspace default. If a suitable default already exists, use it.
 4. Review the threshold days and delivery window. Ensure `1` is a threshold for this check and that the window includes the time you expect delivery. Save the settings.
 
-Threshold `1` means one day before expiry; `0` means the expiry day. See [Contact groups & channels](https://tokentimer.ch/docs/self-hosted/alerts/contact-groups) and [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts/index).
+Threshold `1` means one day before expiry; `0` means the expiry day. See [Contact groups & channels](https://tokentimer.ch/docs/self-hosted/alerts/contact-groups) and [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts).
 
 ## 3. Create a sample asset
 
@@ -56,6 +56,6 @@ No new alert is expected when the same threshold has already been delivered. Fil
 
 ## Continue
 
-Keep or delete the sample after the check. Then [import an existing inventory](https://tokentimer.ch/docs/self-hosted/tokens/import-file), [connect an integration](https://tokentimer.ch/docs/self-hosted/integrations/index), or [monitor an HTTPS endpoint](https://tokentimer.ch/docs/self-hosted/monitoring/endpoint-monitoring).
+Keep or delete the sample after the check. Then [import an existing inventory](https://tokentimer.ch/docs/self-hosted/tokens/import-file), [connect an integration](https://tokentimer.ch/docs/self-hosted/integrations), or [monitor an HTTPS endpoint](https://tokentimer.ch/docs/self-hosted/monitoring/endpoint-monitoring).
 
 Tracking a certificate's expiry does not configure renewal. Set up [certificate automation](https://tokentimer.ch/docs/self-hosted/automation) separately when you are ready to manage issuance and renewal.

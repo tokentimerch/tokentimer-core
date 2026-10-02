@@ -170,7 +170,7 @@ passthrough.
 `config.json`, job payload, and every pitfall actually hit (certbot account
 registration flags, the chain-path save crash above, `certPath` needing to
 be a file rather than a directory) — is documented step by step at
-<https://tokentimer.ch/docs/self-hosted/next/runbooks/certops-cloudflare-worked-example>
+<https://tokentimer.ch/docs/self-hosted/runbooks/certops-cloudflare-worked-example>
 (mirrored for the SaaS variant at
 <https://tokentimer.ch/docs/cloud/runbooks/certops-cloudflare-worked-example>).
 That page exists specifically so this reference material does not have to

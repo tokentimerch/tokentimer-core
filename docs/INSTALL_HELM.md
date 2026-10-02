@@ -113,7 +113,9 @@ Setting any `existingSecret` makes the chart stop emitting that group's generate
 >   certopsRegistrationEncryptionKey: "<64 hex chars>"
 > ```
 >
-> Rotating either value makes the data it wrapped unreadable: signing keys must be re-issued and agents must re-register.
+> `CERTOPS_SIGNING_ENCRYPTION_KEY` wraps the stored job-signing private keys. Preserve it with backups; replacing it alone makes those keys unreadable. Operational signing-key rotation does not change this wrapping key; replacing it requires a separate encrypted-record migration.
+>
+> `CERTOPS_REGISTRATION_ENCRYPTION_KEY` wraps only short-lived registration-replay credentials used to recover a lost registration response. Changing it can invalidate outstanding replay recovery, but enrolled-agent credentials are stored as hashes: existing agents do not inherently need to re-register. Preserve the matching key during backup/recovery.
 
 ## Step 3 - Wait for pods and access the dashboard
 
@@ -158,6 +160,6 @@ TokenTimer creates the admin user automatically on first startup from `ADMIN_EMA
 >
 > After first login, remove `ADMIN_PASSWORD` from your `.env` file (or values). It is only needed for the bootstrap on first start.
 
-Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens/index), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts/index), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
+Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
 
 Continue with [First asset and alert check](FIRST_ASSET.md). Optional network policy, monitoring, and scaling are covered in [Kubernetes operations](KUBERNETES_OPERATIONS.md).
