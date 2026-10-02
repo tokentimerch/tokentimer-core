@@ -3682,7 +3682,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: Quota exceeded, source already managed, or source unavailable }
+        "409": { description: "Quota exceeded, source already managed, or source unavailable" }
         "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/certificates:
     get:
