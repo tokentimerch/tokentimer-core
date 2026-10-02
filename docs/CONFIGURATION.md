@@ -4,6 +4,8 @@ Environment variables for TokenTimer Core, plus one CertOps workspace
 setting that is not an env var (`certOpsRequireApprovalAlways`; see
 [Job approval](#certops-job-approval)).
 
+Start with [Configuration basics](CONFIGURATION_BASICS.md) for precedence, SMTP, restarts, and recovery keys. This page remains the exhaustive variable reference.
+
 Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from compose/examples where applicable.
 
 `unset` means optional and disabled unless you set it. `required` means you must provide a value for production.
@@ -14,7 +16,7 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 | ------------------------- | ---------------------------------------- | ------------------------------ | ---------------------- |
 | `TT_MODE`                 | Core variant mode                        | `oss`                          | App mode               |
 | `NODE_ENV`                | Runtime environment                      | `development`                  | API, worker, dashboard |
-| `SESSION_SECRET`          | Session signing secret                   | `required`                     | API, worker            |
+| `SESSION_SECRET`          | Session signing and stored-settings encryption secret; preserve on restore | `required`                     | API, worker            |
 | `ADMIN_EMAIL`             | First admin bootstrap email              | `admin@your-company.com`       | API bootstrap          |
 | `ADMIN_PASSWORD`          | First admin bootstrap password           | `ChangeThisSecurePassword123!` | API bootstrap          |
 | `ADMIN_NAME`              | First admin bootstrap display name       | `Administrator`                | API bootstrap          |

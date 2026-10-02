@@ -9,7 +9,7 @@ one of them.
 ## Product invariant: zero private-key custody
 
 TokenTimer control planes (Core, Cloud, Enterprise) never store, generate,
-export, transmit, or process private key material. This is structural, not a
+export, transmit, or process customer certificate private key material. This is structural, not a
 policy toggle. It is enforced in depth:
 
 - field-name redaction in the logger (`apps/api/utils/logger.js`),
@@ -132,18 +132,7 @@ the shared detector scans every outbound envelope.
   protocol envelopes and enforced server-side (compare-and-swap on
   `certops_agents.last_sequence`, 409 on regression, generation reset on
   re-register). Defense in depth over the nonce replay cache.
-- **Renewal profile snapshot** - the immutable renewal configuration frozen
-  into a `renew` job's payload at creation time. Optional when a job is
-  created manually or via bulk renew, but **required and fully validated at
-  approval time** (`validateRenewalProfileOnPayload(..., { required: true })`
-  in `jobApprovals.js`), so approving a thin payload fails with
-  `400 CERTOPS_RENEWAL_PROFILE_INCOMPLETE` and the job stays at
-  `pending_approval`. The gate exists so what an approver signs off on is
-  bound by hash to what actually runs, rather than being re-resolved from a
-  mutable profile row at dispatch. Scheduler-created renewals always carry a
-  complete snapshot, resolved from the certificate's linked
-  `certificate_profiles` row; for certificates TokenTimer issued, that row is a
-  **derived renewal profile** (below).
+- **Renewal profile snapshot** - the immutable configuration resolved from the certificate's linked profile and frozen into every manual, bulk, or scheduled `renew` job at creation. Approval validates it again and binds its hash, so dispatch does not silently re-resolve mutable profile data. The manual caller supplies an optional reason, not a raw replacement profile.
 - **Issue operation and `provisioning` status** - `issue` is the job operation
   that requests a brand-new certificate when no `managed_certificate` row
   exists yet, unlike `renew`/`deploy`/`reload`/`revoke`/`noop`, which all
@@ -237,7 +226,7 @@ the shared detector scans every outbound envelope.
   scheduler admits on. See ADR-0010 A1.2 and A1.3.
 - **Workspace Job approval** - `certOpsRequireApprovalAlways` on
   `GET`/`PUT /api/v1/workspaces/:id/certops/settings`. When on, every new job
-  starts at `pending_approval`: dashboard, machine API tokens, bulk renew,
+  starts at `pending_approval`: dashboard, session-authenticated manual requests, bulk renew,
   scheduled renewal, and trust-anchor distribute or revoke. Fail-closed: the
   per-job `requiresApproval` checkbox cannot override it, and an explicit
   `false` from a caller cannot override a true workspace column. Off by
@@ -341,27 +330,7 @@ the shared detector scans every outbound envelope.
 
 ## Dashboard certificate visibility
 
-Certificate inventory stays on existing token surfaces; CertOps enriches them
-rather than adding a parallel inventory page. See ADR-0006.
-
-- **Tokens list / Control Center** - cert rows show key locality, managed status,
-  and retired filtering when CertOps is enabled.
-- **Token detail** - CertOps panel for managed fields and deployment history.
-- **Import tokens** - public PEM import card when `certops.enabled` is on.
-- **CertOps section** - orchestration only (agents, jobs, evidence,
-  approvals, kill switch), not a second certificate list. It ships
-  `/certops/operations` (the workspace kill switch toggle at the top; the
-  executor jobs panel with a manager-only "Create manual job" dialog,
-  including a "require approval" checkbox that locks on while
-  `certOpsRequireApprovalAlways` is set, and inline Approve/Reject
-  actions on jobs sitting at `pending_approval`; evidence timelines; machine
-  API tokens and the **Job approval** panel on `/certops/settings`; the
-  Deploy-an-agent panel with the show-once bootstrap token
-  and install command; and the Agent fleet panel with status/heartbeat/retire)
-  mounted via the `/certops/*` splat route. No nav entry: it is
-  reached from the Control Center certificate-operations panel footer link
-  and from a Workspace Preferences entry (last section, shown only when
-  `certops.enabled` is on).
+Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
 
 ## Certificate removal
 
@@ -486,7 +455,7 @@ flows use this path when `certops.enabled` is on.
 
 ## Editions
 
-- **Core** - open source (AGPL-3.0), generous free base.
+- **Core** - open source (AGPL-3.0), self-hosted.
 - **Cloud** - production SaaS overlay of core (`apps/saas`, `apps/web`).
 - **Enterprise** - licensed overlay; restricted execution and connectors.
 

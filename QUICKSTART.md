@@ -1,513 +1,69 @@
-# TokenTimer Core - Quick Start Guide
-
-Get TokenTimer Core running in under 5 minutes.
-
-> [!TIP]
-> **Reference docs:** [Full configuration variables](docs/CONFIGURATION.md) &bull; [Auth model & RBAC](docs/AUTHENTICATION.md) &bull; [Helm chart options](deploy/helm/README.md) &bull; [Helm values file](deploy/helm/values.yaml) &bull; [Compose .env example](deploy/compose/.env.example)
-
-## Prerequisites
-
-- Docker and Docker Compose
-- Or Node.js >= 22.0.0 + PostgreSQL 15+
-- pnpm (recommended package manager for this monorepo)
-
-For Option 3 (Kubernetes) additionally:
-
-- Kubernetes >= 1.29 and Helm >= 3.14
-- The [CloudNativePG operator](https://cloudnative-pg.io/), because the chart
-  defaults to `postgresql.cloudnative.enabled=true` and renders a CNPG
-  `Cluster` that nothing reconciles without it (the API pod then waits forever
-  for a database). Install the operator, or point the chart at an external
-  Postgres with `postgresql.external.*`. See
-  [deploy/helm/README.md](deploy/helm/README.md) for both paths.
-
-## Option 1: Docker Compose (Fastest)
-
-### 1. Clone and Configure
-
-```bash
-cd tokentimer-core/deploy/compose
-cp .env.example .env
-```
-
-### 2. Edit .env
-
-Minimal required configuration (production-safe baseline):
-
-```bash
-# Core runtime
-NODE_ENV=production
-SESSION_SECRET=replace_with_a_long_random_value
-
-# Database
-DB_HOST=postgres
-DB_PORT=5432
-DB_NAME=tokentimer
-DB_USER=tokentimer
-DB_PASSWORD=replace_with_secure_password
-
-# Initial admin bootstrap (first start only)
-ADMIN_EMAIL=admin@your-company.com
-ADMIN_PASSWORD=ChangeThisSecurePassword123!
-ADMIN_NAME=Administrator
-
-# Public URLs (what users/browsers should use)
-APP_URL=http://localhost:5173
-API_URL=http://localhost:4000
-
-# Optional host port remap. These set the published host ports for Docker
-# Compose. Note pnpm dev also reads them for its port-availability preflight,
-# while the Vite dev server itself is pinned to 5173 (strictPort), so remapping
-# DASHBOARD_PORT here makes that preflight check the wrong port for pnpm dev.
-# Change these only if ports 4000/5173 are already used on your host.
-# If you remap, keep APP_URL/API_URL in sync with the new host ports.
-# API_PORT=4000
-# DASHBOARD_PORT=5173
-
-# Optional but common: SMTP sender identity
-# SMTP_HOST=smtp.example.com
-# SMTP_PORT=465
-# SMTP_USER=noreply@example.com
-# SMTP_PASS=your_smtp_password
-# FROM_EMAIL=noreply@example.com
-# FROM_EMAIL_NAME=TokenTimer
-
-# Required only if you plan to connect a CertOps agent. Compose enables CertOps
-# by default (CERTOPS_ENABLED:-true); without these two keys the CertOps UI
-# appears but agent registration and job dispatch fail closed with HTTP 500.
-# Generate each with: openssl rand -hex 32
-# CERTOPS_SIGNING_ENCRYPTION_KEY=
-# CERTOPS_REGISTRATION_ENCRYPTION_KEY=
-# Or set CERTOPS_ENABLED=false if you do not use CertOps at all.
-```
-
-> [!WARNING]
-> If you run locally on `http://localhost` with `NODE_ENV=production`, authentication can fail because secure session cookies are not persisted/sent by the browser on local HTTP.
-> Put HTTPS in front of API/dashboard (reverse proxy with TLS), or use `NODE_ENV=development` for local non-TLS testing.
-> As a last-resort local troubleshooting option only, set `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true`.
-
-### 3. Start All Services
-
-```bash
-# A) Build from local source (default)
-docker compose up -d
-
-# B) Use prebuilt images (Pattern A override file)
-# Optional vars in .env: TT_IMAGE_REGISTRY, TT_IMAGE_OWNER, TT_IMAGE_TAG
-docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
-```
-
-### 4. Access the Dashboard
-
-Open `http://localhost:5173` in your browser.
-
-### 5. Check Status
-
-```bash
-# View logs
-docker compose logs -f
-
-# Check health
-curl http://localhost:4000/health
-
-# View running services
-docker compose ps
-```
-
-## Option 2: Local Development
-
-### 1. Install Dependencies
-
-```bash
-cd tokentimer-core
-pnpm install
-```
-
-### 2. Configure Environment
-
-Copy the root example for local development:
-
-```bash
-cp .env.example .env
-```
-
-Create `.env` in the root directory:
-
-```bash
-NODE_ENV=development
-SESSION_SECRET=dev_session_secret_change_in_production
-
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=tokentimer
-DB_USER=tokentimer
-DB_PASSWORD=password
-
-ADMIN_EMAIL=admin@localhost.local
-ADMIN_PASSWORD=AdminPassword123!
-ADMIN_NAME=Administrator
-
-APP_URL=http://localhost:5173
-API_URL=http://localhost:4000
-```
-
-### 3. Start Development Servers
-
-```bash
-pnpm run dev
-```
-
-The API applies pending migrations itself on startup, so there is no separate migration step.
-
-This starts PostgreSQL in Docker, then:
-
-- API on `http://localhost:4000`
-- Worker runner with cron schedules matching the Kubernetes defaults
-- Dashboard on `http://localhost:5173`
-
-Default worker runner schedules:
-
-| Worker | Default schedule | Runs on start |
-|--------|------------------|---------------|
-| Alert Discovery | `*/5 * * * *` | No |
-| Alert Delivery | `1/5 * * * *` | No |
-| Auto Sync | `*/1 * * * *` | No |
-| Endpoint Check | `*/1 * * * *` | No |
-| Weekly Digest | `0 9 * * 1` | No |
-| CertOps Maintenance | `*/1 * * * *` | No |
-
-Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes. In that case apply migrations yourself first with `pnpm run migrate`, since that command talks to an existing database and does not start one.
-
-### 4. Access the Dashboard
-
-Open `http://localhost:5173` in your browser.
-
-## Option 3: Kubernetes (Helm)
-
-> [!NOTE]
-> All configurable values are documented in [`deploy/helm/values.yaml`](deploy/helm/values.yaml). For a full environment variable reference, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md). For the chart's own reference (value precedence, `existingSecret` semantics, private registries, autoscaling, the CertOps controller) see [`deploy/helm/README.md`](deploy/helm/README.md).
-
-> [!IMPORTANT]
-> **Prerequisite: the CloudNativePG operator.** The chart defaults to `postgresql.cloudnative.enabled=true`, which creates a CNPG `Cluster` resource. Without the operator installed, nothing reconciles that resource: no database pods appear and the API pod never becomes ready.
->
-> ```bash
-> helm repo add cnpg https://cloudnative-pg.github.io/charts
-> helm repo update
-> helm install cnpg-operator cnpg/cloudnative-pg \
->   --namespace cnpg-system --create-namespace \
->   --version 0.23.0 \
->   --wait
-> ```
->
-> To use an existing external PostgreSQL instead, set `postgresql.cloudnative.enabled=false` and configure `postgresql.external.*`. See [`deploy/helm/README.md`](deploy/helm/README.md).
-
-### 1. Install the Helm Chart
-
-**Option A — from OCI registry (recommended)**
-
-```bash
-helm install tokentimer oci://ghcr.io/tokentimerch/charts/tokentimer \
-  --namespace tokentimer --create-namespace \
-  --set config.adminEmail="admin@your-company.com" \
-  --set config.adminPassword="SecurePassword123!" \
-  --set config.sessionSecret="replace-with-long-random-value" \
-  --set postgresql.auth.password="your-db-password" \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host="tokentimer.your-domain.com"
-```
-
-**Option B — from local source**
-
-```bash
-cd deploy/helm
-
-helm install tokentimer . \
-  --namespace tokentimer --create-namespace \
-  --set config.adminEmail="admin@your-company.com" \
-  --set config.adminPassword="SecurePassword123!" \
-  --set config.sessionSecret="replace-with-long-random-value" \
-  --set postgresql.auth.password="your-db-password" \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host="tokentimer.your-domain.com"
-```
-
-**Option C — with a values file (recommended for production)**
-
-Use the chart defaults as a starting point:
-
-```bash
-# Copy and edit the values file
-cp deploy/helm/values.yaml my-values.yaml
-# See deploy/helm/values.yaml for all options
-# See docs/CONFIGURATION.md for the full env variable reference
-
-helm install tokentimer oci://ghcr.io/tokentimerch/charts/tokentimer \
-  --namespace tokentimer --create-namespace \
-  -f my-values.yaml
-```
-
-### 2. Wait for Pods
-
-```bash
-kubectl get pods -n tokentimer -w
-```
-
-### 3. Access Dashboard
-
-```bash
-# If using ingress
-open https://tokentimer.your-domain.com
-
-# Or port-forward
-kubectl port-forward svc/tokentimer-dashboard 3000:80 -n tokentimer
-open http://localhost:3000
-```
-
-## First Steps After Installation
-
-### 1. Login as Admin
-
-**Important**: TokenTimer creates the admin user automatically on first startup using the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you configured.
-
-1. Navigate to http://localhost:5173/login
-2. Login with:
-   - Email: Your `ADMIN_EMAIL`
-   - Password: Your `ADMIN_PASSWORD`
-3. You'll see your default admin workspace
-
-**Security**: After first login, remove `ADMIN_PASSWORD` from your `.env` file!
-
-### 2. Invite Team Members (Optional)
-
-1. Go to Workspace Settings → Members
-2. Click "Invite User"
-3. Enter email and select role (Admin, Manager, or Viewer)
-4. Share the invitation URL with the user
-5. They set their password and join automatically
-
-### 3. Add Your First Token
-
-1. Go to Dashboard
-2. Click "Add Token"
-3. Fill in:
-   - Name (e.g., "AWS Access Key")
-   - Type (e.g., "API Key")
-   - Expiration Date
-   - Category (optional)
-4. Click "Save"
-
-### 4. Configure Alerts
-
-1. Go to Workspace Settings
-2. Click "Alert Preferences"
-3. Configure:
-   - Alert thresholds (days before expiry: 30, 14, 7, 1, 0)
-   - Email notifications (enabled by default)
-   - Webhook URLs (optional)
-4. Add contacts to receive alerts
-5. Save settings
-
-### 5. Test Alerts
-
-The worker runner uses explicit cron schedules and will:
-
-- Scan tokens for upcoming expirations
-- Queue alerts based on thresholds
-- Send notifications via configured channels
-
-To test immediately, check the `alert_queue` table:
-
-```sql
-SELECT * FROM alert_queue ORDER BY created_at DESC LIMIT 10;
-```
-
-## Troubleshooting
-
-### API won't start
-
-**Check database connection:**
-
-```bash
-# Test PostgreSQL
-psql postgresql://tokentimer:password@localhost:5432/tokentimer
-
-# Check logs
-docker compose logs api
-```
-
-### Worker not sending alerts
-
-**Check worker logs:**
-
-```bash
-docker compose logs worker-discovery worker-delivery worker-weekly-digest worker-auto-sync worker-endpoint-check worker-certops
-```
-
-**Verify SMTP configuration:**
-
-```bash
-# SMTP check command is deployment-specific. Verify values first:
-docker compose exec api env | grep -E "SMTP_|FROM_EMAIL"
-```
-
-**Check alert queue:**
-
-```sql
-SELECT * FROM alert_queue WHERE status = 'pending' LIMIT 10;
-```
-
-### Dashboard shows errors
-
-**Check browser console** for JavaScript errors
-
-**Verify API connectivity:**
-
-```bash
-curl http://localhost:4000/health
-```
-
-### Login returns 401 on localhost in production mode
-
-If `NODE_ENV=production` and your local URLs are `http://localhost`, the API uses secure cookies for sessions and the browser may not send/persist them on local HTTP.
-
-Fix options:
-
-1. Put HTTPS in front of API and dashboard (reverse proxy with TLS).
-2. For local non-TLS testing only, switch to `NODE_ENV=development`.
-3. As a last resort for local troubleshooting only, set `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true`.
-
-## Configuration Reference
-
-### Minimum required variables (Docker Compose)
-
-```bash
-SESSION_SECRET=long-random-string        # required — long random value
-DB_PASSWORD=secure-db-password           # required
-ADMIN_EMAIL=admin@your-company.com       # required — bootstraps the admin account
-ADMIN_PASSWORD=secure-admin-password     # required on first start; remove afterwards
-APP_URL=http://localhost:5173
-API_URL=http://localhost:4000
-```
-
-For every available variable (SMTP, Slack, integrations, worker tuning, security overrides), see:
-
-- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — full environment variable reference
-- **[deploy/compose/.env.example](deploy/compose/.env.example)** — annotated Compose template
-- **[deploy/helm/values.yaml](deploy/helm/values.yaml)** — all Helm chart knobs
-
-## Health Checks
-
-### API Health
-
-```bash
-curl http://localhost:4000/health
-```
-
-Expected response:
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-03-19T12:00:00.000Z",
-  "uptime": 123.456,
-  "environment": "production"
-}
-```
-
-### Database Health
-
-```bash
-docker compose exec postgres pg_isready
-```
-
-## Backup and Restore
-
-### Backup Database
-
-```bash
-docker compose exec postgres pg_dump -U tokentimer tokentimer > backup.sql
-```
-
-### Restore Database
-
-```bash
-docker compose exec -T postgres psql -U tokentimer tokentimer < backup.sql
-```
-
-## Upgrading
-
-### Docker Compose
-
-Which commands you need depends on which of the two patterns from [Start All Services](#3-start-all-services) you deployed.
-
-Build from local source (the default: app services declare `build:` with no `image:`, so `docker compose pull` has nothing to fetch for them):
-
-```bash
-git pull
-docker compose up -d --build
-
-# Verify health
-curl http://localhost:4000/health
-```
-
-Prebuilt images (the `docker-compose.images.yml` override):
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.images.yml pull
-docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
-
-# Verify health
-curl http://localhost:4000/health
-```
-
-### Kubernetes
-
-```bash
-# Update to new version
-helm upgrade tokentimer ./deploy/helm -n tokentimer
-
-# Monitor rollout
-kubectl rollout status deployment/tokentimer-api -n tokentimer
-```
-
-## Uninstalling
-
-### Docker Compose
-
-```bash
-cd deploy/compose
-
-# Stop and remove containers (keeps data)
-docker compose down
-
-# Stop and remove everything including volumes
-docker compose down -v
-```
-
-### Kubernetes
-
-```bash
-helm uninstall tokentimer -n tokentimer
-```
-
-## Getting Help
-
-- **Configuration**: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- **Authentication**: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)
-- **Helm chart**: [deploy/helm/README.md](deploy/helm/README.md)
-- **Issues**: [GitHub Issues](https://github.com/tokentimerch/tokentimer-core/issues)
-- **Support**: support@tokentimer.ch
-
-## Next Steps
-
-After getting TokenTimer running:
-
-1. **Configure SMTP** for email alerts (via System Settings UI or env vars)
-2. **Add your tokens** (API keys, certificates, secrets)
-3. **Set up alert thresholds** for your workflow
-4. **Add team members** to workspaces
-5. **Integrate with CI/CD** via API
-
----
-
-**TokenTimer Core** - Never let a secret expire again.
+# TokenTimer Core — Quick start
+
+Install Core, sign in, and check one harmless asset reminder. Choose a deployment method; integrations and certificate automation can follow once the basic notification path works.
+
+## Choose an installation
+
+- [Docker Compose](docs/INSTALL_COMPOSE.md): released images on one host. Requires Git, Docker, and Docker Compose.
+- [Kubernetes with Helm](docs/INSTALL_HELM.md): a cluster with in-cluster or external PostgreSQL. Requires Kubernetes 1.29+ and Helm 3.14+.
+- [Local development](DEVELOPMENT.md): run from source to contribute or debug.
+
+## After sign-in
+
+Follow [First asset and alert check](docs/FIRST_ASSET.md): test SMTP, select recipients, create a sample expiring tomorrow, and confirm both delivery history and the inbox. A healthy API does not prove email delivery.
+
+An asset is metadata. Do not store the real API key, password, or certificate private key in its fields.
+
+## When you need more
+
+[Configuration basics](docs/CONFIGURATION_BASICS.md) · [Variable reference](docs/CONFIGURATION.md) · [Backup and restore](docs/BACKUP_RESTORE.md) · [Upgrade](docs/UPGRADE.md) · [Authentication and roles](docs/AUTHENTICATION.md)
+
+For certificate issuance and renewal, start with the [agent overview](docs/certops/agent.md).
+
+## Previous quickstart sections
+
+<a id="tokentimer-core---quick-start-guide"></a>
+<a id="prerequisites"></a>
+<a id="option-1-docker-compose-fastest"></a>
+<a id="1-clone-and-configure"></a>
+<a id="2-edit-env"></a>
+<a id="3-start-all-services"></a>
+<a id="4-access-the-dashboard"></a>
+<a id="5-check-status"></a>
+<a id="option-2-local-development"></a>
+<a id="1-install-dependencies"></a>
+<a id="2-configure-environment"></a>
+<a id="3-start-development-servers"></a>
+<a id="4-access-the-dashboard-1"></a>
+<a id="option-3-kubernetes-helm"></a>
+<a id="1-install-the-helm-chart"></a>
+<a id="2-wait-for-pods"></a>
+<a id="3-access-dashboard"></a>
+<a id="first-steps-after-installation"></a>
+<a id="1-login-as-admin"></a>
+<a id="2-invite-team-members-optional"></a>
+<a id="3-add-your-first-token"></a>
+<a id="4-configure-alerts"></a>
+<a id="5-test-alerts"></a>
+<a id="troubleshooting"></a>
+<a id="api-wont-start"></a>
+<a id="worker-not-sending-alerts"></a>
+<a id="dashboard-shows-errors"></a>
+<a id="login-returns-401-on-localhost-in-production-mode"></a>
+<a id="configuration-reference"></a>
+<a id="minimum-required-variables-docker-compose"></a>
+<a id="health-checks"></a>
+<a id="api-health"></a>
+<a id="database-health"></a>
+<a id="backup-and-restore"></a>
+<a id="backup-database"></a>
+<a id="restore-database"></a>
+<a id="upgrading"></a>
+<a id="docker-compose"></a>
+<a id="kubernetes"></a>
+<a id="uninstalling"></a>
+<a id="docker-compose-1"></a>
+<a id="kubernetes-1"></a>
+<a id="getting-help"></a>
+<a id="next-steps"></a>
+The complete installation sequence is now in [Compose](docs/INSTALL_COMPOSE.md) or [Helm](docs/INSTALL_HELM.md). Source development is in [DEVELOPMENT.md](DEVELOPMENT.md); first login and alert checks are in [First asset](docs/FIRST_ASSET.md); recovery and version changes are in [Backup](docs/BACKUP_RESTORE.md) and [Upgrade](docs/UPGRADE.md).

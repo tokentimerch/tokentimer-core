@@ -4,7 +4,7 @@ TokenTimer CertOps Agent: the outbound-only execution-plane process that holds
 private keys on the host, talks to the TokenTimer control plane, and deploys
 certificates.
 
-Package version tracks the TokenTimer Core release line (`0.11.0` with this PR).
+Package version tracks the TokenTimer Core release line; see `package.json` for the checkout version. Use the version of the tarball you downloaded when following the commands below. For a complete operator installation guide, see [Linux agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install) or [Windows agent installation](https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install-windows).
 
 ## Distribution model (H10)
 
@@ -27,10 +27,12 @@ pnpm --filter @tokentimer/agent pack:release
 Operators verify integrity before install:
 
 ```sh
-sha256sum -c tokentimer-agent-0.11.0.tgz.sha256
-tar -xzf tokentimer-agent-0.11.0.tgz
+VERSION=RELEASE_VERSION   # replace with the downloaded release version
+WORKSPACE_ID=YOUR_WORKSPACE_ID
+sha256sum -c "tokentimer-agent-$VERSION.tgz.sha256"
+tar -xzf "tokentimer-agent-$VERSION.tgz"
 cd package
-sudo ./scripts/install-agent.sh --api-url https://cp.example.com --workspace-id <id> \
+sudo ./scripts/install-agent.sh --api-url https://cp.example.com --workspace-id "$WORKSPACE_ID" \
   --write-path /etc/letsencrypt --reload-service nginx
 ```
 

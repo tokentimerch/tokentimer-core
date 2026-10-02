@@ -1,7 +1,7 @@
 # CertOps machine APIs (executor and cert-manager controller)
 
 Reference for external systems that report certificate lifecycle events and
-for the customer-side cert-manager controller. Neither surface is the future
+for the customer-side cert-manager controller. These machine transports are separate from the native
 agent protocol. See
 `docs/certops/CONTEXT.md` for domain language and ADR-0006 for where the
 executor jobs/evidence UI lives in the dashboard.
@@ -28,8 +28,8 @@ The same Settings tab holds the **Job approval** workspace setting
   manager immediately, or you will need to revoke it and create a new one.
 - Allowed scopes (`ALLOWED_SCOPES` in `apiTokens.js`), grant the minimum an
   executor needs:
-  - `certops:read` - read certificates and jobs.
-  - `certops:jobs:read` - poll job status.
+  - `certops:read` - reserved for a future read API.
+  - `certops:jobs:read` - reserved for a future read API.
   - `certops:events:write` - report job lifecycle events (section 2 below).
   - `certops:evidence:write` - attach evidence records (separate from
     `certops:events:write`; an events-only token cannot attach evidence,
@@ -194,7 +194,7 @@ Redaction and rejection are two different code paths, do not conflate them:
   blocks, PKCS#8/PKCS#1 headers, etc., detected by
   `containsPrivateKeyMaterial` in `apps/api/utils/secretMaterial.js`) is
   rejected outright with **HTTP 422** `PRIVATE_KEY_MATERIAL_REJECTED`,
-  before any other validation runs and before anything is persisted. This
+  after applicable authentication and before persistence. This
   applies to the whole request body, not just the `evidence`/`output`
   fields.
 - Separately, generic secret-shaped fields (tokens, passwords, API keys,
@@ -233,7 +233,7 @@ resetting per route.
 | 400 | `CERTOPS_EXECUTOR_EVENT_TYPE_INVALID` | Evidence-mode request (`/jobs/:jobId/evidence`) sent with an `eventType` other than `evidence.attached`. |
 | 404 | `CERTOPS_JOB_NOT_FOUND` | `jobId` does not reference a job TokenTimer already knows about. |
 | 409 | `CERTOPS_EXECUTOR_EVENT_CONFLICT` | Same `eventId` replayed with a different payload than the one first accepted. |
-| 422 | `PRIVATE_KEY_MATERIAL_REJECTED` | Payload matched a known private-key pattern; rejected before any other validation or persistence. |
+| 422 | `PRIVATE_KEY_MATERIAL_REJECTED` | Payload matched a known private-key pattern; rejected before persistence, after applicable authentication. |
 | 413 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB pre-redaction size cap. |
 | 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
 | 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
@@ -247,6 +247,8 @@ All error bodies use the flat envelope
 (tokens, key material, raw secrets) ever echoed back.
 
 ## 6. Minimal external executor example
+
+For a reporting demonstration, create an approved `noop` job from a human session in a workspace without native agents claiming that work. Native `renew` jobs require agent custody and a stored profile. Use one new reporting job per execution attempt; terminal jobs never reopen. The shell examples require Bash, curl, and `uuidgen`.
 
 A plain HTTP loop is enough to be a valid executor; there is no SDK
 requirement.
