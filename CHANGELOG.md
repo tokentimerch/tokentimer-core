@@ -24,6 +24,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Token and certificate details hide the Auto-sync section for manual or legacy inventory without auto-sync provenance, while retaining it for managed inventory, active configurations and association history.
 - Import errors appear immediately beneath integration connection forms. GitLab rejects invalid credentials, redirects and invalid instance responses before scanning inventory. Disabling one configuration keeps management navigation available for the remaining configurations.
 - **`GET /api/tokens` pages stay distinct when many tokens share `created_at`.** Offset 0 and 1 no longer return the same row. The list sort now ties on `id`.
 - **Certificate renewal failure webhooks use provider-specific payloads** (#275). Slack, Discord, Teams, and PagerDuty receive the certificate, job, and error context with provider-appropriate escaping.

@@ -48,7 +48,10 @@ export default function AutoSyncProvenance({ tokenId, ownership }) {
         ? 'Observed'
         : 'Manual or legacy'
     : ownership;
-  if (!ownershipLabel) return null;
+  const hasAutoSyncProvenance = data
+    ? data.managed || configurations.length > 0 || events.length > 0
+    : ownership === 'Managed' || ownership === 'Observed';
+  if (!hasAutoSyncProvenance) return null;
   const loadMore = async () => {
     setLoading(true);
     try {

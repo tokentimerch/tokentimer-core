@@ -6,6 +6,7 @@ import {
   fireEvent,
   waitFor,
   cleanup,
+  act,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 import AutoSyncProvenance from '../../src/components/AutoSyncProvenance.jsx';
@@ -17,6 +18,62 @@ describe('association provenance API contract', () => {
   beforeEach(() => {
     cleanup();
     get.mockReset();
+  });
+  it('hides manual inventory before and after loading empty provenance', async () => {
+    let resolve;
+    get.mockReturnValue(
+      new Promise(done => {
+        resolve = done;
+      })
+    );
+    render(
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={71} ownership='Manual or legacy' />
+      </ChakraProvider>
+    );
+    expect(screen.queryByRole('region', { name: 'Auto-sync' })).toBeNull();
+    await act(async () => {
+      resolve({ data: { managed: false, configurations: [], items: [] } });
+    });
+    expect(screen.queryByRole('region', { name: 'Auto-sync' })).toBeNull();
+  });
+  it.each([
+    ['Managed', { managed: true, configurations: [], items: [] }],
+    [
+      'Observed',
+      {
+        managed: false,
+        configurations: [{ config_id: 'config-a', name: 'Production' }],
+        items: [],
+      },
+    ],
+    [
+      'Manual or legacy',
+      {
+        managed: false,
+        configurations: [],
+        items: [
+          {
+            id: '1',
+            event: 'detached',
+            config_name: 'Deleted config',
+            reason: 'configuration_deleted',
+            occurred_at: '2026-10-01T00:00:00Z',
+          },
+        ],
+      },
+    ],
+  ])('retains %s inventory with auto-sync provenance', async (label, data) => {
+    get.mockResolvedValue({ data });
+    render(
+      <ChakraProvider>
+        <AutoSyncProvenance tokenId={71} />
+      </ChakraProvider>
+    );
+    expect(
+      await screen.findByRole('region', { name: 'Auto-sync' })
+    ).toBeTruthy();
+    expect(screen.getByText(label)).toBeTruthy();
   });
   it('loads and pages the registered token route, retaining earlier events', async () => {
     get.mockImplementation(url => {
