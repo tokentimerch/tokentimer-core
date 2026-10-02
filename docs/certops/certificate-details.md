@@ -9,7 +9,17 @@ integrations without creating separate certificate entries.
 This section answers **“Where has this certificate been seen?”** Each endpoint,
 file path, certificate-store slot, or service binding is a separate location.
 A stored copy does not establish service use. Failed checks, disconnected
-agents, deleted monitoring, and stale evidence mean **Unknown**, not removed.
+agents, deleted monitoring, and stale evidence mean uncertain presence, not removal.
+The table explains why: **Monitoring ended**, **Not checked recently**, or
+**Needs verification**. An **Observed** badge requires fresh presence evidence.
+
+Deleting and recreating an endpoint monitor does not create another location.
+The default view shows one row per endpoint URL, preferring its current monitor.
+**Show previous observations** reveals older monitor records; these are history,
+not extra current locations. Up to 20 locations and 20 previous observations per
+location are returned, with full counts. File paths on different hosts and
+separate service bindings remain distinct. Unknown visibility at a genuinely
+unmonitored location is still shown and still matters for decommissioning.
 Seeing a certificate does not by itself configure automatic renewal.
 
 ## Certificate management

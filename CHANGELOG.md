@@ -22,6 +22,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Group recreated endpoint monitors into one observed location before counting and pagination. Preserve previous observations behind an optional history switch and explain uncertain presence with Monitoring ended, Not checked recently, or Needs verification. Raw evidence and decommission safety remain intact.
+
 - Restore the accessible alert-history region and remove an unused certificate-modal import detected by clean CI.
 
 - Endpoint deletion and re-add join the existing certificate identity while preserving separate management periods. Rotation cannot transfer a retired certificate's lifecycle to its replacement. History and alerts remain scoped to the selected workspace and fingerprint.

@@ -270,36 +270,45 @@ async function listCertificateIdentities({
       sourceMap.set(sourceRow.identity_id, group);
     }
     const locations = await client.query(
-      `SELECT * FROM (
-         SELECT all_locations.*,
-                COUNT(*) OVER (PARTITION BY identity_id)::int AS total,
-                BOOL_OR(presence_state = 'unknown') OVER (PARTITION BY identity_id) AS visibility_unknown,
-                ROW_NUMBER() OVER (PARTITION BY identity_id
-                  ORDER BY captured_at DESC NULLS LAST, id) AS rn
-         FROM (
+      `WITH all_locations AS (
          SELECT identity.id AS identity_id, observed.id, observed.source,
                 observed.source_ref, observed.location_kind, observed.deployment_reference,
                 CASE WHEN (observed.source IN ('endpoint_monitor', 'domain_checker')
                              AND observed.domain_monitor_id IS NULL)
                            OR observed.captured_at IS NULL
+                           OR observed.captured_at > NOW()
                            OR observed.captured_at < NOW() - GREATEST(INTERVAL '15 minutes',
                              COALESCE(observed.scan_interval_seconds * INTERVAL '2 seconds',
                                INTERVAL '24 hours'))
                      THEN 'unknown' ELSE observed.presence_state END AS presence_state,
-                observed.evidence_kind, observed.captured_at
+                observed.evidence_kind, observed.captured_at,
+                observed.source IN ('endpoint_monitor', 'domain_checker')
+                  AND observed.domain_monitor_id IS NULL AS monitoring_ended,
+                observed.captured_at BETWEEN NOW() - GREATEST(INTERVAL '15 minutes',
+                  COALESCE(observed.scan_interval_seconds * INTERVAL '2 seconds', INTERVAL '24 hours'))
+                  AND NOW() AS fresh,
+                CASE WHEN observed.source IN ('endpoint_monitor', 'domain_checker')
+                  THEN 'endpoint:' || COALESCE(NULLIF(BTRIM(observed.deployment_reference), ''),
+                    monitor.url, NULLIF(observed.source_ref, ''), observed.id::text)
+                  ELSE observed.id::text END AS location_key
            FROM certops_certificate_identities identity
            JOIN certificate_instances observed
              ON observed.workspace_id = identity.workspace_id
             AND certops_normalize_fingerprint(observed.observed_fingerprint_sha256) = identity.fingerprint_sha256
+           LEFT JOIN domain_monitors monitor ON monitor.id = observed.domain_monitor_id
+             AND monitor.workspace_id = observed.workspace_id
           WHERE identity.id = ANY($1::uuid[]) AND identity.workspace_id = $2
             AND observed.source <> 'agent_filesystem'
          UNION ALL
          SELECT identity.id, observed.id, 'endpoint_monitor',
                 observed.source_ref, 'tls_endpoint', NULL,
                 CASE WHEN observed.domain_monitor_id IS NOT NULL
-                       AND observed.captured_at >= NOW() - INTERVAL '24 hours'
+                       AND observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW()
                      THEN 'confirmed_present' ELSE 'unknown' END,
-                'service_binding', observed.captured_at
+                'service_binding', observed.captured_at,
+                observed.domain_monitor_id IS NULL,
+                observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW(),
+                'endpoint:' || COALESCE(NULLIF(BTRIM(observed.source_ref), ''), observed.id::text)
            FROM certops_certificate_identities identity
            JOIN certops_unmanaged_observations observed
              ON observed.workspace_id = identity.workspace_id
@@ -308,18 +317,48 @@ async function listCertificateIdentities({
          UNION ALL
          SELECT identity.id, observed.id, observed.source,
                 observed.source_ref, observed.location_kind, observed.location_ref,
-                CASE WHEN observed.captured_at >= NOW() - INTERVAL '24 hours'
+                CASE WHEN observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW()
                      THEN 'confirmed_present' ELSE 'unknown' END,
                 CASE WHEN observed.location_kind IN ('iis_binding', 'http_sys')
                      THEN 'service_binding' ELSE 'stored_copy' END,
-                observed.captured_at
+                observed.captured_at, FALSE,
+                observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW(),
+                observed.id::text
            FROM certops_certificate_identities identity
            JOIN certops_slot_observations observed
              ON observed.workspace_id = identity.workspace_id
             AND observed.fingerprint_sha256 = identity.fingerprint_sha256
           WHERE identity.id = ANY($1::uuid[]) AND identity.workspace_id = $2
-         ) all_locations
-        ) ranked WHERE rn <= 20`,
+         ), reasoned AS (
+           SELECT all_locations.*,
+             CASE WHEN monitoring_ended THEN 'monitoring_ended'
+                  WHEN captured_at > NOW() THEN 'invalid_timestamp'
+                  WHEN captured_at IS NULL THEN 'never_observed'
+                  WHEN NOT fresh THEN 'stale'
+                  WHEN presence_state = 'unknown' THEN 'not_confirmed'
+                  ELSE NULL END AS observation_reason
+           FROM all_locations
+         ), location_observations AS (
+           SELECT reasoned.*,
+             ROW_NUMBER() OVER location_order AS location_rank,
+             COUNT(*) OVER (PARTITION BY identity_id, location_key)::int - 1 AS previous_count,
+             JSONB_AGG(JSONB_BUILD_OBJECT(
+               'id', id, 'source', source, 'presenceState', presence_state,
+               'capturedAt', captured_at, 'monitoringEnded', monitoring_ended,
+               'observationReason', observation_reason)) OVER (
+                 location_order ROWS BETWEEN 1 FOLLOWING AND 20 FOLLOWING
+               ) AS previous_observations
+           FROM reasoned
+           WINDOW location_order AS (PARTITION BY identity_id, location_key
+             ORDER BY monitoring_ended, captured_at DESC NULLS LAST, id)
+         ), ranked AS (
+           SELECT location_observations.*,
+             COUNT(*) OVER (PARTITION BY identity_id)::int AS total,
+             BOOL_OR(presence_state = 'unknown') OVER (PARTITION BY identity_id) AS visibility_unknown,
+             ROW_NUMBER() OVER (PARTITION BY identity_id
+               ORDER BY captured_at DESC NULLS LAST, id) AS rn
+           FROM location_observations WHERE location_rank = 1
+         ) SELECT * FROM ranked WHERE rn <= 20`,
       [ids, workspaceId],
     );
     const locationMap = new Map();
@@ -334,6 +373,10 @@ async function listCertificateIdentities({
         presenceState: location.presence_state,
         evidenceKind: location.evidence_kind,
         capturedAt: location.captured_at,
+        monitoringEnded: Boolean(location.monitoring_ended),
+        observationReason: location.observation_reason,
+        previousObservationCount: Number(location.previous_count || 0),
+        previousObservations: location.previous_observations || [],
       });
       locationMap.set(location.identity_id, group);
     }

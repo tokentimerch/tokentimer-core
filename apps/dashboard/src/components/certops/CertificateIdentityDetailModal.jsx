@@ -48,13 +48,33 @@ function SectionContent({ children }) {
 function LocationStatus({ location }) {
   const present = location.presenceState === 'confirmed_present';
   const absent = location.presenceState === 'confirmed_absent';
+  const ended = location.observationReason === 'monitoring_ended';
+  const unknownLabel = ended
+    ? 'Monitoring ended'
+    : location.observationReason === 'stale'
+      ? 'Not checked recently'
+      : 'Needs verification';
   return (
     <Badge
       textTransform='none'
       whiteSpace='normal'
-      colorScheme={present ? 'green' : absent ? 'gray' : 'orange'}
+      colorScheme={
+        location.historical || ended
+          ? 'gray'
+          : present
+            ? 'green'
+            : absent
+              ? 'gray'
+              : 'orange'
+      }
     >
-      {present ? 'Observed' : absent ? 'No longer observed' : 'Unknown'}
+      {location.historical
+        ? 'Previous observation'
+        : present
+          ? 'Observed'
+          : absent
+            ? 'No longer observed'
+            : unknownLabel}
     </Badge>
   );
 }
@@ -77,6 +97,7 @@ export default function CertificateIdentityDetailModal({
   const [profiles, setProfiles] = useState([]);
   const [profileIds, setProfileIds] = useState({});
   const [showHistory, setShowHistory] = useState(false);
+  const [showLocationHistory, setShowLocationHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -88,6 +109,7 @@ export default function CertificateIdentityDetailModal({
     setCertificateFields(null);
     setError('');
     setShowHistory(false);
+    setShowLocationHistory(false);
     setProfileIds({});
     if (certificate.identityId) {
       getCertificateIdentity(workspaceId, certificate.identityId)
@@ -281,6 +303,23 @@ export default function CertificateIdentityDetailModal({
     issuer: detail.issuer,
   };
 
+  const locations = detail.locations || [];
+  const previousObservationCount = locations.reduce(
+    (total, location) => total + (location.previousObservationCount || 0),
+    0
+  );
+  const visibleLocations = locations.flatMap(location => [
+    location,
+    ...(showLocationHistory
+      ? (location.previousObservations || []).map(previous => ({
+          ...location,
+          ...previous,
+          historical: true,
+          previousObservationCount: 0,
+          previousObservations: [],
+        }))
+      : []),
+  ]);
   const identityPanel = (
     <VStack align='stretch' spacing={6} mb={6}>
       <HStack spacing={2} flexWrap='wrap'>
@@ -299,7 +338,8 @@ export default function CertificateIdentityDetailModal({
       </HStack>
       {detail.visibilityUnknown ? (
         <Text fontSize='sm' color='orange.400'>
-          Visibility is unknown at one or more locations.
+          Current presence cannot be confirmed at every location. Check the
+          location status below.
         </Text>
       ) : null}
       {tokenError ? (
@@ -314,13 +354,30 @@ export default function CertificateIdentityDetailModal({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
-        description='Where this certificate has been seen: endpoints, service bindings, or stored copies. Being observed does not mean automatic renewal is configured.'
+        description='Where this certificate has been seen. Recreated endpoint monitors share one location; previous observations stay in history. Stored copies do not prove service use or configure automatic renewal.'
         icon={MapPin}
         enclosed
         mb={0}
       >
         <SectionContent>
-          {(detail.locations || []).length ? (
+          {previousObservationCount > 0 ? (
+            <FormControl display='flex' alignItems='center' mb={3}>
+              <Switch
+                id='certificate-location-history'
+                isChecked={showLocationHistory}
+                onChange={event => setShowLocationHistory(event.target.checked)}
+                mr={2}
+              />
+              <FormLabel
+                htmlFor='certificate-location-history'
+                mb={0}
+                fontSize='sm'
+              >
+                Show previous observations
+              </FormLabel>
+            </FormControl>
+          ) : null}
+          {visibleLocations.length ? (
             <TableContainer overflowX='auto' whiteSpace='normal'>
               <Table
                 aria-label='Observed locations'
@@ -347,12 +404,24 @@ export default function CertificateIdentityDetailModal({
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {detail.locations.map(location => (
-                    <Tr key={location.id}>
+                  {visibleLocations.map(location => (
+                    <Tr
+                      key={`${location.historical ? 'previous' : 'current'}-${location.id}`}
+                    >
                       <Td>
                         {location.deploymentReference ||
                           location.sourceRef ||
                           'Location'}
+                        {location.previousObservationCount > 0 ? (
+                          <Text
+                            fontSize='xs'
+                            color='dashboard.modal.muted'
+                            mt={1}
+                          >
+                            {location.previousObservationCount} previous
+                            observations
+                          </Text>
+                        ) : null}
                       </Td>
                       <Td>
                         <Text fontSize='sm'>
@@ -382,6 +451,15 @@ export default function CertificateIdentityDetailModal({
                       </Td>
                       <Td>
                         <LocationStatus location={location} />
+                        {location.historical && location.monitoringEnded ? (
+                          <Text
+                            fontSize='xs'
+                            color='dashboard.modal.muted'
+                            mt={1}
+                          >
+                            Monitoring ended
+                          </Text>
+                        ) : null}
                       </Td>
                     </Tr>
                   ))}
@@ -395,6 +473,17 @@ export default function CertificateIdentityDetailModal({
             <Text fontSize='xs' mt={2}>
               Showing {(detail.locations || []).length} of{' '}
               {detail.locationCount} locations.
+            </Text>
+          ) : null}
+          {showLocationHistory &&
+          locations.some(
+            location =>
+              (location.previousObservationCount || 0) >
+              (location.previousObservations || []).length
+          ) ? (
+            <Text fontSize='xs' color='dashboard.modal.muted' mt={2}>
+              Showing up to 20 previous observations per location. All records
+              remain in the audit history.
             </Text>
           ) : null}
         </SectionContent>

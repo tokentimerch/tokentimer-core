@@ -3589,7 +3589,7 @@ paths:
       tags: [CertOps]
       summary: Read a certificate identity and its locations and management history
       operationId: getCertOpsCertificateIdentity
-      description: Returns complete source-period history and up to 20 location observations with the full locationCount. Viewer responses redact sensitive references.
+      description: Returns complete source-period history and up to 20 distinct locations with the full locationCount. Recreated endpoint monitors share one URL location, preferring surviving monitors. Each location includes observationReason, monitoringEnded, previousObservationCount and up to 20 previousObservations without sensitive references. Viewer responses redact current deployment and source references.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path

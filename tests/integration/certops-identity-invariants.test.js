@@ -1426,6 +1426,88 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       }
     });
   }
+  it("groups recreated endpoint monitors before pagination without hiding genuine visibility gaps", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A);
+    const url = "https://shared.example.test:10443";
+    for (let n = 0; n < 25; n++) {
+      await observation(ws, mc, A, time(n), {
+        source: "endpoint_monitor",
+        locationRef: url,
+      });
+    }
+    const monitor = await endpoint(ws);
+    const current = await observation(ws, mc, A, time(30), {
+      source: "endpoint_monitor",
+      locationRef: url,
+      domainMonitorId: monitor.id,
+    });
+    const lost = await observation(ws, mc, A, time(31), {
+      source: "endpoint_monitor",
+      locationRef: "https://removed.example.test:10443",
+    });
+    await observation(ws, mc, A, time(32), { locationRef: "file:///same.pem" });
+    await observation(ws, mc, A, time(33), { locationRef: "file:///same.pem" });
+    const detail = (
+      await listCertificateIdentities({ workspaceId: ws, client: db })
+    ).items[0];
+    assert.equal(detail.locationCount, 4);
+    assert.equal(detail.locations.length, 4);
+    const endpointLocation = detail.locations.find((l) => l.id === current.id);
+    assert.equal(endpointLocation.presenceState, "confirmed_present");
+    assert.equal(endpointLocation.previousObservationCount, 25);
+    assert.equal(endpointLocation.previousObservations.length, 20);
+    assert(
+      endpointLocation.previousObservations.every((l) => l.monitoringEnded),
+    );
+    assert.equal(
+      detail.locations.find((l) => l.id === lost.id).observationReason,
+      "monitoring_ended",
+    );
+    assert.equal(detail.visibilityUnknown, true);
+    assert.equal(
+      (
+        await db.query(
+          "SELECT COUNT(*)::int n FROM certificate_instances WHERE workspace_id=$1",
+          [ws],
+        )
+      ).rows[0].n,
+      29,
+    );
+    await assert.rejects(
+      retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: detail.identityId,
+        expectedFingerprintSha256: A,
+        status: "decommissioned",
+        reason: "Not in use",
+        acknowledgeUncertainty: true,
+        client: db,
+      }),
+      { code: "CERTOPS_CERTIFICATE_STILL_SERVING" },
+    );
+  });
+  it("previous deleted monitors do not make a freshly observed endpoint uncertain", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      monitor = await endpoint(ws);
+    await observation(ws, mc, A, time(20), {
+      source: "endpoint_monitor",
+      locationRef: monitor.url,
+    });
+    await observation(ws, mc, A, time(10), {
+      source: "endpoint_monitor",
+      locationRef: monitor.url,
+      domainMonitorId: monitor.id,
+    });
+    const certificate = (
+      await listCertificateIdentities({ workspaceId: ws, client: db })
+    ).items[0];
+    assert.equal(certificate.locationCount, 1);
+    assert.equal(certificate.visibilityUnknown, false);
+    assert.equal(certificate.locations[0].monitoringEnded, false);
+    assert.equal(certificate.locations[0].presenceState, "confirmed_present");
+  });
   it("visibility is known when all 21 locations are fresh in list and detail", async () => {
     const ws = await workspace(),
       mc = await source(ws, A),

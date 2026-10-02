@@ -119,7 +119,7 @@ replacement operation to bypass retirement restrictions.
 
 Grouped list and detail responses return at most 20 locations, with a full
 `locationCount`. PostgreSQL computes `visibilityUnknown` over all matching
-locations using their effective presence and freshness rules before applying
+distinct locations using their effective presence and freshness rules before applying
 the display limit. No observations means unknown visibility; fresh confirmed
 absence is known visibility.
 
@@ -143,3 +143,12 @@ registrations appear by default; **Show ended periods** reveals earlier periods
 and associations. **Start managing again** opens a new period with explicitly
 selected renewal settings, never a second fingerprint entry. See
 [Certificate details](../certops/certificate-details.md).
+
+Repeated endpoint monitor records are grouped by their exact endpoint URL before
+location counts and pagination. Prefer a surviving monitor over ended monitors,
+then its latest captured evidence. Previous monitor records remain immutable;
+responses include their count and at most 20 historical summaries per location.
+Historical summaries contain no deployment paths or source references. Genuine
+current visibility gaps are retained; the lifecycle action continues checking
+all raw evidence independently of the display projection. Other observation
+slots are not merged merely because two hosts use the same file path.

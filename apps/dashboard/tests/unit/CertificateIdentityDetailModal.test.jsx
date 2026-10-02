@@ -172,7 +172,7 @@ it('shows one linked token together with all certificate sources and locations',
       within(locations)
         .getByText('https://shared.example.test:443')
         .closest('tr')
-    ).getByText('Unknown')
+    ).getByText('Needs verification')
   ).toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Certificate management' });
   expect(
@@ -363,4 +363,76 @@ it('keeps restart renewal choices independent for each registration', async () =
       automationEnabled: false,
     })
   );
+});
+
+it('keeps previous monitors out of current locations and explains visibility gaps', async () => {
+  const identity = {
+    identityId: 'identity-1',
+    locationCount: 3,
+    sources: [],
+    locations: [
+      {
+        id: 'current',
+        source: 'endpoint_monitor',
+        deploymentReference: 'https://shared:443',
+        presenceState: 'confirmed_present',
+        previousObservationCount: 2,
+        previousObservations: [
+          {
+            id: 'old-1',
+            monitoringEnded: true,
+            observationReason: 'monitoring_ended',
+            presenceState: 'unknown',
+          },
+          {
+            id: 'old-2',
+            monitoringEnded: true,
+            observationReason: 'monitoring_ended',
+            presenceState: 'unknown',
+          },
+        ],
+      },
+      {
+        id: 'ended',
+        deploymentReference: 'https://removed:443',
+        presenceState: 'unknown',
+        observationReason: 'monitoring_ended',
+      },
+      {
+        id: 'stale',
+        deploymentReference: 'file:///stale.pem',
+        presenceState: 'unknown',
+        observationReason: 'stale',
+      },
+    ],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  const table = await screen.findByRole('table', {
+    name: 'Observed locations',
+  });
+  expect(within(table).getAllByRole('row')).toHaveLength(4);
+  expect(within(table).getAllByText('https://shared:443')).toHaveLength(1);
+  expect(within(table).getByText('Monitoring ended')).toBeInTheDocument();
+  expect(within(table).getByText('Not checked recently')).toBeInTheDocument();
+  expect(
+    [...table.querySelectorAll('tbody tr')].map(
+      row => row.lastElementChild.textContent
+    )
+  ).not.toContain('Unknown');
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: 'Show previous observations' })
+  );
+  expect(within(table).getAllByRole('row')).toHaveLength(6);
+  expect(within(table).getAllByText('Previous observation')).toHaveLength(2);
+  expect(within(table).getAllByText('Observed')).toHaveLength(1);
 });
