@@ -52,7 +52,10 @@ async function gitlabRequest({
 
       // Build a user-friendly error message based on status code
       let userMessage;
-      if (status === 401) {
+      if (status >= 300 && status < 400) {
+        userMessage =
+          `GitLab API redirected the request (HTTP ${status}). Use the canonical HTTPS GitLab instance URL, including any installation path. Redirects are not followed when sending credentials.`;
+      } else if (status === 401) {
         userMessage =
           responseData?.message ||
           'Authentication failed. Token is invalid or expired. Generate a new Personal Access Token with "read_api" scope.';
@@ -80,7 +83,7 @@ async function gitlabRequest({
       }
 
       const err = new Error(userMessage);
-      err.status = status;
+      err.status = status >= 300 && status < 400 ? 502 : status;
       err.body = responseData;
 
       // Use debug level for expected permission errors (401/403/404), warn for unexpected errors
@@ -498,64 +501,35 @@ async function scanGitLab({
   const BATCH_SIZE = 10; // Concurrency limit for parallel API calls
   let currentUser = null;
 
+  // Establish a usable identity before scanning any inventory scope. A failed
+  // connection/auth check cannot be treated as a partial scan or a zero-item
+  // PAT result, even when filters would skip the current user's PATs.
   try {
-    // Get current user info (works on both cloud and self-hosted)
-    // Use short timeout (15s) for initial connection check - fail fast if unreachable
-    try {
-      currentUser = await gitlabRequest({
-        baseUrl: normalizedUrl,
-        token,
-        method: "GET",
-        path: "/api/v4/user",
-        timeout: 15000, // 15 second timeout for initial connection/auth check
-      });
-      logger.info("GitLab user authenticated", {
-        userId: currentUser?.id,
-        username: currentUser?.username,
-        isAdmin: currentUser?.is_admin || false,
-      });
-    } catch (e) {
-      logger.error("Failed to fetch GitLab user info", { error: e.message });
-
-      // If initial connection fails with a network error, fail immediately
-      // Don't waste time trying other scans if we can't even connect
-      const isNetworkError =
-        e.code === "ECONNABORTED" ||
-        e.code === "ETIMEDOUT" ||
-        e.code === "ECONNREFUSED" ||
-        e.code === "ENOTFOUND" ||
-        e.code === "ECONNRESET" ||
-        e.code === "EPIPE" ||
-        e.message?.includes("timeout") ||
-        e.message?.includes("Connection");
-
-      if (isNetworkError) {
-        // Throw immediately with the detailed error message
-        const err = new Error(e.message);
-        err.code = e.code;
-        throw err;
-      }
-
-      // For auth/404 errors on initial user check, fail immediately
-      // If the token is invalid or URL is wrong, all subsequent scans will fail anyway
-      const isAuthOrInvalidUrl =
-        e.status === 401 ||
-        e.status === 403 ||
-        e.status === 404 ||
-        e.message?.includes("Authentication failed") ||
-        e.message?.includes("Unauthorized") ||
-        e.message?.includes("Permission denied") ||
-        e.message?.includes("Forbidden") ||
-        e.message?.includes("Not a valid GitLab instance");
-
-      if (isAuthOrInvalidUrl) {
-        throw e;
-      }
-
-      // For other errors, add to summary and continue
-      summary.push({ type: "user", error: e.message });
+    currentUser = await gitlabRequest({
+      baseUrl: normalizedUrl,
+      token,
+      method: "GET",
+      path: "/api/v4/user",
+      timeout: 15000,
+    });
+    if (!Number.isInteger(currentUser?.id) || currentUser.id <= 0) {
+      const error = new Error(
+        "Not a valid GitLab API response. Check the instance URL, including any installation path, and use a Personal Access Token with read_api scope.",
+      );
+      error.status = 400;
+      throw error;
     }
+    logger.info("GitLab user authenticated", {
+      userId: currentUser.id,
+      username: currentUser.username,
+      isAdmin: currentUser.is_admin || false,
+    });
+  } catch (error) {
+    logger.error("Failed to fetch GitLab user info", { error: error.message });
+    throw error;
+  }
 
+  try {
     // NOTE: Personal Access Tokens scanning moved to after group/project tokens
     // to enable deduplication of bot user PATs
 

@@ -61,6 +61,78 @@ async function expectReject(promiseFactory, pattern) {
 }
 
 describe("GitLab integration helper coverage", () => {
+  it("fails the connection check on redirects instead of returning zero-item scope summaries", async () => {
+    const seen = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async (config) => {
+        seen.push(new URL(config.url).pathname);
+        const error = new Error("Request failed with status 301");
+        error.response = { status: 301, data: {} };
+        throw error;
+      },
+    });
+    await expectReject(
+      () =>
+        gitlab.scanGitLab({
+          baseUrl: "http://gitlab.example.test",
+          token: "fixture-token",
+          filters: {
+            includePATs: true,
+            includeProjectTokens: true,
+            includeGroupTokens: true,
+            includeDeployTokens: true,
+            includeSSHKeys: false,
+            excludeUserPATs: true,
+          },
+        }),
+      /redirect.*301|301.*redirect/i,
+    );
+    expect(seen).to.deep.equal(["/api/v4/user"]);
+  });
+
+  for (const status of [401, 403, 404, 429, 503]) {
+    it(`stops all scope scans when the initial identity check returns ${status}`, async () => {
+      const seen = [];
+      const gitlab = requireWithMocks(resolveGitlabModule(), {
+        axios: async (config) => {
+          seen.push(new URL(config.url).pathname);
+          const error = new Error(`HTTP ${status}`);
+          error.response = { status, data: {} };
+          throw error;
+        },
+      });
+      try {
+        await gitlab.scanGitLab({
+          baseUrl: "https://gitlab.example.test",
+          token: "fixture-token",
+        });
+        throw new Error("Expected identity failure");
+      } catch (error) {
+        expect(error.status).to.equal(status);
+      }
+      expect(seen).to.deep.equal(["/api/v4/user"]);
+    });
+  }
+
+  it("rejects a non-GitLab success page before requesting inventory", async () => {
+    const seen = [];
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: async (config) => {
+        seen.push(new URL(config.url).pathname);
+        return { data: "<html>sign in</html>" };
+      },
+    });
+    await expectReject(
+      () =>
+        gitlab.scanGitLab({
+          baseUrl: "https://wrong.example.test",
+          token: "fixture-token",
+        }),
+      /valid GitLab.*response/i,
+    );
+    expect(seen).to.deep.equal(["/api/v4/user"]);
+  });
+
   it("maps status and network errors in gitlabRequest", async () => {
     const axios401 = async () => {
       const err = new Error("unauthorized");
@@ -242,7 +314,9 @@ describe("GitLab integration helper coverage", () => {
         return { data: { id: 1, username: "alice", is_admin: false } };
       }
       if (pathname === "/api/v4/projects") {
-        return { data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }] };
+        return {
+          data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }],
+        };
       }
       if (pathname === "/api/v4/projects/10/access_tokens") {
         return {
@@ -318,9 +392,7 @@ describe("GitLab integration helper coverage", () => {
       "To be renewed and put back in tokentimer for auto-sync to work. Only requires read_api",
     );
     expect(projectToken).to.exist;
-    expect(projectToken.description).to.equal(
-      "real project token description",
-    );
+    expect(projectToken.description).to.equal("real project token description");
     expect(groupToken).to.exist;
     expect(groupToken.description).to.equal("real group token description");
   });
@@ -413,14 +485,13 @@ describe("GitLab integration helper coverage", () => {
   // instance B. scanGitLab must return a `host` reflecting which server was
   // actually scanned, independent of the numeric owner id.
   it("returns a distinct host per self-hosted GitLab instance even when owner ids collide", async () => {
-    const buildAxiosMock = () =>
-      async (config) => {
-        const { pathname } = new URL(config.url);
-        if (pathname === "/api/v4/user") {
-          return { data: { id: 99, username: "bot", is_admin: false } };
-        }
-        return { data: [], headers: {} };
-      };
+    const buildAxiosMock = () => async (config) => {
+      const { pathname } = new URL(config.url);
+      if (pathname === "/api/v4/user") {
+        return { data: { id: 99, username: "bot", is_admin: false } };
+      }
+      return { data: [], headers: {} };
+    };
 
     const gitlabA = requireWithMocks(resolveGitlabModule(), {
       axios: buildAxiosMock(),
@@ -477,7 +548,9 @@ describe("GitLab integration helper coverage", () => {
         return { data: { id: 1, username: "alice", is_admin: false } };
       }
       if (pathname === "/api/v4/projects") {
-        return { data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }] };
+        return {
+          data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }],
+        };
       }
       if (pathname === "/api/v4/projects/10/access_tokens") {
         return {
@@ -607,4 +680,3 @@ describe("GitLab integration helper coverage", () => {
     expect(result.host).to.equal("evil.com");
   });
 });
-

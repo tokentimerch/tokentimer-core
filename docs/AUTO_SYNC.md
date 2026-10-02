@@ -30,7 +30,7 @@ Detach, event insertion, association recheck and conditional managed-token delet
 
 `GET /api/v1/workspaces/:id/auto-sync/:configId/runs` returns run ID, trigger, generation, scan version, timestamps, status, settings snapshot and separate discovered/created/updated/detached/deleted/error counts. Pages use an opaque cursor over the unique generation, avoiding timestamp precision loss. `limit` is an integer from 1 to 100. Import tokens offers **Earlier runs**; Control Center opens the selected configuration by ID.
 
-Scan and credential-validation errors appear directly below each integration connection form, before scan filters and results. File import errors remain in the file import flow.
+Scan and credential-validation errors appear directly below each integration connection form, before scan filters and results. File import errors remain in the file import flow. GitLab must establish a valid user identity before scanning inventory; failed authentication, redirects, rate limits, server failures, and non-GitLab responses fail that connection check immediately. Redirect feedback asks for the canonical HTTPS instance URL; credentialed redirects remain disabled. Scope errors after successful authentication still follow the partial-scan rules.
 
 Token and certificate details group ownership and configuration names in a labeled Auto-sync section. Show history expands the association events; Earlier history loads another page from `GET /api/tokens/:id/auto-sync-provenance`. `next_before` is the event ID cursor. Deleted configurations remain identifiable in events, and retained inventory keeps its deletion explanation visible while history is collapsed. Reads use the normal token membership authorization, including viewer access.
 
