@@ -11,7 +11,7 @@ export default function AutoSyncProvenance({ tokenId }) {
     let cancelled = false;
     setData(null);
     apiClient
-      .get(`/api/v1/tokens/${tokenId}/auto-sync-provenance`)
+      .get(`/api/tokens/${tokenId}/auto-sync-provenance`)
       .then(res => {
         if (!cancelled) setData(res.data);
       })
@@ -26,7 +26,7 @@ export default function AutoSyncProvenance({ tokenId }) {
     setLoading(true);
     try {
       const res = await apiClient.get(
-        `/api/v1/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
+        `/api/tokens/${tokenId}/auto-sync-provenance?before=${data.next_before}`
       );
       if (current.current === tokenId)
         setData(previous => ({

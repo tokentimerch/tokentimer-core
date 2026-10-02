@@ -1,6 +1,12 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import {
+  render,
+  waitFor,
+  screen,
+  fireEvent,
+  cleanup,
+} from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
@@ -148,6 +154,7 @@ function renderModal(openRequest) {
 
 describe('ImportTokensModal restored scan params provider scoping', () => {
   beforeEach(() => {
+    cleanup();
     vi.clearAllMocks();
     gitlabFormProps.length = 0;
     githubFormProps.length = 0;
@@ -244,5 +251,75 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       expect(gitlabFormProps.some(sp => sp?.baseUrl === secondUrl)).toBe(true);
     });
     expect(gitlabFormProps.some(sp => sp?.baseUrl === firstUrl)).toBe(false);
+  });
+
+  it('hides the previous configuration history while another configuration loads', async () => {
+    let finishSecond;
+    const secondHistory = new Promise(resolve => {
+      finishSecond = resolve;
+    });
+    apiGetMock.mockImplementation(url => {
+      if (String(url).includes('/as-gitlab-1/runs'))
+        return Promise.resolve({
+          data: {
+            items: [
+              {
+                run_id: 'run-1',
+                status: 'first-history',
+                started_at: '2026-10-01',
+                discovered_count: 1,
+              },
+            ],
+            next_cursor: 'old-cursor',
+          },
+        });
+      if (String(url).includes('/as-gitlab-2/runs')) return secondHistory;
+      if (String(url).endsWith('/auto-sync'))
+        return Promise.resolve({
+          data: {
+            items: [
+              {
+                id: 'as-gitlab-1',
+                provider: 'gitlab',
+                name: 'First',
+                scan_params: {},
+              },
+              {
+                id: 'as-gitlab-2',
+                provider: 'gitlab',
+                name: 'Second',
+                scan_params: {},
+              },
+            ],
+          },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    render(
+      renderModal({
+        provider: 'gitlab',
+        integrationSubTab: 'manage',
+        autoSyncConfigId: 'as-gitlab-1',
+      })
+    );
+    expect(await screen.findByText(/first-history/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Configuration' }), {
+      target: { value: 'as-gitlab-2' },
+    });
+    expect(await screen.findByText('Loading run history…')).toBeTruthy();
+    expect(screen.queryByText(/first-history/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Earlier runs' })).toBeNull();
+    finishSecond({
+      data: {
+        items: [
+          {
+            run_id: 'run-2',
+            status: 'second-history',
+            started_at: '2026-10-02',
+          },
+        ],
+      },
+    });
+    expect(await screen.findByText(/second-history/)).toBeTruthy();
   });
 });

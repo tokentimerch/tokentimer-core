@@ -1071,6 +1071,10 @@ export default function ImportTokensModal({
   const [autoSyncConfigs, setAutoSyncConfigs] = React.useState([]);
   const [autoSyncName, setAutoSyncName] = React.useState('');
   const [autoSyncRuns, setAutoSyncRuns] = React.useState([]);
+  const [autoSyncRunsFor, setAutoSyncRunsFor] = React.useState(null);
+  const autoSyncHistoryKey = `${workspaceId}/${autoSyncConfig?.id}`;
+  const visibleAutoSyncRuns =
+    autoSyncRunsFor === autoSyncHistoryKey ? autoSyncRuns : [];
   const [autoSyncRunsCursor, setAutoSyncRunsCursor] = React.useState(null);
   const [loadingAutoSyncRuns, setLoadingAutoSyncRuns] = React.useState(false);
   const autoSyncHistoryConfigRef = React.useRef(null);
@@ -1279,23 +1283,34 @@ export default function ImportTokensModal({
       return undefined;
     }
     let cancelled = false;
+    setAutoSyncRunsFor(null);
+    setAutoSyncRunsCursor(null);
     apiClient
       .get(
         `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/runs?limit=10`
       )
       .then(res => {
         if (!cancelled) {
+          setAutoSyncRunsFor(autoSyncHistoryKey);
           setAutoSyncRuns(res.data?.items || []);
           setAutoSyncRunsCursor(res.data?.next_cursor || null);
         }
       })
       .catch(() => {
-        if (!cancelled) setAutoSyncRuns([]);
+        if (!cancelled) {
+          setAutoSyncRunsFor(autoSyncHistoryKey);
+          setAutoSyncRuns([]);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, autoSyncConfig?.id, autoSyncConfig?.last_sync_at]);
+  }, [
+    workspaceId,
+    autoSyncConfig?.id,
+    autoSyncConfig?.last_sync_at,
+    autoSyncHistoryKey,
+  ]);
 
   const loadEarlierAutoSyncRuns = async () => {
     if (!autoSyncRunsCursor || !autoSyncConfig?.id) return;
@@ -2749,12 +2764,16 @@ export default function ImportTokensModal({
                       <Text fontSize='sm' fontWeight='semibold' mb={2}>
                         Recent runs
                       </Text>
-                      {autoSyncRuns.length === 0 ? (
+                      {autoSyncRunsFor !== autoSyncHistoryKey ? (
+                        <Text fontSize='sm' color={muted}>
+                          Loading run history…
+                        </Text>
+                      ) : visibleAutoSyncRuns.length === 0 ? (
                         <Text fontSize='sm' color={muted}>
                           No runs yet
                         </Text>
                       ) : (
-                        autoSyncRuns.map(run => (
+                        visibleAutoSyncRuns.map(run => (
                           <Text key={run.run_id} fontSize='xs'>
                             {new Date(run.started_at).toLocaleString()} ·{' '}
                             {run.trigger} · {run.status}
@@ -2766,7 +2785,8 @@ export default function ImportTokensModal({
                           </Text>
                         ))
                       )}
-                      {autoSyncRunsCursor ? (
+                      {autoSyncRunsFor === autoSyncHistoryKey &&
+                      autoSyncRunsCursor ? (
                         <Button
                           size='xs'
                           mt={2}
