@@ -11,11 +11,13 @@ import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
 
-const { apiGetMock, gitlabFormProps, githubFormProps } = vi.hoisted(() => ({
-  apiGetMock: vi.fn(),
-  gitlabFormProps: [],
-  githubFormProps: [],
-}));
+const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps } =
+  vi.hoisted(() => ({
+    apiGetMock: vi.fn(),
+    apiDeleteMock: vi.fn(),
+    gitlabFormProps: [],
+    githubFormProps: [],
+  }));
 
 vi.mock('../../src/utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), log: vi.fn() },
@@ -35,7 +37,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     get: apiGetMock,
     post: vi.fn().mockResolvedValue({ data: {} }),
     put: vi.fn().mockResolvedValue({ data: {} }),
-    delete: vi.fn().mockResolvedValue({ data: {} }),
+    delete: apiDeleteMock,
   },
   tokenAPI: { createToken: vi.fn() },
   workspaceAPI: {
@@ -164,6 +166,7 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
+    apiDeleteMock.mockReset().mockResolvedValue({ data: {} });
     gitlabFormProps.length = 0;
     githubFormProps.length = 0;
     // Only GitLab has an auto-sync config with saved scan params.
@@ -188,6 +191,115 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       return Promise.resolve({ data: {} });
     });
   });
+
+  it.each([true, false])(
+    'refreshes provider configuration selection after disabling (remaining: %s)',
+    async hasRemaining => {
+      const removed = {
+        id: 'as-gitlab-1',
+        provider: 'gitlab',
+        name: 'Removed configuration',
+        scan_params: { baseUrl: GITLAB_SELF_HOSTED },
+      };
+      const remaining = {
+        id: 'as-gitlab-2',
+        provider: 'gitlab',
+        name: 'Remaining configuration',
+        scan_params: { baseUrl: 'https://gitlab.remaining.example' },
+      };
+      let configs = [
+        removed,
+        ...(hasRemaining ? [remaining] : []),
+        {
+          id: 'as-github-1',
+          provider: 'github',
+          name: 'Other provider',
+          scan_params: {},
+        },
+      ];
+      apiGetMock.mockImplementation(url =>
+        Promise.resolve({
+          data: { items: String(url).endsWith('/auto-sync') ? configs : [] },
+        })
+      );
+      apiDeleteMock.mockImplementation(() => {
+        configs = configs.filter(config => config.id !== removed.id);
+        return Promise.resolve({ data: {} });
+      });
+      render(
+        renderModal({
+          provider: 'gitlab',
+          integrationSubTab: 'manage',
+          autoSyncConfigId: removed.id,
+        })
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole('combobox', { name: 'Configuration' })
+        ).toHaveValue(removed.id)
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Disable auto-sync', exact: true })
+      );
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Disable Auto-Sync',
+          exact: true,
+        })
+      );
+      await waitFor(() =>
+        expect(apiDeleteMock).toHaveBeenCalledWith(
+          '/api/v1/workspaces/ws-1/auto-sync/as-gitlab-1'
+        )
+      );
+      if (hasRemaining) {
+        await waitFor(() =>
+          expect(gitlabFormProps.at(-1)?.baseUrl).toBe(
+            remaining.scan_params.baseUrl
+          )
+        );
+        expect(
+          screen.getByRole('button', { name: 'Scan & Import', exact: true })
+        ).toBeVisible();
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Manage auto-sync', exact: true })
+        );
+        expect(
+          screen.getByRole('combobox', { name: 'Configuration' })
+        ).toHaveValue(remaining.id);
+        expect(
+          screen.queryByRole('option', { name: removed.name })
+        ).not.toBeInTheDocument();
+        // The removed deep-link selection must not return when reopening this provider.
+        fireEvent.click(
+          screen.getByRole('button', { name: 'GitHub', exact: true })
+        );
+        await screen.findByText('github-form');
+        fireEvent.click(
+          screen.getByRole('button', { name: 'GitLab', exact: true })
+        );
+        await waitFor(() =>
+          expect(gitlabFormProps.at(-1)?.baseUrl).toBe(
+            remaining.scan_params.baseUrl
+          )
+        );
+        expect(
+          screen.getByRole('button', { name: 'Manage auto-sync', exact: true })
+        ).toBeVisible();
+      } else {
+        await waitFor(() => expect(gitlabFormProps.at(-1)).toBeNull());
+        expect(
+          screen.queryByRole('button', {
+            name: 'Manage auto-sync',
+            exact: true,
+          })
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: 'Enable auto-sync', exact: true })
+        ).toBeVisible();
+      }
+    }
+  );
 
   it('clears a previous provider error when switching integrations', async () => {
     render(renderModal({ provider: 'gitlab' }));

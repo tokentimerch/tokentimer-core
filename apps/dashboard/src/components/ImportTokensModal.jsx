@@ -1731,7 +1731,18 @@ export default function ImportTokensModal({
       await apiClient.delete(
         `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}`
       );
-      setAutoSyncConfig(false);
+      const remainingConfigs = autoSyncConfigs.filter(
+        config => config.id !== autoSyncConfig.id
+      );
+      const nextConfig = remainingConfigs[0] || null;
+      setAutoSyncConfigs(remainingConfigs);
+      setAutoSyncConfig(nextConfig || false);
+      setAutoSyncName(nextConfig?.name || source);
+      // Refetch and restore the remaining selection instead of requesting the deleted ID.
+      setRequestedAutoSyncConfig({
+        provider: source,
+        id: nextConfig?.id || null,
+      });
       setIntegrationSubTab('scan');
       setPendingManageTab(false);
       showSuccess(`Auto-sync disabled for ${source}`);
