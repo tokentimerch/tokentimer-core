@@ -91,6 +91,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     workspaceId,
     onImportComplete,
     onError,
+    errorContent,
     onScanSuccess,
     borderColor,
     helpTextColor,
@@ -406,6 +407,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           </Button>
         ) : null}
       </HStack>
+      {errorContent}
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <Text fontSize='sm' fontWeight='medium' mb={3}>
           {autoSyncManageMode ? 'Sync filters' : 'Scan Filters'}

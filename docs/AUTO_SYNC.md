@@ -30,6 +30,8 @@ Detach, event insertion, association recheck and conditional managed-token delet
 
 `GET /api/v1/workspaces/:id/auto-sync/:configId/runs` returns run ID, trigger, generation, scan version, timestamps, status, settings snapshot and separate discovered/created/updated/detached/deleted/error counts. Pages use an opaque cursor over the unique generation, avoiding timestamp precision loss. `limit` is an integer from 1 to 100. Import tokens offers **Earlier runs**; Control Center opens the selected configuration by ID.
 
+Scan and credential-validation errors appear directly below each integration connection form, before scan filters and results. File import errors remain in the file import flow.
+
 Token and certificate details group ownership and configuration names in a labeled Auto-sync section. Show history expands the association events; Earlier history loads another page from `GET /api/tokens/:id/auto-sync-provenance`. `next_before` is the event ID cursor. Deleted configurations remain identifiable in events, and retained inventory keeps its deletion explanation visible while history is collapsed. Reads use the normal token membership authorization, including viewer access.
 
 Provider error bodies, raw exception messages and import item names are not persisted as public auto-sync errors. Controlled categories retain HTTP status, timeouts or import/completeness outcomes; credential-like JSON, header values and multiline secrets cannot enter run history, audit or incident notifications through these messages. Credentials never enter settings snapshots; the allowlist contains scope/filter metadata and sanitized source instance/account identity.

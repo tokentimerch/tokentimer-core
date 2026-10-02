@@ -2345,6 +2345,156 @@ export default function ImportTokensModal({
     })();
   }, [isOpen]);
 
+  const renderErrorAlert = () =>
+    error ? (
+      <Alert status='error' minW={0} maxW='100%' alignItems='flex-start'>
+        <AlertIcon flexShrink={0} />
+        <VStack align='start' spacing={3} w='full' minW={0} maxW='100%'>
+          {(() => {
+            const parsed = parseErrorMessage(error);
+            const errorTextColor = isLight ? 'red.800' : 'red.200';
+            const helperTextColor = isLight ? 'gray.700' : 'gray.300';
+
+            if (!parsed)
+              return (
+                <Text
+                  fontSize='sm'
+                  color={errorTextColor}
+                  whiteSpace='normal'
+                  overflowWrap='anywhere'
+                  wordBreak='break-word'
+                >
+                  {error}
+                </Text>
+              );
+
+            // For multi-line errors (with bullet points), show full message with formatting
+            const isMultiLine = parsed.fullMessage.includes('\n');
+
+            return (
+              <>
+                {!isMultiLine && (
+                  <Text
+                    fontSize='sm'
+                    fontWeight='semibold'
+                    color={errorTextColor}
+                    whiteSpace='normal'
+                    overflowWrap='anywhere'
+                    wordBreak='break-word'
+                  >
+                    {parsed.shortMessage}
+                  </Text>
+                )}
+                {parsed.commands && parsed.commands.length > 0 && (
+                  <Box w='full'>
+                    <Text fontSize='xs' mb={2} color={helperTextColor}>
+                      Run these commands to fix:
+                    </Text>
+                    <VStack align='stretch' spacing={2}>
+                      {parsed.commands.map((cmd, idx) => (
+                        <CopyableCodeBlock key={idx} code={cmd} />
+                      ))}
+                    </VStack>
+                  </Box>
+                )}
+                {isMultiLine ? (
+                  <Text
+                    fontSize='sm'
+                    color={errorTextColor}
+                    whiteSpace='pre-wrap'
+                    overflowWrap='anywhere'
+                    wordBreak='break-word'
+                  >
+                    {parsed.fullMessage}
+                  </Text>
+                ) : (
+                  parsed.fullMessage !== parsed.shortMessage &&
+                  !parsed.commands && (
+                    <Text fontSize='xs' color={helperTextColor}>
+                      {parsed.fullMessage}
+                    </Text>
+                  )
+                )}
+              </>
+            );
+          })()}
+          {failedRows && failedRows.length > 0 ? (
+            <Box maxH='120px' overflowY='auto' w='full'>
+              <Table size='xs' variant='simple'>
+                <Thead>
+                  <Tr>
+                    <Th>Row</Th>
+                    <Th>Error</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {failedRows.slice(0, 10).map(fr => (
+                    <Tr key={fr.index}>
+                      <Td>{fr.index + 2}</Td>
+                      <Td>{fr.error}</Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </Table>
+              <HStack justify='space-between' mt={1}>
+                {failedRows.length > 10 ? (
+                  <Text fontSize='xs' color={muted}>
+                    Showing first 10 of {failedRows.length} errors.
+                  </Text>
+                ) : (
+                  <span />
+                )}
+                <Button
+                  size='xs'
+                  onClick={() => {
+                    try {
+                      const rows = [
+                        ['row', 'error'],
+                        ...failedRows.map(fr => [
+                          String(fr.index + 2),
+                          String(fr.error),
+                        ]),
+                      ];
+                      const csv = rows
+                        .map(r =>
+                          r
+                            .map(v => `"${String(v).replace(/"/g, '""')}"`)
+                            .join(',')
+                        )
+                        .join('\n');
+                      const blob = new Blob([csv], {
+                        type: 'text/csv;charset=utf-8;',
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'import-errors.csv';
+                      a.click();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (_) {}
+                  }}
+                >
+                  Download CSV
+                </Button>
+              </HStack>
+            </Box>
+          ) : null}
+          <Text fontSize='xs'>
+            Need help? See{' '}
+            <ChakraLink
+              href={IMPORT_DOCS.integrations}
+              textDecoration='underline'
+              color='blue.500'
+              isExternal
+            >
+              import docs
+            </ChakraLink>
+            .
+          </Text>
+        </VStack>
+      </Alert>
+    ) : null;
+
   return (
     <>
       <Modal
@@ -2944,6 +3094,7 @@ export default function ImportTokensModal({
 
               {source === 'vault' && !autoSyncManageMode ? (
                 <ImportVaultForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={vaultFormRef}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
@@ -2972,6 +3123,7 @@ export default function ImportTokensModal({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
@@ -3016,6 +3168,7 @@ export default function ImportTokensModal({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
@@ -3060,6 +3213,7 @@ export default function ImportTokensModal({
 
               {source === 'aws' && !autoSyncManageMode ? (
                 <ImportAWSForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
                   workspaceId={workspaceId}
@@ -3089,6 +3243,7 @@ export default function ImportTokensModal({
 
               {source === 'azure' ? (
                 <ImportAzureForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={azureFormRef}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
@@ -3119,6 +3274,7 @@ export default function ImportTokensModal({
 
               {source === 'gcp' && !autoSyncManageMode ? (
                 <ImportGCPForm
+                  errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gcpFormRef}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
@@ -3236,6 +3392,7 @@ export default function ImportTokensModal({
                       </Button>
                     ) : null}
                   </HStack>
+                  {!autoSyncManageMode ? renderErrorAlert() : null}
                   <Box
                     border='1px solid'
                     borderColor={border}
@@ -3359,175 +3516,18 @@ export default function ImportTokensModal({
                 </HStack>
               ) : null}
 
-              {error ? (
-                <Alert
-                  status='error'
-                  minW={0}
-                  maxW='100%'
-                  alignItems='flex-start'
-                >
-                  <AlertIcon flexShrink={0} />
-                  <VStack
-                    align='start'
-                    spacing={3}
-                    w='full'
-                    minW={0}
-                    maxW='100%'
-                  >
-                    {(() => {
-                      const parsed = parseErrorMessage(error);
-                      const errorTextColor = isLight ? 'red.800' : 'red.200';
-                      const helperTextColor = isLight ? 'gray.700' : 'gray.300';
-
-                      if (!parsed)
-                        return (
-                          <Text
-                            fontSize='sm'
-                            color={errorTextColor}
-                            whiteSpace='normal'
-                            overflowWrap='anywhere'
-                            wordBreak='break-word'
-                          >
-                            {error}
-                          </Text>
-                        );
-
-                      // For multi-line errors (with bullet points), show full message with formatting
-                      const isMultiLine = parsed.fullMessage.includes('\n');
-
-                      return (
-                        <>
-                          {!isMultiLine && (
-                            <Text
-                              fontSize='sm'
-                              fontWeight='semibold'
-                              color={errorTextColor}
-                              whiteSpace='normal'
-                              overflowWrap='anywhere'
-                              wordBreak='break-word'
-                            >
-                              {parsed.shortMessage}
-                            </Text>
-                          )}
-                          {parsed.commands && parsed.commands.length > 0 && (
-                            <Box w='full'>
-                              <Text
-                                fontSize='xs'
-                                mb={2}
-                                color={helperTextColor}
-                              >
-                                Run these commands to fix:
-                              </Text>
-                              <VStack align='stretch' spacing={2}>
-                                {parsed.commands.map((cmd, idx) => (
-                                  <CopyableCodeBlock key={idx} code={cmd} />
-                                ))}
-                              </VStack>
-                            </Box>
-                          )}
-                          {isMultiLine ? (
-                            <Text
-                              fontSize='sm'
-                              color={errorTextColor}
-                              whiteSpace='pre-wrap'
-                              overflowWrap='anywhere'
-                              wordBreak='break-word'
-                            >
-                              {parsed.fullMessage}
-                            </Text>
-                          ) : (
-                            parsed.fullMessage !== parsed.shortMessage &&
-                            !parsed.commands && (
-                              <Text fontSize='xs' color={helperTextColor}>
-                                {parsed.fullMessage}
-                              </Text>
-                            )
-                          )}
-                        </>
-                      );
-                    })()}
-                    {failedRows && failedRows.length > 0 ? (
-                      <Box maxH='120px' overflowY='auto' w='full'>
-                        <Table size='xs' variant='simple'>
-                          <Thead>
-                            <Tr>
-                              <Th>Row</Th>
-                              <Th>Error</Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {failedRows.slice(0, 10).map(fr => (
-                              <Tr key={fr.index}>
-                                <Td>{fr.index + 2}</Td>
-                                <Td>{fr.error}</Td>
-                              </Tr>
-                            ))}
-                          </Tbody>
-                        </Table>
-                        <HStack justify='space-between' mt={1}>
-                          {failedRows.length > 10 ? (
-                            <Text fontSize='xs' color={muted}>
-                              Showing first 10 of {failedRows.length} errors.
-                            </Text>
-                          ) : (
-                            <span />
-                          )}
-                          <Button
-                            size='xs'
-                            onClick={() => {
-                              try {
-                                const rows = [
-                                  ['row', 'error'],
-                                  ...failedRows.map(fr => [
-                                    String(fr.index + 2),
-                                    String(fr.error),
-                                  ]),
-                                ];
-                                const csv = rows
-                                  .map(r =>
-                                    r
-                                      .map(
-                                        v =>
-                                          `"${String(v).replace(/"/g, '""')}"`
-                                      )
-                                      .join(',')
-                                  )
-                                  .join('\n');
-                                const blob = new Blob([csv], {
-                                  type: 'text/csv;charset=utf-8;',
-                                });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = 'import-errors.csv';
-                                a.click();
-                                setTimeout(
-                                  () => URL.revokeObjectURL(url),
-                                  1000
-                                );
-                              } catch (_) {}
-                            }}
-                          >
-                            Download CSV
-                          </Button>
-                        </HStack>
-                      </Box>
-                    ) : null}
-                    <Text fontSize='xs'>
-                      Need help? See{' '}
-                      <ChakraLink
-                        href={IMPORT_DOCS.integrations}
-                        textDecoration='underline'
-                        color='blue.500'
-                        isExternal
-                      >
-                        import docs
-                      </ChakraLink>
-                      .
-                    </Text>
-                  </VStack>
-                </Alert>
-              ) : null}
+              {autoSyncManageMode ||
+              ![
+                'vault',
+                'gitlab',
+                'github',
+                'aws',
+                'azure',
+                'gcp',
+                'azure-ad',
+              ].includes(source)
+                ? renderErrorAlert()
+                : null}
 
               {source === 'file' && rows.length > 0 ? (
                 <Box>

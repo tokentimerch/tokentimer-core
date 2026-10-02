@@ -125,6 +125,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
     workspaceId,
     onImportComplete,
     onError,
+    errorContent,
     onScanSuccess,
     borderColor,
     helpTextColor,
@@ -631,6 +632,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
             Scan
           </Button>
         </HStack>
+        {errorContent}
 
         <Box>
           <Text fontSize='sm' mb={1}>

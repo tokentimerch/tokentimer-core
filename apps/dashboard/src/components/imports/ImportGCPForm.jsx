@@ -93,6 +93,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
     workspaceId,
     onImportComplete,
     onError,
+    errorContent,
     onScanSuccess,
     borderColor,
     helpTextColor,
@@ -318,6 +319,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
           Scan
         </Button>
       </HStack>
+      {errorContent}
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <VStack align='stretch' spacing={2}>
           <Checkbox
