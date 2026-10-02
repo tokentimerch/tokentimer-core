@@ -1,7 +1,7 @@
 # Certificate identity hardening review
 
-Base: PR #283, `3402b282720196418c7bb37d5464456cf48ef65b`.
-Work branch: `codex/certops-identity-invariants-hardening`.
+Source review base: `3402b282720196418c7bb37d5464456cf48ef65b`.
+Integrated into Core PR #284, `feat/certops-fingerprint-identity`.
 
 ## Pre-implementation findings
 
@@ -56,10 +56,11 @@ returned start time comes from the new period rather than source creation.
 
 The repository records migration version/name pairs and skips applied versions.
 Its runner explicitly supports historic shipped migration sequences, and its DDL
-guard requires transactional, additive changes. PR #283 is open and no local tag
-contains its HEAD, but that does not prove nobody has applied its migration.
-Therefore this branch preserves v62 byte-for-byte and appends v63. Both a fresh
-pre-v62 upgrade and an already-v62 upgrade were tested. Ambiguous historic
+guard requires transactional, additive changes. On the original review base, the
+identity schema was v62 and the hardening schema was appended as v63. During the
+rebase onto `main`, auto-sync became v61, identity remained v62, and hardening
+remained v63. The identity migration body was retained. Both a fresh pre-v62
+upgrade and an already-v62 upgrade were tested. Ambiguous historic
 associations and lifecycle remain reported rather than guessed.
 
 The runner's v62 compatibility view resolves the qualified existing audit
@@ -147,10 +148,20 @@ external callback fixture. Tests use isolated ports/databases; pre-existing
 Docker test stacks and the user's `audit-*` files are preserved. The repository's
 backend coverage collector, which manages the standard Compose stack, was not
 run; complete unit/core tests and frontend coverage were run independently.
-Latest `main` CI run 36623701106 failed on an endpoint-worker missing-module
-import before scanning. PR #283 already carries those dependencies; this branch's
-built worker passes all entrypoints. No GitHub workflow, PR or deployment was
-created or changed by this task.
+These results were recorded on the source hardening branch before integration
+into PR #284. They are historical validation evidence, not a claim that each
+check was rerun after the rebase.
+
+### Rebase and manual validation, 2026-10-02
+
+Rebased the identity and hardening commits onto current `main`, retaining the
+v61 auto-sync, v62 identity, v63 hardening migration sequence. Against a
+disposable PostgreSQL 17 instance, the actual migration CLI applied all 63
+migrations. The invariant suite passed 36 tests; the HTTP identity suite passed
+9 tests against a containerized API. The API image built, started and returned
+HTTP 200 from `/health`. The complete Core unit suite passed 2,260 tests across
+346 suites. The focused dashboard component suite passed 33 tests, and the
+dashboard production build passed. These checks used the rebased PR branch.
 
 ## PostgreSQL performance evidence
 
@@ -158,7 +169,8 @@ The reproducible `scripts/certops-identity-performance.cjs` creates and drops it
 own database. It migrates the schema, populates two workspaces with 5,000 identities
 and 10,000 sources each, adds 100 provisional sources and 10,000 observations, then
 uses `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` on actual inventory SQL, admission
-predicates and the admission function. The listed workspace total is 5,100.
+predicates and the admission function. The listed workspace total is 5,100. The
+table below records the source-branch run; the rebased branch was measured again.
 
 | Query | Execution time |
 | --- | ---: |
@@ -180,6 +192,11 @@ chooses that plan; they do so once per batch. An early correlated-query hardenin
 candidate took 2.63 seconds at this population; batching and correcting the SQL
 normalizer's cost removed that pattern. This is local warm-cache evidence under
 concurrent build/test load, not a production latency guarantee.
+
+On the rebased branch with the same 5,100-row inventory workload, the grouped
+expiry page took 97.422 ms, source history 0.455 ms, locations 2.794 ms,
+fingerprint lookup 0.025 ms, distinct quota count 0.989 ms, and the new-identity
+admission function 2.306 ms. These are local measurements, not latency targets.
 
 ## Remaining limits and review readiness
 
@@ -206,5 +223,5 @@ Within Core's configured quota policy, the branch enforces all eight requested
 domain invariants with database boundaries and owner-scoped transactions, backed
 by real PostgreSQL and HTTP tests. It is suitable for invariant-focused human
 review. This assessment does not assert deployment readiness for unconfigured
-finite Cloud plans or unresolved historical migration issues. Only the new
-branch is to be pushed; PR #283 remains untouched and no PR is opened.
+finite Cloud plans or unresolved historical migration issues. The hardening is
+integrated into Core PR #284.
