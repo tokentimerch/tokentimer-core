@@ -255,6 +255,7 @@ function DetailRow({
 }) {
   const content = children ?? (hasValue(value) ? value : '--');
   const showLabelDivider = tableStyle && !propertyValueStyle;
+  const truncateValue = compactValue && !propertyValueStyle;
   return (
     <Grid
       data-detail-row
@@ -266,7 +267,7 @@ function DetailRow({
         sm: `${labelWidth} minmax(0, 1fr)`,
       }}
       gap={{ base: 1, sm: propertyValueStyle ? 2 : tableStyle ? 0 : 4 }}
-      alignItems={tableStyle ? 'center' : 'start'}
+      alignItems={propertyValueStyle ? 'start' : tableStyle ? 'center' : 'start'}
       py={tableStyle ? 1.75 : 2.25}
       borderBottom={propertyValueStyle ? 0 : '1px solid'}
       borderColor='dashboard.modal.border'
@@ -292,11 +293,11 @@ function DetailRow({
           fontFamily={mono ? 'mono' : undefined}
           fontWeight={compactValue ? 'medium' : undefined}
           lineHeight='1.45'
-          overflowWrap={compactValue ? 'normal' : 'anywhere'}
-          whiteSpace={compactValue ? 'nowrap' : 'pre-wrap'}
-          overflow={compactValue ? 'hidden' : undefined}
-          textOverflow={compactValue ? 'ellipsis' : undefined}
-          title={compactValue ? valueTitle || String(content) : undefined}
+          overflowWrap={truncateValue ? 'normal' : 'anywhere'}
+          whiteSpace={truncateValue ? 'nowrap' : 'pre-wrap'}
+          overflow={truncateValue ? 'hidden' : undefined}
+          textOverflow={truncateValue ? 'ellipsis' : undefined}
+          title={truncateValue ? valueTitle || String(content) : undefined}
           minW={0}
         >
           {content}
@@ -308,9 +309,9 @@ function DetailRow({
           borderColor='dashboard.modal.border'
           color='dashboard.modal.text'
           minW={0}
-          title={compactValue ? valueTitle : undefined}
+          title={truncateValue ? valueTitle : undefined}
           sx={
-            compactValue
+            truncateValue
               ? {
                   '& > .chakra-text': {
                     fontWeight: 'medium',
@@ -445,20 +446,13 @@ export default function CertificateDetailsModal({
     token?.contacts,
     token?.renewal_url
   );
-  const hasCertificateState = hasAnyValue(
-    certificate?.status,
-    certificate?.notAfter
-  );
   const hasCertificateOperations = hasAnyValue(
-    certificate?.status,
-    certificate?.notAfter,
     certificate?.keyMode,
     certificate?.keyReference,
     hasRenewalData ? certificate?.renewal : null,
     certificate?.source,
     certificate?.sourceRef,
     certificate?.serialNumber,
-    certificate?.notBefore,
     publicKey,
     certificate?.signatureAlgorithm,
     sans,
@@ -471,21 +465,23 @@ export default function CertificateDetailsModal({
       ? 'dashboard.state.danger'
       : expiry.scheme === 'orange'
         ? 'dashboard.state.warning'
-        : undefined;
+        : expiry.scheme === 'green'
+          ? 'dashboard.state.success'
+          : undefined;
   const summaryItems = [
     hasValue(expiresAt)
       ? {
           label: 'Expires',
           value: formatDate(expiresAt),
-          help: expiry.label,
-          accent: expiryColor,
+          help: (
+            <Text as='span' color={expiryColor} fontWeight='semibold'>
+              {expiry.label}
+            </Text>
+          ),
         }
       : null,
     hasValue(certificate?.notBefore)
       ? { label: 'Valid from', value: formatDate(certificate.notBefore) }
-      : null,
-    hasValue(certificate?.notAfter)
-      ? { label: 'Valid to', value: formatDate(certificate.notAfter) }
       : null,
     hasRenewalData
       ? {
@@ -648,7 +644,6 @@ export default function CertificateDetailsModal({
 
         <ModalBody {...bodyProps} py={{ base: 4, md: 4 }}>
           <DashboardDetailsSummary items={summaryItems} />
-          {identityPanel || null}
 
           {certOpsLoading ? (
             <HStack mb={4} spacing={2} color='dashboard.modal.muted'>
@@ -924,16 +919,6 @@ export default function CertificateDetailsModal({
                 compactValues={compactTableSections && !isEditing}
                 propertyValueRows={propertyValueRows}
               >
-                {hasCertificateState ? (
-                  <DetailRow label='Certificate state'>
-                    <HStack spacing={2} flexWrap='wrap'>
-                      <CertificateStateBadges
-                        status={certificate.status}
-                        expiry={hasValue(certificate.notAfter) ? expiry : null}
-                      />
-                    </HStack>
-                  </DetailRow>
-                ) : null}
                 {hasKeyLocality ? (
                   <DetailRow label='Key locality'>
                     <KeyLocalityList
@@ -979,18 +964,6 @@ export default function CertificateDetailsModal({
                     />
                   </DetailRow>
                 ) : null}
-                {hasValue(certificate?.notBefore) ? (
-                  <DetailRow
-                    label='Valid from'
-                    value={formatDate(certificate.notBefore)}
-                  />
-                ) : null}
-                {hasValue(certificate?.notAfter) ? (
-                  <DetailRow
-                    label='Valid to'
-                    value={formatDate(certificate.notAfter)}
-                  />
-                ) : null}
                 {hasValue(publicKey) ? (
                   <DetailRow label='Public key' value={publicKey} />
                 ) : null}
@@ -1028,7 +1001,7 @@ export default function CertificateDetailsModal({
               </Section>
             ) : null}
 
-            {isEditing || hasValue(token.notes) ? (
+            {isEditing || hasValue(token.notes) || identityPanel ? (
               <Section title='Notes'>
                 <Box data-detail-row p={3}>
                   {isEditing ? (
@@ -1042,13 +1015,18 @@ export default function CertificateDetailsModal({
                       placeholder='Additional information'
                     />
                   ) : (
-                    <Text fontSize='sm' whiteSpace='pre-wrap'>
-                      {token.notes}
+                    <Text
+                      fontSize='sm'
+                      whiteSpace='pre-wrap'
+                      color={hasValue(token.notes) ? undefined : 'dashboard.modal.muted'}
+                    >
+                      {hasValue(token.notes) ? token.notes : 'No notes added.'}
                     </Text>
                   )}
                 </Box>
               </Section>
             ) : null}
+            {identityPanel || null}
             {hasObservedLocations ? (
               <Section
                 title='Observed locations'

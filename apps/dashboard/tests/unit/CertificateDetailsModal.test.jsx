@@ -303,14 +303,32 @@ describe('CertificateDetailsModal', () => {
       .getByText('Subject :')
       .closest('[data-detail-row]');
     expect(subjectRow).toHaveAttribute('data-property-value-style', 'true');
-    expect(screen.getByTitle(token.subject)).toBeInTheDocument();
+    expect(screen.queryByTitle(token.subject)).not.toBeInTheDocument();
+  });
+
+  it('places certificate locations and sources after notes without filling notes automatically', () => {
+    renderModal({
+      token: { ...token, notes: '' },
+      propertyValueRows: true,
+      identityPanel: (
+        <section data-testid='identity-panel'>
+          <h3>Observed locations</h3>
+          <h3>Management sources</h3>
+        </section>
+      ),
+    });
+
+    const notesSection = screen.getByRole('heading', { name: 'Notes' }).closest('section');
+    const identityPanel = screen.getByTestId('identity-panel');
+    expect(notesSection).toHaveTextContent('No notes added.');
+    expect(notesSection.compareDocumentPosition(identityPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('keeps certificate and operational fields visible without a technical-details section', () => {
     renderModal();
 
     expect(screen.getByText('Serial number')).toBeInTheDocument();
-    expect(screen.getByText('Certificate state')).toBeInTheDocument();
+    expect(screen.queryByText('Certificate state')).not.toBeInTheDocument();
     expect(screen.getAllByText('Key locality').length).toBeGreaterThan(0);
     expect(screen.getByText('Managed certificate ID')).toBeInTheDocument();
     expect(screen.getByText('SHA-256 fingerprint')).toBeInTheDocument();
@@ -352,10 +370,12 @@ describe('CertificateDetailsModal', () => {
       document.querySelectorAll('.chakra-badge')
     ).filter(node => node.textContent === 'Expiring');
 
-    expect(expiryBadges).toHaveLength(2);
-    expect(expiryBadges[0].className).toBe(expiryBadges[1].className);
-    expect(statusBadges).toHaveLength(2);
-    expect(statusBadges[0].className).toBe(statusBadges[1].className);
+    expect(expiryBadges).toHaveLength(1);
+    expect(statusBadges).toHaveLength(1);
+    const expiresSummary = screen.getByText('Expires').closest('section');
+    expect(within(expiresSummary).getByText('2d left')).toBeInTheDocument();
+    expect(screen.queryByText('Valid to')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Valid from')).toHaveLength(1);
   });
 
   it('edits and saves every certificate field supported by the previous details modal', async () => {
