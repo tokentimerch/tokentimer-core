@@ -72,13 +72,21 @@ vi.mock('../../src/components/imports/ImportVaultForm', () => ({
 vi.mock('../../src/components/imports/ImportGitLabForm', () => ({
   default: React.forwardRef(function GitLabMock(props, _ref) {
     gitlabFormProps.push(props.initialScanParams);
-    return <div>gitlab-form</div>;
+    return (
+      <div>
+        gitlab-form
+        <button onClick={() => props.onError('GitLab scan failed')}>
+          Fail GitLab scan
+        </button>
+        {props.errorContent}
+      </div>
+    );
   }),
 }));
 vi.mock('../../src/components/imports/ImportGitHubForm', () => ({
   default: React.forwardRef(function GitHubMock(props, _ref) {
     githubFormProps.push(props.initialScanParams);
-    return <div>github-form</div>;
+    return <div>github-form{props.errorContent}</div>;
   }),
 }));
 vi.mock('../../src/components/imports/ImportAWSForm', () => ({
@@ -179,6 +187,23 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       }
       return Promise.resolve({ data: {} });
     });
+  });
+
+  it('clears a previous provider error when switching integrations', async () => {
+    render(renderModal({ provider: 'gitlab' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Fail GitLab scan' })
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'GitLab scan failed'
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'GitHub', exact: true })
+    );
+    await screen.findByText('github-form');
+    await waitFor(() =>
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    );
   });
 
   it('never hands GitLab scan params to the GitHub form when switching providers', async () => {

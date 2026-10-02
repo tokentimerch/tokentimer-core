@@ -1749,6 +1749,8 @@ export default function ImportTokensModal({
 
   // Reset bulk section and integration count when source changes
   React.useEffect(() => {
+    setError(null);
+    setFailedRows([]);
     setBulkSection('');
     setBulkContactGroupIds([]);
     setIntegrationSelectedCount(0);
