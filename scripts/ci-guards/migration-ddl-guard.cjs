@@ -248,7 +248,12 @@ function checkTransactionGuarantee(source) {
   const body = fnMatch[0].slice(loopStart);
 
   const beginIdx = body.search(/client\.query\(\s*["']BEGIN["']\s*\)/);
-  const execIdx = body.search(/client\.query\(\s*\w+\.sql\s*\)/);
+  const directExecIdx = body.search(/client\.query\(\s*\w+\.sql\s*\)/);
+  const helper = source.match(/async function applyMigrationSql\(client, migration\) \{([\s\S]*?)\n\}/);
+  const helperExecIdx = helper && /await client\.query\(migration\.sql\)/.test(helper[1])
+    ? body.search(/await applyMigrationSql\(client, migration\)/)
+    : -1;
+  const execIdx = directExecIdx === -1 ? helperExecIdx : directExecIdx;
   const commitIdx = body.search(/client\.query\(\s*["']COMMIT["']\s*\)/);
   const rollbackIdx = body.search(/client\.query\(\s*["']ROLLBACK["']\s*\)/);
   const catchIdx = body.search(/}\s*catch\s*\(/);

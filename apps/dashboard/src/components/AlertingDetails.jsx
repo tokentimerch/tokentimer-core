@@ -59,6 +59,7 @@ export default function AlertingDetails({
     <Box
       ref={sectionRef}
       as='div'
+      role='region'
       aria-label='Alerting and alert history'
       minW={0}
       {...boxProps}

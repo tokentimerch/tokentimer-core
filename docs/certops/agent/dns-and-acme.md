@@ -24,9 +24,9 @@ EXO2-HMAC-SHA256 signature are computed with `node:crypto`, and RFC 2136
 speaks the DNS wire format over `node:net` with a TSIG HMAC (RFC 8945,
 `hmac-sha1/224/256/384/512`).
 
-Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
+Supported provider ids (exact-match against `policy.allowedDnsProviders`):
 `cloudflare`, `route53`, `azure-dns`, `google-cloud-dns`, `rfc2136`,
-`acme-dns`. Wave-2 provider ids: `ovhcloud`, `hetzner`, `infomaniak`,
+`acme-dns`. Additional provider ids: `ovhcloud`, `hetzner`, `infomaniak`,
 `exoscale`, `powerdns`.
 
 Test-only provider id: `pebble-challtestsrv` — Let's Encrypt's own

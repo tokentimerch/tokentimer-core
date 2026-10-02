@@ -22,7 +22,6 @@ import { TOKEN_CATEGORIES } from '../../constants/tokenCategories.js';
 import { tokenAPI } from '../../utils/apiClient';
 import CopyableId from '../CopyableId.jsx';
 import {
-  DASHBOARD_MODAL_HEADING_FONT,
   DashboardDetailsModalFrame,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
