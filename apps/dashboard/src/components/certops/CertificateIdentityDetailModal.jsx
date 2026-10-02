@@ -9,15 +9,26 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import apiClient, { tokenAPI, workspaceAPI } from '../../utils/apiClient';
+import { MapPin, Settings } from 'lucide-react';
+import DashboardDetailsSection from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
 import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import {
   getCertificateIdentity,
+  getManagedCertificatesForToken,
   listCertOpsRenewalProfiles,
   readdManagingSource,
   stopManagingSource,
 } from './certopsApi';
 import { sourceLabel } from './certopsFormat.js';
+
+function SectionContent({ children }) {
+  return (
+    <Box py={1} sx={{ '& > :last-child': { borderBottom: 0 } }}>
+      {children}
+    </Box>
+  );
+}
 
 function LocationStatus({ location }) {
   const present = location.presenceState === 'confirmed_present';
@@ -40,6 +51,7 @@ export default function CertificateIdentityDetailModal({
 }) {
   const [detail, setDetail] = useState(null);
   const [token, setToken] = useState(null);
+  const [certificateFields, setCertificateFields] = useState(null);
   const [tokenError, setTokenError] = useState('');
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);
@@ -53,6 +65,7 @@ export default function CertificateIdentityDetailModal({
     let active = true;
     setDetail(certificate);
     setToken(null);
+    setCertificateFields(null);
     setError('');
     if (certificate.identityId) {
       getCertificateIdentity(workspaceId, certificate.identityId)
@@ -81,6 +94,7 @@ export default function CertificateIdentityDetailModal({
   useEffect(() => {
     if (!isOpen || !tokenId) {
       setToken(null);
+      setCertificateFields(null);
       setTokenError('');
       return undefined;
     }
@@ -93,10 +107,31 @@ export default function CertificateIdentityDetailModal({
       apiClient
         .get(`/api/v1/workspaces/${workspaceId}/contacts`)
         .catch(() => null),
+      getManagedCertificatesForToken(workspaceId, tokenId),
     ])
-      .then(([tokenData, settings, contacts]) => {
+      .then(([tokenData, settings, contacts, certificates]) => {
         if (!active) return;
         setToken(tokenData || null);
+        // Reuse the token modal's enrichment, scoped to this immutable
+        // fingerprint so a shared token's rotated certificate cannot leak in.
+        const normalize = value =>
+          String(value || '')
+            .replace(/:/g, '')
+            .trim()
+            .toLowerCase();
+        const matching = (certificates || []).filter(item =>
+          detail?.fingerprintSha256
+            ? normalize(item.fingerprintSha256) ===
+              normalize(detail.fingerprintSha256)
+            : String(item.id) === String(detail?.managedCertificateId)
+        );
+        setCertificateFields(
+          matching.find(
+            item => String(item.id) === String(detail?.managedCertificateId)
+          ) ||
+            matching[0] ||
+            null
+        );
         setContactGroups(
           Array.isArray(settings?.contact_groups) ? settings.contact_groups : []
         );
@@ -111,7 +146,13 @@ export default function CertificateIdentityDetailModal({
     return () => {
       active = false;
     };
-  }, [isOpen, tokenId, workspaceId]);
+  }, [
+    isOpen,
+    tokenId,
+    workspaceId,
+    detail?.fingerprintSha256,
+    detail?.managedCertificateId,
+  ]);
 
   const refresh = async () => {
     if (!certificate.identityId) {
@@ -179,6 +220,7 @@ export default function CertificateIdentityDetailModal({
       (!detail.identityId || source.currentIdentityId === detail.identityId)
   );
   const certificateFacts = {
+    ...certificateFields,
     status:
       detail.lifecycleStatus && detail.lifecycleStatus !== 'active'
         ? detail.lifecycleStatus
@@ -189,7 +231,7 @@ export default function CertificateIdentityDetailModal({
   };
 
   const identityPanel = (
-    <VStack align='stretch' spacing={4} mb={6}>
+    <VStack align='stretch' spacing={6} mb={6}>
       <HStack spacing={2} flexWrap='wrap'>
         <Badge colorScheme='blue'>
           {detail.locationCount ?? (detail.locations || []).length} locations
@@ -218,154 +260,150 @@ export default function CertificateIdentityDetailModal({
           Loading token fields…
         </Text>
       ) : null}
-      <Box
-        as='section'
-        borderWidth='1px'
-        borderColor='dashboard.modal.border'
-        borderRadius='md'
-        p={3}
+      <DashboardDetailsSection
+        title='Observed locations'
+        icon={MapPin}
+        enclosed
+        mb={0}
       >
-        <Text as='h3' fontSize='sm' fontWeight='bold' mb={2}>
-          Observed locations
-        </Text>
-        {(detail.locations || []).length ? (
-          detail.locations.map(location => (
-            <HStack
-              key={location.id}
-              align='start'
-              justify='space-between'
-              flexWrap='wrap'
-              py={2}
-              borderTopWidth='1px'
-              borderColor='dashboard.modal.border'
-            >
-              <Box minW={0} flex='1'>
-                <Text fontSize='sm' overflowWrap='anywhere'>
-                  {location.deploymentReference ||
-                    location.sourceRef ||
-                    location.locationKind ||
-                    'Location'}
-                </Text>
-                <Text fontSize='xs' color='dashboard.modal.muted'>
-                  {location.capturedAt
-                    ? `Last seen ${new Date(location.capturedAt).toLocaleString()}`
-                    : 'Observation time unknown'}
-                </Text>
-              </Box>
-              <LocationStatus location={location} />
-            </HStack>
-          ))
-        ) : (
-          <Text fontSize='sm'>No location observations recorded.</Text>
-        )}
-        {detail.locationCount > (detail.locations || []).length ? (
-          <Text fontSize='xs' mt={2}>
-            Showing {(detail.locations || []).length} of {detail.locationCount}{' '}
-            locations.
-          </Text>
-        ) : null}
-      </Box>
-      <Box
-        as='section'
-        borderWidth='1px'
-        borderColor='dashboard.modal.border'
-        borderRadius='md'
-        p={3}
-      >
-        <Text as='h3' fontSize='sm' fontWeight='bold' mb={2}>
-          Management sources
-        </Text>
-        {(detail.sources || []).length ? (
-          detail.sources.map(source => {
-            const current = activeSources.includes(source);
-            const canReadd =
-              source.periodEndedAt &&
-              source.endedReason !== 'endpoint_monitor_deleted' &&
-              !(detail.sources || []).some(
-                other =>
-                  other.managedCertificateId === source.managedCertificateId &&
-                  !other.periodEndedAt
-              );
-            return (
-              <Box
-                key={`${source.periodId}-${source.startedAt}`}
+        <SectionContent>
+          {(detail.locations || []).length ? (
+            detail.locations.map(location => (
+              <HStack
+                key={location.id}
+                align='start'
+                justify='space-between'
+                flexWrap='wrap'
                 py={2}
-                borderTopWidth='1px'
+                borderBottomWidth='1px'
                 borderColor='dashboard.modal.border'
               >
-                <HStack
-                  justify='space-between'
-                  align='start'
-                  flexWrap='wrap'
-                  spacing={3}
+                <Box minW={0} flex='1'>
+                  <Text fontSize='sm' overflowWrap='anywhere'>
+                    {location.deploymentReference ||
+                      location.sourceRef ||
+                      location.locationKind ||
+                      'Location'}
+                  </Text>
+                  <Text fontSize='xs' color='dashboard.modal.muted'>
+                    {location.capturedAt
+                      ? `Last seen ${new Date(location.capturedAt).toLocaleString()}`
+                      : 'Observation time unknown'}
+                  </Text>
+                </Box>
+                <LocationStatus location={location} />
+              </HStack>
+            ))
+          ) : (
+            <Text fontSize='sm'>No location observations recorded.</Text>
+          )}
+          {detail.locationCount > (detail.locations || []).length ? (
+            <Text fontSize='xs' mt={2}>
+              Showing {(detail.locations || []).length} of{' '}
+              {detail.locationCount} locations.
+            </Text>
+          ) : null}
+        </SectionContent>
+      </DashboardDetailsSection>
+      <DashboardDetailsSection
+        title='Management sources'
+        icon={Settings}
+        enclosed
+        mb={0}
+      >
+        <SectionContent>
+          {(detail.sources || []).length ? (
+            detail.sources.map(source => {
+              const current = activeSources.includes(source);
+              const canReadd =
+                source.periodEndedAt &&
+                source.endedReason !== 'endpoint_monitor_deleted' &&
+                !(detail.sources || []).some(
+                  other =>
+                    other.managedCertificateId ===
+                      source.managedCertificateId && !other.periodEndedAt
+                );
+              return (
+                <Box
+                  key={`${source.periodId}-${source.startedAt}`}
+                  py={2}
+                  borderBottomWidth='1px'
+                  borderColor='dashboard.modal.border'
                 >
-                  <Box minW={0} flex='1'>
-                    <HStack spacing={2} flexWrap='wrap'>
-                      <Text fontSize='sm' fontWeight='semibold'>
-                        {sourceLabel(source.source)}
+                  <HStack
+                    justify='space-between'
+                    align='start'
+                    flexWrap='wrap'
+                    spacing={3}
+                  >
+                    <Box minW={0} flex='1'>
+                      <HStack spacing={2} flexWrap='wrap'>
+                        <Text fontSize='sm' fontWeight='semibold'>
+                          {sourceLabel(source.source)}
+                        </Text>
+                        <Badge colorScheme={current ? 'green' : 'gray'}>
+                          {current ? 'Managing' : 'Ended'}
+                        </Badge>
+                      </HStack>
+                      {source.sourceRef ? (
+                        <Box maxW='100%' overflowWrap='anywhere'>
+                          <CopyableId id={source.sourceRef} size='xs' />
+                        </Box>
+                      ) : null}
+                      <Text fontSize='xs' color='dashboard.modal.muted'>
+                        {new Date(source.startedAt).toLocaleDateString()} –{' '}
+                        {source.endedAt
+                          ? new Date(source.endedAt).toLocaleDateString()
+                          : 'present'}
                       </Text>
-                      <Badge colorScheme={current ? 'green' : 'gray'}>
-                        {current ? 'Managing' : 'Ended'}
-                      </Badge>
-                    </HStack>
-                    {source.sourceRef ? (
-                      <Box maxW='100%' overflowWrap='anywhere'>
-                        <CopyableId id={source.sourceRef} size='xs' />
-                      </Box>
+                    </Box>
+                    {canManage && current ? (
+                      <Button
+                        size='xs'
+                        isDisabled={busy}
+                        onClick={() => stop(source.periodId)}
+                      >
+                        Stop managing
+                      </Button>
                     ) : null}
-                    <Text fontSize='xs' color='dashboard.modal.muted'>
-                      {new Date(source.startedAt).toLocaleDateString()} –{' '}
-                      {source.endedAt
-                        ? new Date(source.endedAt).toLocaleDateString()
-                        : 'present'}
-                    </Text>
-                  </Box>
-                  {canManage && current ? (
-                    <Button
-                      size='xs'
-                      isDisabled={busy}
-                      onClick={() => stop(source.periodId)}
-                    >
-                      Stop managing
-                    </Button>
-                  ) : null}
-                </HStack>
-                {canManage && canReadd ? (
-                  <HStack mt={2}>
-                    <Select
-                      size='xs'
-                      value={profileId}
-                      onChange={event => setProfileId(event.target.value)}
-                    >
-                      <option value=''>No renewal automation</option>
-                      {profiles.map(profile => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name || profile.id}
-                        </option>
-                      ))}
-                    </Select>
-                    <Button
-                      size='xs'
-                      isDisabled={busy}
-                      onClick={() => readd(source.managedCertificateId)}
-                    >
-                      Re-add
-                    </Button>
                   </HStack>
-                ) : null}
-              </Box>
-            );
-          })
-        ) : (
-          <Text fontSize='sm'>No management history recorded.</Text>
-        )}
-        {detail.sourceCount > (detail.sources || []).length ? (
-          <Text fontSize='xs' mt={2}>
-            Showing {(detail.sources || []).length} of {detail.sourceCount}{' '}
-            source periods.
-          </Text>
-        ) : null}
-      </Box>
+                  {canManage && canReadd ? (
+                    <HStack mt={2}>
+                      <Select
+                        size='xs'
+                        value={profileId}
+                        onChange={event => setProfileId(event.target.value)}
+                      >
+                        <option value=''>No renewal automation</option>
+                        {profiles.map(profile => (
+                          <option key={profile.id} value={profile.id}>
+                            {profile.name || profile.id}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        size='xs'
+                        isDisabled={busy}
+                        onClick={() => readd(source.managedCertificateId)}
+                      >
+                        Re-add
+                      </Button>
+                    </HStack>
+                  ) : null}
+                </Box>
+              );
+            })
+          ) : (
+            <Text fontSize='sm'>No management history recorded.</Text>
+          )}
+          {detail.sourceCount > (detail.sources || []).length ? (
+            <Text fontSize='xs' mt={2}>
+              Showing {(detail.sources || []).length} of {detail.sourceCount}{' '}
+              source periods.
+            </Text>
+          ) : null}
+        </SectionContent>
+      </DashboardDetailsSection>
       {error ? (
         <Text fontSize='sm' color='orange.400'>
           {error}

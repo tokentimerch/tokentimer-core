@@ -5,6 +5,7 @@ import CertificateIdentityDetailModal from '../../src/components/certops/Certifi
 
 const {
   getIdentityMock,
+  getManagedMock,
   listProfilesMock,
   getTokenMock,
   getAlertSettingsMock,
@@ -12,6 +13,7 @@ const {
   detailsModalMock,
 } = vi.hoisted(() => ({
   getIdentityMock: vi.fn(),
+  getManagedMock: vi.fn(),
   listProfilesMock: vi.fn(),
   getTokenMock: vi.fn(),
   getAlertSettingsMock: vi.fn(),
@@ -21,6 +23,7 @@ const {
 
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
   getCertificateIdentity: getIdentityMock,
+  getManagedCertificatesForToken: getManagedMock,
   listCertOpsRenewalProfiles: listProfilesMock,
   readdManagingSource: vi.fn(),
   stopManagingSource: vi.fn(),
@@ -46,6 +49,8 @@ vi.mock('../../src/components/certops/CertificateDetailsModal.jsx', () => ({
 
 beforeEach(() => {
   getIdentityMock.mockReset();
+  getManagedMock.mockReset();
+  getManagedMock.mockResolvedValue([]);
   listProfilesMock.mockReset();
   getTokenMock.mockReset();
   getAlertSettingsMock.mockReset();
@@ -97,6 +102,21 @@ it('shows one linked token together with all certificate sources and locations',
     ],
   };
   getIdentityMock.mockResolvedValue(identity);
+  getManagedMock.mockResolvedValue([
+    {
+      id: 'cert-1',
+      fingerprintSha256: 'a'.repeat(64),
+      notBefore: '2026-10-02T00:00:00Z',
+      keyMode: 'external-unknown',
+      renewal: { state: 'not-eligible' },
+    },
+    {
+      id: 'rotated',
+      fingerprintSha256: 'b'.repeat(64),
+      notBefore: '2026-11-01T00:00:00Z',
+      renewal: { state: 'auto' },
+    },
+  ]);
   getTokenMock.mockResolvedValue({
     id: 7,
     name: 'Shared token asset',
@@ -132,6 +152,9 @@ it('shows one linked token together with all certificate sources and locations',
       certOps: expect.objectContaining({
         certificate: expect.objectContaining({
           fingerprintSha256: 'a'.repeat(64),
+          notBefore: '2026-10-02T00:00:00Z',
+          keyMode: 'external-unknown',
+          renewal: { state: 'not-eligible' },
         }),
       }),
     })
