@@ -550,3 +550,23 @@ describe("scrubVaultCredentialBody", () => {
     assert.equal(body.address, "https://vault");
   });
 });
+
+
+describe("Vault forward proxy responses", () => {
+  it("preserves a rejected CONNECT status without retrying or blaming AppRole credentials", async () => {
+    const originalFetch = global.fetch;
+    let requests = 0;
+    try {
+      global.fetch = async () => {
+        requests++;
+        const cause = Object.assign(new Error("Proxy response (403) !== 200 when HTTP Tunneling"), { code: "UND_ERR_ABORTED" });
+        throw new TypeError("fetch failed", { cause: new Error("Request was cancelled.", { cause }) });
+      };
+      await assert.rejects(
+        () => vaultAppRoleLogin({ address: "https://vault.example.test", roleId: "role", secretId: "secret" }),
+        error => error.status === 403 && error.code === "VAULT_PROXY_RESPONSE" && /Forward proxy/.test(error.message),
+      );
+      assert.equal(requests, 1);
+    } finally { global.fetch = originalFetch; }
+  });
+});

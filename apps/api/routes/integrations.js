@@ -403,7 +403,10 @@ router.post(
 
       const httpStatus = e?.status || status || 502;
       const payload = { error: userMessage };
-      if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
+      if (e?.code === "VAULT_PROXY_RESPONSE") {
+        payload.code = "VAULT_PROXY_RESPONSE";
+        payload.error = e.message;
+      } else if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
       res.status(httpStatus).json(withQuota(payload));
     } finally {
       scrubVaultCredentialBody(req.body);
@@ -508,7 +511,10 @@ router.post(
 
       const httpStatus = e?.status || status || 502;
       const payload = { error: userMessage };
-      if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
+      if (e?.code === "VAULT_PROXY_RESPONSE") {
+        payload.code = "VAULT_PROXY_RESPONSE";
+        payload.error = e.message;
+      } else if (httpStatus === 403) payload.code = "VAULT_PERMISSION_DENIED";
       res.status(httpStatus).json(payload);
     } finally {
       scrubVaultCredentialBody(req.body);
