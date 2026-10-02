@@ -58,15 +58,17 @@ describe('association provenance API contract', () => {
         <AutoSyncProvenance tokenId={71} />
       </ChakraProvider>
     );
-    expect(await screen.findByText('Tracked by Production')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Earlier provenance' }));
+    expect(await screen.findByText('Production')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show history' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier history' }));
+    expect(await screen.findByText('Removed from Former config')).toBeTruthy();
     expect(
-      await screen.findByText(/Former config.*inventory retained/)
+      screen.getByText('Configuration deleted; inventory retained.')
     ).toBeTruthy();
-    expect(screen.getByText(/Production.*attached/)).toBeTruthy();
+    expect(screen.getByText('Added to Production')).toBeTruthy();
     await waitFor(() =>
       expect(
-        screen.queryByRole('button', { name: 'Earlier provenance' })
+        screen.queryByRole('button', { name: 'Earlier history' })
       ).toBeNull()
     );
   });

@@ -758,17 +758,6 @@ export default function CertificateDetailsModal({
                   value={formatDate(token.created_at)}
                 />
               ) : null}
-              <DetailRow
-                label='Auto-sync ownership'
-                value={
-                  token.auto_sync_managed
-                    ? 'Managed'
-                    : token.auto_sync_observed
-                      ? 'Observed'
-                      : 'Manual or legacy'
-                }
-              />
-              <AutoSyncProvenance tokenId={token.id} />
               {token.imported_at ? (
                 <DetailRow
                   label='Imported'
@@ -788,6 +777,17 @@ export default function CertificateDetailsModal({
                 />
               ) : null}
             </Section>
+
+            <AutoSyncProvenance
+              tokenId={token.id}
+              ownership={
+                token.auto_sync_managed
+                  ? 'Managed'
+                  : token.auto_sync_observed
+                    ? 'Observed'
+                    : 'Manual or legacy'
+              }
+            />
 
             {isEditing || hasCertificateDetails ? (
               <Section

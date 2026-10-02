@@ -21,6 +21,14 @@ vi.mock('../../src/utils/apiClient', async importOriginal => {
   const actual = await importOriginal();
   return {
     ...actual,
+    default: {
+      ...actual.default,
+      get: vi
+        .fn()
+        .mockResolvedValue({
+          data: { managed: false, configurations: [], items: [] },
+        }),
+    },
     tokenAPI: {
       ...actual.tokenAPI,
       updateToken: updateTokenMock,
@@ -246,9 +254,7 @@ describe('TokenDetailModal', () => {
       },
     });
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Current status' })
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Current status' }));
     const alerting = within(
       await screen.findByRole('region', {
         name: 'Alert eligibility and delivery',
@@ -375,9 +381,7 @@ describe('TokenDetailModal', () => {
       },
       {},
       {
-        initialEntries: [
-          '/dashboard?token-id=17&alert-event=delivery%3A104',
-        ],
+        initialEntries: ['/dashboard?token-id=17&alert-event=delivery%3A104'],
       }
     );
 
@@ -429,12 +433,8 @@ describe('TokenDetailModal', () => {
       { initialEntries: ['/dashboard?token-id=17'] }
     );
 
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Current status' })
-    );
-    expect(
-      screen.queryByText(/View in audit logs/i)
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Current status' }));
+    expect(screen.queryByText(/View in audit logs/i)).not.toBeInTheDocument();
   });
 
   it('omits unavailable rows and sections in read mode without hiding edit fields', () => {

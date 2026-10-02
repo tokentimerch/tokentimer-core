@@ -17,6 +17,13 @@ const { updateTokenMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/utils/apiClient', () => ({
+  default: {
+    get: vi
+      .fn()
+      .mockResolvedValue({
+        data: { managed: false, configurations: [], items: [] },
+      }),
+  },
   tokenAPI: { updateToken: updateTokenMock },
 }));
 
