@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Multiple auto-sync configurations per provider and workspace** (#71, #282). Each configuration has a durable ID, editable name, independent schedule and health, paginated run history, and immutable token association history. Shared source assets remain one inventory row across overlapping configurations. Migration 61 preserves configuration IDs and leaves unproven legacy ownership unmanaged.
+
+### Changed
+
+- Auto-sync imports and cleanup use renewable leases, database generation/version fences, and positively complete scan scopes. Failed or partial scans retain associations; cleanup deletes only auto-sync-created inventory with no remaining associations. Manual imports adopt existing tokens as unmanaged, and deleting a configuration retains otherwise orphaned inventory with provenance.
+- Duplicate configurations require persisted administrator activation after old workers are drained and the new images are verified. Activation rejects legacy unfenced scans/imports; older API/worker images must not rejoin afterward. Roll forward or recover a pre-activation backup.
+
+### Fixed
+
+- Import errors appear immediately beneath integration connection forms. GitLab rejects invalid credentials, redirects and invalid instance responses before scanning inventory. Disabling one configuration keeps management navigation available for the remaining configurations.
+
 ## [0.17.0] - 2026-09-29
 
 ### Added
