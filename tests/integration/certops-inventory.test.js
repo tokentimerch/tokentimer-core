@@ -770,7 +770,9 @@ describe("CertOps inventory routes", function () {
     );
 
     const response = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceId}/certops/instances?limit=50&offset=0`)
+      .get(
+        `/api/v1/workspaces/${workspaceId}/certops/instances?limit=50&offset=0`,
+      )
       .set("Cookie", viewerSession.cookie)
       .expect(200);
 
@@ -784,9 +786,7 @@ describe("CertOps inventory routes", function () {
     expectNoPrivateKeyFields(response.body);
 
     const outsiderResponse = await request(BASE)
-      .get(
-        `/api/v1/workspaces/${outsiderWorkspaceId}/certops/instances`,
-      )
+      .get(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/instances`)
       .set("Cookie", outsiderSession.cookie)
       .expect(200);
     expect(
@@ -823,7 +823,9 @@ describe("CertOps inventory routes", function () {
     const targetId = target.rows[0].id;
 
     const response = await request(BASE)
-      .get(`/api/v1/workspaces/${workspaceId}/certops/targets?limit=50&offset=0`)
+      .get(
+        `/api/v1/workspaces/${workspaceId}/certops/targets?limit=50&offset=0`,
+      )
       .set("Cookie", viewerSession.cookie)
       .expect(200);
 
@@ -858,7 +860,12 @@ describe("CertOps inventory routes", function () {
         `/api/v1/workspaces/${workspaceId}/certops/certificates/${leafCertificate.id}/retire`,
       )
       .set("Cookie", ownerSession.cookie)
-      .send({ status: "decommissioned", reason: "rotation completed" })
+      .send({
+        status: "decommissioned",
+        reason: "rotation completed",
+        expectedFingerprintSha256: leafCertificate.fingerprintSha256,
+        acknowledgeUncertainty: true,
+      })
       .expect(200);
 
     expect(response.body.certificate.id).to.equal(leafCertificate.id);
@@ -866,7 +873,10 @@ describe("CertOps inventory routes", function () {
     expect(response.body.certificate.tokenId).to.equal(leafCertificate.tokenId);
     expectNoPrivateKeyFields(response.body);
 
-    const managed = await managedCertificateRow(workspaceId, leafCertificate.id);
+    const managed = await managedCertificateRow(
+      workspaceId,
+      leafCertificate.id,
+    );
     expect(managed.status).to.equal("decommissioned");
     expect(managed.token_id).to.equal(leafCertificate.tokenId);
 
@@ -887,18 +897,17 @@ describe("CertOps inventory routes", function () {
          FROM audit_events
         WHERE workspace_id = $1
           AND action = 'CERTOPS_CERTIFICATE_RETIRED'
-          AND metadata->>'managedCertificateId' = $2
+          AND metadata->>'identityId' = $2
         ORDER BY id DESC
         LIMIT 1`,
-      [workspaceId, leafCertificate.id],
+      [workspaceId, response.body.certificate.identityId],
     );
     expect(audit.rows).to.have.length(1);
     expect(audit.rows[0].action).to.equal("CERTOPS_CERTIFICATE_RETIRED");
     expect(audit.rows[0].target_type).to.equal("managed_certificate");
     expect(audit.rows[0].actor_user_id).to.equal(ownerUser.id);
     expect(audit.rows[0].metadata).to.include({
-      managedCertificateId: leafCertificate.id,
-      tokenId: leafCertificate.tokenId,
+      identityId: response.body.certificate.identityId,
       status: "decommissioned",
       reason: "rotation completed",
       fingerprintSha256: leafCertificate.fingerprintSha256,
@@ -914,7 +923,11 @@ describe("CertOps inventory routes", function () {
         `/api/v1/workspaces/${workspaceId}/certops/certificates/${caCertificate.id}/retire`,
       )
       .set("Cookie", managerSession.cookie)
-      .send({ status: "revoked", reason: "issuer revoked certificate" })
+      .send({
+        status: "revoked",
+        reason: "issuer revoked certificate",
+        expectedFingerprintSha256: caCertificate.fingerprintSha256,
+      })
       .expect(200);
 
     expect(response.body.certificate.id).to.equal(caCertificate.id);
@@ -952,7 +965,10 @@ describe("CertOps inventory routes", function () {
           status,
           `Shared lifecycle ${suffix}`,
           `shared-${suffix}.certops.example`,
-          `${suffix.repeat(40)}`.replace(/[^a-f0-9]/g, "0").slice(0, 64).padEnd(64, "0"),
+          `${suffix.repeat(40)}`
+            .replace(/[^a-f0-9]/g, "0")
+            .slice(0, 64)
+            .padEnd(64, "0"),
         ],
       );
       return rows.rows[0].id;
@@ -969,7 +985,13 @@ describe("CertOps inventory routes", function () {
           `/api/v1/workspaces/${workspaceId}/certops/certificates/${firstId}/retire`,
         )
         .set("Cookie", ownerSession.cookie)
-        .send({ status: "revoked", reason: "one of two rotated" })
+        .send({
+          status: "revoked",
+          reason: "one of two rotated",
+          expectedFingerprintSha256: (
+            await managedCertificateRow(workspaceId, firstId)
+          ).fingerprint_sha256,
+        })
         .expect(200);
 
       const firstRetired = await managedCertificateRow(workspaceId, firstId);
@@ -983,11 +1005,21 @@ describe("CertOps inventory routes", function () {
           `/api/v1/workspaces/${workspaceId}/certops/certificates/${secondId}/retire`,
         )
         .set("Cookie", ownerSession.cookie)
-        .send({ status: "decommissioned", reason: "last sibling retired" })
+        .send({
+          status: "decommissioned",
+          reason: "last sibling retired",
+          acknowledgeUncertainty: true,
+          expectedFingerprintSha256: (
+            await managedCertificateRow(workspaceId, secondId)
+          ).fingerprint_sha256,
+        })
         .expect(200);
 
       sharedToken = await tokenRow(shared.id);
-      expect(sharedToken.cert_lifecycle_status).to.equal("decommissioned");
+      expect(sharedToken.cert_lifecycle_status).to.equal("revoked");
+      expect(
+        (await managedCertificateRow(workspaceId, secondId)).status,
+      ).to.equal("decommissioned");
     } finally {
       await TestUtils.execQuery(
         "DELETE FROM managed_certificates WHERE id = ANY($1::uuid[])",
@@ -999,16 +1031,16 @@ describe("CertOps inventory routes", function () {
     }
   });
 
-  it("excludes retired managed certificates from active inventory counts", async () => {
+  it("counts open distinct identities even when their lifecycle is retired", async () => {
     const totalRows = await TestUtils.execQuery(
       `SELECT COUNT(*)::int AS count
-         FROM managed_certificates
-        WHERE workspace_id = $1`,
+         FROM (SELECT DISTINCT current_identity_id FROM certops_management_periods
+           WHERE workspace_id = $1 AND ended_at IS NULL) managed`,
       [workspaceId],
     );
     const activeCount = await countActiveManagedCertificates({ workspaceId });
 
-    expect(activeCount).to.be.lessThan(totalRows.rows[0].count);
+    expect(activeCount).to.equal(totalRows.rows[0].count);
     expect(activeCount).to.be.at.least(0);
   });
 
@@ -1031,22 +1063,28 @@ describe("CertOps inventory routes", function () {
     expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
   });
 
-  it("does not reset retired status when a monitor observation hits a retired certificate", async () => {
+  it("keeps retired rediscovery sticky and rotates to an independent active identity", async () => {
     for (const retiredStatus of ["revoked", "decommissioned"]) {
+      const fingerprintA = (retiredStatus === "revoked" ? "d1" : "d2").repeat(
+        32,
+      );
+      const fingerprintB = (retiredStatus === "revoked" ? "e1" : "e2").repeat(
+        32,
+      );
       const monitorRows = await TestUtils.execQuery(
         `INSERT INTO domain_monitors (workspace_id, url, created_by)
          VALUES ($1, $2, $3)
          RETURNING id`,
-        [
-          workspaceId,
-          `https://retired-${retiredStatus}.example`,
-          ownerUser.id,
-        ],
+        [workspaceId, `https://retired-${retiredStatus}.example`, ownerUser.id],
       );
       const domainMonitorId = monitorRows.rows[0].id;
-      const linkedToken = await createWorkspaceToken(ownerSession, workspaceId, {
-        name: `CertOps ${retiredStatus} monitor token`,
-      });
+      const linkedToken = await createWorkspaceToken(
+        ownerSession,
+        workspaceId,
+        {
+          name: `CertOps ${retiredStatus} monitor token`,
+        },
+      );
 
       const observation = {
         dbPool: pool,
@@ -1061,7 +1099,7 @@ describe("CertOps inventory routes", function () {
           issuer: "Retire Test CA",
           subject: `CN=retired-${retiredStatus}.example`,
           serialNumber: "01",
-          fingerprintSha256: "d".repeat(64),
+          fingerprintSha256: fingerprintA,
           notAfter: "2099-01-01",
         },
       };
@@ -1075,15 +1113,43 @@ describe("CertOps inventory routes", function () {
           `/api/v1/workspaces/${workspaceId}/certops/certificates/${first.managedCertificate.id}/retire`,
         )
         .set("Cookie", ownerSession.cookie)
-        .send({ status: retiredStatus, reason: "retire-first regression" })
-        .expect(200);
+        .send({
+          status: retiredStatus,
+          reason: "retire-first regression",
+          expectedFingerprintSha256: fingerprintA,
+          acknowledgeUncertainty: true,
+        })
+        .expect(retiredStatus === "decommissioned" ? 409 : 200);
+
+      if (retiredStatus === "decommissioned") {
+        // A live endpoint is safety evidence: delete it before decommissioning.
+        await TestUtils.execQuery("DELETE FROM domain_monitors WHERE id=$1", [
+          domainMonitorId,
+        ]);
+        await request(BASE)
+          .post(
+            `/api/v1/workspaces/${workspaceId}/certops/certificates/${first.managedCertificate.id}/retire`,
+          )
+          .set("Cookie", ownerSession.cookie)
+          .send({
+            status: retiredStatus,
+            reason: "endpoint removed",
+            expectedFingerprintSha256: fingerprintA,
+            acknowledgeUncertainty: true,
+          })
+          .expect(200);
+        continue;
+      }
+      const rediscovered =
+        await bridgeEndpointCertificateObservation(observation);
+      expect(rediscovered.managedCertificate.status).to.equal(retiredStatus);
 
       const second = await bridgeEndpointCertificateObservation({
         ...observation,
         certificate: {
           ...observation.certificate,
           serialNumber: "02",
-          fingerprintSha256: "e".repeat(64),
+          fingerprintSha256: fingerprintB,
         },
       });
 
@@ -1091,18 +1157,30 @@ describe("CertOps inventory routes", function () {
       expect(second.managedCertificate.id).to.equal(
         first.managedCertificate.id,
       );
-      expect(second.managedCertificate.status).to.equal(retiredStatus);
+      expect(second.managedCertificate.status).to.equal("discovered");
       expect(second.managedCertificate.serialNumber).to.equal("02");
       expect(second.managedCertificate.fingerprintSha256).to.equal(
-        "e".repeat(64),
+        fingerprintB,
       );
 
       const managed = await managedCertificateRow(
         workspaceId,
         first.managedCertificate.id,
       );
-      expect(managed.status).to.equal(retiredStatus);
-      expect(managed.fingerprint_sha256).to.equal("e".repeat(64));
+      expect(managed.status).to.equal("discovered");
+      expect(managed.fingerprint_sha256).to.equal(fingerprintB);
+      const identities = await TestUtils.execQuery(
+        "SELECT fingerprint_sha256, lifecycle_status FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=ANY($2::text[])",
+        [workspaceId, [fingerprintA, fingerprintB]],
+      );
+      expect(identities.rows).to.deep.include({
+        fingerprint_sha256: fingerprintA,
+        lifecycle_status: retiredStatus,
+      });
+      expect(identities.rows).to.deep.include({
+        fingerprint_sha256: fingerprintB,
+        lifecycle_status: "active",
+      });
     }
   });
 
@@ -1114,7 +1192,11 @@ describe("CertOps inventory routes", function () {
         `/api/v1/workspaces/${workspaceId}/certops/certificates/${caCertificate.id}/retire`,
       )
       .set("Cookie", ownerSession.cookie)
-      .send({ status: "deleted", reason: "operator requested deletion" });
+      .send({
+        status: "deleted",
+        reason: "operator requested deletion",
+        expectedFingerprintSha256: caCertificate.fingerprintSha256,
+      });
 
     expect(response.status).to.equal(400);
     expect(response.body).to.deep.equal({
@@ -1157,7 +1239,11 @@ describe("CertOps inventory routes", function () {
         `/api/v1/workspaces/${outsiderWorkspaceId}/certops/certificates/${leafCertificate.id}/retire`,
       )
       .set("Cookie", outsiderSession.cookie)
-      .send({ status: "revoked", reason: "wrong workspace" });
+      .send({
+        status: "revoked",
+        reason: "wrong workspace",
+        expectedFingerprintSha256: leafCertificate.fingerprintSha256,
+      });
 
     expect(response.status).to.equal(404);
     expect(response.body.code).to.equal("CERTOPS_CERTIFICATE_NOT_FOUND");
@@ -1300,9 +1386,10 @@ describe("CertOps inventory routes", function () {
       .expect(200);
 
     expect(response.body.message).to.include("deleted");
-    const rows = await TestUtils.execQuery("SELECT 1 FROM tokens WHERE id = $1", [
-      token.id,
-    ]);
+    const rows = await TestUtils.execQuery(
+      "SELECT 1 FROM tokens WHERE id = $1",
+      [token.id],
+    );
     expect(rows.rows).to.have.length(0);
   });
 
@@ -1319,9 +1406,10 @@ describe("CertOps inventory routes", function () {
       .expect(200);
 
     expect(response.body.message).to.include("deleted");
-    const rows = await TestUtils.execQuery("SELECT 1 FROM tokens WHERE id = $1", [
-      token.id,
-    ]);
+    const rows = await TestUtils.execQuery(
+      "SELECT 1 FROM tokens WHERE id = $1",
+      [token.id],
+    );
     expect(rows.rows).to.have.length(0);
   });
 

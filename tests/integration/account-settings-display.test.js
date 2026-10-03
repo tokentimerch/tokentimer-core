@@ -1,25 +1,26 @@
 const { TestUtils, request, expect } = require("./test-server");
 const User = require("../../apps/api/db/models/User");
 const bcrypt = require("bcryptjs");
+const { randomUUID } = require("node:crypto");
 
 // Use the existing Docker Compose server
 const TEST_SERVER_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 describe("Account Settings Display", () => {
   let agent;
+  let createdUser;
+  let createdCookie;
 
   beforeEach(async () => {
     agent = request.agent(TEST_SERVER_URL);
   });
 
   afterEach(async () => {
-    // Clean up any test data
-    await User.findByEmail("test@example.com").then((user) => {
-      if (user) {
-        // Note: In a real test, you'd want to delete the user
-        // For now, we'll just check the session
-      }
-    });
+    if (createdUser && createdCookie) {
+      await TestUtils.cleanupTestUser(createdUser.email, createdCookie);
+    }
+    createdUser = null;
+    createdCookie = null;
   });
 
   describe("Session Authentication Method Display", () => {
@@ -27,7 +28,7 @@ describe("Account Settings Display", () => {
       // Create a local user
       const passwordHash = await bcrypt.hash("testpassword", 12);
       const localUserData = {
-        email: "test.local@example.com",
+        email: `test.local-${randomUUID()}@example.com`,
         displayName: "Test Local User",
         passwordHash,
         authMethod: "local",
@@ -37,12 +38,15 @@ describe("Account Settings Display", () => {
       };
 
       const localUser = await User.createLocal(localUserData);
+      createdUser = localUser;
 
       // Simulate login by setting up session
       const loginResponse = await agent.post("/auth/login").send({
         email: localUser.email,
         password: "testpassword",
       });
+      expect(loginResponse.status).to.equal(200);
+      createdCookie = loginResponse.headers["set-cookie"];
 
       // Get session to verify auth method
       const sessionResponse = await agent.get("/api/session");

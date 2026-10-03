@@ -1622,7 +1622,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                     key={row.id || row.provider}
                                     accent={getAutoSyncAccent(row.health)}
                                     icon={RefreshCw}
-                                    title={row.name || formatProviderLabel(row.provider)}
+                                    title={
+                                      row.name ||
+                                      formatProviderLabel(row.provider)
+                                    }
                                     subtitle={row.scheduleLabel}
                                     trailing={getAutoSyncHealthBadge(
                                       row.health

@@ -18,11 +18,9 @@ const { updateTokenMock } = vi.hoisted(() => ({
 
 vi.mock('../../src/utils/apiClient', () => ({
   default: {
-    get: vi
-      .fn()
-      .mockResolvedValue({
-        data: { managed: false, configurations: [], items: [] },
-      }),
+    get: vi.fn().mockResolvedValue({
+      data: { managed: false, configurations: [], items: [] },
+    }),
   },
   tokenAPI: { updateToken: updateTokenMock },
 }));
@@ -137,6 +135,40 @@ describe('CertificateDetailsModal', () => {
     updateTokenMock.mockReset();
   });
 
+  it('hides location observations in the dashboard token view even when populated', () => {
+    renderModal({ showObservedLocations: false });
+    expect(
+      screen.queryByRole('heading', { name: 'Observed locations' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('certificate-instances')
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Valid from')).toBeInTheDocument();
+  });
+
+  it('orders key locality before renewal and renewal-path badges', () => {
+    renderModal({
+      certOps: {
+        certificate: {
+          ...certificate,
+          renewal: { state: 'not-configured' },
+          renewalPathState: 'unavailable',
+        },
+      },
+    });
+    const header = screen
+      .getByRole('heading', { name: token.name })
+      .closest('.chakra-modal__header');
+    const text = header.textContent;
+    expect(text.indexOf('Agent-local')).toBeGreaterThan(text.indexOf('Active'));
+    expect(text.indexOf('Agent-local')).toBeLessThan(
+      text.indexOf('No auto-renewal')
+    );
+    expect(text.indexOf('No auto-renewal')).toBeLessThan(
+      text.indexOf('Renewal path')
+    );
+  });
+
   it('shows the full CSR reference beside its source without a workflow action', () => {
     const sourceRef = 'csr:00544aa5-5e4c-4c77-8cc2-4bbdbd11537e';
     renderModal({
@@ -153,8 +185,23 @@ describe('CertificateDetailsModal', () => {
     expect(within(sourceRow).getByText(sourceRef)).toBeInTheDocument();
     expect(within(sourceRow).getByTitle(sourceRef)).toBeInTheDocument();
     expect(
+      screen.queryByRole('heading', { name: 'Registration source' })
+    ).not.toBeInTheDocument();
+    expect(
       screen.queryByRole('link', { name: 'Start CSR workflow' })
     ).not.toBeInTheDocument();
+  });
+
+  it('identifies the selected source when a token references several certificates', () => {
+    renderModal({
+      managedCertificateId: 'cert-2',
+      certOps: { certificate, certificateCount: 2 },
+    });
+    expect(
+      screen.getByText(
+        '2 certificates reference this token. Showing the certificate for the selected source.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('presents certificate identity, lifecycle summary, and compact vertical content', () => {
@@ -263,6 +310,7 @@ describe('CertificateDetailsModal', () => {
     const notesSection = screen
       .getByRole('heading', { name: 'Notes' })
       .closest('section');
+    expect(within(notesSection).getAllByText('Notes')).toHaveLength(1);
     expect(
       notesSection.querySelector('[data-detail-columns="1"]')
     ).toBeInTheDocument();
@@ -289,14 +337,37 @@ describe('CertificateDetailsModal', () => {
       .getByText('Subject :')
       .closest('[data-detail-row]');
     expect(subjectRow).toHaveAttribute('data-property-value-style', 'true');
-    expect(screen.getByTitle(token.subject)).toBeInTheDocument();
+    expect(screen.queryByTitle(token.subject)).not.toBeInTheDocument();
+  });
+
+  it('places certificate locations and sources after notes without filling notes automatically', () => {
+    renderModal({
+      token: { ...token, notes: '' },
+      propertyValueRows: true,
+      identityPanel: (
+        <section data-testid='identity-panel'>
+          <h3>Observed locations</h3>
+          <h3>Certificate management</h3>
+        </section>
+      ),
+    });
+
+    const notesSection = screen
+      .getByRole('heading', { name: 'Notes' })
+      .closest('section');
+    const identityPanel = screen.getByTestId('identity-panel');
+    expect(notesSection).toHaveTextContent('No notes added.');
+    expect(
+      notesSection.compareDocumentPosition(identityPanel) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('keeps certificate and operational fields visible without a technical-details section', () => {
     renderModal();
 
     expect(screen.getByText('Serial number')).toBeInTheDocument();
-    expect(screen.getByText('Certificate state')).toBeInTheDocument();
+    expect(screen.queryByText('Certificate state')).not.toBeInTheDocument();
     expect(screen.getAllByText('Key locality').length).toBeGreaterThan(0);
     expect(screen.getByText('Managed certificate ID')).toBeInTheDocument();
     expect(screen.getByText('SHA-256 fingerprint')).toBeInTheDocument();
@@ -338,10 +409,12 @@ describe('CertificateDetailsModal', () => {
       document.querySelectorAll('.chakra-badge')
     ).filter(node => node.textContent === 'Expiring');
 
-    expect(expiryBadges).toHaveLength(2);
-    expect(expiryBadges[0].className).toBe(expiryBadges[1].className);
-    expect(statusBadges).toHaveLength(2);
-    expect(statusBadges[0].className).toBe(statusBadges[1].className);
+    expect(expiryBadges).toHaveLength(1);
+    expect(statusBadges).toHaveLength(1);
+    const expiresSummary = screen.getByText('Expires').closest('section');
+    expect(within(expiresSummary).getByText('2d left')).toBeInTheDocument();
+    expect(screen.queryByText('Valid to')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Valid from')).toHaveLength(1);
   });
 
   it('edits and saves every certificate field supported by the previous details modal', async () => {

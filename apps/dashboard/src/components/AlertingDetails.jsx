@@ -2,22 +2,19 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Collapse,
-  Heading,
   HStack,
   Icon,
   Text,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Bell, ChevronDown, ChevronRight } from 'lucide-react';
 import { useSearchParams } from 'react-router';
-import { DASHBOARD_MODAL_HEADING_FONT } from './DashboardModalFrame.jsx';
+import DashboardDetailsSection from './DashboardDetailsSection.jsx';
 import AlertStateDisplay, {
   AlertUpcomingSection,
 } from './AlertStateDisplay.jsx';
 import AlertLifecycleTimeline from './AlertLifecycleTimeline.jsx';
 
-// Match CertificateDetailsModal "Job history" section chrome: heading +
-// description, then a compact disclosure row for the content.
 export default function AlertingDetails({
   token,
   enabled = true,
@@ -61,98 +58,90 @@ export default function AlertingDetails({
   return (
     <Box
       ref={sectionRef}
-      as='section'
+      as='div'
+      role='region'
       aria-label='Alerting and alert history'
-      mb={6}
       minW={0}
       {...boxProps}
     >
-      <Box mb={2}>
-        <Heading
-          as='h3'
-          fontFamily={DASHBOARD_MODAL_HEADING_FONT}
-          fontSize='sm'
-          fontWeight='bold'
-          letterSpacing='0.01em'
-        >
-          Alerting and alert history
-        </Heading>
-        <Text mt={1} fontSize='xs' color='dashboard.modal.muted'>
-          See the current alert status, upcoming thresholds, and past delivery
-          activity for this asset.
-        </Text>
-      </Box>
-      <Box data-detail-row py={2}>
-        <HStack
-          as='button'
-          type='button'
-          w='full'
-          textAlign='left'
-          spacing={2}
-          px={0}
-          py={2}
-          borderRadius='md'
-          _hover={{ bg: rowHoverBg }}
-          onClick={() => setExpanded(current => !current)}
-          aria-label='Current status'
-          aria-expanded={expanded}
-          aria-controls={contentId}
-        >
-          <Icon
-            as={expanded ? ChevronDown : ChevronRight}
-            boxSize={3.5}
-            color='dashboard.modal.muted'
-            flexShrink={0}
-          />
-          <Text fontSize='sm' fontWeight='medium' flex='1' noOfLines={1}>
-            Current status
-          </Text>
-        </HStack>
-        <Collapse in={expanded} animateOpacity>
-          <Box
-            id={contentId}
-            mt={1}
-            ml={1}
-            pl={3}
+      <DashboardDetailsSection
+        title='Alerting and alert history'
+        description='See the current alert status, upcoming thresholds, and past delivery activity for this asset.'
+        icon={Bell}
+        enclosed
+      >
+        <Box data-detail-row py={2}>
+          <HStack
+            as='button'
+            type='button'
+            w='full'
+            textAlign='left'
+            spacing={2}
+            px={0}
             py={2}
-            borderLeftWidth='2px'
-            borderColor='dashboard.modal.border'
+            borderRadius='md'
+            _hover={{ bg: rowHoverBg }}
+            onClick={() => setExpanded(current => !current)}
+            aria-label='Current status'
+            aria-expanded={expanded}
+            aria-controls={contentId}
           >
-            <AlertStateDisplay
-              alertState={token?.alert_state}
-              showHeading={false}
-              compact
+            <Icon
+              as={expanded ? ChevronDown : ChevronRight}
+              boxSize={3.5}
+              color='dashboard.modal.muted'
+              flexShrink={0}
             />
-            <AlertUpcomingSection alertState={token?.alert_state} />
+            <Text fontSize='sm' fontWeight='medium' flex='1' noOfLines={1}>
+              Current status
+            </Text>
+          </HStack>
+          <Collapse in={expanded} animateOpacity>
             <Box
-              role='region'
-              aria-label='History'
-              borderTop='1px solid'
+              id={contentId}
+              mt={1}
+              ml={1}
+              pl={3}
+              py={2}
+              borderLeftWidth='2px'
               borderColor='dashboard.modal.border'
-              pt={4}
-              mt={4}
             >
-              <Text
-                fontSize='xs'
-                fontWeight='semibold'
-                color='dashboard.modal.muted'
-                mb={2}
-              >
-                History
-              </Text>
-              <AlertLifecycleTimeline
-                tokenId={token?.id}
+              <AlertStateDisplay
                 alertState={token?.alert_state}
-                enabled={enabled && expanded}
-                compact
                 showHeading={false}
-                showUpcoming={false}
-                focusEventId={focusEventId}
+                compact
               />
+              <AlertUpcomingSection alertState={token?.alert_state} />
+              <Box
+                role='region'
+                aria-label='History'
+                borderTop='1px solid'
+                borderColor='dashboard.modal.border'
+                pt={4}
+                mt={4}
+              >
+                <Text
+                  fontSize='xs'
+                  fontWeight='semibold'
+                  color='dashboard.modal.muted'
+                  mb={2}
+                >
+                  History
+                </Text>
+                <AlertLifecycleTimeline
+                  tokenId={token?.id}
+                  alertState={token?.alert_state}
+                  enabled={enabled && expanded}
+                  compact
+                  showHeading={false}
+                  showUpcoming={false}
+                  focusEventId={focusEventId}
+                />
+              </Box>
             </Box>
-          </Box>
-        </Collapse>
-      </Box>
+          </Collapse>
+        </Box>
+      </DashboardDetailsSection>
     </Box>
   );
 }

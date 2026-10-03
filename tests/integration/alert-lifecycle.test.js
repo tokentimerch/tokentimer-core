@@ -824,6 +824,14 @@ describe("Alert lifecycle APIs", function () {
   });
 
   it("attributes current-month alert-stats to the token's current workspace after transfer", async () => {
+    // The timeline fixtures deliberately use historic September timestamps.
+    // Add an actual current-month delivery so this assertion stays valid later.
+    await client.query(
+      `INSERT INTO alert_delivery_log (
+         user_id, token_id, workspace_id, channel, status, sent_at
+       ) VALUES ($1, $2, $3, 'email', 'success', NOW())`,
+      [owner.user.id, tokenA, workspaceA],
+    );
     // tokenA was already transferred to workspaceB by the prior test; historical
     // delivery rows still record workspaceA.
     const persisted = await client.query(

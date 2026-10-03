@@ -20,6 +20,7 @@ const { isIP } = require("node:net");
 
 const { pool } = require("../../db/database");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const { parsePublicCertificateMaterial } = require("./parser");
 const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
@@ -519,6 +520,21 @@ function normalizeAgentFilesystemObservation({
     ),
   };
 
+  if (publicCertificate.certificatePem) {
+    const [parsed] = parsePublicCertificateMaterial(publicCertificate.certificatePem);
+    if (parsed.fingerprintSha256 !== fingerprintSha256) {
+      throw observationError("certificatePem does not match fingerprintSha256");
+    }
+    // A supplied public certificate is authoritative for its immutable facts.
+    // This also keeps older reports with only PEM plus locality complete.
+    publicCertificate.subject = parsed.subject;
+    publicCertificate.issuer = parsed.issuer;
+    publicCertificate.serialNumber = parsed.serialNumber;
+    publicCertificate.subjectAltNames = parsed.subjectAltNames;
+    publicCertificate.notBefore = parsed.notBefore;
+    publicCertificate.notAfter = parsed.notAfter;
+  }
+
   // Security-relevant invariant (B18): server-owned fields MUST be assigned
   // AFTER any client-submitted metadata is assembled so a compromised or
   // buggy agent cannot spoof agentId, summary, fingerprint attribution, or
@@ -624,7 +640,6 @@ async function findExistingEvidenceByClientId(client, observation) {
 async function upsertInventoryForObservation(client, observation) {
   const certificate = certificateFor(observation);
   const certSourceRef = certSourceRefFor(observation);
-  const targetSourceRef = targetSourceRefFor(observation);
   const isFilesystem = observation.locationKind === "filesystem";
   const displayName =
     certificate.commonName || observation.filePath || observation.locationSlot;
@@ -684,6 +699,7 @@ async function upsertInventoryForObservation(client, observation) {
       source: observation.source,
       sourceRef: certSourceRef,
       reuseCertificateId: existingManagedCertificate?.id,
+      observedAt: observation.observedAt,
       name: displayName,
       // os-store-managed only when the agent actually
       // observed a private key at this location (observation.keyPresent ===
@@ -729,28 +745,7 @@ async function upsertInventoryForObservation(client, observation) {
     0,
   );
 
-  const target = await upsertAgentFilesystemTarget(client, {
-    workspaceId: observation.workspaceId,
-    source: observation.source,
-    sourceRef: targetSourceRef,
-    targetType: observation.locationKind === "iis_binding" ? "windows-iis" : "agent-host",
-    hostname: observation.targetHost,
-    name: observation.targetHost,
-    locationKind: observation.locationKind,
-    deploymentReference: observation.locationRef,
-    windowsStore: observation.windowsFields?.storeName || null,
-    windowsSite: observation.windowsFields?.siteName || null,
-    windowsPort: observation.windowsFields?.port || null,
-    windowsSniHost: observation.windowsFields?.sniHost || null,
-    publicMetadata: {
-      agentId: observation.agentId,
-      targetHost: observation.targetHost,
-      locationKind: observation.locationKind,
-      observationOnly:
-        observation.locationKind !== "iis_binding" ||
-        observation.keyPresent !== true,
-    },
-  });
+  const target = await upsertTargetForObservation(client, observation);
 
   const instance = await upsertAgentFilesystemInstance(client, {
     workspaceId: observation.workspaceId,
@@ -790,11 +785,86 @@ async function upsertInventoryForObservation(client, observation) {
   return { managedCertificate, target, instance };
 }
 
+async function upsertTargetForObservation(client, observation) {
+  return upsertAgentFilesystemTarget(client, {
+    workspaceId: observation.workspaceId,
+    source: observation.source,
+    sourceRef: targetSourceRefFor(observation),
+    targetType: observation.locationKind === "iis_binding" ? "windows-iis" : "agent-host",
+    hostname: observation.targetHost,
+    name: observation.targetHost,
+    locationKind: observation.locationKind,
+    deploymentReference: observation.locationRef,
+    windowsStore: observation.windowsFields?.storeName || null,
+    windowsSite: observation.windowsFields?.siteName || null,
+    windowsPort: observation.windowsFields?.port || null,
+    windowsSniHost: observation.windowsFields?.sniHost || null,
+    publicMetadata: {
+      agentId: observation.agentId,
+      targetHost: observation.targetHost,
+      locationKind: observation.locationKind,
+      observationOnly:
+        observation.locationKind !== "iis_binding" ||
+        observation.keyPresent !== true,
+    },
+  });
+}
+
+function managementQuotaExceeded(error) {
+  return error?.code === "CERTOPS_MANAGED_CERT_LIMIT" ||
+    (error?.code === "P0001" && error?.detail === "CERTOPS_MANAGED_CERT_LIMIT");
+}
+
+async function retainUnmanagedObservation(client, observation) {
+  const capturedAt = Date.parse(observation.observedAt);
+  if (!Number.isFinite(capturedAt) || capturedAt > Date.now() + 5 * 60 * 1000) {
+    throw observationError("observedAt is outside the accepted capture window");
+  }
+  const certificate = certificateFor(observation);
+  const result = await client.query(
+    `SELECT certops_ensure_certificate_identity($1, $2, $3, $4, $5) AS id`,
+    [observation.workspaceId, observation.fingerprintSha256,
+      certificate.commonName, certificate.issuer, certificate.notAfter],
+  );
+  // These public facts belong to the fingerprint even without enrollment.
+  // Never overwrite a retained token or another source's history snapshot.
+  await client.query(
+    `INSERT INTO certops_identity_detail_history(workspace_id, identity_id, certificate_details, captured_at)
+     VALUES ($1, $2, $3::jsonb, $4)
+     ON CONFLICT (workspace_id, identity_id) DO NOTHING`,
+    [observation.workspaceId, result.rows[0].id, JSON.stringify({
+      fingerprintSha256: observation.fingerprintSha256,
+      commonName: certificate.commonName, subjectAltNames: certificate.subjectAltNames,
+      issuer: certificate.issuer, serialNumber: certificate.serialNumber,
+      notBefore: certificate.notBefore, notAfter: certificate.notAfter,
+      subject: certificate.subject,
+    }), observation.observedAt],
+  );
+  const target = await upsertTargetForObservation(client, observation);
+  await client.query(
+    `INSERT INTO certops_slot_observations(
+       workspace_id, target_id, fingerprint_sha256, location_ref,
+       source, location_kind, source_ref, captured_at)
+     VALUES ($1, $8, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (workspace_id, target_id, fingerprint_sha256, location_ref)
+     DO UPDATE SET captured_at = GREATEST(certops_slot_observations.captured_at,
+                                EXCLUDED.captured_at)`,
+    [observation.workspaceId, observation.fingerprintSha256,
+      observation.locationKind === "filesystem"
+        ? `file://${observation.filePath}` : observation.locationRef,
+      observation.source, observation.locationKind, certSourceRefFor(observation),
+      observation.observedAt, target.id],
+  );
+  return { unmanaged: true, certificateIdentityId: result.rows[0].id,
+    managedCertificate: null, target, instance: null };
+}
+
 async function persistOneObservation(client, observation) {
   const existing = await findExistingEvidenceByClientId(client, observation);
   if (existing) {
     return {
       duplicate: true,
+      unmanaged: existing.metadata?.unmanaged === true,
       evidence: existing,
       managedCertificateId:
         existing.metadata?.managedCertificateId ||
@@ -803,7 +873,20 @@ async function persistOneObservation(client, observation) {
     };
   }
 
-  const inventory = await upsertInventoryForObservation(client, observation);
+  // Admission can fail in PostgreSQL after token/source writes. Roll back only
+  // that enrollment, retaining the sequence CAS and authenticated observation.
+  // All other failures still abort the complete batch.
+  await client.query("SAVEPOINT agent_observation_enrollment");
+  let inventory;
+  try {
+    inventory = await upsertInventoryForObservation(client, observation);
+    await client.query("RELEASE SAVEPOINT agent_observation_enrollment");
+  } catch (error) {
+    await client.query("ROLLBACK TO SAVEPOINT agent_observation_enrollment");
+    await client.query("RELEASE SAVEPOINT agent_observation_enrollment");
+    if (!managementQuotaExceeded(error)) throw error;
+    inventory = await retainUnmanagedObservation(client, observation);
+  }
 
   // Server-owned metadata fields set AFTER client metadata (B18).
   const clientMetadata = {
@@ -816,6 +899,9 @@ async function persistOneObservation(client, observation) {
   delete clientMetadata.fingerprintSha256;
   delete clientMetadata.created_by_agent_id;
   delete clientMetadata.createdByAgentId;
+  // Public certificate material belongs to inventory, not evidence metadata,
+  // whose detector intentionally rejects all PEM-bearing fields.
+  delete clientMetadata.certificatePem;
 
   const metadata = {
     ...clientMetadata,
@@ -830,8 +916,10 @@ async function persistOneObservation(client, observation) {
     evidenceId: observation.evidenceId,
     source: observation.source,
     eventType: "certificate.observed",
-    managedCertificateId: inventory.managedCertificate.id,
-    targetId: inventory.target.id,
+    unmanaged: inventory.unmanaged === true,
+    certificateIdentityId: inventory.certificateIdentityId || null,
+    managedCertificateId: inventory.managedCertificate?.id || null,
+    targetId: inventory.target?.id || null,
     certificateInstanceId: inventory.instance?.id || null,
     observedAtServer: observation.observedAtServer,
   };
@@ -840,8 +928,8 @@ async function persistOneObservation(client, observation) {
     client,
     workspaceId: observation.workspaceId,
     evidenceType: "certificate.observed",
-    subjectType: "managed_certificate",
-    subjectId: inventory.managedCertificate.id,
+    subjectType: inventory.unmanaged ? null : "managed_certificate",
+    subjectId: inventory.managedCertificate?.id || null,
     observedAt: observation.observedAt,
     createdByAgentId: observation.agentRowId,
     clientEvidenceId: observation.evidenceId,
@@ -850,9 +938,10 @@ async function persistOneObservation(client, observation) {
 
   return {
     duplicate: false,
+    unmanaged: inventory.unmanaged === true,
     evidence,
-    managedCertificateId: inventory.managedCertificate.id,
-    targetId: inventory.target.id,
+    managedCertificateId: inventory.managedCertificate?.id || null,
+    targetId: inventory.target?.id || null,
     certificateInstanceId: inventory.instance?.id || null,
   };
 }

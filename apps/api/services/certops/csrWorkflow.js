@@ -343,7 +343,7 @@ async function promote(client, row, actorUserId, method, instanceId = null) {
   const current = existing.rows[0];
   if (!current || RETIRED.has(current.status)) fail("Certificate is retired", "CERTOPS_CSR_IDENTITY_CONFLICT", 409);
   const result = await client.query(
-    `UPDATE managed_certificates SET status = 'active', common_name = $3,
+    `UPDATE managed_certificates SET status = 'active', identity_observed_at = clock_timestamp(), common_name = $3,
       subject_alt_names = $4::text[], issuer = $5, subject = $6,
       serial_number = $7, certificate_pem = $8, fingerprint_sha256 = $9,
       spki_fingerprint_sha256 = $10, public_key_algorithm = $11,

@@ -63,6 +63,7 @@ function reconcileClient({ metadata = VERIFY_METADATA } = {}) {
   const audits = [];
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       if (sql.includes("INSERT INTO audit_events")) {
         audits.push({
@@ -200,6 +201,7 @@ describe("CERTOPS_CERTIFICATE_ISSUED", () => {
     const audits = [];
     const client = {
       query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         const sql = typeof text === "string" ? text : text?.text || "";
         if (sql.includes("INSERT INTO audit_events")) {
           audits.push(params[2]);
@@ -263,6 +265,7 @@ function refreshClient({ metadata = VERIFY_METADATA, tokenId = 77 } = {}) {
   const linkTokenCalls = [];
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       if (sql.includes("INSERT INTO audit_events")) {
         audits.push({
@@ -391,6 +394,7 @@ function derivationClient({ existingProfileId = null, inserted = true } = {}) {
   const audits = [];
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       if (sql.includes("INSERT INTO audit_events")) {
         audits.push({
@@ -511,6 +515,7 @@ function schedulerPool({ dueRows = [] } = {}) {
   const pool = {
     clients,
     async query(sql) {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const text = String(sql);
       if (text.includes("disabled_count")) {
         return { rows: [{ disabled_count: 0 }] };
@@ -522,6 +527,7 @@ function schedulerPool({ dueRows = [] } = {}) {
       const client = {
         released: false,
         async query(sql, params = []) {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
           const text = String(sql).trim();
           if (text.includes("pg_try_advisory_lock")) {
             return { rows: [{ acquired: true }] };
@@ -675,6 +681,7 @@ function resultPool({ jobRow = {}, jobUpdate = {} } = {}) {
   const transaction = [];
   const client = {
     async query(text, params) {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       const trimmed = sql.trim().toUpperCase();
       if (trimmed === "BEGIN" || trimmed === "COMMIT" || trimmed === "ROLLBACK") {
@@ -952,6 +959,7 @@ describe("CERTOPS_AGENT_REGISTERED", () => {
     const transaction = [];
     const client = {
       async query(text, params) {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         const sql = typeof text === "string" ? text : text?.text || "";
         const trimmed = sql.trim().toUpperCase();
         if (

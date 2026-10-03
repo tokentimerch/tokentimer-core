@@ -96,12 +96,23 @@ describe("Retired certificate alerts against PostgreSQL", function () {
   }
 
   async function retireCertificate(certificateId, status) {
+    const certificate = (
+      await TestUtils.execQuery(
+        "SELECT fingerprint_sha256 FROM managed_certificates WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, certificateId],
+      )
+    ).rows[0];
     await request(BASE)
       .post(
         `/api/v1/workspaces/${workspaceId}/certops/certificates/${certificateId}/retire`,
       )
       .set("Cookie", cookie)
-      .send({ status, reason: "retired-certificate-alert integration" })
+      .send({
+        status,
+        reason: "retired-certificate-alert integration",
+        expectedFingerprintSha256: certificate.fingerprint_sha256,
+        acknowledgeUncertainty: true,
+      })
       .expect(200);
   }
 
@@ -168,9 +179,10 @@ describe("Retired certificate alerts against PostgreSQL", function () {
         [alertId],
       );
       logRows = log.rows;
-      const discarded = /revoked or decommissioned|endpoint recovered before threshold/i.test(
-        String(alertRow?.error_message || ""),
-      );
+      const discarded =
+        /revoked or decommissioned|endpoint recovered before threshold/i.test(
+          String(alertRow?.error_message || ""),
+        );
       if (
         alertRow?.status === "sent" &&
         !discarded &&
@@ -333,9 +345,7 @@ describe("Retired certificate alerts against PostgreSQL", function () {
       afterLast.some((row) => row.alert_key.startsWith("token_expiry:")),
     ).to.equal(false);
     expect(
-      afterLast.some((row) =>
-        row.alert_key.startsWith("cert_renewal_failed:"),
-      ),
+      afterLast.some((row) => row.alert_key.startsWith("cert_renewal_failed:")),
     ).to.equal(false);
     expect(
       afterLast.some((row) => row.alert_key.startsWith("endpoint_health:")),
@@ -371,7 +381,7 @@ describe("Retired certificate alerts against PostgreSQL", function () {
       "SELECT cert_lifecycle_status FROM tokens WHERE id = $1",
       [tokenId],
     );
-    expect(tokenAfter.rows[0].cert_lifecycle_status).to.equal("decommissioned");
+    expect(tokenAfter.rows[0].cert_lifecycle_status).to.equal("revoked");
 
     const afterRetire = await alertRows(tokenId);
     expect(
@@ -455,8 +465,9 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     );
     expect(queuedAudit.rows).to.have.length(1);
     expect(queuedAudit.rows[0].workspace_id).to.equal(workspaceId);
-    expect(queuedAudit.rows[0].metadata.alert_key)
-      .to.equal(liveQueued.rows[0].alert_key);
+    expect(queuedAudit.rows[0].metadata.alert_key).to.equal(
+      liveQueued.rows[0].alert_key,
+    );
   });
 
   it("discards leftover renewal-failure delivery for a retired certificate while the shared token stays live", async () => {
@@ -522,7 +533,10 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     const liveName = `digest-live-${Date.now()}`;
     const retiredName = `digest-retired-${Date.now()}`;
     await createExpiringToken(liveName, digestGroupId);
-    const retiredTokenId = await createExpiringToken(retiredName, digestGroupId);
+    const retiredTokenId = await createExpiringToken(
+      retiredName,
+      digestGroupId,
+    );
     await TestUtils.execQuery(
       `UPDATE tokens
           SET cert_lifecycle_status = 'decommissioned'

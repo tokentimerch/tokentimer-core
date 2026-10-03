@@ -22,7 +22,10 @@ import CertificateDetailsModal from './CertificateDetailsModal.jsx';
 import { useCertOpsForToken } from './useCertOps.js';
 
 function CertificateDetailsModalWithCertOps(props) {
-  const certOps = useCertOpsForToken(props.token?.id);
+  const certOps = useCertOpsForToken(
+    props.token?.id,
+    props.managedCertificateId
+  );
   return (
     <CertificateDetailsModal
       {...props}
@@ -47,6 +50,7 @@ export default function CertificateTokenDetailModal({
   onClose,
   workspaceId,
   tokenId,
+  managedCertificateId,
   canManage,
 }) {
   const {
@@ -116,6 +120,7 @@ export default function CertificateTokenDetailModal({
     return (
       <CertificateDetailsModalWithCertOps
         token={token}
+        managedCertificateId={managedCertificateId}
         isOpen={isOpen}
         onClose={onClose}
         isViewer={!canManage}

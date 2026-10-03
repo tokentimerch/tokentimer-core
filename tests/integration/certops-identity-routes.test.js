@@ -1,0 +1,691 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const { randomUUID } = require("node:crypto");
+const { request, TestUtils } = require("./setup");
+const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+const A = "a3".repeat(32),
+  B = "b3".repeat(32);
+const SOURCE_REF = "file:///private/certops/source.pem";
+const DEPLOYMENT_REF = "file:///private/certops/deployment.pem";
+const KEY_REF = "vault://private/certops/key";
+const PRIVATE_KEY =
+  "-----BEGIN PRIVATE KEY-----\nZmFrZS1wcml2YXRlLWtleQ==\n-----END PRIVATE KEY-----";
+
+describe("CertOps identity HTTP authorization and admission", function () {
+  this.timeout(90000);
+  let owner,
+    manager,
+    viewer,
+    outsider,
+    ws,
+    otherWs,
+    mc,
+    identityId,
+    firstPeriod;
+  const people = [];
+  async function person() {
+    const user = await TestUtils.createVerifiedTestUser();
+    const session = await TestUtils.loginTestUser(
+      user.email,
+      "SecureTest123!@#",
+    );
+    const workspaces = await request(BASE)
+      .get("/api/v1/workspaces?limit=50&offset=0")
+      .set("Cookie", session.cookie)
+      .expect(200);
+    const result = {
+      user,
+      cookie: session.cookie,
+      workspaceId: workspaces.body.items[0].id,
+    };
+    people.push(result);
+    return result;
+  }
+  async function source(fingerprint, sourceRef, workspaceId = ws) {
+    return (
+      await TestUtils.execQuery(
+        `INSERT INTO managed_certificates(workspace_id,source,source_ref,
+      fingerprint_sha256,common_name,key_mode,key_reference) VALUES($1,'agent_filesystem',$2,$3,
+        'Identity route certificate','external-unknown',$4) RETURNING id`,
+        [workspaceId, sourceRef, fingerprint, KEY_REF],
+      )
+    ).rows[0].id;
+  }
+  const path = (suffix, workspaceId = ws) =>
+    `/api/v1/workspaces/${workspaceId}/certops/${suffix}`;
+  const post = (suffix, who, body = {}, workspaceId = ws) =>
+    request(BASE)
+      .post(path(suffix, workspaceId))
+      .set("Cookie", who.cookie)
+      .send(body);
+  before(async () => {
+    owner = await person();
+    manager = await person();
+    viewer = await person();
+    outsider = await person();
+    ws = owner.workspaceId;
+    otherWs = outsider.workspaceId;
+    await TestUtils.execQuery(
+      `INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by)
+      VALUES($1,$2,'workspace_manager',$3),($4,$2,'viewer',$3)`,
+      [manager.user.id, ws, owner.user.id, viewer.user.id],
+    );
+    mc = await source(A, SOURCE_REF);
+    identityId = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [ws, A],
+      )
+    ).rows[0].id;
+    firstPeriod = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [mc],
+      )
+    ).rows[0].id;
+    const target = (
+      await TestUtils.execQuery(
+        "INSERT INTO certificate_targets(workspace_id,name,target_type) VALUES($1,'Route test host','host') RETURNING id",
+        [ws],
+      )
+    ).rows[0].id;
+    await TestUtils.execQuery(
+      `INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,
+      source,source_ref,observed_fingerprint_sha256,observed_at,location_kind,deployment_reference)
+      VALUES($1,$2,$3,'agent_filesystem',$4,$5,NOW(),'filesystem',$6)`,
+      [ws, mc, target, SOURCE_REF, A, DEPLOYMENT_REF],
+    );
+  });
+  after(async () => {
+    for (const who of people)
+      await TestUtils.cleanupTestUser(who.user.email, who.cookie);
+  });
+  it("exposes source and location history to a manager", async () => {
+    const res = await request(BASE)
+      .get(path(`certificate-identities/${identityId}`))
+      .set("Cookie", manager.cookie)
+      .expect(200);
+    assert.equal(res.body.certificate.identityId, identityId);
+    assert.equal(res.body.certificate.keyReference, KEY_REF);
+    assert.equal(res.body.certificate.sources[0].sourceRef, SOURCE_REF);
+    assert.equal(
+      res.body.certificate.locations[0].deploymentReference,
+      DEPLOYMENT_REF,
+    );
+  });
+  it("redacts sensitive source, key and deployment references from viewer list and detail", async () => {
+    for (const suffix of [
+      "certificate-identities",
+      `certificate-identities/${identityId}`,
+    ]) {
+      const res = await request(BASE)
+        .get(path(suffix))
+        .set("Cookie", viewer.cookie)
+        .expect(200);
+      for (const value of [SOURCE_REF, DEPLOYMENT_REF, KEY_REF])
+        assert(!res.text.includes(value));
+      const item = res.body.certificate || res.body.items[0];
+      assert.equal(item.keyReference, undefined);
+      assert.equal(item.sources[0].sourceRef, undefined);
+      assert.equal(item.locations[0].deploymentReference, undefined);
+      assert.equal(item.sourceCount, 1);
+      assert.equal(item.locationCount, 1);
+    }
+  });
+  it("rejects every management/lifecycle write from viewers", async () => {
+    await post(`management-periods/${firstPeriod}/stop`, viewer).expect(403);
+    await post(`sources/${mc}/readd`, viewer, {
+      renewalProfileId: null,
+      automationEnabled: false,
+    }).expect(403);
+    await post(`certificate-identities/${identityId}/retire`, viewer, {
+      status: "revoked",
+      reason: "Forbidden",
+      expectedFingerprintSha256: A,
+    }).expect(403);
+    assert.equal(
+      (
+        await TestUtils.execQuery(
+          "SELECT ended_at FROM certops_management_periods WHERE id=$1",
+          [firstPeriod],
+        )
+      ).rows[0].ended_at,
+      null,
+    );
+  });
+  it("isolates reads and all writes from a different workspace even with forged body workspace IDs", async () => {
+    await request(BASE)
+      .get(path("certificate-identities"))
+      .set("Cookie", outsider.cookie)
+      .expect(403);
+    await request(BASE)
+      .get(path(`certificate-identities/${identityId}`, otherWs))
+      .set("Cookie", outsider.cookie)
+      .expect(404);
+    const fake = { workspaceId: ws, workspace_id: ws };
+    await post(
+      `management-periods/${firstPeriod}/stop`,
+      outsider,
+      fake,
+      otherWs,
+    ).expect(404);
+    await post(
+      `sources/${mc}/readd`,
+      outsider,
+      { ...fake, renewalProfileId: null, automationEnabled: false },
+      otherWs,
+    ).expect(404);
+    await post(
+      `certificate-identities/${identityId}/retire`,
+      outsider,
+      {
+        ...fake,
+        status: "revoked",
+        reason: "Wrong workspace",
+        expectedFingerprintSha256: A,
+      },
+      otherWs,
+    ).expect(404);
+    await post(
+      `certificates/${mc}/retire`,
+      outsider,
+      {
+        status: "revoked",
+        reason: "Wrong workspace",
+        expectedFingerprintSha256: A,
+      },
+      otherWs,
+    ).expect(404);
+  });
+  it("rejects key material on identity retirement, stop and re-add without echoing it", async () => {
+    for (const [suffix, body] of [
+      [
+        `certificate-identities/${identityId}/retire`,
+        {
+          status: "revoked",
+          expectedFingerprintSha256: A,
+          reason: PRIVATE_KEY,
+        },
+      ],
+      [`management-periods/${firstPeriod}/stop`, { secret: PRIVATE_KEY }],
+      [
+        `sources/${mc}/readd`,
+        {
+          renewalProfileId: null,
+          automationEnabled: false,
+          secret: PRIVATE_KEY,
+        },
+      ],
+    ]) {
+      const res = await post(suffix, owner, body).expect(422);
+      assert.equal(res.body.code, "PRIVATE_KEY_MATERIAL_REJECTED");
+      assert(!res.text.includes("BEGIN PRIVATE KEY"));
+    }
+  });
+  it("requires the exact fingerprint precondition on the legacy source retirement route", async () => {
+    await post(`certificates/${mc}/retire`, owner, {
+      status: "revoked",
+      reason: "No fingerprint",
+    }).expect(428);
+    await post(`certificates/${mc}/retire`, owner, {
+      status: "revoked",
+      reason: "Stale identity",
+      expectedFingerprintSha256: B,
+    }).expect(412);
+    assert.equal(
+      (
+        await TestUtils.execQuery(
+          "SELECT lifecycle_status FROM certops_certificate_identities WHERE id=$1",
+          [identityId],
+        )
+      ).rows[0].lifecycle_status,
+      "active",
+    );
+  });
+  it("manager stop is idempotent and explicit re-add creates a different period", async () => {
+    await post(`management-periods/${firstPeriod}/stop`, manager).expect(200);
+    await post(`management-periods/${firstPeriod}/stop`, manager).expect(200);
+    const res = await post(`sources/${mc}/readd`, manager, {
+      renewalProfileId: null,
+      automationEnabled: false,
+    }).expect(201);
+    assert.notEqual(res.body.periodId, firstPeriod);
+    const periods = (
+      await TestUtils.execQuery(
+        "SELECT id,ended_at FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [mc],
+      )
+    ).rows;
+    assert.equal(periods.length, 2);
+    assert(periods.find((p) => p.id === firstPeriod).ended_at);
+    assert.equal(
+      periods.find((p) => p.id === res.body.periodId).ended_at,
+      null,
+    );
+    assert.equal(
+      (
+        await TestUtils.execQuery(
+          "SELECT lifecycle_status FROM certops_certificate_identities WHERE id=$1",
+          [identityId],
+        )
+      ).rows[0].lifecycle_status,
+      "active",
+    );
+  });
+  it("rejects invalid UUID configuration, filters and sorting with client errors", async () => {
+    await post(`sources/${mc}/readd`, owner, {
+      renewalProfileId: "bad-id",
+      automationEnabled: true,
+    }).expect(400);
+    await request(BASE)
+      .get(path("certificate-identities/not-a-uuid"))
+      .set("Cookie", owner.cookie)
+      .expect(404);
+    for (const query of [
+      { sort: "not-a-sort" },
+      { direction: "sideways", sort: "name" },
+      { status: "deleted" },
+      { source: "anywhere" },
+      { unmanaged: "maybe" },
+    ]) {
+      await request(BASE)
+        .get(path("certificate-identities"))
+        .query(query)
+        .set("Cookie", owner.cookie)
+        .expect(400);
+    }
+  });
+  it("route re-add cannot bypass mandatory quota admission", async () => {
+    const current = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL",
+        [mc],
+      )
+    ).rows[0].id;
+    await post(`management-periods/${current}/stop`, owner).expect(200);
+    await TestUtils.execQuery(
+      "UPDATE workspaces SET certops_managed_identity_limit=1 WHERE id=$1",
+      [ws],
+    );
+    await source(B, `file:///private/${randomUUID()}.pem`);
+    const res = await post(`sources/${mc}/readd`, owner, {
+      renewalProfileId: null,
+      automationEnabled: false,
+    }).expect(409);
+    assert.equal(res.body.code, "CERTOPS_MANAGED_CERT_LIMIT");
+    assert.equal(
+      (
+        await TestUtils.execQuery(
+          "SELECT COUNT(*)::int n FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL",
+          [mc],
+        )
+      ).rows[0].n,
+      0,
+    );
+  });
+  it("keeps deleted-source snapshots in manager and viewer HTTP history", async () => {
+    const sourceRef = `file:///private/deleted-${randomUUID()}.pem`;
+    const deleted = await source(B, sourceRef);
+    const historicalPeriod = (
+      await TestUtils.execQuery(
+        "SELECT * FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [deleted],
+      )
+    ).rows[0];
+    const historicalIdentity = historicalPeriod.current_identity_id;
+    await TestUtils.execQuery("DELETE FROM managed_certificates WHERE id=$1", [
+      deleted,
+    ]);
+    for (const who of [manager, viewer]) {
+      for (const suffix of [
+        "certificate-identities",
+        `certificate-identities/${historicalIdentity}`,
+      ]) {
+        const res = await request(BASE)
+          .get(path(suffix))
+          .set("Cookie", who.cookie)
+          .expect(200);
+        const certificate =
+          res.body.certificate ||
+          res.body.items.find((item) => item.identityId === historicalIdentity);
+        const history = certificate.sources.find(
+          (item) => item.periodId === historicalPeriod.id,
+        );
+        assert(history);
+        assert.equal(history.managedCertificateId, deleted);
+        assert.equal(history.source, historicalPeriod.source);
+        assert.equal(history.tokenId, null);
+        assert.equal(history.currentIdentityId, historicalIdentity);
+        assert.equal(history.endedReason, "management_source_deleted");
+        assert(history.startedAt);
+        assert(history.endedAt);
+        assert(certificate.sourceCount >= 2);
+        assert.equal(
+          history.sourceRef,
+          who === manager ? sourceRef : undefined,
+        );
+        if (who === viewer) assert(!res.text.includes(sourceRef));
+      }
+    }
+  });
+  it("isolates transferred token and source data in original-workspace HTTP history", async () => {
+    const sourceRef = `file:///private/transferred-${randomUUID()}.pem`;
+    const moved = await source(B, sourceRef);
+    const movedToken = (
+      await TestUtils.execQuery(
+        `INSERT INTO tokens(workspace_id,user_id,name,type,expiration)
+         VALUES($1,$2,'Transferred certificate','ssl_cert','2027-01-01') RETURNING id`,
+        [ws, owner.user.id],
+      )
+    ).rows[0].id;
+    await TestUtils.execQuery(
+      "UPDATE managed_certificates SET token_id=$2 WHERE id=$1",
+      [moved, movedToken],
+    );
+    const historicalPeriod = (
+      await TestUtils.execQuery(
+        "SELECT * FROM certops_management_periods WHERE managed_certificate_id=$1",
+        [moved],
+      )
+    ).rows[0];
+    await TestUtils.execQuery(
+      "SELECT certops_transfer_management_sources($1,$2,$3::uuid[])",
+      [ws, otherWs, [moved]],
+    );
+    await TestUtils.execQuery("UPDATE tokens SET workspace_id=$2 WHERE id=$1", [
+      movedToken,
+      otherWs,
+    ]);
+    const destinationRef = `file:///destination/${randomUUID()}.pem`;
+    await TestUtils.execQuery(
+      "UPDATE managed_certificates SET source_ref=$2,name=$2 WHERE id=$1",
+      [moved, destinationRef],
+    );
+    for (const suffix of [
+      "certificate-identities",
+      `certificate-identities/${historicalPeriod.current_identity_id}`,
+    ]) {
+      const res = await request(BASE)
+        .get(path(suffix))
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const certificate =
+        res.body.certificate ||
+        res.body.items.find(
+          (item) => item.identityId === historicalPeriod.current_identity_id,
+        );
+      const history = certificate.sources.find(
+        (item) => item.periodId === historicalPeriod.id,
+      );
+      assert(history);
+      assert.equal(history.sourceRef, sourceRef);
+      assert.equal(history.tokenId, null);
+      assert.equal(history.endedReason, "workspace_transfer");
+      assert.notEqual(certificate.tokenId, movedToken);
+      assert(certificate.sources.every((item) => item.tokenId !== movedToken));
+      assert(!res.text.includes(destinationRef));
+    }
+    const destinationIdentity = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [otherWs, B],
+      )
+    ).rows[0].id;
+    const destination = await request(BASE)
+      .get(path(`certificate-identities/${destinationIdentity}`, otherWs))
+      .set("Cookie", outsider.cookie)
+      .expect(200);
+    assert.equal(destination.body.certificate.tokenId, movedToken);
+    const currentSource = destination.body.certificate.sources.find(
+      (item) => item.managedCertificateId === moved && !item.endedAt,
+    );
+    assert.equal(currentSource.tokenId, movedToken);
+  });
+  it("returns global visibility and full counts with only 20 HTTP locations", async () => {
+    const selectedIdentity = (
+      await TestUtils.execQuery(
+        "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+        [ws, B],
+      )
+    ).rows[0].id;
+    const prefix = randomUUID();
+    await TestUtils.execQuery(
+      `INSERT INTO certops_slot_observations(workspace_id,fingerprint_sha256,source_ref,location_ref,captured_at)
+       SELECT $1,$2,$3::text || n::text,'file:///fresh-' || n::text || '.pem',NOW()-n*INTERVAL '1 second'
+       FROM generate_series(1,21) n`,
+      [ws, B, prefix],
+    );
+    for (const visibilityUnknown of [false, true]) {
+      if (visibilityUnknown) {
+        await TestUtils.execQuery(
+          "UPDATE certops_slot_observations SET captured_at=NOW()-INTERVAL '2 days' WHERE workspace_id=$1 AND source_ref=$2",
+          [ws, `${prefix}21`],
+        );
+      }
+      for (const suffix of [
+        "certificate-identities",
+        `certificate-identities/${selectedIdentity}`,
+      ]) {
+        const res = await request(BASE)
+          .get(path(suffix))
+          .set("Cookie", manager.cookie)
+          .expect(200);
+        const certificate =
+          res.body.certificate ||
+          res.body.items.find((item) => item.identityId === selectedIdentity);
+        assert.equal(certificate.locations.length, 20);
+        assert.equal(certificate.locationCount, 21);
+        assert(
+          certificate.locations.every(
+            (item) => item.presenceState === "confirmed_present",
+          ),
+        );
+        assert.equal(certificate.visibilityUnknown, visibilityUnknown);
+      }
+    }
+  });
+  it("retains stopped identity details with workspace authorization and never hydrates a moved token", async () => {
+    // Earlier quota tests intentionally retain their one-unit workspace limit.
+    // This scenario owns a separate workspace and never changes that admission
+    // policy or any existing source to make room for its certificate.
+    const detailsWorkspace = (
+      await TestUtils.execQuery(
+        `INSERT INTO workspaces(id,name,plan,created_by)
+       SELECT gen_random_uuid(),'Retained identity details',plan,$2 FROM workspaces WHERE id=$1 RETURNING id`,
+        [ws, owner.user.id],
+      )
+    ).rows[0].id;
+    let tokenId = null;
+    try {
+      await TestUtils.execQuery(
+        `INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by)
+       VALUES($1,$2,'admin',$1),($3,$2,'workspace_manager',$1),($4,$2,'viewer',$1)`,
+        [owner.user.id, detailsWorkspace, manager.user.id, viewer.user.id],
+      );
+      const fingerprint = "c7".repeat(32);
+      const managedId = await source(
+        fingerprint,
+        `file:///details-${randomUUID()}.pem`,
+        detailsWorkspace,
+      );
+      tokenId = (
+        await TestUtils.execQuery(
+          `INSERT INTO tokens(workspace_id,user_id,name,type,expiration,notes)
+       VALUES($1,$2,'Retained route certificate','ssl_cert','2027-01-01','Original workspace notes') RETURNING id`,
+          [detailsWorkspace, owner.user.id],
+        )
+      ).rows[0].id;
+      await TestUtils.execQuery(
+        "UPDATE managed_certificates SET token_id=$2,not_before='2026-01-01',not_after='2027-01-01' WHERE id=$1",
+        [managedId, tokenId],
+      );
+      const identity = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+          [detailsWorkspace, fingerprint],
+        )
+      ).rows[0].id;
+      const period = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",
+          [detailsWorkspace, managedId],
+        )
+      ).rows[0].id;
+      await post(
+        `management-periods/${period}/stop`,
+        manager,
+        {},
+        detailsWorkspace,
+      ).expect(200);
+      const suffix = `certificate-identities/${identity}`;
+      for (const who of [manager, viewer]) {
+        const res = await request(BASE)
+          .get(path(suffix, detailsWorkspace))
+          .set("Cookie", who.cookie)
+          .expect(200);
+        assert.equal(res.body.certificate.managed, false);
+        assert.equal(res.body.certificate.tokenId, tokenId);
+        assert.equal(
+          res.body.certificate.tokenSnapshot.notes,
+          "Original workspace notes",
+        );
+        assert.equal(
+          new Date(
+            res.body.certificate.certificateSnapshot.notBefore,
+          ).toISOString(),
+          "2026-01-01T00:00:00.000Z",
+        );
+        assert(
+          !JSON.stringify(res.body.certificate.certificateSnapshot).includes(
+            KEY_REF,
+          ),
+        );
+      }
+      await request(BASE)
+        .get(path(suffix, detailsWorkspace))
+        .set("Cookie", outsider.cookie)
+        .expect(403);
+      await request(BASE)
+        .get(path(suffix, otherWs))
+        .set("Cookie", outsider.cookie)
+        .expect(404);
+      await TestUtils.execQuery(
+        "UPDATE tokens SET workspace_id=$2,notes='Destination-only note' WHERE id=$1",
+        [tokenId, otherWs],
+      );
+      const historical = await request(BASE)
+        .get(path(suffix, detailsWorkspace))
+        .set("Cookie", viewer.cookie)
+        .expect(200);
+      assert.equal(historical.body.certificate.tokenId, null);
+      assert.equal(
+        historical.body.certificate.tokenSnapshot.notes,
+        "Original workspace notes",
+      );
+      assert(!historical.text.includes("Destination-only note"));
+      await TestUtils.execQuery(
+        "DELETE FROM certops_identity_detail_history WHERE workspace_id=$1 AND identity_id=$2",
+        [detailsWorkspace, identity],
+      );
+      const unavailable = await request(BASE)
+        .get(path(suffix, detailsWorkspace))
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      assert.equal(unavailable.body.certificate.tokenId, null);
+      assert.equal(unavailable.body.certificate.tokenSnapshot, null);
+      assert.equal(unavailable.body.certificate.certificateSnapshot, null);
+    } finally {
+      if (tokenId !== null)
+        await TestUtils.execQuery(
+          "DELETE FROM tokens WHERE id=$1 AND user_id=$2",
+          [tokenId, owner.user.id],
+        );
+      await TestUtils.execQuery(
+        "DELETE FROM workspaces WHERE id=$1 AND created_by=$2",
+        [detailsWorkspace, owner.user.id],
+      );
+    }
+  });
+
+  it("projects current renewal facts for a rotated identity without a token and clears them when management stops", async () => {
+    const detailsWorkspace = (
+      await TestUtils.execQuery(
+        `INSERT INTO workspaces(id,name,plan,created_by)
+       SELECT gen_random_uuid(),'Read-only identity renewal',plan,$2 FROM workspaces WHERE id=$1 RETURNING id`,
+        [ws, owner.user.id],
+      )
+    ).rows[0].id;
+    try {
+      await TestUtils.execQuery(
+        `INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by)
+       VALUES($1,$2,'admin',$1),($3,$2,'workspace_manager',$1)`,
+        [owner.user.id, detailsWorkspace, manager.user.id],
+      );
+      const managedId = await source(
+        "d7".repeat(32),
+        `file:///renewal-${randomUUID()}.pem`,
+        detailsWorkspace,
+      );
+      await TestUtils.execQuery(
+        `UPDATE managed_certificates SET fingerprint_sha256=$2,key_mode='agent-local',identity_observed_at=clock_timestamp(),
+         not_before='2026-10-02',not_after='2027-01-01' WHERE id=$1`,
+        [managedId, "d8".repeat(32)],
+      );
+      const identity = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+          [detailsWorkspace, "d8".repeat(32)],
+        )
+      ).rows[0].id;
+      const suffix = `certificate-identities/${identity}`;
+      const read = () =>
+        request(BASE)
+          .get(path(suffix, detailsWorkspace))
+          .set("Cookie", manager.cookie)
+          .expect(200);
+      const current = (await read()).body.certificate;
+      assert.equal(current.tokenId, null);
+      assert.equal(current.managed, true);
+      assert.equal(current.keyMode, "agent-local");
+      assert.equal(current.renewal.state, "not-configured");
+      assert.equal(current.renewal.keyMode, "agent-local");
+      const listed = await request(BASE)
+        .get(path("certificate-identities", detailsWorkspace))
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const item = listed.body.items.find(
+        (certificate) => certificate.identityId === identity,
+      );
+      assert.deepEqual(current.renewal, item.renewal);
+      assert.equal(current.renewalPathState, item.renewalPathState);
+      const period = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL",
+          [managedId],
+        )
+      ).rows[0].id;
+      await post(
+        `management-periods/${period}/stop`,
+        manager,
+        {},
+        detailsWorkspace,
+      ).expect(200);
+      const stopped = (await read()).body.certificate;
+      assert.equal(stopped.managed, false);
+      assert.equal(stopped.keyMode, null);
+      assert.equal(stopped.profileId, null);
+      assert.equal(stopped.renewal.state, "not-eligible");
+      assert.equal(stopped.renewal.profileId, null);
+      assert.equal(
+        stopped.certificateSnapshot.fingerprintSha256,
+        "d8".repeat(32),
+      );
+    } finally {
+      await TestUtils.execQuery(
+        "DELETE FROM workspaces WHERE id=$1 AND created_by=$2",
+        [detailsWorkspace, owner.user.id],
+      );
+    }
+  });
+});

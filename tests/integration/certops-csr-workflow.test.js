@@ -682,7 +682,7 @@ describe("operator supplied CSR workflow", function () {
     const certificateB = await pool.query(
       `INSERT INTO managed_certificates (workspace_id, status, source, source_ref,
          name, certificate_pem, fingerprint_sha256, spki_fingerprint_sha256, not_after)
-       VALUES ($1, 'active', 'endpoint_monitor', $2, 'Observed B', $3, $4, $5, $6) RETURNING id`,
+       VALUES ($1, 'active', 'agent_filesystem', $2, 'Observed B', $3, $4, $5, $6) RETURNING id`,
       [workspaceId, `csr-observed:${randomUUID()}`, newLeaf.certificatePem,
         newLeaf.fingerprintSha256, newLeaf.spkiFingerprintSha256, newLeaf.notAfter],
     );
@@ -747,7 +747,7 @@ describe("operator supplied CSR workflow", function () {
     const observed = await pool.query(
       `INSERT INTO managed_certificates (workspace_id, status, source, source_ref,
          name, certificate_pem, fingerprint_sha256, spki_fingerprint_sha256, not_after)
-       VALUES ($1, 'discovered', 'endpoint_monitor', $2, 'Shared observed leaf', $3, $4, $5, $6)
+       VALUES ($1, 'discovered', 'agent_filesystem', $2, 'Shared observed leaf', $3, $4, $5, $6)
        RETURNING id`,
       [workspaceId, `csr-shared:${randomUUID()}`, parsed.certificatePem,
         parsed.fingerprintSha256, parsed.spkiFingerprintSha256, parsed.notAfter],

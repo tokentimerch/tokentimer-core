@@ -24,6 +24,8 @@ describe("WhatsApp helper unit coverage", () => {
   let originalInfo;
   let originalWarn;
   let originalError;
+  let dbPool;
+  let originalDbQuery;
 
   before(async () => {
     axios = workerRequire("axios");
@@ -32,15 +34,29 @@ describe("WhatsApp helper unit coverage", () => {
         path.join(__dirname, "..", "..", "apps", "worker", "src", "logger.js"),
       ).href
     );
-    ({ sendWhatsApp } = await import(pathToFileURL(workerModulePath).href));
+    ({ pool: dbPool } = await import(
+      pathToFileURL(path.join(path.dirname(workerModulePath), "..", "db.js"))
+        .href
+    ));
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     originalEnv = { ...process.env };
     originalPost = axios.post;
     originalInfo = loggerModule.logger.info;
     originalWarn = loggerModule.logger.warn;
     originalError = loggerModule.logger.error;
+    originalDbQuery = dbPool.query;
+    dbPool.query = async () => ({ rows: [] });
+    // Isolate the module's credential cache from other notifier suites.
+    ({ sendWhatsApp } = await import(
+      `${pathToFileURL(workerModulePath).href}?test=${require("node:crypto").randomUUID()}`
+    ));
+    axios.post = async () => {
+      throw new Error(
+        "Unexpected outbound request in credential validation test",
+      );
+    };
     loggerModule.logger.info = () => {};
     loggerModule.logger.warn = () => {};
     loggerModule.logger.error = () => {};
@@ -52,6 +68,7 @@ describe("WhatsApp helper unit coverage", () => {
     loggerModule.logger.info = originalInfo;
     loggerModule.logger.warn = originalWarn;
     loggerModule.logger.error = originalError;
+    dbPool.query = originalDbQuery;
   });
 
   it("returns dry-run success when WHATSAPP_DRY_RUN is enabled", async () => {

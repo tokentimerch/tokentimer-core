@@ -547,12 +547,10 @@ async function transferTokenAssociations(
   let movedCertificates = 0;
   if (certIds.length > 0) {
     const certRes = await client.query(
-      `UPDATE managed_certificates
-          SET workspace_id = $1, profile_id = NULL, updated_at = NOW()
-        WHERE workspace_id = $2 AND id = ANY($3::uuid[])`,
+      `SELECT certops_transfer_management_sources($2::uuid, $1::uuid, $3::uuid[]) AS moved`,
       [toWorkspaceId, fromWorkspaceId, certIds],
     );
-    movedCertificates = certRes.rowCount || 0;
+    movedCertificates = Number(certRes.rows[0]?.moved || 0);
   }
 
   if (jobIds.length > 0) {

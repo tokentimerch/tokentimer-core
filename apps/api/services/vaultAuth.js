@@ -156,6 +156,20 @@ function classifyAppRoleLoginFailure(status, bodyText) {
   return null;
 }
 
+// Undici wraps a rejected CONNECT response in nested transport errors.
+// Preserve the proxy status without treating it as a Vault credential failure.
+function proxyResponseStatus(error) {
+  const seen = new Set();
+  for (let cause = error; cause && !seen.has(cause) && seen.size < 8; cause = cause.cause) {
+    seen.add(cause);
+    if (cause.code !== "UND_ERR_ABORTED") continue;
+    const match = /^Proxy response \((\d{3})\) !== 200 when HTTP Tunneling$/.exec(cause.message || "");
+    const status = match ? Number(match[1]) : 0;
+    if (status >= 400 && status <= 599) return status;
+  }
+  return null;
+}
+
 async function vaultHttpRequest({
   address,
   path,
@@ -230,6 +244,16 @@ async function vaultHttpRequest({
     return await res.json();
   } catch (error) {
     clearTimeout(timeoutId);
+    const proxyStatus = proxyResponseStatus(error);
+    if (proxyStatus) {
+      const rejected = new Error(
+        `Forward proxy rejected the Vault connection (${proxyStatus}). Check the proxy access rules and authentication.`,
+        { cause: error },
+      );
+      rejected.status = proxyStatus;
+      rejected.code = "VAULT_PROXY_RESPONSE";
+      throw rejected;
+    }
     if (error.name === "AbortError") {
       logger.error("Vault API request timeout", {
         method,
@@ -284,6 +308,7 @@ async function vaultAppRoleLogin({
       extraHeaders: namespaceHeaders(namespace),
     });
   } catch (err) {
+    if (err.code === "VAULT_PROXY_RESPONSE") throw err;
     const code = classifyAppRoleLoginFailure(err.status, err.body);
     if (code) throw new VaultAuthError(code, undefined, { cause: err });
     throw err;

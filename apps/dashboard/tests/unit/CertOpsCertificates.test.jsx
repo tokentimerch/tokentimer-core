@@ -21,6 +21,8 @@ const {
   retryRenewalSetupIntentMock,
   listCertificatesMock,
   listRenewalProfilesMock,
+  getCertificateIdentityMock,
+  listCertOpsRenewalProfilesMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -30,6 +32,8 @@ const {
   retryRenewalSetupIntentMock: vi.fn(),
   listCertificatesMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
+  getCertificateIdentityMock: vi.fn(),
+  listCertOpsRenewalProfilesMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -46,7 +50,10 @@ vi.mock('../../src/components/certops/useCertOpsCertificates.js', () => ({
 
 vi.mock('../../src/components/certops/CsrWorkflowPanel.jsx', () => ({
   default: ({ existingCertificateId }) => (
-    <div data-testid='csr-workflow-panel' data-existing-certificate-id={existingCertificateId} />
+    <div
+      data-testid='csr-workflow-panel'
+      data-existing-certificate-id={existingCertificateId}
+    />
   ),
 }));
 
@@ -61,6 +68,8 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     detachCertificateRenewalProfile: detachCertificateRenewalProfileMock,
     retryRenewalSetupIntent: retryRenewalSetupIntentMock,
     listCertificates: listCertificatesMock,
+    getCertificateIdentity: getCertificateIdentityMock,
+    listCertOpsRenewalProfiles: listCertOpsRenewalProfilesMock,
   };
 });
 
@@ -101,9 +110,14 @@ function certState(overrides = {}) {
 function certificate(overrides = {}) {
   return {
     id: 'cert-11111111-1111-1111-1111-111111111111',
+    identityId: '11111111-1111-4111-8111-111111111111',
+    fingerprintSha256: 'a'.repeat(64),
     commonName: 'example.test',
     subjectAltNames: [],
     status: 'active',
+    lifecycleStatus: ['revoked', 'decommissioned'].includes(overrides.status)
+      ? overrides.status
+      : 'active',
     source: 'manual',
     notAfter: '2099-01-01T00:00:00.000Z',
     keyMode: null,
@@ -121,6 +135,8 @@ beforeEach(() => {
   retryRenewalSetupIntentMock.mockReset();
   listCertificatesMock.mockReset();
   listRenewalProfilesMock.mockReset();
+  getCertificateIdentityMock.mockReset();
+  listCertOpsRenewalProfilesMock.mockReset();
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
   // Default: the retired-count probe (two limit:1 list calls) sees no
@@ -133,6 +149,95 @@ beforeEach(() => {
   // manual entry without an extra click in tests that don't care about the
   // preset picker.
   listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
+  getCertificateIdentityMock.mockResolvedValue(null);
+  listCertOpsRenewalProfilesMock.mockResolvedValue([]);
+});
+
+it('opens one certificate detail with token fields, sources, and all locations', async () => {
+  const item = certificate({
+    tokenId: null,
+    locationCount: 2,
+    sourceCount: 2,
+    activeSourceCount: 2,
+  });
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [item] })
+  );
+  getCertificateIdentityMock.mockResolvedValue({
+    ...item,
+    sources: [
+      {
+        periodId: 'period-1',
+        managedCertificateId: item.id,
+        source: 'manual',
+        sourceRef: 'first source',
+        tokenId: 'token-1',
+        startedAt: '2026-01-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+      {
+        periodId: 'period-2',
+        managedCertificateId: 'cert-2',
+        source: 'manual',
+        sourceRef: 'second source',
+        tokenId: 'token-2',
+        startedAt: '2026-02-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+      {
+        periodId: 'period-old',
+        managedCertificateId: 'cert-rotated',
+        source: 'manual',
+        sourceRef: 'rotated source',
+        tokenId: 'token-3',
+        startedAt: '2025-01-01T00:00:00Z',
+        endedAt: '2025-06-01T00:00:00Z',
+        periodEndedAt: '2025-06-01T00:00:00Z',
+        currentIdentityId: item.identityId,
+      },
+    ],
+    locations: [
+      {
+        id: 'location-1',
+        presenceState: 'confirmed_present',
+        sourceRef: 'api-a.pem',
+      },
+      {
+        id: 'location-2',
+        presenceState: 'confirmed_present',
+        sourceRef: 'api-b.pem',
+      },
+    ],
+  });
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(await screen.findByText(/api-a\.pem/)).toBeInTheDocument();
+  expect(screen.getByText(/api-b\.pem/)).toBeInTheDocument();
+  expect(
+    screen.getByRole('heading', { name: 'Certificate management' })
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('heading', { name: 'Basic information' })
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'View token details' })
+  ).not.toBeInTheDocument();
+});
+
+it('shows active source count while retaining historical management periods', () => {
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          sourceCount: 3,
+          activeSourceCount: 2,
+          locationCount: 2,
+        }),
+      ],
+    })
+  );
+  renderPage();
+  expect(screen.getByText('2 sources · 2 locations')).toBeInTheDocument();
 });
 
 it('opens an existing-certificate CSR when a same-page link changes the URL', async () => {
@@ -141,7 +246,9 @@ it('opens an existing-certificate CSR when a same-page link changes the URL', as
     <ChakraProvider>
       <DashboardThemeProvider>
         <MemoryRouter initialEntries={['/certops/certificates?workspace=ws-1']}>
-          <Link to={`/certops/certificates?workspace=ws-1&csrCertificateId=${certificateId}`}>
+          <Link
+            to={`/certops/certificates?workspace=ws-1&csrCertificateId=${certificateId}`}
+          >
             Start CSR workflow
           </Link>
           <CertOpsCertificates />
@@ -284,7 +391,7 @@ describe('CertOpsCertificates list states', () => {
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
 
-    ['Details', 'Set up renewal', 'Retire'].forEach(name => {
+    ['Details', 'Set up renewal', 'Change lifecycle'].forEach(name => {
       expect(
         screen.getByRole('button', { name }).querySelector('svg')
       ).not.toBeNull();
@@ -376,6 +483,49 @@ describe('CertOpsCertificates filters', () => {
 });
 
 describe('CertOpsCertificates retire action', () => {
+  it('keeps fingerprintless provisional sources outside the identity lifecycle action', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            identityId: null,
+            fingerprintSha256: null,
+            lifecycleStatus: null,
+            status: 'provisioning',
+          }),
+        ],
+      })
+    );
+    renderPage();
+    expect(
+      screen.queryByRole('button', { name: 'Change lifecycle' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('requires a reason and uncertainty acknowledgment before decommissioning', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({ certificates: [certificate()] })
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Change lifecycle' }));
+    await screen.findByRole('dialog', { name: /Retire certificate/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
+    expect(
+      screen.getByText('Enter a reason for this lifecycle change.')
+    ).toBeInTheDocument();
+    expect(retireCertificateMock).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), {
+      target: { value: 'Service removed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
+    expect(
+      screen.getByText(
+        'Confirm that you understand visibility may be incomplete.'
+      )
+    ).toBeInTheDocument();
+    expect(retireCertificateMock).not.toHaveBeenCalled();
+  });
+
   it('does not show the retire action for a non-manager viewer', () => {
     useCertOpsCanManageMock.mockReturnValue(false);
     useCertOpsCertificatesMock.mockReturnValue(
@@ -385,7 +535,7 @@ describe('CertOpsCertificates retire action', () => {
     renderPage();
 
     expect(
-      screen.queryByRole('button', { name: 'Retire' })
+      screen.queryByRole('button', { name: 'Change lifecycle' })
     ).not.toBeInTheDocument();
   });
 
@@ -397,7 +547,7 @@ describe('CertOpsCertificates retire action', () => {
     renderPage();
 
     expect(
-      screen.queryByRole('button', { name: 'Retire' })
+      screen.queryByRole('button', { name: 'Change lifecycle' })
     ).not.toBeInTheDocument();
   });
 
@@ -410,15 +560,13 @@ describe('CertOpsCertificates retire action', () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retire' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Change lifecycle' }));
     const dialog = await screen.findByRole('dialog', {
       name: /Retire certificate/,
     });
     expect(dialog).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /Renewal-failure alerts for this certificate will stop/i
-      )
+      screen.getByText(/Renewal-failure alerts for this certificate will stop/i)
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -429,13 +577,25 @@ describe('CertOpsCertificates retire action', () => {
       screen.getByText(/Endpoint monitoring continues/i)
     ).toBeInTheDocument();
 
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), {
+      target: { value: 'Service removed' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /I understand CertOps/ })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
     await vi.waitFor(() => {
       expect(retireCertificateMock).toHaveBeenCalledWith(
         'ws-1',
         certificate().id,
-        expect.objectContaining({ status: 'decommissioned' })
+        expect.objectContaining({
+          status: 'decommissioned',
+          reason: 'Service removed',
+          identityId: certificate().identityId,
+          fingerprintSha256: certificate().fingerprintSha256,
+          acknowledgeUncertainty: true,
+        })
       );
       expect(refresh).toHaveBeenCalledTimes(1);
     });
@@ -929,7 +1089,7 @@ describe('CertOpsCertificates retired count badge', () => {
         pagination: {
           limit: 1,
           offset: 0,
-          total: params?.excludeRetired === false ? 7 : 4,
+          total: params?.status === 'revoked' ? 2 : 1,
         },
       })
     );
@@ -962,7 +1122,7 @@ describe('CertOpsCertificates retired count badge', () => {
         pagination: {
           limit: 1,
           offset: 0,
-          total: params?.excludeRetired === false ? 4 : 4,
+          total: params?.status === 'revoked' ? 2 : 1,
         },
       })
     );
@@ -973,11 +1133,17 @@ describe('CertOpsCertificates retired count badge', () => {
     await screen.findByRole('button', { name: /Retired/ });
     const callsBeforeRetire = listCertificatesMock.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retire' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Change lifecycle' }));
     const dialog = await screen.findByRole('dialog', {
       name: /Retire certificate/,
     });
     expect(dialog).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText(/Reason \(required/), {
+      target: { value: 'Service removed' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /I understand CertOps/ })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
     await vi.waitFor(() => {

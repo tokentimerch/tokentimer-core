@@ -23,11 +23,9 @@ vi.mock('../../src/utils/apiClient', async importOriginal => {
     ...actual,
     default: {
       ...actual.default,
-      get: vi
-        .fn()
-        .mockResolvedValue({
-          data: { managed: false, configurations: [], items: [] },
-        }),
+      get: vi.fn().mockResolvedValue({
+        data: { managed: false, configurations: [], items: [] },
+      }),
     },
     tokenAPI: {
       ...actual.tokenAPI,
@@ -105,6 +103,7 @@ describe('TokenDetailModal', () => {
     expect(screen.getByText('Basic information')).toBeInTheDocument();
     expect(screen.getByText('General details')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getAllByText('Notes')).toHaveLength(1);
     expect(
       document.querySelectorAll('[data-dashboard-detail-row]').length
     ).toBeGreaterThan(10);

@@ -576,7 +576,7 @@ async function takeNextControllerProvisioningCommand({
     }
 
     // Atomic claim/lease bound to this cluster identity.
-    await client.query(
+    const claimResult = await client.query(
       `UPDATE certificate_jobs
           SET status = CASE
                 WHEN status = 'pending' THEN 'claimed'
@@ -591,9 +591,13 @@ async function takeNextControllerProvisioningCommand({
               END,
               queued_at = COALESCE(queued_at, NOW()),
               updated_at = NOW()
-        WHERE id = $1`,
+        WHERE id = $1 RETURNING status`,
       [row.id, apiToken.controllerClusterId, leaseSeconds],
     );
+    if (claimResult.rows[0]?.status === "cancelled") {
+      await client.query("COMMIT");
+      return null;
+    }
 
     await client.query(
       `INSERT INTO certificate_controller_provision_deliveries

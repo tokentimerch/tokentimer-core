@@ -58,6 +58,7 @@ the certificate status change. Exact column name is an implementation detail.
 
 Frontend retire UI (dashboard PR #48) may land ahead of the backend retire
 endpoint (see PR #47). That is acceptable under this decision when:
+
 - OpenAPI, route-compat contract, migration, token status column, audit row, and
   tests are tracked in the paired backend PR or an immediately following one.
 - Callers handle 404 on the retire route until the backend ships.
@@ -84,3 +85,87 @@ endpoint (see PR #47). That is acceptable under this decision when:
   other non-terminal status: it retires to `revoked` or `decommissioned` through
   the retire route with token status mirroring, is never row-deleted, and counts
   as active for quota.
+
+## Addendum: fingerprint identity and management periods (2026-10-01)
+
+This addendum supersedes the 1:1 source-row lifecycle and default retired
+visibility rules above. A certificate is identified by its normalized SHA-256
+fingerprint within a workspace. `managed_certificates` remains a historical
+source record. An open `certops_management_periods` row denotes current
+management; rotation changes its current certificate association without
+moving lifecycle from A to B. Closing a period is terminal. Re-adding a source
+starts another period, and observations cannot reopen management.
+
+The grouped inventory displays one fingerprint once, with its source history
+and location evidence. Fingerprintless provisioning rows stay separate until
+identified. Lifecycle changes target `certops_certificate_identities` and
+require the expected fingerprint; the legacy record route requires the same
+precondition. Revocation records CertOps state and does not contact the CA.
+Decommission is an operator declaration made with the best available evidence:
+fresh confirmed service use blocks it; stored copies or unknown visibility
+require a reason and explicit acknowledgment. Subsequent observations leave
+lifecycle unchanged and show the conflict. Revoked/decommissioned certificates
+with fresh presence remain visible by default.
+
+Historical source provenance comes from the management period's `source` and
+`source_ref` snapshots and survives physical source deletion or workspace
+transfer. Current source fields such as `tokenId` are hydrated only when the
+source and period belong to the same workspace; otherwise they are null.
+Observation matching normalizes legacy instance fingerprints on reads with
+`certops_normalize_fingerprint`, including the decommission safety check.
+Slot and unmanaged observations enforce canonical fingerprints with database
+constraints. The same normalizer checks job targets before permitting a
+replacement operation to bypass retirement restrictions.
+
+Grouped list and detail responses return at most 20 locations, with a full
+`locationCount`. PostgreSQL computes `visibilityUnknown` over all matching
+distinct locations using their effective presence and freshness rules before applying
+the display limit. No observations means unknown visibility; fresh confirmed
+absence is known visibility.
+
+Lifecycle does not end management and does not release quota. Quota consumes
+one unit per distinct fingerprint with an open period, plus one per open
+fingerprintless source. Closing the last period releases the unit. Token status
+and alert suppression must respect other active fingerprints sharing a token.
+Historical source records, jobs, observations, and audit rows remain intact.
+
+Certificate detail layout is shared with dashboard token details. Both use the
+same validity, expiry, renewal, key-locality, Notes and alert sections. CertOps
+adds column-based observed locations and management periods beneath Notes;
+dashboard token details omit those location tables. Source actions remain tied
+to a specific management period, and evidence state is separate from evidence
+type. Edition overlays retain this shared layout; hosted Cloud excludes
+auto-sync provenance because that feature and its schema are not available.
+
+The UI calls the source-period section **Certificate management** and explains
+registrations separately from deployment evidence. Current and restartable
+registrations appear by default; **Show ended periods** reveals earlier periods
+and associations. **Start managing again** opens a new period with explicitly
+selected renewal settings, never a second fingerprint entry. See
+[Certificate details](../certops/certificate-details.md).
+
+Repeated endpoint monitor records are grouped by their exact endpoint URL before
+location counts and pagination. Prefer a surviving monitor over ended monitors,
+then its latest captured evidence. Previous monitor records remain immutable;
+responses include their count and at most 20 historical summaries per location.
+Historical summaries contain no deployment paths or source references. Genuine
+current visibility gaps are retained; the lifecycle action continues checking
+all raw evidence independently of the display projection. Other observation
+slots are not merged merely because two hosts use the same file path.
+
+Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.
+
+Public token/certificate details are retained per immutable identity. A canonical
+token remains usable only while it belongs to that workspace and still describes
+that fingerprint. Rotation, deletion, or workspace transfer leaves a read-only
+public snapshot; ambiguous historical detail backfill never copies the current
+replacement certificate. Snapshot fields are explicitly selected, excluding
+private material and arbitrary token metadata.
+
+Lifecycle mutations use targeted identity and token locks. Unchanged captures do
+not take workspace quota locks. Admission and quota-changing enrollment/rotation
+remain serialized on their write transaction. A contended source status cache
+may refresh on its next capture; lifecycle reads, eligibility and token alert
+projection use the immutable identity. Cancellation locks only work eligible for
+the affected fingerprint. Valid quota-blocked agent discoveries keep evidence and
+locations as unmanaged identities, retaining replay and timestamp protections.

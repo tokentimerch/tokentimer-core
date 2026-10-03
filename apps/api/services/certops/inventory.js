@@ -238,10 +238,10 @@ async function acquireManagedCertificateImportLock(client, workspaceId) {
 
 async function countActiveManagedCertificatesWithClient(client, workspaceId) {
   const result = await client.query(
-    `SELECT COUNT(*)::int AS c
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND status NOT IN ('revoked', 'decommissioned')`,
+    `SELECT (COUNT(DISTINCT current_identity_id) +
+             COUNT(*) FILTER (WHERE current_identity_id IS NULL))::int AS c
+       FROM certops_management_periods
+      WHERE workspace_id = $1 AND ended_at IS NULL`,
     [workspaceId],
   );
   return Number(result.rows[0]?.c || 0);
@@ -252,26 +252,21 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
   if (unique.length === 0) return 0;
 
   const result = await client.query(
-    `SELECT fingerprint_sha256, status
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND fingerprint_sha256 = ANY($2::text[])`,
+    `SELECT identity.fingerprint_sha256
+       FROM certops_management_periods period
+       JOIN certops_certificate_identities identity
+         ON identity.id = period.current_identity_id
+      WHERE period.workspace_id = $1 AND period.ended_at IS NULL
+        AND identity.fingerprint_sha256 = ANY($2::text[])`,
     [workspaceId, unique],
   );
-  const byFingerprint = new Map(
-    result.rows.map((row) => [row.fingerprint_sha256, row.status]),
-  );
+  const managed = new Set(result.rows.map((row) => row.fingerprint_sha256));
 
   let consuming = 0;
   for (const fingerprint of unique) {
-    const status = byFingerprint.get(fingerprint);
-    if (!status) {
+    if (!managed.has(fingerprint)) {
       consuming += 1;
-      continue;
     }
-    // Existing fingerprints are idempotent regardless of lifecycle status.
-    // A retired certificate stays retired on re-import and cannot consume a
-    // second managed-certificate quota slot.
   }
   return consuming;
 }
@@ -992,6 +987,7 @@ async function refreshManagedCertificateById(
             created_by = COALESCE(created_by, $22),
             deployed_cert_path = COALESCE($23, deployed_cert_path),
             deployed_agent_id = COALESCE($24::uuid, deployed_agent_id),
+            identity_observed_at = COALESCE($25::timestamptz, clock_timestamp()),
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
@@ -1021,6 +1017,7 @@ async function refreshManagedCertificateById(
       options.createdBy || null,
       deployedCertPath,
       deployedAgentId,
+      options.observedAt || null,
     ],
   );
   if (!result.rows[0]) {
@@ -1090,6 +1087,7 @@ async function upsertManagedCertificateByMonitorSource(
     options.createdBy || null,
     deployedCertPath,
     deployedAgentId,
+    options.observedAt || null,
   ];
 
   const result = await client.query(
@@ -1118,12 +1116,13 @@ async function upsertManagedCertificateByMonitorSource(
        public_metadata,
        created_by,
        deployed_cert_path,
-       deployed_agent_id
+       deployed_agent_id,
+       identity_observed_at
      )
      VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12,
        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23,
-       $24, $25::uuid
+       $24, $25::uuid, COALESCE($26::timestamptz, clock_timestamp())
      )
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
@@ -1146,6 +1145,7 @@ async function upsertManagedCertificateByMonitorSource(
        serial_number = EXCLUDED.serial_number,
        certificate_pem = EXCLUDED.certificate_pem,
        fingerprint_sha256 = EXCLUDED.fingerprint_sha256,
+       identity_observed_at = EXCLUDED.identity_observed_at,
        spki_fingerprint_sha256 = EXCLUDED.spki_fingerprint_sha256,
        public_key_algorithm = EXCLUDED.public_key_algorithm,
        public_key_size = EXCLUDED.public_key_size,
@@ -1427,15 +1427,7 @@ async function importPublicCertificates(options) {
 }
 
 async function countActiveManagedCertificates({ workspaceId }) {
-  const result = await pool.query(
-    `SELECT COUNT(*)::int AS count
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND status NOT IN (${RETIRE_STATUS_SQL_LIST})`,
-    [workspaceId],
-  );
-
-  return result.rows[0].count;
+  return countActiveManagedCertificatesWithClient(pool, workspaceId);
 }
 
 const MANAGED_CERTIFICATE_LIST_FROM = `
@@ -1689,37 +1681,6 @@ function resolveRetireArgs(clientOrPool, options) {
   return { db: clientOrPool || pool, options: options || {} };
 }
 
-async function writeRetireAudit(client, options, certificate, status, reason) {
-  await client.query(
-    `INSERT INTO audit_events (
-       actor_user_id,
-       subject_user_id,
-       action,
-       target_type,
-       target_id,
-       channel,
-       metadata,
-       workspace_id
-     )
-     VALUES ($1, $2, 'CERTOPS_CERTIFICATE_RETIRED', 'managed_certificate',
-             NULL, NULL, $3::jsonb, $4)`,
-    [
-      options.actorUserId || options.createdBy || null,
-      options.actorUserId || options.createdBy || null,
-      JSON.stringify(
-        compactObject({
-          managedCertificateId: certificate.id,
-          tokenId: certificate.token_id,
-          status,
-          reason,
-          fingerprintSha256: certificate.fingerprint_sha256,
-        }),
-      ),
-      options.workspaceId,
-    ],
-  );
-}
-
 function unsentRetiredAlertStatusSql() {
   return RETIRED_CERT_UNSENT_ALERT_STATUSES.map((status) => `'${status}'`).join(
     ", ",
@@ -1781,114 +1742,40 @@ async function suppressPendingRetiredCertificateAlerts(
   return { deleted };
 }
 
+// Compatibility entry point for trusted internal callers. Certificate lifecycle
+// and all safety checks are owned by the identity helper. A supplied pg client
+// belongs to the caller's transaction; a pool acquires its own transaction.
 async function retireManagedCertificate(clientOrPool, options) {
   const resolved = resolveRetireArgs(clientOrPool, options);
-  const normalizedStatus = normalizeRetireStatus(resolved.options.status);
-  const normalizedReason = normalizeRetireReason(resolved.options.reason);
-  const db = resolved.db;
-  const client =
-    db && typeof db.connect === "function" ? await db.connect() : db;
-  const shouldRelease = db && typeof db.connect === "function";
-
-  if (!client || typeof client.query !== "function") {
-    throw new Error("retireManagedCertificate requires a pg client or pool");
-  }
-
+  const status = normalizeRetireStatus(resolved.options.status);
+  const reason = normalizeRetireReason(resolved.options.reason);
+  const { Client } = require("pg");
+  const ownsTransaction = !(resolved.db instanceof Client) && typeof resolved.db.connect === "function";
+  const client = ownsTransaction ? await resolved.db.connect() : resolved.db;
+  if (!client || typeof client.query !== "function") throw new Error("retireManagedCertificate requires a pg client or pool");
   try {
-    await client.query("BEGIN");
-
-    const existing = await client.query(
-      `SELECT *
-         FROM managed_certificates
-        WHERE workspace_id = $1
-          AND id = $2
-        FOR UPDATE`,
-      [resolved.options.workspaceId, resolved.options.certificateId],
-    );
-
-    const certificate = existing.rows[0];
-    if (!certificate) {
-      throw certOpsValidationError(
-        "Certificate not found",
-        CERTOPS_CERTIFICATE_NOT_FOUND,
-      );
-    }
-
-    const updated = await client.query(
-      `UPDATE managed_certificates
-          SET status = $1,
-              updated_at = NOW()
-        WHERE workspace_id = $2
-          AND id = $3
-        RETURNING *`,
-      [
-        normalizedStatus,
-        resolved.options.workspaceId,
-        resolved.options.certificateId,
-      ],
-    );
-
-    let suppressTokenExpiry = false;
-    if (certificate.token_id) {
-      // Interim model: several managed certificates may reference the same
-      // token. Only mirror a terminal lifecycle status onto the shared token
-      // when no sibling certificate remains outside a retired status;
-      // otherwise the token would advertise revoked/decommissioned while
-      // another linked certificate is still active.
-      const activeSiblings = await client.query(
-        `SELECT 1
-           FROM managed_certificates
-          WHERE workspace_id = $1
-            AND token_id = $2
-            AND id <> $3
-            AND status NOT IN ('revoked', 'decommissioned')
-          LIMIT 1`,
-        [
-          resolved.options.workspaceId,
-          certificate.token_id,
-          resolved.options.certificateId,
-        ],
-      );
-      if (activeSiblings.rowCount === 0) {
-        await client.query(
-          `UPDATE tokens
-              SET cert_lifecycle_status = $1,
-                  updated_at = NOW()
-            WHERE workspace_id = $2
-              AND id = $3`,
-          [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
-        );
-        suppressTokenExpiry = true;
-      }
-    }
-
-    await suppressPendingRetiredCertificateAlerts(client, {
-      tokenId: certificate.token_id,
-      certificateId: resolved.options.certificateId,
-      workspaceId: resolved.options.workspaceId,
-      suppressTokenExpiry,
-    });
-
-    await writeRetireAudit(
+    if (ownsTransaction) await client.query("BEGIN");
+    const source = await client.query(`SELECT i.id AS identity_id, i.fingerprint_sha256
+      FROM managed_certificates mc LEFT JOIN certops_certificate_identities i
+        ON i.workspace_id = mc.workspace_id AND i.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+      WHERE mc.workspace_id = $1 AND mc.id = $2`,
+      [resolved.options.workspaceId, resolved.options.certificateId]);
+    if (!source.rows.length) throw certOpsValidationError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+    // Lazy import avoids the inventory/identity module dependency cycle.
+    const { retireCertificateIdentity } = require("./certificateIdentity");
+    const result = await retireCertificateIdentity({
+      workspaceId: resolved.options.workspaceId, identityId: source.rows[0].identity_id,
+      expectedFingerprintSha256: resolved.options.expectedFingerprintSha256 || source.rows[0].fingerprint_sha256,
+      status, reason, acknowledgeUncertainty: resolved.options.acknowledgeUncertainty === true,
+      actorUserId: resolved.options.actorUserId || resolved.options.createdBy || null,
       client,
-      resolved.options,
-      updated.rows[0],
-      normalizedStatus,
-      normalizedReason,
-    );
-
-    await client.query("COMMIT");
-    return toInventoryRecord(updated.rows[0]);
-  } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (_rollbackError) {
-      /* Preserve the original error. */
-    }
-    throw err;
-  } finally {
-    if (shouldRelease) client.release();
-  }
+    });
+    if (ownsTransaction) await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    if (ownsTransaction) await client.query("ROLLBACK");
+    throw error;
+  } finally { if (ownsTransaction) client.release(); }
 }
 
 /**
@@ -2003,6 +1890,9 @@ module.exports = {
   listWorkspaceCertificateInstances,
   managedCertificateFilterSql,
   normalizeKeyMode,
+  normalizeCertificateStatusFilter,
+  normalizeCertificateSourceFilter,
+  normalizeCertificateFlagFilter,
   normalizeKeyReference,
   normalizeSourceRef,
   normalizeLimit,

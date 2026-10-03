@@ -1109,7 +1109,8 @@ async function claimJobs({
     // without the capability keeps claiming ordinary renewals of active
     // certificates exactly as before.
     const selected = await client.query(
-      `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
+      `SELECT id, workspace_id, operation, subject_type, subject_id,
+              management_period_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
@@ -1127,6 +1128,27 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND status = 'pending'
           AND executor_kind = 'agent'
+          AND (
+            cj.subject_type IS DISTINCT FROM 'managed_certificate'
+            OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
+            OR EXISTS (
+              SELECT 1 FROM certops_management_periods period
+              LEFT JOIN certops_certificate_identities identity
+                ON identity.id = COALESCE(cj.certificate_identity_id,
+                  period.current_identity_id)
+              WHERE period.workspace_id = cj.workspace_id
+                AND period.managed_certificate_id::text = cj.subject_id
+                AND period.ended_at IS NULL
+                AND (cj.management_period_id IS NULL OR cj.management_period_id = period.id)
+                AND (identity.lifecycle_status IS NULL
+                  OR identity.lifecycle_status = 'active'
+                  OR cj.operation NOT IN ('renew', 'deploy', 'reload')
+                  OR (lower(cj.payload->>'targetFingerprintSha256')
+                        IS DISTINCT FROM identity.fingerprint_sha256
+                    AND cj.payload->>'targetFingerprintSha256' IS NOT NULL
+                    AND cj.payload->>'canRestoreOriginal' = 'false'))
+            )
+          )
           AND (scheduled_for IS NULL OR scheduled_for <= NOW())
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
@@ -1199,6 +1221,15 @@ async function claimJobs({
     };
     const jobs = [];
     for (const row of selected.rows) {
+      if (row.subject_type === "managed_certificate" && row.management_period_id) {
+        const ownership = await client.query(
+          `SELECT 1 FROM certops_management_periods
+            WHERE id = $1 AND workspace_id = $2 AND ended_at IS NULL
+            FOR SHARE`,
+          [row.management_period_id, agent.workspaceId],
+        );
+        if (!ownership.rowCount) continue;
+      }
       // SQL above is a lock-efficient prefilter. This shared pure predicate
       // is authoritative and is also used by renewal-path health, preventing
       // the UI from calling a path healthy that dispatch would reject.
@@ -1329,11 +1360,11 @@ async function claimJobs({
                 updated_at = NOW()
           WHERE id = $1
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
-                    subject_type, subject_id, payload, mode, created_at`,
+                    subject_type, subject_id, payload, mode, created_at, status`,
         [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
-      if (!job) continue;
+      if (!job || (job.status && job.status !== "claimed")) continue;
 
       const payload =
         job.payload && typeof job.payload === "object"
@@ -1601,8 +1632,13 @@ async function reconcileProvisionedCertificate({
       WHERE workspace_id = $1
         AND id = $2::uuid
         AND status = 'provisioning'
+      AND EXISTS (SELECT 1 FROM certificate_jobs j
+        JOIN certops_management_periods p ON p.id = j.management_period_id
+        WHERE j.workspace_id = $1 AND j.id = $3 AND p.ended_at IS NULL
+          AND p.managed_certificate_id = managed_certificates.id
+          AND (j.certificate_identity_id IS NULL OR j.certificate_identity_id = p.current_identity_id))
       FOR UPDATE`,
-    [workspaceId, job.subject_id],
+    [workspaceId, job.subject_id, job.id],
   );
   const certificate = locked.rows[0];
   if (!certificate) return null;
@@ -1676,7 +1712,7 @@ async function reconcileProvisionedCertificate({
 
   await client.query(
     `UPDATE managed_certificates
-        SET status = 'active',
+        SET status = 'active', identity_observed_at = clock_timestamp(),
             fingerprint_sha256 = $3,
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
@@ -1906,8 +1942,13 @@ async function refreshRenewedCertificateEvidence({
       WHERE workspace_id = $1
         AND id = $2::uuid
         AND status = 'active'
+      AND EXISTS (SELECT 1 FROM certificate_jobs j
+        JOIN certops_management_periods p ON p.id = j.management_period_id
+        WHERE j.workspace_id = $1 AND j.id = $3 AND p.ended_at IS NULL
+          AND p.managed_certificate_id = managed_certificates.id
+          AND (j.certificate_identity_id IS NULL OR j.certificate_identity_id = p.current_identity_id))
       FOR UPDATE`,
-    [workspaceId, job.subject_id],
+    [workspaceId, job.subject_id, job.id],
   );
   const certificate = locked.rows[0];
   if (!certificate) return null;
@@ -1994,7 +2035,7 @@ async function refreshRenewedCertificateEvidence({
 
   await client.query(
     `UPDATE managed_certificates
-        SET fingerprint_sha256 = $3,
+        SET fingerprint_sha256 = $3, identity_observed_at = clock_timestamp(),
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
             issuer = COALESCE($6, issuer),
@@ -2107,7 +2148,7 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              source, payload, assigned_agent_id
+              source, payload, assigned_agent_id, management_period_id, certificate_identity_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2

@@ -27,15 +27,15 @@ import { loadAssignedGroupIds } from "./shared/replaceAssetContactGroups.js";
 import { adoptOrCreateMonitorToken } from "./shared/adoptOrCreateMonitorToken.js";
 
 const require = createRequire(import.meta.url);
-const { bridgeEndpointCertificateObservation } = require(
-  "../../api/services/certops/monitorBridge.js",
-);
-const { shouldDeferCsrMonitorTokenUpdate } = require(
-  "../../api/services/certops/csrWorkflow.js",
-);
-const { evaluateCertOpsMonitorBridgeGate } = require(
-  "../../api/services/certops/bridgeGates.js",
-);
+const {
+  bridgeEndpointCertificateObservation,
+} = require("../../api/services/certops/monitorBridge.js");
+const {
+  shouldDeferCsrMonitorTokenUpdate,
+} = require("../../api/services/certops/csrWorkflow.js");
+const {
+  evaluateCertOpsMonitorBridgeGate,
+} = require("../../api/services/certops/bridgeGates.js");
 
 function formatDateYmd(date) {
   if (!date) return null;
@@ -376,19 +376,11 @@ async function runEndpointChecks() {
 
     logger.info(`Checking ${claimedMonitors.length} endpoints`);
 
-    // From here on we run in autocommit: each per-domain UPDATE persists
-    // immediately, so a failure on domain N cannot roll back the results
-    // already recorded for domains 1..N-1, and no lock spans network I/O.
+    // Network checks run outside transactions. Each result then commits its
+    // endpoint, token, certificate and alert effects in one owner-locked
+    // transaction, so a later domain cannot roll back an earlier result.
     for (const domain of claimedMonitors) {
-      const {
-        id,
-        url,
-        token_id,
-        health_check_enabled,
-        workspace_id,
-        consecutive_failures,
-      } = domain;
-      let currentTokenId = token_id;
+      const { id, url, health_check_enabled } = domain;
 
       // Owner-scoped per-row lease renewal: the batch-wide lease taken at
       // claim time can expire before later rows are reached (each row's
@@ -449,146 +441,14 @@ async function runEndpointChecks() {
                 public_certificate_pem: publicCertificatePem,
               };
 
-              // Update endpoint monitor with cert data
-              await client.query(
-                `UPDATE domain_monitors
-                 SET ssl_issuer = $1, ssl_subject = $2, ssl_valid_from = $3,
-                     ssl_valid_to = $4, ssl_serial = $5, ssl_fingerprint = $6,
-                     validated = TRUE, validated_at = COALESCE(validated_at, NOW()),
-                     updated_at = NOW()
-                 WHERE id = $7`,
-                [
-                  sslData.ssl_issuer,
-                  sslData.ssl_subject,
-                  sslData.ssl_valid_from,
-                  sslData.ssl_valid_to,
-                  sslData.ssl_serial,
-                  sslData.ssl_fingerprint,
-                  id,
-                ],
+              const persisted = await persistEndpointCertificateResult(
+                client,
+                domain,
+                claimId,
+                sslData,
               );
-
-              // Update linked token expiration if cert changed
-              if (currentTokenId && sslData.ssl_valid_to) {
-                const deferTokenUpdate = await shouldDeferCsrMonitorTokenUpdate(client, {
-                  workspaceId: workspace_id,
-                  domainMonitorId: id,
-                  tokenId: currentTokenId,
-                  fingerprintSha256: sslData.ssl_fingerprint,
-                });
-                const newExpiry = deferTokenUpdate ? null : formatDateYmd(sslData.ssl_valid_to);
-                if (newExpiry) {
-                  await client.query(
-                    `UPDATE tokens SET expiration = $1, issuer = $2, serial_number = $3,
-                            subject = $4, updated_at = NOW()
-                     WHERE id = $5`,
-                    [
-                      newExpiry,
-                      sslData.ssl_issuer,
-                      sslData.ssl_serial,
-                      sslData.ssl_subject,
-                      currentTokenId,
-                    ],
-                  );
-                }
-              }
-
-              // Auto-create token if we got cert data but no token is linked yet
-              if (!currentTokenId && sslData.ssl_valid_to) {
-                try {
-                  // Resolve workspace default contact group for the new token
-                  let defaultCgId = null;
-                  try {
-                    const cgRes = await client.query(
-                      "SELECT default_contact_group_id FROM workspace_settings WHERE workspace_id = $1",
-                      [workspace_id],
-                    );
-                    if (cgRes.rows[0]?.default_contact_group_id) {
-                      defaultCgId = String(
-                        cgRes.rows[0].default_contact_group_id,
-                      );
-                    }
-                  } catch (_err) {
-                    logger.warn("DB operation failed", { error: _err.message });
-                  }
-
-                  const tokenId = await adoptOrCreateMonitorToken(client, {
-                    workspaceId: workspace_id,
-                    hostname: parsedUrl.hostname,
-                    url,
-                    sslData,
-                    defaultContactGroupId: defaultCgId,
-                  });
-                  await client.query(
-                    "UPDATE domain_monitors SET token_id = $1 WHERE id = $2",
-                    [tokenId, id],
-                  );
-                  currentTokenId = tokenId;
-                } catch (tokenErr) {
-                  logger.warn("Failed to auto-create token for endpoint", {
-                    url,
-                    error: tokenErr.message,
-                  });
-                }
-              }
-
-              if (currentTokenId) {
-                try {
-                  // Small per-domain transaction just for the CertOps bridge:
-                  // gate evaluation + bridge write commit or roll back as one
-                  // atomic unit, without holding locks across the network I/O
-                  // that surrounds this block (we run in autocommit here, so a
-                  // plain BEGIN/COMMIT is legal again).
-                  await client.query("BEGIN");
-                  try {
-                    const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
-                      client,
-                      workspaceId: workspace_id,
-                      domainMonitorId: id,
-                      fingerprintSha256: sslData.ssl_fingerprint,
-                    });
-                    if (!bridgeGate.allowed) {
-                      logger.debug("CertOps monitor bridge skipped by gate", {
-                        workspaceId: workspace_id,
-                        domainMonitorId: id,
-                        code: bridgeGate.code || null,
-                        reason: bridgeGate.reason || null,
-                      });
-                    } else {
-                      await bridgeEndpointCertificateObservation({
-                        client,
-                        workspaceId: workspace_id,
-                        domainMonitorId: id,
-                        tokenId: currentTokenId,
-                        url,
-                        hostname: parsedUrl.hostname,
-                        source: "endpoint_monitor",
-                        sourceRef: id,
-                        certificate: {
-                          issuer: sslData.ssl_issuer,
-                          subject: sslData.ssl_subject,
-                          serialNumber: sslData.ssl_serial,
-                          fingerprintSha256: sslData.ssl_fingerprint,
-                          notBefore: sslData.ssl_valid_from,
-                          notAfter: sslData.ssl_valid_to,
-                          certificatePem: sslData.public_certificate_pem,
-                        },
-                      });
-                    }
-                    await client.query("COMMIT");
-                  } catch (bridgeTxnErr) {
-                    await client.query("ROLLBACK");
-                    throw bridgeTxnErr;
-                  }
-                } catch (bridgeErr) {
-                  logger.warn("CertOps monitor bridge failed", {
-                    workspaceId: workspace_id,
-                    domainMonitorId: id,
-                    code: bridgeErr.code || null,
-                    error: bridgeErr.message,
-                  });
-                }
-              }
+              if (!persisted) continue;
+              domain.token_id = persisted.tokenId;
             }
           } catch (sslErr) {
             logger.warn(`SSL check failed for ${url}`, {
@@ -600,101 +460,134 @@ async function runEndpointChecks() {
         // 2. Health check
         if (health_check_enabled) {
           const health = await checkHealth(url);
-          const isHealthy = health.status === "healthy";
-          const newFailures = isHealthy ? 0 : (consecutive_failures || 0) + 1;
-          // last_health_status from the SELECT is the PREVIOUS check's result
-          const prevStatus = domain.last_health_status;
+          await withOwnedEndpointResult(
+            client,
+            domain,
+            claimId,
+            async (liveDomain) => {
+              const isHealthy = health.status === "healthy";
+              const newFailures = isHealthy
+                ? 0
+                : (liveDomain.consecutive_failures || 0) + 1;
+              // last_health_status from the SELECT is the PREVIOUS check's result
+              const prevStatus = liveDomain.last_health_status;
 
-          await client.query(
-            `UPDATE domain_monitors
+              const healthUpdated = await client.query(
+                `UPDATE domain_monitors
              SET last_health_status = $1,
                  last_health_status_code = $2, last_health_error = $3,
                  last_health_response_ms = $4,
                  previous_health_status = last_health_status,
                  consecutive_failures = $5,
                  updated_at = NOW()
-             WHERE id = $6`,
-            [
-              health.status,
-              health.statusCode,
-              health.error,
-              health.responseMs,
-              newFailures,
-              id,
-            ],
+             WHERE id = $6 AND check_claim_id = $7`,
+                [
+                  health.status,
+                  health.statusCode,
+                  health.error,
+                  health.responseMs,
+                  newFailures,
+                  id,
+                  claimId,
+                ],
+              );
+              if (!healthUpdated.rowCount) return null;
+
+              // --- Alert on STATE TRANSITION only ---
+              // Queue alert immediately on transition. The delivery worker will
+              // check alert_after_failures before actually sending the "down" alert.
+              const transitionedDown =
+                prevStatus && prevStatus === "healthy" && !isHealthy;
+              const transitionedUp =
+                prevStatus && prevStatus !== "healthy" && isHealthy;
+
+              if (transitionedDown) {
+                logger.warn(
+                  `Endpoint TRANSITION healthy -> ${health.status}: ${url}`,
+                  {
+                    statusCode: health.statusCode,
+                    error: health.error,
+                  },
+                );
+                await queueEndpointAlert(
+                  client,
+                  liveDomain,
+                  health.status,
+                  health,
+                  "down",
+                );
+              } else if (transitionedUp) {
+                logger.info(`Endpoint RECOVERED: ${url}`);
+                await queueEndpointAlert(
+                  client,
+                  liveDomain,
+                  "healthy",
+                  health,
+                  "recovered",
+                );
+              } else if (!isHealthy) {
+                logger.debug(
+                  `Endpoint still unhealthy: ${url} (failure ${newFailures})`,
+                  {
+                    status: health.status,
+                    statusCode: health.statusCode,
+                  },
+                );
+              }
+              return true;
+            },
           );
-
-          // --- Alert on STATE TRANSITION only ---
-          // Queue alert immediately on transition. The delivery worker will
-          // check alert_after_failures before actually sending the "down" alert.
-          const transitionedDown =
-            prevStatus && prevStatus === "healthy" && !isHealthy;
-          const transitionedUp =
-            prevStatus && prevStatus !== "healthy" && isHealthy;
-
-          if (transitionedDown) {
-            logger.warn(
-              `Endpoint TRANSITION healthy -> ${health.status}: ${url}`,
-              {
-                statusCode: health.statusCode,
-                error: health.error,
-              },
-            );
-            await queueEndpointAlert(
-              client,
-              domain,
-              health.status,
-              health,
-              "down",
-            );
-          } else if (transitionedUp) {
-            logger.info(`Endpoint RECOVERED: ${url}`);
-            await queueEndpointAlert(
-              client,
-              domain,
-              "healthy",
-              health,
-              "recovered",
-            );
-          } else if (!isHealthy) {
-            logger.debug(
-              `Endpoint still unhealthy: ${url} (failure ${newFailures})`,
-              {
-                status: health.status,
-                statusCode: health.statusCode,
-              },
-            );
-          }
         }
       } catch (domainErr) {
         logger.error(`Endpoint check failed for ${url}`, {
           error: domainErr.message,
         });
 
-        const newFailures = (domain.consecutive_failures || 0) + 1;
-        const prevStatus = domain.last_health_status;
+        await withOwnedEndpointResult(
+          client,
+          domain,
+          claimId,
+          async (liveDomain) => {
+            const newFailures = (liveDomain.consecutive_failures || 0) + 1;
+            const prevStatus = liveDomain.last_health_status;
 
-        await client.query(
-          `UPDATE domain_monitors
+            const errorUpdated = await client.query(
+              `UPDATE domain_monitors
            SET last_health_status = 'error',
                last_health_error = $1,
                previous_health_status = last_health_status,
                consecutive_failures = $2,
                updated_at = NOW()
-           WHERE id = $3`,
-          [String(domainErr.message).substring(0, 500), newFailures, id],
-        );
+           WHERE id = $3 AND check_claim_id = $4`,
+              [
+                String(domainErr.message).substring(0, 500),
+                newFailures,
+                id,
+                claimId,
+              ],
+            );
 
-        // Queue alert on transition healthy -> error
-        if (prevStatus && prevStatus === "healthy") {
-          await queueEndpointAlert(
-            client,
-            domain,
-            "error",
-            { error: domainErr.message, responseMs: null, statusCode: null },
-            "down",
-          );
-        }
+            // Queue alert on transition healthy -> error
+            if (
+              errorUpdated.rowCount &&
+              prevStatus &&
+              prevStatus === "healthy"
+            ) {
+              await queueEndpointAlert(
+                client,
+                liveDomain,
+                "error",
+                {
+                  error: domainErr.message,
+                  responseMs: null,
+                  statusCode: null,
+                },
+                "down",
+              );
+            }
+            return true;
+          },
+        );
       } finally {
         // The check completed (or failed terminally): advance the schedule
         // and release the concurrency lease so the monitor becomes claimable
@@ -725,6 +618,221 @@ async function runEndpointChecks() {
   logger.info("Endpoint check worker finished");
 }
 
+async function withOwnedEndpointResult(
+  client,
+  domain,
+  claimId,
+  applyResult,
+  fingerprint = null,
+) {
+  await client.query("BEGIN");
+  try {
+    if (fingerprint) {
+      const source = await client.query(
+        `SELECT fingerprint_sha256 FROM managed_certificates
+          WHERE workspace_id = $1 AND source = 'endpoint_monitor' AND source_ref = $2`,
+        [domain.workspace_id, String(domain.id)],
+      );
+      const normalized = String(fingerprint)
+        .replace(/:/g, "")
+        .trim()
+        .toLowerCase();
+      if (
+        !source.rows.length ||
+        source.rows[0].fingerprint_sha256 !== normalized
+      ) {
+        // Enrollment/rotation changes quota. Own that lock before the monitor
+        // and token; ordinary unchanged captures need only their monitor claim.
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
+          [domain.workspace_id],
+        );
+      }
+    }
+    const live = await client.query(
+      "SELECT * FROM domain_monitors WHERE id = $1 AND workspace_id = $2 AND check_claim_id = $3 FOR UPDATE",
+      [domain.id, domain.workspace_id, claimId],
+    );
+    if (!live.rows.length) {
+      await client.query("COMMIT");
+      return null;
+    }
+    const result = await applyResult(live.rows[0]);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+function persistEndpointCertificateResult(
+  client,
+  domain,
+  claimId,
+  sslData,
+  capturedAt = new Date(),
+) {
+  return withOwnedEndpointResult(
+    client,
+    domain,
+    claimId,
+    async (liveDomain) => {
+      const { id, workspace_id, url } = liveDomain;
+      const parsedUrl = new URL(url);
+      let currentTokenId = liveDomain.token_id;
+      // Update endpoint monitor with cert data
+      const monitorUpdated = await client.query(
+        `UPDATE domain_monitors
+                 SET ssl_issuer = $1, ssl_subject = $2, ssl_valid_from = $3,
+                     ssl_valid_to = $4, ssl_serial = $5, ssl_fingerprint = $6,
+                     validated = TRUE, validated_at = COALESCE(validated_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = $7 AND check_claim_id = $8`,
+        [
+          sslData.ssl_issuer,
+          sslData.ssl_subject,
+          sslData.ssl_valid_from,
+          sslData.ssl_valid_to,
+          sslData.ssl_serial,
+          sslData.ssl_fingerprint,
+          id,
+          claimId,
+        ],
+      );
+      if (!monitorUpdated.rowCount) return null;
+
+      // Update linked token expiration if cert changed
+      if (currentTokenId && sslData.ssl_valid_to) {
+        const deferTokenUpdate = await shouldDeferCsrMonitorTokenUpdate(
+          client,
+          {
+            workspaceId: workspace_id,
+            domainMonitorId: id,
+            tokenId: currentTokenId,
+            fingerprintSha256: sslData.ssl_fingerprint,
+          },
+        );
+        const newExpiry = deferTokenUpdate
+          ? null
+          : formatDateYmd(sslData.ssl_valid_to);
+        if (newExpiry) {
+          await client.query(
+            `UPDATE tokens SET expiration = $1, issuer = $2, serial_number = $3,
+                            subject = $4, updated_at = NOW()
+                     WHERE id = $5 AND EXISTS (
+                       SELECT 1 FROM domain_monitors dm
+                        WHERE dm.id = $6 AND dm.check_claim_id = $7)`,
+            [
+              newExpiry,
+              sslData.ssl_issuer,
+              sslData.ssl_serial,
+              sslData.ssl_subject,
+              currentTokenId,
+              id,
+              claimId,
+            ],
+          );
+        }
+      }
+
+      // Auto-create token if we got cert data but no token is linked yet
+      if (!currentTokenId && sslData.ssl_valid_to) {
+        try {
+          await client.query("SAVEPOINT endpoint_token");
+          // Resolve workspace default contact group for the new token
+          let defaultCgId = null;
+          try {
+            const cgRes = await client.query(
+              "SELECT default_contact_group_id FROM workspace_settings WHERE workspace_id = $1",
+              [workspace_id],
+            );
+            if (cgRes.rows[0]?.default_contact_group_id) {
+              defaultCgId = String(cgRes.rows[0].default_contact_group_id);
+            }
+          } catch (_err) {
+            logger.warn("DB operation failed", { error: _err.message });
+          }
+
+          const tokenId = await adoptOrCreateMonitorToken(client, {
+            workspaceId: workspace_id,
+            hostname: parsedUrl.hostname,
+            url,
+            sslData,
+            defaultContactGroupId: defaultCgId,
+          });
+          await client.query(
+            "UPDATE domain_monitors SET token_id = $1 WHERE id = $2 AND check_claim_id = $3",
+            [tokenId, id, claimId],
+          );
+          currentTokenId = tokenId;
+          await client.query("RELEASE SAVEPOINT endpoint_token");
+        } catch (tokenErr) {
+          await client.query("ROLLBACK TO SAVEPOINT endpoint_token");
+          await client.query("RELEASE SAVEPOINT endpoint_token");
+          logger.warn("Failed to auto-create token for endpoint", {
+            url,
+            error: tokenErr.message,
+          });
+        }
+      }
+
+      if (currentTokenId) {
+        try {
+          await client.query("SAVEPOINT certops_bridge");
+          const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
+            client,
+            workspaceId: workspace_id,
+            domainMonitorId: id,
+            fingerprintSha256: sslData.ssl_fingerprint,
+          });
+          if (!bridgeGate.allowed) {
+            logger.debug("CertOps monitor bridge skipped by gate", {
+              workspaceId: workspace_id,
+              domainMonitorId: id,
+              code: bridgeGate.code || null,
+              reason: bridgeGate.reason || null,
+            });
+          } else {
+            await bridgeEndpointCertificateObservation({
+              client,
+              workspaceId: workspace_id,
+              domainMonitorId: id,
+              tokenId: currentTokenId,
+              url,
+              hostname: parsedUrl.hostname,
+              source: "endpoint_monitor",
+              sourceRef: id,
+              observedAt: capturedAt,
+              certificate: {
+                issuer: sslData.ssl_issuer,
+                subject: sslData.ssl_subject,
+                serialNumber: sslData.ssl_serial,
+                fingerprintSha256: sslData.ssl_fingerprint,
+                notBefore: sslData.ssl_valid_from,
+                notAfter: sslData.ssl_valid_to,
+                certificatePem: sslData.public_certificate_pem,
+              },
+            });
+          }
+          await client.query("RELEASE SAVEPOINT certops_bridge");
+        } catch (bridgeErr) {
+          await client.query("ROLLBACK TO SAVEPOINT certops_bridge");
+          await client.query("RELEASE SAVEPOINT certops_bridge");
+          logger.warn("CertOps monitor bridge failed", {
+            workspaceId: workspace_id,
+            domainMonitorId: id,
+            code: bridgeErr.code || null,
+            error: bridgeErr.message,
+          });
+        }
+      }
+      return { tokenId: currentTokenId };
+    },
+    sslData.ssl_fingerprint,
+  );
+}
+
 // Entry point
 if (isNodeEntrypoint(import.meta.url)) {
   warnIfNodeUseEnvProxyUnsupported();
@@ -748,4 +856,9 @@ if (isNodeEntrypoint(import.meta.url)) {
   })();
 }
 
-export { runEndpointChecks, adoptOrCreateMonitorToken };
+export {
+  runEndpointChecks,
+  adoptOrCreateMonitorToken,
+  persistEndpointCertificateResult,
+  withOwnedEndpointResult,
+};

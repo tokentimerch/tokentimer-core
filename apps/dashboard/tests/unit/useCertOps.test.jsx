@@ -201,9 +201,7 @@ describe('useCertOpsForToken instance error handling', () => {
 
     const { result } = renderHook(() => useCertOpsForToken(42));
 
-    await waitFor(() =>
-      expect(result.current.instancesAvailable).toBe(false)
-    );
+    await waitFor(() => expect(result.current.instancesAvailable).toBe(false));
     expect(result.current.instancesError).toBe('');
   });
 
@@ -234,6 +232,23 @@ describe('useCertOpsForToken instance error handling', () => {
     );
     expect(result.current.instancesAvailable).toBe(true);
     expect(result.current.instancesError).toBe('');
+  });
+
+  it('loads the selected source certificate when a token has several certificates', async () => {
+    getManagedCertificatesForTokenMock.mockResolvedValue([
+      { id: 'cert-1', status: 'active' },
+      { id: 'cert-2', status: 'active' },
+    ]);
+    getCertificateInstancesMock.mockResolvedValue({ items: [] });
+
+    const { result } = renderHook(() => useCertOpsForToken(42, 'cert-2'));
+
+    await waitFor(() => expect(result.current.certificate?.id).toBe('cert-2'));
+    expect(getCertificateInstancesMock).toHaveBeenCalledWith(
+      'ws-1',
+      'cert-2',
+      expect.any(Object)
+    );
   });
 });
 

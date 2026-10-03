@@ -2130,10 +2130,21 @@ router.delete(
   authorize("domain.manage"),
   async (req, res) => {
     try {
-      const result = await pool.query(
-        "DELETE FROM domain_monitors WHERE id = $1 AND workspace_id = $2 RETURNING url",
-        [req.params.domainId, req.workspace.id],
-      );
+      const client = await pool.connect();
+      let result;
+      try {
+        await client.query("BEGIN");
+        result = await client.query(
+          "DELETE FROM domain_monitors WHERE id = $1 AND workspace_id = $2 RETURNING url",
+          [req.params.domainId, req.workspace.id],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "Endpoint monitor not found" });
       }

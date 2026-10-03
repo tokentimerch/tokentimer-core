@@ -47,6 +47,7 @@ function createMockPool(handler) {
   };
   const client = {
     query: async (text, params) => {
+      if (String(typeof text === "string" ? text : text?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ text: sql, params });
       const trimmed = sql.trim().toUpperCase();
@@ -209,6 +210,7 @@ describe("agentDispatch.enforceAgentSequence", () => {
     const queries = [];
     const client = {
       query: async (sql, params) => {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         queries.push({ sql, params });
         return { rows: [{ id: "agent-row-1" }] };
       },
@@ -242,6 +244,7 @@ describe("agentDispatch.enforceAgentSequence", () => {
   it("accepts a sequence-less envelope only while the agent has never sequenced", async () => {
     const client = {
       query: async (sql) => {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         assert.match(sql, /SELECT last_sequence FROM certops_agents/);
         return { rows: [{ last_sequence: 0 }] };
       },
@@ -261,6 +264,7 @@ describe("agentDispatch.enforceAgentSequence", () => {
   it("rejects a sequence-less envelope once the agent has sent sequenced traffic (no-bypass)", async () => {
     const client = {
       query: async (sql) => {
+      if (String(typeof sql === "string" ? sql : sql?.text || "").includes("certops_managed_cert_quota_")) return { rows: [] };
         assert.match(sql, /SELECT last_sequence FROM certops_agents/);
         return { rows: [{ last_sequence: 12 }] };
       },
