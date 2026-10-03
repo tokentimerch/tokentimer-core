@@ -216,6 +216,9 @@ it('keeps stopped certificate notes and validity as read-only details without a 
     identityId: 'identity-a',
     tokenId: null,
     managed: false,
+    keyMode: null,
+    profileId: null,
+    renewal: { state: 'not-eligible' },
     fingerprintSha256: 'a'.repeat(64),
     commonName: 'old.example.test',
     tokenSnapshot: {
@@ -252,11 +255,89 @@ it('keeps stopped certificate notes and validity as read-only details without a 
         certificate: expect.objectContaining({
           serialNumber: 'AA',
           notBefore: '2026-01-01',
+          keyMode: null,
+          profileId: null,
+          renewal: { state: 'not-eligible' },
         }),
       }),
     })
   );
   expect(getTokenMock).not.toHaveBeenCalled();
+  expect(getManagedMock).not.toHaveBeenCalled();
+});
+
+it('keeps current renewal and key locality for a rotated read-only identity without hydrating its old token', async () => {
+  const identity = {
+    identityId: 'identity-b',
+    tokenId: null,
+    tokenSnapshot: null,
+    managed: true,
+    keyMode: 'agent-local',
+    profileId: null,
+    source: 'agent_filesystem',
+    renewal: { state: 'not-configured' },
+    renewalPathState: 'unavailable',
+    commonName: 'replacement.example.test',
+    fingerprintSha256: 'b'.repeat(64),
+    status: 'discovered',
+    lifecycleStatus: 'active',
+    certificateSnapshot: {
+      fingerprintSha256: 'b'.repeat(64),
+      notBefore: '2026-10-02',
+      notAfter: '2027-01-01',
+      serialNumber: 'BB',
+    },
+    sources: [
+      {
+        periodId: 'period-b',
+        managedCertificateId: 'rotated-source',
+        currentIdentityId: 'identity-b',
+        source: 'agent_filesystem',
+        startedAt: '2026-10-02',
+      },
+    ],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  getTokenMock.mockResolvedValue({
+    name: 'Old certificate A',
+    notes: 'A notes',
+  });
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        canManage
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  expect(
+    await screen.findByText('replacement.example.test')
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(detailsModalMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        isViewer: true,
+        certOps: expect.objectContaining({
+          certificate: expect.objectContaining({
+            fingerprintSha256: 'b'.repeat(64),
+            serialNumber: 'BB',
+            notBefore: '2026-10-02',
+            keyMode: 'agent-local',
+            profileId: null,
+            renewal: { state: 'not-configured' },
+            renewalPathState: 'unavailable',
+          }),
+        }),
+      })
+    )
+  );
+  expect(getTokenMock).not.toHaveBeenCalled();
+  expect(getManagedMock).not.toHaveBeenCalled();
+  expect(screen.queryByText('Old certificate A')).not.toBeInTheDocument();
 });
 
 it('never overwrites A public details with a mutable token or enrichment that rotated to B', async () => {

@@ -3392,7 +3392,10 @@ router.get(
       });
       if (!result.items.length) return res.status(404).json({
         error: "Certificate not found", code: CERTOPS_CERTIFICATE_NOT_FOUND });
-      return res.json({ certificate: redactIdentityLocationsForViewers(req, result.items)[0] });
+      const enriched = await withRenewalState({
+        workspaceId: req.workspace.id, certificates: result.items,
+      });
+      return res.json({ certificate: redactIdentityLocationsForViewers(req, enriched)[0] });
     } catch (err) {
       return handleCertOpsError(res, err) || res.status(500).json({
         error: "Failed to load certificate identity", code: "INTERNAL_ERROR" });

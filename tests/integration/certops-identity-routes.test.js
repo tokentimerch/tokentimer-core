@@ -607,4 +607,85 @@ describe("CertOps identity HTTP authorization and admission", function () {
       );
     }
   });
+
+  it("projects current renewal facts for a rotated identity without a token and clears them when management stops", async () => {
+    const detailsWorkspace = (
+      await TestUtils.execQuery(
+        `INSERT INTO workspaces(id,name,plan,created_by)
+       SELECT gen_random_uuid(),'Read-only identity renewal',plan,$2 FROM workspaces WHERE id=$1 RETURNING id`,
+        [ws, owner.user.id],
+      )
+    ).rows[0].id;
+    try {
+      await TestUtils.execQuery(
+        `INSERT INTO workspace_memberships(user_id,workspace_id,role,invited_by)
+       VALUES($1,$2,'admin',$1),($3,$2,'workspace_manager',$1)`,
+        [owner.user.id, detailsWorkspace, manager.user.id],
+      );
+      const managedId = await source(
+        "d7".repeat(32),
+        `file:///renewal-${randomUUID()}.pem`,
+        detailsWorkspace,
+      );
+      await TestUtils.execQuery(
+        `UPDATE managed_certificates SET fingerprint_sha256=$2,key_mode='agent-local',identity_observed_at=clock_timestamp(),
+         not_before='2026-10-02',not_after='2027-01-01' WHERE id=$1`,
+        [managedId, "d8".repeat(32)],
+      );
+      const identity = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+          [detailsWorkspace, "d8".repeat(32)],
+        )
+      ).rows[0].id;
+      const suffix = `certificate-identities/${identity}`;
+      const read = () =>
+        request(BASE)
+          .get(path(suffix, detailsWorkspace))
+          .set("Cookie", manager.cookie)
+          .expect(200);
+      const current = (await read()).body.certificate;
+      assert.equal(current.tokenId, null);
+      assert.equal(current.managed, true);
+      assert.equal(current.keyMode, "agent-local");
+      assert.equal(current.renewal.state, "not-configured");
+      assert.equal(current.renewal.keyMode, "agent-local");
+      const listed = await request(BASE)
+        .get(path("certificate-identities", detailsWorkspace))
+        .set("Cookie", manager.cookie)
+        .expect(200);
+      const item = listed.body.items.find(
+        (certificate) => certificate.identityId === identity,
+      );
+      assert.deepEqual(current.renewal, item.renewal);
+      assert.equal(current.renewalPathState, item.renewalPathState);
+      const period = (
+        await TestUtils.execQuery(
+          "SELECT id FROM certops_management_periods WHERE managed_certificate_id=$1 AND ended_at IS NULL",
+          [managedId],
+        )
+      ).rows[0].id;
+      await post(
+        `management-periods/${period}/stop`,
+        manager,
+        {},
+        detailsWorkspace,
+      ).expect(200);
+      const stopped = (await read()).body.certificate;
+      assert.equal(stopped.managed, false);
+      assert.equal(stopped.keyMode, null);
+      assert.equal(stopped.profileId, null);
+      assert.equal(stopped.renewal.state, "not-eligible");
+      assert.equal(stopped.renewal.profileId, null);
+      assert.equal(
+        stopped.certificateSnapshot.fingerprintSha256,
+        "d8".repeat(32),
+      );
+    } finally {
+      await TestUtils.execQuery(
+        "DELETE FROM workspaces WHERE id=$1 AND created_by=$2",
+        [detailsWorkspace, owner.user.id],
+      );
+    }
+  });
 });

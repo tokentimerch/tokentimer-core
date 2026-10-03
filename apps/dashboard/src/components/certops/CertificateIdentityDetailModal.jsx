@@ -144,7 +144,29 @@ export default function CertificateIdentityDetailModal({
           ? { ...detail.tokenSnapshot, ...(tokenId ? { id: tokenId } : {}) }
           : null
       );
-      setCertificateFields(detail.certificateSnapshot || null);
+      // Current identity management facts are safe even when the historical
+      // token has rotated away. They must not depend on an editable token link.
+      const identityFields = {
+        ...Object.fromEntries(
+          [
+            'source',
+            'keyMode',
+            'keyReference',
+            'profileId',
+            'renewal',
+            'renewalPathState',
+            'renewalPathReason',
+            'renewalPathSummary',
+            'dependencies',
+            'renewalSetup',
+            'renewalPreflight',
+          ]
+            .filter(key => detail[key] !== undefined)
+            .map(key => [key, detail[key]])
+        ),
+        ...detail.certificateSnapshot,
+      };
+      setCertificateFields(identityFields);
       setTokenError('');
       if (!tokenId || !detail.tokenSnapshot || detail.managed === false)
         return undefined;
@@ -168,7 +190,7 @@ export default function CertificateIdentityDetailModal({
               normalize(item.fingerprintSha256) ===
               normalize(detail.fingerprintSha256)
           );
-          setCertificateFields({ ...matching, ...detail.certificateSnapshot });
+          setCertificateFields({ ...matching, ...identityFields });
           setContactGroups(
             Array.isArray(settings?.contact_groups)
               ? settings.contact_groups
@@ -239,17 +261,7 @@ export default function CertificateIdentityDetailModal({
     return () => {
       active = false;
     };
-  }, [
-    isOpen,
-    tokenId,
-    workspaceId,
-    detail?.fingerprintSha256,
-    detail?.managedCertificateId,
-    detail?.identityId,
-    detail?.tokenSnapshot,
-    detail?.certificateSnapshot,
-    detail?.managed,
-  ]);
+  }, [isOpen, tokenId, workspaceId, detail]);
 
   const refresh = async () => {
     if (!certificate.identityId) {
