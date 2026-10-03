@@ -161,3 +161,6 @@ tests/integration/rate-limit-security.test.js
 tests/integration/csrf-and-rate-limit.test.js
 tests/integration/csrf-worker-exemption.test.js
 tests/integration/csrf-login-enforcement.test.js
+
+tests/integration/certops-identity-token-details.test.js
+tests/integration/certops-agent-unmanaged-observations.test.js

@@ -618,13 +618,37 @@ async function runEndpointChecks() {
   logger.info("Endpoint check worker finished");
 }
 
-async function withOwnedEndpointResult(client, domain, claimId, applyResult) {
+async function withOwnedEndpointResult(
+  client,
+  domain,
+  claimId,
+  applyResult,
+  fingerprint = null,
+) {
   await client.query("BEGIN");
   try {
-    await client.query(
-      "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
-      [domain.workspace_id],
-    );
+    if (fingerprint) {
+      const source = await client.query(
+        `SELECT fingerprint_sha256 FROM managed_certificates
+          WHERE workspace_id = $1 AND source = 'endpoint_monitor' AND source_ref = $2`,
+        [domain.workspace_id, String(domain.id)],
+      );
+      const normalized = String(fingerprint)
+        .replace(/:/g, "")
+        .trim()
+        .toLowerCase();
+      if (
+        !source.rows.length ||
+        source.rows[0].fingerprint_sha256 !== normalized
+      ) {
+        // Enrollment/rotation changes quota. Own that lock before the monitor
+        // and token; ordinary unchanged captures need only their monitor claim.
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
+          [domain.workspace_id],
+        );
+      }
+    }
     const live = await client.query(
       "SELECT * FROM domain_monitors WHERE id = $1 AND workspace_id = $2 AND check_claim_id = $3 FOR UPDATE",
       [domain.id, domain.workspace_id, claimId],
@@ -805,6 +829,7 @@ function persistEndpointCertificateResult(
       }
       return { tokenId: currentTokenId };
     },
+    sslData.ssl_fingerprint,
   );
 }
 

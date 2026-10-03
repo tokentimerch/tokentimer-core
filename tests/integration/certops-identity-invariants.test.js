@@ -394,6 +394,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     );
     await db.query(migrations.find((m) => m.version === 63).sql);
     await db.query(migrations.find((m) => m.version === 64).sql);
+    await db.query(migrations.find((m) => m.version === 65).sql);
     assert.deepEqual(
       (await db.query("SELECT * FROM certops_management_periods ORDER BY id"))
         .rows,
@@ -679,6 +680,258 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       new Date(current.started_at).toISOString(),
     );
   });
+  it("quota admission does not serialize lifecycle or unchanged source captures", async () => {
+    const ws = await workspace(1),
+      mc = await source(ws, A),
+      id = await identity(ws, A);
+    await clients(async (holder, writer) => {
+      await holder.query("BEGIN");
+      await holder.query(
+        "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
+        [ws],
+      );
+      await writer.query("BEGIN");
+      await writer.query("SET LOCAL statement_timeout = '1500ms'");
+      await writer.query(
+        "UPDATE managed_certificates SET updated_at=updated_at WHERE id=$1",
+        [mc.id],
+      );
+      await upsertManagedCertificateByMonitorSource(
+        writer,
+        {
+          fingerprintSha256: A,
+          commonName: "unchanged",
+          notAfter: "2027-01-01",
+        },
+        {
+          workspaceId: ws,
+          source: mc.source,
+          sourceRef: mc.source_ref,
+          observedAt: new Date(),
+        },
+        0,
+      );
+      const result = await retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: id.id,
+        expectedFingerprintSha256: A,
+        status: "revoked",
+        reason: "Scoped lifecycle lock",
+        client: writer,
+      });
+      assert.equal(result.lifecycleStatus, "revoked");
+      // Calling the compatibility helper must not reintroduce a quota lock.
+      const {
+        retireManagedCertificate,
+      } = require("../../apps/api/services/certops/inventory");
+      await retireManagedCertificate(writer, {
+        workspaceId: ws,
+        certificateId: mc.id,
+        status: "revoked",
+        reason: "Idempotent scoped retirement",
+      });
+      await writer.query("ROLLBACK");
+      await writer.query("BEGIN");
+      const pids = await blockedBy(writer, holder);
+      const enrolled = writer.query(
+        "INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256) VALUES($1,'agent_filesystem',$2,$3)",
+        [ws, randomUUID(), A],
+      );
+      await waitForBlock(pids);
+      await holder.query("COMMIT");
+      await enrolled;
+      await writer.query("COMMIT");
+    });
+    assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
+  });
+  it("existing identity lifecycle row locks do not block source captures or observation foreign keys", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      id = await identity(ws, A),
+      target = (
+        await db.query(
+          "INSERT INTO certificate_targets(workspace_id,name,target_type) VALUES($1,'Lock fixture','host') RETURNING id",
+          [ws],
+        )
+      ).rows[0];
+    await clients(async (lifecycle, capture) => {
+      await lifecycle.query("BEGIN");
+      await lifecycle.query(
+        "SELECT id FROM certops_certificate_identities WHERE id=$1 FOR NO KEY UPDATE",
+        [id.id],
+      );
+      await capture.query("BEGIN");
+      await capture.query("SET LOCAL statement_timeout = '1500ms'");
+      await capture.query(
+        "UPDATE managed_certificates SET common_name='more metadata' WHERE id=$1",
+        [mc.id],
+      );
+      await capture.query(
+        "INSERT INTO certificate_instances(workspace_id,managed_certificate_id,source,source_ref,observed_fingerprint_sha256,observed_at,target_id) VALUES($1,$2,'endpoint_monitor',$3,$4,clock_timestamp(),$5)",
+        [ws, mc.id, randomUUID(), A, target.id],
+      );
+      await capture.query("COMMIT");
+      await lifecycle.query("COMMIT");
+    });
+  });
+  for (const observationFirst of [true, false]) {
+    it(`observation/decommission races derive the conflict when observation commits ${observationFirst ? "first" : "last"}`, async () => {
+      const ws = await workspace(),
+        mc = await source(ws, A),
+        id = await identity(ws, A),
+        monitor = await endpoint(ws),
+        target = (
+          await db.query(
+            "INSERT INTO certificate_targets(workspace_id,name,target_type) VALUES($1,'Race fixture','host') RETURNING id",
+            [ws],
+          )
+        ).rows[0];
+      await clients(async (lifecycle, capture) => {
+        await lifecycle.query("BEGIN");
+        await capture.query("BEGIN");
+        await lifecycle.query("SET LOCAL statement_timeout = '1500ms'");
+        await capture.query("SET LOCAL statement_timeout = '1500ms'");
+        await retireCertificateIdentity({
+          workspaceId: ws,
+          identityId: id.id,
+          expectedFingerprintSha256: A,
+          status: "decommissioned",
+          reason: "No known service usage",
+          acknowledgeUncertainty: true,
+          client: lifecycle,
+        });
+        await capture.query(
+          "INSERT INTO certificate_instances(workspace_id,managed_certificate_id,source,source_ref,domain_monitor_id,observed_fingerprint_sha256,observed_at,target_id) VALUES($1,$2,'endpoint_monitor',$3,$4,$5,clock_timestamp(),$6)",
+          [ws, mc.id, monitor.id, monitor.id, A, target.id],
+        );
+        await (observationFirst ? capture : lifecycle).query("COMMIT");
+        await (observationFirst ? lifecycle : capture).query("COMMIT");
+      });
+      const listing = await listCertificateIdentities({
+        client: db,
+        workspaceId: ws,
+        excludeRetired: true,
+      });
+      const row = listing.items.find((item) => item.identityId === id.id);
+      assert(row, "Retired certificate with fresh use remains visible");
+      assert.equal(row.lifecycleStatus, "decommissioned");
+      assert.equal(row.stillObserved, true);
+    });
+  }
+  it("retirement skips a contended source while preserving authoritative lifecycle and token state", async () => {
+    const ws = await workspace(),
+      t = await token(ws),
+      mc = await source(ws, A, { tokenId: t }),
+      id = await identity(ws, A);
+    await clients(async (writer, lifecycle) => {
+      await writer.query("BEGIN");
+      await writer.query(
+        "SELECT id FROM managed_certificates WHERE id=$1 FOR UPDATE",
+        [mc.id],
+      );
+      await lifecycle.query("BEGIN");
+      await lifecycle.query("SET LOCAL statement_timeout = '1500ms'");
+      await retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: id.id,
+        expectedFingerprintSha256: A,
+        status: "revoked",
+        reason: "Contended source cache",
+        client: lifecycle,
+      });
+      await lifecycle.query("COMMIT");
+      assert.equal(
+        (
+          await db.query(
+            "SELECT cert_lifecycle_status FROM tokens WHERE id=$1",
+            [t],
+          )
+        ).rows[0].cert_lifecycle_status,
+        "revoked",
+      );
+      await writer.query(
+        "UPDATE managed_certificates SET common_name='refreshed after retirement' WHERE id=$1",
+        [mc.id],
+      );
+      await writer.query("COMMIT");
+    });
+    assert.equal(
+      (
+        await db.query("SELECT status FROM managed_certificates WHERE id=$1", [
+          mc.id,
+        ])
+      ).rows[0].status,
+      "revoked",
+    );
+  });
+  it("endpoint token-first ingestion and retirement cannot invert token/source locks", async () => {
+    const ws = await workspace(),
+      t = await token(ws),
+      mc = await source(ws, A, { tokenId: t }),
+      id = await identity(ws, A);
+    await clients(async (ingestion, lifecycle) => {
+      await ingestion.query("BEGIN");
+      await ingestion.query(
+        "SELECT id FROM tokens WHERE id=$1 FOR NO KEY UPDATE",
+        [t],
+      );
+      await lifecycle.query("BEGIN");
+      const pids = await blockedBy(lifecycle, ingestion);
+      const retired = retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: id.id,
+        expectedFingerprintSha256: A,
+        status: "revoked",
+        reason: "Token-first endpoint interleaving",
+        client: lifecycle,
+      });
+      await waitForBlock(pids);
+      await ingestion.query("SET LOCAL statement_timeout = '1500ms'");
+      await ingestion.query(
+        "UPDATE managed_certificates SET common_name='endpoint capture' WHERE id=$1",
+        [mc.id],
+      );
+      await ingestion.query("COMMIT");
+      await retired;
+      await lifecycle.query("COMMIT");
+    });
+    assert.equal((await identity(ws, A)).lifecycle_status, "revoked");
+  });
+  it("retirement cancellation locks only work for the affected fingerprint", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      other = await source(ws, B),
+      id = await identity(ws, A);
+    await job(ws, mc);
+    const unrelated = await job(ws, other);
+    await clients(async (lifecycle, unrelatedWorker) => {
+      await lifecycle.query("BEGIN");
+      await retireCertificateIdentity({
+        workspaceId: ws,
+        identityId: id.id,
+        expectedFingerprintSha256: A,
+        status: "revoked",
+        reason: "Targeted cancellation",
+        client: lifecycle,
+      });
+      await unrelatedWorker.query("BEGIN");
+      await unrelatedWorker.query("SET LOCAL statement_timeout='1500ms'");
+      await unrelatedWorker.query(
+        "SELECT id FROM certificate_jobs WHERE id=$1 FOR UPDATE",
+        [unrelated.id],
+      );
+      await unrelatedWorker.query("COMMIT");
+      await lifecycle.query("COMMIT");
+    });
+    assert.equal(
+      (
+        await db.query("SELECT status FROM certificate_jobs WHERE id=$1", [
+          unrelated.id,
+        ])
+      ).rows[0].status,
+      "pending",
+    );
+  });
   it("quota counts distinct managed identities plus provisionals, regardless of lifecycle", async () => {
     const ws = await workspace(2),
       first = await source(ws, A),
@@ -734,34 +987,78 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
   });
   it("existing-source rotation allows temporary overage while new enrollment remains blocked", async () => {
-    const ws = await workspace(1), first = await source(ws, A), second = await source(ws, A);
-    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]);
+    const ws = await workspace(1),
+      first = await source(ws, A),
+      second = await source(ws, A);
+    await db.query(
+      "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
+      [first.id, B],
+    );
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
-    assert.equal((await period(first)).current_identity_id, (await identity(ws, B)).id);
-    await assert.rejects(source(ws, C), { detail: "CERTOPS_MANAGED_CERT_LIMIT" });
+    assert.equal(
+      (await period(first)).current_identity_id,
+      (await identity(ws, B)).id,
+    );
+    await assert.rejects(source(ws, C), {
+      detail: "CERTOPS_MANAGED_CERT_LIMIT",
+    });
     await source(ws, B);
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
-    await stopManagingSource({workspaceId: ws, periodId: (await period(second)).id, client: db});
+    await stopManagingSource({
+      workspaceId: ws,
+      periodId: (await period(second)).id,
+      client: db,
+    });
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
   });
   it("v64 repairs already-applied v63 without exempting closed or foreign periods from admission", async () => {
-    const ws = await workspace(1), first = await source(ws, A), second = await source(ws, A);
+    const ws = await workspace(1),
+      first = await source(ws, A),
+      second = await source(ws, A);
     const originalPeriod = await period(first);
-    await db.query(migrations.find(m => m.version === 63).sql);
-    await assert.rejects(db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
-    const repair = migrations.find(m => m.version === 64);
+    await db.query(migrations.find((m) => m.version === 63).sql);
+    await assert.rejects(
+      db.query(
+        "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
+        [first.id, B],
+      ),
+      { detail: "CERTOPS_MANAGED_CERT_LIMIT" },
+    );
+    const repair = migrations.find((m) => m.version === 64);
     await db.query(repair.sql);
     await db.query(repair.sql);
     const foreign = await source(await workspace(), C);
-    await assert.rejects(db.query("SELECT certops_admit_management($1,$2,$3)", [ws, null, (await period(foreign)).id]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
+    await assert.rejects(
+      db.query("SELECT certops_admit_management($1,$2,$3)", [
+        ws,
+        null,
+        (await period(foreign)).id,
+      ]),
+      { detail: "CERTOPS_MANAGED_CERT_LIMIT" },
+    );
     const closed = await period(second);
-    await stopManagingSource({workspaceId: ws, periodId: closed.id, client: db});
-    await assert.rejects(db.query("SELECT certops_admit_management($1,$2,$3)", [ws, null, closed.id]), {detail: "CERTOPS_MANAGED_CERT_LIMIT"});
+    await stopManagingSource({
+      workspaceId: ws,
+      periodId: closed.id,
+      client: db,
+    });
+    await assert.rejects(
+      db.query("SELECT certops_admit_management($1,$2,$3)", [
+        ws,
+        null,
+        closed.id,
+      ]),
+      { detail: "CERTOPS_MANAGED_CERT_LIMIT" },
+    );
     await source(ws, A);
-    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1", [first.id, B]);
+    await db.query(
+      "UPDATE managed_certificates SET fingerprint_sha256=$2,identity_observed_at=clock_timestamp() WHERE id=$1",
+      [first.id, B],
+    );
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 2);
     assert.equal((await period(first)).id, originalPeriod.id);
     assert((await period(second)).ended_at);
+    await db.query(migrations.find((m) => m.version === 65).sql);
   });
   it("closing cancels only unstarted period jobs and preserves claimed/running reconciliation", async () => {
     const ws = await workspace(),
@@ -865,6 +1162,75 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       [ws],
     );
     await assert.rejects(job(ws, mc, "claimed"), { code: "55000" });
+  });
+  it("unchanged endpoint captures remain independent of a held quota lock", async () => {
+    const ws = await workspace(),
+      dm = await endpoint(ws),
+      claim = randomUUID();
+    await source(ws, A, {
+      source: "endpoint_monitor",
+      sourceRef: String(dm.id),
+    });
+    await db.query("UPDATE domain_monitors SET check_claim_id=$2 WHERE id=$1", [
+      dm.id,
+      claim,
+    ]);
+    await clients(async (quota, capture) => {
+      await quota.query("BEGIN");
+      await quota.query(
+        "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
+        [ws],
+      );
+      await capture.query("SET statement_timeout='1500ms'");
+      assert.equal(
+        await worker.withOwnedEndpointResult(
+          capture,
+          dm,
+          claim,
+          async () => "unchanged",
+          A,
+        ),
+        "unchanged",
+      );
+      await quota.query("COMMIT");
+    });
+  });
+  it("endpoint rotation acquires quota before monitor ownership, allowing deletion to finish", async () => {
+    const ws = await workspace(),
+      dm = await endpoint(ws),
+      claim = randomUUID();
+    await source(ws, A, {
+      source: "endpoint_monitor",
+      sourceRef: String(dm.id),
+    });
+    await db.query("UPDATE domain_monitors SET check_claim_id=$2 WHERE id=$1", [
+      dm.id,
+      claim,
+    ]);
+    await clients(async (quota, capture) => {
+      await quota.query("BEGIN");
+      await quota.query(
+        "SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))",
+        [ws],
+      );
+      const pids = await blockedBy(capture, quota);
+      let applied = false;
+      const persisted = worker.withOwnedEndpointResult(
+        capture,
+        dm,
+        claim,
+        async () => {
+          applied = true;
+        },
+        B,
+      );
+      await waitForBlock(pids);
+      await quota.query("SET LOCAL statement_timeout='1500ms'");
+      await quota.query("DELETE FROM domain_monitors WHERE id=$1", [dm.id]);
+      await quota.query("COMMIT");
+      assert.equal(await persisted, null);
+      assert.equal(applied, false);
+    });
   });
   it("late endpoint result cannot create tokens, management or mutate a recreated endpoint", async () => {
     const ws = await workspace(),
@@ -2004,6 +2370,7 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     ).rows[0].n;
     await db.query(migrations.find((m) => m.version === 63).sql);
     await db.query(migrations.find((m) => m.version === 64).sql);
+    await db.query(migrations.find((m) => m.version === 65).sql);
     assert.equal(
       (
         await db.query(

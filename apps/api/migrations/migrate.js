@@ -4570,6 +4570,16 @@ const migrations = [
     name: "certops_rotation_quota_overage",
     sql: fs.readFileSync(require("path").join(__dirname, "064-certops-rotation-quota-overage.sql"), "utf8"),
   },
+  {
+    version: 65,
+    name: "certops_scoped_observation_locks",
+    sql: fs.readFileSync(require("path").join(__dirname, "065-certops-scoped-observation-locks.sql"), "utf8"),
+  },
+  {
+    version: 66,
+    name: "certops_identity_detail_history",
+    sql: fs.readFileSync(require("path").join(__dirname, "066-certops-identity-detail-history.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

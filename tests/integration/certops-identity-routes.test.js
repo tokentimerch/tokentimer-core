@@ -485,4 +485,47 @@ describe("CertOps identity HTTP authorization and admission", function () {
       }
     }
   });
+  it("retains stopped identity details with workspace authorization and never hydrates a moved token", async () => {
+    const fingerprint = "c7".repeat(32);
+    const managedId = await source(fingerprint, `file:///details-${randomUUID()}.pem`);
+    const tokenId = (await TestUtils.execQuery(
+      `INSERT INTO tokens(workspace_id,user_id,name,type,expiration,notes)
+       VALUES($1,$2,'Retained route certificate','ssl_cert','2027-01-01','Original workspace notes') RETURNING id`,
+      [ws, owner.user.id],
+    )).rows[0].id;
+    await TestUtils.execQuery(
+      "UPDATE managed_certificates SET token_id=$2,not_before='2026-01-01',not_after='2027-01-01' WHERE id=$1",
+      [managedId, tokenId],
+    );
+    const identity = (await TestUtils.execQuery(
+      "SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2",
+      [ws, fingerprint],
+    )).rows[0].id;
+    const period = (await TestUtils.execQuery(
+      "SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",
+      [ws, managedId],
+    )).rows[0].id;
+    await post(`management-periods/${period}/stop`, manager).expect(200);
+    const suffix = `certificate-identities/${identity}`;
+    for (const who of [manager, viewer]) {
+      const res = await request(BASE).get(path(suffix)).set("Cookie", who.cookie).expect(200);
+      assert.equal(res.body.certificate.managed, false);
+      assert.equal(res.body.certificate.tokenId, tokenId);
+      assert.equal(res.body.certificate.tokenSnapshot.notes, "Original workspace notes");
+      assert.equal(new Date(res.body.certificate.certificateSnapshot.notBefore).toISOString(), "2026-01-01T00:00:00.000Z");
+      assert(!JSON.stringify(res.body.certificate.certificateSnapshot).includes(KEY_REF));
+    }
+    await request(BASE).get(path(suffix)).set("Cookie", outsider.cookie).expect(403);
+    await request(BASE).get(path(suffix, otherWs)).set("Cookie", outsider.cookie).expect(404);
+    await TestUtils.execQuery("UPDATE tokens SET workspace_id=$2,notes='Destination-only note' WHERE id=$1", [tokenId, otherWs]);
+    const historical = await request(BASE).get(path(suffix)).set("Cookie", viewer.cookie).expect(200);
+    assert.equal(historical.body.certificate.tokenId, null);
+    assert.equal(historical.body.certificate.tokenSnapshot.notes, "Original workspace notes");
+    assert(!historical.text.includes("Destination-only note"));
+    await TestUtils.execQuery("DELETE FROM certops_identity_detail_history WHERE workspace_id=$1 AND identity_id=$2", [ws, identity]);
+    const unavailable = await request(BASE).get(path(suffix)).set("Cookie", manager.cookie).expect(200);
+    assert.equal(unavailable.body.certificate.tokenId, null);
+    assert.equal(unavailable.body.certificate.tokenSnapshot, null);
+    assert.equal(unavailable.body.certificate.certificateSnapshot, null);
+  });
 });

@@ -55,7 +55,6 @@ const {
 } = require("./outbox");
 const {
   linkReconciledCertificateToken,
-  acquireManagedCertificateImportLock,
 } = require("./inventory");
 const {
   DERIVATION_REASON_ALREADY_LINKED,
@@ -979,7 +978,6 @@ async function claimJobs({
   const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
-    await acquireManagedCertificateImportLock(client, agent.workspaceId);
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
     // rejects the poll before any workspace lock or job selection. Inside
     // the transaction, so a claim that later fails rolls the counter back
@@ -2133,7 +2131,6 @@ async function ingestResult({
   }
 
   return await withTransaction(dbPool, async (client) => {
-    await acquireManagedCertificateImportLock(client, agent.workspaceId);
     // Lock the agent row before the job row. claimJobs/renewJobLease both
     // lock the agent row (inside enforceAgentSequence) before any job row;
     // ingestResult used to lock the job row first and the agent row only

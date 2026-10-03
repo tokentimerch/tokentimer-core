@@ -22,7 +22,7 @@ function dbFor({ lifecycle = "active", observations = [], running = [] } = {}) {
   const client = {
     async query(sql) {
       statements.push(sql);
-      if (sql.includes("FROM certops_certificate_identities") && sql.includes("FOR UPDATE")) {
+      if (sql.includes("FROM certops_certificate_identities") && /\bFOR (?:NO KEY )?UPDATE\b/.test(sql)) {
         return { rows: [identity], rowCount: 1 };
       }
       if (sql.includes("FROM certificate_instances ci")) {

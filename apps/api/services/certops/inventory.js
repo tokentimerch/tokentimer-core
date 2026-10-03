@@ -1755,11 +1755,10 @@ async function retireManagedCertificate(clientOrPool, options) {
   if (!client || typeof client.query !== "function") throw new Error("retireManagedCertificate requires a pg client or pool");
   try {
     if (ownsTransaction) await client.query("BEGIN");
-    await acquireManagedCertificateImportLock(client, resolved.options.workspaceId);
     const source = await client.query(`SELECT i.id AS identity_id, i.fingerprint_sha256
       FROM managed_certificates mc LEFT JOIN certops_certificate_identities i
         ON i.workspace_id = mc.workspace_id AND i.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
-      WHERE mc.workspace_id = $1 AND mc.id = $2 FOR UPDATE OF mc`,
+      WHERE mc.workspace_id = $1 AND mc.id = $2`,
       [resolved.options.workspaceId, resolved.options.certificateId]);
     if (!source.rows.length) throw certOpsValidationError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
     // Lazy import avoids the inventory/identity module dependency cycle.

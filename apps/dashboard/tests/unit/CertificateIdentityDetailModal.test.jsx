@@ -77,6 +77,15 @@ it('shows one linked token together with all certificate sources and locations',
   const identity = {
     identityId: 'identity-1',
     tokenId: 7,
+    tokenSnapshot: {
+      name: 'Shared token asset',
+      category: 'cert',
+      type: 'ssl_cert',
+    },
+    certificateSnapshot: {
+      fingerprintSha256: 'a'.repeat(64),
+      notBefore: '2026-10-02T00:00:00Z',
+    },
     commonName: 'shared.example.test',
     fingerprintSha256: 'a'.repeat(64),
     lifecycleStatus: 'active',
@@ -199,6 +208,113 @@ it('shows one linked token together with all certificate sources and locations',
       }),
     })
   );
+  expect(getTokenMock).not.toHaveBeenCalled();
+});
+
+it('keeps stopped certificate notes and validity as read-only details without a live token', async () => {
+  const identity = {
+    identityId: 'identity-a',
+    tokenId: null,
+    managed: false,
+    fingerprintSha256: 'a'.repeat(64),
+    commonName: 'old.example.test',
+    tokenSnapshot: {
+      name: 'Certificate A',
+      notes: 'Retained A notes',
+      expiresAt: '2027-01-01',
+    },
+    certificateSnapshot: {
+      fingerprintSha256: 'a'.repeat(64),
+      notBefore: '2026-01-01',
+      serialNumber: 'AA',
+    },
+    sources: [],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        canManage
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  expect(await screen.findByText('Certificate A')).toBeInTheDocument();
+  expect(detailsModalMock).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      isViewer: true,
+      token: expect.objectContaining({ notes: 'Retained A notes' }),
+      certOps: expect.objectContaining({
+        certificate: expect.objectContaining({
+          serialNumber: 'AA',
+          notBefore: '2026-01-01',
+        }),
+      }),
+    })
+  );
+  expect(getTokenMock).not.toHaveBeenCalled();
+});
+
+it('never overwrites A public details with a mutable token or enrichment that rotated to B', async () => {
+  const identity = {
+    identityId: 'identity-a',
+    tokenId: 7,
+    fingerprintSha256: 'a'.repeat(64),
+    tokenSnapshot: { name: 'Certificate A', notes: 'Retained A notes' },
+    certificateSnapshot: {
+      fingerprintSha256: 'a'.repeat(64),
+      serialNumber: 'AA',
+      notBefore: '2026-01-01',
+    },
+    sources: [],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  getTokenMock.mockResolvedValue({
+    id: 7,
+    name: 'Certificate B',
+    notes: 'B notes',
+  });
+  getManagedMock.mockResolvedValue([
+    {
+      fingerprintSha256: 'b'.repeat(64),
+      serialNumber: 'BB',
+      notBefore: '2027-01-01',
+    },
+  ]);
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        canManage
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  expect(await screen.findByText('Certificate A')).toBeInTheDocument();
+  await waitFor(() => expect(getManagedMock).toHaveBeenCalled());
+  expect(detailsModalMock).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      token: expect.objectContaining({
+        name: 'Certificate A',
+        notes: 'Retained A notes',
+      }),
+      certOps: expect.objectContaining({
+        certificate: expect.objectContaining({
+          fingerprintSha256: 'a'.repeat(64),
+          serialNumber: 'AA',
+        }),
+      }),
+    })
+  );
+  expect(getTokenMock).not.toHaveBeenCalled();
+  expect(screen.queryByText('Certificate B')).not.toBeInTheDocument();
 });
 
 it('keeps one registration visible after stop/restart and reveals ended periods on request', async () => {

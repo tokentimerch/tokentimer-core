@@ -154,3 +154,18 @@ all raw evidence independently of the display projection. Other observation
 slots are not merged merely because two hosts use the same file path.
 
 Existing open management periods may rotate to a different fingerprint even when other sources retain the old certificate and quota usage temporarily exceeds the limit. New period enrollment still requires admission; joining an already managed fingerprint adds no unit. Core migration 64 (Cloud migration 82) repairs the earlier admission function without rewriting historical migrations or management history.
+
+Public token/certificate details are retained per immutable identity. A canonical
+token remains usable only while it belongs to that workspace and still describes
+that fingerprint. Rotation, deletion, or workspace transfer leaves a read-only
+public snapshot; ambiguous historical detail backfill never copies the current
+replacement certificate. Snapshot fields are explicitly selected, excluding
+private material and arbitrary token metadata.
+
+Lifecycle mutations use targeted identity and token locks. Unchanged captures do
+not take workspace quota locks. Admission and quota-changing enrollment/rotation
+remain serialized on their write transaction. A contended source status cache
+may refresh on its next capture; lifecycle reads, eligibility and token alert
+projection use the immutable identity. Cancellation locks only work eligible for
+the affected fingerprint. Valid quota-blocked agent discoveries keep evidence and
+locations as unmanaged identities, retaining replay and timestamp protections.

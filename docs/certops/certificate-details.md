@@ -58,6 +58,20 @@ blocks decommissioning. Stored copies and uncertain visibility require a
 reason and acknowledgment. Rediscovery preserves lifecycle and can display
 **Revoked · Still observed** or **Decommissioned · Still observed**.
 
+## Retained certificate details
+
+Stopping management keeps the certificate's linked token details and Notes.
+The details view uses public fields saved for that exact fingerprint; a source
+rotating to another certificate cannot replace those historical fields. If the
+original token is deleted, transferred to another workspace, or now describes a
+different certificate, the retained details are read-only. Historical fields
+that cannot be verified during upgrade are shown as unavailable rather than
+guessed from the current source.
+
+When enrollment reaches its managed-certificate limit, valid agent observations
+are retained as unmanaged certificates with their separate locations. Replayed
+evidence does not refresh presence. Later enrollment joins the same identity.
+
 ## CSR action
 
 **Add new CSR** starts the operator-supplied public CSR workflow for a

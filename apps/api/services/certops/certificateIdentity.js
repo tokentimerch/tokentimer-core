@@ -79,7 +79,11 @@ function identityRecord(row) {
     name: row.common_name || row.managed_name,
     issuer: row.issuer,
     notAfter: row.not_after,
-    tokenId: row.open_period_id ? row.token_id || null : null,
+    // Display ownership follows the fingerprint, independently of management.
+    // This ID is selected only from a current, same-workspace token association.
+    tokenId: row.token_id || null,
+    tokenSnapshot: row.token_snapshot || null,
+    certificateSnapshot: row.certificate_snapshot || null,
     source: row.open_period_id ? row.source || null : null,
     profileId: row.open_period_id ? row.profile_id || null : null,
     keyMode: row.open_period_id ? row.key_mode || null : null,
@@ -191,11 +195,24 @@ async function listCertificateIdentities({
     WHERE a.workspace_id = $1 ${identityId ? "AND a.identity_id = $2" : ""}
     ORDER BY a.identity_id, (p.ended_at IS NULL AND p.current_identity_id = a.identity_id) DESC,
       a.associated_at DESC, a.id DESC
+  ), detail_tokens AS (
+    SELECT h.identity_id, token.id AS token_id
+    FROM certops_identity_detail_history h
+    JOIN certops_certificate_identities identity ON identity.id = h.identity_id AND identity.workspace_id = h.workspace_id
+    JOIN tokens token ON token.id = h.token_id AND token.workspace_id = h.workspace_id
+    WHERE h.workspace_id = $1 ${identityId ? "AND h.identity_id = $2" : ""}
+      AND certops_token_matches_details(token, h.certificate_details)
+      AND EXISTS (SELECT 1 FROM managed_certificates current_source
+        WHERE current_source.workspace_id = h.workspace_id AND current_source.token_id = token.id
+          AND certops_normalize_fingerprint(current_source.fingerprint_sha256) = identity.fingerprint_sha256)
+      AND NOT EXISTS (SELECT 1 FROM managed_certificates other
+        WHERE other.workspace_id = h.workspace_id AND other.token_id = token.id
+          AND certops_normalize_fingerprint(other.fingerprint_sha256) IS DISTINCT FROM identity.fingerprint_sha256)
   ), present_fingerprints AS (${presence}), candidates AS (
     SELECT ci.id, ci.workspace_id, ci.fingerprint_sha256, ci.lifecycle_status, ci.lifecycle_reason,
       ci.common_name, ci.issuer, ci.not_after, ci.created_at, 'identity'::text AS kind,
       rep.id AS managed_id, rep.name AS managed_name, rep.status AS managed_status,
-      rep.source, rep.token_id, rep.profile_id, rep.key_mode, rep.key_reference, rep.open_period_id,
+      rep.source, details.token_id, rep.profile_id, rep.key_mode, rep.key_reference, rep.open_period_id,
       NULL::uuid AS period_id, NULL::timestamptz AS period_started_at, NULL::timestamptz AS period_ended_at, NULL::text AS ended_reason,
       NULL::text AS source_ref, COALESCE(ci.common_name, rep.name) AS display_name,
       CASE WHEN ci.lifecycle_status <> 'active' THEN ci.lifecycle_status
@@ -204,6 +221,7 @@ async function listCertificateIdentities({
       present.fingerprint IS NOT NULL AS still_observed
     FROM certops_certificate_identities ci
     LEFT JOIN representatives rep ON rep.identity_id = ci.id
+    LEFT JOIN detail_tokens details ON details.identity_id = ci.id
     LEFT JOIN present_fingerprints present ON present.fingerprint = ci.fingerprint_sha256
     WHERE ci.workspace_id = $1 ${identityId ? "AND ci.id = $2" : ""}
     UNION ALL
@@ -224,6 +242,17 @@ async function listCertificateIdentities({
     [...params, pageSize, pageOffset],
   );
   const rows = page.rows[0]?.items || [];
+  // Full public fields belong on the bounded detail request, not every inventory
+  // row. The snapshot is also the fallback if a live token rotates or disappears.
+  if (identityId && rows.length) {
+    const history = await client.query(
+      `SELECT token_details, certificate_details FROM certops_identity_detail_history
+       WHERE workspace_id = $1 AND identity_id = $2`,
+      [workspaceId, identityId],
+    );
+    rows[0].token_snapshot = history.rows[0]?.token_details || null;
+    rows[0].certificate_snapshot = history.rows[0]?.certificate_details || null;
+  }
   if (rows.some((row) => row.kind === "identity")) {
     const ids = rows
       .filter((row) => row.kind === "identity")
@@ -235,7 +264,14 @@ async function listCertificateIdentities({
               p.current_identity_id, p.renewal_profile_id,
               a.associated_at AS started_at,
               COALESCE(a.superseded_at, p.ended_at) AS ended_at,
-              p.source, p.source_ref, mc.token_id,
+              p.source, p.source_ref,
+              CASE WHEN token.workspace_id = a.workspace_id
+                AND certops_normalize_fingerprint(mc.fingerprint_sha256) = identity.fingerprint_sha256
+                AND certops_token_matches_details(token, certops_public_certificate_details(mc))
+                AND NOT EXISTS (SELECT 1 FROM managed_certificates other
+                  WHERE other.workspace_id = a.workspace_id AND other.token_id = mc.token_id
+                    AND certops_normalize_fingerprint(other.fingerprint_sha256) IS DISTINCT FROM identity.fingerprint_sha256)
+                THEN token.id END AS token_id,
               COUNT(*) OVER (PARTITION BY a.identity_id)::int AS total,
               COUNT(*) FILTER (WHERE p.ended_at IS NULL
                 AND p.current_identity_id = a.identity_id
@@ -247,6 +283,8 @@ async function listCertificateIdentities({
          JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
          LEFT JOIN managed_certificates mc
            ON mc.id = p.managed_certificate_id AND mc.workspace_id = p.workspace_id
+         JOIN certops_certificate_identities identity ON identity.id = a.identity_id AND identity.workspace_id = a.workspace_id
+         LEFT JOIN tokens token ON token.id = mc.token_id
         WHERE a.identity_id = ANY($1::uuid[]) AND a.workspace_id = $2) ranked
         WHERE ${identityId ? "TRUE" : "rn <= 20"} ORDER BY started_at DESC`,
       [ids, workspaceId],
@@ -290,6 +328,10 @@ async function listCertificateIdentities({
                 CASE WHEN observed.source IN ('endpoint_monitor', 'domain_checker')
                   THEN 'endpoint:' || COALESCE(NULLIF(BTRIM(observed.deployment_reference), ''),
                     monitor.url, NULLIF(observed.source_ref, ''), observed.id::text)
+                  WHEN observed.source IN ('agent_filesystem', 'agent_windows')
+                    AND observed.source_ref IS NOT NULL
+                  THEN 'agent:' || observed.source || ':' || COALESCE(observed.target_id::text, observed.source_ref) || ':' ||
+                    COALESCE(NULLIF(observed.deployment_reference, ''), observed.id::text)
                   ELSE observed.id::text END AS location_key
            FROM certops_certificate_identities identity
            JOIN certificate_instances observed
@@ -323,7 +365,10 @@ async function listCertificateIdentities({
                      THEN 'service_binding' ELSE 'stored_copy' END,
                 observed.captured_at, FALSE,
                 observed.captured_at BETWEEN NOW() - INTERVAL '24 hours' AND NOW(),
-                observed.id::text
+                CASE WHEN observed.source IN ('agent_filesystem', 'agent_windows')
+                    AND observed.source_ref IS NOT NULL
+                  THEN 'agent:' || observed.source || ':' || COALESCE(observed.target_id::text, observed.source_ref) || ':' || observed.location_ref
+                  ELSE observed.id::text END
            FROM certops_certificate_identities identity
            JOIN certops_slot_observations observed
              ON observed.workspace_id = identity.workspace_id
@@ -476,10 +521,9 @@ async function retireCertificateIdentity({
   }
   const normalizedReason = reasonFor(reason);
   return inTransaction(client, async (tx) => {
-    await acquireManagedCertificateImportLock(tx, workspaceId);
     const locked = await tx.query(
       `SELECT * FROM certops_certificate_identities
-        WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+        WHERE workspace_id = $1 AND id = $2 FOR NO KEY UPDATE`,
       [workspaceId, identityId],
     );
     const identity = locked.rows[0];
@@ -608,6 +652,20 @@ async function retireCertificateIdentity({
         );
       }
     }
+    // Endpoint ingestion owns token rows before updating its source. Lock the
+    // same tokens first; a raw source writer already holding a source is skipped
+    // below instead of forming a source/token lock cycle. Identity lifecycle is
+    // authoritative; the source cache is refreshed on its next observation.
+    const lockedTokens = await tx.query(
+      `SELECT t.id FROM tokens t
+        WHERE t.workspace_id = $1 AND EXISTS (
+          SELECT 1 FROM managed_certificates mc WHERE mc.workspace_id = $1
+            AND mc.token_id = t.id
+            AND certops_normalize_fingerprint(mc.fingerprint_sha256) = $2)
+        ORDER BY t.id FOR NO KEY UPDATE OF t`,
+      [workspaceId, fingerprint],
+    );
+    const tokenIds = lockedTokens.rows.map((row) => row.id);
     const changed = await tx.query(
       `UPDATE certops_certificate_identities SET lifecycle_status = $3,
               lifecycle_reason = $4, retired_at = NOW(), updated_at = NOW()
@@ -616,24 +674,46 @@ async function retireCertificateIdentity({
     );
     await tx.query(
       `UPDATE managed_certificates SET status = $3, updated_at = NOW()
-        WHERE workspace_id = $1 AND certops_normalize_fingerprint(fingerprint_sha256) = $2`,
-      [workspaceId, fingerprint, status],
+        WHERE id IN (SELECT mc.id FROM managed_certificates mc
+          WHERE mc.workspace_id = $1 AND certops_normalize_fingerprint(mc.fingerprint_sha256) = $2
+            AND (mc.token_id IS NULL OR mc.token_id = ANY($4::int[]))
+          ORDER BY mc.id FOR NO KEY UPDATE SKIP LOCKED)`,
+      [workspaceId, fingerprint, status, tokenIds],
+    );
+    await tx.query(
+      `UPDATE tokens t SET cert_lifecycle_status = projected.lifecycle_status, updated_at = NOW()
+        FROM (SELECT mc.token_id, CASE
+          WHEN bool_or(i.lifecycle_status = 'active' OR (i.id IS NULL AND mc.status NOT IN ('revoked','decommissioned'))) THEN 'active'
+          WHEN bool_or(i.lifecycle_status = 'revoked') THEN 'revoked'
+          WHEN bool_or(i.lifecycle_status = 'decommissioned') THEN 'decommissioned'
+          ELSE NULL END AS lifecycle_status
+          FROM managed_certificates mc LEFT JOIN certops_certificate_identities i
+            ON i.workspace_id = mc.workspace_id AND i.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+          WHERE mc.workspace_id = $1 AND mc.token_id = ANY($2::int[]) GROUP BY mc.token_id) projected
+        WHERE t.workspace_id = $1 AND t.id = projected.token_id
+          AND t.cert_lifecycle_status IS DISTINCT FROM projected.lifecycle_status`,
+      [workspaceId, tokenIds],
     );
     const cancelled = await tx.query(
-      `UPDATE certificate_jobs cj SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
-        FROM certops_management_periods p
-        JOIN certops_management_associations a ON a.period_id = p.id
-       WHERE cj.workspace_id = $1 AND a.identity_id = $2
-         AND (cj.certificate_identity_id = $2
-           OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
-         AND cj.subject_type = 'managed_certificate'
-         AND cj.subject_id = p.managed_certificate_id::text
-        AND cj.status IN ('pending_approval', 'approved', 'pending')
-        AND cj.id IN (SELECT id FROM certificate_jobs WHERE workspace_id = $1 FOR UPDATE SKIP LOCKED)
-         AND cj.operation IN ('renew', 'deploy', 'reload')
-         AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
-           AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
-           AND cj.payload->>'canRestoreOriginal' = 'false')`,
+      `WITH eligible AS MATERIALIZED (
+        SELECT DISTINCT cj.id FROM certificate_jobs cj
+          JOIN certops_management_periods p ON cj.subject_type = 'managed_certificate'
+            AND cj.subject_id = p.managed_certificate_id::text
+          JOIN certops_management_associations a ON a.period_id = p.id
+         WHERE cj.workspace_id = $1 AND a.identity_id = $2
+           AND (cj.certificate_identity_id = $2
+             OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
+           AND cj.status IN ('pending_approval', 'approved', 'pending')
+           AND cj.operation IN ('renew', 'deploy', 'reload')
+           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
+             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
+             AND cj.payload->>'canRestoreOriginal' = 'false')
+        ), locked AS MATERIALIZED (
+          SELECT pending.id FROM certificate_jobs pending
+            WHERE pending.id IN (SELECT id FROM eligible) FOR UPDATE SKIP LOCKED
+        )
+        UPDATE certificate_jobs SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
+          WHERE id IN (SELECT id FROM locked)`,
       [workspaceId, identityId, fingerprint],
     );
     const tokens = await tx.query(
@@ -778,7 +858,6 @@ async function readdManagingSource({
     fail("CERTOPS_MANAGEMENT_CONFIG_INVALID", "Renewal profile not found");
   }
   return inTransaction(client, async (tx) => {
-    await acquireManagedCertificateImportLock(tx, workspaceId);
     const mc = await tx.query(
       `SELECT * FROM managed_certificates
       WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
@@ -831,6 +910,7 @@ async function readdManagingSource({
       WHERE workspace_id = $1 AND fingerprint_sha256 = $2`,
       [workspaceId, normalizeFingerprint(mc.rows[0].fingerprint_sha256)],
     );
+    await acquireManagedCertificateImportLock(tx, workspaceId);
     await tx.query("SELECT certops_admit_management($1::uuid, $2::uuid)", [
       workspaceId,
       identity.rows[0]?.id || null,

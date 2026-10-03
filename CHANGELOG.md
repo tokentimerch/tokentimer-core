@@ -11,10 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- CertOps shows one certificate per workspace SHA-256 fingerprint across endpoints, agents and imports. Certificate details combine linked token fields with observed locations and management history; long references wrap and expiry uses severity colors.
+- CertOps shows one certificate per workspace SHA-256 fingerprint across endpoints, agents and imports. Certificate details combine linked token fields with observed locations and management history; long references wrap and expiry uses severity colors. Linked public details and Notes remain available after management ends or the source rotates.
 - Management is source-specific: Stop managing closes a period permanently; explicit re-add creates a new period with selected renewal settings. Endpoint removal and recreation preserve history and reuse the certificate identity.
 - Revocation and decommissioning remain attached to the fingerprint through rotation. Fresh service-use evidence blocks decommissioning; stored copies or uncertain visibility require acknowledgment and a reason. Recording revocation does not contact the CA. Retired certificates still observed remain visible.
-- Quota counts each fingerprint with an open management period once, regardless of lifecycle. Closing the final period releases its unit; existing-source rotation may temporarily exceed quota while new enrollment remains blocked.
+- Quota counts each fingerprint with an open management period once, regardless of lifecycle. Closing the final period releases its unit; existing-source rotation may temporarily exceed quota while new enrollment remains blocked. Valid discoveries that cannot enroll remain visible as unmanaged observations.
 
 ### Changed
 

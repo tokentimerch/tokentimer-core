@@ -136,6 +136,55 @@ export default function CertificateIdentityDetailModal({
 
   const tokenId = detail?.tokenId;
   useEffect(() => {
+    if (isOpen && detail?.identityId) {
+      // Identity-scoped public details are read on the server. Fetching a mutable
+      // token separately can show B under A if it rotates between those reads.
+      setToken(
+        detail.tokenSnapshot
+          ? { ...detail.tokenSnapshot, ...(tokenId ? { id: tokenId } : {}) }
+          : null
+      );
+      setCertificateFields(detail.certificateSnapshot || null);
+      setTokenError('');
+      if (!tokenId || !detail.tokenSnapshot || detail.managed === false)
+        return undefined;
+      let active = true;
+      Promise.all([
+        getManagedCertificatesForToken(workspaceId, tokenId),
+        workspaceAPI.getAlertSettings(workspaceId).catch(() => null),
+        apiClient
+          .get(`/api/v1/workspaces/${workspaceId}/contacts`)
+          .catch(() => null),
+      ])
+        .then(([certificates, settings, contacts]) => {
+          if (!active) return;
+          const normalize = value =>
+            String(value || '')
+              .replace(/:/g, '')
+              .trim()
+              .toLowerCase();
+          const matching = (certificates || []).find(
+            item =>
+              normalize(item.fingerprintSha256) ===
+              normalize(detail.fingerprintSha256)
+          );
+          setCertificateFields({ ...matching, ...detail.certificateSnapshot });
+          setContactGroups(
+            Array.isArray(settings?.contact_groups)
+              ? settings.contact_groups
+              : []
+          );
+          setWorkspaceContacts(
+            Array.isArray(contacts?.data?.items) ? contacts.data.items : []
+          );
+        })
+        .catch(() => {
+          // Retained public fields remain usable when live enrichment is unavailable.
+        });
+      return () => {
+        active = false;
+      };
+    }
     if (!isOpen || !tokenId) {
       setToken(null);
       setCertificateFields(null);
@@ -196,6 +245,10 @@ export default function CertificateIdentityDetailModal({
     workspaceId,
     detail?.fingerprintSha256,
     detail?.managedCertificateId,
+    detail?.identityId,
+    detail?.tokenSnapshot,
+    detail?.certificateSnapshot,
+    detail?.managed,
   ]);
 
   const refresh = async () => {
@@ -345,6 +398,13 @@ export default function CertificateIdentityDetailModal({
       {tokenError ? (
         <Text fontSize='sm' color='orange.400'>
           Token fields could not be loaded: {tokenError}
+        </Text>
+      ) : null}
+      {detail.identityId &&
+      detail.managed === false &&
+      !detail.tokenSnapshot ? (
+        <Text fontSize='sm' color='dashboard.modal.muted'>
+          Full token details were not retained for this historical certificate.
         </Text>
       ) : null}
       {tokenId && !token && !tokenError ? (
@@ -688,7 +748,7 @@ export default function CertificateIdentityDetailModal({
       token={displayToken}
       isOpen={isOpen}
       onClose={onClose}
-      isViewer={!canManage || !token}
+      isViewer={!canManage || !tokenId || !token}
       contactGroups={contactGroups}
       workspaceContacts={workspaceContacts}
       onTokenUpdated={setToken}
