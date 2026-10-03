@@ -11,25 +11,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- CertOps groups certificates by normalized SHA-256 fingerprint within each workspace. Certificate details show linked token fields, observed locations and management history in column layouts. Stop managing closes a source's management period; explicit re-add creates a new period without deleting history.
+- CertOps shows one certificate per workspace SHA-256 fingerprint across endpoints, agents and imports. Certificate details combine linked token fields with observed locations and management history; long references wrap and expiry uses severity colors.
+- Management is source-specific: Stop managing closes a period permanently; explicit re-add creates a new period with selected renewal settings. Endpoint removal and recreation preserve history and reuse the certificate identity.
+- Revocation and decommissioning remain attached to the fingerprint through rotation. Fresh service-use evidence blocks decommissioning; stored copies or uncertain visibility require acknowledgment and a reason. Recording revocation does not contact the CA. Retired certificates still observed remain visible.
+- Quota counts each fingerprint with an open management period once, regardless of lifecycle. Closing the final period releases its unit; existing-source rotation may temporarily exceed quota while new enrollment remains blocked.
 
 ### Changed
 
-- Certificate management explains registrations separately from observed locations. Show ended periods hides earlier history by default; Start managing again creates a new period without duplicating the certificate. Renewal choices are explicit and independent per registration.
-
-- Revocation and decommissioning belong to the certificate fingerprint, independently of its sources. Fresh confirmed service use blocks decommissioning; stored copies and uncertain visibility require acknowledgment and a reason. Recording revocation in CertOps does not contact the CA.
-- Apply additive identity migrations before enabling the new lifecycle actions. Upgrade API, workers and ingestion together; legacy record retirement requires a certificate-identity precondition. Preserve ambiguous historical retirement evidence for review rather than assigning it to a rotated fingerprint.
+- **Operator action:** apply additive identity migrations and upgrade API, workers and ingestion together before enabling lifecycle actions. Legacy retirement requests require an identity precondition. Ambiguous historical retirement evidence remains available for review.
 
 ### Fixed
 
-- Allow existing management-period rotation to exceed the fingerprint quota temporarily when other sources retain the old certificate; additive migration 64 repairs already-upgraded installations while preserving new-enrollment admission.
-
-- Group recreated endpoint monitors into one observed location before counting and pagination. Preserve previous observations behind an optional history switch and explain uncertain presence with Monitoring ended, Not checked recently, or Needs verification. Raw evidence and decommission safety remain intact.
-
-- Restore the accessible alert-history region and remove an unused certificate-modal import detected by clean CI.
-
-- Endpoint deletion and re-add join the existing certificate identity while preserving separate management periods. Rotation cannot transfer a retired certificate's lifecycle to its replacement. History and alerts remain scoped to the selected workspace and fingerprint.
-- Dashboard token details omit location tables; CertOps retains grouped location and source tables beneath Notes. Certificate summaries share validity and renewal fields, expiry uses severity colors, long references wrap, and key locality precedes renewal badges.
 - Preserve Vault permission and forward-proxy rejection status without retrying a 403 as token expiry.
 
 ## [0.17.0] - 2026-09-29

@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-09-29 for the 0.17.0 release candidate.
+Last reviewed: 2026-10-03 for the CertOps fingerprint inventory candidate.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -19,7 +19,9 @@ changelog.
 CertOps keeps zero control-plane private-key custody (CI-enforced) and does
 not change the role model. Inventory, executor reporting, the Kubernetes
 controller, agent renewal, signed dispatch, Windows/IIS execution, and
-trust-anchor reconciliation have shipped; see [CHANGELOG.md](CHANGELOG.md)
+trust-anchor reconciliation have shipped. The current CertOps candidate groups
+certificates by fingerprint and separates lifecycle, management periods and
+observed locations; see [CHANGELOG.md](CHANGELOG.md)
 and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0.
 Airgap operator packages, proxy-agents, appliance connectors, and
 compliance reporting are not deliverables of this repository.
