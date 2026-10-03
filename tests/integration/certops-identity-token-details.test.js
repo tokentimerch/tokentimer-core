@@ -176,4 +176,38 @@ describe("Certificate details survive management and token history changes", fun
     assert.equal(current.tokenId, tid);
     assert.equal(current.tokenSnapshot.notes, "Destination notes");
   });
+  it("backfill prefers the oldest verified token over an older divergent token and safely fills missing details on rerun", async () => {
+    const { ws, tid } = await fixture();
+    await db.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,name,
+      token_id,serial_number,not_after,identity_observed_at)
+      VALUES($1,'agent_filesystem',$2,$3,'Shared-token B',$4,'BB','2028-01-01',NOW())`, [ws, randomUUID(), B, tid]);
+    const incompleteToken = (await db.query(`INSERT INTO tokens(workspace_id,user_id,name,type,expiration,notes)
+      VALUES($1,$2,'Unverified older A','ssl_cert','2027-01-01','Unverified notes') RETURNING id`, [ws, userId])).rows[0].id;
+    await db.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,name,
+      token_id,serial_number,not_after,identity_observed_at)
+      VALUES($1,'agent_filesystem',$2,$3,'Incomplete-token A',$4,'AA','2027-01-01',NOW())`, [ws, randomUUID(), A, incompleteToken]);
+    const endpointToken = (await db.query(`INSERT INTO tokens(workspace_id,user_id,name,type,expiration,serial_number,notes)
+      VALUES($1,$2,'Verified endpoint A','ssl_cert','2027-01-01','AA','Verified endpoint notes') RETURNING id`, [ws, userId])).rows[0].id;
+    const monitor = (await db.query(`INSERT INTO domain_monitors(workspace_id,created_by,url)
+      VALUES($1,$2,$3) RETURNING id`, [ws, userId, `https://${randomUUID()}.example.test`])).rows[0].id;
+    await db.query(`INSERT INTO managed_certificates(workspace_id,source,source_ref,fingerprint_sha256,name,
+      token_id,serial_number,not_after,identity_observed_at,public_metadata)
+      VALUES($1,'endpoint_monitor',$2,$3,'Endpoint A',$4,'AA','2027-01-01',NOW(),$5::jsonb)`,
+    [ws, monitor, A, endpointToken, JSON.stringify({domainMonitorId:monitor})]);
+    await db.query("DELETE FROM certops_identity_detail_history WHERE workspace_id=$1", [ws]);
+    const backfill = migrations.find(m => m.name === "certops_identity_detail_history").sql;
+    await db.query(backfill);
+    assert.equal((await detail(ws, A)).tokenId, endpointToken);
+    assert.equal((await detail(ws, A)).tokenSnapshot.notes, "Verified endpoint notes");
+    assert.equal((await detail(ws, B)).tokenSnapshot, null);
+    await db.query(`UPDATE certops_identity_detail_history SET token_id=NULL,token_details=NULL
+      WHERE workspace_id=$1 AND identity_id=(SELECT id FROM certops_certificate_identities WHERE workspace_id=$1 AND fingerprint_sha256=$2)`, [ws, A]);
+    await db.query(backfill);
+    assert.equal((await detail(ws, A)).tokenId, endpointToken);
+    assert.equal((await detail(ws, A)).tokenSnapshot.notes, "Verified endpoint notes");
+    await db.query("UPDATE tokens SET notes='Canonical notes survive rerun' WHERE id=$1", [endpointToken]);
+    await db.query(backfill);
+    assert.equal((await detail(ws, A)).tokenSnapshot.notes, "Canonical notes survive rerun");
+    assert.equal((await detail(ws, B)).tokenSnapshot, null);
+  });
 });

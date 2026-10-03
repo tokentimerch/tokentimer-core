@@ -141,17 +141,23 @@ CREATE TRIGGER trg_certops_capture_token_after AFTER UPDATE ON tokens
 -- Historical fingerprints whose sources rotated are deliberately not guessed.
 INSERT INTO certops_identity_detail_history(workspace_id, identity_id, token_id, token_details, certificate_details)
 SELECT DISTINCT ON (i.id) i.workspace_id, i.id,
-  CASE WHEN certops_token_matches_details(t, certops_public_certificate_details(mc)) AND NOT EXISTS (
-    SELECT 1 FROM managed_certificates other WHERE other.workspace_id = i.workspace_id
-      AND other.token_id = t.id AND certops_normalize_fingerprint(other.fingerprint_sha256)
-        IS DISTINCT FROM i.fingerprint_sha256) THEN t.id END,
-  CASE WHEN certops_token_matches_details(t, certops_public_certificate_details(mc)) AND NOT EXISTS (
-    SELECT 1 FROM managed_certificates other WHERE other.workspace_id = i.workspace_id
-      AND other.token_id = t.id AND certops_normalize_fingerprint(other.fingerprint_sha256)
-        IS DISTINCT FROM i.fingerprint_sha256) THEN certops_public_token_details(t) END,
+  CASE WHEN verified.safe_token THEN t.id END,
+  CASE WHEN verified.safe_token THEN certops_public_token_details(t) END,
   certops_public_certificate_details(mc)
 FROM certops_certificate_identities i JOIN managed_certificates mc
   ON mc.workspace_id = i.workspace_id AND certops_normalize_fingerprint(mc.fingerprint_sha256) = i.fingerprint_sha256
 LEFT JOIN tokens t ON t.id = mc.token_id AND t.workspace_id = i.workspace_id
-ORDER BY i.id, mc.created_at ASC, mc.id ASC
-ON CONFLICT (workspace_id, identity_id) DO NOTHING;
+LEFT JOIN LATERAL (
+  SELECT certops_token_matches_details(t, certops_public_certificate_details(mc)) AND NOT EXISTS (
+    SELECT 1 FROM managed_certificates other WHERE other.workspace_id = i.workspace_id
+      AND other.token_id = t.id AND certops_normalize_fingerprint(other.fingerprint_sha256)
+        IS DISTINCT FROM i.fingerprint_sha256) AS safe_token
+) verified ON TRUE
+-- An older ineligible source must not hide a newer verified token for A.
+ORDER BY i.id, verified.safe_token DESC NULLS LAST, mc.created_at ASC, mc.id ASC
+ON CONFLICT (workspace_id, identity_id) DO UPDATE SET
+  token_id = EXCLUDED.token_id, token_details = EXCLUDED.token_details,
+  certificate_details = jsonb_strip_nulls(EXCLUDED.certificate_details)
+    || jsonb_strip_nulls(certops_identity_detail_history.certificate_details)
+WHERE certops_identity_detail_history.token_details IS NULL
+  AND EXCLUDED.token_details IS NOT NULL;

@@ -418,7 +418,7 @@ commercial mint endpoints above.
 
 ### Upgrading to fingerprint inventory
 
-The fingerprint inventory requires additive Core migrations 62–63 and matching
+The fingerprint inventory requires additive Core migrations 62–66 and matching
 API, worker and ingestion code. Back up the database and deployment secrets,
 drain existing automation and prevent lifecycle writes during the upgrade.
 Apply migrations, deploy all matching components, then enable the new actions
@@ -433,7 +433,7 @@ must supply the expected certificate identity; incompatible requests fail
 without mutation. Reverting images does not undo migrations; recovery needs a
 matching backup or an explicitly supported migration path.
 
-Cloud applies the corresponding schema as migrations 80–81. Enterprise must
+Cloud applies the corresponding schema as migrations 80–84. Enterprise must
 ship the Core runtime containing these changes alongside its overlays. Promote
 the final Core pin, contract digests, matching image/chart versions and release
 notes together after green release CI; an unreleased local composition is not
