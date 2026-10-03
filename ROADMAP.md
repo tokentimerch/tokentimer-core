@@ -1,6 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-03 for the CertOps fingerprint inventory candidate.
+Last reviewed: 2026-10-03 for the 0.17.0 release candidate against main
+`d210cb0a74f30731ad42627b12c1743a8527ccfe`.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0

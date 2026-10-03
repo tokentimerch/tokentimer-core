@@ -33,11 +33,16 @@ COPY --chown=nodejs:nodejs apps/api/src/shared/contactGroupPluralWrites.js ./app
 COPY --chown=nodejs:nodejs apps/api/src/shared/contactGroups.js ./apps/api/src/shared/contactGroups.js
 COPY --chown=nodejs:nodejs apps/api/src/shared/replaceAssetContactGroups.js ./apps/api/src/shared/replaceAssetContactGroups.js
 COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+COPY --chown=nodejs:nodejs apps/api/services/audit.js ./apps/api/services/audit.js
 COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY --chown=nodejs:nodejs apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js
 COPY --chown=nodejs:nodejs apps/api/db/database.js ./apps/api/db/database.js
 
 # Install production dependencies using frozen lockfile
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
+
+# API service imports resolve their dependencies through the worker workspace.
+RUN ln -s ../worker/node_modules /app/apps/api/node_modules
 
 # Set working directory to worker
 WORKDIR /app/apps/worker

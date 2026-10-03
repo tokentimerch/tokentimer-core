@@ -9,6 +9,10 @@ Use the target release notes to choose a supported transition. Keep the API, das
 3. Read migration and compatibility notes for the target release. For agents, follow [upgrade ordering](https://github.com/tokentimerch/tokentimer-core/blob/main/docs/certops/agent/operations.md).
 4. Plan downtime if the release requires it. Keep the recovery set available before starting.
 
+### Upgrading to 0.17.0 fingerprint inventory
+
+Follow [fingerprint inventory upgrade guidance](CONFIGURATION.md#upgrading-to-fingerprint-inventory) before enabling the new CertOps actions. Back up the database and matching secrets, drain old automation, prevent lifecycle writes, and deploy matching API, workers and ingestion with migrations 62–66. Review ambiguous historical retirement evidence and verify grouping, rotation, endpoint removal/re-add, quota and decommission eligibility before resuming automation. Legacy retirement clients must supply the expected certificate identity. Reverting images does not reverse these migrations.
+
 ## Docker Compose
 
 From the installed Compose directory, update the deployment files to the target release and review `.env.example` changes without overwriting your `.env`. Set `TT_IMAGE_TAG` to the selected published release in `.env`, then:

@@ -9,45 +9,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-03
+
 ### Added
 
 - CertOps shows one certificate per workspace SHA-256 fingerprint across endpoints, agents and imports. Certificate details combine linked token fields with observed locations and management history; long references wrap and expiry uses severity colors. Linked public details and Notes remain available after management ends or the source rotates.
 - Management is source-specific: Stop managing closes a period permanently; explicit re-add creates a new period with selected renewal settings. Endpoint removal and recreation preserve history and reuse the certificate identity.
 - Revocation and decommissioning remain attached to the fingerprint through rotation. Fresh service-use evidence blocks decommissioning; stored copies or uncertain visibility require acknowledgment and a reason. Recording revocation does not contact the CA. Retired certificates still observed remain visible.
 - Quota counts each fingerprint with an open management period once, regardless of lifecycle. Closing the final period releases its unit; existing-source rotation may temporarily exceed quota while new enrollment remains blocked. Valid discoveries that cannot enroll remain visible as unmanaged observations.
+- **Persistent operational incidents** (#140). Delivery and auto-sync failures remain visible in the dashboard bell until recovery, with repeated failures grouped into one open incident. Critical incidents escalate by email, capped by default at 10 per workspace per 24 hours. See [notification thresholds and limits](docs/CONFIGURATION.md#alerts-limits-and-webhooks) to configure escalation and the cap.
+- **Multiple auto-sync configurations per provider and workspace** (#71, #282). Each configuration has a durable ID, editable name, independent schedule and health, paginated run history, and immutable token association history. Shared source assets remain one inventory row across overlapping configurations. Migration 61 preserves configuration IDs and leaves unproven legacy ownership unmanaged. Details show auto-sync controls only for assets with provenance; connection errors appear beneath their forms, and disabled configurations retain management navigation.
+- **CertOps operator-supplied CSR workflow** (#245). Managers can upload and export a public CSR, import the signed public certificate, review issued-name changes, and complete installation through a matching observation or audited manual attestation. CSR controls live in the CertOps Certificates tab, including a viewport-sized dialog. The workflow preserves certificate identity and deployment history; private keys and key packages remain rejected. Database migration 60 adds the workflow records.
 
 ### Changed
 
-- **Operator action:** apply additive identity migrations and upgrade API, workers and ingestion together before enabling lifecycle actions. Legacy retirement requests require an identity precondition. Ambiguous historical retirement evidence remains available for review.
+- **Operator action:** back up the database and matching secrets, apply additive identity migrations 62–66, and upgrade API, workers and ingestion together before enabling lifecycle actions. Drain old automation and prevent lifecycle writes during the upgrade. Legacy retirement requests require an identity precondition; ambiguous historical retirement evidence remains available for review. See [fingerprint inventory upgrade guidance](docs/CONFIGURATION.md#upgrading-to-fingerprint-inventory).
+- Auto-sync imports and cleanup use renewable leases, database generation/version fences, and positively complete scan scopes. Failed or partial scans retain associations; cleanup deletes only auto-sync-created inventory with no remaining associations. Manual imports adopt existing tokens as unmanaged, and deleting a configuration retains otherwise orphaned inventory with provenance.
+- **Operator action:** activate duplicate configurations as a system administrator after old workers are drained and the new images are verified. Activation rejects legacy unfenced scans/imports; older API/worker images must not rejoin afterward. Roll forward or recover a pre-activation backup.
 
 ### Fixed
 
 - Preserve Vault permission and forward-proxy rejection status without retrying a 403 as token expiry.
-
-## [0.17.0] - 2026-09-29
-
-### Added
-
-- **Multiple auto-sync configurations per provider and workspace** (#71, #282). Each configuration has a durable ID, editable name, independent schedule and health, paginated run history, and immutable token association history. Shared source assets remain one inventory row across overlapping configurations. Migration 61 preserves configuration IDs and leaves unproven legacy ownership unmanaged.
-- **CertOps operator-supplied CSR workflow** (#245). Managers can upload and export a public CSR, import the signed public certificate, review issued-name changes, and complete installation through a matching observation or audited manual attestation. CSR controls live in the CertOps Certificates tab, including a viewport-sized dialog. The workflow preserves certificate identity and deployment history; private keys and key packages remain rejected. Database migration 60 adds the workflow records.
-- **Published images are boot-tested in CI** (#273). The API, dashboard, worker entrypoints, and Kubernetes controller must start from their built images, catching missing runtime files before release.
-
-### Changed
-
-- Auto-sync imports and cleanup use renewable leases, database generation/version fences, and positively complete scan scopes. Failed or partial scans retain associations; cleanup deletes only auto-sync-created inventory with no remaining associations. Manual imports adopt existing tokens as unmanaged, and deleting a configuration retains otherwise orphaned inventory with provenance.
-- Duplicate configurations require persisted administrator activation after old workers are drained and the new images are verified. Activation rejects legacy unfenced scans/imports; older API/worker images must not rejoin afterward. Roll forward or recover a pre-activation backup.
-
-### Fixed
-
-- Token and certificate details hide the Auto-sync section for manual or legacy inventory without auto-sync provenance, while retaining it for managed inventory, active configurations and association history.
-- Import errors appear immediately beneath integration connection forms. GitLab rejects invalid credentials, redirects and invalid instance responses before scanning inventory. Disabling one configuration keeps management navigation available for the remaining configurations.
+- GitLab rejects invalid credentials, redirects and invalid instance responses before scanning inventory.
 - **`GET /api/tokens` pages stay distinct when many tokens share `created_at`.** Offset 0 and 1 no longer return the same row. The list sort now ties on `id`.
 - **Certificate renewal failure webhooks use provider-specific payloads** (#275). Slack, Discord, Teams, and PagerDuty receive the certificate, job, and error context with provider-appropriate escaping.
-- **Frontend coverage is a blocking CI gate** (#227, #277). Maintainer pre-merge validation and the required green post-merge CI run are documented in `CONTRIBUTING.md`.
 
 ### Security
 
-- Updated Nodemailer to 10.0.12 and the transitive `ip-address` pin to 10.7.2 to address [GHSA-6vj9-mwq6-2f5v](https://github.com/advisories/GHSA-6vj9-mwq6-2f5v), [GHSA-rpw4-54j3-4h4q](https://github.com/advisories/GHSA-rpw4-54j3-4h4q), and [GHSA-2vr4-cq9g-pvrc](https://github.com/advisories/GHSA-2vr4-cq9g-pvrc). Also update the `brace-expansion` and `fast-uri` transitive pins to 5.0.12 and 3.1.8 to clear the release dependency audit. **Operator action:** rebuild and roll the API and worker images with this release.
+- Updated Nodemailer to 10.0.12 and `ip-address` to 10.7.2 to address [GHSA-6vj9-mwq6-2f5v](https://github.com/advisories/GHSA-6vj9-mwq6-2f5v), [GHSA-rpw4-54j3-4h4q](https://github.com/advisories/GHSA-rpw4-54j3-4h4q), and [GHSA-2vr4-cq9g-pvrc](https://github.com/advisories/GHSA-2vr4-cq9g-pvrc).
+- Updated Axios to 1.20.0 to address [GHSA-c29m-xwm3-cm6r](https://github.com/advisories/GHSA-c29m-xwm3-cm6r), [GHSA-mghh-pgcx-3jjj](https://github.com/advisories/GHSA-mghh-pgcx-3jjj), and [GHSA-x97p-jq2g-jp4f](https://github.com/advisories/GHSA-x97p-jq2g-jp4f).
+- API, dashboard, worker and Kubernetes controller images require Alpine `libcrypto3` and `libssl3` 3.5.9-r0 or newer, avoiding superseded OpenSSL package pins.
+
+**Operator action:** rebuild and roll the published images with this release.
 
 ## [0.16.1] - 2026-09-17
 
