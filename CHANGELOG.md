@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Certificate expiry time remaining keeps its severity color in both light and dark themes.
+- Certificate badges use consistent sizing, readable labels and lifecycle colors independent of expiry. Details show the expiry countdown once, with severity colors in both light and dark themes.
 - Tokens linked to different certificate fingerprints no longer combine certificate details or choose a retirement target automatically. Select the certificate in CertOps; linked tokens remain protected from permanent deletion.
 
 ## [0.17.0] - 2026-10-04

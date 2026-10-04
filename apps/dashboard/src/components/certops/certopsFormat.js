@@ -102,7 +102,23 @@ export const MANAGED_CERTIFICATE_STATUSES = Object.keys(STATUS_LABELS);
 
 export function statusLabel(status) {
   const key = String(status || '').toLowerCase();
+  if (key === 'unknown') return 'Unknown';
   return STATUS_LABELS[key] || (status ? String(status) : 'Unknown');
+}
+
+/** Lifecycle belongs to the identity; source expiry must not recolor it. */
+export function certificateLifecycleDescriptor(certificate) {
+  const identified = Boolean(
+    certificate?.identityId || certificate?.fingerprintSha256
+  );
+  const status = identified
+    ? certificate?.lifecycleStatus || certificate?.status
+    : certificate?.status || certificate?.lifecycleStatus;
+  return {
+    status,
+    label: (identified && certificate?.lifecycleDisplay) || statusLabel(status),
+    scheme: statusScheme(status),
+  };
 }
 
 // Mirrors MANAGED_CERTIFICATE_SOURCES in

@@ -1,8 +1,8 @@
+import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
 import Section from '../DashboardDetailsSection.jsx';
 import AutoSyncProvenance from '../AutoSyncProvenance.jsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Badge,
   Box,
   Grid,
   HStack,
@@ -55,8 +55,6 @@ import {
   keyModeLabel,
   renewalDescriptor,
   sourceLabel,
-  statusLabel,
-  statusScheme,
 } from './certopsFormat.js';
 
 function hasValue(value) {
@@ -168,31 +166,6 @@ function DetailRow({
         </Box>
       )}
     </Grid>
-  );
-}
-
-function CertificateStateBadges({ status, expiry }) {
-  return (
-    <>
-      {status ? (
-        <Badge
-          colorScheme={statusScheme(status)}
-          variant='subtle'
-          textTransform='none'
-        >
-          {statusLabel(status)}
-        </Badge>
-      ) : null}
-      {expiry ? (
-        <Badge
-          colorScheme={expiry.scheme}
-          variant='subtle'
-          textTransform='none'
-        >
-          {expiry.label}
-        </Badge>
-      ) : null}
-    </>
   );
 }
 
@@ -446,7 +419,6 @@ export default function CertificateDetailsModal({
             statusBadges={
               hasAnyValue(
                 certificate?.status,
-                expiresAt,
                 hasRenewalData ? certificate?.renewal : null,
                 hasKeyLocality
                   ? certificate?.keyMode || certificate?.keyReference
@@ -457,10 +429,9 @@ export default function CertificateDetailsModal({
                   : null
               ) ? (
                 <>
-                  <CertificateStateBadges
-                    status={certificate?.status}
-                    expiry={hasValue(expiresAt) ? expiry : null}
-                  />
+                  {certificate ? (
+                    <CertificateLifecycleBadge certificate={certificate} />
+                  ) : null}
                   {hasKeyLocality ? (
                     <KeyLocalityBadge
                       keyMode={certificate.keyMode}

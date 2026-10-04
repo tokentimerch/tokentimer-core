@@ -153,6 +153,37 @@ beforeEach(() => {
   listCertOpsRenewalProfilesMock.mockResolvedValue([]);
 });
 
+it('shows one stable identity lifecycle alongside independent inventory expiry', () => {
+  const now = Date.now();
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({
+      certificates: [
+        certificate({
+          id: 'expired-source',
+          commonName: 'expired.example.test',
+          status: 'expired',
+          notAfter: new Date(now - 86400000).toISOString(),
+        }),
+        certificate({
+          id: 'expiring-source',
+          commonName: 'expiring.example.test',
+          status: 'expiring',
+          notAfter: new Date(now + 7 * 86400000).toISOString(),
+        }),
+      ],
+    })
+  );
+  renderPage();
+  for (const name of ['expired.example.test', 'expiring.example.test']) {
+    const row = screen.getByText(name).closest('tr');
+    expect(within(row).getByText('Active')).toBeInTheDocument();
+    expect(within(row).queryByText('Expiring')).not.toBeInTheDocument();
+    expect(within(row).queryByText('Expired')).not.toBeInTheDocument();
+  }
+  expect(screen.getByText('Expired 1d ago')).toBeInTheDocument();
+  expect(screen.getByText('7d left')).toBeInTheDocument();
+});
+
 it('opens one certificate detail with token fields, sources, and all locations', async () => {
   const item = certificate({
     tokenId: null,

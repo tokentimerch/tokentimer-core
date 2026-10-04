@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import RenewalBadge from '../../src/components/certops/RenewalBadge.jsx';
@@ -14,6 +14,13 @@ function renderBadge(renewal) {
 }
 
 describe('RenewalBadge', () => {
+  it('opens the warning explanation when the shared badge is hovered', async () => {
+    renderBadge({ state: RENEWAL_STATES.notConfigured });
+    fireEvent.pointerOver(screen.getByText('No auto-renewal'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      /will not renew automatically/i
+    );
+  });
   it('renders the auto-renewal window date', () => {
     renderBadge({
       state: RENEWAL_STATES.auto,
@@ -49,9 +56,7 @@ describe('RenewalBadge', () => {
     // Must not reuse the not-configured copy: that tells the operator to go fix
     // a profile, which is wrong when they switched it off on purpose.
     expect(screen.queryByText('No auto-renewal')).not.toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/switched off/i)
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/switched off/i)).toBeInTheDocument();
   });
 
   it('never renders a reassuring badge when the API omits the renewal field', () => {
@@ -68,7 +73,9 @@ describe('RenewalBadge', () => {
       workspacePaused: true,
     });
 
-    expect(screen.getByText('Auto-renew on (workspace paused)')).toBeInTheDocument();
+    expect(
+      screen.getByText('Auto-renew on (workspace paused)')
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(/paused/i)).toBeInTheDocument();
   });
 });

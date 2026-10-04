@@ -1,6 +1,6 @@
+import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Badge,
   Box,
   Button,
   FormControl,
@@ -55,7 +55,7 @@ function LocationStatus({ location }) {
       ? 'Not checked recently'
       : 'Needs verification';
   return (
-    <Badge
+    <CertOpsBadge
       textTransform='none'
       whiteSpace='normal'
       colorScheme={
@@ -75,7 +75,7 @@ function LocationStatus({ location }) {
           : absent
             ? 'No longer observed'
             : unknownLabel}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
@@ -359,6 +359,8 @@ export default function CertificateIdentityDetailModal({
     (detail.sources || []).length - visibleSources.length;
   const certificateFacts = {
     ...certificateFields,
+    lifecycleStatus: detail.lifecycleStatus,
+    lifecycleDisplay: detail.lifecycleDisplay,
     status:
       detail.lifecycleStatus && detail.lifecycleStatus !== 'active'
         ? detail.lifecycleStatus
@@ -388,17 +390,15 @@ export default function CertificateIdentityDetailModal({
   const identityPanel = (
     <VStack align='stretch' spacing={6} mb={6}>
       <HStack spacing={2} flexWrap='wrap'>
-        <Badge colorScheme='blue'>
+        <CertOpsBadge>
           {detail.locationCount ?? (detail.locations || []).length} locations
-        </Badge>
-        <Badge colorScheme='purple'>
+        </CertOpsBadge>
+        <CertOpsBadge>
           {detail.activeSourceCount ?? activeSources.length} active
           registrations
-        </Badge>
+        </CertOpsBadge>
         {detail.lifecycleDisplay ? (
-          <Badge colorScheme={detail.stillObserved ? 'red' : 'gray'}>
-            {detail.lifecycleDisplay}
-          </Badge>
+          <CertificateLifecycleBadge certificate={detail} />
         ) : null}
       </HStack>
       {detail.visibilityUnknown ? (
@@ -645,7 +645,7 @@ export default function CertificateIdentityDetailModal({
                           </Text>
                         </Td>
                         <Td>
-                          <Badge
+                          <CertOpsBadge
                             textTransform='none'
                             whiteSpace='normal'
                             colorScheme={current ? 'green' : 'gray'}
@@ -655,7 +655,7 @@ export default function CertificateIdentityDetailModal({
                               : canReadd
                                 ? 'Stopped'
                                 : 'Ended'}
-                          </Badge>
+                          </CertOpsBadge>
                         </Td>
                         <Td>
                           <Text fontSize='xs'>

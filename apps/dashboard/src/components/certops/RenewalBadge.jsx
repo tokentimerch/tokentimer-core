@@ -1,4 +1,5 @@
-import { Badge, Tooltip } from '@chakra-ui/react';
+import CertOpsBadge from './CertOpsBadge.jsx';
+import { Tooltip } from '@chakra-ui/react';
 import { renewalDescriptor } from './certopsFormat';
 
 /**
@@ -19,16 +20,13 @@ export default function RenewalBadge({ renewal, fontSize = 'xs' }) {
 
   return (
     <Tooltip label={descriptor.help} hasArrow placement='top' openDelay={250}>
-      <Badge
+      <CertOpsBadge
         colorScheme={descriptor.scheme}
-        variant={descriptor.isWarning ? 'solid' : 'subtle'}
-        textTransform='none'
-        fontWeight='medium'
         fontSize={fontSize}
         aria-label={`${descriptor.label}. ${descriptor.help}`}
       >
         {descriptor.label}
-      </Badge>
+      </CertOpsBadge>
     </Tooltip>
   );
 }

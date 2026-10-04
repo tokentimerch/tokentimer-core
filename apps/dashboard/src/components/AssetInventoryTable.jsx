@@ -1,3 +1,4 @@
+import { CertificateLifecycleBadge } from './certops/CertOpsBadge.jsx';
 import { useCallback } from 'react';
 import {
   formatContactGroupNames,
@@ -21,7 +22,6 @@ import {
   Tooltip,
   Tr,
   VStack,
-  Badge,
   useColorMode,
   useColorModeValue,
 } from '@chakra-ui/react';
@@ -40,6 +40,7 @@ import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
 import {
   isRetiredStatus,
+  certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './certops/certopsFormat';
 import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
@@ -503,27 +504,21 @@ function StatusBadge({ token, getStatusMeta }) {
   const status = effectiveStatusMeta(token, getStatusMeta);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const managed = token.__managedCert;
+  const lifecycle = certificateLifecycleDescriptor(managed);
   // Skip the lifecycle badge when it says the same thing as the pill above
   // it (e.g. both read "expired") instead of adding a distinct state like
   // "provisioning" or "renewing".
   const managedStatusIsRedundant =
-    managed?.status && String(managed.status).toLowerCase() === status.key;
+    lifecycle.status && String(lifecycle.status).toLowerCase() === status.key;
 
   return (
     <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
-      {managed?.status &&
-      !isRetiredStatus(managed.status) &&
+      {lifecycle.status &&
+      !isRetiredStatus(lifecycle.status) &&
       !managedStatusIsRedundant ? (
         <Tooltip label='Managed certificate lifecycle status'>
-          <Badge
-            colorScheme='purple'
-            variant='subtle'
-            textTransform='none'
-            fontSize='xs'
-          >
-            {managed.status}
-          </Badge>
+          <CertificateLifecycleBadge certificate={managed} />
         </Tooltip>
       ) : null}
       {token.monitor_health_status && (

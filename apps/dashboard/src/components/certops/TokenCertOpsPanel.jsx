@@ -1,3 +1,4 @@
+import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
 import {
   Badge,
   Box,
@@ -18,12 +19,10 @@ import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
-  expiryDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
   formatDate,
   isCertToken,
   renewalDescriptor,
-  statusScheme,
 } from './certopsFormat';
 import { useCertOpsForToken } from './useCertOps.js';
 
@@ -112,7 +111,6 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
   }
   if (!certificate) return null;
 
-  const expiry = expiryDescriptor(certificate.notAfter);
   const renewal = renewalDescriptor(certificate.renewal);
   const sans = Array.isArray(certificate.subjectAltNames)
     ? certificate.subjectAltNames
@@ -141,18 +139,9 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
           >
             Certificate operations
           </Text>
-          <Badge
-            colorScheme={statusScheme(certificate.status)}
-            variant='subtle'
-            textTransform='none'
-          >
-            {certificate.status || 'unknown'}
-          </Badge>
-          <Badge colorScheme={expiry.scheme} variant='subtle'>
-            {expiry.label}
-          </Badge>
-          <RenewalBadge renewal={certificate.renewal} fontSize='sm' />
-          <RenewalPathBadge certificate={certificate} fontSize='sm' />
+          <CertificateLifecycleBadge certificate={certificate} />
+          <RenewalBadge renewal={certificate.renewal} />
+          <RenewalPathBadge certificate={certificate} />
         </HStack>
         {certificateCount > 1 ? (
           <Text fontSize='xs' color={muted} mb={3}>
@@ -186,7 +175,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
 
       <Field label='Automatic renewal'>
         <VStack align='start' spacing={2}>
-          <RenewalBadge renewal={certificate.renewal} fontSize='sm' />
+          <RenewalBadge renewal={certificate.renewal} />
           <Text
             fontSize='xs'
             color={renewal.isWarning ? dashboard.state.warning : muted}

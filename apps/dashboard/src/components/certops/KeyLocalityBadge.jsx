@@ -1,4 +1,5 @@
-import { Badge, Tooltip } from '@chakra-ui/react';
+import CertOpsBadge from './CertOpsBadge.jsx';
+import { Tooltip } from '@chakra-ui/react';
 import { keyModeLabel } from './certopsFormat';
 
 /**
@@ -20,14 +21,7 @@ export default function KeyLocalityBadge({ keyMode, keyReference }) {
 
   return (
     <Tooltip label={tooltip} hasArrow placement='top' openDelay={250}>
-      <Badge
-        colorScheme={keyMode ? 'purple' : 'gray'}
-        variant='subtle'
-        textTransform='none'
-        fontWeight='medium'
-      >
-        {label}
-      </Badge>
+      <CertOpsBadge colorScheme='gray'>{label}</CertOpsBadge>
     </Tooltip>
   );
 }

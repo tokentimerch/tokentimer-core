@@ -1,7 +1,9 @@
+import CertOpsBadge, {
+  CertificateLifecycleBadge,
+} from '../../components/certops/CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
-  Badge,
   Box,
   Button,
   Flex,
@@ -58,7 +60,6 @@ import {
   renewalSetupDescriptor,
   sourceLabel,
   statusLabel,
-  statusScheme,
 } from '../../components/certops/certopsFormat.js';
 import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
 import { useCertOpsCertificates } from '../../components/certops/useCertOpsCertificates.js';
@@ -135,15 +136,14 @@ function RenewalSetupStatus({ renewalSetup, onRetry, retrying, canManage }) {
         placement='top'
         openDelay={250}
       >
-        <Badge
+        <CertOpsBadge
           colorScheme={descriptor.scheme}
           variant='subtle'
           textTransform='none'
-          fontWeight='medium'
           fontSize='xs'
         >
           {descriptor.label}
-        </Badge>
+        </CertOpsBadge>
       </Tooltip>
       {canManage && descriptor.canRetry ? (
         <Button
@@ -664,13 +664,13 @@ export default function CertOpsCertificates() {
                             display={`${String(certificate.id).slice(0, 12)}...`}
                           />
                           {extraSans > 0 ? (
-                            <Badge
-                              variant='outline'
+                            <CertOpsBadge
+                              variant='subtle'
                               textTransform='none'
                               fontSize='xs'
                             >
                               +{extraSans} SAN{extraSans === 1 ? '' : 's'}
-                            </Badge>
+                            </CertOpsBadge>
                           ) : null}
                         </HStack>
                       </Td>
@@ -683,28 +683,20 @@ export default function CertOpsCertificates() {
                         <MobileFieldLabel color={muted}>
                           Status
                         </MobileFieldLabel>
-                        <Badge
-                          colorScheme={statusScheme(certificate.status)}
-                          variant='subtle'
-                          textTransform='none'
-                          fontWeight='medium'
-                        >
-                          {certificate.lifecycleDisplay ||
-                            statusLabel(certificate.status)}
-                        </Badge>
+                        <CertificateLifecycleBadge certificate={certificate} />
                         {certificate.reconciliationReason ? (
                           <Tooltip
                             label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}
                           >
-                            <Badge
+                            <CertOpsBadge
                               ml={2}
                               colorScheme='orange'
-                              variant='outline'
+                              variant='subtle'
                               textTransform='none'
                               fontSize='xs'
                             >
                               Unreconciled
-                            </Badge>
+                            </CertOpsBadge>
                           </Tooltip>
                         ) : null}
                       </Td>
@@ -718,13 +710,13 @@ export default function CertOpsCertificates() {
                           Expiry
                         </MobileFieldLabel>
                         <Box>
-                          <Badge
+                          <CertOpsBadge
                             colorScheme={expiry.scheme}
                             variant='subtle'
                             fontSize='xs'
                           >
                             {expiry.label}
-                          </Badge>
+                          </CertOpsBadge>
                           <Text fontSize='xs' color={muted} mt={1}>
                             {formatDate(certificate.notAfter)}
                           </Text>

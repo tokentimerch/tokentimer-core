@@ -68,6 +68,23 @@ describe('TokenCertOpsPanel', () => {
     useCertOpsForTokenMock.mockReset();
   });
 
+  it('keeps certificate lifecycle but leaves expiry to the parent Expires summary', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificate: cert({
+          identityId: 'identity-a',
+          lifecycleStatus: 'active',
+          status: 'expiring',
+          notAfter: new Date(Date.now() + 7 * 86400000).toISOString(),
+        }),
+      })
+    );
+    renderPanel(certToken);
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.queryByText('7d left')).not.toBeInTheDocument();
+    expect(screen.queryByText('Expiring')).not.toBeInTheDocument();
+  });
+
   it('requires explicit selection for ambiguous token links without showing B renewal or locations', () => {
     useCertOpsForTokenMock.mockReturnValue(
       hookState({ certificate: null, certificateCount: 2, ambiguousLink: true })
