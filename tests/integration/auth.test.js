@@ -1,6 +1,49 @@
 const { TestUtils, request, expect } = require("./setup");
 const { logger } = require("./logger");
 
+// Keep generated codes safely inside otplib's strict current 30s period.
+async function freshTotpPeriodMs(
+  periodSeconds = 30,
+  marginMs = 5000,
+  {
+    now = Date.now,
+    wait = (milliseconds) =>
+      new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  const periodMs = periodSeconds * 1000;
+  for (;;) {
+    const remainingMs = periodMs - (now() % periodMs);
+    if (remainingMs >= marginMs) return;
+    // A timer may resume before rollover; recheck rather than generating a
+    // nearly expired code and racing strict verification in the API process.
+    await wait(remainingMs);
+  }
+}
+
+describe("TOTP integration fixture timing", () => {
+  it("rechecks an early timer callback before generating a current code", async () => {
+    const { generateSync, verifySync } = require("otplib");
+    let clockMs = 29000;
+    const waits = [];
+    await freshTotpPeriodMs(30, 5000, {
+      now: () => clockMs,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+        // Simulate the first timer firing two milliseconds before rollover.
+        clockMs += milliseconds - (waits.length === 1 ? 2 : 0);
+      },
+    });
+    // Public RFC test secret; adjacent-period codes differ deterministically.
+    const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    const token = generateSync({ secret, epoch: clockMs / 1000 });
+    const result = verifySync({ secret, token, epoch: 30.008 });
+    expect(result.valid).to.equal(true);
+    expect(waits).to.deep.equal([1000, 2]);
+    expect(clockMs).to.equal(30000);
+  });
+});
+
 describe("Authentication Integration Tests", () => {
   let testUser;
   let session;
@@ -69,12 +112,6 @@ describe("Authentication Integration Tests", () => {
     // code, then send it over an HTTP round-trip" flaky near the boundary.
     // Wait for a fresh period before generating a code whenever there isn't
     // comfortably enough of the window left to survive the request.
-    async function freshTotpPeriodMs(periodSeconds = 30, marginMs = 5000) {
-      const periodMs = periodSeconds * 1000;
-      const remainingMs = periodMs - (Date.now() % periodMs);
-      if (remainingMs >= marginMs) return;
-      await new Promise((resolve) => setTimeout(resolve, remainingMs));
-    }
 
     it("should support enabling 2FA and challenge on login", async () => {
       const email = `otp-user-${Date.now()}@example.com`;
