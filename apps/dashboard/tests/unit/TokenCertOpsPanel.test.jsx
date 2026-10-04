@@ -68,6 +68,20 @@ describe('TokenCertOpsPanel', () => {
     useCertOpsForTokenMock.mockReset();
   });
 
+  it('requires explicit selection for ambiguous token links without showing B renewal or locations', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({ certificate: null, certificateCount: 2, ambiguousLink: true })
+    );
+    renderPanel({ ...certToken, workspace_id: 'ws-shared' });
+    expect(
+      screen.getByRole('link', { name: 'Choose a certificate in CertOps' })
+    ).toHaveAttribute('href', '/certops/certificates?workspace=ws-shared');
+    expect(
+      screen.queryByTestId('certificate-instances')
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Automatic renewal')).not.toBeInTheDocument();
+  });
+
   it('does not show the notice when a single certificate references the token', () => {
     useCertOpsForTokenMock.mockReturnValue(hookState());
 
@@ -177,6 +191,8 @@ describe('TokenCertOpsPanel', () => {
 
     expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
     expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
-    expect(screen.queryByText('Renewal path unavailable')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Renewal path unavailable')
+    ).not.toBeInTheDocument();
   });
 });

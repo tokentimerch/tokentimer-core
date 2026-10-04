@@ -204,6 +204,35 @@ describe('CertificateDetailsModal', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows asset facts and an explicit CertOps link without blending another identity', () => {
+    renderModal({
+      token: { ...token, workspace_id: 'ws-shared' },
+      certOps: {
+        certificate: {
+          ...certificate,
+          serialNumber: 'unrelated-B-serial',
+          fingerprintSha256: 'b'.repeat(64),
+        },
+        certificateCount: 2,
+        ambiguousLink: true,
+      },
+    });
+    expect(
+      screen.getByText(
+        /This asset is linked to multiple certificate identities/
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Choose a certificate in CertOps' })
+    ).toHaveAttribute('href', '/certops/certificates?workspace=ws-shared');
+    expect(screen.getByText('token-serial')).toBeInTheDocument();
+    expect(screen.queryByText('unrelated-B-serial')).not.toBeInTheDocument();
+    expect(screen.queryByText('b'.repeat(64))).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/most recently updated active certificate/)
+    ).not.toBeInTheDocument();
+  });
+
   it('presents certificate identity, lifecycle summary, and compact vertical content', () => {
     renderModal();
 

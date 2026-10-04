@@ -1,5 +1,5 @@
 import apiClient from '../../utils/apiClient';
-import { pickPrimaryCertificate } from './certopsFormat';
+import { resolveTokenCertificate } from './certopsFormat';
 
 /**
  * CertOps API helpers (inventory surface).
@@ -525,7 +525,7 @@ export function invalidateCertOpsInventoryCache(workspaceId) {
  * `byTokenId` maps tokenId -> certificate[] because the backend allows multiple
  * managed_certificates rows to reference the same token (e.g. one imported and
  * one monitor-observed for the same site). Use `getManagedCertificateForToken`
- * or `pickPrimaryCertificate` for single-cert display contexts.
+ * or `resolveTokenCertificate` for safe token display contexts.
  */
 export async function loadCertOpsInventoryIndex(
   workspaceId,
@@ -582,8 +582,8 @@ export async function getManagedCertificatesForToken(
 
 /**
  * Resolve the primary managed_certificate row linked to an existing tokens.id.
- * When several certificates reference the token, the deterministic pick from
- * `pickPrimaryCertificate` applies (active preferred, most recently updated).
+ * Multiple sources with the same fingerprint have a deterministic representative.
+ * Cross-fingerprint or unidentified ambiguity has no automatic selection.
  */
 export async function getManagedCertificateForToken(
   workspaceId,
@@ -595,5 +595,5 @@ export async function getManagedCertificateForToken(
     tokenId,
     opts
   );
-  return pickPrimaryCertificate(certs);
+  return resolveTokenCertificate(certs).certificate;
 }

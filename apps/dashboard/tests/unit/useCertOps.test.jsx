@@ -250,6 +250,60 @@ describe('useCertOpsForToken instance error handling', () => {
       expect.any(Object)
     );
   });
+
+  it('does not load B locations when retired A and active B share a token', async () => {
+    getManagedCertificatesForTokenMock.mockResolvedValue([
+      { id: 'cert-a', fingerprintSha256: 'a'.repeat(64), status: 'revoked' },
+      { id: 'cert-b', fingerprintSha256: 'b'.repeat(64), status: 'active' },
+    ]);
+    const { result } = renderHook(() => useCertOpsForToken(42));
+    await waitFor(() => expect(result.current.ambiguousLink).toBe(true));
+    expect(result.current.certificate).toBeNull();
+    expect(result.current.certificateCount).toBe(2);
+    expect(getCertificateInstancesMock).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicit A source selection even when B is active on the same token', async () => {
+    getManagedCertificatesForTokenMock.mockResolvedValue([
+      { id: 'cert-a', fingerprintSha256: 'a'.repeat(64), status: 'revoked' },
+      { id: 'cert-b', fingerprintSha256: 'b'.repeat(64), status: 'active' },
+    ]);
+    getCertificateInstancesMock.mockResolvedValue({
+      items: [{ id: 'location-a' }],
+    });
+    const { result } = renderHook(() => useCertOpsForToken(42, 'cert-a'));
+    await waitFor(() => expect(result.current.certificate?.id).toBe('cert-a'));
+    expect(result.current.ambiguousLink).toBe(false);
+    expect(getCertificateInstancesMock).toHaveBeenCalledWith(
+      'ws-1',
+      'cert-a',
+      expect.any(Object)
+    );
+  });
+
+  it('keeps same-fingerprint multi-source token details usable without an ambiguity notice', async () => {
+    getManagedCertificatesForTokenMock.mockResolvedValue([
+      {
+        id: 'cert-a',
+        fingerprintSha256: 'a'.repeat(64),
+        status: 'active',
+        updatedAt: '2026-01-01',
+      },
+      {
+        id: 'cert-agent',
+        fingerprintSha256: 'A:'.repeat(63) + 'A',
+        status: 'active',
+        updatedAt: '2026-02-01',
+      },
+    ]);
+    getCertificateInstancesMock.mockResolvedValue({ items: [] });
+    const { result } = renderHook(() => useCertOpsForToken(42));
+    await waitFor(() =>
+      expect(result.current.certificate?.id).toBe('cert-agent')
+    );
+    expect(result.current.ambiguousLink).toBe(false);
+    expect(result.current.certificateCount).toBe(1);
+  });
 });
 
 describe('useCertOpsIsWorkspaceAdmin', () => {

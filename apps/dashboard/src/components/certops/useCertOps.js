@@ -12,7 +12,7 @@ import {
   updateWorkspaceCertOpsPauseState,
   updateWorkspaceCertOpsRequireApprovalAlways,
 } from './certopsApi';
-import { pickPrimaryCertificate } from './certopsFormat';
+import { resolveTokenCertificate } from './certopsFormat';
 
 /** @type {Map<string, { at: number, role: string }>} */
 const workspaceRoleCache = new Map();
@@ -424,16 +424,16 @@ export function useWorkspaceCertOps() {
  * Loads CertOps enrichment (managed certificate + deployment history) for an
  * existing cert token row, keyed by tokens.id via managed_certificates.token_id.
  *
- * Several managed certificates can reference the same token. `certificate`
- * is the deterministic primary pick (active preferred, most recently updated);
- * `certificates` and `certificateCount` expose the full set so callers can
- * surface a multi-cert notice.
+ * Several sources can reference one token. Automatic selection is safe only
+ * when they identify the same fingerprint. Otherwise callers must show the
+ * ambiguous-link notice or provide an explicit selected source ID.
  */
 export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [certificate, setCertificate] = useState(null);
   const [certificates, setCertificates] = useState([]);
+  const [ambiguousLink, setAmbiguousLink] = useState(false);
   const [instances, setInstances] = useState([]);
   const [instancesAvailable, setInstancesAvailable] = useState(true);
   const [instancesError, setInstancesError] = useState('');
@@ -444,6 +444,7 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
     if (!workspaceId || !tokenId || enabled !== true) {
       setCertificate(null);
       setCertificates([]);
+      setAmbiguousLink(false);
       setInstances([]);
       setInstancesAvailable(true);
       setInstancesError('');
@@ -455,6 +456,10 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
+    setCertificate(null);
+    setCertificates([]);
+    setInstances([]);
+    setAmbiguousLink(false);
     setError('');
     setInstancesError('');
 
@@ -466,12 +471,14 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
           { signal: controller.signal }
         );
         if (cancelled) return;
+        const resolution = resolveTokenCertificate(linked);
         const managed = preferredCertificateId
           ? linked.find(
               cert => String(cert.id) === String(preferredCertificateId)
             )
-          : pickPrimaryCertificate(linked);
+          : resolution.certificate;
         setCertificates(Array.isArray(linked) ? linked : []);
+        setAmbiguousLink(!preferredCertificateId && resolution.ambiguousLink);
         setCertificate(managed || null);
         if (!managed?.id) {
           setInstances([]);
@@ -535,7 +542,8 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
     enabled,
     certificate,
     certificates,
-    certificateCount: certificates.length,
+    certificateCount: resolveTokenCertificate(certificates).certificateCount,
+    ambiguousLink,
     instances,
     instancesAvailable,
     instancesError,

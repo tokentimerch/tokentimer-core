@@ -38,7 +38,10 @@ import {
 import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
-import { isRetiredStatus } from './certops/certopsFormat';
+import {
+  isRetiredStatus,
+  AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
+} from './certops/certopsFormat';
 import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
@@ -70,6 +73,13 @@ const RETIRED_STATUS_META = {
  */
 function effectiveStatusMeta(token, getStatusMeta) {
   const managed = token.__managedCert;
+  if (token.__managedCertificatesRetired) {
+    return {
+      ...RETIRED_STATUS_META.decommissioned,
+      key: 'retired',
+      label: 'Retired',
+    };
+  }
   if (managed && isRetiredStatus(managed.status)) {
     return (
       RETIRED_STATUS_META[String(managed.status).toLowerCase()] ||
@@ -699,18 +709,34 @@ function InventoryRowActions({
       </Tooltip>
       {!isViewer && (
         <>
-          <Tooltip label='Renew'>
+          <Tooltip
+            label={
+              token.__certificateLinkAmbiguous
+                ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                : 'Renew'
+            }
+            shouldWrapChildren
+          >
             <IconButton
               {...actionButtonProps}
+              isDisabled={token.__certificateLinkAmbiguous}
               aria-label={`Renew token ${token.name}`}
               icon={<CalendarClock size={16} />}
               onClick={() => onOpenRenew(token)}
             />
           </Tooltip>
-          {token.__managedCert ? (
-            <Tooltip label='Retire (revoke / decommission)'>
+          {token.__managedCert || token.__certificateLinkAmbiguous ? (
+            <Tooltip
+              label={
+                token.__certificateLinkAmbiguous
+                  ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                  : 'Retire (revoke / decommission)'
+              }
+              shouldWrapChildren
+            >
               <IconButton
                 {...actionButtonProps}
+                isDisabled={token.__certificateLinkAmbiguous}
                 aria-label={`Retire certificate ${token.name}`}
                 icon={<Archive size={16} />}
                 onClick={() => onDeleteToken(token.id)}
@@ -1030,13 +1056,25 @@ function AssetInventoryMobileCard({
               <Button
                 {...mobileActionButtonProps}
                 leftIcon={<CalendarClock size={14} />}
+                isDisabled={token.__certificateLinkAmbiguous}
+                title={
+                  token.__certificateLinkAmbiguous
+                    ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                    : undefined
+                }
                 onClick={() => helpers.onOpenRenew(token)}
               >
                 Renew
               </Button>
-              {token.__managedCert ? (
+              {token.__managedCert || token.__certificateLinkAmbiguous ? (
                 <Button
                   {...mobileActionButtonProps}
+                  isDisabled={token.__certificateLinkAmbiguous}
+                  title={
+                    token.__certificateLinkAmbiguous
+                      ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                      : undefined
+                  }
                   leftIcon={<Archive size={14} />}
                   onClick={() => helpers.onDeleteToken(token.id)}
                 >

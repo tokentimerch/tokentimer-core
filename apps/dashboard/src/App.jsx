@@ -88,8 +88,8 @@ import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificate } from './components/certops/certopsApi.js';
 import {
-  isRetiredStatus,
-  pickPrimaryCertificate,
+  resolveTokenCertificate,
+  AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './components/certops/certopsFormat.js';
 import {
   DashboardModalFrame,
@@ -2082,6 +2082,10 @@ function App() {
 
   // Open renew modal with default date based on category/type
   const handleOpenRenew = token => {
+    if (token.__certificateLinkAmbiguous) {
+      toast.error(AMBIGUOUS_CERTIFICATE_LINK_MESSAGE);
+      return;
+    }
     setTokenToRenew(token);
     const defaultDate = calculateDefaultExpiration(
       token.category,
@@ -3314,15 +3318,15 @@ function DashboardView({
   // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
   // to gate deletion of managed cert tokens and to hide retired certs by default.
   // Empty/no-op when CertOps is disabled for the workspace. Several
-  // certificates may reference the same token; single-cert contexts use the
-  // deterministic primary pick (active preferred, most recently updated).
+  // sources may reference the same token; cross-fingerprint links require an
+  // explicit choice in CertOps and remain protected against hard deletion.
   const {
     byTokenId: managedByTokenId,
     resolved: certOpsResolved,
     refresh: refreshCertOps,
   } = useWorkspaceCertOps();
-  const getManagedCertForToken = useCallback(
-    id => pickPrimaryCertificate(managedByTokenId.get(Number(id))),
+  const getCertOpsForToken = useCallback(
+    id => resolveTokenCertificate(managedByTokenId.get(Number(id))),
     [managedByTokenId]
   );
   const [showRetired, setShowRetired] = useState(false);
@@ -3348,7 +3352,12 @@ function DashboardView({
         refreshCertOps();
         return;
       }
-      const cert = getManagedCertForToken(id);
+      const resolution = getCertOpsForToken(id);
+      if (resolution.ambiguousLink) {
+        toast.error(AMBIGUOUS_CERTIFICATE_LINK_MESSAGE);
+        return;
+      }
+      const cert = resolution.certificate;
       if (cert) {
         const token = (Array.isArray(tokens)
           ? tokens.find(t => t.id === id)
@@ -3363,7 +3372,7 @@ function DashboardView({
     },
     [
       certOpsResolved,
-      getManagedCertForToken,
+      getCertOpsForToken,
       onDeleteToken,
       onRetireModalOpen,
       refreshCertOps,
@@ -3939,10 +3948,12 @@ function DashboardView({
     }
     // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
     // (they must be revoked/decommissioned individually).
-    const managedSelected = selectedIds.filter(id =>
-      getManagedCertForToken(id)
+    const managedSelected = selectedIds.filter(
+      id => getCertOpsForToken(id).hasManagedLinks
     );
-    const bulkDeleteIds = selectedIds.filter(id => !getManagedCertForToken(id));
+    const bulkDeleteIds = selectedIds.filter(
+      id => !getCertOpsForToken(id).hasManagedLinks
+    );
     if (bulkDeleteIds.length === 0) {
       try {
         showSuccessMessage(
@@ -4368,10 +4379,8 @@ function DashboardView({
 
   const isTokenRetired = useCallback(
     token => {
-      const cert = pickPrimaryCertificate(
-        managedByTokenId.get(Number(token?.id))
-      );
-      return Boolean(cert && isRetiredStatus(cert.status));
+      return resolveTokenCertificate(managedByTokenId.get(Number(token?.id)))
+        .allRetired;
     },
     [managedByTokenId]
   );
@@ -4416,12 +4425,11 @@ function DashboardView({
         sectionParam
       );
       for (const token of categoryTokens) {
-        const managedCert = pickPrimaryCertificate(
+        const resolution = resolveTokenCertificate(
           managedByTokenId.get(Number(token.id))
         );
-        const retired = Boolean(
-          managedCert && isRetiredStatus(managedCert.status)
-        );
+        const managedCert = resolution.certificate;
+        const retired = resolution.allRetired;
         if (retired && !showRetired) continue;
         const status = getDashboardStatusMeta(token.expiresAt).key;
         const matchesStatus =
@@ -4434,7 +4442,15 @@ function DashboardView({
         if (matchesStatus) {
           dedupe.set(
             String(token.id),
-            managedCert ? { ...token, __managedCert: managedCert } : token
+            resolution.ambiguousLink
+              ? {
+                  ...token,
+                  __certificateLinkAmbiguous: true,
+                  __managedCertificatesRetired: resolution.allRetired,
+                }
+              : managedCert
+                ? { ...token, __managedCert: managedCert }
+                : token
           );
         }
       }

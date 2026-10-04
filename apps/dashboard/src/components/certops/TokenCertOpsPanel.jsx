@@ -5,9 +5,11 @@ import {
   Divider,
   GridItem,
   HStack,
+  Link,
   Text,
   VStack,
 } from '@chakra-ui/react';
+import { Link as RouterLink } from 'react-router';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
@@ -17,6 +19,7 @@ import RenewalBadge from './RenewalBadge.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
   expiryDescriptor,
+  AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
   formatDate,
   isCertToken,
   renewalDescriptor,
@@ -52,15 +55,21 @@ export default function TokenCertOpsPanel({ token, tokenId }) {
   // Cheap guard before any hooks: only certificate assets get this panel. The
   // hooks live in CertOpsPanelBody so they are never called conditionally.
   if (!isCertToken(token)) return null;
-  return <CertOpsPanelBody tokenId={token?.id ?? tokenId} />;
+  return (
+    <CertOpsPanelBody
+      tokenId={token?.id ?? tokenId}
+      workspaceId={token?.workspace_id}
+    />
+  );
 }
 
-function CertOpsPanelBody({ tokenId }) {
+function CertOpsPanelBody({ tokenId, workspaceId }) {
   const { muted, dashboard } = useDashboardTheme();
   const {
     enabled,
     certificate,
     certificateCount,
+    ambiguousLink,
     instances,
     instancesAvailable,
     instancesError,
@@ -82,6 +91,22 @@ function CertOpsPanelBody({ tokenId }) {
     return (
       <GridItem colSpan={{ base: 1, md: 2 }}>
         <DashboardErrorAlert>{error}</DashboardErrorAlert>
+      </GridItem>
+    );
+  }
+  if (ambiguousLink) {
+    return (
+      <GridItem colSpan={{ base: 1, md: 2 }}>
+        <Text fontSize='sm' color={muted}>
+          {AMBIGUOUS_CERTIFICATE_LINK_MESSAGE}
+        </Text>
+        <Link
+          as={RouterLink}
+          to={`/certops/certificates${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`}
+          color='blue.400'
+        >
+          Choose a certificate in CertOps
+        </Link>
       </GridItem>
     );
   }

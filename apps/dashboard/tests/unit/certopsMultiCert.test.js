@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pickPrimaryCertificate,
   sortCertificatesForToken,
+  resolveTokenCertificate,
 } from '../../src/components/certops/certopsFormat';
 
 function cert(overrides = {}) {
@@ -40,9 +41,10 @@ describe('sortCertificatesForToken / pickPrimaryCertificate (multi-cert)', () =>
     });
     expect(pickPrimaryCertificate([retired, active]).id).toBe('cert-active');
     expect(pickPrimaryCertificate([active, retired]).id).toBe('cert-active');
-    expect(
-      sortCertificatesForToken([retired, active]).map(c => c.id)
-    ).toEqual(['cert-active', 'cert-retired']);
+    expect(sortCertificatesForToken([retired, active]).map(c => c.id)).toEqual([
+      'cert-active',
+      'cert-retired',
+    ]);
   });
 
   it('treats decommissioned as retired too', () => {
@@ -94,9 +96,21 @@ describe('sortCertificatesForToken / pickPrimaryCertificate (multi-cert)', () =>
 
   it('is stable regardless of input order (deterministic ordering)', () => {
     const certs = [
-      cert({ id: 'r1', status: 'revoked', updatedAt: '2026-06-01T00:00:00.000Z' }),
-      cert({ id: 'a1', status: 'active', updatedAt: '2026-02-01T00:00:00.000Z' }),
-      cert({ id: 'a2', status: 'active', updatedAt: '2026-04-01T00:00:00.000Z' }),
+      cert({
+        id: 'r1',
+        status: 'revoked',
+        updatedAt: '2026-06-01T00:00:00.000Z',
+      }),
+      cert({
+        id: 'a1',
+        status: 'active',
+        updatedAt: '2026-02-01T00:00:00.000Z',
+      }),
+      cert({
+        id: 'a2',
+        status: 'active',
+        updatedAt: '2026-04-01T00:00:00.000Z',
+      }),
     ];
     const expected = ['a2', 'a1', 'r1'];
     expect(sortCertificatesForToken(certs).map(c => c.id)).toEqual(expected);
@@ -110,5 +124,70 @@ describe('sortCertificatesForToken / pickPrimaryCertificate (multi-cert)', () =>
     const snapshot = certs.map(c => c.id);
     sortCertificatesForToken(certs);
     expect(certs.map(c => c.id)).toEqual(snapshot);
+  });
+});
+
+describe('resolveTokenCertificate (fingerprint scoped token contexts)', () => {
+  it('does not select active B over revoked A linked to the same asset', () => {
+    const A = cert({ fingerprintSha256: 'a'.repeat(64), status: 'revoked' });
+    const B = cert({
+      id: 'cert-b',
+      fingerprintSha256: 'b'.repeat(64),
+      status: 'active',
+      updatedAt: '2026-03-01',
+    });
+    const resolution = resolveTokenCertificate([A, B]);
+    expect(resolution.certificate).toBeNull();
+    expect(resolution.ambiguousLink).toBe(true);
+    expect(resolution.certificateCount).toBe(2);
+    expect(resolution.hasManagedLinks).toBe(true);
+  });
+
+  it('normalizes the same fingerprint across sources and retains one safe representative', () => {
+    const older = cert({ fingerprintSha256: 'a'.repeat(64) });
+    const newer = cert({
+      id: 'cert-agent',
+      fingerprintSha256: 'AA:'.repeat(31) + 'AA',
+      updatedAt: '2026-03-01',
+    });
+    expect(resolveTokenCertificate([older, newer])).toEqual({
+      certificate: newer,
+      certificateCount: 1,
+      ambiguousLink: false,
+      hasManagedLinks: true,
+      allRetired: false,
+    });
+  });
+
+  it('preserves aggregate retirement without selecting an ambiguous identity', () => {
+    const A = cert({ fingerprintSha256: 'a'.repeat(64), status: 'revoked' });
+    const B = cert({
+      id: 'b',
+      fingerprintSha256: 'b'.repeat(64),
+      status: 'decommissioned',
+    });
+    expect(resolveTokenCertificate([A, B])).toMatchObject({
+      ambiguousLink: true,
+      certificate: null,
+      allRetired: true,
+    });
+    expect(
+      resolveTokenCertificate([A, { ...B, status: 'active' }]).allRetired
+    ).toBe(false);
+    expect(resolveTokenCertificate([]).allRetired).toBe(false);
+  });
+
+  it('keeps unidentified associations separate and never treats ambiguity as unmanaged', () => {
+    const unknown = cert({ id: 'unknown', fingerprintSha256: null });
+    expect(resolveTokenCertificate([unknown]).certificate).toBe(unknown);
+    for (const linked of [
+      [unknown, cert({ id: 'other-unknown' })],
+      [unknown, cert({ fingerprintSha256: 'a'.repeat(64) })],
+    ]) {
+      expect(resolveTokenCertificate(linked).certificate).toBeNull();
+      expect(resolveTokenCertificate(linked).hasManagedLinks).toBe(true);
+      expect(resolveTokenCertificate(linked).ambiguousLink).toBe(true);
+    }
+    expect(resolveTokenCertificate([]).hasManagedLinks).toBe(false);
   });
 });

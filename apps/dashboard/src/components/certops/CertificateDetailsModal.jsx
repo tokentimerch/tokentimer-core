@@ -7,6 +7,7 @@ import {
   Grid,
   HStack,
   Input,
+  Link,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -17,6 +18,7 @@ import {
   Textarea,
   VStack,
 } from '@chakra-ui/react';
+import { Link as RouterLink } from 'react-router';
 import { FileText, Info, MapPin, Settings } from 'lucide-react';
 import { TOKEN_CATEGORIES } from '../../constants/tokenCategories.js';
 import { tokenAPI } from '../../utils/apiClient';
@@ -48,6 +50,7 @@ import RenewalBadge from './RenewalBadge.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
   expiryDescriptor,
+  AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
   formatDate,
   keyModeLabel,
   renewalDescriptor,
@@ -224,14 +227,16 @@ export default function CertificateDetailsModal({
   const [editData, setEditData] = useState(() => createTokenEditData(token));
 
   const {
-    certificate,
+    certificate: linkedCertificate,
     certificateCount = 0,
+    ambiguousLink = false,
     instances = [],
     instancesAvailable = true,
     instancesError = '',
     loading: certOpsLoading = false,
     error: certOpsError = '',
   } = certOps;
+  const certificate = ambiguousLink ? null : linkedCertificate;
 
   useEffect(() => {
     setSaveError('');
@@ -501,7 +506,21 @@ export default function CertificateDetailsModal({
               {certOpsError}
             </Text>
           ) : null}
-          {certificateCount > 1 ? (
+          {ambiguousLink ? (
+            <Box mb={4} role='status'>
+              <Text fontSize='sm' color='dashboard.modal.muted'>
+                {AMBIGUOUS_CERTIFICATE_LINK_MESSAGE}
+              </Text>
+              <Link
+                as={RouterLink}
+                to={`/certops/certificates${token.workspace_id ? `?workspace=${encodeURIComponent(token.workspace_id)}` : ''}`}
+                fontSize='sm'
+                color='blue.400'
+              >
+                Choose a certificate in CertOps
+              </Link>
+            </Box>
+          ) : certificateCount > 1 ? (
             <Text mb={4} fontSize='xs' color='dashboard.modal.muted'>
               {certificateCount} certificates reference this token. Showing{' '}
               {managedCertificateId
