@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-04
+
 ### Fixed
 
 - Badges share readable sizing and theme-aware colors across the dashboard, including CertOps certificates, renewals, jobs and agents. Certificate lifecycle colors remain independent of expiry; details show the countdown once, with severity colors in both light and dark themes.
