@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-03 for the 0.17.0 release candidate against main
-`d210cb0a74f30731ad42627b12c1743a8527ccfe`.
+Last reviewed: 2026-10-04 for the 0.17.0 release against main
+`91a1533308b7339f95374ca1e99f3af897a0e1e7`.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -20,7 +20,7 @@ changelog.
 CertOps keeps zero control-plane private-key custody (CI-enforced) and does
 not change the role model. Inventory, executor reporting, the Kubernetes
 controller, agent renewal, signed dispatch, Windows/IIS execution, and
-trust-anchor reconciliation have shipped. The current CertOps candidate groups
+trust-anchor reconciliation have shipped. CertOps 0.17.0 groups
 certificates by fingerprint and separates lifecycle, management periods and
 observed locations; see [CHANGELOG.md](CHANGELOG.md)
 and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0.
@@ -97,8 +97,6 @@ Per-user personal default already exists. v1.0.0 adds a separate
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));
-SAST and verified SARIF ingestion
-([#236](https://github.com/tokentimerch/tokentimer-core/issues/236));
 release image signing and verification instructions
 ([#237](https://github.com/tokentimerch/tokentimer-core/issues/237));
 targeted dashboard and test maintainability
