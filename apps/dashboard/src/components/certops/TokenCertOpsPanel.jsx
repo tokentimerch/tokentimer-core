@@ -1,6 +1,5 @@
-import { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
+import CertOpsBadge, { CertificateLifecycleBadge } from './CertOpsBadge.jsx';
 import {
-  Badge,
   Box,
   Code,
   Divider,
@@ -222,9 +221,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
           </Text>
           <HStack flexWrap='wrap' spacing={2}>
             {sans.map(san => (
-              <Badge key={san} variant='outline' textTransform='none'>
-                {san}
-              </Badge>
+              <CertOpsBadge key={san}>{san}</CertOpsBadge>
             ))}
           </HStack>
         </GridItem>
