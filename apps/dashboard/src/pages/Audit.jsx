@@ -2128,14 +2128,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         <Flex align='flex-start' gap={3} minW={0}>
           <Box flex='1' minW={0}>
             <Badge
-              bg={mobileAccentBg}
-              color={accentColor}
-              border='1px solid'
-              borderColor={mobileAccentBorder}
-              variant='outline'
-              borderRadius='md'
-              px={2}
-              py={1}
+              colorScheme='blue'
+              variant='subtle'
               maxW='100%'
               whiteSpace='normal'
               wordBreak='break-word'
@@ -2736,14 +2730,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                               </Td>
                               <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action} py={3}>
                                 <Badge
-                                  bg={mobileAccentBg}
-                                  color={accentColor}
-                                  border='1px solid'
-                                  borderColor={mobileAccentBorder}
-                                  variant='outline'
-                                  borderRadius='md'
-                                  px={2}
-                                  py={1}
+                                  colorScheme='blue'
+                                  variant='subtle'
                                   whiteSpace='normal'
                                   textAlign='left'
                                   maxW='100%'

@@ -64,11 +64,6 @@ export function DashboardDetailsModalHeader({
         <Badge
           colorScheme={badgeColorScheme}
           variant='subtle'
-          fontSize='2xs'
-          letterSpacing='0.08em'
-          px={2.5}
-          py={1.5}
-          textTransform='uppercase'
           flexShrink={0}
           position={{ base: 'absolute', md: 'static' }}
           top={{ base: 0, md: 'auto' }}

@@ -52,15 +52,7 @@ function ActionModalHeader({ title, description, badge, colorScheme }) {
         <DashboardModalTitle>{title}</DashboardModalTitle>
         <DashboardModalDescription>{description}</DashboardModalDescription>
       </Box>
-      <Badge
-        colorScheme={colorScheme}
-        variant='subtle'
-        fontSize='2xs'
-        letterSpacing='0.08em'
-        px={2.5}
-        py={1.5}
-        flexShrink={0}
-      >
+      <Badge colorScheme={colorScheme} variant='subtle' flexShrink={0}>
         {badge}
       </Badge>
     </Flex>

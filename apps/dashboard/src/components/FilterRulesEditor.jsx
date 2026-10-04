@@ -387,7 +387,7 @@ export default function FilterRulesEditor({
                   />
                 </HStack>
                 {err ? (
-                  <Badge colorScheme='red' fontSize='2xs' mt={1}>
+                  <Badge colorScheme='red' mt={1}>
                     Invalid regex: {err}
                   </Badge>
                 ) : null}

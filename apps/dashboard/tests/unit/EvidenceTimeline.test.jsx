@@ -346,7 +346,7 @@ describe('EvidenceTimeline', () => {
     expect(screen.getByText('No subject recorded')).toBeInTheDocument();
   });
 
-  it('shows a visible redaction marker only on evidence flagged as redacted', () => {
+  it('keeps the redaction explanation accessible from its badge without exposing removed values', async () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),
       logEntries: [
@@ -371,6 +371,12 @@ describe('EvidenceTimeline', () => {
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
     expect(screen.getAllByText('Redacted')).toHaveLength(1);
+    fireEvent.pointerEnter(screen.getByText('Redacted'), {
+      pointerType: 'mouse',
+    });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Sensitive values were removed before storage.'
+    );
   });
 
   it('shows the redaction marker for the nested server-owned metadata shape', () => {

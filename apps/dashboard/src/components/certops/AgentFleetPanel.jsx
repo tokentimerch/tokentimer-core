@@ -1,9 +1,9 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Box,
   Button,
   Checkbox,
@@ -95,15 +95,11 @@ function displayAgentStatus(agent) {
 }
 
 /** Subtle status chip for an agent, JobStatusBadge conventions. */
-function AgentStatusBadge({ status, fontSize = 'xs' }) {
+function AgentStatusBadge({ status }) {
   const key = String(status || '').toLowerCase();
   return (
-    <Badge
+    <CertOpsBadge
       colorScheme={AGENT_STATUS_SCHEME[key] || 'gray'}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize={fontSize}
       title={
         key === 'stale'
           ? 'No heartbeat received within the offline threshold; the agent is likely down and awaiting the next fleet sweep.'
@@ -111,7 +107,7 @@ function AgentStatusBadge({ status, fontSize = 'xs' }) {
       }
     >
       {AGENT_STATUS_LABEL[key] || (status ? String(status) : 'Unknown')}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
@@ -172,12 +168,8 @@ function ClockDriftBadge({ clockDriftState }) {
   const key = String(clockDriftState || '').toLowerCase();
   if (key !== 'warn' && key !== 'alert') return null;
   return (
-    <Badge
+    <CertOpsBadge
       colorScheme={CLOCK_DRIFT_SCHEME[key]}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
       title={
         key === 'alert'
           ? 'Clock offset exceeds the alert threshold (CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS).'
@@ -185,7 +177,7 @@ function ClockDriftBadge({ clockDriftState }) {
       }
     >
       {CLOCK_DRIFT_LABEL[key]}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
@@ -225,16 +217,12 @@ function AgentCompatibilityBadge({ compatibilityState, compatibilityRange }) {
       'This agent can still claim jobs, but it is more than one minor version behind the latest known build. Upgrade when convenient.';
   }
   return (
-    <Badge
+    <CertOpsBadge
       colorScheme={COMPATIBILITY_SCHEME[key] || 'gray'}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
       title={title}
     >
       {COMPATIBILITY_LABEL[key] || 'Unknown'}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
@@ -248,15 +236,9 @@ function NtpBadge({ ntpSynced }) {
     );
   }
   return (
-    <Badge
-      colorScheme={ntpSynced ? 'green' : 'orange'}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
-    >
+    <CertOpsBadge colorScheme={ntpSynced ? 'green' : 'orange'}>
       {ntpSynced ? 'Synced' : 'Not synced'}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
@@ -272,25 +254,17 @@ function ExecutionCapabilityBadge({ supportedOperations }) {
     : [];
   if (declared.length > 0) {
     return (
-      <Badge
+      <CertOpsBadge
         colorScheme='green'
-        variant='subtle'
-        textTransform='none'
-        fontWeight='medium'
-        fontSize='xs'
         title={`Last declared on claim: ${declared.join(', ')}`}
       >
         Enabled
-      </Badge>
+      </CertOpsBadge>
     );
   }
   return (
-    <Badge
+    <CertOpsBadge
       colorScheme='orange'
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
       title={
         'No executable action declared on the last claim call. Most often ' +
         'this means the agent is running observe-only (no execution block, ' +
@@ -300,7 +274,7 @@ function ExecutionCapabilityBadge({ supportedOperations }) {
       }
     >
       No capability declared
-    </Badge>
+    </CertOpsBadge>
   );
 }
 

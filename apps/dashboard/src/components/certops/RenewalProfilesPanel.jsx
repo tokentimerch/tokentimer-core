@@ -1,6 +1,6 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import {
-  Badge,
   Box,
   Button,
   Flex,
@@ -74,12 +74,11 @@ import {
 
 function statusBadge(profile) {
   if (profile.autoRenewEnabled) {
-    return { label: 'On', scheme: 'green', variant: 'subtle' };
+    return { label: 'On', scheme: 'green' };
   }
   return {
     label: profile.status === 'archived' ? 'Archived' : 'Off',
     scheme: 'orange',
-    variant: 'solid',
   };
 }
 
@@ -413,15 +412,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                               placement='top'
                               openDelay={250}
                             >
-                              <Badge
-                                colorScheme='blue'
-                                variant='subtle'
-                                textTransform='none'
-                                fontWeight='medium'
-                                fontSize='xs'
-                              >
+                              <CertOpsBadge colorScheme='blue'>
                                 Derived
-                              </Badge>
+                              </CertOpsBadge>
                             </Tooltip>
                           ) : null}
                           {renewal.dns?.provider ? (
@@ -443,15 +436,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                         <CertOpsMobileFieldLabel color={muted}>
                           Auto-renew
                         </CertOpsMobileFieldLabel>
-                        <Badge
-                          colorScheme={badge.scheme}
-                          variant={badge.variant}
-                          textTransform='none'
-                          fontWeight='medium'
-                          fontSize='xs'
-                        >
+                        <CertOpsBadge colorScheme={badge.scheme}>
                           {badge.label}
-                        </Badge>
+                        </CertOpsBadge>
                       </Td>
                       <Td {...tableStyles.cellProps}>
                         <CertOpsMobileFieldLabel color={muted}>

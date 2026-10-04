@@ -1,6 +1,6 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useCallback, useMemo, useState } from 'react';
 import {
-  Badge,
   Box,
   Button,
   Collapse,
@@ -82,15 +82,7 @@ function approvalDecisionErrorMessage(err, decision) {
 function JobReasonChip({ advisory }) {
   if (!advisory) return null;
   return (
-    <Badge
-      colorScheme={advisory.tone}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
-    >
-      {advisory.label}
-    </Badge>
+    <CertOpsBadge colorScheme={advisory.tone}>{advisory.label}</CertOpsBadge>
   );
 }
 

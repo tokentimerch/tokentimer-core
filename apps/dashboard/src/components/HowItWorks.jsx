@@ -78,11 +78,6 @@ export function HowItWorks({
   const stepIconBg = useColorModeValue('gray.100', 'whiteAlpha.100');
   const stepIconBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
 
-  // Badge colors using theme
-  const badgeBg = useColorModeValue('orange.100', 'orange.500');
-  const badgeColor = useColorModeValue('orange.800', 'orange.200');
-  const badgeBorder = useColorModeValue('orange.300', 'orange.400');
-
   const steps = [
     {
       number: 1,
@@ -485,9 +480,6 @@ export function HowItWorks({
                     {step.number === 2 && (
                       <ConfigureVisual
                         active={!isMobile || activeStep === 2}
-                        badgeBg={badgeBg}
-                        badgeColor={badgeColor}
-                        badgeBorder={badgeBorder}
                         textColor={textColor}
                         textColorSecondary={textColorSecondary}
                       />
@@ -687,14 +679,7 @@ function CaptureVisual({ active }) {
 }
 
 // Visual for Configure step
-function ConfigureVisual({
-  active,
-  badgeBg,
-  badgeColor,
-  badgeBorder,
-  _textColor,
-  textColorSecondary,
-}) {
+function ConfigureVisual({ active, _textColor, textColorSecondary }) {
   const channels = [
     { icon: FiMail, label: 'Email' },
     { icon: FiBell, label: 'Slack' },
@@ -721,22 +706,7 @@ function ConfigureVisual({
           <Text color={textColorSecondary} fontSize='xs' mb={2}>
             Threshold
           </Text>
-          <Badge
-            bg={useColorModeValue('orange.100', badgeBg)}
-            color={useColorModeValue('orange.800', badgeColor)}
-            border='1px solid'
-            borderColor={useColorModeValue('orange.300', badgeBorder)}
-            fontWeight='bold'
-            sx={{
-              _light: {
-                bg: 'orange.100 !important',
-                color: 'orange.800 !important',
-                borderColor: 'orange.300 !important',
-              },
-            }}
-          >
-            48 hours
-          </Badge>
+          <Badge colorScheme='orange'>48 hours</Badge>
         </Box>
       </motion.div>
 

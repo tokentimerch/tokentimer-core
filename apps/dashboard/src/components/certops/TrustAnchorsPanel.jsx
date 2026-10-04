@@ -1,9 +1,9 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Box,
   Button,
   Collapse,
@@ -86,49 +86,27 @@ const INSTALLATION_STATE_LABEL = {
 function AnchorStatusBadge({ status }) {
   const key = String(status || '').toLowerCase();
   return (
-    <Badge
-      colorScheme={ANCHOR_STATUS_SCHEME[key] || 'gray'}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
-    >
+    <CertOpsBadge colorScheme={ANCHOR_STATUS_SCHEME[key] || 'gray'}>
       {key === 'active'
         ? 'Active'
         : key === 'revoked'
           ? 'Revoked'
           : status || 'Unknown'}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
 function InstallationStateBadge({ state }) {
   const key = String(state || '').toLowerCase();
   return (
-    <Badge
-      colorScheme={INSTALLATION_STATE_SCHEME[key] || 'gray'}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
-    >
+    <CertOpsBadge colorScheme={INSTALLATION_STATE_SCHEME[key] || 'gray'}>
       {INSTALLATION_STATE_LABEL[key] || (state ? String(state) : 'Unknown')}
-    </Badge>
+    </CertOpsBadge>
   );
 }
 
 function StaleReconciliationBadge() {
-  return (
-    <Badge
-      colorScheme='red'
-      variant='solid'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize='xs'
-    >
-      Needs attention
-    </Badge>
-  );
+  return <CertOpsBadge colorScheme='red'>Needs attention</CertOpsBadge>;
 }
 
 function AdvisoryHover({ label, color, children }) {

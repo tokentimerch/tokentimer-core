@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ChakraProvider } from '@chakra-ui/react';
-import { CertificateLifecycleBadge } from '../../src/components/certops/CertOpsBadge.jsx';
+import { Badge, ChakraProvider, extendTheme } from '@chakra-ui/react';
+import CertOpsBadge, {
+  CertificateLifecycleBadge,
+} from '../../src/components/certops/CertOpsBadge.jsx';
+import { theme } from '../../src/styles/theme.js';
+import { dashboardBadgeTheme } from '../../src/styles/badges.js';
 import KeyLocalityBadge from '../../src/components/certops/KeyLocalityBadge.jsx';
 import {
   certificateLifecycleDescriptor,
@@ -12,6 +16,82 @@ import {
 afterEach(() => vi.useRealTimers());
 
 describe('Certificate badge semantics', () => {
+  it('keeps small badge text at accessible contrast in both themes', () => {
+    const resolveColor = token => {
+      if (token === 'white') return '#ffffff';
+      const [scheme, shade] = token.split('.');
+      return theme.colors[scheme][shade];
+    };
+    const luminance = hex => {
+      const channels = hex
+        .replace('#', '')
+        .match(/../g)
+        .map(value => {
+          const channel = parseInt(value, 16) / 255;
+          return channel <= 0.04045
+            ? channel / 12.92
+            : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    for (const scheme of [
+      'gray',
+      'red',
+      'orange',
+      'yellow',
+      'green',
+      'blue',
+      'purple',
+      'teal',
+      'cyan',
+      'pink',
+    ]) {
+      for (const [variant, describeVariant] of Object.entries(
+        dashboardBadgeTheme.variants
+      )) {
+        const style = describeVariant({ colorScheme: scheme });
+        for (const mode of ['light', 'dark']) {
+          const colors = mode === 'dark' ? { ...style, ...style._dark } : style;
+          const background =
+            colors.bg === 'transparent'
+              ? mode === 'dark'
+                ? 'gray.900'
+                : 'white'
+              : colors.bg;
+          const textLuminance = luminance(resolveColor(colors.color));
+          const backgroundLuminance = luminance(resolveColor(background));
+          const contrast =
+            (Math.max(textLuminance, backgroundLuminance) + 0.05) /
+            (Math.min(textLuminance, backgroundLuminance) + 0.05);
+          expect(
+            contrast,
+            `${scheme} ${variant} ${mode}`
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it('gives ordinary website badges and CertOps badges the same readable sizing', () => {
+    render(
+      <ChakraProvider
+        theme={extendTheme(theme, {
+          config: { initialColorMode: 'light', useSystemColorMode: false },
+        })}
+      >
+        <Badge>Workspace member</Badge>
+        <CertOpsBadge colorScheme='green'>Agent online</CertOpsBadge>
+      </ChakraProvider>
+    );
+    for (const label of ['Workspace member', 'Agent online']) {
+      expect(screen.getByText(label)).toHaveStyle({
+        display: 'inline-flex',
+        minHeight: '24px',
+        textTransform: 'none',
+      });
+    }
+  });
+
   it('keeps immutable lifecycle independent of source expiry and renewal states', () => {
     for (const status of ['active', 'expiring', 'expired', 'renewing']) {
       expect(

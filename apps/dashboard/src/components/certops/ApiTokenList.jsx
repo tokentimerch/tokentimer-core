@@ -1,3 +1,4 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useRef, useState } from 'react';
 import {
   Alert,
@@ -7,7 +8,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
-  Badge,
   Box,
   Button,
   Code,
@@ -181,13 +181,9 @@ export default function ApiTokenList() {
                     </Code>
                   </Box>
                   <HStack spacing={2} flexShrink={0}>
-                    <Badge
-                      colorScheme={STATUS_SCHEME[status] || 'gray'}
-                      variant='subtle'
-                      textTransform='none'
-                    >
+                    <CertOpsBadge colorScheme={STATUS_SCHEME[status] || 'gray'}>
                       {status}
-                    </Badge>
+                    </CertOpsBadge>
                     {canManage && canRevoke ? (
                       <Button
                         size='xs'
@@ -204,28 +200,22 @@ export default function ApiTokenList() {
                 <HStack flexWrap='wrap' spacing={2} mb={3}>
                   {(Array.isArray(token.scopes) ? token.scopes : []).map(
                     scope => (
-                      <Badge
+                      <CertOpsBadge
                         key={`${token.id}-${scope}`}
-                        variant='outline'
-                        textTransform='none'
                         fontFamily='mono'
-                        fontSize='xs'
                       >
                         {certOpsScopeShortLabel(scope)}
-                      </Badge>
+                      </CertOpsBadge>
                     )
                   )}
                   {token.controllerClusterId ? (
-                    <Badge
-                      variant='solid'
+                    <CertOpsBadge
                       colorScheme='purple'
-                      textTransform='none'
                       fontFamily='mono'
-                      fontSize='xs'
                       title='This token is bound to a single cert-manager controller cluster.'
                     >
                       cluster: {token.controllerClusterId}
-                    </Badge>
+                    </CertOpsBadge>
                   ) : null}
                 </HStack>
 

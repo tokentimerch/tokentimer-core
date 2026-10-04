@@ -1,5 +1,5 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import {
-  Badge,
   Box,
   Flex,
   HStack,
@@ -67,15 +67,7 @@ function ApprovedByLine({ job, color }) {
 function RedactionBadge() {
   return (
     <Tooltip label={REDACTION_TOOLTIP} hasArrow placement='top' openDelay={250}>
-      <Badge
-        colorScheme='orange'
-        variant='subtle'
-        textTransform='none'
-        fontSize='2xs'
-        fontWeight='medium'
-      >
-        Redacted
-      </Badge>
+      <CertOpsBadge colorScheme='orange'>Redacted</CertOpsBadge>
     </Tooltip>
   );
 }
@@ -229,24 +221,12 @@ function TimelineItem({
             {title}
           </Text>
           {attemptLabel ? (
-            <Badge
-              colorScheme='blue'
-              variant='outline'
-              textTransform='none'
-              fontSize='2xs'
-            >
-              {attemptLabel}
-            </Badge>
+            <CertOpsBadge colorScheme='blue'>{attemptLabel}</CertOpsBadge>
           ) : null}
           {isEvidence ? (
-            <Badge
-              colorScheme={evidenceTypeScheme(type)}
-              variant='subtle'
-              textTransform='none'
-              fontSize='2xs'
-            >
+            <CertOpsBadge colorScheme={evidenceTypeScheme(type)}>
               {evidenceTypeLabel(type)}
-            </Badge>
+            </CertOpsBadge>
           ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
@@ -386,9 +366,7 @@ export default function EvidenceTimeline({
                 </>
               ) : null}
               {!compact && job.source ? (
-                <Badge variant='outline' textTransform='none' fontSize='2xs'>
-                  {job.source}
-                </Badge>
+                <CertOpsBadge>{job.source}</CertOpsBadge>
               ) : null}
               {job.id ? (
                 <Link

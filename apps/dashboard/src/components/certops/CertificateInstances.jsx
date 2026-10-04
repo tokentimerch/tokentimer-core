@@ -1,6 +1,6 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useMemo, useState, Fragment } from 'react';
 import {
-  Badge,
   Button,
   Table,
   TableContainer,
@@ -179,14 +179,9 @@ function InstanceRow({ instance, border, muted, indent = false }) {
           placement='top'
           openDelay={250}
         >
-          <Badge
-            colorScheme={connectivity.scheme}
-            variant='subtle'
-            textTransform='none'
-            fontSize='xs'
-          >
+          <CertOpsBadge colorScheme={connectivity.scheme}>
             {connectivity.label}
-          </Badge>
+          </CertOpsBadge>
         </Tooltip>
       </Td>
       <Td borderColor={border}>
@@ -199,13 +194,9 @@ function InstanceRow({ instance, border, muted, indent = false }) {
         </Text>
       </Td>
       <Td borderColor={border}>
-        <Badge
-          colorScheme={statusScheme(instance.status)}
-          variant='subtle'
-          textTransform='none'
-        >
+        <CertOpsBadge colorScheme={statusScheme(instance.status)}>
           {instance.status || 'unknown'}
-        </Badge>
+        </CertOpsBadge>
       </Td>
     </Tr>
   );
@@ -331,14 +322,9 @@ export default function CertificateInstances({ instances, available, error }) {
                       placement='top'
                       openDelay={250}
                     >
-                      <Badge
-                        colorScheme={connectivity.scheme}
-                        variant='subtle'
-                        textTransform='none'
-                        fontSize='xs'
-                      >
+                      <CertOpsBadge colorScheme={connectivity.scheme}>
                         {connectivity.label}
-                      </Badge>
+                      </CertOpsBadge>
                     </Tooltip>
                   </Td>
                   <Td borderColor={border}>
@@ -351,17 +337,13 @@ export default function CertificateInstances({ instances, available, error }) {
                     </Text>
                   </Td>
                   <Td borderColor={border}>
-                    <Badge
-                      colorScheme={statusScheme(current.status)}
-                      variant='subtle'
-                      textTransform='none'
-                    >
+                    <CertOpsBadge colorScheme={statusScheme(current.status)}>
                       {current.status || 'unknown'}
-                    </Badge>
+                    </CertOpsBadge>
                     {rotated ? (
-                      <Badge ml={2} colorScheme='purple' variant='outline'>
+                      <CertOpsBadge ml={2} colorScheme='purple'>
                         Renewed
-                      </Badge>
+                      </CertOpsBadge>
                     ) : null}
                   </Td>
                 </Tr>

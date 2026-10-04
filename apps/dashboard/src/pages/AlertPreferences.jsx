@@ -2256,12 +2256,7 @@ export default function AlertPreferences({
               <Text fontSize='sm' fontWeight='semibold' wordBreak='break-word'>
                 {webhook.name || 'Unnamed webhook'}
               </Text>
-              <Badge
-                variant='outline'
-                colorScheme='blue'
-                borderRadius='md'
-                mt={1}
-              >
+              <Badge variant='subtle' colorScheme='blue' mt={1}>
                 {formatWebhookKindLabel(webhook.kind)}
               </Badge>
             </Box>
@@ -2337,13 +2332,6 @@ export default function AlertPreferences({
             variant='subtle'
             display='inline-flex'
             alignItems='center'
-            h='30px'
-            px={2.5}
-            borderRadius='md'
-            fontSize='xs'
-            fontWeight='semibold'
-            letterSpacing='0.04em'
-            textTransform='uppercase'
           >
             Verified
           </Badge>
@@ -2574,12 +2562,7 @@ export default function AlertPreferences({
                 </Text>
               ) : null}
             </Box>
-            <Badge
-              variant='outline'
-              colorScheme='blue'
-              borderRadius='md'
-              flexShrink={0}
-            >
+            <Badge variant='subtle' colorScheme='blue' flexShrink={0}>
               Contact
             </Badge>
           </Flex>
@@ -3883,13 +3866,6 @@ export default function AlertPreferences({
                   colorScheme='green'
                   variant='subtle'
                   alignSelf='flex-start'
-                  borderRadius='md'
-                  px={2.5}
-                  py={1}
-                  fontSize='xs'
-                  fontWeight='semibold'
-                  letterSpacing='0.04em'
-                  textTransform='uppercase'
                 >
                   Verified
                 </Badge>

@@ -2696,7 +2696,7 @@ export default function ImportTokensModal({
                           </Text>
                           {isLocked ? (
                             <Tooltip label={lockReason} fontSize='xs'>
-                              <Badge colorScheme='orange' fontSize='2xs'>
+                              <Badge colorScheme='orange'>
                                 {isViewer ? 'ADMIN' : 'LIMIT'}
                               </Badge>
                             </Tooltip>

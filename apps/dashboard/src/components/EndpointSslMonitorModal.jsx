@@ -1058,10 +1058,10 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 ) : (
                                   <Badge colorScheme='gray'>Pending</Badge>
                                 )}
-                                <Badge variant='outline'>
+                                <Badge variant='subtle'>
                                   {d.check_interval}
                                 </Badge>
-                                <Badge variant='outline' colorScheme='orange'>
+                                <Badge variant='subtle' colorScheme='orange'>
                                   {d.alert_after_failures || 2}x
                                 </Badge>
                               </HStack>
@@ -1220,7 +1220,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                     : '-'}
                                 </Td>
                                 <Td whiteSpace='nowrap'>
-                                  <Badge variant='outline'>
+                                  <Badge variant='subtle'>
                                     {d.check_interval}
                                   </Badge>
                                 </Td>
@@ -1232,7 +1232,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                   >
                                     <Box as='span' display='inline-block'>
                                       <Badge
-                                        variant='outline'
+                                        variant='subtle'
                                         colorScheme='orange'
                                       >
                                         {d.alert_after_failures || 2}x

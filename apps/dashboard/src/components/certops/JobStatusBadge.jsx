@@ -1,21 +1,15 @@
-import { Badge } from '@chakra-ui/react';
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { jobStatusLabel, jobStatusScheme } from './certopsJobsFormat';
 
 /**
  * Subtle status chip for a CertOps job.
  *
- * @param {{ status?: string, fontSize?: string }} props
+ * @param {{ status?: string }} props
  */
-export default function JobStatusBadge({ status, fontSize = 'xs' }) {
+export default function JobStatusBadge({ status }) {
   return (
-    <Badge
-      colorScheme={jobStatusScheme(status)}
-      variant='subtle'
-      textTransform='none'
-      fontWeight='medium'
-      fontSize={fontSize}
-    >
+    <CertOpsBadge colorScheme={jobStatusScheme(status)}>
       {jobStatusLabel(status)}
-    </Badge>
+    </CertOpsBadge>
   );
 }

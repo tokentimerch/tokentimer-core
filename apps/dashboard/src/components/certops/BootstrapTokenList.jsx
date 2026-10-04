@@ -1,3 +1,4 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useRef, useState } from 'react';
 import {
   Alert,
@@ -7,7 +8,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
-  Badge,
   Box,
   Button,
   Code,
@@ -171,13 +171,11 @@ export default function BootstrapTokenList() {
                     </Code>
                   </Box>
                   <HStack spacing={2} flexShrink={0}>
-                    <Badge
+                    <CertOpsBadge
                       colorScheme={TOKEN_STATUS_SCHEME[status] || 'gray'}
-                      variant='subtle'
-                      textTransform='none'
                     >
                       {status}
-                    </Badge>
+                    </CertOpsBadge>
                     {canRevoke ? (
                       <Button
                         size='xs'

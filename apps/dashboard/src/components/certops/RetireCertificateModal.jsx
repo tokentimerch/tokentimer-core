@@ -1,9 +1,9 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Button,
   Checkbox,
   Flex,
@@ -148,9 +148,9 @@ export default function RetireCertificateModal({
                   {subjectLabel}
                 </Text>
                 {certificate?.status ? (
-                  <Badge ml={2} colorScheme='gray' textTransform='capitalize'>
+                  <CertOpsBadge ml={2} colorScheme='gray'>
                     {certificate.status}
-                  </Badge>
+                  </CertOpsBadge>
                 ) : null}
               </Text>
             ) : null}

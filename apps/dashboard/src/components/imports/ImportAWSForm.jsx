@@ -537,7 +537,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
                           <Text fontSize='sm' fontWeight='bold'>
                             All Regions + Global
                           </Text>
-                          <Badge colorScheme='purple' fontSize='xs'>
+                          <Badge colorScheme='purple'>
                             {awsDetectedRegions.length} region
                             {awsDetectedRegions.length !== 1 ? 's' : ''} + IAM
                           </Badge>
@@ -572,7 +572,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
                         <Text fontSize='sm' fontWeight='medium'>
                           Global (IAM only)
                         </Text>
-                        <Badge colorScheme='orange' fontSize='xs'>
+                        <Badge colorScheme='orange'>
                           {awsIamInfo.keysCount} access key
                           {awsIamInfo.keysCount !== 1 ? 's' : ''}
                         </Badge>
@@ -616,14 +616,10 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
                             {region}
                           </Text>
                           {hasSecrets && (
-                            <Badge colorScheme='green' fontSize='xs'>
-                              Secrets
-                            </Badge>
+                            <Badge colorScheme='green'>Secrets</Badge>
                           )}
                           {hasCerts && (
-                            <Badge colorScheme='purple' fontSize='xs'>
-                              Certificates
-                            </Badge>
+                            <Badge colorScheme='purple'>Certificates</Badge>
                           )}
                         </HStack>
                         <Button
@@ -673,7 +669,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
                       <Text fontSize='sm' fontWeight='medium'>
                         Global (IAM only)
                       </Text>
-                      <Badge colorScheme='orange' fontSize='xs'>
+                      <Badge colorScheme='orange'>
                         {awsIamInfo.keysCount} access key
                         {awsIamInfo.keysCount !== 1 ? 's' : ''}
                       </Badge>

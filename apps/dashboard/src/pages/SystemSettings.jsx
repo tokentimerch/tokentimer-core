@@ -218,24 +218,14 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                 label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'
               >
                 <Box as='span' display='inline-block'>
-                  <Badge
-                    colorScheme='orange'
-                    variant='solid'
-                    fontSize='xs'
-                    px={2}
-                    py={0.5}
-                    borderRadius='md'
-                    cursor='help'
-                  >
+                  <Badge colorScheme='orange' variant='subtle' cursor='help'>
                     ENV
                   </Badge>
                 </Box>
               </Tooltip>
             )}
             {!isLocked && setting.source === 'database' && (
-              <Badge colorScheme='blue' fontSize='xs'>
-                Saved in database
-              </Badge>
+              <Badge colorScheme='blue'>Saved in database</Badge>
             )}
           </HStack>
         </FormLabel>
@@ -308,24 +298,14 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                 label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'
               >
                 <Box as='span' display='inline-block'>
-                  <Badge
-                    colorScheme='orange'
-                    variant='solid'
-                    fontSize='xs'
-                    px={2}
-                    py={0.5}
-                    borderRadius='md'
-                    cursor='help'
-                  >
+                  <Badge colorScheme='orange' variant='subtle' cursor='help'>
                     ENV
                   </Badge>
                 </Box>
               </Tooltip>
             )}
             {!isLocked && setting.source === 'database' && (
-              <Badge colorScheme='blue' fontSize='xs'>
-                Saved in database
-              </Badge>
+              <Badge colorScheme='blue'>Saved in database</Badge>
             )}
           </HStack>
         </FormLabel>

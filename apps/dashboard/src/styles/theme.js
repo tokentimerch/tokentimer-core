@@ -1,5 +1,6 @@
 import { extendTheme } from '@chakra-ui/react';
 import { chakraSemanticTokens as semanticTokens } from './colors';
+import { dashboardBadgeTheme } from './badges';
 
 /** Dashboard chrome palette (light = soft cool gray, dark = slate layered surfaces). */
 export const dashboardThemeColors = {
@@ -760,45 +761,7 @@ const components = {
       },
     },
   },
-  Badge: {
-    variants: {
-      subtle: props => ({
-        _light: {
-          bg: `${props.colorScheme}.100`,
-          color: `${props.colorScheme}.700`,
-          border: '1px solid',
-          borderColor: `${props.colorScheme}.300`,
-        },
-        fontWeight: 'semibold',
-        _dark: {
-          // Keep dark mode default behavior
-        },
-      }),
-      solid: props => ({
-        _light: {
-          bg: `${props.colorScheme}.500`,
-          color: 'white',
-        },
-        fontWeight: 'medium',
-        _dark: {
-          // Keep dark mode default behavior
-        },
-      }),
-      outline: props => ({
-        _light: {
-          color: `${props.colorScheme}.700`,
-          borderColor: `${props.colorScheme}.500`,
-          borderWidth: '1px',
-          bg: `${props.colorScheme}.50`,
-        },
-        borderWidth: '1px',
-        fontWeight: 'medium',
-        _dark: {
-          // Keep dark mode default behavior
-        },
-      }),
-    },
-  },
+  Badge: dashboardBadgeTheme,
   Alert: {
     variants: {
       info: {

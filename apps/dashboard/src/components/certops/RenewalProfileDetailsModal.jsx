@@ -1,5 +1,5 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import {
-  Badge,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -126,26 +126,16 @@ export default function RenewalProfileDetailsModal({
             statusBadges={
               <>
                 {hasDisplayValue(profile.autoRenewEnabled) ? (
-                  <Badge
+                  <CertOpsBadge
                     colorScheme={profile.autoRenewEnabled ? 'green' : 'orange'}
-                    variant='subtle'
-                    textTransform='none'
-                    fontWeight='medium'
                   >
                     {profile.autoRenewEnabled
                       ? 'Auto-renews'
                       : 'Auto-renew off'}
-                  </Badge>
+                  </CertOpsBadge>
                 ) : null}
                 {profile.derived ? (
-                  <Badge
-                    colorScheme='blue'
-                    variant='subtle'
-                    textTransform='none'
-                    fontWeight='medium'
-                  >
-                    Derived
-                  </Badge>
+                  <CertOpsBadge colorScheme='blue'>Derived</CertOpsBadge>
                 ) : null}
               </>
             }

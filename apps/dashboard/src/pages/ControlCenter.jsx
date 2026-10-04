@@ -209,9 +209,6 @@ function getPrivilegeLevelBadge(level) {
       <Badge
         colorScheme={meta.colorScheme}
         textTransform='capitalize'
-        px={2}
-        py={0.5}
-        borderRadius='md'
         cursor='help'
       >
         {meta.label}
@@ -239,13 +236,7 @@ function getAutoSyncHealthBadge(health) {
   };
   const meta = map[health] || map.scheduled;
   return (
-    <Badge
-      colorScheme={meta.colorScheme}
-      textTransform='capitalize'
-      px={2}
-      py={0.5}
-      borderRadius='md'
-    >
+    <Badge colorScheme={meta.colorScheme} textTransform='capitalize'>
       {meta.label}
     </Badge>
   );
@@ -1478,7 +1469,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                         <Badge
                                           colorScheme={chip.colorScheme}
                                           variant='subtle'
-                                          fontSize='xs'
                                         >
                                           {item.categoryLabel || chip.label}
                                         </Badge>
@@ -1581,13 +1571,12 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                       text={item.preview || item.privileges}
                                     />
                                     <HStack spacing={2} mt={2}>
-                                      <Badge variant='outline' fontSize='xs'>
+                                      <Badge variant='subtle'>
                                         {item.scopeCount || 0} scope(s)
                                       </Badge>
                                       <Badge
                                         variant='subtle'
                                         colorScheme='purple'
-                                        fontSize='xs'
                                       >
                                         Score {item.score || 0}
                                       </Badge>
@@ -1738,7 +1727,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                                 cert.status
                                               )}
                                               variant='subtle'
-                                              fontSize='xs'
                                               textTransform='capitalize'
                                             >
                                               {statusLabel(cert.status)}
@@ -1746,7 +1734,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                             <Badge
                                               colorScheme={expiry.scheme}
                                               variant='subtle'
-                                              fontSize='xs'
                                             >
                                               {expiry.label}
                                             </Badge>

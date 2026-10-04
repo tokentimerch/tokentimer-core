@@ -1,9 +1,9 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Box,
   Button,
   HStack,
@@ -259,15 +259,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
                 <Text fontSize='sm' fontWeight='bold'>
                   Certificate operations are paused for this workspace
                 </Text>
-                <Badge
-                  colorScheme='red'
-                  variant='subtle'
-                  textTransform='none'
-                  fontWeight='medium'
-                  fontSize='xs'
-                >
-                  Paused
-                </Badge>
+                <CertOpsBadge colorScheme='red'>Paused</CertOpsBadge>
               </HStack>
               <AlertDescription fontSize='sm' display='block'>
                 New provisioning intent and command delivery to agents are
@@ -298,15 +290,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
         <HStack spacing={3} align='center'>
           {loading ? <Spinner size='xs' /> : null}
           {resolved ? (
-            <Badge
-              colorScheme='green'
-              variant='subtle'
-              textTransform='none'
-              fontWeight='medium'
-              fontSize='xs'
-            >
-              Active
-            </Badge>
+            <CertOpsBadge colorScheme='green'>Active</CertOpsBadge>
           ) : null}
           <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
             {resolved

@@ -1,6 +1,6 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useState } from 'react';
 import {
-  Badge,
   Box,
   Button,
   Flex,
@@ -362,15 +362,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           gap={{ base: 1, lg: 2 }}
                         >
                           <Text fontSize='sm'>{formatDate(item.notAfter)}</Text>
-                          <Badge
-                            colorScheme={expiry.scheme}
-                            variant='subtle'
-                            textTransform='none'
-                            fontWeight='medium'
-                            fontSize='xs'
-                          >
+                          <CertOpsBadge colorScheme={expiry.scheme}>
                             {expiry.label}
-                          </Badge>
+                          </CertOpsBadge>
                         </Flex>
                       </Td>
                       <Td
@@ -396,15 +390,7 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                         </CertOpsMobileFieldLabel>
                         {item.autoRenewEnabled ? (
                           <HStack spacing={2}>
-                            <Badge
-                              colorScheme='green'
-                              variant='subtle'
-                              textTransform='none'
-                              fontWeight='medium'
-                              fontSize='xs'
-                            >
-                              On
-                            </Badge>
+                            <CertOpsBadge colorScheme='green'>On</CertOpsBadge>
                             {deferred ? (
                               <Tooltip
                                 label={deferred.tooltip}
@@ -412,16 +398,12 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                                 placement='top'
                                 openDelay={250}
                               >
-                                <Badge
+                                <CertOpsBadge
                                   colorScheme='yellow'
-                                  variant='subtle'
-                                  textTransform='none'
-                                  fontWeight='medium'
-                                  fontSize='xs'
                                   aria-label={`${deferred.label}. ${deferred.tooltip}`}
                                 >
                                   {deferred.label}
-                                </Badge>
+                                </CertOpsBadge>
                               </Tooltip>
                             ) : null}
                           </HStack>
@@ -434,15 +416,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                             placement='top'
                             openDelay={250}
                           >
-                            <Badge
-                              colorScheme='orange'
-                              variant='solid'
-                              textTransform='none'
-                              fontWeight='medium'
-                              fontSize='xs'
-                            >
+                            <CertOpsBadge colorScheme='orange'>
                               {blockedDescriptor(item.blockedReason).label}
-                            </Badge>
+                            </CertOpsBadge>
                           </Tooltip>
                         )}
                       </Td>

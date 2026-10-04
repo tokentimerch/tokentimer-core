@@ -1,8 +1,12 @@
 import { Badge } from '@chakra-ui/react';
 import { forwardRef } from 'react';
 import { certificateLifecycleDescriptor } from './certopsFormat.js';
+import {
+  badgeColorScheme,
+  dashboardBadgeBaseStyle,
+} from '../../styles/badges.js';
 
-/** Consistent, theme-aware badges for certificate state and information. */
+/** Shared dashboard badge design for CertOps status and information. */
 const CertOpsBadge = forwardRef(function CertOpsBadge(
   { colorScheme = 'gray', ...props },
   ref
@@ -10,18 +14,9 @@ const CertOpsBadge = forwardRef(function CertOpsBadge(
   return (
     <Badge
       ref={ref}
-      colorScheme={colorScheme === 'yellow' ? 'orange' : colorScheme}
+      colorScheme={badgeColorScheme(colorScheme)}
       variant='subtle'
-      display='inline-flex'
-      alignItems='center'
-      px={2}
-      py={0.5}
-      minH='24px'
-      borderRadius='md'
-      fontSize='xs'
-      fontWeight='semibold'
-      lineHeight='short'
-      textTransform='none'
+      {...dashboardBadgeBaseStyle}
       {...props}
     />
   );

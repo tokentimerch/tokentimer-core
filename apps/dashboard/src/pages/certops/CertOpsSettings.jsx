@@ -1,5 +1,6 @@
+import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
 import { useState } from 'react';
-import { Badge, HStack, Stack, Switch, Text } from '@chakra-ui/react';
+import { HStack, Stack, Switch, Text } from '@chakra-ui/react';
 import { useOutletContext } from 'react-router';
 import ApiTokenList from '../../components/certops/ApiTokenList.jsx';
 import ApiTokenModal from '../../components/certops/ApiTokenModal.jsx';
@@ -67,16 +68,12 @@ function JobApprovalPolicyPanel() {
             aria-label='Require approval for every new job'
           />
         ) : (
-          <Badge
+          <CertOpsBadge
             colorScheme={certOpsRequireApprovalAlways ? 'purple' : 'gray'}
-            variant='subtle'
-            textTransform='none'
-            fontWeight='medium'
-            fontSize='xs'
             flexShrink={0}
           >
             {certOpsRequireApprovalAlways ? 'Always required' : 'Not required'}
-          </Badge>
+          </CertOpsBadge>
         )}
       </HStack>
       {!isAdmin ? (

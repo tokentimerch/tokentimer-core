@@ -1,9 +1,9 @@
+import CertOpsBadge from './CertOpsBadge.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Box,
   Button,
   FormControl,
@@ -258,11 +258,13 @@ export default function CsrWorkflowPanel({
                 {item.requestedNames?.join(', ') || item.subject || item.id}
               </Text>
               <HStack>
-                <Badge colorScheme={item.identityConflict ? 'red' : undefined}>
+                <CertOpsBadge
+                  colorScheme={item.identityConflict ? 'red' : undefined}
+                >
                   {item.identityConflict
                     ? 'Identity conflict'
                     : item.status.replaceAll('_', ' ')}
-                </Badge>
+                </CertOpsBadge>
                 <Button size='sm' onClick={() => select(item)}>
                   Open
                 </Button>
@@ -276,7 +278,7 @@ export default function CsrWorkflowPanel({
         <Box borderWidth='1px' borderRadius='md' p={4}>
           <HStack justify='space-between' mb={3}>
             <Text fontWeight='semibold'>CSR {selected.id}</Text>
-            <Badge>{selected.status.replaceAll('_', ' ')}</Badge>
+            <CertOpsBadge>{selected.status.replaceAll('_', ' ')}</CertOpsBadge>
           </HStack>
           <Text fontSize='sm'>
             Requested: {selected.requestedNames?.join(', ') || 'No names'}

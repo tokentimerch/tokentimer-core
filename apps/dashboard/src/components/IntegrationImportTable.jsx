@@ -268,9 +268,7 @@ export default function IntegrationImportTable({
                           ))}
                         </Select>
                       ) : (
-                        <Badge fontSize='xs'>
-                          {String(item.category || 'general')}
-                        </Badge>
+                        <Badge>{String(item.category || 'general')}</Badge>
                       )}
                     </Td>
                   )}
@@ -291,7 +289,7 @@ export default function IntegrationImportTable({
                         ))}
                       </Select>
                     ) : (
-                      <Badge fontSize='xs'>{item.type}</Badge>
+                      <Badge>{item.type}</Badge>
                     )}
                   </Td>
                   <Td>
@@ -392,7 +390,6 @@ export default function IntegrationImportTable({
                             {detail.badge ? (
                               <Badge
                                 colorScheme={detail.badgeColor || 'purple'}
-                                fontSize='2xs'
                               >
                                 {detail.value}
                               </Badge>
@@ -425,9 +422,7 @@ export default function IntegrationImportTable({
                           placement='top'
                         >
                           <Box as='span' display='inline-block'>
-                            <Badge colorScheme='blue' fontSize='2xs'>
-                              ∞
-                            </Badge>
+                            <Badge colorScheme='blue'>∞</Badge>
                           </Box>
                         </Tooltip>
                       )}
