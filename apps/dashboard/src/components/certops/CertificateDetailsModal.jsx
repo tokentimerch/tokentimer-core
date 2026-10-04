@@ -313,7 +313,13 @@ export default function CertificateDetailsModal({
           label: 'Expires',
           value: formatDate(expiresAt),
           help: (
-            <Text as='span' color={expiryColor} fontWeight='semibold'>
+            <Text
+              as='span'
+              color={expiryColor}
+              _light={{ color: expiryColor }}
+              _dark={{ color: expiryColor }}
+              fontWeight='semibold'
+            >
               {expiry.label}
             </Text>
           ),

@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Certificate expiry time remaining keeps its severity color in both light and dark themes.
+
 ## [0.17.0] - 2026-10-04
 
 ### Added
