@@ -643,7 +643,14 @@ export default function CertOpsCertificates() {
                         base: '0 14px 32px rgba(0, 0, 0, 0.18)',
                         lg: 'none',
                       }}
+                      cursor='pointer'
                       _hover={{ bg: rowHoverBg }}
+                      onClick={event => {
+                        if (event.target.closest('button')) return;
+                        if (event.target.closest('a')) return;
+                        if (event.target.closest('input')) return;
+                        setDetailsTarget(certificate);
+                      }}
                     >
                       <Td
                         maxW={{ base: 'none', lg: '260px' }}

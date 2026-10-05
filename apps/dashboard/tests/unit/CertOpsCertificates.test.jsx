@@ -255,6 +255,40 @@ it('opens one certificate detail with token fields, sources, and all locations',
   ).not.toBeInTheDocument();
 });
 
+it('opens certificate details when the inventory row is clicked', async () => {
+  const item = certificate();
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [item] })
+  );
+  getCertificateIdentityMock.mockResolvedValue({
+    ...item,
+    locations: [
+      {
+        id: 'location-1',
+        presenceState: 'confirmed_present',
+        sourceRef: 'api-a.pem',
+      },
+    ],
+  });
+  renderPage();
+  fireEvent.click(screen.getByText('example.test'));
+  expect(
+    await screen.findByRole('heading', { name: 'Certificate management' })
+  ).toBeInTheDocument();
+});
+
+it('keeps action buttons from opening certificate details', async () => {
+  useCertOpsCertificatesMock.mockReturnValue(
+    certState({ certificates: [certificate()] })
+  );
+  renderPage();
+  fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+  expect(
+    screen.queryByRole('heading', { name: 'Certificate management' })
+  ).not.toBeInTheDocument();
+  expect(screen.getByText('Set up automatic renewal')).toBeInTheDocument();
+});
+
 it('shows active source count while retaining historical management periods', () => {
   useCertOpsCertificatesMock.mockReturnValue(
     certState({
