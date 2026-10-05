@@ -84,6 +84,8 @@ describe('AutoSyncMultiConfigPanel', () => {
     expect(
       screen.queryByRole('button', { name: 'Allow multiple configurations' })
     ).not.toBeInTheDocument();
-    expect(screen.queryByText('Loading activation state...')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Loading activation state...')
+    ).not.toBeInTheDocument();
   });
 });

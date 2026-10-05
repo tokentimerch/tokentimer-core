@@ -394,24 +394,24 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
       >
         <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
           {autoSyncMultiConfigEnabled === false ? (
-          <Box id={AUTO_SYNC_MULTI_CONFIG_HASH}>
-          <SettingsIntegrationCard
-            title='Auto-sync configurations'
-            description='Allow more than one scheduled connection per provider after the worker fleet is verified.'
-            icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
-            configured={false}
-            isOpen={openIntegration === 'auto-sync'}
-            onToggle={() =>
-              setOpenIntegration(prev =>
-                prev === 'auto-sync' ? null : 'auto-sync'
-              )
-            }
-          >
-            <AutoSyncMultiConfigPanel
-              onEnabledChange={setAutoSyncMultiConfigEnabled}
-            />
-          </SettingsIntegrationCard>
-          </Box>
+            <Box id={AUTO_SYNC_MULTI_CONFIG_HASH}>
+              <SettingsIntegrationCard
+                title='Auto-sync configurations'
+                description='Allow more than one scheduled connection per provider after the worker fleet is verified.'
+                icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
+                configured={false}
+                isOpen={openIntegration === 'auto-sync'}
+                onToggle={() =>
+                  setOpenIntegration(prev =>
+                    prev === 'auto-sync' ? null : 'auto-sync'
+                  )
+                }
+              >
+                <AutoSyncMultiConfigPanel
+                  onEnabledChange={setAutoSyncMultiConfigEnabled}
+                />
+              </SettingsIntegrationCard>
+            </Box>
           ) : null}
 
           <SettingsIntegrationCard
