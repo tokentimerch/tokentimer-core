@@ -331,6 +331,38 @@ function validateAuthenticatedProvisioningBinding(apiToken, desired) {
 }
 
 /**
+ * Reserve one controller delivery before its job is claimed. The unique
+ * delivery row is the cross-transaction admission gate: a losing contender
+ * receives no row and must not alter the job's claim, lease, or attempt count.
+ */
+async function admitControllerProvisioningDelivery({ client, row, apiToken }) {
+  const expiredSameClusterLease =
+    row.claimed_by_controller_cluster_id === apiToken.controllerClusterId
+    && row.lease_expires_at
+    && new Date(row.lease_expires_at).getTime() < Date.now();
+  const result = await client.query(
+    `INSERT INTO certificate_controller_provision_deliveries
+       (job_id, workspace_id, controller_cluster_id, delivered_at, updated_at)
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT (job_id) DO UPDATE
+       SET controller_cluster_id = EXCLUDED.controller_cluster_id,
+           delivered_at = NOW(), updated_at = NOW()
+     WHERE certificate_controller_provision_deliveries.delivered_at <=
+             NOW() - ($4 || ' seconds')::interval
+        OR $5::boolean
+     RETURNING job_id`,
+    [
+      row.id,
+      apiToken.workspaceId,
+      apiToken.controllerClusterId,
+      String(DELIVERY_RETRY_INTERVAL_SECONDS),
+      expiredSameClusterLease,
+    ],
+  );
+  return Boolean(result.rows[0]);
+}
+
+/**
  * Reauthorize one already delivered provisioning command immediately before
  * a Kubernetes create/patch. The workspace row lock and rollout resolution are
  * intentionally repeated here so a pause or global disable after delivery
@@ -575,7 +607,19 @@ async function takeNextControllerProvisioningCommand({
       return null;
     }
 
-    // Atomic claim/lease bound to this cluster identity.
+    // The delivery row is the authoritative admission gate. The job row lock
+    // alone is insufficient because a competing transaction can evaluate the
+    // joined delivery state before the first delivery row is visible. Reserve
+    // (or refresh) the delivery row first; a conflict inside the retry window
+    // means another request won and this request must return no command.
+    if (!await admitControllerProvisioningDelivery({ client, row, apiToken })) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    // Atomic claim/lease bound to this cluster identity. This runs only after
+    // delivery admission succeeds, so a rejected concurrent delivery cannot
+    // consume an attempt or alter the job lease.
     const claimResult = await client.query(
       `UPDATE certificate_jobs
           SET status = CASE
@@ -594,20 +638,10 @@ async function takeNextControllerProvisioningCommand({
         WHERE id = $1 RETURNING status`,
       [row.id, apiToken.controllerClusterId, leaseSeconds],
     );
-    if (claimResult.rows[0]?.status === "cancelled") {
-      await client.query("COMMIT");
+    if (!claimResult.rows[0] || claimResult.rows[0].status === "cancelled") {
+      await client.query("ROLLBACK");
       return null;
     }
-
-    await client.query(
-      `INSERT INTO certificate_controller_provision_deliveries
-         (job_id, workspace_id, controller_cluster_id, delivered_at, updated_at)
-       VALUES ($1, $2, $3, NOW(), NOW())
-       ON CONFLICT (job_id) DO UPDATE
-         SET controller_cluster_id = EXCLUDED.controller_cluster_id,
-             delivered_at = NOW(), updated_at = NOW()`,
-      [row.id, apiToken.workspaceId, apiToken.controllerClusterId],
-    );
     await client.query("COMMIT");
     const eventTimestamps = Object.fromEntries(
       [
@@ -724,6 +758,7 @@ module.exports = {
   CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT,
   CONTROLLER_PROVISIONING_JOB_SOURCE,
   DELIVERY_RETRY_INTERVAL_SECONDS,
+  admitControllerProvisioningDelivery,
   canonicalizeControllerProvisioningTerminalOccurredAt,
   authorizeControllerProvisioningMutation,
   createControllerProvisionIntent,

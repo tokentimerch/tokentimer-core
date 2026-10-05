@@ -5,6 +5,8 @@ const assert = require("node:assert/strict");
 
 const {
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  DELIVERY_RETRY_INTERVAL_SECONDS,
+  admitControllerProvisioningDelivery,
   canonicalizeControllerProvisioningTerminalOccurredAt,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,
@@ -26,6 +28,83 @@ const desired = Object.freeze({
 });
 
 describe("controller provisioning normalization", () => {
+  it("uses the delivery row as an atomic admission gate before a controller claim", async () => {
+    const calls = [];
+    const admitted = await admitControllerProvisioningDelivery({
+      client: {
+        query: async (sql, values) => {
+          calls.push({ sql, values });
+          return { rows: [] };
+        },
+      },
+      row: {
+        id: desired.jobId,
+        claimed_by_controller_cluster_id: null,
+        lease_expires_at: null,
+      },
+      apiToken: {
+        workspaceId,
+        controllerClusterId: "cluster-a",
+      },
+    });
+
+    assert.equal(admitted, false);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].sql, /INSERT INTO certificate_controller_provision_deliveries/);
+    assert.match(calls[0].sql, /ON CONFLICT \(job_id\) DO UPDATE/);
+    assert.match(calls[0].sql, /WHERE certificate_controller_provision_deliveries\.delivered_at <=/);
+    assert.match(calls[0].sql, /RETURNING job_id/);
+    assert.deepEqual(calls[0].values, [
+      desired.jobId,
+      workspaceId,
+      "cluster-a",
+      String(DELIVERY_RETRY_INTERVAL_SECONDS),
+      false,
+    ]);
+  });
+
+  it("admits an expired lease only for the same controller cluster", async () => {
+    const calls = [];
+    const admitted = await admitControllerProvisioningDelivery({
+      client: {
+        query: async (sql, values) => {
+          calls.push({ sql, values });
+          return { rows: [{ job_id: desired.jobId }] };
+        },
+      },
+      row: {
+        id: desired.jobId,
+        claimed_by_controller_cluster_id: "cluster-a",
+        lease_expires_at: new Date(Date.now() - 1_000),
+      },
+      apiToken: {
+        workspaceId,
+        controllerClusterId: "cluster-a",
+      },
+    });
+    assert.equal(admitted, true);
+    assert.equal(calls[0].values[4], true);
+
+    await admitControllerProvisioningDelivery({
+      client: {
+        query: async (sql, values) => {
+          calls.push({ sql, values });
+          return { rows: [] };
+        },
+      },
+      row: {
+        id: desired.jobId,
+        claimed_by_controller_cluster_id: "cluster-b",
+        lease_expires_at: new Date(Date.now() - 1_000),
+      },
+      apiToken: {
+        workspaceId,
+        controllerClusterId: "cluster-a",
+      },
+    });
+    assert.equal(calls[1].values[4], false);
+  });
+
   it("accepts only the bounded public desired Certificate shape", () => {
     const normalized = normalizeDesiredCertificate(desired);
     assert.deepEqual(normalized.dnsNames, ["example.test", "www.example.test"]);
