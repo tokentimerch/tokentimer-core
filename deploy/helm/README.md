@@ -607,7 +607,6 @@ workflow on a version tag.
 Verification fails with a non-zero exit code if the image is unsigned, the
 signature is invalid, the OIDC issuer is unexpected, or the signing workflow
 identity does not match the expected release workflow.
-```
 
 ## Upgrading
 
