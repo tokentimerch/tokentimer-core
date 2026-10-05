@@ -9,9 +9,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-05
+
 ### Added
 
-- **System settings** lets a system administrator activate multiple auto-sync configurations per provider. The Import tokens error links to that control. The control is hidden after activation. Confirm drained workers and the fencing-aware worker image before activating; Helm values cannot turn this on.
+- **System settings** lets a system administrator activate multiple auto-sync configurations per provider. The Import tokens error links to that control, which is hidden after activation. **Operator action:** deploy the current API and fencing-aware worker image, drain older workers, then make both attestations in System settings before enabling this irreversible capability. Helm values cannot enable it.
+
+### Fixed
+
+- **Kubernetes controller provisioning** admits only one concurrent command poller, preserving the command attempt and lease for the winning controller.
+- **Certificate details** use the same enclosed cards for Notes and Job history as other token details. Selecting a certificate inventory row opens its details without intercepting its action controls.
 
 ## [0.17.1] - 2026-10-04
 
