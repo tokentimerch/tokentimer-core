@@ -79,23 +79,25 @@ export default function AutoSyncMultiConfigPanel({ onEnabledChange }) {
           <Alert status='warning' borderRadius='md'>
             <AlertIcon />
             <AlertDescription fontSize='sm'>
-              Each workspace and provider starts with one configuration. Confirm
-              old workers are gone and this release is running before allowing
-              duplicates. Activation cannot be reversed while multiple
-              configurations exist.
+              Confirm that you are not running an auto-sync worker with a
+              version prior to 0.17.0. Be aware that running an unfenced worker
+              with this setting turned on can have unwanted consequences.
+              Activation cannot be reversed while multiple configurations
+              exist.
             </AlertDescription>
           </Alert>
           <Checkbox
             isChecked={workersDrained}
             onChange={e => setWorkersDrained(e.target.checked)}
           >
-            Old auto-sync workers have been drained
+            I confirm no auto-sync worker prior to 0.17.0 is still running
           </Checkbox>
           <Checkbox
             isChecked={workerImageVerified}
             onChange={e => setWorkerImageVerified(e.target.checked)}
           >
-            This deployment uses the fencing-aware worker image
+            I confirm this deployment uses a fencing-aware worker image
+            (0.17.0 or later)
           </Checkbox>
           <HStack justify='flex-end'>
             <DashboardActionButton

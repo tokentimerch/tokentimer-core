@@ -52,12 +52,12 @@ describe('AutoSyncMultiConfigPanel', () => {
     expect(activate).toBeDisabled();
     fireEvent.click(
       screen.getByRole('checkbox', {
-        name: 'Old auto-sync workers have been drained',
+        name: 'I confirm no auto-sync worker prior to 0.17.0 is still running',
       })
     );
     fireEvent.click(
       screen.getByRole('checkbox', {
-        name: 'This deployment uses the fencing-aware worker image',
+        name: 'I confirm this deployment uses a fencing-aware worker image (0.17.0 or later)',
       })
     );
     expect(activate).toBeEnabled();
