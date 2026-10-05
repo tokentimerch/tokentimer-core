@@ -58,59 +58,64 @@ jobs:
           cache-to: type=gha,mode=max
 
 
-sign-images:
-  needs: build-and-push-docker
-  runs-on: ubuntu-latest
+  sign-images:
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
 
-  strategy:
-    matrix:
-      component:
-        - api
-        - worker
-        - dashboard
-        - k8s-controller
+    strategy:
+      matrix:
+        component:
+          - api
+          - worker
+          - dashboard
+          - k8s-controller
 
-  permissions:
-    contents: read
-    packages: write
-    id-token: write
+    permissions:
+      packages: write
+      id-token: write
 
-  steps:
-    - name: Extract version from tag
-      id: get_version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+    steps:
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-    - name: Resolve image digest
-      id: digest
-      run: |
-        IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-        DIGEST=$(docker buildx imagetools inspect "$IMAGE" \
-          --format '{{json .Manifest.Digest}}' | tr -d '"')
+      - name: Resolve image digest
+        id: digest
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}"
 
-        echo "DIGEST=${DIGEST}" >> "$GITHUB_OUTPUT"
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')
 
-        echo "Resolved digest: ${DIGEST}"
+          echo "DIGEST=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Resolved digest: ${DIGEST}"
 
-    - name: Install Cosign
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
 
-    - name: Sign image
-      run: |
-        IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}@${{ steps.digest.outputs.DIGEST }}"
+      - name: Sign image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}@${{ steps.digest.outputs.DIGEST }}"
 
-        echo "Signing ${IMAGE}"
-        cosign sign --yes "${IMAGE}"
+          echo "Signing ${IMAGE}"
+          cosign sign --yes "${IMAGE}"
 
-    - name: Verify image
-      run: |
-        IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}@${{ steps.digest.outputs.DIGEST }}"
+      - name: Verify image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}@${{ steps.digest.outputs.DIGEST }}"
 
-        cosign verify \
-          --certificate-identity-regexp="https://github.com/${{ github.repository }}" \
-          --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-          "${IMAGE}"
-          
+          cosign verify \
+            --certificate-identity-regexp="^https://github\.com/tokentimerch/tokentimer-core/\.github/workflows/release\.yml@refs/tags/v.+$" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            "${IMAGE}"
+            
 
   # Stage 1b: package Helm chart (no OCI publish yet).
   build-helm-chart:

@@ -583,16 +583,31 @@ only when fallback is explicitly enabled.
 
 ### Verifying Core image signatures
 
-TokenTimer Core release images published to GHCR are signed using
-Cosign with GitHub Actions OIDC keyless signing.
+Core release images are signed with Cosign using GitHub Actions OIDC
+(keyless signing). Signatures are attached to the immutable image digest.
 
-To verify a Core image, use its immutable digest:
+To verify a released Core image, first resolve the exact digest you want
+to verify, then run:
 
 ```bash
+IMAGE="ghcr.io/tokentimerch/tokentimer-core-api@sha256:<DIGEST>"
+
 cosign verify \
-  --certificate-identity-regexp="https://github.com/tokentimerch/..." \
+  --certificate-identity-regexp="^https://github\.com/tokentimerch/tokentimer-core/\.github/workflows/release\.yml@refs/tags/v.+$" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  ghcr.io/tokentimerch/tokentimer-core-api@sha256:<DIGEST>
+  "${IMAGE}"
+```
+
+Replace `<DIGEST>` with the exact SHA-256 digest published for the release.
+
+The verification succeeds only when the image has a valid Cosign signature
+issued through GitHub Actions OIDC by the TokenTimer Core `release.yml`
+workflow on a version tag.
+
+Verification fails with a non-zero exit code if the image is unsigned, the
+signature is invalid, the OIDC issuer is unexpected, or the signing workflow
+identity does not match the expected release workflow.
+```
 
 ## Upgrading
 
