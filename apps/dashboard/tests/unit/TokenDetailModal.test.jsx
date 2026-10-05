@@ -105,6 +105,9 @@ describe('TokenDetailModal', () => {
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
     expect(screen.getAllByText('Notes')).toHaveLength(1);
     expect(
+      screen.getByRole('heading', { name: 'Notes' }).closest('section')
+    ).toHaveAttribute('data-dashboard-data-section');
+    expect(
       document.querySelectorAll('[data-dashboard-detail-row]').length
     ).toBeGreaterThan(10);
   });

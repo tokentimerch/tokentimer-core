@@ -337,7 +337,9 @@ export function DashboardModalDataSection({
   children,
   tokens,
   icon: SectionIcon,
+  columns = 2,
 }) {
+  const usesTwoColumns = columns === 2;
   return (
     <GridItem gridColumn='1 / -1' minW={0}>
       <Box
@@ -381,32 +383,41 @@ export function DashboardModalDataSection({
         </Box>
         <DashboardModalDataSectionContext.Provider value>
           <Grid
+            data-detail-columns={columns}
             templateColumns='minmax(0, 1fr)'
             position='relative'
             mx={3}
             minW={0}
-            _before={{
-              content: '""',
-              display: { base: 'none', md: 'block' },
-              position: 'absolute',
-              top: 2,
-              bottom: 2,
-              left: '50%',
-              width: '1px',
-              bg: tokens.border,
-              pointerEvents: 'none',
-            }}
-            sx={{
-              '@media screen and (min-width: 48em)': {
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                '& > [data-dashboard-detail-item]:nth-of-type(odd)': {
-                  paddingRight: '16px',
-                },
-                '& > [data-dashboard-detail-item]:nth-of-type(even)': {
-                  paddingLeft: '16px',
-                },
-              },
-            }}
+            _before={
+              usesTwoColumns
+                ? {
+                    content: '""',
+                    display: { base: 'none', md: 'block' },
+                    position: 'absolute',
+                    top: 2,
+                    bottom: 2,
+                    left: '50%',
+                    width: '1px',
+                    bg: tokens.border,
+                    pointerEvents: 'none',
+                  }
+                : undefined
+            }
+            sx={
+              usesTwoColumns
+                ? {
+                    '@media screen and (min-width: 48em)': {
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                      '& > [data-dashboard-detail-item]:nth-of-type(odd)': {
+                        paddingRight: '16px',
+                      },
+                      '& > [data-dashboard-detail-item]:nth-of-type(even)': {
+                        paddingLeft: '16px',
+                      },
+                    },
+                  }
+                : undefined
+            }
           >
             {children}
           </Grid>

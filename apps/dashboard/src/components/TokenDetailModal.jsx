@@ -27,7 +27,6 @@ import {
   DashboardModalDataSection,
   DashboardModalDetailRow,
   DashboardModalDetailsGrid,
-  DashboardModalSectionHeading,
 } from './DashboardModalDetails.jsx';
 import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
 import AlertingDetails from './AlertingDetails.jsx';
@@ -199,15 +198,6 @@ function TokenDetailModal({
     >
       {hasDisplayValue(value) ? value : '-'}
     </Text>
-  );
-
-  const renderSectionTitle = (label, withDivider = true) => (
-    <DashboardModalSectionHeading
-      tokens={modalTokens}
-      withDivider={withDivider}
-    >
-      {label}
-    </DashboardModalSectionHeading>
   );
 
   const renderField = (
@@ -818,12 +808,18 @@ function TokenDetailModal({
               </DashboardModalDataSection>
             )}
 
-            {/* Notes */}
             {(isEditing || hasDisplayValue(token.notes)) && (
-              <>
-                {renderSectionTitle('Notes')}
-
-                <GridItem gridColumn='1 / -1'>
+              <DashboardModalDataSection
+                title='Notes'
+                tokens={modalTokens}
+                columns={1}
+              >
+                <GridItem
+                  data-dashboard-detail-item
+                  gridColumn='1 / -1'
+                  minW={0}
+                  py={2.25}
+                >
                   {isEditing ? (
                     <Textarea
                       aria-label='Notes'
@@ -832,6 +828,7 @@ function TokenDetailModal({
                         setEditData(d => ({ ...d, notes: e.target.value }))
                       }
                       {...commonInputProps}
+                      minH='72px'
                       maxLength={500}
                       placeholder='Additional information'
                     />
@@ -839,7 +836,7 @@ function TokenDetailModal({
                     renderValueText(token.notes, true)
                   )}
                 </GridItem>
-              </>
+              </DashboardModalDataSection>
             )}
             <AlertingDetails
               token={token}

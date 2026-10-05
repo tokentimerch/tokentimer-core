@@ -340,6 +340,7 @@ describe('CertificateDetailsModal', () => {
       .getByRole('heading', { name: 'Notes' })
       .closest('section');
     expect(within(notesSection).getAllByText('Notes')).toHaveLength(1);
+    expect(notesSection).toHaveAttribute('data-compact-section', 'true');
     expect(
       notesSection.querySelector('[data-detail-columns="1"]')
     ).toBeInTheDocument();

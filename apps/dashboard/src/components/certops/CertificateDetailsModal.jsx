@@ -837,8 +837,12 @@ export default function CertificateDetailsModal({
             ) : null}
 
             {isEditing || hasValue(token.notes) || identityPanel ? (
-              <Section title='Notes'>
-                <Box data-detail-row p={3}>
+              <Section title='Notes' enclosed={compactTableSections}>
+                <Box
+                  data-detail-row
+                  py={compactTableSections ? 1.75 : 3}
+                  px={compactTableSections ? 0 : 3}
+                >
                   {isEditing ? (
                     <Textarea
                       aria-label='Notes'
