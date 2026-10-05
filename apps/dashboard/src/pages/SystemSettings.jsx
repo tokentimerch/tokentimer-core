@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router';
 import {
   Box,
   Text,
@@ -20,9 +21,11 @@ import {
   Tooltip,
   Switch,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff, FiMail } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiMail, FiRepeat } from 'react-icons/fi';
 import { FaWhatsapp } from 'react-icons/fa';
 import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
+import AutoSyncMultiConfigPanel from '../components/AutoSyncMultiConfigPanel.jsx';
+import { AUTO_SYNC_MULTI_CONFIG_HASH } from '../utils/autoSyncActivation.jsx';
 import apiClient from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
@@ -59,6 +62,9 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
   const [openIntegration, setOpenIntegration] = useState('smtp');
+  const [autoSyncMultiConfigEnabled, setAutoSyncMultiConfigEnabled] =
+    useState(null);
+  const location = useLocation();
 
   const { muted, dashboard } = useDashboardTheme();
   const lockedInputBg = dashboard.bg.panelHover;
@@ -66,6 +72,36 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.get('/api/v1/admin/auto-sync/activation');
+        if (!cancelled) {
+          setAutoSyncMultiConfigEnabled(res.data?.enabled === true);
+        }
+      } catch (e) {
+        logger.error('Failed to load auto-sync activation', e);
+        if (!cancelled) setAutoSyncMultiConfigEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (location.hash !== `#${AUTO_SYNC_MULTI_CONFIG_HASH}`) return;
+    if (autoSyncMultiConfigEnabled !== false) return;
+    setOpenIntegration('auto-sync');
+    requestAnimationFrame(() => {
+      document.getElementById(AUTO_SYNC_MULTI_CONFIG_HASH)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [location.hash, autoSyncMultiConfigEnabled]);
 
   async function loadSettings() {
     try {
@@ -357,6 +393,27 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
         contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
       >
         <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
+          {autoSyncMultiConfigEnabled === false ? (
+          <Box id={AUTO_SYNC_MULTI_CONFIG_HASH}>
+          <SettingsIntegrationCard
+            title='Auto-sync configurations'
+            description='Allow more than one scheduled connection per provider after the worker fleet is verified.'
+            icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
+            configured={false}
+            isOpen={openIntegration === 'auto-sync'}
+            onToggle={() =>
+              setOpenIntegration(prev =>
+                prev === 'auto-sync' ? null : 'auto-sync'
+              )
+            }
+          >
+            <AutoSyncMultiConfigPanel
+              onEnabledChange={setAutoSyncMultiConfigEnabled}
+            />
+          </SettingsIntegrationCard>
+          </Box>
+          ) : null}
+
           <SettingsIntegrationCard
             title='Email (SMTP)'
             description='Configure outgoing email delivery for alert notifications.'

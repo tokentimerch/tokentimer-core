@@ -390,11 +390,12 @@ all associations disappear; manual imports make an existing token unmanaged.
 Deleting a configuration detaches its tokens and retains them in inventory.
 Legacy tokens start unmanaged and are associated only when rediscovered.
 
-The multi-configuration capability is off after migration. The operator must
-drain all old auto-sync workers, deploy and verify a worker image containing
-run fencing, then activate it as a system admin with
-`POST /api/v1/admin/auto-sync/activation` and JSON
+The multi-configuration capability is off after migration. A system
+administrator activates it from **System settings** (Auto-sync configurations)
+after draining old auto-sync workers and verifying the fencing-aware worker
+image, or with `POST /api/v1/admin/auto-sync/activation` and JSON
 `{"workers_drained":true,"worker_image_verified":true}`.
+That settings card is shown only until activation.
 The corresponding GET route reports activation state. From activation onward,
 worker imports without a current fenced run ID are rejected. Run-now clicks
 during a run are persisted as one follow-up manual run. A scan setting or

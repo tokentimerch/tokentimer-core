@@ -8,7 +8,10 @@ const {
 } = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
+  AUTO_SYNC_MULTI_CONFIG_HREF,
   multiConfigEnabled,
+  isMultiConfigActivationError,
+  multiConfigDisabledBody,
   normalizeConnectionName,
   validateAutoSyncSettings,
   scanSettingsEqual,
@@ -282,7 +285,14 @@ router.get("/api/v1/admin/auto-sync/activation", getApiLimiter(), requireAuth,
   async (req, res) => {
     const admin = await pool.query("SELECT is_admin FROM users WHERE id = $1", [req.user.id]);
     if (!admin.rows[0]?.is_admin) return res.status(403).json({ error: "System admin required" });
-    res.json({ enabled: await multiConfigEnabled() });
+    const { rows } = await pool.query(
+      "SELECT multi_config_enabled, activated_at FROM auto_sync_feature_state WHERE id = TRUE",
+    );
+    res.json({
+      enabled: rows[0]?.multi_config_enabled === true,
+      activated_at: rows[0]?.activated_at || null,
+      href: AUTO_SYNC_MULTI_CONFIG_HREF,
+    });
   });
 
 router.post("/api/v1/admin/auto-sync/activation", getApiLimiter(), requireAuth,
@@ -438,7 +448,7 @@ router.post(
           [req.workspace.id, provider],
         );
         if (existing.length > 0 && !(await multiConfigEnabled(client))) {
-          const error = new Error("Multiple configurations require operator activation");
+          const error = new Error(multiConfigDisabledBody().error);
           error.code = "MULTI_CONFIG_DISABLED";
           throw error;
         }
@@ -480,8 +490,8 @@ router.post(
       }
       res.status(201).json(result.rows[0]);
     } catch (e) {
-      if (e.code === "MULTI_CONFIG_DISABLED") {
-        return res.status(409).json({ error: e.message, code: e.code });
+      if (isMultiConfigActivationError(e)) {
+        return res.status(409).json(multiConfigDisabledBody());
       }
       if (e.code === "23505") {
         return res.status(409).json({

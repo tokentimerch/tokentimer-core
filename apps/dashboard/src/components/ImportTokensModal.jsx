@@ -48,6 +48,7 @@ import apiClient, {
   showSuccessMessage as showSuccess,
 } from '../utils/apiClient';
 import { showWarning } from '../utils/toast.js';
+import { showAutoSyncEnableError } from '../utils/autoSyncActivation.jsx';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import {
   FiDownload,
@@ -1706,7 +1707,7 @@ export default function ImportTokensModal({
       );
       setIntegrationSubTab('manage');
     } catch (e) {
-      showWarning(e?.response?.data?.error || 'Failed to enable auto-sync');
+      showAutoSyncEnableError(e);
     } finally {
       setSavingAutoSync(false);
     }

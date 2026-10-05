@@ -2310,11 +2310,17 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: Config already exists
+          description: Duplicate name, or multiple configurations before operator activation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                allOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - type: object
+                    properties:
+                      href:
+                        type: string
+                        description: System settings path when code is MULTI_CONFIG_DISABLED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/admin/auto-sync/activation:
@@ -2332,6 +2338,13 @@ paths:
                 type: object
                 properties:
                   enabled: { type: boolean }
+                  activated_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  href:
+                    type: string
+                    description: Dashboard System settings deep link for activation.
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
@@ -7812,6 +7825,9 @@ components:
           type: string
         code:
           type: string
+        href:
+          type: string
+          description: Optional dashboard path for operator follow-up.
         details:
           oneOf:
             - type: array

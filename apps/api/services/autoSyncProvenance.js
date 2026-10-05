@@ -6,11 +6,29 @@ const { buildDimensionFilterSql } = require("./importCleanup");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const AUTO_SYNC_MULTI_CONFIG_HREF = "/system-settings#auto-sync-multi-config";
+
 async function multiConfigEnabled(db = pool) {
   const { rows } = await db.query(
     "SELECT multi_config_enabled FROM auto_sync_feature_state WHERE id = TRUE",
   );
   return rows[0]?.multi_config_enabled === true;
+}
+
+function isMultiConfigActivationError(error) {
+  return (
+    error?.code === "MULTI_CONFIG_DISABLED" ||
+    (error?.code === "23514" &&
+      /operator activation/i.test(String(error.message || "")))
+  );
+}
+
+function multiConfigDisabledBody() {
+  return {
+    error: "Multiple configurations require operator activation",
+    code: "MULTI_CONFIG_DISABLED",
+    href: AUTO_SYNC_MULTI_CONFIG_HREF,
+  };
 }
 
 function normalizeConnectionName(value) {
@@ -343,7 +361,10 @@ async function reconcileAutoSyncRun(context, scanIds = [context.scanId]) {
 }
 
 module.exports = {
+  AUTO_SYNC_MULTI_CONFIG_HREF,
   multiConfigEnabled,
+  isMultiConfigActivationError,
+  multiConfigDisabledBody,
   parseAutoSyncContext,
   normalizeConnectionName,
   validateAutoSyncSettings,

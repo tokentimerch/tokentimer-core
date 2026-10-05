@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **System settings** lets a system administrator activate multiple auto-sync configurations per provider. The Import tokens error links to that control. The control is hidden after activation. Confirm drained workers and the fencing-aware worker image before activating; Helm values cannot turn this on.
+
 ## [0.17.1] - 2026-10-04
 
 ### Fixed
