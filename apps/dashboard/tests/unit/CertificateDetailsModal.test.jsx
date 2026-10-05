@@ -344,6 +344,14 @@ describe('CertificateDetailsModal', () => {
     expect(
       notesSection.querySelector('[data-detail-columns="1"]')
     ).toBeInTheDocument();
+
+    const jobHistorySection = screen
+      .getByRole('heading', { name: 'Job history' })
+      .closest('section');
+    expect(jobHistorySection).toHaveAttribute('data-compact-section', 'true');
+    expect(
+      jobHistorySection.querySelector('[data-detail-columns="1"]')
+    ).toBeInTheDocument();
   });
 
   it('keeps long values single-line with full-value access in the compact table', () => {

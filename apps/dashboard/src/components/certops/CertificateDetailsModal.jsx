@@ -19,7 +19,7 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
-import { FileText, Info, MapPin, Settings } from 'lucide-react';
+import { FileText, History, Info, MapPin, Settings } from 'lucide-react';
 import { TOKEN_CATEGORIES } from '../../constants/tokenCategories.js';
 import { tokenAPI } from '../../utils/apiClient';
 import CopyableId from '../CopyableId.jsx';
@@ -897,6 +897,8 @@ export default function CertificateDetailsModal({
                 renderContainer={content => (
                   <Section
                     title='Job history'
+                    enclosed
+                    icon={History}
                     description='Latest certificate operation and its activity.'
                     contentBorder={false}
                   >
