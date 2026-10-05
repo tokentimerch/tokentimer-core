@@ -581,6 +581,19 @@ opts into a mounted Kubernetes ServiceAccount token. Its distinct identity has
 the mode-specific least-privilege RBAC described above, with Secret `get` added
 only when fallback is explicitly enabled.
 
+### Verifying Core image signatures
+
+TokenTimer Core release images published to GHCR are signed using
+Cosign with GitHub Actions OIDC keyless signing.
+
+To verify a Core image, use its immutable digest:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp="https://github.com/tokentimerch/..." \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ghcr.io/tokentimerch/tokentimer-core-api@sha256:<DIGEST>
+
 ## Upgrading
 
 ```bash
