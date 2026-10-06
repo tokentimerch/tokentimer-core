@@ -1057,6 +1057,12 @@ paths:
                       items:
                         type: string
                         maxLength: 120
+                description:
+                  type: string
+                  maxLength: 10000
+                notes:
+                  type: string
+                  maxLength: 10000
                 contact_group_id:
                   type: string
                   nullable: true
@@ -10327,6 +10333,21 @@ components:
         license_type:
           type: string
           maxLength: 100
+        section:
+          oneOf:
+            - type: string
+              maxLength: 255
+            - type: array
+              maxItems: 50
+              items:
+                type: string
+                maxLength: 120
+        description:
+          type: string
+          maxLength: 10000
+        notes:
+          type: string
+          maxLength: 10000
         created_at:
           type: string
           format: date-time
