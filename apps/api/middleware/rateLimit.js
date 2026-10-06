@@ -393,6 +393,50 @@ function getApiLimiter() {
   return resolvedApiLimiter;
 }
 
+// Per-IP cap for GET /api/csrf-token. That route is registered before
+// applyGlobalRateLimit / speedLimiter, and applyGlobalRateLimit skips it.
+// In-process storage: the aggregate limit scales with API process count.
+function createCsrfTokenLimiter({ windowMs, max } = {}) {
+  const resolvedWindowMs =
+    windowMs ?? intEnv("CSRF_TOKEN_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000);
+  const resolvedMax =
+    max ?? intEnv("CSRF_TOKEN_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 60);
+  return rateLimit({
+    windowMs: resolvedWindowMs,
+    max: resolvedMax,
+    message: "Too many CSRF token requests, please try again later.",
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: false,
+    keyGenerator: (req) => {
+      const ip = resolveClientIp(req) || ipKeyGenerator(req);
+      return `csrf-token:${ip}`;
+    },
+    handler: (req, res) => {
+      const fallbackRetrySec = Math.max(1, Math.ceil(resolvedWindowMs / 1000));
+      const resetTime = req.rateLimit?.resetTime;
+      const retryAfterSeconds =
+        resetTime instanceof Date
+          ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+          : fallbackRetrySec;
+      logger.warn("RATE_LIMIT_EXCEEDED", {
+        type: "csrf_token",
+        ip: resolveClientIp(req),
+        userAgent: req.get("User-Agent"),
+        retryAfterSeconds,
+      });
+      res.set("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({
+        error: "Too many CSRF token requests, please try again later.",
+        code: "CSRF_TOKEN_RATE_LIMITED",
+        retry_after_seconds: retryAfterSeconds,
+      });
+    },
+  });
+}
+
+const csrfTokenLimiter = createCsrfTokenLimiter();
+
 const noRateLimit = (req, res, next) => next();
 
 /**
@@ -490,6 +534,8 @@ module.exports = {
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
   getTestApiLimiter,
+  csrfTokenLimiter,
+  createCsrfTokenLimiter,
   noRateLimit,
   applyGlobalRateLimit,
   normalizeEmail,

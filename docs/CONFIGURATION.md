@@ -159,6 +159,8 @@ an incomplete configuration and SMTP is reported as not configured. With no
 | `GLOBAL_SLOWDOWN_WINDOW_MS`               | Global slowdown window in ms                                                | `900000`                              | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_AFTER`             | Requests before delay is applied                                            | `50`                                  | API rate limiting    |
 | `GLOBAL_SLOWDOWN_DELAY_MS`                | Added delay per request after threshold                                     | `500`                                 | API rate limiting    |
+| `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`         | Per-IP limiter window for `GET /api/csrf-token`                             | `900000`                              | API rate limiting    |
+| `CSRF_TOKEN_RATE_LIMIT_MAX`               | Per-IP max `GET /api/csrf-token` requests per window. If clients return 429 `CSRF_TOKEN_RATE_LIMITED`, raise this value. | `60` (prod) / `1000` (dev,test) | API rate limiting    |
 | `LOGIN_RATE_LIMIT_WINDOW_MS`              | Login limiter window in ms                                                  | `900000`                              | Auth rate limiting   |
 | `LOGIN_RATE_LIMIT_MAX`                    | Login attempts per window                                                   | `10` (prod) / `500` (dev,test)        | Auth rate limiting   |
 | `LOGIN_EMAIL_RATE_LIMIT_MAX`              | Login attempts per email per window                                         | `5` (prod) / `500` (dev,test)         | Auth rate limiting   |

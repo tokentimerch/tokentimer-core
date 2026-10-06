@@ -306,9 +306,18 @@ app.use(cookieParser());
 app.use("/api", csrfExempt);
 app.use("/auth", csrfExempt);
 
+const {
+  speedLimiter,
+  csrfTokenLimiter,
+  applyGlobalRateLimit,
+  getApiLimiter,
+} = require("./middleware/rateLimit");
+
 // Always rotate (overwrite) so stale cookies after secret rotation or
 // cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
-app.get("/api/csrf-token", (req, res) => {
+// Registered before applyGlobalRateLimit / speedLimiter; those layers skip
+// or never see this path, so csrfTokenLimiter is the app-level cap.
+app.get("/api/csrf-token", csrfTokenLimiter, (req, res) => {
   const csrfToken = generateCsrfToken(req, res, true, false);
   res.json({ csrfToken });
 });
@@ -326,14 +335,6 @@ app.use((error, req, res, next) => {
   }
   next(error);
 });
-
-// Rate limiters, testWebhookUrl, and API limiter helpers
-// (extracted to middleware/rateLimit.js and config/constants.js)
-const {
-  speedLimiter,
-  applyGlobalRateLimit,
-  getApiLimiter,
-} = require("./middleware/rateLimit");
 
 // Contacts and WhatsApp already attach getApiLimiter on each route. Keep them
 // ahead of the global limiter so unauthenticated Twilio callbacks are not
