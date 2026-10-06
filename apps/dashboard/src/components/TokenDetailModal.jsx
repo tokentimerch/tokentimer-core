@@ -307,7 +307,7 @@ function TokenDetailModal({
           {...commonInputProps}
           list='workspace-contacts-suggestions'
           placeholder={placeholder}
-          maxLength={200}
+          maxLength={500}
         />
       ) : (
         renderValueText(token.contacts)
@@ -463,7 +463,7 @@ function TokenDetailModal({
                   : null}
                 {isEditing || hasDisplayValue(token.name)
                   ? renderEditable('Name', 'name', token.name, {
-                      inputProps: { maxLength: 100 },
+                      inputProps: { maxLength: 255 },
                     })
                   : null}
                 {isEditing || hasDisplayValue(token.section)
@@ -533,7 +533,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.issuer)) &&
                   renderEditable('Issuer', 'issuer', token.issuer, {
                     inputProps: {
-                      maxLength: 100,
+                      maxLength: 255,
                       placeholder: "Let's Encrypt, DigiCert",
                     },
                   })}
@@ -542,13 +542,13 @@ function TokenDetailModal({
                     'Serial number',
                     'serial_number',
                     token.serial_number,
-                    { inputProps: { maxLength: 50, placeholder: 'Optional' } }
+                    { inputProps: { maxLength: 255, placeholder: 'Optional' } }
                   )}
                 {(isEditing || hasDisplayValue(token.subject)) &&
                   renderEditable('Subject', 'subject', token.subject, {
                     multiline: true,
                     inputProps: {
-                      maxLength: 300,
+                      maxLength: 1000,
                       placeholder: 'CN=example.com, O=Example Corp, C=US',
                     },
                   })}
@@ -603,7 +603,7 @@ function TokenDetailModal({
                   renderEditable('Locations', 'location', token.location, {
                     multiline: true,
                     inputProps: {
-                      maxLength: 1000,
+                      maxLength: 500,
                       placeholder: 'One location per line',
                       rows: 3,
                     },
@@ -611,7 +611,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.used_by)) &&
                   renderEditable('Used by', 'used_by', token.used_by, {
                     inputProps: {
-                      maxLength: 200,
+                        maxLength: 500,
                       placeholder: 'Application, service',
                     },
                   })}
@@ -633,7 +633,7 @@ function TokenDetailModal({
                     {
                       multiline: true,
                       inputProps: {
-                        maxLength: 300,
+                        maxLength: 10000,
                         placeholder: 'Use case or context for this key/secret',
                       },
                     }
@@ -648,7 +648,7 @@ function TokenDetailModal({
                       : hasDisplayValue(token.algorithm)) &&
                     renderEditable('Algorithm', 'algorithm', token.algorithm, {
                       inputProps: {
-                        maxLength: 50,
+                        maxLength: 100,
                         placeholder: 'AES-256, RSA',
                       },
                     })
@@ -705,7 +705,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.vendor)) &&
                   renderEditable('Vendor', 'vendor', token.vendor, {
                     inputProps: {
-                      maxLength: 100,
+                      maxLength: 255,
                       placeholder: 'Microsoft, Adobe',
                     },
                   })}
@@ -716,7 +716,7 @@ function TokenDetailModal({
                     token.license_type,
                     {
                       inputProps: {
-                        maxLength: 50,
+                        maxLength: 100,
                         placeholder: 'Perpetual, Subscription',
                       },
                     }
@@ -769,7 +769,7 @@ function TokenDetailModal({
                   renderEditable('Locations', 'location', token.location, {
                     multiline: true,
                     inputProps: {
-                      maxLength: 1000,
+                      maxLength: 500,
                       placeholder: 'One location per line',
                       rows: 3,
                     },
@@ -777,7 +777,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.used_by)) &&
                   renderEditable('Used by', 'used_by', token.used_by, {
                     inputProps: {
-                      maxLength: 200,
+                        maxLength: 500,
                       placeholder: 'Application, service',
                     },
                   })}

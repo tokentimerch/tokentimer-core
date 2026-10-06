@@ -72,7 +72,7 @@ export default function IntegrationImportTable({
   const saveEditing = index => {
     // Validate before saving
     const name = editValues.name?.trim() || '';
-    if (name.length < 3 || name.length > 100) {
+    if (name.length < 1 || name.length > 255) {
       return; // Don't save if invalid
     }
 
@@ -86,7 +86,7 @@ export default function IntegrationImportTable({
   const isEditValid = () => {
     if (!editValues.name) return false;
     const name = editValues.name.trim();
-    if (name.length < 3 || name.length > 100) return false;
+    if (name.length < 1 || name.length > 255) return false;
 
     // Check field lengths
     const maxLengths = {
@@ -100,7 +100,7 @@ export default function IntegrationImportTable({
       vendor: 255,
       renewal_url: 500,
       contacts: 500,
-      section: 120,
+      section: 255,
       description: 10000,
     };
 
@@ -222,10 +222,10 @@ export default function IntegrationImportTable({
                         }
                         size='xs'
                         fontSize='sm'
-                        maxLength={100}
+                        maxLength={255}
                         isInvalid={
-                          editValues.name.trim().length < 3 ||
-                          editValues.name.length > 100
+                          editValues.name.trim().length < 1 ||
+                          editValues.name.length > 255
                         }
                       />
                     ) : (

@@ -191,8 +191,8 @@ const REPRESENTATIVE_COMBINATIONS = [
 // Constraint-focused test data
 const CONSTRAINT_TEST_DATA = {
   boundary_valid: {
-    name: "ABC",
-    name_max: "A".repeat(100),
+    name: "A",
+    name_max: "A".repeat(255),
     location_max: "B".repeat(500),
     issuer_max: "C".repeat(255),
     key_size_min: 1,
@@ -201,8 +201,8 @@ const CONSTRAINT_TEST_DATA = {
     cost_large: 999999999999.99,
   },
   boundary_invalid: {
-    name_short: "AB",
-    name_long: "A".repeat(101),
+    name_short: "",
+    name_long: "A".repeat(256),
     location_long: "B".repeat(501),
     issuer_long: "C".repeat(256),
     key_size_negative: -1,
@@ -225,7 +225,7 @@ const CONSTRAINT_TEST_DATA = {
 };
 
 const isValidCombination = (category, fields, tokenType = null) => {
-  if (fields.name && fields.name.length < 3) return false;
+  if (fields.name && fields.name.length < 1) return false;
   if (fields.key_size && fields.key_size <= 0) return false;
   if (fields.cost && fields.cost < 0) return false;
 

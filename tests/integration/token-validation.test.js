@@ -115,7 +115,7 @@ describe("Token Validation Integration Tests", () => {
       }
 
       const tokenData = {
-        name: "ab",
+        name: "",
         type: "api_key",
         category: "key_secret", // Fixed: api_key belongs to key_secret category
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -131,7 +131,7 @@ describe("Token Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
 
@@ -142,7 +142,7 @@ describe("Token Validation Integration Tests", () => {
       }
 
       const tokenData = {
-        name: "a".repeat(101),
+        name: "a".repeat(256),
         type: "api_key",
         category: "key_secret", // Fixed: api_key belongs to key_secret category
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -158,7 +158,7 @@ describe("Token Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
   });

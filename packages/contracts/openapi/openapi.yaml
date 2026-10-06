@@ -1017,6 +1017,22 @@ paths:
               type: object
               additionalProperties: true
               properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                issuer:
+                  type: string
+                  maxLength: 255
+                serial_number:
+                  type: string
+                  maxLength: 255
+                vendor:
+                  type: string
+                  maxLength: 255
+                subject:
+                  type: string
+                  maxLength: 1000
                 contact_group_id:
                   type: string
                   nullable: true
@@ -2282,7 +2298,8 @@ paths:
               properties:
                 name:
                   type: string
-                  maxLength: 100
+                  minLength: 1
+                  maxLength: 255
                 provider:
                   type: string
                 credentials:
@@ -10166,6 +10183,8 @@ components:
           example: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
         name:
           type: string
+          minLength: 1
+          maxLength: 255
           example: "Stripe Production API Key"
         type:
           type: string
@@ -10192,9 +10211,11 @@ components:
           description: Assigned contact groups. Empty array uses the workspace default.
         description:
           type: string
+          maxLength: 10000
           example: "Rotated quarterly by platform team"
         notes:
           type: string
+          maxLength: 10000
           example: "Owner: Platform - escalate before expiration"
     Token:
       type: object
@@ -10207,6 +10228,8 @@ components:
           format: uuid
         name:
           type: string
+          minLength: 1
+          maxLength: 255
         type:
           type: string
         category:
@@ -10219,12 +10242,16 @@ components:
           format: date
         location:
           type: string
+          maxLength: 500
         issuer:
           type: string
+          maxLength: 255
         serial_number:
           type: string
+          maxLength: 255
         subject:
           type: string
+          maxLength: 1000
         created_at:
           type: string
           format: date-time

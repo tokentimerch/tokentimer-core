@@ -1,5 +1,7 @@
 // Twilio/WhatsApp approved templates reject newlines, long runs of spaces, and
 // unknown or overlong variable keys (max 16 chars). See DocsAlerts placeholder contracts.
+// Twilio Content template variables are capped at 250 characters. Inventory
+// names may be 255; overlong values are ellipsized here, not rejected.
 export const WHATSAPP_TEMPLATE_VALUE_MAX_LEN = 250;
 
 // tokens_list can enumerate many tokens; sanitize chars only, do not truncate.

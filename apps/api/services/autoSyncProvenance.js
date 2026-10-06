@@ -34,7 +34,7 @@ function multiConfigDisabledBody() {
 function normalizeConnectionName(value) {
   if (typeof value !== "string") return null;
   const name = value.trim().replace(/\s+/gu, " ");
-  return name.length >= 1 && name.length <= 100 ? name : null;
+  return name.length >= 1 && name.length <= 255 ? name : null;
 }
 
 function validateAutoSyncSettings(body) {

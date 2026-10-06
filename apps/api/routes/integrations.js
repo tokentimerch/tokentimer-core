@@ -2387,8 +2387,8 @@ router.post(
 
           // Validate required fields
           if (!name) throw new Error("missing name");
-          if (name.length < 3 || name.length > 100)
-            throw new Error("name must be between 3 and 100 characters");
+          if (name.length < 1 || name.length > 255)
+            throw new Error("name must be between 1 and 255 characters");
           if (!ALLOWED_CATEGORIES.includes(category))
             throw new Error("invalid category");
           if (!ALLOWED_TYPES.includes(type)) throw new Error("invalid type");

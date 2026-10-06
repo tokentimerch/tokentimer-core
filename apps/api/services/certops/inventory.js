@@ -188,8 +188,8 @@ function formatDateYmd(value) {
 function tokenNameFor(certificate, fallbackName) {
   const name = String(chooseCertificateName(certificate, fallbackName) || "Certificate")
     .trim()
-    .slice(0, 100);
-  return name.length >= 3 ? name : "Certificate";
+    .slice(0, 255);
+  return name.length >= 1 ? name : "Certificate";
 }
 
 function certificateDomainsFor(certificate) {

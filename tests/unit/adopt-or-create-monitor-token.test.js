@@ -94,4 +94,36 @@ describe("adoptOrCreateMonitorToken", () => {
 
     assert.strictEqual(tokenId, 99);
   });
+
+  it("keeps monitor token names within the 255-character inventory cap", async () => {
+    const mod = await importFresh(
+      "apps/worker/src/shared/adoptOrCreateMonitorToken.js",
+    );
+    const hostname = `${"a".repeat(250)}.example.com`;
+    const client = {
+      async query(sql, params) {
+        if (sql.includes("SELECT id FROM tokens")) {
+          assert.strictEqual(params[1], hostname.slice(0, 255));
+          return { rows: [{ id: 7 }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+
+    const tokenId = await mod.adoptOrCreateMonitorToken(client, {
+      workspaceId: "ws-1",
+      hostname,
+      url: "https://app.example.com",
+      sslData: {
+        ssl_valid_to: "2027-01-01T00:00:00.000Z",
+        ssl_issuer: "CN=Test CA",
+        ssl_serial: "abc",
+        ssl_subject: "CN=app.example.com",
+        ssl_fingerprint: "deadbeef",
+      },
+      defaultContactGroupId: null,
+    });
+
+    assert.strictEqual(tokenId, 7);
+  });
 });

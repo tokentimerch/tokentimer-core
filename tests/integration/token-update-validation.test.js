@@ -189,7 +189,7 @@ describe("Token Update Validation Integration Tests", () => {
   describe("Update Field Validation", () => {
     it("should reject update with name too short", async () => {
       const updateData = {
-        name: "ab",
+        name: "",
       };
 
       const response = await request("http://localhost:4000")
@@ -200,13 +200,13 @@ describe("Token Update Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
 
     it("should reject update with name too long", async () => {
       const updateData = {
-        name: "a".repeat(101),
+        name: "a".repeat(256),
       };
 
       const response = await request("http://localhost:4000")
@@ -217,7 +217,7 @@ describe("Token Update Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
 

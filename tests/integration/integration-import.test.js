@@ -73,13 +73,13 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("validates name length (3-100 characters)", async () => {
+  it("validates name length (1-255 characters)", async () => {
     const res = await request("http://localhost:4000")
       .post("/api/v1/integrations/import?workspace_id=test")
       .send({
         items: [
           {
-            name: "ab", // Too short (min 3)
+            name: "",
             expiration: getFutureDate(180),
             category: "key_secret",
             type: "api_key",
@@ -91,7 +91,7 @@ describe("Generic integration import endpoint", () => {
         if (res.status === 201) {
           expect(res.body).to.have.property("error_count");
           expect(res.body.error_count).to.equal(1);
-          expect(res.body.errors[0].error).to.match(/name.*3.*100/i);
+          expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
         }
       });
   });
