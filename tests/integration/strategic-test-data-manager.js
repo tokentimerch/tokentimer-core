@@ -225,7 +225,7 @@ const CONSTRAINT_TEST_DATA = {
 };
 
 const isValidCombination = (category, fields, tokenType = null) => {
-  if (fields.name && fields.name.length < 1) return false;
+  if (typeof fields.name === "string" && fields.name.length < 1) return false;
   if (fields.key_size && fields.key_size <= 0) return false;
   if (fields.cost && fields.cost < 0) return false;
 

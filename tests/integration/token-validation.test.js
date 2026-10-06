@@ -161,6 +161,55 @@ describe("Token Validation Integration Tests", () => {
         "Token name must be between 1 and 255 characters",
       );
     });
+
+    it("should accept a 1-character token name", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const tokenData = {
+        name: "A",
+        type: "api_key",
+        category: "key_secret",
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+      };
+
+      const response = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({ ...tokenData, workspace_id: session.workspaceId })
+        .expect(201);
+
+      expect(response.body.name).to.equal("A");
+    });
+
+    it("should accept a 255-character token name", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const name = "A".repeat(255);
+      const tokenData = {
+        name,
+        type: "api_key",
+        category: "key_secret",
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+      };
+
+      const response = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({ ...tokenData, workspace_id: session.workspaceId })
+        .expect(201);
+
+      expect(response.body.name).to.equal(name);
+    });
   });
 
   describe("Category-Specific Validation", () => {

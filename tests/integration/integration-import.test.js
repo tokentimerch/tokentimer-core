@@ -73,7 +73,7 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("validates name length (1-255 characters)", async () => {
+  it("rejects a missing import name", async () => {
     const res = await request("http://localhost:4000")
       .post("/api/v1/integrations/import?workspace_id=test")
       .send({
@@ -91,7 +91,57 @@ describe("Generic integration import endpoint", () => {
         if (res.status === 201) {
           expect(res.body).to.have.property("error_count");
           expect(res.body.error_count).to.equal(1);
+          expect(res.body.errors[0].error).to.match(/missing name/i);
+        }
+      });
+  });
+
+  it("rejects a 256-character import name", async () => {
+    const res = await request("http://localhost:4000")
+      .post("/api/v1/integrations/import?workspace_id=test")
+      .send({
+        items: [
+          {
+            name: "A".repeat(256),
+            expiration: getFutureDate(180),
+            category: "key_secret",
+            type: "api_key",
+          },
+        ],
+      })
+      .expect((res) => {
+        expect([400, 401, 201]).to.include(res.status);
+        if (res.status === 201) {
+          expect(res.body).to.have.property("error_count");
+          expect(res.body.error_count).to.equal(1);
           expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+        }
+      });
+  });
+
+  it("accepts 1-character and 255-character import names", async () => {
+    const res = await request("http://localhost:4000")
+      .post("/api/v1/integrations/import?workspace_id=test")
+      .send({
+        items: [
+          {
+            name: "A",
+            expiration: getFutureDate(180),
+            category: "key_secret",
+            type: "api_key",
+          },
+          {
+            name: "B".repeat(255),
+            expiration: getFutureDate(180),
+            category: "key_secret",
+            type: "api_key",
+          },
+        ],
+      })
+      .expect((res) => {
+        expect([400, 401, 201]).to.include(res.status);
+        if (res.status === 201) {
+          expect(res.body.error_count || 0).to.equal(0);
         }
       });
   });

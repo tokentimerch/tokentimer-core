@@ -1033,6 +1033,30 @@ paths:
                 subject:
                   type: string
                   maxLength: 1000
+                location:
+                  type: string
+                  maxLength: 500
+                used_by:
+                  type: string
+                  maxLength: 500
+                contacts:
+                  type: string
+                  maxLength: 500
+                algorithm:
+                  type: string
+                  maxLength: 100
+                license_type:
+                  type: string
+                  maxLength: 100
+                section:
+                  oneOf:
+                    - type: string
+                      maxLength: 255
+                    - type: array
+                      maxItems: 50
+                      items:
+                        type: string
+                        maxLength: 120
                 contact_group_id:
                   type: string
                   nullable: true
@@ -10217,6 +10241,42 @@ components:
           type: string
           maxLength: 10000
           example: "Owner: Platform - escalate before expiration"
+        location:
+          type: string
+          maxLength: 500
+        used_by:
+          type: string
+          maxLength: 500
+        contacts:
+          type: string
+          maxLength: 500
+        issuer:
+          type: string
+          maxLength: 255
+        serial_number:
+          type: string
+          maxLength: 255
+        vendor:
+          type: string
+          maxLength: 255
+        subject:
+          type: string
+          maxLength: 1000
+        algorithm:
+          type: string
+          maxLength: 100
+        license_type:
+          type: string
+          maxLength: 100
+        section:
+          oneOf:
+            - type: string
+              maxLength: 255
+            - type: array
+              maxItems: 50
+              items:
+                type: string
+                maxLength: 120
     Token:
       type: object
       required: [id, name, type]
@@ -10252,6 +10312,21 @@ components:
         subject:
           type: string
           maxLength: 1000
+        used_by:
+          type: string
+          maxLength: 500
+        contacts:
+          type: string
+          maxLength: 500
+        vendor:
+          type: string
+          maxLength: 255
+        algorithm:
+          type: string
+          maxLength: 100
+        license_type:
+          type: string
+          maxLength: 100
         created_at:
           type: string
           format: date-time
