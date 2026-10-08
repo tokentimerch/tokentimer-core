@@ -4584,18 +4584,21 @@ const migrations = [
     version: 67,
     name: "inventory_and_auto_sync_name_length",
     sql: `
-      -- Existing DBs never re-run version 1. Drop the old length>=3 check before
-      -- trimming so names that only met the cap via padding can shrink to 1-255.
+      -- Existing DBs never re-run version 1. Drop the old length>=3 check first.
+      -- Rewrite only names that are empty after POSIX whitespace trim (spaces,
+      -- tabs, newlines). Padded names stay as stored; API writes still trim.
       ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_name_check;
-      UPDATE tokens SET name = btrim(name) WHERE name IS DISTINCT FROM btrim(name);
-      UPDATE tokens SET name = 'unnamed' WHERE char_length(btrim(name)) < 1;
+      UPDATE tokens SET name = 'unnamed'
+       WHERE char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) < 1;
       ALTER TABLE tokens ALTER COLUMN name TYPE VARCHAR(255);
       ALTER TABLE tokens ADD CONSTRAINT tokens_name_check
-        CHECK (char_length(btrim(name)) BETWEEN 1 AND 255);
+        CHECK (char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) BETWEEN 1 AND 255);
 
       ALTER TABLE auto_sync_configs DROP CONSTRAINT IF EXISTS auto_sync_configs_name_canonical;
       ALTER TABLE auto_sync_configs ADD CONSTRAINT auto_sync_configs_name_canonical
-        CHECK (connection_key = REGEXP_REPLACE(BTRIM(connection_key), '[[:space:]]+', ' ', 'g')
+        CHECK (connection_key = REGEXP_REPLACE(
+                 regexp_replace(connection_key, '^[[:space:]]+|[[:space:]]+$', '', 'g'),
+                 '[[:space:]]+', ' ', 'g')
                AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 255);
     `,
   },

@@ -119,6 +119,50 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
+  it("accepts a 255-character import name that contains < after encoding stays in bound", async () => {
+    const res = await request("http://localhost:4000")
+      .post("/api/v1/integrations/import?workspace_id=test")
+      .send({
+        items: [
+          {
+            name: `${"A".repeat(251)}<`,
+            expiration: getFutureDate(180),
+            category: "key_secret",
+            type: "api_key",
+          },
+        ],
+      })
+      .expect((res) => {
+        expect([400, 401, 201]).to.include(res.status);
+        if (res.status === 201) {
+          expect(res.body.error_count || 0).to.equal(0);
+        }
+      });
+  });
+
+  it("rejects a 255-character import name that encodes past VARCHAR(255)", async () => {
+    const res = await request("http://localhost:4000")
+      .post("/api/v1/integrations/import?workspace_id=test")
+      .send({
+        items: [
+          {
+            name: `${"A".repeat(254)}<`,
+            expiration: getFutureDate(180),
+            category: "key_secret",
+            type: "api_key",
+          },
+        ],
+      })
+      .expect((res) => {
+        expect([400, 401, 201]).to.include(res.status);
+        if (res.status === 201) {
+          expect(res.body).to.have.property("error_count");
+          expect(res.body.error_count).to.equal(1);
+          expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+        }
+      });
+  });
+
   it("accepts 1-character and 255-character import names", async () => {
     const res = await request("http://localhost:4000")
       .post("/api/v1/integrations/import?workspace_id=test")

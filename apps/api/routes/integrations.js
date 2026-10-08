@@ -2358,13 +2358,19 @@ router.post(
       for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
         const it = itemsToImport[itemIndex];
         try {
-          // Sanitize and validate name (HTML escape for XSS protection)
+          // Length is the operator-facing name (after JS trim). Escape after that
+          // so a 255-character name is not rejected only because < became &lt;.
           let name = String(it?.name || "").trim();
+          if (!name) throw new Error("missing name");
+          if (name.length > 255)
+            throw new Error("name must be between 1 and 255 characters");
           name = name
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#x27;");
+          if (name.length > 255)
+            throw new Error("name must be between 1 and 255 characters");
 
           let expiration = it?.expiration || it?.expiresAt || null;
           let hasNoExpiration = false;
@@ -2385,10 +2391,6 @@ router.post(
           ).toLowerCase();
           const type = (it?.type || default_type || "other").toLowerCase();
 
-          // Validate required fields
-          if (!name) throw new Error("missing name");
-          if (name.length < 1 || name.length > 255)
-            throw new Error("name must be between 1 and 255 characters");
           if (!ALLOWED_CATEGORIES.includes(category))
             throw new Error("invalid category");
           if (!ALLOWED_TYPES.includes(type)) throw new Error("invalid type");

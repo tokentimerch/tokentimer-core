@@ -67,7 +67,18 @@ describe("operational notifications migration", () => {
       /CHAR_LENGTH\(connection_key\) BETWEEN 1 AND 100/,
     );
     assert.match(widen.sql, /DROP CONSTRAINT IF EXISTS tokens_name_check/);
-    assert.match(widen.sql, /UPDATE tokens SET name = btrim\(name\)/);
+    assert.doesNotMatch(
+      widen.sql,
+      /UPDATE tokens SET name = btrim\(name\)/,
+    );
+    assert.match(
+      widen.sql,
+      /UPDATE tokens SET name = 'unnamed'/,
+    );
+    assert.match(
+      widen.sql,
+      /regexp_replace\(name, '\^\[\[:space:\]\]\+\|\[\[:space:\]\]\+\$'/,
+    );
     assert.match(widen.sql, /ALTER COLUMN name TYPE VARCHAR\(255\)/);
     assert.match(
       widen.sql,

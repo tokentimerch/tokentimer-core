@@ -2,7 +2,7 @@
  * Migration 67 - upgrade path on a populated 0.17.2-shaped database.
  *
  * Stops at version 66, plants names that the old length>=3 check allowed
- * (plain, padded, and three-space whitespace), then applies 67 and checks
+ * (plain, padded, three-space, and tab-only), then applies 67 and checks
  * the widened CHECK plus auto-sync connection_key bound.
  */
 
@@ -70,6 +70,7 @@ describe("Inventory name length migration 67 - upgrade path", function () {
   let normalId;
   let paddedId;
   let whitespaceId;
+  let tabOnlyId;
   let configId;
 
   before(async function () {
@@ -121,14 +122,16 @@ describe("Inventory name length migration 67 - upgrade path", function () {
          VALUES
            ($1, $2, $1, 'NormalName', CURRENT_DATE + 90, 'api_key', 'key_secret'),
            ($1, $2, $1, '  Padded Name  ', CURRENT_DATE + 90, 'api_key', 'key_secret'),
-           ($1, $2, $1, '   ', CURRENT_DATE + 90, 'api_key', 'key_secret')
+           ($1, $2, $1, '   ', CURRENT_DATE + 90, 'api_key', 'key_secret'),
+           ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')
          RETURNING id, name`,
-        [userId, workspaceId],
+        [userId, workspaceId, "\t\t\t"],
       );
       const byName = new Map(tokenRows.rows.map((row) => [row.name, row.id]));
       normalId = byName.get("NormalName");
       paddedId = byName.get("  Padded Name  ");
       whitespaceId = byName.get("   ");
+      tabOnlyId = byName.get("\t\t\t");
 
       const config = await client.query(
         `INSERT INTO auto_sync_configs
@@ -150,15 +153,16 @@ describe("Inventory name length migration 67 - upgrade path", function () {
     await dropDatabase(UPGRADE_DB_NAME);
   });
 
-  it("trims existing names and replaces whitespace-only names", async () => {
+  it("rewrites only whitespace-only names and leaves padded names stored", async () => {
     const { rows } = await pool.query(
       `SELECT id, name FROM tokens WHERE id = ANY($1::int[])`,
-      [[normalId, paddedId, whitespaceId]],
+      [[normalId, paddedId, whitespaceId, tabOnlyId]],
     );
     const byId = new Map(rows.map((row) => [row.id, row.name]));
     expect(byId.get(normalId)).to.equal("NormalName");
-    expect(byId.get(paddedId)).to.equal("Padded Name");
+    expect(byId.get(paddedId)).to.equal("  Padded Name  ");
     expect(byId.get(whitespaceId)).to.equal("unnamed");
+    expect(byId.get(tabOnlyId)).to.equal("unnamed");
   });
 
   it("widens tokens.name to VARCHAR(255) with a 1-255 trimmed CHECK", async () => {
@@ -199,6 +203,21 @@ describe("Inventory name length migration 67 - upgrade path", function () {
         () => expect.fail("whitespace-only name should fail"),
         (err) => expect(err.code).to.equal("23514"),
       );
+    await pool
+      .query(
+        `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+         VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+        [userId, workspaceId, "\t\n"],
+      )
+      .then(
+        () => expect.fail("tab and newline-only name should fail"),
+        (err) => expect(err.code).to.equal("23514"),
+      );
+    await pool.query(
+      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+       VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+      [userId, workspaceId, "  Padded New  "],
+    );
   });
 
   it("raises the auto-sync connection_key CHECK to 255 without altering TEXT", async () => {

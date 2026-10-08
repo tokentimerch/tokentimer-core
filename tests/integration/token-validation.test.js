@@ -210,6 +210,69 @@ describe("Token Validation Integration Tests", () => {
 
       expect(response.body.name).to.equal(name);
     });
+
+    it("should trim surrounding spaces and reject tab-only names", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
+
+      const trimmed = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "  Spaced  ",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(201);
+      expect(trimmed.body.name).to.equal("Spaced");
+
+      const tabs = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\t\t\t",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(tabs.body.error).to.equal("Validation failed");
+
+      const newlines = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\n\n",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(newlines.body.error).to.equal("Validation failed");
+
+      const nbsp = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\u00A0\u00A0",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(nbsp.body.error).to.equal("Validation failed");
+    });
   });
 
   describe("Category-Specific Validation", () => {
