@@ -1899,6 +1899,7 @@ module.exports = {
   normalizeOffset,
   retireManagedCertificate,
   suppressPendingRetiredCertificateAlerts,
+  tokenNameFor,
   toInstanceRecord,
   toInventoryRecord,
   toTargetRecord,

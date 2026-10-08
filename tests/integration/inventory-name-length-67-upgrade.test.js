@@ -496,4 +496,44 @@ describe("Inventory name length migration 67 - post-commit recovery", function (
       ["tokens_name_check", true],
     ]);
   });
+
+  it("allows concurrent post-commit VALIDATE from two migrators", async () => {
+    // Drop validation so both runners start from NOT VALID again.
+    await pool.query(
+      `ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_name_check`,
+    );
+    await pool.query(
+      `ALTER TABLE auto_sync_configs DROP CONSTRAINT IF EXISTS auto_sync_configs_name_canonical`,
+    );
+    await pool.query(`
+      ALTER TABLE tokens ADD CONSTRAINT tokens_name_check
+        CHECK (char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) BETWEEN 1 AND 255)
+        NOT VALID
+    `);
+    await pool.query(`
+      ALTER TABLE auto_sync_configs ADD CONSTRAINT auto_sync_configs_name_canonical
+        CHECK (connection_key = REGEXP_REPLACE(
+                 regexp_replace(connection_key, '^[[:space:]]+|[[:space:]]+$', '', 'g'),
+                 '[[:space:]]+', ' ', 'g')
+               AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 255)
+        NOT VALID
+    `);
+
+    const left = await pool.connect();
+    const right = await pool.connect();
+    try {
+      await Promise.all([
+        applyPostCommitSql(left, widen),
+        applyPostCommitSql(right, widen),
+      ]);
+    } finally {
+      left.release();
+      right.release();
+    }
+
+    expect(await constraintState()).to.deep.equal([
+      ["auto_sync_configs_name_canonical", true],
+      ["tokens_name_check", true],
+    ]);
+  });
 });

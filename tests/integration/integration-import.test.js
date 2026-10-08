@@ -127,31 +127,10 @@ describe("Generic integration import endpoint", () => {
       expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
     });
 
-    it("stores a name whose encoded form still fits 255 characters", async () => {
-      const stored = `${"A".repeat(251)}&lt;`;
+    it("rejects import names that contain angle brackets like create/update", async () => {
       const res = await importItems([
         {
-          name: `${"A".repeat(251)}<`,
-          expiration: getFutureDate(180),
-          category: "key_secret",
-          type: "api_key",
-        },
-      ]).expect(201);
-      expect(res.body.error_count).to.equal(0);
-      expect(res.body.created_count).to.equal(1);
-      expect(res.body.created[0].name).to.equal(stored);
-
-      const storedRow = await TestUtils.execQuery(
-        "SELECT name FROM tokens WHERE id = $1",
-        [res.body.created[0].id],
-      );
-      expect(storedRow.rows[0].name).to.equal(stored);
-    });
-
-    it("rejects a 255-character import name that encodes past VARCHAR(255)", async () => {
-      const res = await importItems([
-        {
-          name: `${"A".repeat(254)}<`,
+          name: 'Test<script>alert("xss")</script>',
           expiration: getFutureDate(180),
           category: "key_secret",
           type: "api_key",
@@ -159,7 +138,7 @@ describe("Generic integration import endpoint", () => {
       ]).expect(201);
       expect(res.body.error_count).to.equal(1);
       expect(res.body.created_count).to.equal(0);
-      expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+      expect(res.body.errors[0].error).to.match(/HTML tags/i);
     });
 
     it("accepts 1-character and 255-character import names and stores them", async () => {
@@ -236,13 +215,13 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("sanitizes HTML in text fields", async () => {
+  it("rejects HTML tags in import names without authenticating", async () => {
     const res = await request("http://localhost:4000")
       .post("/api/v1/integrations/import?workspace_id=test")
       .send({
         items: [
           {
-            name: 'Test<script>alert("xss")</script>', // XSS attempt
+            name: 'Test<script>alert("xss")</script>',
             expiration: getFutureDate(180),
             category: "key_secret",
             type: "api_key",
@@ -251,11 +230,9 @@ describe("Generic integration import endpoint", () => {
       })
       .expect((res) => {
         expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201 && res.body.created_count > 0) {
-          // Name should be HTML-escaped
-          const created = res.body.created[0];
-          expect(created.name).to.not.include("<script>");
-          expect(created.name).to.include("&lt;").or.include("&gt;");
+        if (res.status === 201) {
+          expect(res.body.error_count).to.be.at.least(1);
+          expect(res.body.errors[0].error).to.match(/HTML tags/i);
         }
       });
   });

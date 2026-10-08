@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   fingerprintsFromCertificates,
+  tokenNameFor,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/inventory.js"),
 );
@@ -142,5 +143,30 @@ describe("CertOps inventory import helpers", () => {
       validateIndex < tokenCreateIndex,
       "validateImport must run before managed certificate upsert",
     );
+  });
+
+  it("truncates CertOps display names without using them as fingerprint identity", () => {
+    // Differentiating suffixes sit past the 255-char display-name cap.
+    const sharedPrefix = "c".repeat(255);
+    const nameA = `${sharedPrefix}.alpha.example.com`;
+    const nameB = `${sharedPrefix}.beta.example.com`;
+    assert.equal(tokenNameFor({}, nameA), sharedPrefix);
+    assert.equal(tokenNameFor({}, nameB), sharedPrefix);
+    assert.notEqual(nameA, nameB);
+
+    const inventorySource = require("node:fs").readFileSync(
+      path.resolve(__dirname, "../../apps/api/services/certops/inventory.js"),
+      "utf8",
+    );
+    const existingStart = inventorySource.indexOf(
+      "async function existingCertOpsToken",
+    );
+    assert.notEqual(existingStart, -1);
+    const existingBody = inventorySource.slice(
+      existingStart,
+      inventorySource.indexOf("async function ensureManagedCertificateToken"),
+    );
+    assert.match(existingBody, /fingerprintSha256/);
+    assert.doesNotMatch(existingBody, /\bname\b\s*=/);
   });
 });

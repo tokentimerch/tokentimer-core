@@ -2358,19 +2358,14 @@ router.post(
       for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
         const it = itemsToImport[itemIndex];
         try {
-          // Operator-facing cap is 1-255 on the trimmed name. HTML-escaping can
-          // still make the stored value longer; reject those so they fit VARCHAR(255).
+          // Match create/update validation: reject angle brackets, store the
+          // trimmed name without HTML-entity expansion (XSS is handled at render).
           let name = String(it?.name || "").trim();
           if (!name) throw new Error("missing name");
           if (name.length > 255)
             throw new Error("name must be between 1 and 255 characters");
-          name = name
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#x27;");
-          if (name.length > 255)
-            throw new Error("name must be between 1 and 255 characters");
+          if (/[<>]/.test(name))
+            throw new Error("Token name cannot contain HTML tags (< or >)");
 
           let expiration = it?.expiration || it?.expiresAt || null;
           let hasNoExpiration = false;
