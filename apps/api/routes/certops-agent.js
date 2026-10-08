@@ -75,6 +75,7 @@ const {
   persistAgentJobEvidenceBatch,
 } = require("../services/certops/agentObservations");
 const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
+const { ingestAgentJobLogs } = require("../services/certops/agentJobLogs");
 const {
   CERTOPS_AGENT_MESSAGE_INVALID,
   assertValidAgentProtocolEnvelope,
@@ -86,6 +87,7 @@ const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
 const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
 const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
 const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
+const CERTOPS_AGENT_JOBS_LOGS_PATH = "/api/v1/certops/agent/jobs/:jobId/logs";
 const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const CLAIM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
@@ -174,6 +176,57 @@ function validateResultBody(envelope) {
 
 function validateEvidenceBody(envelope) {
   return assertValidAgentProtocolEnvelope(envelope, "evidence");
+}
+
+const logRateBuckets = new Map();
+
+function takeAgentLogPermit(agentKey, now = Date.now()) {
+  const burst = 40;
+  const refillPerMs = 20 / 1000;
+  let bucket = logRateBuckets.get(agentKey);
+  if (!bucket) {
+    bucket = { tokens: burst, updated: now };
+    logRateBuckets.set(agentKey, bucket);
+  }
+  bucket.tokens = Math.min(burst, bucket.tokens + (now - bucket.updated) * refillPerMs);
+  bucket.updated = now;
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+async function logsHandler(req, res, options = {}) {
+  try {
+    const jobId = req.params?.jobId;
+    if (
+      typeof jobId !== "string" ||
+      jobId.length < 1 ||
+      jobId.length > 128 ||
+      !JOB_ID_PATTERN.test(jobId)
+    ) {
+      throw messageError("jobId is invalid");
+    }
+    const envelope = validateEnvelope(req.body, "log");
+    const agentKey = req.certopsAgent?.agentId || req.certopsAgent?.id || "unknown";
+    if (!takeAgentLogPermit(agentKey)) {
+      res.set("Retry-After", "1");
+      return res.status(429).json({
+        error: "Agent log rate limit exceeded",
+        code: "CERTOPS_AGENT_LOG_RATE_LIMITED",
+        retryAfterMs: 1000,
+      });
+    }
+    const result = await (options.ingestAgentJobLogs || ingestAgentJobLogs)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      jobId,
+      body: envelope.body,
+      env: options.env,
+    });
+    return res.status(result.httpStatus).json(result.body);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
 }
 
 // --- Private-material rejection (422 wins over auth-shaped errors) ---
@@ -617,6 +670,14 @@ function createCertOpsAgentRouter(options = {}) {
     (req, res) => resultsHandler(req, res, options),
   );
 
+  // Execution console. Best effort, so it is never on the result path.
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_JOBS_LOGS_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => logsHandler(req, res, options),
+  );
+
   return certOpsAgentRouter;
 }
 
@@ -642,6 +703,8 @@ module.exports._test = {
   rejectAgentPrivateMaterial,
   requireNonRetiredAgent,
   resultsHandler,
+  logsHandler,
+  CERTOPS_AGENT_JOBS_LOGS_PATH,
   validateClaimBody,
   validateEnvelope,
   validateEvidenceBody,

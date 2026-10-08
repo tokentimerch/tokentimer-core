@@ -18,6 +18,7 @@ renewal POST used during job execution:
 | `claim` | `POST /api/v1/certops/agent/jobs/claim` |
 | `result`, `evidence` | `POST /api/v1/certops/agent/jobs/results` |
 | lease renew | `POST /api/v1/certops/agent/jobs/:jobId/lease` |
+| `log` | `POST /api/v1/certops/agent/jobs/:jobId/logs` |
 
 Result and evidence share one route; the envelope's `messageType`
 disambiguates server-side. Every envelope carries `schemaVersion` (1),
@@ -112,6 +113,54 @@ Flow:
   plus `rejectionReason`, `keyRotated`, `errorMessage`, `clockOffsetMs`)
   and per-step evidence bodies. See "Dry-run and reconciliation statuses"
   below for mode gating on the two newer terminals.
+
+<a id="execution-console-stream"></a>
+
+### Execution console stream
+
+The job's **Agent output** panel is fed by an optional, best-effort stream.
+Job results and evidence stay authoritative: a lost, dropped or refused log
+batch never changes a job outcome, and log storage failures never fail a
+claim.
+
+- **Negotiation.** The agent declares `job-log-stream-v1`. The claim
+  response carries a top-level `logStreams` array, one `{ enabled,
+  maxBatchBytes }` entry per job in `jobs`, outside the signed job, so job
+  signatures and the job schema are unchanged. Agents that predate it ignore
+  the field, and a server that omits it leaves streaming off. A stream is
+  enabled only for a fresh capability (same freshness window as above) and
+  when `CERTOPS_AGENT_LOG_RETENTION_DAYS` is not `0`.
+- **Transport.** `log` envelopes post to the per-job route with the claim's
+  `claimId`, `lines` (per-claim `seq` starting at 1) and an optional
+  `final: true`. They carry no `sequence` and never share the control-channel
+  queue, so a slow log endpoint cannot delay heartbeats, lease renewals or
+  results. Bodies are capped at 64 KiB.
+- **Acks.** `200` returns `{ ackThroughSeq, newlyStored, duplicateCount,
+  serverDroppedCount, streamDisabled, retryAfterMs }`. A retried batch (same
+  lines, same `final` flag) gets the stored ack of its first delivery;
+  counters and the daily quota never move twice. Lines past the per-claim cap
+  (5000 lines or 1 MiB) or the workspace quota (`CERTOPS_AGENT_LOG_DAILY_BYTES`)
+  are acknowledged in `serverDroppedCount`, not stored. `streamDisabled: true`
+  means stop sending for this claim.
+- **Refusals.** `409 CERTOPS_AGENT_LOG_CLOSED` once the stream is final,
+  abandoned or past its grace window; `409 CERTOPS_AGENT_LOG_CLAIM_INVALID`
+  for an unknown claim or one owned by another agent; `422
+  CERTOPS_AGENT_LOG_PRIVATE_MATERIAL` when a batch contains key material (the
+  whole batch is refused and audited); `400 CERTOPS_AGENT_LOG_INVALID` for a
+  non-contiguous `seq` run; `429 CERTOPS_AGENT_LOG_RATE_LIMITED` with
+  `Retry-After`.
+- **Agent sender.** Lines are buffered locally (1000 lines and 256 KiB per
+  claim, 2 MiB per agent) and flushed every 50 lines or 1 second, at most 200
+  lines per batch. It backs off on 408 and 5xx, honors `Retry-After` on 429
+  and 503, splits on 413, stops the stream on 401, 403, 404, 409 and 410, and
+  drops a batch on any other 4xx. Retries give up after 2 minutes, 60 seconds
+  for the final flush. Closing a stream never blocks the claim loop.
+  `TT_AGENT_LOG_STREAM=off` turns the stream off on one agent.
+- **Lifecycle.** A claim that ends without a final batch (cancel, requeue,
+  reaped lease) has its stream closed with a 5-minute grace window for late
+  batches, then the maintenance worker marks it abandoned. The read API's
+  `logsComplete` becomes true once the job is terminal and every stream is
+  closed; clients should stop polling then.
 
 Backoff and jitter: poll loops apply +/-20% jitter to every interval
 (`jitteredDelay`) to avoid fleet thundering herd. `withRetry` provides

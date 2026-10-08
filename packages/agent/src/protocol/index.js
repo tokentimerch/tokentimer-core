@@ -39,7 +39,22 @@ const MESSAGE_TYPES = Object.freeze({
   CLAIM: "claim",
   RESULT: "result",
   EVIDENCE: "evidence",
+  LOG: "log",
 });
+
+const logStreamByJob = new WeakMap();
+
+function rememberClaimLogStream(job, offer) {
+  if (!job || typeof job !== "object" || !offer || typeof offer !== "object") return;
+  logStreamByJob.set(job, {
+    enabled: offer.enabled === true,
+    maxBatchBytes: Number.isInteger(offer.maxBatchBytes) ? offer.maxBatchBytes : 64 * 1024,
+  });
+}
+
+function readClaimLogStream(job) {
+  return logStreamByJob.get(job) || null;
+}
 
 class AgentProtocolError extends Error {
   constructor(message, code, options = {}) {
@@ -357,7 +372,12 @@ async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUE
     }
   }
   const json = await readBoundedResponseJson(response);
-  return { status: response.status, ok: response.ok, json, envelope: safeEnvelope };
+  const retryAfterHeader = response.headers?.get?.("retry-after");
+  const retryAfterSeconds = Number(retryAfterHeader);
+  const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+    ? Math.round(retryAfterSeconds * 1000)
+    : null;
+  return { status: response.status, ok: response.ok, json, envelope: safeEnvelope, retryAfterMs };
 }
 
 /**
@@ -686,7 +706,32 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (json?.jobs !== undefined && !Array.isArray(json.jobs)) throw new AgentProtocolError("claim response jobs must be an array", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (Array.isArray(json?.jobs) && json.jobs.length > 16) throw new AgentProtocolError("claim response contains too many jobs", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
-    return json?.jobs ?? [];
+    const jobs = json?.jobs ?? [];
+    const offers = Array.isArray(json?.logStreams) ? json.logStreams : [];
+    jobs.forEach((job, index) => {
+      if (offers[index]) rememberClaimLogStream(job, offers[index]);
+    });
+    return jobs;
+  }
+
+  /**
+   * Execution-console batch. Not sequenced: it must not share the control
+   * channel queue, or a slow log post would delay heartbeats, leases, and
+   * results. HTTP errors are returned so the sender can split, back off, or stop.
+   */
+  async function postJobLogs({ jobId, body } = {}) {
+    if (typeof jobId !== "string" || jobId.length === 0 || !AGENT_ID_PATTERN.test(jobId)) {
+      throw new AgentProtocolError("postJobLogs requires a valid jobId", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    const token = await resolveCredential(getCredential);
+    const route = `${ROUTES.LEASE}/${encodeURIComponent(jobId)}/logs`;
+    const { status, ok, json, retryAfterMs } = await send(route, token, buildEnvelope({
+      agentId,
+      protocolVersion,
+      messageType: MESSAGE_TYPES.LOG,
+      body,
+    }));
+    return { status, ok, json, retryAfterMs };
   }
 
   /**
@@ -794,7 +839,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence };
+  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence, postJobLogs };
 }
 
 module.exports = {
@@ -815,4 +860,5 @@ module.exports = {
   withRetry,
   startPollLoop,
   createProtocolClient,
+  readClaimLogStream,
 };

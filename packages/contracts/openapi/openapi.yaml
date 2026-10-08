@@ -5609,6 +5609,77 @@ paths:
                 code: CERTOPS_JOB_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/agent-log:
+    get:
+      tags: [CertOps]
+      summary: Read the agent execution console for one job
+      operationId: listCertOpsAgentJobLog
+      description: >-
+        Opaque-cursor read of curated agent execution lines. Viewers receive
+        stream status only. Managers and admins also receive the lines.
+        Poll while logsComplete is false.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: cursor
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Console page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentLogReadResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/workspaces/{id}/certops/agents/{agentId}/agent-log:
+    get:
+      tags: [CertOps]
+      summary: List recent execution-console streams for one agent
+      operationId: listCertOpsAgentFleetLog
+      description: Stream summaries only. Line text is loaded from the job console route.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+      responses:
+        "200":
+          description: Recent job stream summaries
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence:
     get:
       tags: [CertOps]
@@ -7280,6 +7351,84 @@ paths:
           description: CertOps machine-token rate limit exceeded
         "503":
           description: Security audit sink unavailable while rejecting private material
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/{jobId}/logs:
+    post:
+      tags: [CertOps Agent]
+      summary: Ingest execution-console lines for one claim
+      operationId: createCertOpsAgentJobLogs
+      description: >-
+        Telemetry channel for curated execution-console lines. Authenticated
+        with the per-agent credential. The body is an agent-protocol envelope
+        with messageType log and no control-channel sequence, so it does not
+        move certops_agents.last_sequence. Retries of the same batch are
+        idempotent. A lost final acknowledgement can be retried.
+      security:
+        - agentCredentialAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_.:-]+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsAgentLogRequest"
+      responses:
+        "200":
+          description: Batch acknowledged. newlyStored and serverDroppedCount describe the first resolution of this batch and stay stable on retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentLogAck"
+        "400":
+          description: Message envelope failed agent-protocol validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: CertOps is disabled deployment-wide (route is hidden)
+        "409":
+          description: Claim is unknown, owned by another agent, or no longer accepting new lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Claim is not valid
+                code: CERTOPS_AGENT_LOG_CLAIM_INVALID
+        "410":
+          description: Agent is retired
+        "413":
+          description: Serialized batch exceeds 64 KiB
+        "422":
+          description: Private key material was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Agent log batch rejected
+                code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL
+        "429":
+          description: Agent log rate limit exceeded
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/results:
@@ -11640,7 +11789,7 @@ components:
           description: Agent protocol semver the agent speaks (version negotiation).
         messageType:
           type: string
-          enum: [register, heartbeat, claim, result, evidence]
+          enum: [register, heartbeat, claim, result, evidence, log]
         agentId:
           type: string
           minLength: 1
@@ -11813,6 +11962,17 @@ components:
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
       required: [jobs]
       properties:
+        logStreams:
+          type: array
+          description: Parallel to jobs. Older servers omit it. enabled false means the agent must not stream for that job.
+          items:
+            type: object
+            required: [enabled, maxBatchBytes]
+            properties:
+              enabled:
+                type: boolean
+              maxBatchBytes:
+                type: integer
         jobs:
           type: array
           items:
@@ -11902,6 +12062,82 @@ components:
           format: date-time
           nullable: true
           description: Extended dispatch-nonce expiry after this renew (B7).
+    CertOpsAgentLogRequest:
+      allOf:
+        - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
+        - type: object
+          required: [body]
+          properties:
+            messageType:
+              type: string
+              enum: [log]
+            body:
+              type: object
+              required: [jobId, claimId, final]
+              properties:
+                jobId:
+                  type: string
+                claimId:
+                  type: string
+                firstSeq:
+                  type: integer
+                  minimum: 1
+                lines:
+                  type: array
+                  maxItems: 200
+                droppedBefore:
+                  type: integer
+                  minimum: 0
+                final:
+                  type: boolean
+    CertOpsAgentLogAck:
+      type: object
+      additionalProperties: false
+      required: [ackThroughSeq, newlyStored, duplicateCount, serverDroppedCount, streamDisabled]
+      properties:
+        ackThroughSeq:
+          type: integer
+          minimum: 0
+        newlyStored:
+          type: integer
+          minimum: 0
+          description: Lines stored by the first resolution of this batch. A retry returns the same number and does not store again.
+        duplicateCount:
+          type: integer
+          minimum: 0
+        serverDroppedCount:
+          type: integer
+          minimum: 0
+          description: Lines the server dropped on the first resolution of this batch. A retry does not increment the stream counter.
+        streamDisabled:
+          type: boolean
+        retryAfterMs:
+          type: integer
+          nullable: true
+    CertOpsAgentLogReadResponse:
+      type: object
+      required: [items, nextCursor, hasMore, logsComplete, streams, storageEnabled]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        nextCursor:
+          type: string
+          nullable: true
+          description: Resumes after the last line returned. On an empty page it echoes the request cursor, so pollers keep their position.
+        hasMore:
+          type: boolean
+          description: More lines are already stored after this page.
+        logsComplete:
+          type: boolean
+          description: The job is terminal and every claim stream is closed. Stop polling.
+        streams:
+          type: array
+          items:
+            type: object
+        storageEnabled:
+          type: boolean
     CertOpsAgentResultRequest:
       allOf:
         - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"

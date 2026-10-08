@@ -83,6 +83,13 @@ const {
 } = require("./agentJobEligibility");
 const { isTrustAnchorOperation } = require("./jobs");
 const {
+  JOB_LOG_STREAM_CAPABILITY,
+  MAX_BATCH_BYTES,
+  openStreamForClaim,
+  closeClaimStreamSafely,
+  storageEnabled,
+} = require("./agentJobLogs");
+const {
   revalidateTrustJobForDispatch,
   ingestTrustJobResult,
   onTrustJobTerminalTransition,
@@ -1031,7 +1038,7 @@ async function claimJobs({
       ],
     );
 
-    if (supportedActions.length === 0) return { jobs: [] };
+    if (supportedActions.length === 0) return { jobs: [], logStreams: [] };
 
     // Load the agent's persisted selectors for the claim matcher. The claim
     // body can override DNS providers for this poll; targets/profiles come
@@ -1089,6 +1096,13 @@ async function claimJobs({
       declaredCapabilities: caps.declared_capabilities,
       capabilitiesUpdatedAt: caps.capabilities_updated_at,
       capability: SIGNED_PAYLOAD_B64_CAPABILITY,
+      env,
+    });
+    const logStorageOn = storageEnabled(env);
+    const logStreamEnabled = logStorageOn && hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: JOB_LOG_STREAM_CAPABILITY,
       env,
     });
 
@@ -1222,6 +1236,7 @@ async function claimJobs({
       agentKind,
     };
     const jobs = [];
+    const logStreams = [];
     for (const row of selected.rows) {
       if (row.subject_type === "managed_certificate" && row.management_period_id) {
         const ownership = await client.query(
@@ -1453,10 +1468,41 @@ async function claimJobs({
           : ENVELOPE_VERSION_1,
       });
       jobs.push(signedJob);
+      // With storage off there is no history to keep and no purge to clean it.
+      logStreams.push(logStorageOn
+        ? await bestEffortLogOffer(client, {
+          workspaceId: agent.workspaceId,
+          jobId: String(job.id),
+          claimId: String(job.claim_id),
+          agentRowId: agent.id,
+          attemptNumber: job.attempt_count,
+          streamingEnabled: logStreamEnabled,
+        })
+        : { enabled: false, maxBatchBytes: MAX_BATCH_BYTES });
     }
 
-    return { jobs };
+    return { jobs, logStreams };
   });
+}
+
+async function bestEffortLogOffer(db, args) {
+  const disabled = { enabled: false, maxBatchBytes: MAX_BATCH_BYTES };
+  try {
+    await db.query("SAVEPOINT agent_log_stream");
+    const offer = await openStreamForClaim(db, args);
+    await db.query("RELEASE SAVEPOINT agent_log_stream");
+    return offer;
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK TO SAVEPOINT agent_log_stream");
+    } catch (_rollbackError) {
+      // The claim transaction must continue even when console storage fails.
+    }
+    logger.warn("agent log stream was not opened; claim continues", {
+      code: error?.code || null,
+    });
+    return disabled;
+  }
 }
 
 function safeParseJson(value) {
@@ -2368,6 +2414,13 @@ async function ingestResult({
     );
 
     const row = updated.rows[0];
+    if (row && job.claim_id) {
+      await closeClaimStreamSafely(client, {
+        workspaceId: agent.workspaceId,
+        jobId: String(job.id),
+        claimId: String(job.claim_id),
+      });
+    }
 
     // certificate_job_log's schema is designed to record job.completed/
     // job.failed/job.progress lifecycle events, but until now only the

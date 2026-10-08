@@ -528,6 +528,26 @@ fi
 grep -Fq -- 'csrfTokenRateLimitMax' "${csrf_limiter_zero}" \
   || fail "csrf limiter max 0 failure did not mention csrfTokenRateLimitMax"
 
+echo "==> assert agent console settings reach the shared ConfigMap, including 0"
+agent_log_values="${OUT}/agent-log-values.yaml"
+printf 'config:\n  adminEmail: ci@example.com\n  certopsAgentLogRetentionDays: 0\n  certopsAgentLogDailyBytes: 20971520\n' > "${agent_log_values}"
+agent_log_rendered="$(helm template "${RELEASE_NAME}" "${CHART}" -f "${agent_log_values}" --show-only templates/configmap.yaml)"
+assert_contains "${agent_log_rendered}" 'CERTOPS_AGENT_LOG_RETENTION_DAYS: "0"' "agent log retention 0 kept"
+assert_contains "${agent_log_rendered}" 'CERTOPS_AGENT_LOG_DAILY_BYTES: "20971520"' "agent log daily bytes as plain integer"
+assert_not_contains "$(cat "${proxy_disabled}")" 'CERTOPS_AGENT_LOG_' "default omit CERTOPS_AGENT_LOG_*"
+agent_log_null="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.certopsAgentLogRetentionDays=null \
+  --show-only templates/configmap.yaml)"
+assert_not_contains "${agent_log_null}" 'CERTOPS_AGENT_LOG_RETENTION_DAYS' "null agent log retention defers to code default"
+for invalid in -1 1.5 garbage; do
+  if helm template "${RELEASE_NAME}" "${CHART}" \
+    --set config.adminEmail=ci@example.com \
+    --set "config.certopsAgentLogRetentionDays=${invalid}" >/dev/null 2>&1; then
+    fail "accepted invalid certopsAgentLogRetentionDays=${invalid}"
+  fi
+done
+
 expect_proxy_failure network-policy-without-proxy-cidrs 'proxyCidrs' \
   --set config.useEnvProxy=true \
   --set config.proxyExistingSecret=corporate-proxy \

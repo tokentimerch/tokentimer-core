@@ -132,6 +132,30 @@ export async function listJobLog(
  * Fetch evidence items attached to a job.
  * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
  */
+export async function listAgentJobLog(
+  workspaceId,
+  jobId,
+  { cursor, limit = 200, signal } = {}
+) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/agent-log`,
+    { params: { cursor, limit }, signal }
+  );
+  return res.data;
+}
+
+export async function listAgentFleetLog(
+  workspaceId,
+  agentId,
+  { limit = 20, signal } = {}
+) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/agents/${encodeURIComponent(agentId)}/agent-log`,
+    { params: { limit }, signal }
+  );
+  return res.data;
+}
+
 export async function listJobEvidence(
   workspaceId,
   jobId,

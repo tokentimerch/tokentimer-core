@@ -4646,6 +4646,11 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 69,
+    name: "certops_agent_job_logs",
+    sql: fs.readFileSync(require("path").join(__dirname, "069-certops-agent-job-logs.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

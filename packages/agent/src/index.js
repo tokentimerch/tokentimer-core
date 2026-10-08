@@ -96,7 +96,15 @@ const {
   createCaAwareFetch,
   startPollLoop,
   validateRegistrationResponse,
+  readClaimLogStream,
 } = require("./protocol");
+const {
+  createJobLogSession,
+  withJobConsole,
+  mirrorToJobConsole,
+  closeInBackground,
+  drainJobLogSessions,
+} = require("./job-log-stream");
 const {
   buildPolicyRejectionEvidence,
   buildEvidenceItem,
@@ -238,6 +246,7 @@ function buildSignedJobPolicyDescriptor(job) {
 }
 
 function emitLog(log, message, details) {
+  mirrorToJobConsole("error", message, details);
   if (typeof log === "function") {
     log(message, details);
     return;
@@ -258,6 +267,7 @@ function emitLog(log, message, details) {
  */
 function emitInfo(message, details) {
   defaultAgentLogger.info(message, details);
+  mirrorToJobConsole("info", message, details);
 }
 
 function localAttemptId(jobId) {
@@ -347,13 +357,14 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
     ? [
         "evidence-claim-binding-v1",
+        "job-log-stream-v1",
         "windows-cert-store-v1",
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
       ]
     : AGENT_TRUST_STORE_PREREQUISITES.candidate
-      ? ["evidence-claim-binding-v1", "trust-anchor-deploy-v1"]
-      : ["evidence-claim-binding-v1"],
+      ? ["evidence-claim-binding-v1", "job-log-stream-v1", "trust-anchor-deploy-v1"]
+      : ["evidence-claim-binding-v1", "job-log-stream-v1"],
 );
 
 /**
@@ -1968,6 +1979,15 @@ async function handleSignedJob({
     `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
       `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
   );
+  const logOffer = readClaimLogStream(claimedJob);
+  const jobLogSession = logOffer?.enabled === true && process.env.TT_AGENT_LOG_STREAM !== "off"
+    ? createJobLogSession({
+      post: (request) => client.postJobLogs(request),
+      jobId,
+      claimId,
+      maxBatchBytes: logOffer.maxBatchBytes,
+    })
+    : null;
   const evidenceBuffer = createEvidenceBuffer();
   const leaseOpts = {
     leaseClient: client,
@@ -1979,7 +1999,7 @@ async function handleSignedJob({
   const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
   let outcome;
   try {
-    outcome = await executeJob({
+    outcome = await withJobConsole(jobLogSession, () => executeJob({
       job,
       jobId,
       attemptId,
@@ -1990,7 +2010,8 @@ async function handleSignedJob({
       leaseState,
       executionContext,
       log,
-    });
+      jobLog: jobLogSession?.logger,
+    }));
     const heartbeatAbort = leaseHeartbeat.getAbort();
     // Lease loss after a "clean" terminal must not be reported as success.
     // awaiting_issuer is intentionally omitted: the CA request and RequestId
@@ -2021,59 +2042,69 @@ async function handleSignedJob({
           failureCategory: outcome?.trustResult?.failureCategory,
         }
       : undefined;
-  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`, finishDetails);
+  withJobConsole(jobLogSession, () => emitInfo(
+    `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
+    finishDetails,
+  ));
 
   const evidenceBodies = evidenceBuffer.takeEvidence();
   for (const body of evidenceBodies) {
     assertEvidencePayloadSafe(body);
   }
 
-  const transmitted = await persistAndTransmitOutcome({
-    outboxDir: resolvedOutboxDir,
-    client,
-    result: {
-      jobId,
-      attemptId,
-      claimId,
-      nonce,
-      status: outcome.status,
-      rejectionReason: outcome.rejectionReason ?? null,
-      keyRotated: outcome.keyRotated ?? null,
-      errorMessage: outcome.errorMessage ?? null,
-      clockOffsetMs: clockEstimator.getOffsetMs(),
-      // Only trust-anchor jobs produce this; omitted (not null) for every
-      // other job family so their result bodies stay byte-identical.
-      ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
-      // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
-      // state; required by agent-protocol when status is awaiting_issuer.
-      ...(outcome.enrollmentResult
-        ? { enrollmentResult: outcome.enrollmentResult }
-        : {}),
-    },
-    evidence: evidenceBodies,
-    log,
-  });
-
-  if (stateDir && outcome && typeof outcome.status === "string") {
-    try {
-      clearJournalOnTerminal({
-        stateDir,
+  let transmitted;
+  try {
+    transmitted = await persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
         jobId,
         attemptId,
+        claimId,
+        nonce,
         status: outcome.status,
-      });
-    } catch (err) {
-      emitLog(
-        log,
-        `could not clear job journal for ${jobId}: ${err.message}`,
-      );
-    }
-  }
+        rejectionReason: outcome.rejectionReason ?? null,
+        keyRotated: outcome.keyRotated ?? null,
+        errorMessage: outcome.errorMessage ?? null,
+        clockOffsetMs: clockEstimator.getOffsetMs(),
+        // Only trust-anchor jobs produce this; omitted (not null) for every
+        // other job family so their result bodies stay byte-identical.
+        ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
+        // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
+        // state; required by agent-protocol when status is awaiting_issuer.
+        ...(outcome.enrollmentResult
+          ? { enrollmentResult: outcome.enrollmentResult }
+          : {}),
+      },
+      evidence: evidenceBodies,
+      log,
+    });
 
-  return {
-    ...transmitted,
-    retired: outcome.retired === true,
-  };
+    if (stateDir && outcome && typeof outcome.status === "string") {
+      try {
+        clearJournalOnTerminal({
+          stateDir,
+          jobId,
+          attemptId,
+          status: outcome.status,
+        });
+      } catch (err) {
+        emitLog(
+          log,
+          `could not clear job journal for ${jobId}: ${err.message}`,
+        );
+      }
+    }
+
+    return {
+      ...transmitted,
+      retired: outcome.retired === true,
+    };
+  } finally {
+    // Not awaited: a slow or unreachable log endpoint must not hold the
+    // claim loop. runAgent drains briefly on shutdown.
+    closeInBackground(jobLogSession);
+  }
 }
 
 /**
@@ -2185,6 +2216,14 @@ async function handleObserveOnlyJob({
  *   into ../trust-store. Always null/omitted in production.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
  */
+function stepForAction(action) {
+  if (action === "renew") return "acme";
+  if (action === "deploy") return "deploy";
+  if (action === "reload") return "reload";
+  if (action === "distribute-trust" || action === "revoke-trust") return "trust";
+  return "other";
+}
+
 async function executeJob({
   job,
   jobId,
@@ -2197,6 +2236,7 @@ async function executeJob({
   executionContext,
   log = console.error,
   trustStoreSeams = null,
+  jobLog = null,
 }) {
   const { execution } = executionContext;
   const action = job.action;
@@ -2220,6 +2260,11 @@ async function executeJob({
   // bindEvidenceClientToClaim above for why this is done once, here, rather
   // than threading claimId through every downstream execute*Job helper).
   const claimBoundClient = bindEvidenceClientToClaim(client, claimId);
+
+  if (jobLog) {
+    jobLog.step(stepForAction(action));
+    jobLog.info(`Starting ${action || "job"}`);
+  }
 
   if (action === "noop") {
     await reportStepEvidence(claimBoundClient, jobId, [
@@ -6378,6 +6423,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
+    await drainJobLogSessions();
   }
 }
 

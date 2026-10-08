@@ -164,6 +164,25 @@ function validClaimBody() {
   return { maxJobs: 2, supportedActions: ["renew", "reload"] };
 }
 
+function validLogBody() {
+  return {
+    jobId: "job-1",
+    claimId: "claim-1",
+    firstSeq: 1,
+    lines: [
+      {
+        seq: 1,
+        ts: "2026-10-08T08:30:00.000Z",
+        level: "info",
+        step: "deploy",
+        message: "Deploying certificate",
+      },
+    ],
+    droppedBefore: 0,
+    final: false,
+  };
+}
+
 function validResultBody() {
   return {
     jobId: "job-1",
@@ -196,6 +215,7 @@ const VALID_MESSAGES = {
   claim: () => envelope("claim", validClaimBody()),
   result: () => envelope("result", validResultBody(), { clockOffsetMs: 42 }),
   evidence: () => envelope("evidence", validEvidenceBody()),
+  log: () => envelope("log", validLogBody()),
 };
 
 function clone(value) {

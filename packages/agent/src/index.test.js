@@ -753,6 +753,7 @@ describe("registerIfNeeded", () => {
     // pass the manifest gate and get declared.
     const expectedDeclaredCapabilities = [
       "evidence-claim-binding-v1",
+      "job-log-stream-v1",
       ...(process.platform === "win32"
         ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
         : AGENT_TRUST_STORE_PREREQUISITES.candidate

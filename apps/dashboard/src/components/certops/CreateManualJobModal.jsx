@@ -3,6 +3,7 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Box,
   Button,
   ButtonGroup,
   Checkbox,
@@ -47,6 +48,7 @@ import {
   truncateId,
 } from './certopsJobsFormat';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
+import AgentShellConsole from './AgentShellConsole.jsx';
 import { useCertOpsControllerClusters } from './useCertOpsControllerClusters.js';
 import {
   useCertOpsIsWorkspaceAdmin,
@@ -343,6 +345,7 @@ export default function CreateManualJobModal({
   const [fieldReason, setFieldReason] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [createdJobId, setCreatedJobId] = useState(null);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
   const [controllerClusterId, setControllerClusterId] = useState('');
   const [controllerNamespace, setControllerNamespace] = useState('');
@@ -570,6 +573,7 @@ export default function CreateManualJobModal({
 
   const handleClose = () => {
     if (submitting) return;
+    setCreatedJobId(null);
     resetForm();
     onClose();
   };
@@ -737,6 +741,11 @@ export default function CreateManualJobModal({
             'Job created',
             result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
           );
+          if (result?.job?.id) {
+            setCreatedJobId(result.job.id);
+            onCreated?.();
+            return;
+          }
         }
         resetForm();
         onClose();
@@ -763,6 +772,7 @@ export default function CreateManualJobModal({
             : 'Provisioning intent created',
           result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
         );
+        // Controller jobs have no agent console to watch.
         resetForm();
         onClose();
         onCreated?.();
@@ -790,6 +800,11 @@ export default function CreateManualJobModal({
             : `Job ID: ${truncateId(job.id)}`
           : undefined
       );
+      if (job?.id) {
+        setCreatedJobId(job.id);
+        onCreated?.();
+        return;
+      }
       resetForm();
       onClose();
       onCreated?.();
@@ -1551,6 +1566,14 @@ export default function CreateManualJobModal({
               )}
             </VStack>
           )}
+          {createdJobId ? (
+            <Box mt={4}>
+              <AgentShellConsole
+                workspaceId={workspaceId}
+                jobId={createdJobId}
+              />
+            </Box>
+          ) : null}
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Button
@@ -1558,14 +1581,14 @@ export default function CreateManualJobModal({
             onClick={handleClose}
             isDisabled={submitting}
           >
-            Cancel
+            {createdJobId ? 'Close' : 'Cancel'}
           </Button>
           <Button
             {...primaryButtonProps}
             ml={{ base: 0, md: 3 }}
             mt={{ base: 2, md: 0 }}
             onClick={handleSubmit}
-            isDisabled={!canSubmit}
+            isDisabled={!canSubmit || Boolean(createdJobId)}
             isLoading={submitting}
             loadingText='Creating'
           >

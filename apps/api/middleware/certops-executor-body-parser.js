@@ -19,6 +19,7 @@ const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
 const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
 const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
 const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
+const CERTOPS_AGENT_LOG_BODY_LIMIT_BYTES = 64 * 1024;
 const CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES = Object.freeze({
   aggregateExecutorEvents: "aggregate-executor-events",
   controllerObservations: "controller-observations",
@@ -101,6 +102,7 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
       normalizedPath === `${prefix}/agent/jobs/claim` ||
       normalizedPath === `${prefix}/agent/jobs/claim/` ||
       new RegExp(`^${prefix}/agent/jobs/[^/]+/lease/?$`).test(normalizedPath) ||
+      new RegExp(`^${prefix}/agent/jobs/[^/]+/logs/?$`).test(normalizedPath) ||
       normalizedPath === `${prefix}/agent/jobs/results` ||
       normalizedPath === `${prefix}/agent/jobs/results/`
     ) {
@@ -173,21 +175,32 @@ function handleCertOpsMachineWriteBodyParserError(error, _req, res, next) {
  * gating, token hashing, database access, or handler work. The router checks
  * the request marker and applies its own limiter only when mounted standalone.
  */
+function isAgentJobLogPost(req) {
+  const normalized = normalizedRequestPath(req?.path || req?.originalUrl);
+  return /\/agent\/jobs\/[^/]+\/logs\/?$/.test(normalized);
+}
+
 function createCertOpsMachineWritePreParserBoundary(options = {}) {
   const preAuthRateLimitMiddleware =
     options.preAuthRateLimitMiddleware ||
     createCertOpsMachineTokenPreAuthRateLimit(options.rateLimitOptions || {});
   const parser =
     options.parser || createCertOpsMachineWriteJsonParser(options.parserOptions);
+  const logParser =
+    options.logParser ||
+    createCertOpsMachineWriteJsonParser({
+      limitBytes: CERTOPS_AGENT_LOG_BODY_LIMIT_BYTES,
+    });
   const errorHandler =
     options.errorHandler || handleCertOpsMachineWriteBodyParserError;
 
   return function certOpsMachineWritePreParserBoundary(req, res, next) {
     if (!isExactCertOpsMachineWritePost(req)) return next();
+    const selectedParser = isAgentJobLogPost(req) ? logParser : parser;
     return preAuthRateLimitMiddleware(req, res, (rateLimitError) => {
       if (rateLimitError) return next(rateLimitError);
       markCertOpsExecutorPreAuthLimit(req);
-      return parser(req, res, (parserError) => {
+      return selectedParser(req, res, (parserError) => {
         if (parserError) return errorHandler(parserError, req, res, next);
         return next();
       });
@@ -208,6 +221,7 @@ module.exports = {
   CERTOPS_JOB_EVENTS_PATH,
   CERTOPS_JOB_EVIDENCE_PATH,
   CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES,
+  CERTOPS_AGENT_LOG_BODY_LIMIT_BYTES,
   CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES,
   CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE,
   CERTOPS_EXECUTOR_EVENT_INVALID,

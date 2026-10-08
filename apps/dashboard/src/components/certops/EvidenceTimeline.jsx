@@ -45,6 +45,8 @@ import {
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
+import AgentShellConsole from './AgentShellConsole.jsx';
+import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
@@ -280,6 +282,7 @@ export default function EvidenceTimeline({
   compact = false,
   embedded = false,
 }) {
+  const { workspaceId } = useWorkspace();
   const { muted, border, dashboard } = useDashboardTheme();
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
@@ -677,6 +680,7 @@ export default function EvidenceTimeline({
           {truncationNotes.join(' · ')}
         </Text>
       ) : null}
+      <AgentShellConsole workspaceId={workspaceId} jobId={jobId} />
     </VStack>
   );
 }

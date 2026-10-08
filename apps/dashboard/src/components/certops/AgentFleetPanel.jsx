@@ -38,6 +38,8 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import CopyableId from '../CopyableId.jsx';
+import AgentShellConsole from './AgentShellConsole.jsx';
+import { listAgentFleetLog } from './certopsJobsApi';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
@@ -601,6 +603,69 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   panel title (the tab's "Deploy an agent" button), so the fleet keeps
  *   its own title/description without the caller duplicating them.
  */
+function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
+  const { overlayProps, headerProps, bodyProps, closeButtonProps } =
+    useDashboardModalProps();
+  const [jobs, setJobs] = useState([]);
+  const [jobId, setJobId] = useState(null);
+  useEffect(() => {
+    if (!isOpen || !agent?.id || !workspaceId) return undefined;
+    let cancelled = false;
+    listAgentFleetLog(workspaceId, agent.id)
+      .then(result => {
+        if (cancelled) return;
+        const seen = new Set();
+        const items = (result.items || []).filter(item => {
+          if (seen.has(item.jobId)) return false;
+          seen.add(item.jobId);
+          return true;
+        });
+        setJobs(items);
+        setJobId(items[0]?.jobId || null);
+      })
+      .catch(() => {
+        if (!cancelled) setJobs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, agent, workspaceId]);
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '720px' }}>
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Agent logs</DashboardModalTitle>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          {jobs.length === 0 ? (
+            <Text fontSize='sm'>No execution console for this agent yet.</Text>
+          ) : (
+            <Stack spacing={3}>
+              <HStack spacing={2} flexWrap='wrap'>
+                {jobs.map(job => (
+                  <Button
+                    key={job.jobId}
+                    size='xs'
+                    variant={job.jobId === jobId ? 'solid' : 'outline'}
+                    onClick={() => setJobId(job.jobId)}
+                  >
+                    Job {String(job.jobId).slice(0, 8)} ({job.jobStatus})
+                  </Button>
+                ))}
+              </HStack>
+              {jobId ? (
+                <AgentShellConsole workspaceId={workspaceId} jobId={jobId} />
+              ) : null}
+            </Stack>
+          )}
+        </ModalBody>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
 export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
@@ -619,6 +684,7 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     });
 
   const [retireTarget, setRetireTarget] = useState(null);
+  const [logTarget, setLogTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
 
   const { muted, dashboard } = useDashboardThemeColors();
@@ -930,6 +996,13 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                                 Edit alerting
                               </Button>
                             ) : null}
+                            <Button
+                              size='xs'
+                              variant='outline'
+                              onClick={() => setLogTarget(agent)}
+                            >
+                              View logs
+                            </Button>
                             {status !== 'retired' ? (
                               <Button
                                 size='xs'
@@ -952,6 +1025,12 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
         </Box>
       ) : null}
 
+      <AgentJobLogsModal
+        isOpen={Boolean(logTarget)}
+        onClose={() => setLogTarget(null)}
+        agent={logTarget}
+        workspaceId={workspaceId}
+      />
       <RetireAgentModal
         isOpen={Boolean(retireTarget)}
         onClose={() => setRetireTarget(null)}

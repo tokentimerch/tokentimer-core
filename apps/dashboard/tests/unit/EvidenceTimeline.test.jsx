@@ -26,6 +26,14 @@ vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
   useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
+vi.mock('../../src/components/certops/AgentShellConsole.jsx', () => ({
+  default: () => null,
+}));
+
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}));
+
 function renderWithProviders(ui) {
   return render(
     <ChakraProvider>

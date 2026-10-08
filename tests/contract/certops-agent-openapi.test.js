@@ -48,6 +48,7 @@ const AGENT_ROUTES = {
   "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/results": "agentCredentialAuth",
+  "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth",
 };
 
 /**
@@ -231,7 +232,7 @@ describe("CertOps agent routes OpenAPI contract", () => {
 
 describe("CertOps route-compat contract (agent runtime)", () => {
   it("carries the agent-runtime version and status", () => {
-    assert.strictEqual(routeCompat.version, "0.17.0");
+    assert.strictEqual(routeCompat.version, "0.18.0");
     assert.strictEqual(routeCompat.status, "agent-runtime-stable");
   });
 
@@ -294,6 +295,7 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
       "claim",
       "result",
       "evidence",
+      "log",
     ]);
     assert.ok(
       envelopeBlock.includes(`enum: [${schemaEnum.join(", ")}]`),
