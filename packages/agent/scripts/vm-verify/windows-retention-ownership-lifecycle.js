@@ -9,6 +9,7 @@
 // and a real CA -- not a mocked execFileImpl anywhere in this script.
 //
 // Usage: node windows-retention-ownership-lifecycle.js <caConfig> <stateDir> <workDir> <port>
+//   Against an enterprise CA, set TT_VERIFY_CA_TEMPLATE to an auto-issue template.
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -26,6 +27,11 @@ const {
   markIssuedContainerAccepted,
 } = certStore;
 const { recordSupersededWindowsCertificate, runWindowsRetentionSweep } = agent;
+
+// An enterprise CA needs the template at submit; a standalone CA takes none.
+const SUBMIT_TEMPLATE_ARGS = process.env.TT_VERIFY_CA_TEMPLATE
+  ? ["-attrib", `CertificateTemplate:${process.env.TT_VERIFY_CA_TEMPLATE}`]
+  : [];
 
 function runCaptured(cmd, args) {
   try {
@@ -52,7 +58,7 @@ async function issueRealCert({ caConfig, workDir, commonName, jobId }) {
     try { fs.unlinkSync(stale); } catch { /* fine */ }
   }
 
-  const submit = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-f", "-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath, cerPath]);
   let requestId = null;
   const idMatch = `${submit.stdout}\n${submit.stderr}`.match(/RequestId:\s*(\d+)/i);
   if (idMatch) requestId = idMatch[1];
