@@ -18,7 +18,10 @@ the CA Read right. Follow-up checks the same day replaced the pinned CA
 certificate thumbprint with a pinned CA public key (a CA certificate renewal
 changes the thumbprint but not the key), mapped submit-time permission and
 template-availability denials, qualified EC keys on schema version 4
-templates, and made a submit that never reached the CA retryable.
+templates, and made a submit that never reached the CA retryable. Writing
+the wire contracts then added the `requested` and `refused` enrollment
+states, named the remaining error codes and rejection reasons, and aligned
+the evidence type names with the existing convention.
 
 ## Context
 
@@ -103,6 +106,7 @@ This keeps both state machines monotonic:
 Enrollment states:
 
 ```
+requested -> prepared
 prepared -> submitting
 submitting -> pending_issuance | issued | denied | submission_uncertain
 submission_uncertain -> pending_issuance | issued | abandoned
@@ -113,7 +117,13 @@ validated -> installing
 installing -> installed | install_failed
 ```
 
-Terminal enrollment states are `denied`, `abandoned`, `expired`,
+`requested` is the state the control plane creates the enrollment in,
+before the agent has generated a key. Any state before `installing` can
+also move to `refused` when the agent declines to continue: an agent-local
+rule no longer matches (decision 4), or a template or CA check fails
+(decision 5). The key, if one exists, is freed.
+
+Terminal enrollment states are `refused`, `denied`, `abandoned`, `expired`,
 `cancelled`, `rejected_invalid`, `validation_expired`, `installed` and
 `install_failed`. Transitions are forward-only; a late or replayed agent
 report never moves an enrollment backwards.
@@ -161,10 +171,10 @@ when the issuer is validated; see decision 6), `template`,
 `requireLaterNotAfter`.
 
 The agent records `snapshotSha256` when the enrollment reaches `prepared`
-and rejects any continuation carrying a different hash with
-`ENROLLMENT_SNAPSHOT_MISMATCH`. Agent-local policy is still re-evaluated on
-every continuation: if local policy has become more restrictive, the
-enrollment fails and its key is freed. Editing an issuer or profile affects
+and rejects any continuation carrying a different hash with the rejection
+reason `enrollment_snapshot_mismatch`. Agent-local policy is still
+re-evaluated on every continuation: if local policy has become more
+restrictive, the enrollment is `refused` and its key is freed. Editing an issuer or profile affects
 only new enrollments; the dashboard lists pending enrollments that still use
 an older issuer version and offers cancel and re-enroll. A profile change can
 therefore never silently redirect an existing enrollment to another CA or
@@ -177,8 +187,8 @@ The agent configuration gains `adcs.enrollmentRules`, a list of
 one rule matches on every field at once; independent CA and template
 allowlists are not used, because they would permit combinations the
 operator never intended. `dnsScopes` uses the same zone-coverage rule as the
-existing DNS zone allowlist. A job outside the rules is `rejected` with no
-CA contact.
+existing DNS zone allowlist. A job outside the rules is `rejected` with the
+rejection reason `issuer_not_allowlisted` and no CA contact.
 
 The agent also refuses `transport` values other than `dcom` and never passes
 `-rpc` to `certreq`.
@@ -216,8 +226,10 @@ For the CA, the agent reads `EditFlags` with
 `certutil -config <caConfig> -getreg CA\InterfaceFlags` and refuses when
 `IF_ENFORCEENCRYPTICERTREQUEST` (`0x200`) is clear. If either value cannot be
 read under the agent identity, the agent refuses unless agent-local policy
-carries an explicit operator attestation for that CA. The agent never adds a
-`SAN:` request attribute.
+carries an explicit operator attestation for that CA. Either refusal uses
+`ADCS_CA_CONFIG_UNSAFE`. The agent never adds a `SAN:` request attribute.
+Every refusal in this decision ends the enrollment `refused` before any
+submit.
 
 The agent also fetches the CA's certificates from the CA itself
 (`certutil -config <caConfig> -cainfo certcount`, then `-ca.cert <index>`
@@ -261,7 +273,8 @@ from `-submit` or `-retrieve`, before it touches any store. It is written
 issuer-agnostically so the ACME path can adopt it later, first in
 report-only mode.
 
-Definitive failures move the enrollment to `rejected_invalid`; the
+Definitive failures move the enrollment to `rejected_invalid` with
+`ADCS_CERTIFICATE_INVALID` (or `ADCS_CA_KEY_CHANGED`, below); the
 certificate is never accepted and the key is freed:
 
 - the certificate's SubjectPublicKeyInfo differs from the journaled CSR's
@@ -572,11 +585,12 @@ in the build-time qualified-capabilities manifest only after the release
 gate below is met, and dispatch requires a fresh capability epoch as for the
 other gated capabilities (ADR-0012 decisions 14 and 17).
 
-New evidence kinds: `adcs-template-verdict`, `adcs-submitted`,
-`adcs-pending`, `adcs-issued`, `adcs-denied`, `adcs-uncertain`,
-`adcs-validation-deferred` and `adcs-rejected-invalid`. Evidence carries the
-RequestId, CA config, template, certificate fingerprints and the validation
-verdict, never key material.
+New evidence types, following the existing `<domain>.<event>` naming:
+`adcs.template_checked`, `adcs.submitted`, `adcs.pending`, `adcs.issued`,
+`adcs.denied`, `adcs.uncertain`, `adcs.validation_deferred` and
+`adcs.rejected_invalid`. Evidence carries the RequestId, CA config,
+template, certificate fingerprints and the validation verdict, never key
+material.
 
 ## Questions the proof of concept must answer
 
