@@ -397,7 +397,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
             <Box id={AUTO_SYNC_MULTI_CONFIG_HASH}>
               <SettingsIntegrationCard
                 title='Auto-sync configurations'
-                description='Allow more than one scheduled connection per provider after the worker fleet is verified.'
+                description='Allow more than one scheduled connection per provider after confirming no worker prior to 0.17.0 is still running.'
                 icon={<Icon as={FiRepeat} boxSize={6} color='blue.500' />}
                 configured={false}
                 isOpen={openIntegration === 'auto-sync'}
