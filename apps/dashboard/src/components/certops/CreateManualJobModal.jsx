@@ -823,28 +823,44 @@ export default function CreateManualJobModal({
       scrollBehavior='inside'
     >
       <ModalOverlay {...overlayProps} />
-      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '640px' }}>
+      <DashboardModalFrame
+        maxW={{
+          base: 'calc(100vw - 24px)',
+          md: createdJobId ? '720px' : '640px',
+        }}
+      >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
-            {isTrustOp
-              ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
-                // trust"), so appending the full "trust anchor" would stutter.
-                `${jobOperationLabel(trustOp.operation)} anchor`
-              : 'Create manual job'}
+            {createdJobId
+              ? 'Job dispatched'
+              : isTrustOp
+                ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
+                  // trust"), so appending the full "trust anchor" would stutter.
+                  `${jobOperationLabel(trustOp.operation)} anchor`
+                : 'Create manual job'}
           </DashboardModalTitle>
           <DashboardModalDescription>
-            {isTrustOp
-              ? `${trustOp.anchorName || 'Trust anchor'}${
-                  trustOp.anchorFingerprint
-                    ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
-                    : ''
-                }. The job is recorded with source "api".`
-              : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
+            {createdJobId
+              ? 'Live agent execution. The console below streams curated agent output as it arrives.'
+              : isTrustOp
+                ? `${trustOp.anchorName || 'Trust anchor'}${
+                    trustOp.anchorFingerprint
+                      ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
+                      : ''
+                  }. The job is recorded with source "api".`
+                : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
         <ModalBody {...bodyProps}>
-          {isTrustOp ? (
+          {createdJobId ? (
+            <AgentShellConsole
+              workspaceId={workspaceId}
+              jobId={createdJobId}
+              title='Agent output'
+              maxHeight='360px'
+            />
+          ) : isTrustOp ? (
             <VStack align='stretch' spacing={4}>
               {!isWorkspaceAdmin ? (
                 <Alert status='warning' variant='subtle' borderRadius='md'>
@@ -1566,14 +1582,6 @@ export default function CreateManualJobModal({
               )}
             </VStack>
           )}
-          {createdJobId ? (
-            <Box mt={4}>
-              <AgentShellConsole
-                workspaceId={workspaceId}
-                jobId={createdJobId}
-              />
-            </Box>
-          ) : null}
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Button

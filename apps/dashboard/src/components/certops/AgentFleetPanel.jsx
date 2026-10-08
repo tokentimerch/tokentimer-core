@@ -18,6 +18,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Stack,
   Table,
@@ -604,13 +605,20 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   its own title/description without the caller duplicating them.
  */
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
-  const { overlayProps, headerProps, bodyProps, closeButtonProps } =
+  const { overlayProps, headerProps, bodyProps, closeButtonProps, footerProps } =
     useDashboardModalProps();
+  const { muted, text } = useDashboardThemeColors();
   const [jobs, setJobs] = useState([]);
   const [jobId, setJobId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const agentLabel =
+    agent?.name || agent?.hostname || agent?.agentId || 'Agent';
   useEffect(() => {
     if (!isOpen || !agent?.id || !workspaceId) return undefined;
     let cancelled = false;
+    setLoading(true);
+    setJobs([]);
+    setJobId(null);
     listAgentFleetLog(workspaceId, agent.id)
       .then(result => {
         if (cancelled) return;
@@ -625,6 +633,9 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
       })
       .catch(() => {
         if (!cancelled) setJobs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -636,31 +647,61 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
       <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '720px' }}>
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Agent logs</DashboardModalTitle>
+          <DashboardModalDescription>
+            Curated agent output from recent CertOps jobs for {agentLabel}.
+            Secrets are filtered. Oldest first.
+          </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
-          {jobs.length === 0 ? (
-            <Text fontSize='sm'>No execution console for this agent yet.</Text>
-          ) : (
+          {loading ? (
+            <HStack spacing={2} color={muted} py={6} justify='center'>
+              <Spinner size='sm' />
+              <Text fontSize='sm'>Loading agent logs...</Text>
+            </HStack>
+          ) : null}
+          {!loading && jobs.length === 0 ? (
+            <Box py={4}>
+              <Text fontSize='sm' fontWeight='semibold' color={text}>
+                No job logs for this agent yet.
+              </Text>
+              <Text fontSize='sm' color={muted} mt={1}>
+                Logs appear after the agent claims and reports CertOps jobs.
+              </Text>
+            </Box>
+          ) : null}
+          {!loading && jobs.length > 0 ? (
             <Stack spacing={3}>
-              <HStack spacing={2} flexWrap='wrap'>
-                {jobs.map(job => (
-                  <Button
-                    key={job.jobId}
-                    size='xs'
-                    variant={job.jobId === jobId ? 'solid' : 'outline'}
-                    onClick={() => setJobId(job.jobId)}
-                  >
-                    Job {String(job.jobId).slice(0, 8)} ({job.jobStatus})
-                  </Button>
-                ))}
-              </HStack>
+              <Box>
+                <Text fontSize='sm' mb={1} color={muted}>
+                  Source
+                </Text>
+                <Select
+                  size='sm'
+                  value={jobId || ''}
+                  onChange={event => setJobId(event.target.value || null)}
+                >
+                  {jobs.map(job => (
+                    <option key={job.jobId} value={job.jobId}>
+                      Job {String(job.jobId).slice(0, 8)} · {job.jobStatus}
+                    </option>
+                  ))}
+                </Select>
+              </Box>
               {jobId ? (
-                <AgentShellConsole workspaceId={workspaceId} jobId={jobId} />
+                <AgentShellConsole
+                  workspaceId={workspaceId}
+                  jobId={jobId}
+                  title={`Agent · ${agentLabel}`}
+                  maxHeight='360px'
+                />
               ) : null}
             </Stack>
-          )}
+          ) : null}
         </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Button onClick={onClose}>Close</Button>
+        </ModalFooter>
       </DashboardModalFrame>
     </Modal>
   );

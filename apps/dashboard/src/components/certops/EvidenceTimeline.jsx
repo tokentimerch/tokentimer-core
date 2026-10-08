@@ -680,7 +680,14 @@ export default function EvidenceTimeline({
           {truncationNotes.join(' · ')}
         </Text>
       ) : null}
-      <AgentShellConsole workspaceId={workspaceId} jobId={jobId} />
+      {workspaceId && jobId ? (
+        <AgentShellConsole
+          workspaceId={workspaceId}
+          jobId={jobId}
+          title='Agent output'
+          maxHeight='200px'
+        />
+      ) : null}
     </VStack>
   );
 }

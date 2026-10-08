@@ -4,6 +4,7 @@ import { ChakraProvider } from '@chakra-ui/react';
 
 import AgentShellConsole, {
   deliveryLabel,
+  formatConsoleLine,
 } from '../../src/components/certops/AgentShellConsole.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -21,18 +22,52 @@ function renderConsole(fetcher) {
   );
 }
 
-function line(seq, message) {
-  return { claimId: 'claim-1', attempt: 1, seq, message };
+function line(seq, message, overrides = {}) {
+  return {
+    claimId: 'claim-1',
+    attempt: 1,
+    seq,
+    message,
+    ts: `2026-10-06T08:43:5${seq}.000Z`,
+    ...overrides,
+  };
 }
 
-const streaming = [{ claimId: 'claim-1', attempt: 1, status: 'streaming', streamingEnabled: true }];
-const finalStreams = [{ claimId: 'claim-1', attempt: 1, status: 'final', streamingEnabled: true }];
+const streaming = [
+  {
+    claimId: 'claim-1',
+    attempt: 1,
+    status: 'streaming',
+    streamingEnabled: true,
+  },
+];
+const finalStreams = [
+  { claimId: 'claim-1', attempt: 1, status: 'final', streamingEnabled: true },
+];
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('AgentShellConsole', () => {
+  it('renders the POC terminal chrome and formats agent lines', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      items: [line(1, 'Starting renew')],
+      nextCursor: 'c1',
+      hasMore: false,
+      logsComplete: false,
+      streams: streaming,
+      storageEnabled: true,
+    });
+
+    renderConsole(fetcher);
+    await screen.findByText(/tokentimer-agent: Starting renew/);
+    expect(screen.getByText('Agent output')).toBeInTheDocument();
+    expect(screen.getByText(/HOST\s+tokentimer-agent/)).toBeInTheDocument();
+    expect(screen.getByText('Streaming')).toBeInTheDocument();
+    expect(screen.getByText('job-1')).toBeInTheDocument();
+  });
+
   it('polls from the last cursor and appends only new lines', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetcher = vi
@@ -46,7 +81,7 @@ describe('AgentShellConsole', () => {
         storageEnabled: true,
       })
       .mockResolvedValueOnce({
-        items: [line(2, 'ACME order succeeded')],
+        items: [line(2, 'ACME order succeeded', { level: 'info' })],
         nextCursor: 'c2',
         hasMore: false,
         logsComplete: true,
@@ -55,17 +90,17 @@ describe('AgentShellConsole', () => {
       });
 
     renderConsole(fetcher);
-    await screen.findByText('Starting renew');
+    await screen.findByText(/Starting renew/);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1100);
     });
-    await screen.findByText('ACME order succeeded');
+    await screen.findByText(/ACME order succeeded/);
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0][2].cursor).toBeUndefined();
     expect(fetcher.mock.calls[1][2].cursor).toBe('c1');
-    expect(screen.getAllByText('Starting renew')).toHaveLength(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Stream complete');
+    expect(screen.getAllByText(/Starting renew/)).toHaveLength(1);
+    expect(screen.getByText('Succeeded')).toBeInTheDocument();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -89,20 +124,36 @@ describe('AgentShellConsole', () => {
 
     renderConsole(fetcher);
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Could not load agent output'
-      )
+      expect(
+        screen.getAllByText(/Could not load agent output/).length
+      ).toBeGreaterThan(0)
     );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_100);
     });
-    await screen.findByText('back');
-    expect(screen.getByRole('status')).toHaveTextContent('Stream complete');
+    await screen.findByText(/tokentimer-agent: back/);
+    expect(screen.getByText('Succeeded')).toBeInTheDocument();
   });
 
   it('labels a viewer response without showing lines', () => {
     expect(
-      deliveryLabel({ items: [], linesVisible: false, streams: [], storageEnabled: true })
+      deliveryLabel({
+        items: [],
+        linesVisible: false,
+        streams: [],
+        storageEnabled: true,
+      })
     ).toBe('You need manager access to view agent output');
+  });
+
+  it('formats bare messages into the agent logger line shape', () => {
+    expect(
+      formatConsoleLine({
+        message: 'Starting noop',
+        ts: '2026-10-06T08:43:53.000Z',
+        claimId: 'c',
+        seq: 1,
+      }).msg
+    ).toBe('2026-10-06T08:43:53.000Z tokentimer-agent: Starting noop');
   });
 });
