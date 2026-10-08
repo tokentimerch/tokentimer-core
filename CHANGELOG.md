@@ -28,6 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 
 - `proxy-addr` 2.0.7 → 2.0.8 ([GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h), CVE-2026-90711): IPv4-mapped IPv6 trust subnets matched every IPv4 client, letting it spoof `X-Forwarded-For`. Core configures `trust proxy` as a hop count (`TRUST_PROXY_HOPS`), which this advisory does not affect.
+- Alpine-based images (`tokentimer-core-api`, `-worker`, `-dashboard`, `-k8s-controller`) require `zlib` 1.3.2-r1 or newer (CVE-2026-85091, High).
 
 ## [0.17.2] - 2026-10-05
 
