@@ -9,7 +9,8 @@
   "main": "src/index.js",
   "bin": {
     "tokentimer-agent": "bin/tokentimer-agent.js",
-    "certops-dns-hook": "bin/certops-dns-hook.js"
+    "certops-dns-hook": "bin/certops-dns-hook.js",
+    "certops-reconcile-binding": "bin/reconcile-material-binding.js"
   },
   "scripts": {
     "start": "node bin/tokentimer-agent.js",

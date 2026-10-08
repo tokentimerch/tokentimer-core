@@ -5081,7 +5081,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+            enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         - in: query
           name: source
           schema:
@@ -7375,6 +7375,271 @@ paths:
           description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/distribution-groups:
+    get:
+      tags:
+        - CertOps
+      summary: List material distribution groups
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers:
+    get:
+      tags:
+        - CertOps
+      summary: Read independent desired and observed consumer states
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/versions:
+    get:
+      tags:
+        - CertOps
+      summary: List immutable public material versions
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/consumers/{bindingId}:
+    put:
+      tags:
+        - CertOps
+      summary: Revise an explicitly assigned consumer binding
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaterialDistribution_consumerBinding'
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/rollouts:
+    post:
+      tags:
+        - CertOps
+      summary: Request approval of a frozen rollout or explicit rollback
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - materialVersionId
+              properties:
+                materialVersionId:
+                  type: string
+                  format: uuid
+                verificationOnly:
+                  type: boolean
+                  default: false
+                maxParallel:
+                  type: integer
+                  minimum: 1
+                  maximum: 16
+                  default: 1
+      responses:
+        '201':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-groups/{groupId}/rollouts/{rolloutId}/state:
+    post:
+      tags:
+        - CertOps
+      summary: Pause, resume or retire a rollout
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: rolloutId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - state
+              properties:
+                state:
+                  type: string
+                  enum:
+                    - paused
+                    - deploying
+                    - retired
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
+  /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retry:
+    post:
+      tags:
+        - CertOps
+      summary: Retry the same immutable material intent
+      description: >-
+        Workspace membership and CertOps manager authorization required. Writes require an active workspace.
+        Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public distribution metadata
+        '403':
+          description: Workspace or policy denied
+        '409':
+          description: Stale intent, version, generation, period or approval
+        '422':
+          description: Invalid public intent
 components:
   securitySchemes:
     cookieAuth:
@@ -7614,6 +7879,239 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    MaterialDistribution_uuid:
+      type: string
+      format: uuid
+    MaterialDistribution_alias:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{1,64}$
+    MaterialDistribution_revision:
+      type: integer
+      minimum: 1
+      maximum: 2147483647
+    MaterialDistribution_generation:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    MaterialDistribution_fingerprint:
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    MaterialDistribution_publication:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - groupId
+        - managementPeriodId
+        - materialVersionId
+        - materialStoreRef
+        - issuanceProfileRef
+        - profileRevision
+      properties:
+        type:
+          enum: [vault-kv2]
+        groupId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        managementPeriodId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialVersionId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialStoreRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        issuanceProfileRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        profileRevision:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+    MaterialDistribution_materialDeployment:
+      type: object
+      additionalProperties: false
+      required:
+        - groupId
+        - bindingId
+        - rolloutId
+        - materialVersionId
+        - materialStoreRef
+        - providerVersion
+        - fingerprintSha256
+        - generation
+        - deploymentProfileRef
+        - profileRevision
+        - authorizationRevision
+        - verificationPolicy
+      properties:
+        groupId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        bindingId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        rolloutId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialVersionId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialStoreRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        providerVersion:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+        fingerprintSha256:
+          $ref: '#/components/schemas/MaterialDistribution_fingerprint'
+        generation:
+          $ref: '#/components/schemas/MaterialDistribution_generation'
+        deploymentProfileRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        profileRevision:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+        authorizationRevision:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+        verificationPolicy:
+          enum:
+            - served
+            - trust
+        verificationOnly:
+          type: boolean
+          description: Approved read-only verification without installation or reload.
+
+    MaterialDistribution_publicationReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - workspaceId
+        - groupId
+        - materialVersionId
+        - materialStoreRef
+        - providerVersion
+        - fingerprintSha256
+        - validTo
+      properties:
+        schemaVersion:
+          enum: [1]
+        workspaceId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        groupId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialVersionId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialStoreRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        providerVersion:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+        fingerprintSha256:
+          $ref: '#/components/schemas/MaterialDistribution_fingerprint'
+        validTo:
+          type: string
+          format: date-time
+          maxLength: 40
+    MaterialDistribution_deploymentReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - workspaceId
+        - groupId
+        - bindingId
+        - materialVersionId
+        - generation
+        - fetched
+        - installed
+        - bound
+        - servedVerified
+        - trustValidated
+        - fingerprintSha256
+        - validTo
+        - observedAt
+      properties:
+        schemaVersion:
+          enum: [1]
+        workspaceId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        groupId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        bindingId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialVersionId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        generation:
+          $ref: '#/components/schemas/MaterialDistribution_generation'
+        fetched:
+          type: boolean
+        installed:
+          type: boolean
+        bound:
+          type: boolean
+        servedVerified:
+          type: boolean
+        trustValidated:
+          type: boolean
+        fingerprintSha256:
+          $ref: '#/components/schemas/MaterialDistribution_fingerprint'
+        validTo:
+          type: string
+          format: date-time
+          maxLength: 40
+        observedAt:
+          type: string
+          format: date-time
+          maxLength: 40
+    MaterialDistribution_publicationProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - groupId
+        - managementPeriodId
+        - materialStoreRef
+        - issuanceProfileRef
+        - profileRevision
+      properties:
+        type:
+          enum: [vault-kv2]
+        groupId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        managementPeriodId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        materialStoreRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        issuanceProfileRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        profileRevision:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+    MaterialDistribution_consumerBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - deploymentProfileRef
+        - profileRevision
+        - required
+        - wave
+        - verificationPolicy
+        - freshnessSeconds
+        - state
+      properties:
+        agentId:
+          $ref: '#/components/schemas/MaterialDistribution_uuid'
+        deploymentProfileRef:
+          $ref: '#/components/schemas/MaterialDistribution_alias'
+        profileRevision:
+          $ref: '#/components/schemas/MaterialDistribution_revision'
+        required:
+          type: boolean
+        wave:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        verificationPolicy:
+          enum:
+            - served
+            - trust
+        freshnessSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+        state:
+          enum:
+            - active
+            - removed
+
     CertOpsCsrWorkflow:
       type: object
       description: Workspace-scoped public CSR workflow. PEM fields appear on create, detail, and mutation responses, but not list responses.
@@ -8675,7 +9173,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -8768,7 +9266,7 @@ components:
       properties:
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
           description: >-
             Job operation. "issue" is control-plane-only first-time issuance;
             it is dispatched to agents as action "renew", so the agent-facing
@@ -8792,6 +9290,10 @@ components:
             "issue"; the server assigns the id of the managed certificate it
             creates. For "distribute-trust"/"revoke-trust", this is the id of
             the trust anchor to act on.
+        assignedAgentId:
+          type: string
+          format: uuid
+          description: Explicit issuer agent row ID, required for issue with publicationDestination.
         agentId:
           type: string
           format: uuid
@@ -8819,7 +9321,12 @@ components:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
           description: >-
-            Public job payload. For operation "issue", payload.certificateId
+            Public job payload. A vault-managed issue uses publicationDestination
+            with materialStoreRef, issuanceProfileRef and profileRevision; it
+            requires assignedAgentId and forbids filesystem, reload and probe
+            destinations. The server assigns group and material-version IDs.
+            A deploy-from-store job is created from an approved rollout snapshot.
+            For operation "issue", payload.certificateId
             must be omitted because the server assigns it; the name and common
             name of the created certificate come from
             payload.target.reference, and its subject alternative names come
@@ -9097,7 +9604,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]
         status:
           type: string
           enum:
@@ -11802,7 +12309,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust]
+                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, deploy-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -11952,6 +12459,14 @@ components:
                   type: string
                   maxLength: 128
                   description: Single-use dispatch nonce from the signed job payload.
+                publicationReceipt:
+                  $ref: "#/components/schemas/MaterialDistribution_publicationReceipt"
+                deploymentReceipt:
+                  $ref: "#/components/schemas/MaterialDistribution_deploymentReceipt"
+                publicationCertificatePem:
+                  type: string
+                  maxLength: 262144
+                  description: Strictly public leaf and chain PEM; never key-bearing material.
                 evidenceItems:
                   type: array
                   minItems: 1

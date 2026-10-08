@@ -261,6 +261,14 @@ function deriveRenewalProfileFromIssuedCertificate({
   };
 
   // A Windows (os-store-managed) issuance deploys to a machine certificate
+  if (payload.publication) {
+    const { materialVersionId: _version, ...publicationDestination } = payload.publication;
+    return validateRenewalProfile({ ...sharedProfileFields, publicationDestination,
+      deploymentTargets: [], target: { type: "domain", reference: targetReference },
+      verification: { host: null, port: null, requireMatch: false } });
+  }
+
+  // A Windows (os-store-managed) issuance deploys to a machine certificate
   // store plus an IIS site binding, keyed on thumbprint, not to a filesystem
   // path (ADR-0012 decisions 1 and 10). Branching here, on the same
   // target.type discriminator validateTarget already uses, keeps a
@@ -463,7 +471,7 @@ async function ensureDerivedRenewalProfile({
     `INSERT INTO certificate_profiles (
        workspace_id, name, description, status, source, source_ref,
        renew_before_days, key_mode, public_metadata
-     ) VALUES ($1, $2, $3, 'active', $4, $5, $6, 'agent-local', $7::jsonb)
+     ) VALUES ($1, $2, $3, 'active', $4, $5, $6, $9, $7::jsonb)
      ON CONFLICT (workspace_id, LOWER(name)) DO UPDATE
        SET public_metadata = EXCLUDED.public_metadata,
            renew_before_days = COALESCE(
@@ -491,6 +499,7 @@ async function ensureDerivedRenewalProfile({
         },
       }),
       OPERATOR_OWNED_METADATA_KEY,
+      payload.publication ? "vault-managed" : "agent-local",
     ],
   );
   // RETURNING yields nothing when the DO UPDATE's WHERE filters the row out, so

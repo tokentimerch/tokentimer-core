@@ -1128,6 +1128,7 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND status = 'pending'
           AND executor_kind = 'agent'
+          AND NOT (payload ? 'distributionRollout')
           AND (
             cj.subject_type IS DISTINCT FROM 'managed_certificate'
             OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
@@ -1243,11 +1244,22 @@ async function claimJobs({
           requiredDnsProvider: row.required_dns_provider,
           requiredCommandProfile: row.required_command_profile,
           subjectIsProvisioning: row.subject_is_provisioning === true,
+          payload: row.payload,
         },
         compatibility,
         env,
       });
       if (!eligibility.eligible) continue;
+      if (row.payload?.publication || row.payload?.materialDeployment) {
+        try {
+          await require("./materialDistribution").resolveDistributionJobDefaults({ client,
+            workspaceId: row.workspace_id, operation: row.operation, subjectId: row.subject_id,
+            payload: row.payload, assignedAgentId: row.assigned_agent_id, jobId: row.id });
+        } catch (error) {
+          if (!String(error.code || "").startsWith("CERTOPS_")) throw error;
+          continue;
+        }
+      }
 
       // ADR-0012 decision 20i: re-verify the anchor's current status and
       // that the signed intent still matches the anchor row, defense-in-depth
@@ -1513,7 +1525,7 @@ async function renewJobLease({
     await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     const locked = await client.query(
-      `SELECT id, status, claimed_by_agent_id, claim_id, lease_expires_at
+      `SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id, claim_id, lease_expires_at
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -1542,6 +1554,13 @@ async function renewJobLease({
         "Certificate job is not in a renewable lease state",
         CERTOPS_AGENT_LEASE_INVALID,
       );
+    }
+
+    if (job.payload?.publication || job.payload?.materialDeployment) {
+      if (new Date(job.lease_expires_at).getTime() <= Date.now()) throw serviceError("Material claim expired", CERTOPS_AGENT_LEASE_INVALID);
+      await require("./materialDistribution").resolveDistributionJobDefaults({ client,
+        workspaceId: agent.workspaceId, operation: job.operation, subjectId: job.subject_id,
+        payload: job.payload, assignedAgentId: job.assigned_agent_id, jobId: job.id });
     }
 
     const updated = await client.query(
@@ -2248,6 +2267,29 @@ async function ingestResult({
       );
     }
 
+    const materialJob = job.payload?.publication || job.payload?.materialDeployment;
+    if (!job.payload?.publication && (body.publicationReceipt || body.publicationCertificatePem) ||
+        !job.payload?.materialDeployment && body.deploymentReceipt) {
+      throw serviceError("Unexpected material receipt", "CERTOPS_MATERIAL_RECEIPT_UNEXPECTED");
+    }
+    if (jobStatus === "succeeded" && job.payload?.publication) {
+      await require("./materialDistribution").acceptPublicationReceipt({ client, workspaceId: agent.workspaceId,
+        agentId: agent.id, job, receipt: body.publicationReceipt, certificatePem: body.publicationCertificatePem });
+    }
+    if (body.deploymentReceipt) {
+      await require("./materialDistribution").acceptDeploymentReceipt({ client, workspaceId: agent.workspaceId,
+        agentId: agent.id, job, receipt: body.deploymentReceipt, jobStatus });
+    } else if (jobStatus === "succeeded" && job.payload?.materialDeployment) {
+      throw serviceError("Missing deployment receipt", "CERTOPS_MATERIAL_RECEIPT_REQUIRED");
+    } else if (job.payload?.materialDeployment && !["succeeded","dry_run_complete"].includes(jobStatus)) {
+      const intent = job.payload.materialDeployment;
+      await client.query(`UPDATE certops_consumer_deployments SET stage=$3,failure_code=$4
+        WHERE workspace_id=$1 AND job_id=$2`, [agent.workspaceId,job.id,
+        jobStatus === "orphaned_unknown_effect" ? jobStatus : "failed", `agent_result_${jobStatus}`]);
+      await require("./materialDistribution").enqueueDistributionEvent(client,agent.workspaceId,
+        "distribution_rollout_requested",`${intent.rolloutId}:${job.id}:${job.claim_id}`,
+        {groupId:intent.groupId,rolloutId:intent.rolloutId});
+    }
     const isFailure =
       jobStatus !== "succeeded" && jobStatus !== "dry_run_complete";
     // Terminal renew failures must persist error_code for the alerts stage.
@@ -2463,7 +2505,7 @@ async function ingestResult({
     // really exists. Reconcile before the alert stage and inside this
     // transaction, so the job's terminal status and the certificate becoming
     // active are never observable apart.
-    if (jobStatus === "succeeded") {
+    if (jobStatus === "succeeded" && !materialJob) {
       const provisioned = await reconcileProvisionedCertificate({
         client,
         workspaceId: agent.workspaceId,

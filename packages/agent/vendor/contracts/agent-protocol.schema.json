@@ -5,7 +5,13 @@
   "description": "Agent/executor message envelope and per-messageType bodies (see ADR-0002/0003). The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary). Bodies here are bootstrap-phase shapes for the packages/agent client stubs; server-side routes, Ed25519 signature verification, and replay-cache enforcement land with the control-plane agent backend and must stay in lockstep with this file.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"],
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "messageType",
+    "agentId",
+    "sentAt"
+  ],
   "properties": {
     "schemaVersion": {
       "type": "integer",
@@ -20,7 +26,13 @@
     },
     "messageType": {
       "type": "string",
-      "enum": ["register", "heartbeat", "claim", "result", "evidence"],
+      "enum": [
+        "register",
+        "heartbeat",
+        "claim",
+        "result",
+        "evidence"
+      ],
       "description": "register/heartbeat/claim/result/evidence. See definitions.*Body below for the per-messageType payload."
     },
     "agentId": {
@@ -31,7 +43,10 @@
       "description": "Stable agent identifier. For messageType=register this is a client-generated candidate id echoed back by the control plane; the control plane is the source of truth once registration succeeds."
     },
     "workspaceId": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid"
     },
     "sentAt": {
@@ -39,7 +54,10 @@
       "format": "date-time"
     },
     "clockOffsetMs": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "description": "Agent-reported offset vs control-plane time, used for clock-drift detection. Present on heartbeat and result; optional elsewhere."
     },
     "sequence": {
@@ -49,36 +67,102 @@
     },
     "body": {
       "description": "Message-type-specific payload. Structurally validated against the matching *Body definition below via the if/then rules in `allOf`; each body definition is additionalProperties:false, so unconstrained extra fields are rejected per messageType.",
-      "type": ["object", "null"]
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "messageType": { "const": "register" } } },
-      "then": { "properties": { "body": { "$ref": "#/definitions/registerBody" } } }
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "register"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/registerBody"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "messageType": { "const": "heartbeat" } } },
-      "then": { "properties": { "body": { "$ref": "#/definitions/heartbeatBody" } } }
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "heartbeat"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/heartbeatBody"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "messageType": { "const": "claim" } } },
-      "then": { "properties": { "body": { "$ref": "#/definitions/claimBody" } } }
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "claim"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/claimBody"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "messageType": { "const": "result" } } },
-      "then": { "properties": { "body": { "$ref": "#/definitions/resultBody" } } }
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/resultBody"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "messageType": { "const": "evidence" } } },
-      "then": { "properties": { "body": { "$ref": "#/definitions/evidenceBody" } } }
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "evidence"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/evidenceBody"
+          }
+        }
+      }
     }
   ],
   "definitions": {
     "publicMetadataEntry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "value"],
+      "required": [
+        "name",
+        "value"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -86,10 +170,19 @@
         },
         "value": {
           "anyOf": [
-            { "type": "string", "maxLength": 512 },
-            { "type": "number" },
-            { "type": "boolean" },
-            { "type": "null" }
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -97,7 +190,10 @@
     "registerBody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bootstrapTokenId", "agentVersion"],
+      "required": [
+        "bootstrapTokenId",
+        "agentVersion"
+      ],
       "description": "Agent identity lifecycle: POST /agents/register + single-use hashed bootstrap token. The raw bootstrap token travels as a bearer credential (outside this JSON body, per the machine-token pattern), never as a body field; bootstrapTokenId is an opaque non-secret reference used for correlation/audit only.",
       "properties": {
         "bootstrapTokenId": {
@@ -112,15 +208,29 @@
           "maxLength": 32
         },
         "hostname": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 255
         },
         "platform": {
-          "type": ["string", "null"],
-          "enum": ["linux", "darwin", "win32", null]
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "linux",
+            "darwin",
+            "win32",
+            null
+          ]
         },
         "nodeVersion": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 32
         },
         "declaredTargetSelectors": {
@@ -178,7 +288,9 @@
     "heartbeatBody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agentVersion"],
+      "required": [
+        "agentVersion"
+      ],
       "description": "Steady-state heartbeat: updates last_seen_at, carries version-negotiation and clock-drift-relevant fields. A retired agent's heartbeat returns 410 without updating last_seen_at; that behavior lives server-side and is out of scope for this body shape.",
       "properties": {
         "agentVersion": {
@@ -187,15 +299,24 @@
           "maxLength": 32
         },
         "ntpSynced": {
-          "type": ["boolean", "null"],
+          "type": [
+            "boolean",
+            "null"
+          ],
           "description": "Optional local NTP sync status, used alongside clockOffsetMs for fleet clock-drift alerts."
         },
         "uptimeSeconds": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0
         },
         "pinnedSigningKeyId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Job-signing public key id currently pinned by the agent, so the control plane can detect agents still on a retiring key during rotation overlap."
@@ -241,7 +362,17 @@
           "maxItems": 16,
           "items": {
             "type": "string",
-            "enum": ["renew", "deploy", "reload", "revoke", "noop", "protocol_smoke", "distribute-trust", "revoke-trust"]
+            "enum": [
+              "renew",
+              "deploy",
+              "reload",
+              "revoke",
+              "noop",
+              "protocol_smoke",
+              "distribute-trust",
+              "revoke-trust",
+              "deploy-from-store"
+            ]
           },
           "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i)."
         },
@@ -261,7 +392,11 @@
     "resultBody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["jobId", "attemptId", "status"],
+      "required": [
+        "jobId",
+        "attemptId",
+        "status"
+      ],
       "description": "Job integrity and result reporting. Distinct from the external-executor events surface (executor-event.schema.json): this is the signed-job execution result path. attemptId is single-use per the server-side claim/lease model.",
       "properties": {
         "jobId": {
@@ -278,10 +413,20 @@
         },
         "status": {
           "type": "string",
-          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect"]
+          "enum": [
+            "succeeded",
+            "failed",
+            "rejected",
+            "blocked",
+            "dry_run_complete",
+            "orphaned_unknown_effect"
+          ]
         },
         "rejectionReason": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "enum": [
             "job_integrity_failed",
             "job_replay_rejected",
@@ -299,52 +444,90 @@
           "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why."
         },
         "keyRotated": {
-          "type": ["boolean", "null"],
+          "type": [
+            "boolean",
+            "null"
+          ],
           "description": "Key rotation policy: whether this job generated a new key vs reused the existing one. Never accompanied by the key itself."
         },
         "errorMessage": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 1024
         },
         "claimId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Server-assigned claim id from the signed dispatch payload; a non-secret opaque reference the control plane uses to re-prove claim ownership at result ingestion (ADR-0003, 7.4). attemptId doubles as the claimId when omitted."
         },
         "nonce": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 16,
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Single-use dispatch nonce from the signed job payload, consumed by the server-side replay ledger at result ingestion (ADR-0003, 7.4). Non-secret opaque reference."
         },
         "trustResult": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "Typed trust-anchor result for a distribute-trust/revoke-trust job, absent (or null) for every other job family. Deliberately shape-only here: this envelope's scope is shape/enum/type checks, and the authoritative contract is trust-result-contract.schema.json, which the control plane validates at result ingestion before cross-checking the result against the signed job and touching the installation row. It is not $ref'd because the agent's vendored validator is compiled from this file alone and cannot resolve a sibling schema at build time; duplicating the trust contract's body here would create a second source of truth that could silently drift."
+        },
+        "publicationReceipt": {
+          "$ref": "#/definitions/materialDistribution_publicationReceipt"
+        },
+        "deploymentReceipt": {
+          "$ref": "#/definitions/materialDistribution_deploymentReceipt"
+        },
+        "publicationCertificatePem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144,
+          "description": "Vetted public leaf/chain only; accepted solely with a claim-bound publication receipt. Never persisted in generic job/outbox JSON."
         }
       }
     },
     "evidenceBody": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["evidenceItems"],
+      "required": [
+        "evidenceItems"
+      ],
       "description": "Agent-originated evidence, structurally aligned with evidence.schema.json's public fields but scoped to the message envelope's jobId/agentId rather than repeating them per item.",
       "properties": {
         "jobId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$"
         },
         "claimId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "The claim this evidence describes, as issued at dispatch. Required for job-bound evidence that the control plane will trust for reconciliation: a job may be attempted more than once by the same agent, so agent identity alone cannot prove which attempt produced a given observation. The server rejects evidence whose claimId does not match the job's current claim, and records the validated value alongside its own attempt counter."
         },
         "attemptId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Compatibility alias for claimId, matching the result envelope's existing field naming. When both are present they must be equal. This is not an attempt number."
@@ -356,7 +539,11 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["evidenceId", "eventType", "observedAt"],
+            "required": [
+              "evidenceId",
+              "eventType",
+              "observedAt"
+            ],
             "properties": {
               "evidenceId": {
                 "type": "string",
@@ -383,20 +570,341 @@
                 "format": "date-time"
               },
               "fingerprintSha256": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "pattern": "^[a-f0-9]{64}$"
               },
               "summary": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "maxLength": 1024
               },
               "metadata": {
                 "type": "array",
                 "maxItems": 32,
-                "items": { "$ref": "#/definitions/publicMetadataEntry" }
+                "items": {
+                  "$ref": "#/definitions/publicMetadataEntry"
+                }
               }
             }
           }
+        }
+      }
+    },
+    "materialDistribution_uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "materialDistribution_alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "materialDistribution_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "materialDistribution_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "materialDistribution_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "materialDistribution_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_materialDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "bindingId",
+        "rolloutId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "generation",
+        "deploymentProfileRef",
+        "profileRevision",
+        "authorizationRevision",
+        "verificationPolicy"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "rolloutId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "authorizationRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "verificationOnly": {
+          "type": "boolean",
+          "description": "Approved read-only verification of the pinned version; no install or reload."
+        }
+      }
+    },
+    "materialDistribution_publicationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "validTo"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_deploymentReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fetched",
+        "installed",
+        "bound",
+        "servedVerified",
+        "trustValidated",
+        "fingerprintSha256",
+        "validTo",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fetched": {
+          "type": "boolean"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "servedVerified": {
+          "type": "boolean"
+        },
+        "trustValidated": {
+          "type": "boolean"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_publicationProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_consumerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "deploymentProfileRef",
+        "profileRevision",
+        "required",
+        "wave",
+        "verificationPolicy",
+        "freshnessSeconds",
+        "state"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "freshnessSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800
+        },
+        "state": {
+          "enum": [
+            "active",
+            "removed"
+          ]
         }
       }
     }

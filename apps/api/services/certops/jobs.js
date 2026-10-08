@@ -175,6 +175,7 @@ const JOB_OPERATIONS = Object.freeze([
   "issue",
   "renew",
   "deploy",
+  "deploy-from-store",
   "reload",
   "revoke",
   "noop",
@@ -747,6 +748,7 @@ function requiredExecutionFieldsForOperation(payload, operation) {
   if (!base) return base;
   if (operation !== "issue") return base;
   const required = new Set(base);
+  if (payload?.publication) return required;
   required.add(payload?.target?.type === "windows-iis" ? "keyMode" : "certPath");
   return required;
 }
@@ -784,8 +786,19 @@ function validateIssueDeploymentTargets(payload, operation) {
 }
 
 function validateExecutionFields(payload, operation) {
+  if (payload.publication || payload.materialDeployment || operation === "deploy-from-store") {
+    const { validateDistributionContract } = require("./materialDistribution");
+    if (payload.publication) {
+      if (!["issue", "renew"].includes(operation) || payload.materialDeployment) throw executionFieldError("publication");
+      validateDistributionContract("publication", payload.publication);
+    } else {
+      if (operation !== "deploy-from-store") throw executionFieldError("materialDeployment");
+      validateDistributionContract("materialDeployment", payload.materialDeployment);
+    }
+    if (payload.keyMode !== "vault-managed" || ["certPath", "keyPath", "chainPath", "deploymentTargets", "reloadService", "reloadCommandRefs", "verifyHost", "verifyPort"].some((field) => payload[field] != null)) throw executionFieldError("publication");
+  }
   const allowedForOperation =
-    EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+    operation === "deploy-from-store" ? new Set(["keyMode"]) : EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
   for (const fieldName of EXECUTION_FIELD_NAMES) {
     if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
     const value = payload[fieldName];
@@ -1009,6 +1022,7 @@ function normalizeExplicitLifecycleTimestamps(options) {
 const SUBJECT_REQUIRED_OPERATIONS = new Set([
   "renew",
   "deploy",
+  "deploy-from-store",
   "reload",
   "revoke",
   "distribute-trust",
@@ -1242,7 +1256,13 @@ async function resolveManagedCertificateJobDefaults({
   operation,
   subjectType,
   subjectId,
+  payload,
+  assignedAgentId,
 }) {
+  if (payload?.publication || payload?.materialDeployment) {
+    return require("./materialDistribution").resolveDistributionJobDefaults({ client: db,
+      workspaceId, operation, subjectId, payload, assignedAgentId });
+  }
   if (source === CONTROLLER_PROVISIONING_JOB_SOURCE) {
     return { autoAssignedAgentId: null };
   }
@@ -1636,6 +1656,9 @@ async function resolveWorkspaceRequiresApprovalAlways(
 }
 
 async function createCertificateJob(options) {
+  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout) && !options.client) {
+    throw serviceError("Material distribution requires a transaction-owned client", "CERTOPS_PUBLICATION_TRANSACTION_REQUIRED");
+  }
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const operation = normalizeEnum(
@@ -1773,6 +1796,8 @@ async function createCertificateJob(options) {
     operation,
     subjectType,
     subjectId,
+    payload,
+    assignedAgentId: options.assignedAgentId || payload.assignedAgentId,
   });
   const {
     executorKind,
@@ -1932,6 +1957,10 @@ async function createCertificateJob(options) {
 
     const job = jobFromRow(result.rows[0]);
     if (job) {
+      if (payload.publication) {
+        await require("./materialDistribution").allocateMaterialVersion({ client: db, workspaceId,
+          groupId: payload.publication.groupId, job: { ...result.rows[0], payload } });
+      }
       return options.returnOutcome === true ? { job, created: true } : job;
     }
 

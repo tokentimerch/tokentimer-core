@@ -421,6 +421,11 @@ async function approveJob(options) {
     reason,
   });
 
+  if (job.payload?.distributionRollout) {
+    await require("./outbox").enqueueOutboxEvent({ client:db,workspaceId,
+      eventType:"distribution_approval_granted",dedupeKey:jobId,payload:{ jobId } });
+  }
+
   await logAppender({
     client: db,
     workspaceId,

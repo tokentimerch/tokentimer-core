@@ -66,7 +66,8 @@
         "deploy",
         "reload",
         "revoke",
-        "noop"
+        "noop",
+        "deploy-from-store"
       ],
       "description": "Public certificate lifecycle action requested by the control plane."
     },
@@ -201,7 +202,10 @@
       "description": "Non-secret mode describing where key custody remains outside the control plane."
     },
     "keyReference": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 256,
       "description": "Opaque non-secret reference to external execution-plane key custody."
     },
@@ -553,6 +557,12 @@
       "type": "integer",
       "minimum": 0,
       "description": "Reserved for signed agent dispatch: number of claim attempts made for this job so far. Optional and not required for validation today."
+    },
+    "publication": {
+      "$ref": "#/definitions/materialDistribution_publication"
+    },
+    "materialDeployment": {
+      "$ref": "#/definitions/materialDistribution_materialDeployment"
     }
   },
   "definitions": {
@@ -631,6 +641,319 @@
             {
               "type": "null"
             }
+          ]
+        }
+      }
+    },
+    "materialDistribution_uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "materialDistribution_alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "materialDistribution_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "materialDistribution_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "materialDistribution_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "materialDistribution_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_materialDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "bindingId",
+        "rolloutId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "generation",
+        "deploymentProfileRef",
+        "profileRevision",
+        "authorizationRevision",
+        "verificationPolicy"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "rolloutId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "authorizationRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "verificationOnly": {
+          "type": "boolean",
+          "description": "Approved read-only verification of the pinned version; no install or reload."
+        }
+      }
+    },
+    "materialDistribution_publicationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "validTo"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_deploymentReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fetched",
+        "installed",
+        "bound",
+        "servedVerified",
+        "trustValidated",
+        "fingerprintSha256",
+        "validTo",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fetched": {
+          "type": "boolean"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "servedVerified": {
+          "type": "boolean"
+        },
+        "trustValidated": {
+          "type": "boolean"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_publicationProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_consumerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "deploymentProfileRef",
+        "profileRevision",
+        "required",
+        "wave",
+        "verificationPolicy",
+        "freshnessSeconds",
+        "state"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "freshnessSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800
+        },
+        "state": {
+          "enum": [
+            "active",
+            "removed"
           ]
         }
       }

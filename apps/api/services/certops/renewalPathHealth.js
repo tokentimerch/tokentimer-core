@@ -230,6 +230,7 @@ function resolveRequiredExecutors({
   forceDeployedAgentPin = false,
 }) {
   let assignedAgentId = null;
+  if (certificateRow.distribution_issuer_agent_id) assignedAgentId = String(certificateRow.distribution_issuer_agent_id);
   if (certificateRow.source === "agent_filesystem") {
     const legacyAgentIdString = certificateRow.discovery_agent_id || null;
     if (legacyAgentIdString) {
@@ -529,7 +530,8 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
       dependencies: [],
     };
   }
-  if (!isAgentDeployableKeyMode(certificateRow)) {
+  const publicationProfile = parseMetadata(certificateRow.profile_public_metadata)?.renewalProfile?.publicationDestination;
+  if (!isAgentDeployableKeyMode(certificateRow) && !(certificateRow.key_mode === "vault-managed" && publicationProfile && certificateRow.distribution_issuer_agent_id)) {
     return {
       renewalPathState: null,
       renewalPathReason: RENEWAL_PATH_REASONS.NOT_AGENT_DEPLOYABLE,
@@ -578,6 +580,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
         payload,
       }),
       subjectIsProvisioning: certificateRow.status === "provisioning",
+      payload: profile.publicationDestination ? { publication: profile.publicationDestination } : payload,
     };
   } catch (_error) {
     return {
@@ -650,10 +653,12 @@ const CERTIFICATE_ROW_SELECT = `
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,
          cp.status AS profile_status,
-         cp.public_metadata AS profile_public_metadata
+         cp.public_metadata AS profile_public_metadata,
+         dg.issuer_agent_id AS distribution_issuer_agent_id
     FROM managed_certificates mc
     LEFT JOIN certificate_profiles cp
       ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+    LEFT JOIN certops_distribution_groups dg ON dg.workspace_id=mc.workspace_id AND dg.managed_certificate_id=mc.id AND dg.state='active'
 `;
 
 async function resolveRenewalPathForCertificate({

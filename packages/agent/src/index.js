@@ -212,6 +212,9 @@ function buildJobPolicyDescriptor(job) {
  * @param {object} job signature-verified claimed job payload
  * @returns {object} policy jobDescriptor
  */
+const { publicationSession, executePinnedDeployment, resolveBindingPolicy, withMaterialLock } = require("./material-store/lifecycle");
+const { readProtectedFile, resolveStore } = require("./material-store");
+
 function buildSignedJobPolicyDescriptor(job) {
   const descriptor = {};
   if (job?.target?.reference !== undefined) {
@@ -300,6 +303,7 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "noop",
   "renew",
   "deploy",
+  "deploy-from-store",
   "reload",
   "distribute-trust",
   "revoke-trust",
@@ -364,7 +368,9 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
  * same gate rather than a new one being invented at that point.
  */
 const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
-  AGENT_CANDIDATE_CAPABILITIES,
+  [...AGENT_CANDIDATE_CAPABILITIES, ...(process.platform === "linux" ? [
+    "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1",
+  ] : [])],
 );
 
 /**
@@ -1903,7 +1909,8 @@ async function handleSignedJob({
   // 5b. Refuse auto re-execution when unresolved local side-effect journal
   // exists for this jobId (crash-safety; operator reconciliation required).
   const stateDir = resolveAgentStateDir(executionContext);
-  if (stateDir && hasUnresolvedJournalForJob(stateDir, jobId)) {
+  const materialRecoveryOnly = stateDir && hasUnresolvedJournalForJob(stateDir, jobId);
+  if (materialRecoveryOnly && !job.publication && !job.materialDeployment) {
     const msg =
       `unresolved local side-effect journal exists for job ${jobId}; ` +
       `refusing automatic re-execution pending operator reconciliation`;
@@ -1987,7 +1994,7 @@ async function handleSignedJob({
       client: evidenceBuffer,
       leaseClient: client,
       leaseState,
-      executionContext,
+      executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
       log,
     });
     const heartbeatAbort = leaseHeartbeat.getAbort();
@@ -2040,6 +2047,9 @@ async function handleSignedJob({
       // Only trust-anchor jobs produce this; omitted (not null) for every
       // other job family so their result bodies stay byte-identical.
       ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
+      ...(outcome.publicationReceipt ? { publicationReceipt: outcome.publicationReceipt,
+        publicationCertificatePem: outcome.publicationCertificatePem } : {}),
+      ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
     },
     evidence: evidenceBodies,
     log,
@@ -2278,6 +2288,48 @@ async function executeJob({
       onBeforeMutation: markMutation,
       trustStoreSeams,
     });
+  }
+
+  if (job.publication || action === "deploy-from-store") {
+    if (jobMode !== "dry_run" && (typeof claimId !== "string" || claimId.length === 0)) return {status:"blocked",errorMessage:"material_claim_required"};
+    if (process.platform !== "linux") return { status: "blocked", errorMessage: "material_platform_unqualified" };
+    if (jobMode !== "dry_run" && execution.dryRun === true) return { status: "blocked", errorMessage: "material_local_dry_run_required" };
+    const stateDir = resolveAgentStateDir(executionContext);
+    const checkLease = async () => {
+      const gate = await renewJobLeaseOrAbort({ ...leaseOpts, required: true });
+      if (gate?.ok === false) { const error = new Error("material_lease_unavailable"); error.code = "material_lease_unavailable"; throw error; }
+    };
+    try {
+      if (jobMode === "dry_run") {
+        resolveStore(executionContext.materialStores, { ...(job.publication || job.materialDeployment), workspaceId: job.workspaceId });
+        if (job.materialDeployment) resolveBindingPolicy(job,executionContext.materialBindings,policyEngine);
+        return { status: "dry_run_complete", keyRotated: null };
+      }
+      if (action === "deploy-from-store") return await executePinnedDeployment({
+        job, stores: executionContext.materialStores, bindings: executionContext.materialBindings,
+        stateDir, policyEngine, checkLease, recoveryOnly: executionContext.materialRecoveryOnly === true,
+        reload: async (reloadService, reloadCommandRefs) => {
+          if (!reloadService) return false;
+          const outcome = await maybeReloadForJob({ job: { ...job, reloadService, reloadCommandRefs }, jobId,
+            policyEngine, client: claimBoundClient, log, leaseOpts, onBeforeMutation: markMutation });
+          return outcome === null || outcome.status === "succeeded";
+        },
+      });
+      if (action !== "renew") return { status: "blocked", errorMessage: "material_publication_action_invalid" };
+      const session = publicationSession({ job, stores: executionContext.materialStores, stateDir });
+      return await withMaterialLock(path.join(stateDir, "material-locks"), `issuer:${job.workspaceId}:${job.publication.groupId}`, async () => {
+        const recovered = await session.recover(checkLease);
+        if (recovered) return recovered;
+        if (executionContext.materialRecoveryOnly) { const error = new Error("material_issuance_uncertain"); error.code = "material_issuance_uncertain"; throw error; }
+        await checkLease();
+        session.start();
+        return executeRenewJob({ job, jobId, policyEngine, client: claimBoundClient,
+          executionContext, log, leaseOpts, onBeforeMutation: markMutation, publication: session });
+      });
+    } catch (error) {
+      return { status: "orphaned_unknown_effect", errorMessage:
+        /^material_[a-z_]+$/.test(error.code || "") ? error.code : "material_execution_failed" };
+    }
   }
 
   if (action !== "renew" && action !== "deploy" && action !== "reload") {
@@ -2579,6 +2631,7 @@ async function executeRenewJob({
   log,
   leaseOpts = null,
   onBeforeMutation = null,
+  publication = null,
 }) {
   const { execution } = executionContext;
   const commonName = job?.target?.reference;
@@ -2615,7 +2668,7 @@ async function executeRenewJob({
   // already in the approved SAN list so inventory CN and SAN stay aligned.
   const csrCommonName = domains.includes(commonName) ? commonName : domains[0];
 
-  const deployTargetsResolved = resolveJobDeployTargets(job);
+  const deployTargetsResolved = publication ? { targets: [] } : resolveJobDeployTargets(job);
   if (deployTargetsResolved.error) {
     return { status: "failed", errorMessage: deployTargetsResolved.error };
   }
@@ -2852,6 +2905,7 @@ async function executeRenewJob({
       };
     }
     certificatePem = staged.pem;
+    if (publication) publication.stage(certificatePem, readProtectedFile(stagedKeyPath), computeCertificateFingerprint(certificatePem));
   } catch (err) {
     // Every *returned* failure above discards the staged key explicitly, but a
     // thrown one skipped it: the finally below cleans the CSR and the staged
@@ -2871,6 +2925,16 @@ async function executeRenewJob({
     for (const stagedArtifact of Object.values(stagedCertPaths)) {
       fs.rmSync(stagedArtifact, { force: true });
     }
+  }
+
+  if (publication) {
+    const checkLease = async () => {
+      const gate = await renewJobLeaseOrAbort({ ...leaseOpts, required: true });
+      if (gate?.ok === false) { const error = new Error("material_lease_unavailable"); error.code = "material_lease_unavailable"; throw error; }
+    };
+    const published = await publication.recover(checkLease);
+    if (stagedKeyPath !== keyPath) fs.rmSync(stagedKeyPath,{force:true});
+    return published;
   }
 
   let tail;
@@ -6025,6 +6089,8 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     clockEstimator,
     pinnedSigningKey: config.pinnedSigningKey,
     acmeAccounts: config.acmeAccounts || null,
+    materialStores: config.materialStores || null,
+    materialBindings: config.materialBindings || null,
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,

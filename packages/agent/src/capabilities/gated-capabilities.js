@@ -33,6 +33,9 @@ const GATED_CAPABILITIES = Object.freeze([
   "windows-cert-store-v1",
   "iis-binding-v1",
   "trust-anchor-deploy-v1",
+  "material-store-vault-kv2-v1",
+  "certificate-publication-v1",
+  "deploy-from-store-v1",
 ]);
 
 module.exports = { GATED_CAPABILITIES };

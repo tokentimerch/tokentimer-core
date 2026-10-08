@@ -1,0 +1,321 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/material-distribution.schema.json",
+  "title": "Public material distribution contracts",
+  "description": "Customer-side store aliases and public receipts only. Bundle bytes, credential paths, endpoints and authentication secrets are forbidden.",
+  "definitions": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/revision"
+        }
+      }
+    },
+    "materialDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "bindingId",
+        "rolloutId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "generation",
+        "deploymentProfileRef",
+        "profileRevision",
+        "authorizationRevision",
+        "verificationPolicy"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "rolloutId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "generation": {
+          "$ref": "#/definitions/generation"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "authorizationRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "verificationOnly": {
+          "type": "boolean",
+          "description": "Approved read-only verification of the pinned version; no install or reload."
+        }
+      }
+    },
+    "publicationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "validTo"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "deploymentReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fetched",
+        "installed",
+        "bound",
+        "servedVerified",
+        "trustValidated",
+        "fingerprintSha256",
+        "validTo",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/generation"
+        },
+        "fetched": {
+          "type": "boolean"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "servedVerified": {
+          "type": "boolean"
+        },
+        "trustValidated": {
+          "type": "boolean"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "publicationProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/revision"
+        }
+      }
+    },
+    "consumerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "deploymentProfileRef",
+        "profileRevision",
+        "required",
+        "wave",
+        "verificationPolicy",
+        "freshnessSeconds",
+        "state"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/revision"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "freshnessSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800
+        },
+        "state": {
+          "enum": [
+            "active",
+            "removed"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1307,6 +1307,7 @@ export async function drainCertOpsOutbox({
   env = process.env,
   alertResolver = queueCertRenewalFailedAlert,
   derivationResolver = handleProfileDerivationIntent,
+  distributionResolver = (args) => require("../../api/services/certops/distributionOperations.js").handleDistributionIntent(args),
 } = {}) {
   const summary = {
     scanned: 0,
@@ -1349,7 +1350,9 @@ export async function drainCertOpsOutbox({
     try {
       let outcome = { queued: false, reason: "unsupported_event_type" };
 
-      if (row.event_type === "renewal_alert_requested") {
+      if (["material_published","distribution_approval_granted","distribution_rollout_requested"].includes(row.event_type)) {
+        outcome = await distributionResolver({ dbPool,row,claimId,payload });
+      } else if (row.event_type === "renewal_alert_requested") {
         outcome = await alertResolver({
           client: dbPool,
           jobId: payload.jobId || row.dedupe_key,

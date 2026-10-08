@@ -270,6 +270,19 @@
           "kind": "spec",
           "path": "packages/contracts/api/certops-route-compat.contract.json",
           "status": "existing"
+        },
+        {
+          "id": "certops-material-distribution-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/material-distribution.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-material-distribution-validator",
+          "path": "packages/contracts/certops/validate-material-distribution.cjs",
+          "kind": "schema",
+          "status": "existing",
+          "description": "Strict validator for public material publication, consumer bindings and deployment receipts."
         }
       ]
     }

@@ -8,6 +8,8 @@ node_modules
 **/node_modules
 
 # Build artifacts
+.scratch/
+.build/
 apps/dashboard/dist
 apps/dashboard/.vite
 # Local Windows service-host build outputs are not Linux runtime dependencies.

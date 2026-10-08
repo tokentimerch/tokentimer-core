@@ -4608,6 +4608,11 @@ const migrations = [
       ALTER TABLE auto_sync_configs VALIDATE CONSTRAINT auto_sync_configs_name_canonical;
     `,
   },
+  {
+    version: 68,
+    name: "certops_material_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "068-certops-material-distribution.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

@@ -4044,6 +4044,9 @@ function csrRoute(work) {
       if (err?.status && err?.code) {
         return res.status(err.status).json({ error: err.message, code: err.code });
       }
+      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER)_/.test(err.code || "")) {
+        return res.status(err.statusCode).json({ error:err.code,code:err.code });
+      }
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
       logger.error("CertOps CSR workflow failed", {
@@ -4111,6 +4114,31 @@ router.post(
     workspaceId: req.workspace.id, workflowId: req.params.csrId, actorUserId: req.user?.id,
   })),
 );
+
+const distribution = require("../services/certops/distributionOperations");
+const materialDistribution = require("../services/certops/materialDistribution");
+router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...csrWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
+  csrRoute(async (req) => ({ groups: (await pool.query(`SELECT * FROM certops_distribution_groups WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id])).rows })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
+  csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
+  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,req.params.groupId])).rows })));
+router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...csrWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute((req) => distribution.putBinding({ workspaceId:req.workspace.id,groupId:req.params.groupId,
+    bindingId:req.params.bindingId,binding:req.body,actorUserId:req.user?.id })));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...csrWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute(async (req) => ({ statusCode:201,body:await distribution.requestRollout({ workspaceId:req.workspace.id,
+    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
+    actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...csrWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute((req) => distribution.setRolloutState({ workspaceId:req.workspace.id,groupId:req.params.groupId,
+    rolloutId:req.params.rolloutId,state:req.body?.state,actorUserId:req.user?.id })));
 
 module.exports = router;
 module.exports._test = {

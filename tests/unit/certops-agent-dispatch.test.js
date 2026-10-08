@@ -2064,7 +2064,7 @@ describe("agentDispatch.renewJobLease", () => {
       if (sql.includes("SELECT last_sequence")) {
         return { rows: [{ last_sequence: 0 }] };
       }
-      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+      if (sql.includes("SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id")) {
         return {
           rows: [
             {
@@ -2126,7 +2126,7 @@ describe("agentDispatch.renewJobLease", () => {
       if (sql.includes("SELECT last_sequence")) {
         return { rows: [{ last_sequence: 0 }] };
       }
-      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+      if (sql.includes("SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id")) {
         return {
           rows: [
             {

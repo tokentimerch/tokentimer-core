@@ -30,11 +30,11 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
-    assert.equal(migrations.at(-1).version, 67);
-    assert.equal(migrations.at(-1).name, "inventory_and_auto_sync_name_length");
+    assert.equal(migrations.at(-1).version, 68);
+    assert.equal(migrations.at(-1).name, "certops_material_distribution");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 67 }, (_, index) => index + 1),
+      Array.from({ length: 68 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1482,7 +1482,7 @@ describe("migration 44 trust-anchor job operation and subject type", () => {
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].filter((operation)=>operation!=="deploy-from-store").sort());
 
     const subjectTypeDeclared = migration.sql.match(
       /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
@@ -1761,7 +1761,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 67);
+    assert.equal(sorted[sorted.length - 1], 68);
   });
 });
 
