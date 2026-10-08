@@ -3,11 +3,12 @@
 /**
  * Tests for packages/agent/src/windows-discovery/index.js.
  *
- * PowerShell/certutil/netsh/appcmd invocations are exercised through
+ * PowerShell/certutil/appcmd invocations are exercised through
  * injected execFile stubs (same pattern as the sibling
  * windows-cert-store/windows-iis modules). The German and French certutil
  * fixtures are trimmed copies of real Windows Server and Windows 11
- * output; the store query JSON matches what Windows PowerShell 5.1 emits.
+ * output; the store and http.sys query JSON matches what Windows
+ * PowerShell 5.1 emits.
  */
 
 const { describe, it } = require("node:test");
@@ -20,7 +21,8 @@ const {
   parseNodeSubjectAltName,
   splitCertutilStoreBlocks,
   parseCertutilKeyInfo,
-  parseNetshSslcertBindings,
+  buildHttpSysBindingQueryScript,
+  parseHttpSysBindingQueryOutput,
   parseAppcmdSiteListOutput,
   findSitesForBinding,
   listMachineStoreCertificates,
@@ -164,41 +166,33 @@ const APPCMD_LIST_SITE_OUTPUT = `SITE "Default Web Site" (id:1,bindings:http/*:8
 SITE "Secure Site" (id:2,bindings:https/10.0.0.5:8443:,https/*:9443:sni.example.com,state:Started)
 `;
 
-const NETSH_SHOW_SSLCERT_OUTPUT = `
-SSL Certificate bindings:
--------------------------
+// AppId bytes and the GUID netsh was given, from a real Windows Server 2022 binding.
+const REAL_APP_ID_BYTES = [142, 106, 12, 77, 43, 29, 94, 76, 159, 112, 58, 27, 44, 61, 78, 95];
+const REAL_APP_ID = "{4d0c6a8e-1d2b-4c5e-9f70-3a1b2c3d4e5f}";
 
-    IP:port                      : 10.0.0.5:443
-    Certificate Hash              : aabbccddeeff00112233445566778899aabbccdd
-    Application ID              : {12345678-1234-1234-1234-123456789012}
-    Certificate Store Name        : My
+/** One binding as buildHttpSysBindingQueryScript reports it. */
+function httpSysItem({ ipPort, hostnamePort, thumbprint = SAMPLE_THUMBPRINT, storeName = "My", settings = {} }) {
+  const values = {
+    AppId: REAL_APP_ID_BYTES,
+    SslCertHash: Array.from(Buffer.from(thumbprint, "hex")),
+    SslCertStoreName: { chars: codeUnits(storeName) },
+    ...settings,
+  };
+  if (hostnamePort) {
+    return {
+      kind: "SslSniBindingInfo",
+      key: "{d8a96b6f-c34e-11f1-a23d-7c1e5216d685}",
+      values: { ...values, HostnamePort: { chars: codeUnits(hostnamePort) } },
+    };
+  }
+  return { kind: "SslBindingInfo", key: ipPort, values };
+}
 
-    IP:port                      : 0.0.0.0:8443
-    Certificate Hash              : 112233445566778899001122334455667788990a
-    Application ID              : {87654321-4321-4321-4321-210987654321}
-    Certificate Store Name        : WebHosting
-`;
-
-// Real, captured (not hand-authored) netsh http show sslcert output for a
-// hostname-keyed (SNI, via hostnameport=) binding, from a real-host
-// verification run against a live IIS SNI binding. This is the format
-// parseNetshSslcertBindings originally failed to recognize at all.
-const NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT = `
-SSL Certificate bindings:
--------------------------
-
-    Hostname:port                : sni-precision.tokentimer-verify.local:10443
-    Certificate Hash             : daa61c502810ca0952df77a0d4194c32085b5abd
-    Application ID               : {65f12961-a6a1-4736-a36e-af476fd0d37a}
-    Certificate Store Name       : My
-`;
-
-const NETSH_SHOW_SSLCERT_MIXED_OUTPUT = `${NETSH_SHOW_SSLCERT_OUTPUT}
-    Hostname:port                : sni-precision.tokentimer-verify.local:10443
-    Certificate Hash             : daa61c502810ca0952df77a0d4194c32085b5abd
-    Application ID               : {65f12961-a6a1-4736-a36e-af476fd0d37a}
-    Certificate Store Name       : My
-`;
+const HTTPSYS_JSON = powershellJson([
+  httpSysItem({ ipPort: "10.0.0.5:443" }),
+  httpSysItem({ ipPort: "0.0.0.0:8443", thumbprint: "112233445566778899001122334455667788990A", storeName: "WebHosting" }),
+  httpSysItem({ hostnamePort: "SNI-Precision.tokentimer-verify.local:10443", thumbprint: OTHER_THUMBPRINT }),
+]);
 
 /** execFile stub factory, mirroring the sibling modules' makeExecStub. */
 function makeExecStub(response) {
@@ -211,13 +205,18 @@ function makeExecStub(response) {
   return execFileStub;
 }
 
-/** Routes each executable to its own canned response; unrouted calls fail. */
+/**
+ * Routes each executable to its own canned response; unrouted calls fail.
+ * The http.sys binding query is PowerShell too, keyed "httpsys".
+ */
 function makeExecRouter(responses) {
   const calls = [];
   function execFileStub(file, args, options, callback) {
     calls.push({ file, args, options });
     const name = String(file).toLowerCase();
-    const key = ["powershell", "certutil", "netsh", "appcmd"].find((tool) => name.includes(tool));
+    const key = String(args.at(-1)).includes("SslBindingInfo")
+      ? "httpsys"
+      : ["powershell", "certutil", "appcmd"].find((tool) => name.includes(tool));
     const response = responses[key] || { error: Object.assign(new Error("unexpected"), { code: 1 }) };
     process.nextTick(() => callback(response.error || null, response.stdout || "", response.stderr || ""));
   }
@@ -409,39 +408,88 @@ describe("parseCertutilKeyInfo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseNetshSslcertBindings
+// buildHttpSysBindingQueryScript / parseHttpSysBindingQueryOutput
 // ---------------------------------------------------------------------------
 
-describe("parseNetshSslcertBindings", () => {
-  it("parses every binding block into ipPort/thumbprint/storeName/appId", () => {
-    const bindings = parseNetshSslcertBindings(NETSH_SHOW_SSLCERT_OUTPUT);
-    assert.equal(bindings.length, 2);
-    assert.equal(bindings[0].ipPort, "10.0.0.5:443");
-    assert.equal(bindings[0].thumbprint, SAMPLE_THUMBPRINT);
-    assert.equal(bindings[0].storeName, "My");
-    assert.equal(bindings[0].appId, "{12345678-1234-1234-1234-123456789012}");
-    assert.equal(bindings[0].keyedBy, "ipport");
-    assert.equal(bindings[1].ipPort, "0.0.0.0:8443");
+describe("buildHttpSysBindingQueryScript", () => {
+  it("reads both IP- and SNI-keyed bindings from http.sys's registry configuration", () => {
+    const script = buildHttpSysBindingQueryScript();
+    assert.match(script, /'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters'/);
+    assert.match(script, /@\('SslBindingInfo', 'SslSniBindingInfo'\)/);
+  });
+
+  it("uses only constructs that Constrained Language Mode allows, and no double quotes", () => {
+    const script = buildHttpSysBindingQueryScript();
+    assert.doesNotMatch(script, /PSCustomObject|\[Convert\]|\[Console\]|Add-Type|New-Object|\[Microsoft\.Win32/);
+    assert.doesNotMatch(script, /"/);
+  });
+
+  it("keeps nested arrays as arrays", () => {
+    assert.match(buildHttpSysBindingQueryScript(), /-Compress -Depth 6/);
+  });
+});
+
+describe("parseHttpSysBindingQueryOutput", () => {
+  it("decodes the selector, thumbprint, store and AppId of every binding", () => {
+    const bindings = parseHttpSysBindingQueryOutput(HTTPSYS_JSON);
+    assert.equal(bindings.length, 3);
+    assert.deepEqual(bindings[0], {
+      ipPort: "10.0.0.5:443",
+      keyedBy: "ipport",
+      thumbprint: SAMPLE_THUMBPRINT,
+      storeName: "My",
+      appId: REAL_APP_ID,
+      settings: {},
+    });
     assert.equal(bindings[1].storeName, "WebHosting");
   });
 
-  it("returns an empty array when there are no bindings", () => {
-    assert.deepEqual(parseNetshSslcertBindings("\r\nSSL Certificate bindings:\r\n-------------------------\r\n\r\n"), []);
+  it("takes an SNI binding's selector from its HostnamePort value, not its GUID-named key", () => {
+    const sni = parseHttpSysBindingQueryOutput(HTTPSYS_JSON)[2];
+    assert.equal(sni.keyedBy, "hostnameport");
+    assert.equal(sni.ipPort, "SNI-Precision.tokentimer-verify.local:10443");
+    assert.equal(sni.thumbprint, OTHER_THUMBPRINT);
+    assert.deepEqual(sni.settings, {});
   });
 
-  it("parses a real hostname-keyed (SNI, hostnameport=) binding block, not just IP:port ones (2026-08-05 real-host finding)", () => {
-    const bindings = parseNetshSslcertBindings(NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT);
-    assert.equal(bindings.length, 1);
-    assert.equal(bindings[0].ipPort, "sni-precision.tokentimer-verify.local:10443");
-    assert.equal(bindings[0].keyedBy, "hostnameport");
-    assert.equal(bindings[0].thumbprint, "DAA61C502810CA0952DF77A0D4194C32085B5ABD");
-    assert.equal(bindings[0].storeName, "My");
+  it("passes every other value through as a setting, with DWORDs unsigned", () => {
+    const [binding] = parseHttpSysBindingQueryOutput(
+      powershellJson([
+        httpSysItem({
+          ipPort: "0.0.0.0:443",
+          settings: { DefaultFlags: 1552, DefaultSslCertCheckMode: -2147483648, DefaultSslCtlIdentifier: { chars: [] } },
+        }),
+      ]),
+    );
+    assert.deepEqual(binding.settings, {
+      DefaultFlags: 1552,
+      DefaultSslCertCheckMode: 0x80000000,
+      DefaultSslCtlIdentifier: "",
+    });
   });
 
-  it("parses a mix of IP:port and Hostname:port blocks in the same (unfiltered) netsh output, dropping none of them", () => {
-    const bindings = parseNetshSslcertBindings(NETSH_SHOW_SSLCERT_MIXED_OUTPUT);
-    assert.equal(bindings.length, 3);
-    assert.deepEqual(bindings.map((b) => b.keyedBy), ["ipport", "ipport", "hostnameport"]);
+  it("reports an unreadable hash, store or AppId as null rather than guessing", () => {
+    const [binding] = parseHttpSysBindingQueryOutput(
+      JSON.stringify({ items: { kind: "SslBindingInfo", key: "0.0.0.0:443", values: { SslCertHash: [1, 2, 3] } } }),
+    );
+    assert.equal(binding.thumbprint, null);
+    assert.equal(binding.storeName, null);
+    assert.equal(binding.appId, null);
+  });
+
+  it("ignores entries of an unknown kind", () => {
+    const items = [{ kind: "SslCcsBindingInfo", key: "0.0.0.0:443", values: {} }];
+    assert.deepEqual(parseHttpSysBindingQueryOutput(JSON.stringify({ items })), []);
+  });
+
+  it("returns [] when http.sys has no bindings", () => {
+    assert.deepEqual(parseHttpSysBindingQueryOutput('{"items":[]}'), []);
+    assert.deepEqual(parseHttpSysBindingQueryOutput('{"items":null}'), []);
+  });
+
+  it("throws on output that is not the expected JSON", () => {
+    assert.throws(() => parseHttpSysBindingQueryOutput("Get-ChildItem : access denied"));
+    assert.throws(() => parseHttpSysBindingQueryOutput("{}"), /no items field/);
   });
 });
 
@@ -560,25 +608,35 @@ describe("listMachineStoreCertificates", () => {
 
 describe("listHttpSysBindings", () => {
   it("returns parsed bindings on success", async () => {
-    const execFileImpl = makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT });
+    const execFileImpl = makeExecStub({ stdout: HTTPSYS_JSON });
     const result = await listHttpSysBindings({ execFileImpl });
     assert.equal(result.ok, true);
-    assert.equal(result.bindings.length, 2);
+    assert.equal(result.bindings.length, 3);
   });
 
-  it("treats no-bindings-configured as ok: true, bindings: []", async () => {
-    const error = Object.assign(new Error("none"), { code: 1 });
-    const execFileImpl = makeExecStub({ error, stdout: "No SSL certificate bindings exist." });
-    const result = await listHttpSysBindings({ execFileImpl });
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.bindings, []);
+  it("runs Windows PowerShell without a profile or PSModulePath, never netsh", async () => {
+    const execFileImpl = makeExecStub({ stdout: HTTPSYS_JSON });
+    await listHttpSysBindings({ execFileImpl });
+    const [call] = execFileImpl.calls;
+    assert.equal(call.file, "powershell.exe");
+    assert.deepEqual(call.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
+    assert.equal(call.args[3], buildHttpSysBindingQueryScript());
+    assert.ok(!Object.keys(call.options.env).some((key) => key.toLowerCase() === "psmodulepath"));
   });
 
-  it("returns ok: false on a genuine netsh failure", async () => {
+  it("returns ok: false when the query fails", async () => {
     const error = Object.assign(new Error("denied"), { code: 5 });
     const execFileImpl = makeExecStub({ error, stderr: "Access is denied." });
     const result = await listHttpSysBindings({ execFileImpl });
     assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 5);
+  });
+
+  it("returns ok: false when the query output is not JSON", async () => {
+    const execFileImpl = makeExecStub({ stdout: "WARNING: something unexpected" });
+    const result = await listHttpSysBindings({ execFileImpl });
+    assert.equal(result.ok, false);
+    assert.match(result.stderrExcerpt, /unreadable http\.sys binding query output/);
   });
 });
 
@@ -662,7 +720,7 @@ describe("discoverWindowsCertificateInventory", () => {
     const execFileImpl = makeExecRouter({
       powershell: { stdout: STORE_JSON },
       certutil: { stdout: CERTUTIL_KEY_INFO_EN },
-      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+      httpsys: { stdout: HTTPSYS_JSON },
       appcmd: { stdout: APPCMD_LIST_SITE_OUTPUT },
     });
 
@@ -672,16 +730,16 @@ describe("discoverWindowsCertificateInventory", () => {
     assert.deepEqual(bound.boundAt, ["10.0.0.5:443"]);
     assert.deepEqual(bound.boundSites, ["Default Web Site"]);
 
-    const unbound = result.certificates.find((c) => c.thumbprint !== SAMPLE_THUMBPRINT);
-    assert.deepEqual(unbound.boundAt, []);
-    assert.deepEqual(unbound.boundSites, []);
+    const sniBound = result.certificates.find((c) => c.thumbprint === OTHER_THUMBPRINT);
+    assert.deepEqual(sniBound.boundAt, ["SNI-Precision.tokentimer-verify.local:10443"]);
+    assert.deepEqual(sniBound.boundSites, []);
   });
 
   it("reports boundSites: [] (not an error) when appcmd/IIS management tools are unavailable", async () => {
     const execFileImpl = makeExecRouter({
       powershell: { stdout: STORE_JSON },
       certutil: { stdout: CERTUTIL_KEY_INFO_EN },
-      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+      httpsys: { stdout: HTTPSYS_JSON },
       appcmd: { error: Object.assign(new Error("not found"), { code: 9009 }), stderr: "'appcmd' is not recognized" },
     });
 
@@ -698,7 +756,7 @@ describe("discoverWindowsCertificateInventory", () => {
   });
 
   it("surfaces a binding query failure distinctly", async () => {
-    const execFileImpl = makeExecRouter({ powershell: { stdout: EMPTY_STORE_JSON }, netsh: denied() });
+    const execFileImpl = makeExecRouter({ powershell: { stdout: EMPTY_STORE_JSON }, httpsys: denied() });
     const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
     assert.equal(result.ok, false);
     assert.equal(result.code, "BINDING_QUERY_FAILED");
@@ -707,7 +765,7 @@ describe("discoverWindowsCertificateInventory", () => {
   it("never touches the binding query's actual store scoping (reports bindings for all stores)", async () => {
     const execFileImpl = makeExecRouter({
       powershell: { stdout: EMPTY_STORE_JSON },
-      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+      httpsys: { stdout: HTTPSYS_JSON },
     });
     const result = await discoverWindowsCertificateInventory({ store: "WebHosting", execFileImpl });
     assert.equal(result.ok, true);

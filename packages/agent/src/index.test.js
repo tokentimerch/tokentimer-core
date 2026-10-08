@@ -3959,6 +3959,25 @@ function stubbedStoreQueryTarget(file, args) {
   return null;
 }
 
+/** Whether a stubbed call is listHttpSysBindings' registry query. */
+function isHttpSysBindingQuery(file, args) {
+  return file === "powershell.exe" && String(args[args.length - 1]).includes("SslBindingInfo");
+}
+
+/** listHttpSysBindings' query output for IP-keyed bindings in the My store. */
+function httpSysBindingsJson(bindings) {
+  return JSON.stringify({
+    items: bindings.map(({ ipPort, thumbprint }) => ({
+      kind: "SslBindingInfo",
+      key: ipPort,
+      values: {
+        SslCertHash: Array.from(Buffer.from(thumbprint, "hex")),
+        SslCertStoreName: { chars: Array.from("My", (char) => char.charCodeAt(0)) },
+      },
+    })),
+  });
+}
+
 describe("windows-iis renew job (os-store-managed)", () => {
   const CERTIFICATE_ID = "certificate-iis";
   const RENEW_JOB_ID = "job-iis";
@@ -4039,15 +4058,15 @@ describe("windows-iis renew job (os-store-managed)", () => {
   }
 
   /**
-   * Combined certreq.exe/certutil.exe/netsh.exe stub covering every
+   * Combined certreq/certutil/netsh/PowerShell stub covering every
    * Windows child-process tool the CNG/IIS/discovery modules invoke for
    * one windows-iis renewal, keyed on the invoked executable (argv[0])
    * rather than one tool at a time like the sibling modules' own tests,
-   * since a single renewal call here drives all three in sequence.
+   * since a single renewal call here drives all of them in sequence.
    *
    * @param {object} opts
-   * @param {string|null} [opts.outgoingThumbprint] what `netsh http show
-   *   sslcert` reports as already bound, before this deploy. null means
+   * @param {string|null} [opts.outgoingThumbprint] what http.sys reports
+   *   as already bound, before this deploy. null means
    *   "nothing bound yet" (first-ever deploy to this binding).
    * @param {string|null} [opts.storeKeyContainer] the key container the
    *   machine-store listing reports for the outgoing certificate, so
@@ -4086,10 +4105,8 @@ describe("windows-iis renew job (os-store-managed)", () => {
           error = Object.assign(new Error("no matching request"), { code: acceptExitCode });
           stderr = "CertReq: No match";
         }
-      } else if (file === "netsh.exe" && args[1] === "show") {
-        stdout = outgoingThumbprint
-          ? `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${outgoingThumbprint}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`
-          : "";
+      } else if (isHttpSysBindingQuery(file, args)) {
+        stdout = httpSysBindingsJson(outgoingThumbprint ? [{ ipPort: "0.0.0.0:443", thumbprint: outgoingThumbprint }] : []);
       } else if (file === "netsh.exe" && (args[1] === "add" || args[1] === "delete")) {
         stdout = "";
       } else if (file === "powershell.exe" && stubbedStoreQueryTarget(file, args)) {
@@ -4696,22 +4713,22 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
 
   /**
    * @param {object} opts
-   * @param {boolean} [opts.oldStillBound] whether netsh reports a binding
+   * @param {boolean} [opts.oldStillBound] whether http.sys reports a binding
    *   still pointing at OLD_THUMBPRINT.
-   * @param {boolean} [opts.replacementBound] whether netsh reports a
+   * @param {boolean} [opts.replacementBound] whether http.sys reports a
    *   binding for REPLACEMENT_THUMBPRINT (needed before any handshake
    *   probe can even be attempted).
    * @param {string|null} [opts.sharedContainerOnOtherCert] when set, the
    *   machine-store listing reports a SECOND certificate (distinct
    *   thumbprint) sharing this key container name.
-   * @param {boolean} [opts.netshFails] simulate listHttpSysBindings ok:false.
+   * @param {boolean} [opts.bindingQueryFails] simulate listHttpSysBindings ok:false.
    * @param {boolean} [opts.storeQueryFails] simulate listMachineStoreCertificates ok:false.
    */
   function makeSweepExecStub({
     oldStillBound = false,
     replacementBound = true,
     sharedContainerOnOtherCert = null,
-    netshFails = false,
+    bindingQueryFails = false,
     storeQueryFails = false,
   } = {}) {
     const storeListing = windowsStoreListing(
@@ -4722,24 +4739,15 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     const calls = [];
     return function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
-      if (file === "netsh.exe" && args[1] === "show") {
-        if (netshFails) {
+      if (isHttpSysBindingQuery(file, args)) {
+        if (bindingQueryFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
           return;
         }
         const bindings = [];
-        if (oldStillBound) {
-          bindings.push(
-            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${OLD_THUMBPRINT}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`,
-          );
-        }
-        if (replacementBound) {
-          bindings.push(
-            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${REPLACEMENT_THUMBPRINT}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`,
-          );
-        }
-        const stdout = bindings.length > 0 ? `\nSSL Certificate bindings:\n-------------------------\n\n${bindings.join("\n")}` : "";
-        process.nextTick(() => callback(null, stdout, ""));
+        if (oldStillBound) bindings.push({ ipPort: "0.0.0.0:443", thumbprint: OLD_THUMBPRINT });
+        if (replacementBound) bindings.push({ ipPort: "0.0.0.0:443", thumbprint: REPLACEMENT_THUMBPRINT });
+        process.nextTick(() => callback(null, httpSysBindingsJson(bindings), ""));
         return;
       }
       if (stubbedStoreQueryTarget(file, args)) {
@@ -4786,7 +4794,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
 
   // A self-signed fixture certificate generated purely so this suite can
   // assert the sweep's TLS-probe thumbprint comparison genuinely computes
-  // sha1(DER) rather than trusting netsh's own report: REPLACEMENT_THUMBPRINT
+  // sha1(DER) rather than trusting http.sys's own report: REPLACEMENT_THUMBPRINT
   // is set to match this specific certificate's real fingerprint below.
   const FIXTURE_REPLACEMENT_PROBE_CERT_PEM = fs.readFileSync(
     path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
@@ -4832,8 +4840,8 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
       jobOrRollbackJournalRefs: [{ ref: "job-old", active: false }],
     });
     const execFileImplWithRealThumbprint = (file, args, options, callback) => {
-      if (file === "netsh.exe" && args[1] === "show") {
-        const stdout = `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${realReplacementThumbprint}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`;
+      if (isHttpSysBindingQuery(file, args)) {
+        const stdout = httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: realReplacementThumbprint }]);
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
@@ -4909,7 +4917,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
   it("fails safe (defers as still-bound) when listHttpSysBindings itself cannot be queried", async () => {
     workDir = makeTempConfigDir();
     seedRow(workDir);
-    const execFileImpl = makeSweepExecStub({ netshFails: true });
+    const execFileImpl = makeSweepExecStub({ bindingQueryFails: true });
 
     const summary = await runWindowsRetentionSweep({
       stateDir: workDir,

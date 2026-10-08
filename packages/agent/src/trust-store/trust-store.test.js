@@ -1722,7 +1722,7 @@ describe("trust-store: no desired-state pruning", () => {
 function makeFakeSpawn(entries) {
   const items = entries.map(({ thumbprint, pem }) => ({
     Thumbprint: thumbprint,
-    RawCertificateBase64: new (require("node:crypto").X509Certificate)(pem).raw.toString("base64"),
+    RawData: Array.from(new (require("node:crypto").X509Certificate)(pem).raw),
   }));
   return () => ({ status: 0, stdout: JSON.stringify({ items }), stderr: "", error: null });
 }

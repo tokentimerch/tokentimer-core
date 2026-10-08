@@ -5,7 +5,7 @@
  * evidence adapter.
  *
  * This module is NOT a second Windows scanner. All actual enumeration
- * (machine-store `certutil`, http.sys `netsh`, IIS-site `appcmd`) is owned by
+ * (machine store, http.sys bindings, IIS-site `appcmd`) is owned by
  * the canonical ../windows-discovery module (real-host verified against
  * Windows Server 2019/2022/2025). This module's only job is to normalize
  * that canonical output into the same observation shape ./index.js's
@@ -49,8 +49,8 @@ const MAX_DISCOVERY_STORES = 32;
 
 /**
  * Runs a PowerShell script and parses its stdout as JSON. Scoped to exactly
- * one purpose in this module: fetching `{ Thumbprint, RawCertificateBase64 }`
- * pairs for SHA-256 fingerprint completion (see module doc comment). This is
+ * one purpose in this module: fetching `{ Thumbprint, RawData }` pairs for
+ * SHA-256 fingerprint completion (see module doc comment). This is
  * deliberately NOT a general-purpose Windows enumeration helper -- subject,
  * issuer, SANs, dates, key presence, bindings, and sites all come from
  * ../windows-discovery, never from this script.
@@ -109,7 +109,9 @@ function runPowerShellJson(assignOutScript, { spawn = spawnSync, onWarning = () 
  * completion only. storeLocation/storeName are agent-config-controlled (not
  * remotely supplied) but are still validated against a strict allowlist
  * before interpolation, matching this codebase's "never string-build a
- * shell command from unchecked input" posture.
+ * shell command from unchecked input" posture. The bytes travel as a
+ * number list and are encoded here: Constrained Language Mode blocks
+ * [PSCustomObject] and [Convert].
  *
  * @param {{ storeLocation?: string, storeName?: string, spawn?: Function, onWarning?: (m: string) => void }} [options]
  * @returns {Map<string, string>} thumbprint (lowercase) -> base64 DER bytes
@@ -127,9 +129,9 @@ function fetchRawCertificateDerByThumbprint({
   const script = `
 $certs = Get-ChildItem -Path 'Cert:\\${storeLocation}\\${storeName}' -ErrorAction Stop
 $out = foreach ($c in $certs) {
-  [PSCustomObject]@{
+  @{
     Thumbprint = $c.Thumbprint
-    RawCertificateBase64 = [Convert]::ToBase64String($c.RawData)
+    RawData = [int[]]$c.RawData
   }
 }
 `.trim();
@@ -137,8 +139,10 @@ $out = foreach ($c in $certs) {
   const byThumbprint = new Map();
   for (const item of items) {
     if (!item || typeof item.Thumbprint !== "string" || !item.Thumbprint) continue;
-    if (typeof item.RawCertificateBase64 !== "string" || !item.RawCertificateBase64) continue;
-    byThumbprint.set(item.Thumbprint.toLowerCase(), item.RawCertificateBase64);
+    const raw = item.RawData;
+    if (!Array.isArray(raw) || raw.length === 0) continue;
+    if (!raw.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)) continue;
+    byThumbprint.set(item.Thumbprint.toLowerCase(), Buffer.from(raw).toString("base64"));
   }
   return byThumbprint;
 }
@@ -300,7 +304,7 @@ async function collectWindowsDiscoveryObservations({
   // scan so WebHosting and custom-store bindings remain resolvable.
   const bindingsResult = await listHttpSysBindings({ ...execOpts });
   if (!bindingsResult.ok) {
-    onWarning(`windows discovery (http_sys/iis_binding): ${bindingsResult.stderrExcerpt || "netsh query failed"}`);
+    onWarning(`windows discovery (http_sys/iis_binding): ${bindingsResult.stderrExcerpt || "http.sys binding query failed"}`);
   }
   const bindings = bindingsResult.ok ? bindingsResult.bindings : [];
 

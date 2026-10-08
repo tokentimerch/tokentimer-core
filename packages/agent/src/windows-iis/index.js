@@ -378,114 +378,149 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
 }
 
 /**
- * Queries the certificate currently bound at a given binding selector via
- * `netsh http show sslcert ipport=<addr:port>` (or `hostnameport=<host:port>`
- * when the binding carries an sniHost -- see formatBindingSelector),
- * parsing the human-readable output for the `Certificate Hash` line.
- * Returns null (not an error) when nothing is bound there yet, which is
- * the normal state for a first-ever deploy: decision 13's
- * rollback-to-outgoing-thumbprint step is a no-op in that case, not a
- * failure.
- *
- * Parses netsh's fixed-format key/value output rather than any structured
- * format, because `netsh http show sslcert` has no JSON/CSV output mode.
- * This is exactly the kind of implementation detail decision 13 says must
- * stay swappable: a future move to a structured API removes this parser
- * without changing this function's return contract.
+ * Canonical form of an `ipport`/`hostnameport` selector value, so a binding
+ * descriptor and http.sys's own key compare equal: hostnames and IPv6
+ * literals case-insensitively, IPv6 in its compressed form, and "*" as the
+ * 0.0.0.0 wildcard it stands for.
+ * @param {string} selectorValue e.g. "[2001:DB8::1]:443", "Example.com:443"
+ * @returns {string}
+ */
+function canonicalSelectorValue(selectorValue) {
+  const lastColon = selectorValue.lastIndexOf(":");
+  if (lastColon <= 0) return selectorValue.toLowerCase();
+  let host = selectorValue.slice(0, lastColon).toLowerCase();
+  const port = selectorValue.slice(lastColon + 1);
+  if (host === "*") host = "0.0.0.0";
+  const ipv6 = /^\[(.+)\]$/.exec(host);
+  if (ipv6) {
+    try {
+      host = new URL(`http://[${ipv6[1]}]/`).hostname;
+    } catch {
+      // Left as written; it then simply matches nothing.
+    }
+  }
+  return `${host}:${port}`;
+}
+
+/**
+ * Reads the certificate currently bound at a binding's selector
+ * (`ipport=<addr:port>`, or `hostnameport=<host:port>` when it carries an
+ * sniHost -- see formatBindingSelector) from http.sys's configuration,
+ * plus the settings a rebind has to carry over (see decodeHttpSysSettings).
+ * `thumbprint: null` (not an error) means nothing is bound there yet, the
+ * normal state for a first-ever deploy: decision 13's
+ * rollback-to-outgoing-thumbprint step is a no-op in that case.
  *
  * @param {object} input
  * @param {{ address: string, port: number, sniHost?: string }} input.binding
  * @param {Function} [input.execFileImpl]
- * @param {string} [input.netshPath]
+ * @param {string} [input.powershellPath]
  * @param {number} [input.timeoutMs]
- * @returns {Promise<{ ok: true, thumbprint: string|null } | { ok: false, exitCode: number|null, stderrExcerpt: string }>}
+ * @returns {Promise<
+ *   | { ok: true, thumbprint: null }
+ *   | { ok: true, thumbprint: string, parameters: ReturnType<typeof decodeHttpSysSettings>["parameters"], unsupportedSettings?: string[] }
+ *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
+ * >}
  */
 async function queryCurrentBinding({
   binding,
   execFileImpl = childProcess.execFile,
-  netshPath = "netsh.exe",
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-  assertSafeArgvElements("netshPath", [netshPath]);
-  const argv = [
-    netshPath,
-    "http",
-    "show",
-    "sslcert",
-    formatBindingSelector(binding),
-  ];
-  assertSafeArgvElements("argv", argv);
+  const listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
+  if (!listed.ok) {
+    return { ok: false, exitCode: listed.exitCode, stderrExcerpt: listed.stderrExcerpt };
+  }
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
-
-  // netsh exits nonzero when nothing is bound at this selector ("The
-  // system cannot find the file specified" is its real message for this
-  // case, for both the ipport and hostnameport forms); that is the normal
-  // "nothing bound yet" state, not an error.
-  const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
-  if (exitCode !== 0) {
-    if (/cannot find/i.test(stdoutText) || /cannot find/i.test(String(stderr ?? ""))) {
-      return { ok: true, thumbprint: null };
-    }
+  const keyedBy = binding.sniHost ? "hostnameport" : "ipport";
+  const wanted = canonicalSelectorValue(
+    binding.sniHost ? `${binding.sniHost}:${binding.port}` : formatIpPort(binding),
+  );
+  const current = listed.bindings.find(
+    (entry) => entry.keyedBy === keyedBy && entry.ipPort && canonicalSelectorValue(entry.ipPort) === wanted,
+  );
+  if (!current) {
+    return { ok: true, thumbprint: null };
+  }
+  if (!current.thumbprint) {
     return {
       ok: false,
-      exitCode,
-      stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
+      exitCode: null,
+      stderrExcerpt: `the binding at ${formatBindingSelector(binding)} has no readable certificate hash`,
     };
   }
 
-  const match = /Certificate Hash\s*:\s*([0-9A-Fa-f]{40})/.exec(stdoutText);
+  const { parameters, unsupported } = decodeHttpSysSettings(current.settings);
   return {
     ok: true,
-    thumbprint: match ? match[1].toUpperCase() : null,
-    parameters: parseSslcertParameters(stdoutText),
+    thumbprint: current.thumbprint,
+    parameters,
+    ...(unsupported.length > 0 ? { unsupportedSettings: unsupported } : {}),
   };
 }
 
 /**
- * Parses the non-thumbprint parameters an operator may have configured on
- * an existing binding out of `netsh http show sslcert`'s human-readable
- * output: revocation checking, CTL-based issuer restriction, DS mapper
- * usage, client-certificate negotiation, and the newer per-connection
- * policy flags (reject, HTTP/2, QUIC, legacy-TLS/TLS1.2/TLS1.3, OCSP
- * stapling, token binding, extended-event logging, session ticket/id).
- * `bindCertificate`'s delete-then-add rebind (decision 13) would otherwise
- * silently reset every one of these to netsh's own default on every
- * renewal, since `add sslcert` only ever sees the flags a given call
- * explicitly passes it -- found during PR review as a real gap.
+ * http.sys's own flag values (HTTP_SERVICE_CONFIG_SSL_FLAG_*) for the
+ * per-connection options `netsh http add sslcert` can set, each confirmed on
+ * Windows Server 2019, 2022 and 2025 by setting that netsh option alone.
+ */
+const SSL_FLAG_DS_MAPPER = 0x1;
+const SSL_FLAG_NEGOTIATE_CLIENT_CERT = 0x2;
+const NEWER_SSL_FLAGS = Object.freeze([
+  [0x8, "rejectConnections"],
+  [0x10, "disableHttp2"],
+  [0x20, "disableQuic"],
+  [0x40, "disableTls13"],
+  [0x80, "disableOcspStapling"],
+  [0x100, "enableTokenBinding"],
+  [0x200, "logExtendedEvents"],
+  [0x400, "disableLegacyTls"],
+  [0x800, "enableSessionTicket"],
+  [0x1000, "disableTls12"],
+  [0x4000, "disableSessionId"],
+]);
+const SSL_FLAGS_MASK = NEWER_SSL_FLAGS.reduce(
+  (mask, [bit]) => mask | bit,
+  SSL_FLAG_DS_MAPPER | SSL_FLAG_NEGOTIATE_CLIENT_CERT,
+);
+
+/** DefaultSslCertCheckMode bits, confirmed the same way. */
+const CERT_CHECK_NO_REVOCATION = 0x1;
+const CERT_CHECK_CACHED_CLIENT_CERT_ONLY = 0x2;
+const CERT_CHECK_FRESHNESS_TIME = 0x4;
+const CERT_CHECK_NO_USAGE_CHECK = 0x10000;
+const CERT_CHECK_MASK =
+  CERT_CHECK_NO_REVOCATION | CERT_CHECK_CACHED_CLIENT_CERT_ONLY | CERT_CHECK_FRESHNESS_TIME | CERT_CHECK_NO_USAGE_CHECK;
+
+// The CTL names follow the observed naming but were never seen on a real
+// host; if http.sys uses other names, those bindings fail closed instead.
+const HTTPSYS_SETTING_NAMES = new Set([
+  "DefaultFlags",
+  "DefaultSslCertCheckMode",
+  "DefaultSslRevocationFreshnessTime",
+  "DefaultSslRevocationUrlRetrievalTimeout",
+  "DefaultSslCtlIdentifier",
+  "DefaultSslCtlStoreName",
+]);
+
+/**
+ * Turns an existing binding's http.sys settings (../windows-discovery's
+ * `settings`) into the parameters formatPreservedParamArgs replays on a
+ * rebind, because `bindCertificate`'s delete-then-add (decision 13) would
+ * otherwise reset every one of them to netsh's default on each renewal.
  *
- * Only fields this function can positively read back are included in the
- * returned object; a label it does not find, or one netsh reports as
- * "Not Set" (its own tri-state default for the newer per-connection flags
- * below, distinct from Enabled/Disabled), is simply omitted, never
- * defaulted to true/false by guesswork. formatPreservedParamArgs then only
- * ever emits a flag for a key that is actually present, so an unparsed (or
- * "Not Set") field falls back to netsh's own default exactly as it did
- * before this fix -- strictly no worse, not a new failure mode.
+ * Anything netsh cannot set back is listed in `unsupported` rather than
+ * dropped: an unknown value name or flag bit, a value of the wrong type, a
+ * freshness time without its check-mode bit (or the reverse), or a CTL
+ * store without a CTL. The caller must not rebind such a binding.
  *
- * `disableLegacyTls` specifically uses a DIFFERENT vocabulary than every
- * other per-connection policy flag: Microsoft's own documentation reports
- * this one field as "Set"/"Not Set", not "Enabled"/"Disabled"/"Not Set" --
- * a PR review found (2026-08-07) that treating it the same as its siblings
- * meant an outgoing binding with legacy TLS genuinely disabled was never
- * recognized as such, so that restriction was silently dropped (not reset,
- * simply never preserved) on every rebind. See readSetOrEnabledOrNotSet's
- * own doc comment below.
+ * The classic options are always present (false/0/null when unset, as
+ * netsh reports them); the newer per-connection flags only when set, since
+ * an older netsh does not know them at all.
  *
- * These are every parameter `netsh http add sslcert help` accepts as of
- * Windows Server 2022/2025 (excluding certhash/appid/certstorename, which
- * the caller always sets explicitly to the new certificate's own identity,
- * never preserved from the outgoing one): the eight classic ones (Windows
- * Server 2012+) plus the newer per-connection policy flags Server 2019+
- * added (reject/disablehttp2/disablequic/disablelegacytls/disabletls12/
- * disabletls13/disableocspstapling/enabletokenbinding/logextendedevents/
- * enablesessionticket/disablesessionid). A netsh binary older than the
- * host this runs on would simply never emit these newer labels in its
- * `show sslcert` output, so readSetOrEnabledOrNotSet naturally omits
- * them for that host too -- no version detection needed.
- *
- * @param {string} stdoutText raw `netsh http show sslcert` stdout.
- * @returns {{
+ * @param {Record<string, unknown>} [settings]
+ * @returns {{ unsupported: string[], parameters: {
  *   verifyClientCertRevocation?: boolean,
  *   verifyRevocationWithCachedClientCertOnly?: boolean,
  *   usageCheck?: boolean,
@@ -506,97 +541,67 @@ async function queryCurrentBinding({
  *   logExtendedEvents?: boolean,
  *   enableSessionTicket?: boolean,
  *   disableSessionId?: boolean,
- * }}
+ * } }}
  */
-function parseSslcertParameters(stdoutText) {
-  const readEnabledDisabled = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(Enabled|Disabled)`, "i").exec(stdoutText);
-    return found ? found[1].toLowerCase() === "enabled" : undefined;
+function decodeHttpSysSettings(settings = {}) {
+  const unsupported = Object.keys(settings).filter((name) => !HTTPSYS_SETTING_NAMES.has(name));
+  const readNumber = (name) => {
+    const value = settings[name];
+    if (value === undefined) return 0;
+    if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) return value;
+    unsupported.push(name);
+    return 0;
   };
-  // The newer per-connection policy flags (Windows Server 2019+) all
-  // report a real Windows Server 2025 host's actual vocabulary as
-  // "Set"/"Not Set", NOT "Enabled"/"Disabled" -- a real-host finding
-  // (2026-08-09) that widens what was originally believed (and fixed,
-  // 2026-08-07) to be a one-off vocabulary quirk unique to "Disable Legacy
-  // TLS Versions". A real captured `netsh http show sslcert` transcript
-  // from a binding with SEVEN of these flags explicitly configured
-  // (disablehttp2, disablequic, disablelegacytls, enabletokenbinding,
-  // logextendedevents, enablesessionticket, disablesessionid, all set via
-  // a real `add sslcert` call) showed every single one rendered as "Set",
-  // never "Enabled" -- proving the original Enabled/Disabled/Not-Set
-  // regex this function used to have for these ten flags never matches a
-  // real positive value on this Windows build, silently DROPPING (not
-  // resetting -- formatPreservedParamArgs then emits no flag at all) every
-  // one of them on every rebind, quietly undoing an operator's
-  // deliberately-configured connection-policy hardening each time a
-  // certificate renews. Accepts all four tokens defensively, in case a
-  // future/older Windows build ever reports Enabled/Disabled for one of
-  // these fields instead: "Set" and "Enabled" both mean the restriction is
-  // active; "Not Set" and "Disabled" are both omitted (never forced,
-  // exactly netsh's own default-on-omission), so an unparsed or
-  // never-configured field costs nothing extra on rebind either way.
-  const readSetOrEnabledOrNotSet = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(Not Set|Set|Enabled|Disabled)`, "i").exec(stdoutText);
-    if (!found) return undefined;
-    const value = found[1].toLowerCase();
-    return value === "set" || value === "enabled" ? true : undefined;
-  };
-  const readInteger = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(\\d+)`, "i").exec(stdoutText);
-    return found ? Number(found[1]) : undefined;
-  };
-  const readNullableString = (label) => {
-    const found = new RegExp(`${label}\\s*:\\s*(.+)`, "i").exec(stdoutText);
-    if (!found) return undefined;
-    const value = found[1].trim();
-    return value === "" || value === "(null)" ? null : value;
+  const readText = (name) => {
+    const value = settings[name];
+    if (value === undefined) return null;
+    if (typeof value === "string") return value || null;
+    unsupported.push(name);
+    return null;
   };
 
-  const params = {};
-  const assign = (key, value) => {
-    if (value !== undefined) params[key] = value;
+  const flags = readNumber("DefaultFlags");
+  const checkMode = readNumber("DefaultSslCertCheckMode");
+  const freshnessTime = readNumber("DefaultSslRevocationFreshnessTime");
+  const ctlIdentifier = readText("DefaultSslCtlIdentifier");
+  const ctlStoreName = readText("DefaultSslCtlStoreName");
+  const unknownFlags = (flags & ~SSL_FLAGS_MASK) >>> 0;
+  if (unknownFlags !== 0) unsupported.push(`DefaultFlags 0x${unknownFlags.toString(16)}`);
+  const unknownCheckMode = (checkMode & ~CERT_CHECK_MASK) >>> 0;
+  if (unknownCheckMode !== 0) unsupported.push(`DefaultSslCertCheckMode 0x${unknownCheckMode.toString(16)}`);
+  // netsh sets the freshness bit exactly when it is given a non-zero time.
+  if (Boolean(checkMode & CERT_CHECK_FRESHNESS_TIME) !== freshnessTime > 0) {
+    unsupported.push("DefaultSslRevocationFreshnessTime");
+  }
+  if (ctlStoreName !== null && ctlIdentifier === null) unsupported.push("DefaultSslCtlStoreName");
+
+  const parameters = {
+    verifyClientCertRevocation: (checkMode & CERT_CHECK_NO_REVOCATION) === 0,
+    verifyRevocationWithCachedClientCertOnly: (checkMode & CERT_CHECK_CACHED_CLIENT_CERT_ONLY) !== 0,
+    usageCheck: (checkMode & CERT_CHECK_NO_USAGE_CHECK) === 0,
+    revocationFreshnessTime: freshnessTime,
+    urlRetrievalTimeout: readNumber("DefaultSslRevocationUrlRetrievalTimeout"),
+    ctlIdentifier,
+    ctlStoreName,
+    dsMapperUsage: (flags & SSL_FLAG_DS_MAPPER) !== 0,
+    negotiateClientCert: (flags & SSL_FLAG_NEGOTIATE_CLIENT_CERT) !== 0,
   };
-
-  assign("verifyClientCertRevocation", readEnabledDisabled("Verify Client Certificate Revocation"));
-  assign(
-    "verifyRevocationWithCachedClientCertOnly",
-    readEnabledDisabled("Verify Revocation Using Cached Client Certificate Only"),
-  );
-  assign("usageCheck", readEnabledDisabled("Usage Check"));
-  assign("revocationFreshnessTime", readInteger("Revocation Freshness Time"));
-  assign("urlRetrievalTimeout", readInteger("URL Retrieval Timeout"));
-  assign("ctlIdentifier", readNullableString("Ctl Identifier"));
-  assign("ctlStoreName", readNullableString("Ctl Store Name"));
-  assign("dsMapperUsage", readEnabledDisabled("DS Mapper Usage"));
-  assign("negotiateClientCert", readEnabledDisabled("Negotiate Client Certificate"));
-  assign("rejectConnections", readSetOrEnabledOrNotSet("Reject Connections"));
-  assign("disableHttp2", readSetOrEnabledOrNotSet("Disable HTTP2"));
-  assign("disableQuic", readSetOrEnabledOrNotSet("Disable QUIC"));
-  assign("disableLegacyTls", readSetOrEnabledOrNotSet("Disable Legacy TLS Versions"));
-  assign("disableTls12", readSetOrEnabledOrNotSet("Disable TLS1\\.2"));
-  assign("disableTls13", readSetOrEnabledOrNotSet("Disable TLS1\\.3"));
-  assign("disableOcspStapling", readSetOrEnabledOrNotSet("Disable OCSP Stapling"));
-  assign("enableTokenBinding", readSetOrEnabledOrNotSet("Enable Token Binding"));
-  assign("logExtendedEvents", readSetOrEnabledOrNotSet("Log Extended Events"));
-  assign("enableSessionTicket", readSetOrEnabledOrNotSet("Enable Session Ticket"));
-  assign("disableSessionId", readSetOrEnabledOrNotSet("Disable Session ID"));
-
-  return params;
+  for (const [bit, key] of NEWER_SSL_FLAGS) {
+    if ((flags & bit) !== 0) parameters[key] = true;
+  }
+  return { parameters, unsupported };
 }
 
 /**
- * Turns a parseSslcertParameters result back into the `netsh http add
- * sslcert` flags that reproduce it, so bindCertificate's rebind can pass
- * them alongside the new certhash/appid/certstorename and genuinely
- * preserve an operator's prior revocation/CTL/negotiation/connection-policy
- * configuration instead of silently resetting it to netsh's default on
- * every renewal. A key absent from `parameters` (never positively read
- * back, including a netsh "Not Set" tri-state for the newer flags) simply
- * contributes no flag at all, which is exactly netsh's own
- * default-on-omission behavior -- the same as before this fix, for that
- * one field.
+ * Turns decodeHttpSysSettings' parameters back into the `netsh http add
+ * sslcert` flags that reproduce them, so bindCertificate's rebind can pass
+ * them alongside the new certhash/appid/certstorename and preserve an
+ * operator's prior revocation/CTL/negotiation/connection-policy
+ * configuration instead of resetting it to netsh's default on every
+ * renewal. A key absent from `parameters` contributes no flag at all,
+ * which is netsh's own default-on-omission behavior.
  *
- * @param {ReturnType<typeof parseSslcertParameters>} parameters
+ * @param {ReturnType<typeof decodeHttpSysSettings>["parameters"]} parameters
  * @returns {string[]} zero or more `name=value` netsh argv elements.
  */
 function formatPreservedParamArgs(parameters = {}) {
@@ -654,9 +659,8 @@ function formatPreservedParamArgs(parameters = {}) {
   if (parameters.negotiateClientCert !== undefined) {
     args.push(`clientcertnegotiation=${flag(parameters.negotiateClientCert)}`);
   }
-  // Newer per-connection policy flags (Windows Server 2019+; see
-  // parseSslcertParameters' doc comment for the version-agnostic
-  // omit-if-absent rationale, which applies identically here).
+  // Newer per-connection policy flags; see findUnsupportedNetshParams for
+  // the hosts whose netsh lacks some of them.
   if (parameters.rejectConnections !== undefined) {
     args.push(`reject=${flag(parameters.rejectConnections)}`);
   }
@@ -693,6 +697,47 @@ function formatPreservedParamArgs(parameters = {}) {
   return args;
 }
 
+/** Accepted by every netsh this agent runs against (Windows Server 2019+). */
+const CLASSIC_NETSH_PARAMS = new Set([
+  "verifyclientcertrevocation",
+  "verifyrevocationwithcachedclientcertonly",
+  "usagecheck",
+  "revocationfreshnesstime",
+  "urlretrievaltimeout",
+  "sslctlidentifier",
+  "sslctlstorename",
+  "dsmapperusage",
+  "clientcertnegotiation",
+]);
+
+/**
+ * Returns the newer `add sslcert` parameters among `args` that this host's
+ * netsh does not list in its own help. netsh exits 0 WITHOUT creating the
+ * binding when a parameter is unknown to it or rejected by http.sys (both
+ * seen on Windows Server 2019). Settings read back from http.sys were
+ * accepted by it, so only the first case can come up on a rebind, and
+ * replaying such a parameter would leave the endpoint unbound, the
+ * rollback (same settings) included. The help's parameter names are not
+ * localized.
+ *
+ * @param {object} input
+ * @param {string[]} input.args formatPreservedParamArgs output.
+ * @param {Function} input.execFileImpl
+ * @param {string} input.netshPath
+ * @param {number} input.timeoutMs
+ * @returns {Promise<string[]>}
+ */
+async function findUnsupportedNetshParams({ args, execFileImpl, netshPath, timeoutMs }) {
+  const names = args.map((arg) => arg.slice(0, arg.indexOf("="))).filter((name) => !CLASSIC_NETSH_PARAMS.has(name));
+  if (names.length === 0) return [];
+  const argv = [netshPath, "http", "add", "sslcert", "help"];
+  assertSafeArgvElements("argv", argv);
+  const { stdout } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+  const helpText = typeof stdout === "string" ? stdout : String(stdout ?? "");
+  const listed = new Set(Array.from(helpText.matchAll(/\[([a-z0-9]+)=/g), (match) => match[1]));
+  return names.filter((name) => !listed.has(name));
+}
+
 /**
  * Binds (or rebinds) a certificate at a binding selector via netsh http.
  * Always deletes any existing binding at that exact selector first
@@ -721,7 +766,7 @@ function formatPreservedParamArgs(parameters = {}) {
  * @param {{ address: string, port: number, sniHost?: string }} input.binding
  * @param {string} input.thumbprint 40-hex-char SHA-1, any case.
  * @param {string} input.store Windows certificate store name.
- * @param {ReturnType<typeof parseSslcertParameters>} [input.preserveParameters]
+ * @param {ReturnType<typeof decodeHttpSysSettings>["parameters"]} [input.preserveParameters]
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.netshPath]
  * @param {number} [input.timeoutMs]
@@ -821,9 +866,10 @@ async function bindCertificate({
  * @param {object} input
  * @param {{ address: string, port: number, sniHost?: string, store: string }} input.binding
  * @param {string} input.outgoingThumbprint non-null; caller checks null first.
- * @param {ReturnType<typeof parseSslcertParameters>} [input.preserveParameters]
+ * @param {ReturnType<typeof decodeHttpSysSettings>["parameters"]} [input.preserveParameters]
  * @param {Function} input.execFileImpl
  * @param {string} input.netshPath
+ * @param {string} input.powershellPath
  * @param {number} input.timeoutMs
  * @returns {Promise<{ rolledBack: boolean, rollbackDetail?: string, rollbackVerifyDetail?: string }>}
  */
@@ -833,6 +879,7 @@ async function attemptRollback({
   preserveParameters = {},
   execFileImpl,
   netshPath,
+  powershellPath,
   timeoutMs,
   delayImpl,
 }) {
@@ -857,7 +904,7 @@ async function attemptRollback({
   const rollbackVerifyResult = await queryCurrentBinding({
     binding,
     execFileImpl,
-    netshPath,
+    powershellPath,
     timeoutMs,
   });
   const rollbackVerifyDetail =
@@ -898,10 +945,10 @@ async function attemptRollback({
  *      2026-08-07, that checking only the two wildcard forms misses this
  *      shape entirely, even though this module's own binding-scope doc
  *      comment on deployIisBinding already explains specific-IP bindings
- *      take precedence too). Enumerated via a full, unfiltered
- *      `netsh http show sslcert` listing (../windows-discovery's
- *      listHttpSysBindings) rather than a targeted query, since the
- *      conflicting address is not known in advance.
+ *      take precedence too).
+ * All three come from one full binding listing (../windows-discovery's
+ * listHttpSysBindings), since a concrete conflicting address is not known
+ * in advance; wildcards are reported first.
  *
  * A query failure here is swallowed (no warning returned): this check is
  * purely informational and must never fail an otherwise-successful SNI
@@ -911,64 +958,47 @@ async function attemptRollback({
  * @param {object} input
  * @param {{ port: number, sniHost: string }} input.binding
  * @param {Function} input.execFileImpl
- * @param {string} input.netshPath
+ * @param {string} input.powershellPath
  * @param {number} input.timeoutMs
  * @returns {Promise<string|undefined>}
  */
-async function checkSniPrecedenceConflict({ binding, execFileImpl, netshPath, timeoutMs }) {
-  for (const wildcardAddress of ["0.0.0.0", "[::]"]) {
-    let result;
-    try {
-      result = await queryCurrentBinding({
-        binding: { address: wildcardAddress, port: binding.port },
-        execFileImpl,
-        netshPath,
-        timeoutMs,
-      });
-    } catch {
-      continue;
-    }
-    if (result.ok && result.thumbprint !== null) {
-      return (
-        `an existing non-SNI certificate binding at ipport=${wildcardAddress}:${binding.port} may take ` +
-        `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
-        `connecting over that address family: http.sys evaluates ipport bindings before hostnameport ` +
-        `bindings on the same port, regardless of the client's SNI value`
-      );
-    }
-  }
-
-  // Concrete-IP ipport bindings shadow the SNI binding for clients
-  // connecting to that exact IP only, but are otherwise the same
-  // precedence rule as the two wildcard forms above -- see this
-  // function's doc comment.
+async function checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs }) {
+  let listed;
   try {
-    const allBindings = await listHttpSysBindings({ execFileImpl, netshPath, timeoutMs });
-    if (allBindings.ok === true) {
-      for (const existing of allBindings.bindings) {
-        if (existing.keyedBy !== "ipport" || !existing.thumbprint || !existing.ipPort) continue;
-        const parsed = splitIpPortLiteral(existing.ipPort);
-        if (!parsed || parsed.port !== binding.port) continue;
-        if (parsed.address === "0.0.0.0" || parsed.address === "[::]" || parsed.address === "*") {
-          // Already covered by the wildcard checks above.
-          continue;
-        }
-        return (
-          `an existing non-SNI certificate binding at ipport=${parsed.address}:${binding.port} may take ` +
-          `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
-          `connecting to that specific IP: http.sys evaluates ipport bindings before hostnameport bindings ` +
-          `on the same port, regardless of the client's SNI value`
-        );
-      }
-    }
+    listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
   } catch {
-    // Purely informational; see doc comment above.
+    return undefined;
+  }
+  if (listed.ok !== true) return undefined;
+
+  const shadowingAddresses = listed.bindings.flatMap((existing) => {
+    if (existing.keyedBy !== "ipport" || !existing.thumbprint || !existing.ipPort) return [];
+    const parsed = splitIpPortLiteral(canonicalSelectorValue(existing.ipPort));
+    return parsed && parsed.port === binding.port ? [parsed.address] : [];
+  });
+  const wildcardAddress = ["0.0.0.0", "[::]"].find((address) => shadowingAddresses.includes(address));
+  if (wildcardAddress) {
+    return (
+      `an existing non-SNI certificate binding at ipport=${wildcardAddress}:${binding.port} may take ` +
+      `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
+      `connecting over that address family: http.sys evaluates ipport bindings before hostnameport ` +
+      `bindings on the same port, regardless of the client's SNI value`
+    );
+  }
+  const concreteAddress = shadowingAddresses[0];
+  if (concreteAddress) {
+    return (
+      `an existing non-SNI certificate binding at ipport=${concreteAddress}:${binding.port} may take ` +
+      `precedence over this SNI binding (hostnameport=${binding.sniHost}:${binding.port}) for clients ` +
+      `connecting to that specific IP: http.sys evaluates ipport bindings before hostnameport bindings ` +
+      `on the same port, regardless of the client's SNI value`
+    );
   }
   return undefined;
 }
 
 /**
- * Splits a `netsh http show sslcert`-reported `ipPort` literal (an
+ * Splits an http.sys `ipPort` literal (an
  * `IP:port` or `Hostname:port` string, per ../windows-discovery's own
  * `keyedBy` field) into `{ address, port }`, on the LAST colon so a
  * bracketed IPv6 literal (`[::1]:443`) is not mis-split on one of its own
@@ -1049,7 +1079,8 @@ function splitIpPortLiteral(ipPort) {
  *   enrollment / a future PFX-import fallback for that step).
  * @param {Function} [input.execFileImpl] injection point for tests.
  * @param {string} [input.netshPath]
- * @param {number} [input.timeoutMs] budget for each netsh invocation.
+ * @param {string} [input.powershellPath] runs the http.sys binding query.
+ * @param {number} [input.timeoutMs] budget for each netsh/PowerShell invocation.
  * @param {number} [input.verifyTimeoutMs] budget for the post-bind TLS
  *   handshake, default DEFAULT_VERIFY_TIMEOUT_MS.
  * @param {Function} [input.connectImpl] injection point forwarded to
@@ -1085,6 +1116,11 @@ function splitIpPortLiteral(ipPort) {
  * outgoingThumbprint" state a post-bind VERIFY_FAILED leaves it in. Both
  * failure branches now share one attemptRollback helper for this reason.
  *
+ * UNSUPPORTED_BINDING_SETTINGS: the outgoing binding has a setting netsh
+ * cannot set back (see decodeHttpSysSettings and
+ * findUnsupportedNetshParams). The binding is left untouched rather than
+ * rebound without that setting.
+ *
  * @returns {Promise<
  *   | { ok: true, outgoingThumbprint: string|null, boundThumbprint: string, verifiedAt: { host: string, port: number }, skippedMutation?: true, precedenceWarning?: string }
  *   | { ok: false, code: string, detail: string, outgoingThumbprint: string|null, rolledBack: boolean, rollbackDetail?: string, rollbackVerifyDetail?: string }
@@ -1095,6 +1131,7 @@ async function deployIisBinding({
   certificatePem,
   execFileImpl = childProcess.execFile,
   netshPath = "netsh.exe",
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   verifyTimeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
   connectImpl,
@@ -1111,27 +1148,45 @@ async function deployIisBinding({
   const currentBindingResult = await queryCurrentBinding({
     binding,
     execFileImpl,
-    netshPath,
+    powershellPath,
     timeoutMs,
   });
   if (!currentBindingResult.ok) {
     return guardReturnValue({
       ok: false,
       code: "QUERY_FAILED",
-      detail: `netsh http show sslcert failed: ${currentBindingResult.stderrExcerpt}`,
+      detail: `http.sys binding query failed: ${currentBindingResult.stderrExcerpt}`,
       outgoingThumbprint: null,
       rolledBack: false,
     });
   }
   const outgoingThumbprint = currentBindingResult.thumbprint;
-  // Only meaningful when there is an existing binding to preserve settings
-  // from at all; queryCurrentBinding's own parameters field is `{}` for a
-  // never-bound selector, which formatPreservedParamArgs already treats as
-  // "add no preservation flags", so this default costs nothing either way.
+  // No parameters when nothing is bound yet: nothing to carry over.
   const outgoingParameters = currentBindingResult.parameters || {};
   const alreadyBound = outgoingThumbprint === newThumbprint;
 
   if (!alreadyBound) {
+    const unsupported = [
+      ...(currentBindingResult.unsupportedSettings || []),
+      ...(await findUnsupportedNetshParams({
+        args: formatPreservedParamArgs(outgoingParameters),
+        execFileImpl,
+        netshPath,
+        timeoutMs,
+      })).map((name) => `${name} (not supported by this host's netsh)`),
+    ];
+    if (unsupported.length > 0) {
+      return guardReturnValue({
+        ok: false,
+        code: "UNSUPPORTED_BINDING_SETTINGS",
+        detail:
+          `the current binding has settings the agent cannot carry over to the new certificate, so it was left ` +
+          `unchanged: ${unsupported.join(", ")}`,
+        outgoingThumbprint,
+        rolledBack: false,
+      });
+    }
+
     const bindResult = await bindCertificate({
       binding,
       thumbprint: newThumbprint,
@@ -1156,6 +1211,7 @@ async function deployIisBinding({
               preserveParameters: outgoingParameters,
               execFileImpl,
               netshPath,
+              powershellPath,
               timeoutMs,
               delayImpl,
             });
@@ -1181,7 +1237,7 @@ async function deployIisBinding({
 
   if (verifyResult.verified) {
     const precedenceWarning = binding.sniHost
-      ? await checkSniPrecedenceConflict({ binding, execFileImpl, netshPath, timeoutMs })
+      ? await checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs })
       : undefined;
     return guardReturnValue({
       ok: true,
@@ -1217,6 +1273,7 @@ async function deployIisBinding({
     preserveParameters: outgoingParameters,
     execFileImpl,
     netshPath,
+    powershellPath,
     timeoutMs,
     delayImpl,
   });
@@ -1249,8 +1306,10 @@ module.exports = {
   formatIpPort,
   formatBindingSelector,
   generateAppId,
-  parseSslcertParameters,
+  canonicalSelectorValue,
+  decodeHttpSysSettings,
   formatPreservedParamArgs,
+  findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
   queryCurrentBinding,
   bindCertificate,
