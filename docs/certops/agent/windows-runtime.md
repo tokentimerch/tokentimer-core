@@ -36,6 +36,14 @@ The agent supports native Windows service installation. Its runtime differs from
   hardened PowerShell-trust alternative) and CNG non-exportable key custody
   (decision 1) generally available. This is a preflight check only; it does
   not change what the agent itself requires at runtime.
+- **Windows PowerShell 5.1 is a runtime dependency.** The agent reads the
+  machine certificate store (`Cert:\LocalMachine`) and the `http.sys`
+  bindings (registry) through `powershell.exe`, so these reads do not
+  depend on the display language. If `powershell.exe` is missing or the
+  query fails, discovery reports the failure and an IIS deploy fails with
+  `QUERY_FAILED` before changing the binding. Key container and provider names
+  still come from `certutil -store`, matched by thumbprint and line
+  structure rather than by label.
 - **Registry-persisted bootstrap token is cleared after registration.** The
   installer writes the bootstrap token into the service's own
   `HKLM:\SYSTEM\CurrentControlSet\Services\TokenTimerAgent\Environment`
