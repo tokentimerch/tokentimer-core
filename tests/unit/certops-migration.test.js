@@ -86,6 +86,10 @@ describe("operational notifications migration", () => {
       /VALIDATE CONSTRAINT tokens_name_check/,
     );
     assert.match(
+      widen.postCommitSql,
+      /VALIDATE CONSTRAINT auto_sync_configs_name_canonical/,
+    );
+    assert.match(
       widen.sql,
       /CHAR_LENGTH\(connection_key\) BETWEEN 1 AND 255/,
     );

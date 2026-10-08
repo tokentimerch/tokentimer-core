@@ -5026,16 +5026,29 @@ async function runMigrations() {
             [migration.version, migration.name],
           );
           await client.query("COMMIT");
-          await applyPostCommitSql(client, migration);
-          logger.info(`Migration ${migration.version} completed successfully`);
-          migrationsRun++;
         } catch (error) {
           await client.query("ROLLBACK");
           logger.error(`Migration ${migration.version} failed:`, error.message);
           throw error;
         }
+        // postCommitSql runs after the ledger insert. A crash here leaves the
+        // version recorded; the already-executed branch retries it below.
+        try {
+          await applyPostCommitSql(client, migration);
+        } catch (error) {
+          logger.error(
+            `Migration ${migration.version} post-commit validation failed:`,
+            error.message,
+          );
+          throw error;
+        }
+        logger.info(`Migration ${migration.version} completed successfully`);
+        migrationsRun++;
       } else {
         logger.info(`Migration ${migration.version} already executed`);
+        if (migration.postCommitSql) {
+          await applyPostCommitSql(client, migration);
+        }
       }
     }
 

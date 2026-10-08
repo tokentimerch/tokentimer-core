@@ -396,3 +396,104 @@ describe("Inventory name length migration 67 - upgrade path", function () {
     });
   });
 });
+
+describe("Inventory name length migration 67 - post-commit recovery", function () {
+  this.timeout(600000);
+
+  const RECOVERY_DB_NAME = "tokentimer_inventory_name_67_recovery_test";
+  let pool;
+  let widen;
+
+  before(async function () {
+    widen = migrations.find((m) => m.version === 67);
+    expect(widen.postCommitSql, "migration 67 must define postCommitSql").to.be
+      .a("string");
+
+    await dropDatabase(RECOVERY_DB_NAME);
+    const admin = await adminClient();
+    try {
+      await admin.query(`CREATE DATABASE ${RECOVERY_DB_NAME}`);
+    } finally {
+      await admin.end();
+    }
+
+    pool = new Pool({
+      user: DB_USER,
+      host: DB_HOST,
+      database: RECOVERY_DB_NAME,
+      password: DB_PASSWORD,
+      port: DB_PORT,
+      max: 4,
+    });
+
+    const client = await pool.connect();
+    try {
+      await applyMigrations(
+        client,
+        migrations.filter((m) => m.version <= 66),
+      );
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS migrations (
+          version INTEGER PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          executed_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      // Commit the schema change and ledger row, then crash before VALIDATE.
+      await client.query("BEGIN");
+      await applyMigrationSql(client, widen);
+      await client.query(
+        "INSERT INTO migrations (version, name) VALUES ($1, $2)",
+        [widen.version, widen.name],
+      );
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+  });
+
+  after(async function () {
+    if (pool) await pool.end();
+    await dropDatabase(RECOVERY_DB_NAME);
+  });
+
+  async function constraintState() {
+    const { rows } = await pool.query(
+      `SELECT conname, convalidated
+         FROM pg_constraint
+        WHERE conname IN ('tokens_name_check', 'auto_sync_configs_name_canonical')
+        ORDER BY conname`,
+    );
+    return rows.map((row) => [row.conname, row.convalidated]);
+  }
+
+  it("retries VALIDATE after a crash between ledger commit and postCommitSql", async () => {
+    expect(await constraintState()).to.deep.equal([
+      ["auto_sync_configs_name_canonical", false],
+      ["tokens_name_check", false],
+    ]);
+
+    const client = await pool.connect();
+    try {
+      await applyPostCommitSql(client, widen);
+    } finally {
+      client.release();
+    }
+
+    expect(await constraintState()).to.deep.equal([
+      ["auto_sync_configs_name_canonical", true],
+      ["tokens_name_check", true],
+    ]);
+
+    const again = await pool.connect();
+    try {
+      await applyPostCommitSql(again, widen);
+    } finally {
+      again.release();
+    }
+    expect(await constraintState()).to.deep.equal([
+      ["auto_sync_configs_name_canonical", true],
+      ["tokens_name_check", true],
+    ]);
+  });
+});
