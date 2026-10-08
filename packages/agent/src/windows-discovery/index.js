@@ -9,43 +9,39 @@
  * returning private key bytes.
  *
  * Key-presence without export: a machine-store certificate's "has a private
- * key" fact is read from `certutil -store`'s own text report (the presence
- * of a `Key Container =` / `Provider =` line for that certificate's block),
- * never by attempting to export, unlock, or otherwise touch the key
- * material itself. This mirrors the filesystem discovery module's own
- * "detect key presence without reading content" contract, adapted to the
- * CNG/machine-store world where there is no file to peek at in the first
- * place: the key never leaves the store, so there is nothing this module
- * could read even if it wanted to.
+ * key" fact is its own `HasPrivateKey` property, never read by attempting
+ * to export, unlock, or otherwise touch the key material itself. This
+ * mirrors the filesystem discovery module's own "detect key presence
+ * without reading content" contract, adapted to the CNG/machine-store
+ * world where there is no file to peek at in the first place: the key
+ * never leaves the store, so there is nothing this module could read even
+ * if it wanted to.
  *
- * Implementation choice, not contract: `certutil -store` and
- * `netsh http show sslcert` are this module's CURRENT way of asking
- * Windows these two questions (matching the sibling ../windows-cert-store
- * and ../windows-iis modules' own "netsh is an implementation detail, not
- * the contract" stance). Both tools emit fixed-format human-readable text
- * with no JSON/CSV mode, so this module parses that text; a future move to
- * a structured API (CertEnumCertificatesInStore via a native binding,
- * IIS's own WebAdministration binding enumeration) would change the
- * parsing internals without changing this module's return shapes.
+ * Implementation choice, not contract: certificate fields come from
+ * PowerShell's Cert: provider as JSON, and only the key container and
+ * provider names come from `certutil -store`, matched by thumbprint and by
+ * line structure rather than by its labels. certutil's labels, banners and
+ * dates follow the host's display language, so nothing here reads them.
+ * http.sys bindings come from the registry configuration `netsh http show
+ * sslcert` itself prints, whose labels are localized too. A future move to
+ * a structured API would change these internals without changing this
+ * module's return shapes.
  *
  * Module style follows the sibling modules: CommonJS, node builtins only,
  * self-contained plain-data functions, exec via child_process.execFile
  * WITHOUT a shell, every dynamic argv element re-validated against a
  * shell-metacharacter pattern as defense in depth.
  *
- * Status: the text parsers below have been real-host verified against a
- * live certutil.exe/netsh.exe on Windows Server, exercising a populated
- * machine store and real http.sys SNI bindings, with one exception noted
- * where it applies: Subject Alternative Name parsing (added after that
- * verification pass, to close a real gap against this module's documented
- * contract) has only been exercised against hand-authored fixtures, not a
- * captured real `certutil -store -v` transcript.
+ * Status: the store query, key-container parsing and http.sys binding query
+ * are real-host verified on Windows Server 2019 and 2022 (en-US) and 2025
+ * (de-DE, fr-FR), also under Constrained Language Mode. The SNI binding
+ * layout the query reads was observed on 2019, 2022 and 2025.
  *
  * `site` is deliberately always null. Unlike thumbprint/subject/expiry,
- * an IIS site name has no representation in `certutil`'s or `netsh http`'s
- * output: http.sys bindings are keyed by IP:port or hostname:port, never by
- * IIS site, matching ../windows-iis's own documented stance that `site` is
- * caller-supplied evidence/addressing metadata, not something `netsh http`
+ * an IIS site name has no representation in the store or in http.sys's
+ * configuration: http.sys bindings are keyed by IP:port or hostname:port,
+ * never by IIS site, matching ../windows-iis's own documented stance that `site` is
+ * caller-supplied evidence/addressing metadata, not something http.sys
  * itself understands. Resolving a real site name would require a separate
  * IIS-configuration query (e.g. `appcmd list site`) this module does not
  * perform; the field exists on every record so callers can rely on its
@@ -53,6 +49,7 @@
  */
 
 const childProcess = require("node:child_process");
+const { X509Certificate } = require("node:crypto");
 
 /** Mirrors the sibling modules' shell-metacharacter pattern. */
 const SHELL_METACHARACTER_PATTERN = /[;|&$`><\r\n]/;
@@ -107,19 +104,20 @@ function assertSafeArgvElements(label, argv) {
 
 /**
  * Promise wrapper around an execFile-shaped implementation. Mirrors the
- * sibling modules' execWithoutShell exactly.
+ * sibling modules' execWithoutShell, plus optional extra execFile options.
  * @param {Function} execFileImpl
  * @param {string[]} argv
  * @param {number} timeoutMs
+ * @param {object} [extraOptions]
  * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown}>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs) {
+function execWithoutShell(execFileImpl, argv, timeoutMs, extraOptions = {}) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
     execFileImpl(
       file,
       args,
-      { timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 },
+      { timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024, ...extraOptions },
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = typeof error.code === "number" ? error.code : null;
@@ -133,46 +131,139 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
 }
 
 /**
- * Splits `certutil -store` output into one text block per certificate
- * entry. certutil delimits each entry with a
- * "================ Certificate N ================" banner line; the text
- * before the first banner (a store-name header line) is discarded.
- * @param {string} stdout
- * @returns {string[]}
+ * PowerShell that lists one LocalMachine store through the Cert: provider,
+ * so no field depends on the host's display language. It only reads
+ * properties, casts and calls ConvertTo-Json, which all work under
+ * Constrained Language Mode. Subject and issuer travel as UTF-16 code units
+ * because stdout uses the OEM code page, which that mode cannot change.
+ *
+ * @param {string} store validated against STORE_NAME_PATTERN, so it is
+ *   inert inside a single-quoted PowerShell string.
+ * @returns {string}
  */
-function splitCertutilStoreBlocks(stdout) {
-  const bannerPattern = /^={2,}\s*Certificate\s+\d+\s*={2,}\s*$/m;
-  if (!bannerPattern.test(stdout)) return [];
-  return stdout
-    .split(/^={2,}\s*Certificate\s+\d+\s*={2,}\s*$/m)
-    .slice(1)
-    .map((block) => block.trim())
-    .filter((block) => block.length > 0);
+function buildStoreQueryScript(store) {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$path = 'Cert:\\LocalMachine\\${store}'`,
+    "$items = @()",
+    "if (Test-Path -LiteralPath $path) {",
+    "  $items = @(Get-ChildItem -LiteralPath $path | ForEach-Object {",
+    "    @{",
+    "      thumbprint = $_.Thumbprint",
+    "      subject = [int[]][char[]]$_.Subject",
+    "      issuer = [int[]][char[]]$_.Issuer",
+    "      notBefore = $_.NotBefore",
+    "      notAfter = $_.NotAfter",
+    "      serialNumber = $_.SerialNumber",
+    "      hasPrivateKey = $_.HasPrivateKey",
+    "      rawData = [int[]]$_.RawData",
+    "    }",
+    "  })",
+    "}",
+    "ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 4",
+  ].join("\n");
+}
+
+// An inherited PowerShell 7 PSModulePath can stop Windows PowerShell from
+// loading the module that provides the Cert: drive.
+function buildPowerShellEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === "psmodulepath") delete env[key];
+  }
+  return env;
+}
+
+function decodeCodeUnits(value) {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (!value.every((unit) => Number.isInteger(unit) && unit >= 0 && unit <= 0xffff)) return null;
+  return String.fromCharCode(...value);
+}
+
+// Windows PowerShell 5.1 serializes DateTime as "/Date(<epoch ms>)/".
+function parsePowerShellDate(value) {
+  if (typeof value !== "string") return null;
+  const epochMatch = /^\/Date\((-?\d+)\)\/$/.exec(value);
+  const time = epochMatch ? Number(epochMatch[1]) : Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+// Same form certutil printed (lowercase, no DER sign byte), so inventory
+// already reported for a certificate keeps its serial number.
+function normalizeSerialNumber(value) {
+  if (typeof value !== "string" || !/^[0-9A-Fa-f]+$/.test(value)) return null;
+  let serial = value.toLowerCase();
+  while (serial.length > 2 && serial.startsWith("00")) serial = serial.slice(2);
+  return serial;
 }
 
 /**
- * Parses one certutil certificate block into a plain-data record. Never
- * throws on a partially-recognizable block: fields it cannot find are
- * simply null, since a warning-and-skip posture (matching the filesystem
- * discovery module's onWarning convention) is more useful to an operator
- * than aborting the entire store enumeration over one malformed entry.
+ * Parses Node's `X509Certificate#subjectAltName` string (e.g.
+ * `"DNS:example.com, DNS:www.example.com, IP Address:10.0.0.5"`) into bare
+ * values. Commas inside JSON-quoted values are not entry separators.
  *
- * hasPrivateKey is read from the presence of a "Key Container ="
- * (CNG-native) or "Provider =" line -- never by attempting to access the
- * key itself.
+ * @param {string|undefined} subjectAltName
+ * @returns {string[]}
+ */
+function parseNodeSubjectAltName(subjectAltName) {
+  if (typeof subjectAltName !== "string" || !subjectAltName) return [];
+  const entries = [];
+  let start = 0;
+  let inQuotedValue = false;
+  let escaped = false;
+  for (let index = 0; index <= subjectAltName.length; index += 1) {
+    const char = subjectAltName[index];
+    if (inQuotedValue) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inQuotedValue = false;
+      }
+    } else if (char === '"') {
+      inQuotedValue = true;
+    }
+    if (index === subjectAltName.length || (char === "," && !inQuotedValue)) {
+      entries.push(subjectAltName.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const values = [];
+  for (const entry of entries) {
+    const match = /^(?:DNS|IP Address|URI|email)\s*:\s*(.+)$/i.exec(entry);
+    if (!match) continue;
+    let value = match[1].trim();
+    if (value.startsWith('"')) {
+      try {
+        const decoded = JSON.parse(value);
+        if (typeof decoded !== "string") continue;
+        value = decoded;
+      } catch (_error) {
+        continue;
+      }
+    }
+    if (value) values.push(value);
+  }
+  return values;
+}
+
+function readSubjectAltNames(der) {
+  try {
+    return parseNodeSubjectAltName(new X509Certificate(der).subjectAltName);
+  } catch (_error) {
+    return [];
+  }
+}
+
+/**
+ * Parses buildStoreQueryScript's JSON into certificate records. Entries
+ * without a valid thumbprint are dropped.
  *
- * subjectAlternativeNames is read from the "Subject Alternative Name"
- * extension section that `-v` (verbose) adds to certutil's output. Real
- * certutil transcripts vary between one `Name=value` entry per line and a
- * single comma-separated line, so both forms are matched by one regex
- * scoped to just that section (bounded by the next blank line or the next
- * `NN.NN.NN.NN:` OID-prefixed extension heading, whichever comes first) so
- * a later, unrelated extension's own "Name=" style fields are never
- * accidentally swept in.
- *
- * @param {string} block
+ * @param {string} stdout
  * @returns {{
- *   thumbprint: string|null,
+ *   thumbprint: string,
  *   subject: string|null,
  *   issuer: string|null,
  *   notBefore: string|null,
@@ -180,186 +271,228 @@ function splitCertutilStoreBlocks(stdout) {
  *   serialNumber: string|null,
  *   subjectAlternativeNames: string[],
  *   hasPrivateKey: boolean,
- *   keyContainer: string|null,
- *   keyProvider: string|null,
- * }}
+ * }[]}
+ * @throws when stdout is not the expected JSON.
  */
-function parseCertutilStoreBlock(block) {
-  const thumbprintMatch = /Cert Hash\(sha1\)\s*:\s*([0-9A-Fa-f ]{40,})/i.exec(block);
-  const thumbprint = thumbprintMatch
-    ? thumbprintMatch[1].replace(/\s+/g, "").toUpperCase()
-    : null;
-
-  const subjectMatch = /^Subject:\s*(.+)$/m.exec(block);
-  const issuerMatch = /^Issuer:\s*(.+)$/m.exec(block);
-  const notBeforeMatch = /^\s*NotBefore:\s*(.+)$/m.exec(block);
-  const notAfterMatch = /^\s*NotAfter:\s*(.+)$/m.exec(block);
-  const serialMatch = /^Serial Number:\s*(.+)$/m.exec(block);
-  const containerMatch = /^\s*Key Container\s*=\s*(.+)$/m.exec(block);
-  const providerMatch = /^\s*Provider\s*=\s*(.+)$/m.exec(block);
-
-  return {
-    thumbprint,
-    subject: subjectMatch ? subjectMatch[1].trim() : null,
-    issuer: issuerMatch ? issuerMatch[1].trim() : null,
-    notBefore: notBeforeMatch ? notBeforeMatch[1].trim() : null,
-    notAfter: notAfterMatch ? notAfterMatch[1].trim() : null,
-    serialNumber: serialMatch ? serialMatch[1].trim() : null,
-    subjectAlternativeNames: parseSubjectAlternativeNames(block),
-    hasPrivateKey: Boolean(containerMatch || providerMatch),
-    keyContainer: containerMatch ? containerMatch[1].trim() : null,
-    keyProvider: providerMatch ? providerMatch[1].trim() : null,
-  };
+function parseStoreQueryOutput(stdout) {
+  const parsed = JSON.parse(stdout);
+  if (parsed === null || typeof parsed !== "object" || !("items" in parsed)) {
+    throw new Error("store query output has no items field");
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : parsed.items === null ? [] : [parsed.items];
+  return items.flatMap((item) => {
+    const thumbprint = typeof item?.thumbprint === "string" ? item.thumbprint.toUpperCase() : "";
+    if (!THUMBPRINT_PATTERN.test(thumbprint)) return [];
+    const rawData = Array.isArray(item.rawData) ? item.rawData : null;
+    return [
+      {
+        thumbprint,
+        subject: decodeCodeUnits(item.subject),
+        issuer: decodeCodeUnits(item.issuer),
+        notBefore: parsePowerShellDate(item.notBefore),
+        notAfter: parsePowerShellDate(item.notAfter),
+        serialNumber: normalizeSerialNumber(item.serialNumber),
+        subjectAlternativeNames: rawData ? readSubjectAltNames(Buffer.from(rawData)) : [],
+        hasPrivateKey: item.hasPrivateKey === true,
+      },
+    ];
+  });
 }
 
+// "================ Certificate 0 ================"; only the word is
+// localized ("Zertifikat", "Certificat").
+const CERTUTIL_BANNER_PATTERN = /^={2,}[^=\r\n]*\d[^=\r\n]*={2,}[ \t]*$/m;
+
 /**
- * Extracts DNS/IP subject-alternative-name entries from a certutil `-v`
- * extension dump. Returns `[]` (not null) when the section is absent --
- * either because the certificate has no SAN extension, or because
- * `-v` was not used -- so callers never have to null-check before
- * iterating.
- *
- * @param {string} block
+ * Splits `certutil -store` output into one text block per certificate
+ * entry; the text before the first banner (a store-name header) is
+ * discarded.
+ * @param {string} stdout
  * @returns {string[]}
  */
-function parseSubjectAlternativeNames(block) {
-  const headingMatch = /Subject Alternative Name[^\r\n]*\r?\n/i.exec(block);
-  if (!headingMatch) return [];
-
-  const sectionStart = headingMatch.index + headingMatch[0].length;
-  const rest = block.slice(sectionStart);
-  const sectionEndMatch = /\r?\n\s*\r?\n|\r?\n\S/.exec(rest);
-  const section = sectionEndMatch ? rest.slice(0, sectionEndMatch.index) : rest;
-
-  const names = [];
-  const namePattern = /(?:DNS Name|IP Address)\s*=\s*([^\r\n,]+)/gi;
-  let match;
-  while ((match = namePattern.exec(section)) !== null) {
-    const value = match[1].trim();
-    if (value) names.push(value);
-  }
-  return names;
+function splitCertutilStoreBlocks(stdout) {
+  if (!CERTUTIL_BANNER_PATTERN.test(stdout)) return [];
+  return stdout
+    .split(CERTUTIL_BANNER_PATTERN)
+    .slice(1)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
 }
 
 /**
- * Parses `netsh http show sslcert` output (no ipport filter: the full
- * binding list) into one record per binding. Each binding block in
- * netsh's output is separated by a blank line and keyed by EITHER an
- * "IP:port" line (address-keyed bindings) OR a "Hostname:port" line
- * (SNI-keyed bindings, added via `hostnameport=` -- see ../windows-iis's
- * formatBindingSelector). Both forms must be recognized: a real-host run
- * (2026-08-05) against a genuine SNI binding created by ../windows-iis
- * found the original version of this function silently dropped every
- * hostname-keyed block, because its filter only matched "IP:port :". That
- * is a real discovery gap, not cosmetic: any host using an SNI binding
- * would have that certificate's binding invisibly missing from both
- * `listHttpSysBindings` and the cross-referenced inventory's `boundAt`,
- * with no error raised anywhere.
- *
- * The returned `ipPort` field is populated for BOTH forms (kept under
- * this name for backward compatibility with existing callers, since
- * discoverWindowsCertificateInventory's cross-reference keys on this
- * field regardless of which selector netsh used to create the binding);
- * `keyedBy` distinguishes which selector form the real binding actually
- * used, for callers that need to reconstruct the original ipport= vs
- * hostnameport= selector (e.g. to delete or rebind it later).
+ * Reads each certificate's key container and provider from `certutil
+ * -store` output without its localized labels. In every display language
+ * the SHA-1 hash is the last value on its line, and the indented
+ * "<label> = <value>" lines right after it are the key container, then
+ * the provider. Blocks are matched to `thumbprints` by that hash. Labels
+ * may arrive mangled by the console code page, which does not matter here.
  *
  * @param {string} stdout
- * @returns {{ ipPort: string|null, keyedBy: "ipport"|"hostnameport", thumbprint: string|null, storeName: string|null, appId: string|null }[]}
+ * @param {Set<string>} thumbprints uppercase thumbprints to look for.
+ * @returns {Map<string, { keyContainer: string|null, keyProvider: string|null }>}
  */
-function parseNetshSslcertBindings(stdout) {
-  const blocks = stdout
-    .split(/\r?\n\r?\n/)
-    .map((block) => block.trim())
-    .filter((block) => /^\s*(IP:port|Hostname:port)\s*:/im.test(block));
+function parseCertutilKeyInfo(stdout, thumbprints) {
+  const keyInfo = new Map();
+  for (const block of splitCertutilStoreBlocks(stdout)) {
+    const lines = block.split(/\r?\n/);
+    let thumbprint = null;
+    const hashIndex = lines.findIndex((line) => {
+      const match = /(?:^|[^0-9A-Fa-f])((?:[0-9A-Fa-f]{2} ?){19}[0-9A-Fa-f]{2})\s*$/.exec(line);
+      const candidate = match ? match[1].replace(/ /g, "").toUpperCase() : null;
+      if (candidate === null || !thumbprints.has(candidate)) return false;
+      thumbprint = candidate;
+      return true;
+    });
+    if (hashIndex === -1) continue;
 
-  return blocks.map((block) => {
-    const ipPortMatch = /^\s*IP:port\s*:\s*(\S+)/im.exec(block);
-    const hostnamePortMatch = /^\s*Hostname:port\s*:\s*(\S+)/im.exec(block);
-    const thumbprintMatch = /Certificate Hash\s*:\s*([0-9A-Fa-f]{40})/i.exec(block);
-    const storeMatch = /Certificate Store Name\s*:\s*(.+)/i.exec(block);
-    const appIdMatch = /Application ID\s*:\s*(\{[0-9a-fA-F-]+\})/i.exec(block);
-    return {
-      ipPort: ipPortMatch ? ipPortMatch[1].trim() : hostnamePortMatch ? hostnamePortMatch[1].trim() : null,
-      keyedBy: hostnamePortMatch ? "hostnameport" : "ipport",
-      thumbprint: thumbprintMatch ? thumbprintMatch[1].toUpperCase() : null,
-      storeName: storeMatch ? storeMatch[1].trim() : null,
-      appId: appIdMatch ? appIdMatch[1] : null,
-    };
+    // The label may end in a non-breaking space (French) and the "unique
+    // container name" line in between uses a colon, not "=".
+    const values = [];
+    for (const line of lines.slice(hashIndex + 1)) {
+      if (!/^[ \t]/.test(line)) break;
+      const match = /^[ \t]+[^=:\s][^=:]*=(.*)$/.exec(line);
+      if (match) values.push(match[1].trim() || null);
+    }
+    // A lone recognized line could be either one; report neither.
+    keyInfo.set(
+      thumbprint,
+      values.length >= 2
+        ? { keyContainer: values[0], keyProvider: values[1] }
+        : { keyContainer: null, keyProvider: null },
+    );
+  }
+  return keyInfo;
+}
+
+/** Registry subkeys http.sys keeps its TLS bindings under, by selector form. */
+const HTTPSYS_BINDING_KINDS = Object.freeze({
+  SslBindingInfo: "ipport",
+  SslSniBindingInfo: "hostnameport",
+});
+
+/**
+ * PowerShell that dumps http.sys's TLS bindings from the registry, the
+ * configuration `netsh http show sslcert` prints with localized labels.
+ * Binary values travel as byte lists and strings as UTF-16 code units (the
+ * OEM code page stdout uses would mangle a Unicode hostname). Like
+ * buildStoreQueryScript, it works under Constrained Language Mode.
+ * @returns {string}
+ */
+function buildHttpSysBindingQueryScript() {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$base = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters'",
+    "$items = @()",
+    `foreach ($kind in @(${Object.keys(HTTPSYS_BINDING_KINDS).map((kind) => `'${kind}'`).join(", ")})) {`,
+    "  $path = $base + '\\' + $kind",
+    "  if (Test-Path -LiteralPath $path) {",
+    "    $items += @(Get-ChildItem -LiteralPath $path | ForEach-Object {",
+    "      $values = @{}",
+    "      foreach ($p in (Get-ItemProperty -LiteralPath $_.PSPath).PSObject.Properties) {",
+    "        if (@('PSPath', 'PSParentPath', 'PSChildName', 'PSDrive', 'PSProvider') -notcontains $p.Name) {",
+    "          $v = $p.Value",
+    "          if ($v -is [byte[]]) { $v = [int[]]$v }",
+    "          elseif ($v -is [string]) { $v = @{ chars = [int[]][char[]]$v } }",
+    "          $values[$p.Name] = $v",
+    "        }",
+    "      }",
+    "      @{ kind = $kind; key = $_.PSChildName; values = $values }",
+    "    })",
+    "  }",
+    "}",
+    "ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 6",
+  ].join("\n");
+}
+
+function decodeRegistryValue(value) {
+  if (value !== null && typeof value === "object" && !Array.isArray(value) && Array.isArray(value.chars)) {
+    return value.chars.length === 0 ? "" : decodeCodeUnits(value.chars);
+  }
+  // DWORDs come back as signed 32-bit integers.
+  if (Number.isInteger(value) && value < 0 && value >= -0x80000000) return value >>> 0;
+  return value;
+}
+
+function decodeBytes(value, length) {
+  if (!Array.isArray(value) || value.length !== length) return null;
+  if (!value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)) return null;
+  return Buffer.from(value);
+}
+
+// GUIDs are stored with their first three fields little-endian.
+function formatGuid(bytes) {
+  if (!bytes) return null;
+  const hex = (start, end, reverse) => {
+    const slice = Array.from(bytes.subarray(start, end));
+    return Buffer.from(reverse ? slice.reverse() : slice).toString("hex");
+  };
+  return `{${hex(0, 4, true)}-${hex(4, 6, true)}-${hex(6, 8, true)}-${hex(8, 10)}-${hex(10, 16)}}`;
+}
+
+/**
+ * Parses buildHttpSysBindingQueryScript's JSON into one record per binding.
+ * `ipPort` holds the IP:port or hostname:port selector for both forms and
+ * `keyedBy` says which one it is. `settings` carries every other registry
+ * value under its own name, for ../windows-iis to carry over on a rebind.
+ *
+ * @param {string} stdout
+ * @returns {{ ipPort: string|null, keyedBy: "ipport"|"hostnameport", thumbprint: string|null, storeName: string|null, appId: string|null, settings: Record<string, unknown> }[]}
+ * @throws when stdout is not the expected JSON.
+ */
+function parseHttpSysBindingQueryOutput(stdout) {
+  const parsed = JSON.parse(stdout);
+  if (parsed === null || typeof parsed !== "object" || !("items" in parsed)) {
+    throw new Error("http.sys binding query output has no items field");
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : parsed.items === null ? [] : [parsed.items];
+  return items.flatMap((item) => {
+    const keyedBy = HTTPSYS_BINDING_KINDS[item?.kind];
+    if (!keyedBy) return [];
+    const values = {};
+    if (item.values !== null && typeof item.values === "object") {
+      for (const [name, value] of Object.entries(item.values)) values[name] = decodeRegistryValue(value);
+    }
+    const { AppId, SslCertHash, SslCertStoreName, ...settings } = values;
+    let ipPort = typeof item.key === "string" && item.key ? item.key : null;
+    // SNI bindings live under a GUID-named key with the selector in a value.
+    if (keyedBy === "hostnameport") {
+      ipPort = typeof settings.HostnamePort === "string" && settings.HostnamePort ? settings.HostnamePort : null;
+      delete settings.HostnamePort;
+    }
+    const hash = decodeBytes(SslCertHash, 20);
+    return [
+      {
+        ipPort,
+        keyedBy,
+        thumbprint: hash ? hash.toString("hex").toUpperCase() : null,
+        storeName: typeof SslCertStoreName === "string" && SslCertStoreName ? SslCertStoreName : null,
+        appId: formatGuid(decodeBytes(AppId, 16)),
+        settings,
+      },
+    ];
   });
 }
 
 /**
- * Runs one `certutil -store <store>` invocation (verbose or not) and
- * classifies the result. Factored out of listMachineStoreCertificates so
- * that function can retry without `-v` on a genuine verbose-mode failure
- * (see its own doc comment) without duplicating the exit-code
- * classification logic.
+ * Lists every certificate in one LocalMachine store, each annotated with
+ * hasPrivateKey and, for keyed certificates, the key container and
+ * provider. A store that does not exist is reported as
+ * `ok: true, certificates: []`.
  *
- * @param {object} input
- * @param {string} input.store
- * @param {Function} input.execFileImpl
- * @param {string} input.certutilPath
- * @param {number} input.timeoutMs
- * @param {boolean} input.verbose
- * @returns {Promise<
- *   | { ok: true, certificates: ReturnType<typeof parseCertutilStoreBlock>[] }
- *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
- * >}
- */
-async function runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose }) {
-  // -v is a global certutil option and must precede the -store command.
-  // Verbose output includes extensions such as Subject Alternative Name.
-  const argv = verbose
-    ? [certutilPath, "-v", "-store", store]
-    : [certutilPath, "-store", store];
-  assertSafeArgvElements("argv", argv);
-
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
-  const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
-
-  if (exitCode !== 0) {
-    // An empty or nonexistent store is certutil's normal "nothing here"
-    // outcome for this command, not a real failure; anything else is.
-    if (/cannot find|does not exist|no certificates/i.test(stdoutText) ||
-        /cannot find|does not exist|no certificates/i.test(String(stderr ?? ""))) {
-      return { ok: true, certificates: [] };
-    }
-    return {
-      ok: false,
-      exitCode,
-      stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
-    };
-  }
-
-  const certificates = splitCertutilStoreBlocks(stdoutText).map((block) => ({
-    ...parseCertutilStoreBlock(block),
-    store,
-  }));
-  return { ok: true, certificates };
-}
-
-/**
- * Runs `certutil -store <store>` and returns every certificate entry found,
- * each annotated with hasPrivateKey (read from certutil's own report, never
- * from touching the key itself). A nonzero exit (e.g. an empty/nonexistent
- * store) is not an error: it is reported as `ok: true, certificates: []`,
- * matching queryCurrentBinding's "nothing there yet is not a failure"
- * posture in ../windows-iis.
- *
- * The verbose query uses certutil's documented global-option order:
- * `certutil -v -store <name>`. A non-verbose retry remains defense in depth
- * so a host with unavailable verbose output can still report the core
- * certificate fields. The caller-side adapter independently recovers SANs
- * from the certificate's public raw bytes.
+ * Fails closed: the orphan-container sweep and the retention gates treat a
+ * container that no certificate claims as free to delete, so a keyed
+ * certificate whose container cannot be read fails the whole query rather
+ * than coming back with a null keyContainer.
  *
  * @param {object} input
  * @param {string} input.store Windows certificate store name (e.g. "My").
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certutilPath]
+ * @param {string} [input.powershellPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   | { ok: true, certificates: ReturnType<typeof parseCertutilStoreBlock>[] }
+ *   | { ok: true, certificates: (ReturnType<typeof parseStoreQueryOutput>[number] & {
+ *       keyContainer: string|null, keyProvider: string|null, store: string })[] }
  *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
  * >}
  */
@@ -367,64 +500,112 @@ async function listMachineStoreCertificates({
   store,
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-  if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
+  if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store) || /^\.+$/.test(store)) {
     throw buildError(`store must be a valid Windows certificate store name (got ${JSON.stringify(store)})`);
   }
   assertSafeArgvElements("certutilPath", [certutilPath]);
+  assertSafeArgvElements("powershellPath", [powershellPath]);
 
-  const verboseResult = await runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose: true });
-  if (verboseResult.ok) return verboseResult;
+  // The script carries PowerShell syntax by design; the store name is its
+  // only variable part and is validated above.
+  const powershellArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
+  assertSafeArgvElements("argv", powershellArgv);
+  const query = await execWithoutShell(
+    execFileImpl,
+    [...powershellArgv, buildStoreQueryScript(store)],
+    timeoutMs,
+    { env: buildPowerShellEnv() },
+  );
+  if (query.exitCode !== 0) {
+    return { ok: false, exitCode: query.exitCode, stderrExcerpt: boundAndRedactExcerpt(query.stderr || query.stdout) };
+  }
+  let certificates;
+  try {
+    certificates = parseStoreQueryOutput(typeof query.stdout === "string" ? query.stdout : String(query.stdout ?? ""));
+  } catch (error) {
+    return { ok: false, exitCode: null, stderrExcerpt: boundAndRedactExcerpt(`unreadable store query output: ${error.message}`) };
+  }
 
-  const plainResult = await runCertutilStoreQuery({ store, execFileImpl, certutilPath, timeoutMs, verbose: false });
-  if (plainResult.ok) return plainResult;
+  const keyed = certificates.filter((certificate) => certificate.hasPrivateKey);
+  let keyInfo = new Map();
+  if (keyed.length > 0) {
+    const argv = [certutilPath, "-store", store];
+    assertSafeArgvElements("argv", argv);
+    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    if (exitCode !== 0) {
+      return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
+    }
+    keyInfo = parseCertutilKeyInfo(
+      typeof stdout === "string" ? stdout : String(stdout ?? ""),
+      new Set(keyed.map((certificate) => certificate.thumbprint)),
+    );
+    const unresolved = keyed.find((certificate) => !keyInfo.get(certificate.thumbprint)?.keyContainer);
+    if (unresolved) {
+      return {
+        ok: false,
+        exitCode: null,
+        stderrExcerpt: `certutil -store ${store} reported no key container for ${unresolved.thumbprint}`,
+      };
+    }
+  }
 
-  // Both the verbose and the non-verbose query failed: report the
-  // verbose attempt's failure, since it is the one this function's
-  // contract (and its argv-shape test) documents as the primary call.
-  return verboseResult;
+  return {
+    ok: true,
+    certificates: certificates.map((certificate) => ({
+      ...certificate,
+      keyContainer: keyInfo.get(certificate.thumbprint)?.keyContainer ?? null,
+      keyProvider: keyInfo.get(certificate.thumbprint)?.keyProvider ?? null,
+      store,
+    })),
+  };
 }
 
 /**
- * Runs `netsh http show sslcert` (no ipport filter) and returns every
- * binding on the host. A nonzero exit meaning "no bindings configured at
- * all" is reported as `ok: true, bindings: []`, same posture as
- * listMachineStoreCertificates above.
+ * Returns every http.sys TLS binding on the host (IP- and SNI-keyed; CCS
+ * bindings are not reported). A host with none is `ok: true, bindings: []`.
  *
  * @param {object} input
  * @param {Function} [input.execFileImpl]
- * @param {string} [input.netshPath]
+ * @param {string} [input.powershellPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   | { ok: true, bindings: ReturnType<typeof parseNetshSslcertBindings> }
+ *   | { ok: true, bindings: ReturnType<typeof parseHttpSysBindingQueryOutput> }
  *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
  * >}
  */
 async function listHttpSysBindings({
   execFileImpl = childProcess.execFile,
-  netshPath = "netsh.exe",
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-  assertSafeArgvElements("netshPath", [netshPath]);
-  const argv = [netshPath, "http", "show", "sslcert"];
-  assertSafeArgvElements("argv", argv);
+  assertSafeArgvElements("powershellPath", [powershellPath]);
+  const powershellArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
+  assertSafeArgvElements("argv", powershellArgv);
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
-  const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
-
+  const { exitCode, stdout, stderr } = await execWithoutShell(
+    execFileImpl,
+    [...powershellArgv, buildHttpSysBindingQueryScript()],
+    timeoutMs,
+    { env: buildPowerShellEnv() },
+  );
   if (exitCode !== 0) {
-    if (/cannot find|no ssl certificate/i.test(stdoutText) || /cannot find|no ssl certificate/i.test(String(stderr ?? ""))) {
-      return { ok: true, bindings: [] };
-    }
+    return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
+  }
+  try {
+    return {
+      ok: true,
+      bindings: parseHttpSysBindingQueryOutput(typeof stdout === "string" ? stdout : String(stdout ?? "")),
+    };
+  } catch (error) {
     return {
       ok: false,
-      exitCode,
-      stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
+      exitCode: null,
+      stderrExcerpt: boundAndRedactExcerpt(`unreadable http.sys binding query output: ${error.message}`),
     };
   }
-
-  return { ok: true, bindings: parseNetshSslcertBindings(stdoutText) };
 }
 
 /**
@@ -432,7 +613,7 @@ async function listHttpSysBindings({
  * binding list decoded into structured `{ protocol, address, port,
  * hostHeader }` entries. Best-effort only: this is auxiliary evidence used
  * to resolve a binding's `site` name, not part of this module's core
- * certutil/netsh contract, so a caller must never treat a parse miss on
+ * store/binding contract, so a caller must never treat a parse miss on
  * one line as reason to fail the whole call -- unrecognized `SITE` lines
  * are silently skipped rather than thrown.
  *
@@ -563,11 +744,11 @@ function findSitesForBinding(sites, binding) {
  * @param {string} input.store
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certutilPath]
- * @param {string} [input.netshPath]
+ * @param {string} [input.powershellPath]
  * @param {string} [input.appcmdPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   | { ok: true, certificates: (ReturnType<typeof parseCertutilStoreBlock> & { boundAt: string[], boundSites: string[] })[] }
+ *   | { ok: true, certificates: (Extract<Awaited<ReturnType<typeof listMachineStoreCertificates>>, { ok: true }>["certificates"][number] & { boundAt: string[], boundSites: string[] })[] }
  *   | { ok: false, code: "STORE_QUERY_FAILED"|"BINDING_QUERY_FAILED", detail: string }
  * >}
  */
@@ -575,25 +756,25 @@ async function discoverWindowsCertificateInventory({
   store,
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
-  netshPath = "netsh.exe",
+  powershellPath = "powershell.exe",
   appcmdPath,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-  const storeResult = await listMachineStoreCertificates({ store, execFileImpl, certutilPath, timeoutMs });
+  const storeResult = await listMachineStoreCertificates({ store, execFileImpl, certutilPath, powershellPath, timeoutMs });
   if (!storeResult.ok) {
     return {
       ok: false,
       code: "STORE_QUERY_FAILED",
-      detail: `certutil -store ${store} failed: ${storeResult.stderrExcerpt}`,
+      detail: `store query for ${store} failed: ${storeResult.stderrExcerpt}`,
     };
   }
 
-  const bindingsResult = await listHttpSysBindings({ execFileImpl, netshPath, timeoutMs });
+  const bindingsResult = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
   if (!bindingsResult.ok) {
     return {
       ok: false,
       code: "BINDING_QUERY_FAILED",
-      detail: `netsh http show sslcert failed: ${bindingsResult.stderrExcerpt}`,
+      detail: `http.sys binding query failed: ${bindingsResult.stderrExcerpt}`,
     };
   }
 
@@ -635,10 +816,13 @@ module.exports = {
   boundAndRedactExcerpt,
   assertSafeArgvElements,
   execWithoutShell,
+  buildStoreQueryScript,
+  parseStoreQueryOutput,
+  parseNodeSubjectAltName,
   splitCertutilStoreBlocks,
-  parseCertutilStoreBlock,
-  parseSubjectAlternativeNames,
-  parseNetshSslcertBindings,
+  parseCertutilKeyInfo,
+  buildHttpSysBindingQueryScript,
+  parseHttpSysBindingQueryOutput,
   parseAppcmdSiteListOutput,
   findSitesForBinding,
   listMachineStoreCertificates,

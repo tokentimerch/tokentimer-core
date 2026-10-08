@@ -3913,6 +3913,71 @@ describe("renew chain deployment", () => {
   });
 });
 
+/**
+ * Stub stdout for listMachineStoreCertificates' two calls: the PowerShell
+ * store query (JSON) and the `certutil -store` listing it reads key
+ * containers from, in English or German.
+ *
+ * @param {{ thumbprint: string, subject: string, keyContainer?: string|null }[]} entries
+ * @param {{ language?: "en"|"de" }} [options]
+ */
+function windowsStoreListing(entries, { language = "en" } = {}) {
+  const codeUnits = (text) => Array.from({ length: text.length }, (_unused, index) => text.charCodeAt(index));
+  const storeJson = JSON.stringify({
+    items: entries.map(({ thumbprint, subject, keyContainer = null }) => ({
+      thumbprint,
+      subject: codeUnits(`CN=${subject}`),
+      issuer: codeUnits("CN=Test Root CA"),
+      notBefore: `/Date(${Date.UTC(2026, 0, 1)})/`,
+      notAfter: `/Date(${Date.UTC(2027, 0, 1)})/`,
+      serialNumber: "1A2B3C4D5E",
+      hasPrivateKey: keyContainer !== null,
+      rawData: [],
+    })),
+  });
+  const labels =
+    language === "de"
+      ? { banner: "Zertifikat", hash: "Zertifikathash(sha1)", container: "Schl\uFFFDsselcontainer", provider: "Anbieter" }
+      : { banner: "Certificate", hash: "Cert Hash(sha1)", container: "Key Container", provider: "Provider" };
+  const blocks = entries.map(
+    ({ thumbprint, keyContainer = null }, index) =>
+      `================ ${labels.banner} ${index} ================\n${labels.hash}: ${thumbprint.toLowerCase()}\n` +
+      (keyContainer
+        ? `  ${labels.container} = ${keyContainer}\n  ${labels.provider} = Microsoft Software Key Storage Provider\n`
+        : ""),
+  );
+  return { storeJson, certutilStdout: `My\n${blocks.join("")}CertUtil: -store\n` };
+}
+
+/** The store a stubbed PowerShell store query or `certutil -store` call targets, else null. */
+function stubbedStoreQueryTarget(file, args) {
+  if (file === "powershell.exe") {
+    const match = /Cert:\\LocalMachine\\([^']+)'/.exec(args[args.length - 1]);
+    return match ? match[1] : null;
+  }
+  if (file === "certutil.exe" && args.includes("-store")) return args[args.indexOf("-store") + 1];
+  return null;
+}
+
+/** Whether a stubbed call is listHttpSysBindings' registry query. */
+function isHttpSysBindingQuery(file, args) {
+  return file === "powershell.exe" && String(args[args.length - 1]).includes("SslBindingInfo");
+}
+
+/** listHttpSysBindings' query output for IP-keyed bindings in the My store. */
+function httpSysBindingsJson(bindings) {
+  return JSON.stringify({
+    items: bindings.map(({ ipPort, thumbprint }) => ({
+      kind: "SslBindingInfo",
+      key: ipPort,
+      values: {
+        SslCertHash: Array.from(Buffer.from(thumbprint, "hex")),
+        SslCertStoreName: { chars: Array.from("My", (char) => char.charCodeAt(0)) },
+      },
+    })),
+  });
+}
+
 describe("windows-iis renew job (os-store-managed)", () => {
   const CERTIFICATE_ID = "certificate-iis";
   const RENEW_JOB_ID = "job-iis";
@@ -3993,21 +4058,33 @@ describe("windows-iis renew job (os-store-managed)", () => {
   }
 
   /**
-   * Combined certreq.exe/certutil.exe/netsh.exe stub covering every
+   * Combined certreq/certutil/netsh/PowerShell stub covering every
    * Windows child-process tool the CNG/IIS/discovery modules invoke for
    * one windows-iis renewal, keyed on the invoked executable (argv[0])
    * rather than one tool at a time like the sibling modules' own tests,
-   * since a single renewal call here drives all three in sequence.
+   * since a single renewal call here drives all of them in sequence.
    *
    * @param {object} opts
-   * @param {string|null} [opts.outgoingThumbprint] what `netsh http show
-   *   sslcert` reports as already bound, before this deploy. null means
+   * @param {string|null} [opts.outgoingThumbprint] what http.sys reports
+   *   as already bound, before this deploy. null means
    *   "nothing bound yet" (first-ever deploy to this binding).
-   * @param {string|null} [opts.storeKeyContainer] the Key Container netsh's
-   *   sibling `certutil -store` reports for the outgoing certificate, so
+   * @param {string|null} [opts.storeKeyContainer] the key container the
+   *   machine-store listing reports for the outgoing certificate, so
    *   recordSupersededWindowsCertificate can resolve ownershipProvenance.
+   * @param {"en"|"de"} [opts.storeLanguage] certutil's display language.
    */
-  function makeWindowsExecStub({ outgoingThumbprint = null, storeKeyContainer = null, acceptExitCode = 0 } = {}) {
+  function makeWindowsExecStub({
+    outgoingThumbprint = null,
+    storeKeyContainer = null,
+    storeLanguage = "en",
+    acceptExitCode = 0,
+  } = {}) {
+    const storeListing = windowsStoreListing(
+      outgoingThumbprint
+        ? [{ thumbprint: outgoingThumbprint, subject: "old.example.com", keyContainer: storeKeyContainer }]
+        : [],
+      { language: storeLanguage },
+    );
     const calls = [];
     function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
@@ -4028,16 +4105,14 @@ describe("windows-iis renew job (os-store-managed)", () => {
           error = Object.assign(new Error("no matching request"), { code: acceptExitCode });
           stderr = "CertReq: No match";
         }
-      } else if (file === "netsh.exe" && args[1] === "show") {
-        stdout = outgoingThumbprint
-          ? `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${outgoingThumbprint}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`
-          : "";
+      } else if (isHttpSysBindingQuery(file, args)) {
+        stdout = httpSysBindingsJson(outgoingThumbprint ? [{ ipPort: "0.0.0.0:443", thumbprint: outgoingThumbprint }] : []);
       } else if (file === "netsh.exe" && (args[1] === "add" || args[1] === "delete")) {
         stdout = "";
+      } else if (file === "powershell.exe" && stubbedStoreQueryTarget(file, args)) {
+        stdout = storeListing.storeJson;
       } else if (file === "certutil.exe" && args.includes("-store")) {
-        stdout = outgoingThumbprint
-          ? `My "Personal"\n================ Certificate 0 ================\nSerial Number: 1a2b3c4d5e\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=old.example.com\nCert Hash(sha1): ${outgoingThumbprint.match(/../g).join(" ")}\n${storeKeyContainer ? `  Key Container = ${storeKeyContainer}\n` : ""}CertUtil: -store command completed successfully.\n`
-          : `My "Personal"\nCertUtil: -store command completed successfully.\n`;
+        stdout = storeListing.certutilStdout;
       } else if (file === "certutil.exe" && args[0] === "-csp" && args[2] === "-delkey") {
         // removeAbandonedKeyContainer's cleanup call after an ACME failure.
         stdout = "CertUtil: -delkey command completed successfully.\n";
@@ -4194,6 +4269,32 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(row.cngKeyContainerId, "tokentimer-old-1");
     assert.equal(row.ownershipProvenance, "tokentimer_installed");
     assert.equal(row.lifecycleState, "pending_retention");
+  });
+
+  it("resolves the predecessor's ownership and real expiry on a German-language host", async () => {
+    const job = makeJob();
+    recordIssuedContainer({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      jobId: "prior-job",
+      certificateId: job.certificateId,
+    });
+    markIssuedContainerAccepted({
+      stateDir: stateDir(),
+      containerName: "tokentimer-old-1",
+      acceptedThumbprint: OTHER_THUMBPRINT,
+      store: "My",
+    });
+    const { outcome } = await runIisRenew({
+      job,
+      windowsOpts: { outgoingThumbprint: OTHER_THUMBPRINT, storeKeyContainer: "tokentimer-old-1", storeLanguage: "de" },
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const row = readLedgerRow(path.join(stateDir(), "windows-retention"), OTHER_THUMBPRINT);
+    assert.equal(row.cngKeyContainerId, "tokentimer-old-1");
+    assert.equal(row.ownershipProvenance, "tokentimer_installed");
+    assert.equal(row.oldNotAfter, "2027-01-01T00:00:00.000Z");
   });
 
   it("records ownershipProvenance preexisting for a container matching this agent's naming convention but with no issuance record (name alone is not proof)", async () => {
@@ -4612,58 +4713,49 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
 
   /**
    * @param {object} opts
-   * @param {boolean} [opts.oldStillBound] whether netsh reports a binding
+   * @param {boolean} [opts.oldStillBound] whether http.sys reports a binding
    *   still pointing at OLD_THUMBPRINT.
-   * @param {boolean} [opts.replacementBound] whether netsh reports a
+   * @param {boolean} [opts.replacementBound] whether http.sys reports a
    *   binding for REPLACEMENT_THUMBPRINT (needed before any handshake
    *   probe can even be attempted).
    * @param {string|null} [opts.sharedContainerOnOtherCert] when set, the
-   *   certutil -store stub reports a SECOND certificate (distinct
+   *   machine-store listing reports a SECOND certificate (distinct
    *   thumbprint) sharing this key container name.
-   * @param {boolean} [opts.netshFails] simulate listHttpSysBindings ok:false.
-   * @param {boolean} [opts.certutilStoreFails] simulate listMachineStoreCertificates ok:false.
+   * @param {boolean} [opts.bindingQueryFails] simulate listHttpSysBindings ok:false.
+   * @param {boolean} [opts.storeQueryFails] simulate listMachineStoreCertificates ok:false.
    */
   function makeSweepExecStub({
     oldStillBound = false,
     replacementBound = true,
     sharedContainerOnOtherCert = null,
-    netshFails = false,
-    certutilStoreFails = false,
+    bindingQueryFails = false,
+    storeQueryFails = false,
   } = {}) {
+    const storeListing = windowsStoreListing(
+      sharedContainerOnOtherCert
+        ? [{ thumbprint: "CC".repeat(20), subject: "survivor.example.com", keyContainer: sharedContainerOnOtherCert }]
+        : [],
+    );
     const calls = [];
     return function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
-      if (file === "netsh.exe" && args[1] === "show") {
-        if (netshFails) {
+      if (isHttpSysBindingQuery(file, args)) {
+        if (bindingQueryFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
           return;
         }
         const bindings = [];
-        if (oldStillBound) {
-          bindings.push(
-            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${OLD_THUMBPRINT}\n    Application ID              : {12345678-1234-1234-1234-123456789012}\n    Certificate Store Name        : My\n`,
-          );
-        }
-        if (replacementBound) {
-          bindings.push(
-            `    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${REPLACEMENT_THUMBPRINT}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`,
-          );
-        }
-        const stdout = bindings.length > 0 ? `\nSSL Certificate bindings:\n-------------------------\n\n${bindings.join("\n")}` : "";
-        process.nextTick(() => callback(null, stdout, ""));
+        if (oldStillBound) bindings.push({ ipPort: "0.0.0.0:443", thumbprint: OLD_THUMBPRINT });
+        if (replacementBound) bindings.push({ ipPort: "0.0.0.0:443", thumbprint: REPLACEMENT_THUMBPRINT });
+        process.nextTick(() => callback(null, httpSysBindingsJson(bindings), ""));
         return;
       }
-      if (file === "certutil.exe" && args.includes("-store")) {
-        if (certutilStoreFails) {
+      if (stubbedStoreQueryTarget(file, args)) {
+        if (storeQueryFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
           return;
         }
-        let stdout = `My "Personal"\n`;
-        if (sharedContainerOnOtherCert) {
-          stdout +=
-            `================ Certificate 0 ================\nSerial Number: 1\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=survivor.example.com\nCert Hash(sha1): ${"CC".repeat(20).match(/../g).join(" ")}\n  Key Container = ${sharedContainerOnOtherCert}\n`;
-        }
-        stdout += "CertUtil: -store command completed successfully.\n";
+        const stdout = file === "powershell.exe" ? storeListing.storeJson : storeListing.certutilStdout;
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
@@ -4702,7 +4794,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
 
   // A self-signed fixture certificate generated purely so this suite can
   // assert the sweep's TLS-probe thumbprint comparison genuinely computes
-  // sha1(DER) rather than trusting netsh's own report: REPLACEMENT_THUMBPRINT
+  // sha1(DER) rather than trusting http.sys's own report: REPLACEMENT_THUMBPRINT
   // is set to match this specific certificate's real fingerprint below.
   const FIXTURE_REPLACEMENT_PROBE_CERT_PEM = fs.readFileSync(
     path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
@@ -4748,8 +4840,8 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
       jobOrRollbackJournalRefs: [{ ref: "job-old", active: false }],
     });
     const execFileImplWithRealThumbprint = (file, args, options, callback) => {
-      if (file === "netsh.exe" && args[1] === "show") {
-        const stdout = `\nSSL Certificate bindings:\n-------------------------\n\n    IP:port                      : 0.0.0.0:443\n    Certificate Hash              : ${realReplacementThumbprint}\n    Application ID              : {87654321-4321-4321-4321-210987654321}\n    Certificate Store Name        : My\n`;
+      if (isHttpSysBindingQuery(file, args)) {
+        const stdout = httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: realReplacementThumbprint }]);
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
@@ -4825,7 +4917,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
   it("fails safe (defers as still-bound) when listHttpSysBindings itself cannot be queried", async () => {
     workDir = makeTempConfigDir();
     seedRow(workDir);
-    const execFileImpl = makeSweepExecStub({ netshFails: true });
+    const execFileImpl = makeSweepExecStub({ bindingQueryFails: true });
 
     const summary = await runWindowsRetentionSweep({
       stateDir: workDir,
@@ -4844,7 +4936,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     const execFileImpl = makeSweepExecStub({
       oldStillBound: false,
       replacementBound: true,
-      certutilStoreFails: true,
+      storeQueryFails: true,
     });
 
     const summary = await runWindowsRetentionSweep({
@@ -4867,28 +4959,36 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
 
   /**
    * @param {object} opts
-   * @param {string|null} [opts.enrolledContainer] a container name certutil
-   *   -store should report as currently enrolled to a real certificate, if
-   *   any (simulates "a later attempt legitimately used this container").
-   *   Enrolled in EVERY queried store unless `enrolledInStore` narrows it.
+   * @param {string|null} [opts.enrolledContainer] a container name the
+   *   machine-store listing should report as currently enrolled to a real
+   *   certificate, if any (simulates "a later attempt legitimately used
+   *   this container"). Enrolled in EVERY queried store unless
+   *   `enrolledInStore` narrows it.
    * @param {string|null} [opts.enrolledInStore] restricts `enrolledContainer`
    *   to only appear enrolled when that exact store is queried (simulates
    *   a crash after certreq -accept succeeded into "My" but before the
    *   later mirror step into a non-default target store completed).
+   * @param {"en"|"de"} [opts.storeLanguage] certutil's display language.
    * @param {boolean} [opts.delkeyFails] simulate certutil -delkey ok:false.
    */
-  function makeReconcileExecStub({ enrolledContainer = null, enrolledInStore = null, delkeyFails = false } = {}) {
+  function makeReconcileExecStub({
+    enrolledContainer = null,
+    enrolledInStore = null,
+    storeLanguage = "en",
+    delkeyFails = false,
+  } = {}) {
     return function execFileStub(file, args, options, callback) {
-      if (file === "certutil.exe" && args.includes("-store")) {
-        const queriedStore = args[args.indexOf("-store") + 1];
+      const queriedStore = stubbedStoreQueryTarget(file, args);
+      if (queriedStore) {
         const showEnrolled =
           enrolledContainer && (enrolledInStore === null || enrolledInStore === queriedStore);
-        let stdout = `My "Personal"\n`;
-        if (showEnrolled) {
-          stdout +=
-            `================ Certificate 0 ================\nSerial Number: 1\nIssuer: CN=Test Root CA\n NotBefore: 1/1/2026 12:00 AM\n NotAfter: 1/1/2027 12:00 AM\nSubject: CN=enrolled.example.com\nCert Hash(sha1): ${"DD".repeat(20).match(/../g).join(" ")}\n  Key Container = ${enrolledContainer}\n`;
-        }
-        stdout += "CertUtil: -store command completed successfully.\n";
+        const storeListing = windowsStoreListing(
+          showEnrolled
+            ? [{ thumbprint: "DD".repeat(20), subject: "enrolled.example.com", keyContainer: enrolledContainer }]
+            : [],
+          { language: storeLanguage },
+        );
+        const stdout = file === "powershell.exe" ? storeListing.storeJson : storeListing.certutilStdout;
         process.nextTick(() => callback(null, stdout, ""));
         return;
       }
@@ -4946,6 +5046,21 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(result.skipped[0].reason, "enrolled");
   });
 
+  it("never frees a container enrolled to a real certificate on a German-language host", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-live0002";
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub({ enrolledContainer: containerName, storeLanguage: "de" }),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0].reason, "enrolled");
+  });
+
   it("queries both My and the recorded target store, not just one", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-webhost1";
@@ -4953,9 +5068,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
 
     const queriedStores = [];
     const execFileImpl = (file, args, options, callback) => {
-      if (file === "certutil.exe" && args.includes("-store")) {
-        queriedStores.push(args[args.indexOf("-store") + 1]);
-      }
+      if (file === "powershell.exe") queriedStores.push(stubbedStoreQueryTarget(file, args));
       return makeReconcileExecStub()(file, args, options, callback);
     };
 
@@ -4993,11 +5106,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
 
     const execFileImpl = (file, args, options, callback) => {
-      if (
-        file === "certutil.exe" &&
-        args.includes("-store") &&
-        args[args.indexOf("-store") + 1] === "WebHosting"
-      ) {
+      if (stubbedStoreQueryTarget(file, args) === "WebHosting") {
         process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "access denied"));
         return;
       }

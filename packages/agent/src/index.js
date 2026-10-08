@@ -3212,8 +3212,8 @@ async function runWindowsIisDeployTail({
  * Ownership is decided by THREE independent signals, ALL required, not
  * merely container PRESENCE: any non-exportable CNG certificate (one an
  * operator or a different tool enrolled directly on this host, not just
- * one this agent installed) also reports a "Key Container =" line in
- * certutil's output, so presence alone is not evidence this agent may
+ * one this agent installed) also reports a key container in the store
+ * listing, so presence alone is not evidence this agent may
  * delete it; a container name matching this agent's own naming convention
  * alone is a closed-alphabet pattern match, not proof this agent process
  * actually created that exact container; and even a genuine

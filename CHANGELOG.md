@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- An IIS renewal on Windows now fails with `UNSUPPORTED_BINDING_SETTINGS` and leaves the binding untouched when the binding has a setting the agent cannot carry over to the new certificate, such as one this host's `netsh` cannot set. The error detail names the setting. Earlier versions dropped such settings on renewal. **Operator guidance:** remove the named setting, or rebind that certificate manually.
+
+### Fixed
+
+- **Windows agent on non-English hosts** ([#327](https://github.com/tokentimerch/tokentimer-core/issues/327), [#330](https://github.com/tokentimerch/tokentimer-core/issues/330)): the agent read the machine certificate store and http.sys bindings through the English labels of `certutil` and `netsh` output, so on hosts with another display language it found neither. Windows discovery came back empty, replaced certificates never became eligible for retention cleanup, and the startup cleanup after an interrupted renewal could delete the private key of the certificate it had just installed. A first IIS deploy failed with `QUERY_FAILED`, and an IIS renewal reset the binding's TLS settings (such as disabled legacy TLS or HTTP/2) to Windows defaults, with no previous certificate to roll back to. The store is now read through Windows PowerShell's certificate provider and the bindings from http.sys's own configuration, whatever the display language, and discovered validity dates are reported in UTC. **Operator action:** upgrade Windows agents running on non-English hosts, and check the TLS settings of IIS bindings renewed on those hosts (`netsh http show sslcert`), since earlier renewals reset them.
+
 ## [0.17.3] - 2026-10-08
 
 ### Added
