@@ -125,6 +125,8 @@ describe("auto-sync provenance transaction boundaries", () => {
   it("normalizes names before PostgreSQL uniqueness enforcement", () => {
     assert.equal(provenance.normalizeConnectionName("  Prod \t GitLab  "), "Prod GitLab");
     assert.equal(provenance.normalizeConnectionName("   "), null);
+    assert.equal(provenance.normalizeConnectionName("x".repeat(255)), "x".repeat(255));
+    assert.equal(provenance.normalizeConnectionName("x".repeat(256)), null);
   });
 
   it("does not supersede a run for JSON key ordering alone", () => {

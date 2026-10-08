@@ -1,4 +1,4 @@
-const { request, expect } = require("./setup");
+const { request, expect, TestUtils } = require("./setup");
 
 // Helper function to generate future dates for test tokens
 function getFutureDate(daysInFuture = 90) {
@@ -73,27 +73,96 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("validates name length (3-100 characters)", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: "ab", // Too short (min 3)
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body).to.have.property("error_count");
-          expect(res.body.error_count).to.equal(1);
-          expect(res.body.errors[0].error).to.match(/name.*3.*100/i);
-        }
-      });
+  describe("authenticated name length", function () {
+    this.timeout(60000);
+
+    let cookie;
+    let workspaceId;
+
+    before(async () => {
+      const testUser = await TestUtils.createVerifiedTestUser();
+      const session = await TestUtils.loginTestUser(
+        testUser.email,
+        "SecureTest123!@#",
+      );
+      if (!session?.cookie) {
+        throw new Error("import name-length tests require an authenticated session");
+      }
+      cookie = session.cookie;
+      workspaceId = await TestUtils.ensureTestWorkspace(cookie);
+    });
+
+    function importItems(items) {
+      return request("http://localhost:4000")
+        .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+        .set("Cookie", cookie)
+        .send({ items });
+    }
+
+    it("rejects a missing import name", async () => {
+      const res = await importItems([
+        {
+          name: "",
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/missing name/i);
+    });
+
+    it("rejects a 256-character import name", async () => {
+      const res = await importItems([
+        {
+          name: "A".repeat(256),
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+    });
+
+    it("rejects import names that contain angle brackets like create/update", async () => {
+      const res = await importItems([
+        {
+          name: 'Test<script>alert("xss")</script>',
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/HTML tags/i);
+    });
+
+    it("accepts 1-character and 255-character import names and stores them", async () => {
+      const longName = "B".repeat(255);
+      const res = await importItems([
+        {
+          name: "A",
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+        {
+          name: longName,
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(0);
+      expect(res.body.created_count).to.equal(2);
+      const names = res.body.created.map((row) => row.name);
+      expect(names).to.include("A");
+      expect(names).to.include(longName);
+    });
   });
 
   it("validates renewal_date format", async () => {
@@ -146,13 +215,13 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("sanitizes HTML in text fields", async () => {
+  it("rejects HTML tags in import names without authenticating", async () => {
     const res = await request("http://localhost:4000")
       .post("/api/v1/integrations/import?workspace_id=test")
       .send({
         items: [
           {
-            name: 'Test<script>alert("xss")</script>', // XSS attempt
+            name: 'Test<script>alert("xss")</script>',
             expiration: getFutureDate(180),
             category: "key_secret",
             type: "api_key",
@@ -161,11 +230,9 @@ describe("Generic integration import endpoint", () => {
       })
       .expect((res) => {
         expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201 && res.body.created_count > 0) {
-          // Name should be HTML-escaped
-          const created = res.body.created[0];
-          expect(created.name).to.not.include("<script>");
-          expect(created.name).to.include("&lt;").or.include("&gt;");
+        if (res.status === 201) {
+          expect(res.body.error_count).to.be.at.least(1);
+          expect(res.body.errors[0].error).to.match(/HTML tags/i);
         }
       });
   });

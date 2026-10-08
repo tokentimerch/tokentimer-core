@@ -4580,6 +4580,34 @@ const migrations = [
     name: "certops_identity_detail_history",
     sql: fs.readFileSync(require("path").join(__dirname, "066-certops-identity-detail-history.sql"), "utf8"),
   },
+  {
+    version: 67,
+    name: "inventory_and_auto_sync_name_length",
+    sql: `
+      -- Existing DBs never re-run version 1. Drop the old length>=3 check first.
+      -- Rewrite only names that are empty after POSIX whitespace trim (spaces,
+      -- tabs, newlines). Padded names stay as stored; API writes still trim.
+      ALTER TABLE tokens DROP CONSTRAINT IF EXISTS tokens_name_check;
+      UPDATE tokens SET name = 'unnamed'
+       WHERE char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) < 1;
+      ALTER TABLE tokens ALTER COLUMN name TYPE VARCHAR(255);
+      ALTER TABLE tokens ADD CONSTRAINT tokens_name_check
+        CHECK (char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) BETWEEN 1 AND 255)
+        NOT VALID;
+
+      ALTER TABLE auto_sync_configs DROP CONSTRAINT IF EXISTS auto_sync_configs_name_canonical;
+      ALTER TABLE auto_sync_configs ADD CONSTRAINT auto_sync_configs_name_canonical
+        CHECK (connection_key = REGEXP_REPLACE(
+                 regexp_replace(connection_key, '^[[:space:]]+|[[:space:]]+$', '', 'g'),
+                 '[[:space:]]+', ' ', 'g')
+               AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 255)
+        NOT VALID;
+    `,
+    postCommitSql: `
+      ALTER TABLE tokens VALIDATE CONSTRAINT tokens_name_check;
+      ALTER TABLE auto_sync_configs VALIDATE CONSTRAINT auto_sync_configs_name_canonical;
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
@@ -4888,6 +4916,11 @@ async function applyMigrationSql(client, migration) {
   if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
 }
 
+async function applyPostCommitSql(client, migration) {
+  if (!migration.postCommitSql) return;
+  await client.query(migration.postCommitSql);
+}
+
 async function runMigrations() {
   logger.info("Starting database migrations...");
 
@@ -4993,15 +5026,29 @@ async function runMigrations() {
             [migration.version, migration.name],
           );
           await client.query("COMMIT");
-          logger.info(`Migration ${migration.version} completed successfully`);
-          migrationsRun++;
         } catch (error) {
           await client.query("ROLLBACK");
           logger.error(`Migration ${migration.version} failed:`, error.message);
           throw error;
         }
+        // postCommitSql runs after the ledger insert. A crash here leaves the
+        // version recorded; the already-executed branch retries it below.
+        try {
+          await applyPostCommitSql(client, migration);
+        } catch (error) {
+          logger.error(
+            `Migration ${migration.version} post-commit validation failed:`,
+            error.message,
+          );
+          throw error;
+        }
+        logger.info(`Migration ${migration.version} completed successfully`);
+        migrationsRun++;
       } else {
         logger.info(`Migration ${migration.version} already executed`);
+        if (migration.postCommitSql) {
+          await applyPostCommitSql(client, migration);
+        }
       }
     }
 
@@ -5020,4 +5067,10 @@ if (require.main === module) {
   runMigrations().finally(() => migrationPool.end());
 }
 
-module.exports = { runMigrations, migrations, validateMigrationHistory, applyMigrationSql };
+module.exports = {
+  runMigrations,
+  migrations,
+  validateMigrationHistory,
+  applyMigrationSql,
+  applyPostCommitSql,
+};

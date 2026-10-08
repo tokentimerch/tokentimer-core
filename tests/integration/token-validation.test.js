@@ -115,7 +115,7 @@ describe("Token Validation Integration Tests", () => {
       }
 
       const tokenData = {
-        name: "ab",
+        name: "",
         type: "api_key",
         category: "key_secret", // Fixed: api_key belongs to key_secret category
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -131,7 +131,7 @@ describe("Token Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
 
@@ -142,7 +142,7 @@ describe("Token Validation Integration Tests", () => {
       }
 
       const tokenData = {
-        name: "a".repeat(101),
+        name: "a".repeat(256),
         type: "api_key",
         category: "key_secret", // Fixed: api_key belongs to key_secret category
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -158,8 +158,120 @@ describe("Token Validation Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
+    });
+
+    it("should accept a 1-character token name", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const tokenData = {
+        name: "A",
+        type: "api_key",
+        category: "key_secret",
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+      };
+
+      const response = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({ ...tokenData, workspace_id: session.workspaceId })
+        .expect(201);
+
+      expect(response.body.name).to.equal("A");
+    });
+
+    it("should accept a 255-character token name", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const name = "A".repeat(255);
+      const tokenData = {
+        name,
+        type: "api_key",
+        category: "key_secret",
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split("T")[0],
+      };
+
+      const response = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({ ...tokenData, workspace_id: session.workspaceId })
+        .expect(201);
+
+      expect(response.body.name).to.equal(name);
+    });
+
+    it("should trim surrounding spaces and reject tab-only names", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
+
+      const trimmed = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "  Spaced  ",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(201);
+      expect(trimmed.body.name).to.equal("Spaced");
+
+      const tabs = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\t\t\t",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(tabs.body.error).to.equal("Validation failed");
+
+      const newlines = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\n\n",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(newlines.body.error).to.equal("Validation failed");
+
+      const nbsp = await request("http://localhost:4000")
+        .post("/api/tokens")
+        .set("Cookie", session.cookie)
+        .send({
+          name: "\u00A0\u00A0",
+          type: "api_key",
+          category: "key_secret",
+          expiresAt,
+          workspace_id: session.workspaceId,
+        })
+        .expect(400);
+      expect(nbsp.body.error).to.equal("Validation failed");
     });
   });
 

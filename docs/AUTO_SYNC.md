@@ -2,7 +2,7 @@
 
 ## Configuration and inventory identity
 
-Configuration IDs are durable. Public `name` maps to `connection_key`: whitespace is collapsed, names contain 1–100 characters, and PostgreSQL enforces case-insensitive uniqueness per workspace and provider. Name and schedule edits keep an active run valid. Credentials, scan parameters, cleanup policy, and enabled state advance `scan_version` and supersede the active run. All comparisons use the locked current configuration, including concurrent edits.
+Configuration IDs are durable. Public `name` maps to `connection_key`: whitespace is collapsed, names contain 1–255 characters, and PostgreSQL enforces case-insensitive uniqueness per workspace and provider. Name and schedule edits keep an active run valid. Credentials, scan parameters, cleanup policy, and enabled state advance `scan_version` and supersede the active run. All comparisons use the locked current configuration, including concurrent edits.
 
 In Import tokens, Disable auto-sync deletes only the selected configuration. The modal returns to Scan & Import and selects another configuration for that provider when available, keeping Manage auto-sync accessible and restoring the remaining configuration's settings. After deleting the provider's last configuration, the ordinary scan form offers Enable auto-sync again.
 

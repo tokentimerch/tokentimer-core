@@ -435,7 +435,7 @@ router.post(
       const nextSync = computeNextSyncAt(effFreq, effTime, effTz);
       const normalizedName = normalizeConnectionName(name || provider);
       if (!normalizedName) {
-        return res.status(400).json({ error: "Name must contain 1–100 characters" });
+        return res.status(400).json({ error: "Name must contain 1–255 characters" });
       }
 
       const result = await withDbTransaction(async (client) => {
@@ -604,7 +604,7 @@ router.put(
         }
         if (name !== undefined) {
           const normalizedName = normalizeConnectionName(name);
-          if (!normalizedName) return res.status(400).json({ error: "Name must contain 1–100 characters" });
+          if (!normalizedName) return res.status(400).json({ error: "Name must contain 1–255 characters" });
           updates.push(`connection_key = $${idx++}`);
           values.push(normalizedName);
         }
@@ -1570,7 +1570,7 @@ router.post(
               req.user.id,
               String(
                 certificate.name || certificate.commonName || certDomains[0],
-              ).slice(0, 100),
+              ).slice(0, 255),
               expiration,
               issuer,
               serialNumber,

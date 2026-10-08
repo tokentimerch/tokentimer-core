@@ -2875,6 +2875,7 @@ export default function ImportTokensModal({
                         size='sm'
                         value={autoSyncName}
                         onChange={e => setAutoSyncName(e.target.value)}
+                        maxLength={255}
                       />
                     </FormControl>
                     {autoSyncConfig.last_sync_status === 'failed' ||
@@ -3920,6 +3921,7 @@ export default function ImportTokensModal({
                   size='sm'
                   value={autoSyncName}
                   onChange={e => setAutoSyncName(e.target.value)}
+                  maxLength={255}
                 />
               </FormControl>
               <HStack spacing={4} align='flex-end'>

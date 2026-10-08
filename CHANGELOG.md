@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Inventory token names and auto-sync configuration names accept 1–255 characters (previously 3–100 for token names and 1–100 for auto-sync names). Related identity fields such as issuer, serial, and vendor also allow 255 characters. Integration import now rejects angle brackets in names the same way create/update do, instead of HTML-escaping them into storage. **Operator action:** apply migration 67 (`inventory_and_auto_sync_name_length`) before deploying API or worker processes that accept 255-character names. Names that are only whitespace (including tabs and newlines) become `unnamed`; other existing names are not rewritten. The VARCHAR widen is catalog-only; the new CHECKs are added `NOT VALID` and validated after commit so existing rows are scanned without holding an exclusive write lock. If validation is interrupted after the ledger insert, the next migration run retries it.
+
 ### Added
 
 - `GET /api/csrf-token` is capped per client IP (60 requests per 15 minutes in production, 1000 in development and test). **Operator action:** if cookie-session clients see 429 `CSRF_TOKEN_RATE_LIMITED`, raise `CSRF_TOKEN_RATE_LIMIT_MAX` or `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`.

@@ -1140,18 +1140,11 @@ router.put(
       // Validate name length if provided
       if (name !== undefined && name !== null) {
         const trimmedName = name.trim();
-        if (trimmedName.length < 3) {
+        if (trimmedName.length < 1 || trimmedName.length > 255) {
           return res.status(400).json({
             error: "Validation failed",
             code: "VALIDATION_ERROR",
-            details: ["Token name must be between 3 and 100 characters"],
-          });
-        }
-        if (trimmedName.length > 100) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Token name must be between 3 and 100 characters"],
+            details: ["Token name must be between 1 and 255 characters"],
           });
         }
       }
@@ -1421,7 +1414,7 @@ router.put(
 
       const updateData = {
         ...(name !== undefined && {
-          name: processStringField(name, 100, "Name"),
+          name: processStringField(name, 255, "Name"),
         }),
         ...(expirationDate !== null &&
           expirationDate !== undefined && { expiration: expirationDate }),

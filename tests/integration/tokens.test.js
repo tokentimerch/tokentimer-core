@@ -110,7 +110,7 @@ describe("Token Management Integration Tests", () => {
       }
 
       const invalidTokenData = {
-        name: "ab", // Too short
+        name: "",
         type: "invalid_type",
         category: "invalid_category",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
@@ -127,7 +127,7 @@ describe("Token Management Integration Tests", () => {
 
       expect(response.body.error).to.equal("Validation failed");
       expect(response.body.details.join(" ")).to.include(
-        "Token name must be between 3 and 100 characters",
+        "Token name must be between 1 and 255 characters",
       );
     });
 
@@ -519,7 +519,7 @@ describe("Token Management Integration Tests", () => {
       }
 
       const shortNameToken = {
-        name: "ab", // Too short
+        name: "",
         type: "api_key",
         category: "key_secret", // Fixed: api_key belongs to key_secret category
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)

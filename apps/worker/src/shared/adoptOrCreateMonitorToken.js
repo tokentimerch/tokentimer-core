@@ -18,7 +18,7 @@ export async function adoptOrCreateMonitorToken(client, {
   sslData,
   defaultContactGroupId,
 }) {
-  const name = String(hostname || "").substring(0, 100);
+  const name = String(hostname || "").substring(0, 255);
   const location = url;
   const expiration = formatDateYmd(sslData.ssl_valid_to);
   const existing = await client.query(

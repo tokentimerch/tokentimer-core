@@ -30,11 +30,11 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
-    assert.equal(migrations.at(-1).version, 66);
-    assert.equal(migrations.at(-1).name, "certops_identity_detail_history");
+    assert.equal(migrations.at(-1).version, 67);
+    assert.equal(migrations.at(-1).name, "inventory_and_auto_sync_name_length");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 66 }, (_, index) => index + 1),
+      Array.from({ length: 67 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -52,6 +52,47 @@ describe("operational notifications migration", () => {
     assert.match(lifecycleMigration.sql, /idx_operational_notifications_open_delivery_token/);
     assert.match(lifecycleMigration.sql, /JOIN certops_agents ca ON ca.id = aq.certops_agent_id/);
     assert.match(lifecycleMigration.sql, /NEW.type IS DISTINCT FROM OLD.type/);
+  });
+
+  it("widens inventory names only in v67 and leaves version 1 unchanged", () => {
+    const baseline = migrations.find((entry) => entry.version === 1);
+    const widen = migrations.find((entry) => entry.version === 67);
+    const autoSync = migrations.find((entry) => entry.version === 61);
+    assert.match(
+      baseline.sql,
+      /name VARCHAR\(100\) NOT NULL CHECK \(length\(name\) >= 3\)/,
+    );
+    assert.match(
+      autoSync.sql,
+      /CHAR_LENGTH\(connection_key\) BETWEEN 1 AND 100/,
+    );
+    assert.match(widen.sql, /DROP CONSTRAINT IF EXISTS tokens_name_check/);
+    assert.doesNotMatch(
+      widen.sql,
+      /UPDATE tokens SET name = btrim\(name\)/,
+    );
+    assert.match(
+      widen.sql,
+      /UPDATE tokens SET name = 'unnamed'/,
+    );
+    assert.match(
+      widen.sql,
+      /regexp_replace\(name, '\^\[\[:space:\]\]\+\|\[\[:space:\]\]\+\$'/,
+    );
+    assert.match(widen.sql, /ALTER COLUMN name TYPE VARCHAR\(255\)/);
+    assert.match(widen.sql, /NOT VALID/);
+    assert.match(
+      widen.postCommitSql,
+      /VALIDATE CONSTRAINT tokens_name_check/,
+    );
+    assert.match(
+      widen.postCommitSql,
+      /VALIDATE CONSTRAINT auto_sync_configs_name_canonical/,
+    );
+    assert.match(
+      widen.sql,
+      /CHAR_LENGTH\(connection_key\) BETWEEN 1 AND 255/,
+    );
   });
 
   it("accepts only the documented PR #72 migration aliases", () => {
@@ -1720,7 +1761,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 66);
+    assert.equal(sorted[sorted.length - 1], 67);
   });
 });
 

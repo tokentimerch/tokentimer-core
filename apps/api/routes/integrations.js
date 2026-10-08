@@ -2358,13 +2358,14 @@ router.post(
       for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
         const it = itemsToImport[itemIndex];
         try {
-          // Sanitize and validate name (HTML escape for XSS protection)
+          // Match create/update validation: reject angle brackets, store the
+          // trimmed name without HTML-entity expansion (XSS is handled at render).
           let name = String(it?.name || "").trim();
-          name = name
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#x27;");
+          if (!name) throw new Error("missing name");
+          if (name.length > 255)
+            throw new Error("name must be between 1 and 255 characters");
+          if (/[<>]/.test(name))
+            throw new Error("Token name cannot contain HTML tags (< or >)");
 
           let expiration = it?.expiration || it?.expiresAt || null;
           let hasNoExpiration = false;
@@ -2385,10 +2386,6 @@ router.post(
           ).toLowerCase();
           const type = (it?.type || default_type || "other").toLowerCase();
 
-          // Validate required fields
-          if (!name) throw new Error("missing name");
-          if (name.length < 3 || name.length > 100)
-            throw new Error("name must be between 3 and 100 characters");
           if (!ALLOWED_CATEGORIES.includes(category))
             throw new Error("invalid category");
           if (!ALLOWED_TYPES.includes(type)) throw new Error("invalid type");

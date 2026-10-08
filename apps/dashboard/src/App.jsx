@@ -1494,8 +1494,8 @@ function App() {
     // Name validation
     if (!formData.name.trim()) {
       errors.name = 'Name is required';
-    } else if (formData.name.trim().length > 100) {
-      errors.name = 'Name must be 100 characters or less';
+    } else if (formData.name.trim().length > 255) {
+      errors.name = 'Name must be 255 characters or less';
     }
 
     // Type validation - check if type is valid for selected category
@@ -5129,7 +5129,7 @@ function DashboardView({
                                 formErrors.name ? 'red.500' : inputBorder
                               }
                               _placeholder={{ color: placeholderColor }}
-                              maxLength={100}
+                              maxLength={255}
                               aria-required='true'
                               aria-invalid={formErrors.name ? 'true' : 'false'}
                               aria-describedby={
@@ -5231,7 +5231,7 @@ function DashboardView({
                               bg={inputBg}
                               borderColor={inputBorder}
                               placeholder='e.g., prod, AWS, security team'
-                              maxLength={120}
+                              maxLength={255}
                             />
                           </FormControl>
 
@@ -5338,7 +5338,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder={"Let's Encrypt, DigiCert"}
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={100}
+                                maxLength={255}
                               />
                             </FormControl>
 
@@ -5356,7 +5356,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Optional'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={50}
+                                maxLength={255}
                               />
                             </FormControl>
 
@@ -5372,7 +5372,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='CN=example.com, O=Example Corp, C=US'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={300}
+                                maxLength={1000}
                               />
                             </FormControl>
 
@@ -5470,6 +5470,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Web server, API service'
                                 _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
                               />
                             </FormControl>
 
@@ -5505,7 +5506,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Use case or context for this key/secret'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={300}
+                                maxLength={10000}
                               />
                             </FormControl>
 
@@ -5527,7 +5528,7 @@ function DashboardView({
                                     borderColor={inputBorder}
                                     placeholder='AES-256, RSA'
                                     _placeholder={{ color: placeholderColor }}
-                                    maxLength={50}
+                                    maxLength={100}
                                   />
                                 </FormControl>
 
@@ -5609,7 +5610,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Microsoft, Adobe'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={100}
+                                maxLength={255}
                               />
                             </FormControl>
 
@@ -5627,7 +5628,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Perpetual, Subscription'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={50}
+                                maxLength={100}
                               />
                             </FormControl>
 
@@ -5763,7 +5764,7 @@ function DashboardView({
                                 borderColor={inputBorder}
                                 placeholder='Application, service'
                                 _placeholder={{ color: placeholderColor }}
-                                maxLength={200}
+                                maxLength={500}
                               />
                             </FormControl>
 

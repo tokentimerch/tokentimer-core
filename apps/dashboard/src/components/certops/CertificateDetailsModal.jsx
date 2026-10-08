@@ -531,7 +531,7 @@ export default function CertificateDetailsModal({
                       {...commonInputProps}
                       value={editData.name}
                       onChange={updateField('name')}
-                      maxLength={100}
+                      maxLength={255}
                     />
                   ) : (
                     <Text fontSize='sm'>{token.name}</Text>
@@ -660,7 +660,7 @@ export default function CertificateDetailsModal({
                         {...commonInputProps}
                         value={editData.issuer}
                         onChange={updateField('issuer')}
-                        maxLength={100}
+                        maxLength={255}
                         placeholder="Let's Encrypt, DigiCert"
                       />
                     ) : (
@@ -675,7 +675,7 @@ export default function CertificateDetailsModal({
                         {...commonInputProps}
                         value={editData.serial_number}
                         onChange={updateField('serial_number')}
-                        maxLength={50}
+                        maxLength={255}
                         placeholder='Optional'
                       />
                     ) : (
@@ -695,7 +695,7 @@ export default function CertificateDetailsModal({
                         minH='64px'
                         value={editData.subject}
                         onChange={updateField('subject')}
-                        maxLength={300}
+                        maxLength={1000}
                         placeholder='CN=example.com, O=Example Corp, C=US'
                       />
                     ) : (
@@ -716,7 +716,7 @@ export default function CertificateDetailsModal({
                         value={editData.contacts}
                         onChange={updateField('contacts')}
                         list='certificate-workspace-contacts'
-                        maxLength={200}
+                        maxLength={500}
                         placeholder='Who manages this certificate?'
                       />
                     ) : (

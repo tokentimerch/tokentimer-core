@@ -51,8 +51,8 @@ describe("Strategic Token Testing Suite", () => {
 
     // Constraint testing fields - values that test database limits
     constraint_fields: {
-      name_min: "ABC", // Minimum length (3 chars)
-      name_max: "A".repeat(100), // Maximum length
+      name_min: "A", // Minimum length (1 char)
+      name_max: "A".repeat(255), // Maximum length
       location_max: "B".repeat(500), // Maximum VARCHAR(500)
       used_by_max: "C".repeat(500), // Maximum VARCHAR(500)
       issuer_max: "D".repeat(255), // Maximum VARCHAR(255)
@@ -165,7 +165,7 @@ describe("Strategic Token Testing Suite", () => {
 
     // Constraint violations
     constraint_violations: {
-      name: "AB", // Too short (< 3 chars)
+      name: "", // Too short
       key_size: -1, // Negative value
       cost: -100.5, // Negative cost
       cost_too_large: 9999999999999.99, // Over DB limit
@@ -338,7 +338,7 @@ describe("Strategic Token Testing Suite", () => {
       it("should enforce name length constraints", async () => {
         // Test minimum length (should succeed)
         const validToken = {
-          name: "ABC", // Exactly 3 characters
+          name: "A", // Exactly 1 character
           type: "api_key",
           category: "key_secret", // Fixed: api_key belongs to key_secret category
           expiresAt: getFutureDate(90),
@@ -353,7 +353,7 @@ describe("Strategic Token Testing Suite", () => {
 
         // Test too short (should fail)
         const invalidToken = {
-          name: "AB", // Only 2 characters
+          name: "", // Empty
           type: "api_key",
           category: "key_secret", // Fixed: api_key belongs to key_secret category
           expiresAt: getFutureDate(90),
@@ -441,7 +441,7 @@ describe("Strategic Token Testing Suite", () => {
       it("should enforce VARCHAR length constraints", async () => {
         // Test maximum allowed lengths (should succeed)
         const maxLengthToken = {
-          name: "A".repeat(100), // VARCHAR(100) limit
+          name: "A".repeat(255), // VARCHAR(255) limit
           type: "ssl_cert",
           category: "cert",
           expiresAt: getFutureDate(90),
@@ -520,7 +520,7 @@ describe("Strategic Token Testing Suite", () => {
         {
           name: "Name Too Short",
           data: {
-            name: "AB",
+            name: "",
             type: "api_key",
             category: "key_secret",
             expiresAt: getFutureDate(90),

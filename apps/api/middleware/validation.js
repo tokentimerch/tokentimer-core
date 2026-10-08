@@ -47,8 +47,8 @@ const validateLogin = [
 const validateToken = [
   body("name")
     .trim()
-    .isLength({ min: 3, max: 100 })
-    .withMessage("Token name must be between 3 and 100 characters")
+    .isLength({ min: 1, max: 255 })
+    .withMessage("Token name must be between 1 and 255 characters")
     .matches(/^[^<>]*$/)
     .withMessage("Token name cannot contain HTML tags (< or >)"),
   body("type")
