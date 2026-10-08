@@ -116,7 +116,7 @@ function adcsJob(overrides = {}) {
     target: iisTarget(),
     keyMode: "os-store-managed",
     requestedAt: "2026-01-01T00:00:00.000Z",
-    issuer: { kind: "adcs" },
+    issuerKind: "adcs",
     enrollment: enrollmentFor(Buffer.from(JSON.stringify(validSnapshot()), "utf8")),
     ...overrides,
   };
@@ -131,13 +131,10 @@ function preflightJob(overrides = {}) {
     action: "adcs-preflight",
     mode: "real",
     requestedAt: "2026-01-01T00:00:00.000Z",
-    issuer: {
-      kind: "adcs",
-      issuerId: "corp-issuing-ca",
-      caConfig: CA_CONFIG,
-      template: "TokenTimerWebServer",
-      transport: "dcom",
-    },
+    issuerId: "corp-issuing-ca",
+    caConfig: CA_CONFIG,
+    template: "TokenTimerWebServer",
+    transport: "dcom",
     ...overrides,
   };
 }
@@ -164,12 +161,12 @@ describe("AD CS issuer job payload", () => {
     );
   });
 
-  it("keeps jobs without an issuer, or with issuer kind acme, valid unchanged", () => {
+  it("keeps jobs without an issuer kind, or with issuer kind acme, valid unchanged", () => {
     assertValid(acmeJob(), "issuer-less ACME job");
-    assertValid(acmeJob({ issuer: { kind: "acme" } }), "explicit acme issuer");
+    assertValid(acmeJob({ issuerKind: "acme" }), "explicit acme issuer");
     assertValid(
       acmeJob({
-        issuer: { kind: "acme" },
+        issuerKind: "acme",
         commandRef: "certbot-renew",
         caEndpoint: "https://acme.example.com/directory",
         acmeKind: "certbot",
@@ -180,21 +177,22 @@ describe("AD CS issuer job payload", () => {
     );
   });
 
-  it("rejects unknown issuer kinds and issuer fields outside the snapshot", () => {
-    assertInvalid(acmeJob({ issuer: { kind: "venafi" } }), "unknown issuer kind");
-    assertInvalid(acmeJob({ issuer: {} }), "issuer without kind");
-    assertInvalid(
-      adcsJob({ issuer: { kind: "adcs", caConfig: CA_CONFIG } }),
-      "caConfig beside the snapshot",
-    );
+  it("rejects unknown issuer kinds and issuer configuration outside the snapshot", () => {
+    assertInvalid(acmeJob({ issuerKind: "venafi" }), "unknown issuer kind");
+    assertInvalid(acmeJob({ issuerKind: "" }), "empty issuer kind");
+    assertInvalid(adcsJob({ caConfig: CA_CONFIG }), "caConfig beside the snapshot");
+    assertInvalid(adcsJob({ template: "TokenTimerWebServer" }), "template beside the snapshot");
+    const objectShape = adcsJob({ issuer: { kind: "adcs" } });
+    delete objectShape.issuerKind;
+    assertInvalid(objectShape, "issuer object instead of issuerKind");
   });
 
   it("binds continue-enrollment and every enrollment to an adcs issuer", () => {
-    const { issuer, enrollment, ...withoutBoth } = adcsJob({ action: "continue-enrollment" });
-    assertInvalid({ ...withoutBoth, issuer }, "continue-enrollment without enrollment");
-    assertInvalid({ ...withoutBoth, enrollment }, "continue-enrollment without issuer");
+    const { issuerKind, enrollment, ...withoutBoth } = adcsJob({ action: "continue-enrollment" });
+    assertInvalid({ ...withoutBoth, issuerKind }, "continue-enrollment without enrollment");
+    assertInvalid({ ...withoutBoth, enrollment }, "continue-enrollment without issuer kind");
     assertInvalid(
-      { ...withoutBoth, issuer: { kind: "acme" }, enrollment },
+      { ...withoutBoth, issuerKind: "acme", enrollment },
       "continue-enrollment for an acme issuer",
     );
     assertInvalid(acmeJob({ enrollment }), "enrollment on an issuer-less job");
@@ -258,16 +256,41 @@ describe("AD CS issuer job payload", () => {
   });
 
   it("caps the snapshot above the largest valid snapshot and below the signed envelope's limit", () => {
-    const label = (n) => `${n}${"a".repeat(62)}`.slice(0, 63);
-    const longestName = (i) =>
-      `${String(i).padStart(3, "0")}${"b".repeat(60)}.${label("c")}.${label("d")}.${"e".repeat(61)}`;
+    // Every maximum comes from the snapshot schema, so growing it fails here
+    // until the cap is reviewed against the envelope.
+    const props = enrollmentSnapshotSchema.properties;
+    const dnsName = (length, seed) => {
+      const labels = [];
+      let remaining = length;
+      while (remaining > 0) {
+        const size = Math.min(63, remaining);
+        labels.push(size);
+        remaining -= size + 1;
+      }
+      const name = labels
+        .map((size, i) => (i === 0 ? `${seed}${"a".repeat(size)}`.slice(0, size) : "b".repeat(size)))
+        .join(".");
+      assert.equal(name.length, length);
+      return name;
+    };
+    const caNameLength = 64;
     const worst = validSnapshot({
-      issuerId: "i".repeat(128),
-      caConfig: `${label("h")}.${label("o")}.${label("s")}.${"t".repeat(61)}\\${"N".repeat(64)}`,
-      template: "T".repeat(64),
-      authorizedDnsNames: Array.from({ length: 100 }, (_, i) => longestName(i)),
+      issuerId: "i".repeat(props.issuerId.maxLength),
+      issuerVersion: props.issuerVersion.maximum,
+      caConfig: `${dnsName(props.caConfig.maxLength - 1 - caNameLength, "h")}\\${"N".repeat(caNameLength)}`,
+      template: "T".repeat(props.template.maxLength),
+      authorizedDnsNames: Array.from({ length: props.authorizedDnsNames.maxItems }, (_, i) =>
+        dnsName(props.authorizedDnsNames.items.maxLength, String(i).padStart(3, "0")),
+      ),
+      keyAlgorithm: "ecdsa",
+      keySize: 384,
+      policyVersion: props.policyVersion.maximum,
+      pollInterval: props.pollInterval.maximum,
+      pendingTimeout: props.pendingTimeout.maximum,
+      minimumRemainingValidity: props.minimumRemainingValidity.maximum,
+      requireLaterNotAfter: false,
     });
-    assert.equal(worst.authorizedDnsNames[0].length, 253);
+    assert.equal(worst.caConfig.length, props.caConfig.maxLength);
     assert.equal(validateSnapshot(worst), true, errorsOf(validateSnapshot));
     const worstBytes = Buffer.from(JSON.stringify(worst), "utf8");
     assertValid(adcsJob({ enrollment: enrollmentFor(worstBytes) }), "largest valid snapshot");
@@ -430,9 +453,9 @@ describe("AD CS preflight payload", () => {
   it("accepts a preflight naming one CA and template", () => {
     const result = assertValid(preflightJob(), "preflight");
     assert.match(result.schemaId, /adcs-preflight-payload\.schema\.json$/);
-    const withoutIssuerId = { ...preflightJob().issuer };
+    const withoutIssuerId = preflightJob();
     delete withoutIssuerId.issuerId;
-    assertValid(preflightJob({ issuer: withoutIssuerId }), "preflight before the issuer exists");
+    assertValid(withoutIssuerId, "preflight before the issuer exists");
   });
 
   it("carries nothing certificate-shaped and never runs as a dry run", () => {
@@ -442,16 +465,14 @@ describe("AD CS preflight payload", () => {
     assertInvalid({ ...base, keyMode: "os-store-managed" }, "preflight with keyMode");
     assertInvalid({ ...base, enrollment: adcsJob().enrollment }, "preflight with enrollment");
     assertInvalid({ ...base, mode: "dry_run" }, "dry-run preflight");
-    assertInvalid({ ...base, issuer: { ...base.issuer, kind: "acme" } }, "acme preflight");
-    assertInvalid({ ...base, issuer: { ...base.issuer, template: undefined } }, "preflight without template");
-    assertInvalid(
-      { ...base, issuer: { ...base.issuer, caConfig: "ca01\\Corp;CA" } },
-      "preflight with an unsafe caConfig",
-    );
-    assertInvalid(
-      { ...base, issuer: { ...base.issuer, caKeySha256: HEX64 } },
-      "preflight carrying a pin it is meant to discover",
-    );
+    assertInvalid({ ...base, issuerKind: "adcs" }, "preflight with a redundant issuer kind");
+    assertInvalid({ ...base, issuer: { kind: "adcs" } }, "preflight with an issuer object");
+    const withoutTemplate = preflightJob();
+    delete withoutTemplate.template;
+    assertInvalid(withoutTemplate, "preflight without template");
+    assertInvalid({ ...base, caConfig: "ca01\\Corp;CA" }, "preflight with an unsafe caConfig");
+    assertInvalid({ ...base, transport: "rpc" }, "preflight over RPC");
+    assertInvalid({ ...base, caKeySha256: HEX64 }, "preflight carrying a pin it is meant to discover");
   });
 });
 

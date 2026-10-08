@@ -42,6 +42,7 @@
     "issuerVersion": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 2147483647,
       "description": "Issuer configuration version the snapshot was taken from. Approving a new CA key creates a new version."
     },
     "caConfig": {
@@ -91,6 +92,7 @@
     "policyVersion": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 2147483647,
       "description": "Version of the renewal profile the snapshot was resolved from, recorded for evidence."
     },
     "pollInterval": {

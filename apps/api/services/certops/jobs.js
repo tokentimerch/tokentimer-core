@@ -783,11 +783,11 @@ function validateIssueDeploymentTargets(payload, operation) {
   }
 }
 
-// The issuer selection and enrollment snapshot are attached at signed dispatch
+// The issuer kind and enrollment snapshot are attached at signed dispatch
 // from the control plane's issuer and enrollment records (ADR-0014). Signed
 // dispatch spreads the stored payload, so a client-supplied value would be
 // signed as if the control plane had resolved it. Refused even when null.
-const DISPATCH_ATTACHED_FIELD_NAMES = Object.freeze(["issuer", "enrollment"]);
+const DISPATCH_ATTACHED_FIELD_NAMES = Object.freeze(["issuerKind", "enrollment"]);
 
 function validateExecutionFields(payload, operation) {
   for (const fieldName of DISPATCH_ATTACHED_FIELD_NAMES) {

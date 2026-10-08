@@ -1372,6 +1372,7 @@ describe("CertOps jobs service", () => {
   it("rejects generic secret metadata while allowing public certificate metadata", async () => {
     const client = createMemoryClient();
     const publicMetadata = {
+      issuer: "TokenTimer Test CA",
       fingerprintSha256:
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       serialNumber: "01AF",
@@ -1381,8 +1382,6 @@ describe("CertOps jobs service", () => {
       source: "executor",
       attempt: 1,
     };
-    // The certificate's issuer name is result metadata; payload.issuer is the
-    // control plane's issuer selection and is refused on create.
     const job = await createCertificateJob({
       client,
       workspaceId: WORKSPACE_A,
@@ -1390,10 +1389,9 @@ describe("CertOps jobs service", () => {
       subjectType: "managed_certificate",
       subjectId: "cert-1",
       payload: publicMetadata,
-      resultMetadata: { ...publicMetadata, issuer: "TokenTimer Test CA" },
+      resultMetadata: publicMetadata,
     });
-    assert.equal(job.payload.subject, "CN=example.com");
-    assert.equal(job.resultMetadata.issuer, "TokenTimer Test CA");
+    assert.equal(job.payload.issuer, "TokenTimer Test CA");
 
     for (const metadata of [
       { apiKey: "not-allowed" },
@@ -1772,12 +1770,12 @@ describe("CertOps jobs service", () => {
     assert.equal(renew.operation, "renew");
   });
 
-  it("refuses client-supplied issuer and enrollment fields on every create path", async () => {
+  it("refuses client-supplied issuerKind and enrollment fields on every create path", async () => {
     const client = createMemoryClient();
     const smuggled = [
-      { issuer: { kind: "adcs" } },
-      { issuer: { kind: "acme" } },
-      { issuer: null },
+      { issuerKind: "adcs" },
+      { issuerKind: "acme" },
+      { issuerKind: null },
       {
         enrollment: {
           enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
@@ -1819,6 +1817,18 @@ describe("CertOps jobs service", () => {
 
     const listed = await listCertificateJobs({ client, workspaceId: WORKSPACE_A });
     assert.equal(listed.items.length, 0, "no job row may be written for a refused payload");
+
+    // The certificate's issuer name stays ordinary public metadata.
+    const withIssuerName = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "example.com", issuer: "CN=Corp Issuing CA 01" },
+    });
+    assert.equal(withIssuerName.payload.issuer, "CN=Corp Issuing CA 01");
   });
 
   it("rejects execution fields on operations that never execute them", async () => {

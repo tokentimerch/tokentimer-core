@@ -71,17 +71,10 @@
       ],
       "description": "Public certificate lifecycle action requested by the control plane. continue-enrollment is a follow-up step (retrieve, deferred validation, install recovery, or freeing the key after cancellation) of an enrollment an earlier job started (ADR-0014 decision 2)."
     },
-    "issuer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind"],
-      "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused.",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": ["acme", "adcs"]
-        }
-      }
+    "issuerKind": {
+      "type": "string",
+      "enum": ["acme", "adcs"],
+      "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. Not named issuer because job payloads and results already use issuer for a certificate's issuer name. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused."
     },
     "enrollment": {
       "type": "object",
@@ -603,27 +596,20 @@
         "required": ["action"],
         "properties": { "action": { "const": "continue-enrollment" } }
       },
-      "then": { "required": ["issuer", "enrollment"] }
+      "then": { "required": ["issuerKind", "enrollment"] }
     },
     {
       "if": { "required": ["enrollment"] },
       "then": {
-        "required": ["issuer"],
-        "properties": {
-          "issuer": { "properties": { "kind": { "const": "adcs" } } }
-        }
+        "required": ["issuerKind"],
+        "properties": { "issuerKind": { "const": "adcs" } }
       }
     },
     {
       "description": "An adcs job runs only as the first step or a continuation of an enrollment, against one windows-iis target on the Windows CNG path. It carries none of the fields the snapshot supersedes (ACME, DNS-01, key and SAN selection, the ACME-shaped renewal profile, attached PEM) and no multi-target list.",
       "if": {
-        "required": ["issuer"],
-        "properties": {
-          "issuer": {
-            "required": ["kind"],
-            "properties": { "kind": { "const": "adcs" } }
-          }
-        }
+        "required": ["issuerKind"],
+        "properties": { "issuerKind": { "const": "adcs" } }
       },
       "then": {
         "required": ["enrollment"],

@@ -13,7 +13,9 @@
     "action",
     "mode",
     "requestedAt",
-    "issuer"
+    "caConfig",
+    "template",
+    "transport"
   ],
   "properties": {
     "schemaVersion": {
@@ -40,28 +42,18 @@
     "requestedAt": {
       "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/requestedAt"
     },
-    "issuer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "caConfig", "template", "transport"],
-      "properties": {
-        "kind": {
-          "type": "string",
-          "const": "adcs"
-        },
-        "issuerId": {
-          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/issuerId"
-        },
-        "caConfig": {
-          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/caConfig"
-        },
-        "template": {
-          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/template"
-        },
-        "transport": {
-          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/transport"
-        }
-      }
+    "issuerId": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/issuerId",
+      "description": "Issuer being revalidated. Absent for a preflight run before the issuer exists."
+    },
+    "caConfig": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/caConfig"
+    },
+    "template": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/template"
+    },
+    "transport": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/transport"
     },
     "issuedAt": {
       "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/issuedAt"

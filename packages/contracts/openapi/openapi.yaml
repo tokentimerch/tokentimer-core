@@ -8828,7 +8828,7 @@ components:
             (commandRef, caEndpoint, acmeKind, keyRotation, certPath,
             reloadService, verifyHost, verifyPort, dnsZone, dnsProvider); a
             renewalProfile snapshot is not valid on an "issue" job.
-            payload.issuer and payload.enrollment are set by the control
+            payload.issuerKind and payload.enrollment are set by the control
             plane at signed dispatch and are refused on every operation with
             CERTOPS_JOB_EXECUTION_FIELD_INVALID, even when null.
         idempotencyKey:
