@@ -61,12 +61,16 @@ object with CAS=0; exact provider version reads; rollback advances generation.
 Local aliases grant no authority by themselves. Jobs cannot select network endpoints,
 credential files, namespaces, mount paths, device scripts or reload commands.
 Publication success and per-consumer convergence are separate. Existing scanner
-must have no ACL access to bundle paths. Base CertOps remains ungated in Enterprise.
+must have no ACL access to bundle paths. Its code also refuses the reserved
+`bundles/<UUID>` namespace before data or nested metadata requests, including
+direct prefix probes with overprivileged credentials. Base CertOps remains
+ungated in Enterprise.
 
 ## Executed validation
 
-- Core full unit suite: 2,271 passed; strict contract suite: 42 passed.
-- Cloud full unit suite: 1,330 passed; Enterprise full unit suite: 866 passed.
+- Core full unit suite: 2,272 passed; strict contract suite: 42 passed.
+- Cloud full unit suite: 1,333 passed; Enterprise full unit suite: 866 passed.
+  Additional scanner boundary regression passed in Core and the live Cloud fork.
 - Core dashboard and Cloud web production builds passed. Core dashboard type
   check passed. API/worker/agent/dashboard lint has no errors (existing warnings).
 - Production dependency audit, contracts/integrity, lockfile and secret-logging
@@ -82,8 +86,9 @@ must have no ACL access to bundle paths. Base CertOps remains ungated in Enterpr
   with two orders total (initial + renewal). Offline catch-up/rollback/recovery
   issue no additional certificate. Fixture leases and real PostgreSQL dispatch
   are tested separately; this is not full enrolled-agent release qualification.
-- Native packed-agent artifact checks: 3 passed with task-local checksum-verified
-  Go 1.26.6. Full agent regression run and final production image checks continue.
+- Native agent regression: 1,490 tests, 1,477 passed and 13 skipped; no failures.
+  Packed-agent artifact checks: 3 passed with task-local checksum-verified Go
+  1.26.6. Final production image checks continue.
 
 ## Baseline reconciliation
 

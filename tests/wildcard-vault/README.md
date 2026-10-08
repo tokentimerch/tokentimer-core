@@ -70,10 +70,25 @@ node --test --test-concurrency=1 packages/agent/src/material-store/material-stor
 The fixture URL is a test constructor option, not production configuration.
 The remaining fault cases use bounded local HTTP fixtures.
 
+`images.compose.yaml` boots the actual production candidate images on separate
+loopback ports: Core API/dashboard 57500/57501, Cloud 57600/57601 and Enterprise
+57700/57701. First generate protected, task-local random runtime secrets with
+`node tests/wildcard-vault/images-env.cjs`; it preserves an existing file.
+Build/stage the variants from the exact Core source pin and explicitly use the
+candidate Core images as Enterprise bases. Create fresh databases named
+`wildcard_candidate_core_image`, `wildcard_candidate_cloud_image` and
+`wildcard_candidate_enterprise_image` in this fixture. Core and Enterprise
+migrations run separately from their production API image; Cloud migrates at
+startup. Then use both Compose files and run
+`node tests/wildcard-vault/images-smoke.cjs core` (or `cloud` / `enterprise`).
+This checks real production boot, schema, login, workspace access, Cloud's private
+material rejection ordering and Enterprise's base/compliance license separation.
+All users and data created by this smoke test belong to these fixture databases.
+
 Stop only this project's services when finished:
 
 ```powershell
-docker compose -p tt-wildcard-vault-20261008 -f tests/wildcard-vault/compose.yaml --profile images --profile qualification down
+docker compose -p tt-wildcard-vault-20261008 -f tests/wildcard-vault/compose.yaml -f tests/wildcard-vault/images.compose.yaml --profile images --profile qualification down
 ```
 
 Volumes remain for review. Destroy only these named volumes after explicitly

@@ -13,6 +13,14 @@ const {
   maskVaultAddress,
 } = require("./vaultAuth");
 
+// Material publication objects contain private keys. Reserve this exact UUID
+// namespace before any Vault data request, even with overprivileged scanners.
+function isMaterialBundlePath(value) {
+  return /(?:^|\/)bundles\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/|$)/i.test(
+    String(value),
+  );
+}
+
 function recordVaultItemReadFailure(err, state) {
   if (isVaultAuthError(err)) throw err;
   state.hasReadErrors = true;
@@ -262,6 +270,7 @@ async function listKvV2KeysRecursive({
   const results = [];
   let truncated = false;
   async function walk(pathPrefix) {
+    if (isMaterialBundlePath(pathPrefix)) return;
     if (results.length >= limit) {
       truncated = true;
       return;
@@ -290,7 +299,8 @@ async function listKvV2KeysRecursive({
       if (key.endsWith("/")) {
         await walk(`${pathPrefix}${key}`);
       } else {
-        results.push(`${pathPrefix}${key}`);
+        if (!isMaterialBundlePath(`${pathPrefix}${key}`))
+          results.push(`${pathPrefix}${key}`);
       }
     }
   }
@@ -299,6 +309,13 @@ async function listKvV2KeysRecursive({
 }
 
 async function readKvV2Secret({ address, session, mountPath, secretPath }) {
+  if (isMaterialBundlePath(secretPath)) {
+    const error = new Error(
+      "Material bundles are outside inventory scanner scope",
+    );
+    error.code = "VAULT_MATERIAL_BUNDLE_SCAN_DENIED";
+    throw error;
+  }
   const data = await vaultRequest({
     session,
     address,
@@ -472,9 +489,7 @@ async function scanKvV2({
 }) {
   const mountPath = mount.path; // already ends with '/'
   let trimmedPrefix =
-    typeof pathPrefix === "string"
-      ? pathPrefix.replace(/^\/+|\/+$/g, "")
-      : "";
+    typeof pathPrefix === "string" ? pathPrefix.replace(/^\/+|\/+$/g, "") : "";
   // A prefix copied from the Vault CLI/UI often includes the mount name
   // itself (e.g. "staging/test/test" when scanning the "staging/" engine).
   // The prefix is only meant to filter paths *inside* a mount, so strip a
@@ -637,8 +652,7 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
         const notAfter = parsed && parsed.notAfter ? parsed.notAfter : null;
         const subject = parsed && parsed.subject ? parsed.subject : null;
         const issuer = parsed && parsed.issuer ? parsed.issuer : null;
-        const name =
-          extractCommonName(subject) || `${mountPath}cert/${serial}`;
+        const name = extractCommonName(subject) || `${mountPath}cert/${serial}`;
         return {
           source: "vault-pki",
           mount: mountPath,
@@ -656,7 +670,6 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
       }),
     );
 
-
     // Add non-null results to items
     for (const item of batchResults) {
       if (item && items.length < maxItems) {
@@ -664,8 +677,7 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
       }
     }
   }
-  const truncated =
-    serials.length > items.length && !readState.hasReadErrors;
+  const truncated = serials.length > items.length && !readState.hasReadErrors;
   return {
     items,
     truncated,

@@ -58,8 +58,10 @@ creating a new approved rollout. No implicit path or alias fallback exists.
 
 The example Vault policies separate issuer create/read, consumer read and
 scanner denial. Substitute the actual mount and workspace/group prefix. Do not
-attach broader policies that defeat the denial. The server scanner must not
-reuse issuer or consumer credentials. Protect Vault backups as private keys.
+attach broader policies that defeat the denial. The server scanner also refuses
+the reserved `bundles/<UUID>` namespace before data reads or nested metadata
+listing, including direct path-prefix probes. The server scanner must not reuse
+issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
 

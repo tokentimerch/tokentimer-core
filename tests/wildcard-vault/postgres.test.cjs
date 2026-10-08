@@ -24,6 +24,12 @@ test("real PostgreSQL publication, immutable identities, approvals, frozen waves
   const actor=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Distribution fixture','fixture-only','local') RETURNING id`,[`${workspaceId}@example.test`])).rows[0].id;
   const approver=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Approver fixture','fixture-only','local') RETURNING id`,[`approver-${workspaceId}@example.test`])).rows[0].id;
   await pool.query(`INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Isolated distribution',$2,$3)`,[workspaceId,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  // The Cloud candidate advances its Core baseline. Exercise its real upgraded
+  // inventory name constraint as well as the material tables below.
+  const nameInsert="INSERT INTO tokens(user_id,workspace_id,created_by,name,expiration,type,category) VALUES($1,$2,$1,$3,'2027-01-01','other','general') RETURNING name";
+  for(const name of ["x","x".repeat(255)]) assert.equal((await pool.query(nameInsert,[actor,workspaceId,name])).rows[0].name,name);
+  await assert.rejects(pool.query(nameInsert,[actor,workspaceId," \t\n "]),{code:"23514"});
+  await assert.rejects(pool.query(nameInsert,[actor,workspaceId,"x".repeat(256)]),{code:"22001"});
   async function agent(){return (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
     VALUES($1,$2,'0.1.0','1.0.0',$3,$4) RETURNING id`,[workspaceId,crypto.randomUUID(),`ttagent_${crypto.randomBytes(8).toString("hex")}`,crypto.randomBytes(32).toString("hex")])).rows[0].id;}
   const issuer=await agent(),consumerA=await agent(),consumerB=await agent();
