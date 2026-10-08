@@ -9,13 +9,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-
-- Inventory token names and auto-sync configuration names accept 1–255 characters (previously 3–100 for token names and 1–100 for auto-sync names). Related identity fields such as issuer, serial, and vendor also allow 255 characters. Integration import now rejects angle brackets in names the same way create/update do, instead of HTML-escaping them into storage. **Operator action:** apply migration 67 (`inventory_and_auto_sync_name_length`) before deploying API or worker processes that accept 255-character names. Names that are only whitespace (including tabs and newlines) become `unnamed`; other existing names are not rewritten. The VARCHAR widen is catalog-only; the new CHECKs are added `NOT VALID` and validated after commit so existing rows are scanned without holding an exclusive write lock. If validation is interrupted after the ledger insert, the next migration run retries it.
+## [0.17.3] - 2026-10-08
 
 ### Added
 
-- `GET /api/csrf-token` is capped per client IP (60 requests per 15 minutes in production, 1000 in development and test). **Operator action:** if cookie-session clients see 429 `CSRF_TOKEN_RATE_LIMITED`, raise `CSRF_TOKEN_RATE_LIMIT_MAX` or `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`.
+- `GET /api/csrf-token` is capped per client IP (60 requests per 15 minutes in production, 1000 in development and test). Over the cap it returns `429` with code `CSRF_TOKEN_RATE_LIMITED` and `Retry-After`. **Operator action:** if many users share one egress IP, raise `CSRF_TOKEN_RATE_LIMIT_MAX` or `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`. Compose forwards both on `api`; Helm uses `config.csrfTokenRateLimitMax` / `config.csrfTokenRateLimitWindowMs`.
+- Release images (`tokentimer-core-api`, `-worker`, `-dashboard`, `-k8s-controller`) are signed with Cosign keyless signing through GitHub Actions OIDC. **Operator guidance:** verify a digest with `cosign verify` as shown in `deploy/helm/README.md`.
+
+### Changed
+
+- Inventory token names and auto-sync configuration names accept 1–255 characters (previously 3–100 for token names and 1–100 for auto-sync names). Related identity fields such as issuer, serial, and vendor also allow 255 characters. Integration import now rejects angle brackets in names the same way create/update do, instead of HTML-escaping them into storage. **Operator action:** apply migration 67 (`inventory_and_auto_sync_name_length`) before deploying API or worker processes that accept 255-character names. Names that are only whitespace (including tabs and newlines) become `unnamed`; other names are not rewritten. The new CHECKs are validated after commit without an exclusive write lock, and an interrupted validation is retried on the next migration run.
+- The multiple auto-sync configurations activation in System settings names the worker floor explicitly: no auto-sync worker older than 0.17.0 may still be running.
+
+### Fixed
+
+- Helm: `twilio.webhookRateLimitWindowMs` / `twilio.webhookRateLimitMax` set as unquoted YAML numbers of 1000000 or more rendered in exponent form (`1.8e+06`), which the API read as 1. They now render as plain integers, and the chart schema rejects zero, negative or non-numeric values.
+
+### Security
+
+- `proxy-addr` 2.0.7 → 2.0.8 ([GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h), CVE-2026-90711): IPv4-mapped IPv6 trust subnets matched every IPv4 client, letting it spoof `X-Forwarded-For`. Core configures `trust proxy` as a hop count (`TRUST_PROXY_HOPS`), which this advisory does not affect.
+- Alpine-based images (`tokentimer-core-api`, `-worker`, `-dashboard`, `-k8s-controller`) require `zlib` 1.3.2-r1 or newer (CVE-2026-85091, High).
 
 ## [0.17.2] - 2026-10-05
 

@@ -101,6 +101,10 @@ services:
       # LB -> reverse-proxy. Set 0 when no proxy is in front.
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-2}
 
+      # Per-IP limiter for GET /api/csrf-token. Empty = code defaults.
+      CSRF_TOKEN_RATE_LIMIT_WINDOW_MS: ${CSRF_TOKEN_RATE_LIMIT_WINDOW_MS:-}
+      CSRF_TOKEN_RATE_LIMIT_MAX: ${CSRF_TOKEN_RATE_LIMIT_MAX:-}
+
       # Admin Bootstrap (set DISABLE_ADMIN_BOOTSTRAP=true to skip)
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

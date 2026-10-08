@@ -30,12 +30,10 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard
 
 FROM nginx:1.28.3-alpine3.23
 
-# Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-# CVE-2026-9256 / CVE-2026-49975: pin nginx=1.28.3-r4 (patched Alpine 3.23 revision).
-# Require the patched OpenSSL minimum without downgrading current Alpine packages.
+# Explicit minimums stop stale build-cache layers from keeping older packages.
 # Drop unused nginx-module-* packages first; their r1 revisions block apk upgrades.
 RUN apk update && apk upgrade --no-cache \
-    && apk add --no-cache "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" \
+    && apk add --no-cache "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.3.2-r1" \
     && apk del --no-cache \
         nginx \
         nginx-module-acme \
@@ -44,7 +42,7 @@ RUN apk update && apk upgrade --no-cache \
         nginx-module-njs \
         nginx-module-xslt \
     && apk add --no-cache 'nginx~1.28.3' \
-    && apk info --exists "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" \
+    && apk info --exists "libcrypto3>=3.5.9-r0" "libssl3>=3.5.9-r0" "zlib>=1.3.2-r1" \
     && nginx_version="$(apk info -v nginx | sed 's/^nginx-//')" \
     && test "$(apk version -t "$nginx_version" "1.28.3-r4")" != "<" \
     && mkdir -p /run/nginx

@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-05 for the 0.17.2 release against main
-`7cc74f2d2f74fb338db3a825306663cf34fd1ffb`.
+Last reviewed: 2026-10-08 for the 0.17.3 release against main
+`429e5919584d1f707569d84658455f993d19e859`.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, and what v1.0.0
@@ -97,8 +97,6 @@ Per-user personal default already exists. v1.0.0 adds a separate
 
 Performance tests with regression budgets
 ([#235](https://github.com/tokentimerch/tokentimer-core/issues/235));
-release image signing and verification instructions
-([#237](https://github.com/tokentimerch/tokentimer-core/issues/237));
 targeted dashboard and test maintainability
 ([#238](https://github.com/tokentimerch/tokentimer-core/issues/238)).
 TanStack Query v5; incremental type checking on changed security-critical

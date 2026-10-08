@@ -82,8 +82,7 @@ export default function AutoSyncMultiConfigPanel({ onEnabledChange }) {
               Confirm that you are not running an auto-sync worker with a
               version prior to 0.17.0. Be aware that running an unfenced worker
               with this setting turned on can have unwanted consequences.
-              Activation cannot be reversed while multiple configurations
-              exist.
+              Activation cannot be reversed while multiple configurations exist.
             </AlertDescription>
           </Alert>
           <Checkbox
@@ -96,8 +95,8 @@ export default function AutoSyncMultiConfigPanel({ onEnabledChange }) {
             isChecked={workerImageVerified}
             onChange={e => setWorkerImageVerified(e.target.checked)}
           >
-            I confirm this deployment uses a fencing-aware worker image
-            (0.17.0 or later)
+            I confirm this deployment uses a fencing-aware worker image (0.17.0
+            or later)
           </Checkbox>
           <HStack justify='flex-end'>
             <DashboardActionButton
