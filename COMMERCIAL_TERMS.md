@@ -53,7 +53,7 @@ separate commercial license. Contact sales@tokentimer.ch for details.
 Enterprise features include:
 
 - Advanced integrations and auto-sync (AWS, Azure, GCP, HashiCorp Vault, GitHub, GitLab)
-- Advanced authentication (OIDC, SAML, LDAP, SCIM)
+- Single sign-on (OIDC, SAML) with group-to-role mapping, including LDAP or Active Directory users federated through an identity provider
 - Air-gapped deployment support
 - High availability coordination
 - Priority support
