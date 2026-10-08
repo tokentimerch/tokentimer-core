@@ -59,6 +59,11 @@ and run the same test. Quota enforcement is explicitly enabled even under
 `NODE_ENV=test`. Additional assertions exercise the real Cloud outbox worker,
 zero source allocation after quota rejection, frozen-workspace admission denial
 and safe continuing-result acceptance. Clear `TT_WILDCARD_API_ROOT` for Core.
+Both scheduler paths allocate and publish a distinct renewal identity, preserve
+the old identity and retain the consumer's actual deployed version/expiry.
+`renewed-public.crt.pem` is a self-signed public-only database fixture; the
+separate native lifecycle test obtains initial and renewed certificates from
+the real Pebble ACME fixture.
 
 Agent adapter fault tests run with:
 
@@ -84,6 +89,23 @@ startup. Then use both Compose files and run
 This checks real production boot, schema, login, workspace access, Cloud's private
 material rejection ordering and Enterprise's base/compliance license separation.
 All users and data created by this smoke test belong to these fixture databases.
+Add `--dashboard` after starting the corresponding dashboard service to verify
+that the production server serves the consumer-matrix JavaScript chunk.
+`node tests/wildcard-vault/images-verify.cjs core` (or the other variant) checks
+production API/worker file hashes against the reviewed source and loads the
+distribution modules and strict validator with production-only dependencies.
+Enterprise also checks the shipped license verifier's production public key;
+no CI test key is substituted. Worker one-shot commands use these fixture
+databases, network and email capture with explicit container resource limits.
+
+For the production builds, start only this fixture's `registry` service with
+the `images` profile. Use a named `docker-container` Buildx builder with
+`buildkitd.toml`, the fixture network, at most two CPUs and a 4 GiB memory limit. The
+Cloud documentation build exceeded 2 GiB; its retry has a 5 GiB
+combined memory/swap ceiling. Keep the default builder unchanged. Full build,
+immutable base selection and registry scan commands are recorded in the Cloud
+candidate's `docs/wildcard-vault-images.md`. Build contexts are the Core root
+and each variant's `.build/stage/<variant>/runtime`, never an audit checkout.
 
 Stop only this project's services when finished:
 

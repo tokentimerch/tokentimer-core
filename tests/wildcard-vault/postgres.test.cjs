@@ -17,9 +17,13 @@ const {approveJob}=require(path.join(apiRoot,"services/certops/jobApprovals"));
 const {parsePublicCertificateMaterial}=require(path.join(apiRoot,"services/certops/parser"));
 const certificatePem=fs.readFileSync(path.join(__dirname,"../../packages/agent/src/verify/fixtures/leaf.crt.pem"),"utf8");
 const cert=parsePublicCertificateMaterial(certificatePem)[0];
+// Public-only renewal identity fixture. The separate native lifecycle scenario
+// obtains both actual certificates from Pebble; no key enters this API test.
+const renewedPem=fs.readFileSync(path.join(__dirname,"renewed-public.crt.pem"),"utf8");
+const renewedCert=parsePublicCertificateMaterial(renewedPem)[0];
 test.after(()=>pool.end());
 
-test("real PostgreSQL publication, immutable identities, approvals, frozen waves, stale results and scope",async()=>{
+test("real PostgreSQL publication, renewal identities, approvals, frozen waves, stale results and scope",async()=>{
   const workspaceId=crypto.randomUUID();
   const actor=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Distribution fixture','fixture-only','local') RETURNING id`,[`${workspaceId}@example.test`])).rows[0].id;
   const approver=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Approver fixture','fixture-only','local') RETURNING id`,[`approver-${workspaceId}@example.test`])).rows[0].id;
@@ -30,6 +34,27 @@ test("real PostgreSQL publication, immutable identities, approvals, frozen waves
   for(const name of ["x","x".repeat(255)]) assert.equal((await pool.query(nameInsert,[actor,workspaceId,name])).rows[0].name,name);
   await assert.rejects(pool.query(nameInsert,[actor,workspaceId," \t\n "]),{code:"23514"});
   await assert.rejects(pool.query(nameInsert,[actor,workspaceId,"x".repeat(256)]),{code:"22001"});
+  if(process.env.TT_WILDCARD_API_ROOT) {
+    const {migrations,applyMigrationSql,applyPostCommitSql}=require(path.join(apiRoot,"migrations/migrate.js"));
+    const nameMigration=migrations.find(row=>row.version===86),upgrade=await pool.connect();
+    assert.equal(nameMigration.name,"inventory_name_length_core_0173");
+    try {
+      await upgrade.query("BEGIN");
+      await upgrade.query("CREATE TEMP TABLE tokens(name VARCHAR(100) NOT NULL CONSTRAINT tokens_name_check CHECK(length(name)>=3)) ON COMMIT PRESERVE ROWS");
+      assert.equal((await upgrade.query("SELECT 'tokens'::regclass::oid IN (SELECT oid FROM pg_class WHERE relnamespace=pg_my_temp_schema()) owned")).rows[0].owned,true);
+      await upgrade.query("INSERT INTO pg_temp.tokens(name) VALUES('   '),(' padded ') ");
+      await applyMigrationSql(upgrade,nameMigration);
+      await upgrade.query("COMMIT");
+      await applyPostCommitSql(upgrade,nameMigration);
+      await applyPostCommitSql(upgrade,nameMigration);
+      assert.deepEqual((await upgrade.query("SELECT name FROM pg_temp.tokens ORDER BY name")).rows.map(row=>row.name),[" padded ","unnamed"]);
+      assert.equal((await upgrade.query("SELECT convalidated FROM pg_constraint WHERE conrelid='pg_temp.tokens'::regclass AND conname='tokens_name_check'")).rows[0].convalidated,true);
+    } finally {
+      await upgrade.query("ROLLBACK");
+      await upgrade.query("DROP TABLE IF EXISTS pg_temp.tokens");
+      upgrade.release();
+    }
+  }
   async function agent(){return (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
     VALUES($1,$2,'0.1.0','1.0.0',$3,$4) RETURNING id`,[workspaceId,crypto.randomUUID(),`ttagent_${crypto.randomBytes(8).toString("hex")}`,crypto.randomBytes(32).toString("hex")])).rows[0].id;}
   const issuer=await agent(),consumerA=await agent(),consumerB=await agent();
@@ -128,6 +153,42 @@ test("real PostgreSQL publication, immutable identities, approvals, frozen waves
   const retry=await operations.retryDistributionJob({workspaceId,jobId:failedProof.job_id,actorUserId:actor});
   assert.equal(retry.materialVersionId,materialVersionId);
   assert.equal((await material.consumerMatrix({client:pool,workspaceId,groupId})).find(r=>r.binding_id===bindingA).converged,false);
+  // Exercise the production scheduler against the profile persisted by the
+  // publication receipt. Renewal has the same source/issuer/store scope but
+  // allocates a distinct immutable material object; consumers add no sources.
+  const scheduler=require(path.join(apiRoot,process.env.TT_WILDCARD_API_ROOT?"services/certops/renewalSchedulerSweep":"services/certops/renewalScheduler"));
+  const swept=await scheduler.runRenewalSchedulerSweep({dbPool:pool,env:{...process.env,CERTOPS_RENEWAL_THRESHOLD_DAYS:"3650"}});
+  assert.deepEqual(swept.errors,[]);assert.equal(swept.created,1);
+  const renewed=(await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew' AND subject_id=$2",[workspaceId,job.subject_id])).rows[0];
+  assert.ok(renewed);assert.equal(renewed.assigned_agent_id,issuer);
+  assert.equal((await pool.query("SELECT metadata->>'jobId' job_id FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_JOB_CREATED_AUTOMATIC' ORDER BY id DESC LIMIT 1",[workspaceId])).rows[0].job_id,renewed.id);
+  assert.equal(renewed.payload.publication.groupId,groupId);
+  assert.equal(renewed.payload.publication.materialStoreRef,"customer");
+  assert.notEqual(renewed.payload.publication.materialVersionId,materialVersionId);
+  const allocated=(await pool.query("SELECT publishing_job_id FROM certops_material_versions WHERE workspace_id=$1 AND id=$2",[workspaceId,renewed.payload.publication.materialVersionId])).rows[0];
+  assert.equal(allocated.publishing_job_id,renewed.id);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM managed_certificates WHERE workspace_id=$1",[workspaceId])).rows[0].n,1);
+  const sweptAgain=await scheduler.runRenewalSchedulerSweep({dbPool:pool,env:{...process.env,CERTOPS_RENEWAL_THRESHOLD_DAYS:"3650"}});
+  assert.equal(sweptAgain.created,0);assert.deepEqual(sweptAgain.errors,[]);
+  const oldIdentity=(await pool.query("SELECT i.id,i.fingerprint_sha256,i.not_after FROM certops_certificate_identities i JOIN certops_material_versions v ON v.workspace_id=i.workspace_id AND v.certificate_identity_id=i.id WHERE v.workspace_id=$1 AND v.id=$2",[workspaceId,materialVersionId])).rows[0];
+  const renewingJob=(await pool.query("UPDATE certificate_jobs SET status='running',claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[renewed.id,issuer])).rows[0];
+  const renewedReceipt={...receipt,materialVersionId:renewed.payload.publication.materialVersionId,fingerprintSha256:renewedCert.fingerprintSha256,validTo:renewedCert.notAfter};
+  await operations.transaction(async client=>{
+    assert.equal((await material.acceptPublicationReceipt({client,workspaceId,agentId:issuer,job:renewingJob,receipt:renewedReceipt,certificatePem:renewedPem})).duplicate,false);
+    assert.equal((await material.acceptPublicationReceipt({client,workspaceId,agentId:issuer,job:renewingJob,receipt:renewedReceipt,certificatePem:renewedPem})).duplicate,true);
+    await client.query("UPDATE certificate_jobs SET status='succeeded',completed_at=clock_timestamp() WHERE id=$1",[renewed.id]);
+  });
+  const newVersion=(await pool.query("SELECT certificate_identity_id,fingerprint_sha256 FROM certops_material_versions WHERE workspace_id=$1 AND id=$2",[workspaceId,renewedReceipt.materialVersionId])).rows[0];
+  assert.notEqual(newVersion.certificate_identity_id,oldIdentity.id);
+  assert.equal(newVersion.fingerprint_sha256,renewedCert.fingerprintSha256);
+  assert.deepEqual((await pool.query("SELECT id,fingerprint_sha256,not_after FROM certops_certificate_identities WHERE workspace_id=$1 AND id=$2",[workspaceId,oldIdentity.id])).rows[0],oldIdentity);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_certificate_identities WHERE workspace_id=$1",[workspaceId])).rows[0].n,2);
+  assert.equal((await pool.query("SELECT latest_material_version_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2",[workspaceId,groupId])).rows[0].latest_material_version_id,renewedReceipt.materialVersionId);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_outbox WHERE workspace_id=$1 AND event_type='material_published'",[workspaceId])).rows[0].n,2);
+  const afterRenewal=(await material.consumerMatrix({client:pool,workspaceId,groupId})).find(row=>row.binding_id===bindingA);
+  assert.equal(afterRenewal.observed_material_version_id,materialVersionId);
+  assert.equal(afterRenewal.observed_fingerprint_sha256,cert.fingerprintSha256);
+  assert.equal(new Date(afterRenewal.observed_valid_to).toISOString(),cert.notAfter);
   await operations.transaction(async client=>{await client.query(`UPDATE certops_management_periods SET ended_at=clock_timestamp(),ended_reason='retired' WHERE workspace_id=$1 AND id=$2`,[workspaceId,intent.managementPeriodId]);});
   await assert.rejects(operations.transaction(client=>material.acceptPublicationReceipt({client,workspaceId,agentId:issuer,job,receipt,certificatePem})),{code:"CERTOPS_DISTRIBUTION_INACTIVE"});
 });

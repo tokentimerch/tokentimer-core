@@ -42,7 +42,7 @@ This is an implementation candidate, not a release qualification statement.
 - [x] Enterprise inheritance, RBAC and compliance-license separation.
 - [x] Real PostgreSQL/Vault/ACME/two TLS consumer scenario and negative tests.
 - [x] Legacy/secret-boundary/contract/static checks.
-- [ ] Final coordinated candidate image boot/composition checks (see validation below).
+- [x] Coordinated candidate production image boot, worker and dashboard probes.
 - [x] PR-ready summaries, coordinated release dependencies and operational runbook.
 
 ## Pending customer qualification
@@ -69,17 +69,23 @@ ungated in Enterprise.
 ## Executed validation
 
 - Core full unit suite: 2,272 passed; strict contract suite: 42 passed.
-- Cloud full unit suite: 1,333 passed; Enterprise full unit suite: 866 passed.
+- Cloud full unit suite: 1,339 passed; Enterprise full unit suite: 866 passed.
   Additional scanner boundary regression passed in Core and the live Cloud fork.
 - Core dashboard and Cloud web production builds passed. Core dashboard type
   check passed. API/worker/agent/dashboard lint has no errors (existing warnings).
 - Production dependency audit, contracts/integrity, lockfile and secret-logging
   checks passed. Helm template verification and Compose configuration passed.
-- Fresh Core 68- and Cloud 85-migration PostgreSQL databases passed publication,
+- Fresh Core 68- and Cloud 86-migration PostgreSQL databases passed publication,
   immutable identities, non-self approval, frozen canary/waves, real signed
   dispatch/nonces/claims, replay, exact child-job fencing, independent matrix,
   read-only intent, failure recording and same-version retry assertions. Cloud
-  additionally passed real outbox expansion, quota and continuing frozen results.
+  additionally passed real outbox expansion, quota and continuing frozen results,
+  plus migration 86 upgrade repair and retryable post-commit validation. Both
+  real schedulers preserve the assigned issuer, allocate a distinct renewal
+  object without adding a source, audit the durable job ID and suppress another
+  in-flight renewal on the next sweep. Publishing that renewal creates a new
+  identity, preserves the previous identity and leaves consumer deployed
+  fingerprints/expiry independent from the renewed source.
 - Real Vault fault/ACL suite: 8 passed, including create/read-only issuer policy,
   consumer read-only access, scanner denial and cross-customer prefix denial.
 - Real Pebble/DNS-01 native issuer and NGINX/HAProxy lifecycle passed 15 checks,
@@ -88,7 +94,20 @@ ungated in Enterprise.
   are tested separately; this is not full enrolled-agent release qualification.
 - Native agent regression: 1,490 tests, 1,477 passed and 13 skipped; no failures.
   Packed-agent artifact checks: 3 passed with task-local checksum-verified Go
-  1.26.6. Final production image checks continue.
+  1.26.6.
+- Actual production API images booted against dedicated databases, authenticated
+  users and denied cross-workspace reads in all three variants. Cloud rejected
+  private material ahead of plan gating; Enterprise allowed base CertOps without
+  a compliance license. All three dashboards served the consumer-matrix chunk.
+- Actual production workers completed their one-shot maintenance commands.
+  Core and Enterprise API/worker source hashes and production-only dependency
+  imports passed, including Enterprise's production license public key. The
+  scanner regression passed inside all three production API images.
+- Final coordinated image IDs, source/dependency probes and fixed-high Grype
+  gate evidence are recorded with the exact Core pin in
+  `tokentimer-cloud/docs/wildcard-vault-validation.json`. Build/scan recipes are
+  in that repository's `docs/wildcard-vault-images.md`. Existing vulnerability
+  ignores remain visible; these checks do not assert zero vulnerabilities.
 
 ## Baseline reconciliation
 
@@ -105,8 +124,10 @@ Candidate builds still explicitly select task-owned Core images.
 
 Full enrolled agent transport/customer DNS/Vault Agent rotation/host failure
 qualification and actual appliance inventory/HA tests remain required before
-capability promotion. Full three-repo release/coverage/integration/Grype gates
-are not established by the focused lifecycle tests. Latest inspected Core main
+capability promotion. Full three-repo release/coverage/integration gates and
+remote candidate CI are not established by the local image/lifecycle tests.
+Latest inspected Core main
 CI (37791839057) was cancelled, including Docker Build & Security Scan; Cloud
-main CI was still running; Enterprise master CI (37768437343) succeeded. These
+main CI (37790767654) completed successfully; Enterprise master CI (37768437343)
+succeeded. These
 are remote baseline observations, not CI results for this unpushed candidate.

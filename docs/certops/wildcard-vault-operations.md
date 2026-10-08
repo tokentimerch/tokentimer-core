@@ -187,7 +187,7 @@ and rollback. No automated deletion is introduced by this candidate.
 
 Review and commit Core first. Cloud pins that exact candidate SHA, materializes
 manifest-mapped files, retains its quota/private-material/continuing-result
-policy and runs migration 85. Enterprise composes the same candidate, retaining
+policy and runs migrations 85/86. Enterprise composes the same candidate, retaining
 RBAC/SSO and base CertOps independently of licensed compliance reports. Candidate
 SHA compatibility and locally built images are not published release references.
 Only after full agent/customer qualification and real release gates should the
