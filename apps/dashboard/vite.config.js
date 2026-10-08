@@ -61,6 +61,13 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './vitest.setup.js',
     globals: true,
+    // TokenDetailModal / CertificateDetailsModal are large Chakra trees; under
+    // parallel V8 coverage instrumentation they intermittently fail to load
+    // (worker OOM / transform hang) and swing the frontend coverage floor.
+    // Serialize file execution whenever --coverage is on the argv.
+    ...(process.argv.includes('--coverage')
+      ? { fileParallelism: false, maxWorkers: 2 }
+      : {}),
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
