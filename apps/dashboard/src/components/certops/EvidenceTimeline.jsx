@@ -1,11 +1,11 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
 import {
   Box,
+  Button,
   Flex,
   HStack,
   Icon,
   IconButton,
-  Link,
   Popover,
   PopoverArrow,
   PopoverBody,
@@ -95,6 +95,7 @@ function AgentMetadataField({ id, label, agentsById }) {
 }
 
 function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
+  const { dashboard } = useDashboardTheme();
   const attemptLabel =
     typeof job.attemptCount === 'number'
       ? typeof job.maxAttempts === 'number'
@@ -166,13 +167,24 @@ function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
         </MetadataField>
       ) : null}
       {job.id ? (
-        <Link
+        <Button
           as={RouterLink}
           to={`/audit?q=${encodeURIComponent(job.id)}`}
-          fontSize='xs'
+          size='sm'
+          variant='outline'
+          mt={1}
+          w='100%'
+          leftIcon={<Icon as={FileSearch} boxSize={3.5} />}
+          color={dashboard.accent.interactiveForeground}
+          borderColor={dashboard.accent.interactiveBorder}
+          bg={dashboard.accent.interactiveSurface}
+          _hover={{
+            bg: dashboard.accent.interactiveSurface,
+            borderColor: dashboard.accent.interactiveForeground,
+          }}
         >
           View audit log
-        </Link>
+        </Button>
       ) : null}
     </VStack>
   );
