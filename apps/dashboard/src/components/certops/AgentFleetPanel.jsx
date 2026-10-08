@@ -649,7 +649,6 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           <DashboardModalTitle>Agent logs</DashboardModalTitle>
           <DashboardModalDescription>
             Curated agent output from recent CertOps jobs for {agentLabel}.
-            Secrets are filtered. Oldest first.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />

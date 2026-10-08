@@ -10,8 +10,6 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { listAgentJobLog } from './certopsJobsApi';
 
-const COPY =
-  'Agent output is filtered for sensitive information. Avoid including secrets in diagnostic messages. Oldest first.';
 const PAGE_LIMIT = 200;
 const MAX_PAGES_PER_TICK = 5;
 const VISIBLE_POLL_MS = 700;
@@ -424,12 +422,12 @@ export default function AgentShellConsole({
         ) : null}
         <div ref={bottomRef} />
       </Box>
-      <Text fontSize='xs' color={muted}>
-        {payload &&
-        (payload.storageEnabled === false || payload.linesVisible === false)
-          ? deliveryLabel(payload, false)
-          : COPY}
-      </Text>
+      {payload &&
+      (payload.storageEnabled === false || payload.linesVisible === false) ? (
+        <Text fontSize='xs' color={muted}>
+          {deliveryLabel(payload, false)}
+        </Text>
+      ) : null}
     </VStack>
   );
 }

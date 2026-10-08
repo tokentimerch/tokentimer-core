@@ -277,8 +277,8 @@ describe('EvidenceTimeline', () => {
 
     expect(screen.getByText('Job started')).toBeInTheDocument();
     expect(screen.getByText('Job failed')).toBeInTheDocument();
-    expect(screen.getAllByText('Validation passed').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Validation failed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Validation passed')).toHaveLength(1);
+    expect(screen.getAllByText('Validation failed')).toHaveLength(1);
   });
 
   it('renders metadata.summary as the detail line for evidence without a subject', () => {
@@ -425,6 +425,8 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Claim ID')).toBeInTheDocument();
     expect(
       screen.getByText('22222222-2222-4222-8222-222222222222')
@@ -445,6 +447,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
   });
 
@@ -463,6 +466,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Approved by Alice Admin')).toBeInTheDocument();
     expect(screen.queryByText('9')).not.toBeInTheDocument();
     expect(screen.getByText(approvedAtLine)).toBeInTheDocument();
@@ -482,6 +486,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Approved by user-42')).toBeInTheDocument();
   });
 
@@ -689,9 +694,8 @@ describe('EvidenceTimeline', () => {
     renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
 
     expect(screen.queryByText('Distribute trust')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: 'View audit log' })
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
+    expect(screen.getByText('View audit log')).toBeInTheDocument();
   });
 
   it('does not render a failure reason block for a successful job', () => {
@@ -719,11 +723,12 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-abc-123' />);
 
-    const link = screen.getByRole('link', { name: 'View audit log' });
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
+    const link = screen.getByText('View audit log').closest('a');
     expect(link).toHaveAttribute('href', '/audit?q=job-abc-123');
   });
 
-  it('keeps job and executor identifiers in a secondary metadata action in compact mode', () => {
+  it('keeps job and executor identifiers in a secondary metadata action', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({
         id: 'job-compact-123',
@@ -738,17 +743,16 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-compact-123' compact />);
 
-    expect(
-      screen.getByRole('link', { name: 'View audit log' })
-    ).toBeInTheDocument();
     expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
     expect(screen.queryByText('Job ID')).not.toBeInTheDocument();
+    expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
 
     expect(screen.getByText('Job ID')).toBeInTheDocument();
     expect(screen.getByText('Claim ID')).toBeInTheDocument();
     expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
+    expect(screen.getByText('View audit log')).toBeInTheDocument();
   });
 
   it('renders the close button with an accessible name when onClose is provided', () => {
@@ -979,9 +983,12 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    // Compact strip shows the agent label; full copyable field stays in Details.
     expect(
       screen.getByText('DESKTOP-J85DKKR (agent-row-1)')
     ).toBeInTheDocument();
+    expect(screen.queryByText('Claimed by agent')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
   });
 });
