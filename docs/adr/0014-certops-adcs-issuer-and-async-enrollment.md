@@ -20,8 +20,10 @@ changes the thumbprint but not the key), mapped submit-time permission and
 template-availability denials, qualified EC keys on schema version 4
 templates, and made a submit that never reached the CA retryable. Writing
 the wire contracts then added the `requested` and `refused` enrollment
-states, named the remaining error codes and rejection reasons, and aligned
-the evidence type names with the existing convention.
+states, named the remaining error codes and rejection reasons, aligned
+the evidence type names with the existing convention, and renamed the job
+field to `issuerKind`, because job payloads already use `issuer` for a
+certificate's issuer name.
 
 ## Context
 
@@ -64,10 +66,14 @@ this record:
 
 ### 1. Issuer kinds are explicit, and `adcs` is a Core issuer kind
 
-Jobs gain an optional `issuer` object. `issuer.kind` is `acme` or `adcs`.
-A job without `issuer` is an `acme` job and keeps using `caEndpoint`,
-`acmeKind` and `commandRef` exactly as today, so existing renewal profiles
-and agents are unaffected.
+Jobs gain an optional `issuerKind`, `acme` or `adcs`. A job without it is
+an `acme` job and keeps using `caEndpoint`, `acmeKind` and `commandRef`
+exactly as today, so existing renewal profiles and agents are unaffected.
+The field is not called `issuer`: job payloads, results and inventory
+already use that name for a certificate's issuer name, and API clients may
+send it as public metadata. `issuerKind` and the enrollment binding are
+attached by the control plane at signed dispatch and refused on job
+create.
 
 For `adcs`, the issuer configuration names:
 
