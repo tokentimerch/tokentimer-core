@@ -3911,6 +3911,30 @@ describe("renew chain deployment", () => {
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /Skipping renew, Next renewal time is/);
   });
+
+  it("renews a job that names issuerKind acme exactly like one without the field", async () => {
+    seedLiveKey();
+    const job = makeJob({ issuerKind: "acme" });
+    const { outcome } = await runRenew({ job, acmeExecFileImpl: makeCertbotStub() });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(fs.readFileSync(job.certPath, "utf8"), readFixture("chain-leaf-fullchain.crt.pem"));
+  });
+
+  it("blocks a renew job naming an issuer kind this agent does not implement, before any key or ACME work", async () => {
+    seedLiveKey();
+    for (const mode of ["real", "dry_run"]) {
+      const acmeExecFileImpl = makeCertbotStub();
+      const job = makeJob({ issuerKind: "adcs", mode });
+      const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
+
+      assert.equal(outcome.status, "blocked", mode);
+      assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+      assert.equal(acmeExecFileImpl.calls.length, 0);
+      assert.equal(client.calls.reportEvidence.length, 0);
+      assert.deepEqual(stagingLeftovers(), []);
+    }
+  });
 });
 
 /**
@@ -4496,6 +4520,23 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /target\.store and target\.binding/);
     assert.equal(windowsExecFileImpl.calls.length, 0);
+  });
+
+  it("blocks a renew job naming an issuer kind this agent does not implement, before any Windows process runs", async () => {
+    const job = makeJob({ issuerKind: "adcs" });
+    const { outcome, windowsExecFileImpl } = await runIisRenew({ job });
+
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+    assert.equal(windowsExecFileImpl.calls.length, 0);
+  });
+
+  it("renews a job that names issuerKind acme exactly like one without the field", async () => {
+    const job = makeJob({ issuerKind: "acme" });
+    const { outcome } = await runIisRenew({ job });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(outcome.keyRotated, null);
   });
 
   it("fails cleanly when the ACME order itself fails, never reaching certreq -accept", async () => {
