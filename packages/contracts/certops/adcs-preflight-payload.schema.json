@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/adcs-preflight-payload.schema.json",
+  "title": "CertOps AD CS Preflight Job Payload",
+  "description": "Signed dispatch payload for adcs-preflight, the read-only issuer validation job (ADR-0014 decision 5). It names one CA and template and nothing certificate-shaped: no certificateId, target, keyMode, enrollment, or key-custody field. The agent refuses it without contacting any CA unless its local adcs.enrollmentRules name that exact caConfig and template, runs only fixed read-only certutil calls with bounded time, and reports adcs-preflight-result-contract.schema.json. The wire-only signature field is referenced from signed-dispatch-wire-v1.schema.json because a signature is never part of the content it signs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "workspaceId",
+    "agentId",
+    "action",
+    "mode",
+    "requestedAt",
+    "issuer"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/schemaVersion"
+    },
+    "jobId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/jobId"
+    },
+    "workspaceId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/workspaceId"
+    },
+    "agentId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/agentId"
+    },
+    "action": {
+      "type": "string",
+      "const": "adcs-preflight"
+    },
+    "mode": {
+      "type": "string",
+      "const": "real",
+      "description": "Preflight changes nothing, so it has no dry-run variant."
+    },
+    "requestedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/requestedAt"
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "caConfig", "template", "transport"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "adcs"
+        },
+        "issuerId": {
+          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/issuerId"
+        },
+        "caConfig": {
+          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/caConfig"
+        },
+        "template": {
+          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/template"
+        },
+        "transport": {
+          "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/transport"
+        }
+      }
+    },
+    "issuedAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/issuedAt"
+    },
+    "expiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/expiresAt"
+    },
+    "nonce": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/nonce"
+    },
+    "signingKeyId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/signingKeyId"
+    },
+    "signature": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-wire-v1.schema.json#/properties/signature"
+    },
+    "claimId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/claimId"
+    },
+    "attemptId": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptId"
+    },
+    "leaseExpiresAt": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/leaseExpiresAt"
+    },
+    "attemptCount": {
+      "$ref": "https://tokentimer.io/contracts/certops/signed-dispatch-payload.schema.json#/properties/attemptCount"
+    }
+  }
+}

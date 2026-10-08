@@ -12,6 +12,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - An IIS renewal on Windows now fails with `UNSUPPORTED_BINDING_SETTINGS` and leaves the binding untouched when the binding has a setting the agent cannot carry over to the new certificate, such as one this host's `netsh` cannot set. The error detail names the setting. Earlier versions dropped such settings on renewal. **Operator guidance:** remove the named setting, or rebind that certificate manually.
+- `POST /api/v1/workspaces/{id}/certops/jobs` refuses a `payload.issuer` or `payload.enrollment` field with `CERTOPS_JOB_EXECUTION_FIELD_INVALID` (400), on every operation and even when `null`. Both names are reserved for the issuer selection and enrollment binding the control plane attaches at signed dispatch. **Operator action:** API clients that copied a certificate's issuer name into the job payload should drop it; the observed issuer is still recorded from job results and shown in inventory.
 
 ### Fixed
 

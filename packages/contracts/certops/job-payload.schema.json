@@ -66,9 +66,51 @@
         "deploy",
         "reload",
         "revoke",
-        "noop"
+        "noop",
+        "continue-enrollment"
       ],
-      "description": "Public certificate lifecycle action requested by the control plane."
+      "description": "Public certificate lifecycle action requested by the control plane. continue-enrollment is a follow-up step (retrieve, deferred validation, install recovery, or freeing the key after cancellation) of an enrollment an earlier job started (ADR-0014 decision 2)."
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["acme", "adcs"]
+        }
+      }
+    },
+    "enrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enrollmentId", "attempt", "snapshotB64", "snapshotSha256"],
+      "description": "Binds the job to one durable enrollment and its frozen issuer configuration (ADR-0014 decisions 2 and 3). The agent hashes the decoded snapshotB64 bytes itself and compares the result with snapshotSha256 and with the hash it journaled for the enrollment; it never re-canonicalizes the snapshot JSON. The decoded bytes are an enrollment-snapshot.schema.json document. Attached by the control plane at signed dispatch; a job request that supplies it is refused.",
+      "properties": {
+        "enrollmentId": {
+          "$ref": "#/definitions/enrollmentId"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Increases with every job dispatched for the enrollment."
+        },
+        "snapshotB64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 38232,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "description": "Standard padded base64 of the snapshot bytes stored on the enrollment, at most 28 KiB decoded. That covers the largest snapshot enrollment-snapshot.schema.json admits and leaves room for the rest of the signed payload within the envelope's decoded-size limit."
+        },
+        "snapshotSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 (hex) of the decoded snapshot bytes."
+        }
+      }
     },
     "requestedAt": {
       "type": "string",
@@ -555,7 +597,70 @@
       "description": "Reserved for signed agent dispatch: number of claim attempts made for this job so far. Optional and not required for validation today."
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["action"],
+        "properties": { "action": { "const": "continue-enrollment" } }
+      },
+      "then": { "required": ["issuer", "enrollment"] }
+    },
+    {
+      "if": { "required": ["enrollment"] },
+      "then": {
+        "required": ["issuer"],
+        "properties": {
+          "issuer": { "properties": { "kind": { "const": "adcs" } } }
+        }
+      }
+    },
+    {
+      "description": "An adcs job runs only as the first step or a continuation of an enrollment, against one windows-iis target on the Windows CNG path. It carries none of the fields the snapshot supersedes (ACME, DNS-01, key and SAN selection, the ACME-shaped renewal profile, attached PEM) and no multi-target list.",
+      "if": {
+        "required": ["issuer"],
+        "properties": {
+          "issuer": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "adcs" } }
+          }
+        }
+      },
+      "then": {
+        "required": ["enrollment"],
+        "properties": {
+          "action": { "enum": ["renew", "continue-enrollment"] },
+          "keyMode": { "const": "os-store-managed" },
+          "target": { "properties": { "type": { "const": "windows-iis" } } }
+        },
+        "not": {
+          "anyOf": [
+            { "required": ["commandRef"] },
+            { "required": ["caEndpoint"] },
+            { "required": ["acmeKind"] },
+            { "required": ["eabRef"] },
+            { "required": ["accountRef"] },
+            { "required": ["preferredChain"] },
+            { "required": ["dnsZone"] },
+            { "required": ["dnsProvider"] },
+            { "required": ["keyRotation"] },
+            { "required": ["keyAlgorithm"] },
+            { "required": ["keySize"] },
+            { "required": ["sans"] },
+            { "required": ["certificatePem"] },
+            { "required": ["certificatePemSha256"] },
+            { "required": ["renewalProfile"] },
+            { "required": ["deploymentTargets"] }
+          ]
+        }
+      }
+    }
+  ],
   "definitions": {
+    "enrollmentId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Lowercase UUID. The agent derives the CNG key container name from it, so the shape is deliberately strict."
+    },
     "windowsStoreName": {
       "type": "string",
       "minLength": 1,
