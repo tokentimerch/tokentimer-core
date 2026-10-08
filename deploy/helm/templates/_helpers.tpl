@@ -219,6 +219,14 @@ DISABLE_MANUAL_INVITES: "true"
 {{- if not (eq (.Values.config.contactGroupPluralWrites | toString) "") }}
 CONTACT_GROUP_PLURAL_WRITES: {{ .Values.config.contactGroupPluralWrites | quote }}
 {{- end }}
+{{- /* Numeric knobs go through int64: large YAML numbers otherwise render as
+       1.8e+06, which the API parses as 1. */}}
+{{- if .Values.config.csrfTokenRateLimitWindowMs }}
+CSRF_TOKEN_RATE_LIMIT_WINDOW_MS: {{ .Values.config.csrfTokenRateLimitWindowMs | int64 | quote }}
+{{- end }}
+{{- if .Values.config.csrfTokenRateLimitMax }}
+CSRF_TOKEN_RATE_LIMIT_MAX: {{ .Values.config.csrfTokenRateLimitMax | int64 | quote }}
+{{- end }}
 {{- if .Values.config.webhookAllowPrivateIps }}
 WEBHOOK_ALLOW_PRIVATE_IPS: "true"
 {{- end }}
@@ -293,10 +301,10 @@ TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: {{ .Values.twilio.weeklyDigestContent
 {{- end }}
 {{- end }}
 {{- if .Values.twilio.webhookRateLimitWindowMs }}
-TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS: {{ .Values.twilio.webhookRateLimitWindowMs | quote }}
+TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS: {{ .Values.twilio.webhookRateLimitWindowMs | int64 | quote }}
 {{- end }}
 {{- if .Values.twilio.webhookRateLimitMax }}
-TWILIO_WEBHOOK_RATE_LIMIT_MAX: {{ .Values.twilio.webhookRateLimitMax | quote }}
+TWILIO_WEBHOOK_RATE_LIMIT_MAX: {{ .Values.twilio.webhookRateLimitMax | int64 | quote }}
 {{- end }}
 {{- end -}}
 

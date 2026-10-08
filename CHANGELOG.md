@@ -15,7 +15,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `GET /api/csrf-token` is capped per client IP (60 requests per 15 minutes in production, 1000 in development and test). **Operator action:** if cookie-session clients see 429 `CSRF_TOKEN_RATE_LIMITED`, raise `CSRF_TOKEN_RATE_LIMIT_MAX` or `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS`.
+- `GET /api/csrf-token` is capped per client IP (60 requests per 15 minutes in production, 1000 in development and test). **Operator action:** if cookie-session clients see 429 `CSRF_TOKEN_RATE_LIMITED`, raise `CSRF_TOKEN_RATE_LIMIT_MAX` or `CSRF_TOKEN_RATE_LIMIT_WINDOW_MS` (Compose forwards both on `api`; Helm `config.csrfTokenRateLimitMax` / `config.csrfTokenRateLimitWindowMs`).
+
+### Fixed
+
+- Helm: `twilio.webhookRateLimitWindowMs` / `twilio.webhookRateLimitMax` set as unquoted YAML numbers of 1000000 or more rendered in exponent form (`1.8e+06`), which the API read as 1. They now render as plain integers, and the chart schema rejects zero, negative or non-numeric values.
 
 ## [0.17.2] - 2026-10-05
 

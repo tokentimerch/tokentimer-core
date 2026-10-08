@@ -21,8 +21,17 @@
         "baseUrl": { "type": "string", "format": "uri" },
         "apiUrl": { "type": "string", "format": "uri" },
         "trustProxyHops": { "type": "integer", "minimum": 0, "maximum": 32 },
+        "csrfTokenRateLimitWindowMs": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" },
+        "csrfTokenRateLimitMax": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" },
         "alertThresholds": { "type": "string", "pattern": "^[0-9]+(,[0-9]+)*$" },
         "certopsEnabled": { "type": "boolean" }
+      }
+    },
+    "twilio": {
+      "type": "object",
+      "properties": {
+        "webhookRateLimitWindowMs": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" },
+        "webhookRateLimitMax": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" }
       }
     },
     "api": {

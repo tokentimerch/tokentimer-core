@@ -509,6 +509,25 @@ assert_contains "$(cat "${contact_group_digest_rendered}")" 'CONTACT_GROUP_PLURA
 assert_contains "$(cat "${contact_group_digest_rendered}")" 'WEEKLY_DIGEST_RECIPIENT_KEY: "testkey"' "weekly digest recipient key in secret"
 assert_not_contains "$(cat "${proxy_disabled}")" 'CONTACT_GROUP_PLURAL_WRITES:' "default omit CONTACT_GROUP_PLURAL_WRITES"
 
+echo "==> assert CSRF and Twilio limiter knobs render as plain integers"
+csrf_limiter_values="${OUT}/csrf-limiter-values.yaml"
+printf 'config:\n  adminEmail: ci@example.com\n  csrfTokenRateLimitWindowMs: 1800000\n  csrfTokenRateLimitMax: 500\ntwilio:\n  webhookRateLimitWindowMs: 1800000\n' > "${csrf_limiter_values}"
+csrf_limiter_rendered="${OUT}/rendered-csrf-limiter.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" -f "${csrf_limiter_values}" > "${csrf_limiter_rendered}"
+assert_contains "$(cat "${csrf_limiter_rendered}")" 'CSRF_TOKEN_RATE_LIMIT_WINDOW_MS: "1800000"' "csrf limiter window from YAML number"
+assert_contains "$(cat "${csrf_limiter_rendered}")" 'CSRF_TOKEN_RATE_LIMIT_MAX: "500"' "csrf limiter max"
+assert_contains "$(cat "${csrf_limiter_rendered}")" 'TWILIO_WEBHOOK_RATE_LIMIT_WINDOW_MS: "1800000"' "twilio limiter window from YAML number"
+assert_not_contains "$(cat "${proxy_disabled}")" 'CSRF_TOKEN_RATE_LIMIT_' "default omit CSRF_TOKEN_RATE_LIMIT_*"
+csrf_limiter_zero="${OUT}/csrf-limiter-invalid-zero.log"
+if helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.csrfTokenRateLimitMax=0 \
+  > "${csrf_limiter_zero}" 2>&1; then
+  fail "csrf limiter max 0 unexpectedly rendered"
+fi
+grep -Fq -- 'csrfTokenRateLimitMax' "${csrf_limiter_zero}" \
+  || fail "csrf limiter max 0 failure did not mention csrfTokenRateLimitMax"
+
 expect_proxy_failure network-policy-without-proxy-cidrs 'proxyCidrs' \
   --set config.useEnvProxy=true \
   --set config.proxyExistingSecret=corporate-proxy \
