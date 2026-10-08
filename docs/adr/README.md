@@ -55,6 +55,7 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0010](0010-certops-derived-renewal-profiles.md) | CertOps renewal profiles are derived at issuance | Accepted, amended 2026-07-26 |
 | [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
 | [0012](0012-certops-windows-execution-surface-and-trust-anchors.md) | Windows execution surface, trust-anchor operations, signed-dispatch envelope, and CNG-vs-PFX custody | Accepted, amended 2026-08-03 |
+| [0014](0014-certops-adcs-issuer-and-async-enrollment.md) | Microsoft AD CS issuer and asynchronous enrollment lifecycle | Accepted |
 
 ### Alerting
 
@@ -108,6 +109,16 @@ delivery: additive join tables dual-written beside the existing singular
 columns, join-table membership as the source of truth for alert and digest
 readers, and a recipient-centric weekly digest. Stopping the singular-column
 writes is a follow-up, not this record.
+
+ADR-0014 adds Microsoft AD CS as an issuer kind the Windows agent enrolls
+against as its machine identity. It separates a durable enrollment lifecycle
+from execution jobs so CA-manager approval can take days without reopening a
+job, freezes the issuer configuration into a signed snapshot, and makes
+template safety checks and issued-certificate validation mandatory before
+anything is installed. A real-host proof of concept answered the
+Windows-specific questions it lists before it was accepted; its release gate
+still holds back any production release until every case passes on real
+hosts.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.
