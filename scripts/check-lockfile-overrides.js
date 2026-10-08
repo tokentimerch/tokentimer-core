@@ -45,6 +45,7 @@ const REQUIRED_PINS = {
   "form-data": { "*": "4.0.6" },
   ws: { "*": "8.21.0" },
   "fast-uri": { "*": "3.1.8" },
+  "proxy-addr": { "*": "2.0.8" },
 };
 
 function fail(message) {
