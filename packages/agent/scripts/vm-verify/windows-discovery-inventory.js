@@ -1,10 +1,9 @@
 "use strict";
 
-// Real-host verification for real machine-store listing, real
-// netsh-http-show-sslcert parsing (no filter -- full list), real
-// cross-referenced inventory, and fixture-vs-real format drift, especially
-// for the hostname-keyed binding form surfaced by the IIS SNI-precision
-// real-host run.
+// Real-host verification for real machine-store listing, the real http.sys
+// binding query (full list, both IP- and hostname-keyed bindings), real
+// cross-referenced inventory, and agreement between that query and raw
+// `netsh http show sslcert` output on an English-language host.
 //
 // Usage: node windows-discovery-inventory.js <workDir>
 
@@ -16,7 +15,6 @@ const {
   listMachineStoreCertificates,
   listHttpSysBindings,
   discoverWindowsCertificateInventory,
-  parseNetshSslcertBindings,
 } = require("C:\\TokenTimerAgentTest\\src\\windows-discovery\\index.js");
 
 async function main() {
@@ -64,7 +62,7 @@ async function main() {
   }
 
   console.log("");
-  console.log("=== real netsh http show sslcert parsing (no filter, full list) ===");
+  console.log("=== real http.sys binding query (full list) ===");
   const bindingsResult = await listHttpSysBindings();
   if (!bindingsResult.ok) {
     console.log("FAIL: listHttpSysBindings failed ->", JSON.stringify(bindingsResult));
@@ -83,18 +81,28 @@ async function main() {
   console.log(`raw netsh output contains ${rawIpPortCount} "IP:port" block(s) and ${rawHostnamePortCount} "Hostname:port" block(s)`);
 
   console.log("");
-  console.log("=== fixture-vs-real format drift check ===");
-  if (rawHostnamePortCount > 0) {
-    const parsedFromRaw = parseNetshSslcertBindings(rawNetsh);
-    console.log(`parseNetshSslcertBindings against the SAME raw output found ${parsedFromRaw.length} binding(s) (expected ${rawIpPortCount + rawHostnamePortCount} total real bindings)`);
-    if (parsedFromRaw.length < rawIpPortCount + rawHostnamePortCount) {
-      console.log(
-        "FAIL: format drift confirmed -- parseNetshSslcertBindings' block filter only matches " +
-          "'IP:port :' and silently drops every 'Hostname:port :' (SNI-keyed) block. " +
-          `Real host has ${rawHostnamePortCount} hostname-keyed binding(s) that this parser currently ignores entirely.`,
-      );
-      process.exitCode = 1;
-    }
+  console.log("=== agreement check: binding query vs raw netsh ===");
+  const queried = bindingsResult.bindings;
+  const ipPortCount = queried.filter((b) => b.keyedBy === "ipport").length;
+  const hostnamePortCount = queried.filter((b) => b.keyedBy === "hostnameport").length;
+  const rawThumbprints = (rawNetsh.match(/\b[0-9a-f]{40}\b/gi) || []).map((t) => t.toUpperCase()).sort();
+  const queriedThumbprints = queried.map((b) => b.thumbprint).sort();
+  if (rawIpPortCount + rawHostnamePortCount === 0 && queried.length > 0) {
+    console.log("NOTE: raw netsh output has no English labels (non-English host); counts not compared");
+  } else if (ipPortCount !== rawIpPortCount || hostnamePortCount !== rawHostnamePortCount) {
+    console.log(
+      `FAIL: the query found ${ipPortCount} IP-keyed and ${hostnamePortCount} hostname-keyed binding(s), ` +
+        `netsh shows ${rawIpPortCount} and ${rawHostnamePortCount}`,
+    );
+    process.exitCode = 1;
+  } else {
+    console.log("OK: the query and netsh agree on the number of bindings of each kind");
+  }
+  if (JSON.stringify(rawThumbprints) !== JSON.stringify(queriedThumbprints)) {
+    console.log("FAIL: certificate hashes differ ->", JSON.stringify({ rawThumbprints, queriedThumbprints }));
+    process.exitCode = 1;
+  } else {
+    console.log("OK: the query and netsh report the same certificate hashes");
   }
 
   console.log("");

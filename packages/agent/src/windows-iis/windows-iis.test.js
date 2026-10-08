@@ -3,8 +3,9 @@
 /**
  * Tests for packages/agent/src/windows-iis/index.js.
  *
- * netsh invocations are exercised through an injected execFile stub (same
- * pattern as the sibling acme/windows-cert-store modules); the post-bind
+ * netsh and http.sys binding query invocations are exercised through an
+ * injected execFile stub (same pattern as the sibling
+ * acme/windows-cert-store modules); the post-bind
  * TLS handshake is exercised through an injected connectImpl stub, the
  * exact pattern already used by verify/verify.test.js for
  * verifyDeployedCertificate (this module's real dependency, not a mock of
@@ -34,8 +35,10 @@ const {
   formatIpPort,
   generateAppId,
   normalizeThumbprint,
-  parseSslcertParameters,
+  canonicalSelectorValue,
+  decodeHttpSysSettings,
   formatPreservedParamArgs,
+  findUnsupportedNetshParams,
   checkSniPrecedenceConflict,
   queryCurrentBinding,
   bindCertificate,
@@ -59,18 +62,79 @@ const VALID_BINDING = Object.freeze({
   site: "Default Web Site",
 });
 
-/** execFile stub factory, mirroring the sibling modules' makeExecStub. */
+const NO_BINDINGS = JSON.stringify({ items: [] });
+
+/**
+ * execFile stub factory, mirroring the sibling modules' makeExecStub. Calls
+ * are keyed "query" (the http.sys binding query), "help" (`netsh http add
+ * sslcert help`), or by netsh verb ("add" | "delete"). A query answered
+ * without stdout or error reports no bindings at all.
+ */
 function makeExecStub(responsesByCommand) {
   const calls = [];
   function execFileStub(file, args, options, callback) {
     calls.push({ file, args, options });
-    const key = args[1]; // "show" | "add" | "delete"
+    let key = args[1];
+    if (String(args.at(-1)).includes("SslBindingInfo")) key = "query";
+    else if (args[3] === "help") key = "help";
     const response = responsesByCommand(key, args) || { error: null, stdout: "", stderr: "" };
-    process.nextTick(() => callback(response.error, response.stdout || "", response.stderr || ""));
+    const stdout = response.stdout || (key === "query" && !response.error ? NO_BINDINGS : "");
+    process.nextTick(() => callback(response.error, stdout, response.stderr || ""));
   }
   execFileStub.calls = calls;
   return execFileStub;
 }
+
+const queryCalls = (execFileImpl) => execFileImpl.calls.filter((call) => String(call.args.at(-1)).includes("SslBindingInfo"));
+
+const codeUnits = (text) => Array.from(text, (char) => char.charCodeAt(0));
+
+/**
+ * A successful http.sys binding query reporting `entries`, each
+ * `{ ipPort | hostnamePort, thumbprint, settings? }` with settings as raw
+ * registry values.
+ */
+function bindingsOutput(...entries) {
+  const items = entries.map(({ ipPort, hostnamePort, thumbprint, settings = {} }) => {
+    const values = { SslCertHash: Array.from(Buffer.from(thumbprint, "hex")), ...settings };
+    if (!hostnamePort) return { kind: "SslBindingInfo", key: ipPort, values };
+    return {
+      kind: "SslSniBindingInfo",
+      key: "{00000000-0000-0000-0000-000000000001}",
+      values: { ...values, HostnamePort: { chars: codeUnits(hostnamePort) } },
+    };
+  });
+  return { error: null, stdout: JSON.stringify({ items }) };
+}
+
+/** VALID_BINDING's selector bound to `thumbprint`. */
+const boundAtValidBinding = (thumbprint, settings) => bindingsOutput({ ipPort: "10.0.0.5:443", thumbprint, settings });
+
+/** Usage block of a real Windows Server 2019 `netsh http add sslcert help`. */
+const NETSH_2019_ADD_HELP = [
+  " ",
+  "Usage: add sslcert hostnameport=<name:port> | ipport=<ipaddr:port> | ccs=<port>  ",
+  "\tappid=<GUID> ",
+  "\t[certhash=<string>]",
+  "\t[certstorename=<string>]",
+  "\t[verifyclientcertrevocation=enable|disable]",
+  "\t[verifyrevocationwithcachedclientcertonly=enable|disable]",
+  "\t[usagecheck=enable|disable]",
+  "\t[revocationfreshnesstime=<u-int>]",
+  "\t[urlretrievaltimeout=<u-int>]",
+  "\t[sslctlidentifier=<string>]",
+  "\t[sslctlstorename=<string>]",
+  "\t[dsmapperusage=enable|disable]",
+  "\t[clientcertnegotiation=enable|disable]",
+  "\t[reject=enable|disable]",
+  "\t[disablehttp2=enable|disable]",
+  "\t[disablequic=enable|disable]",
+  "\t[disablelegacytls=enable|disable]",
+  "\t[disabletls12=enable|disable]",
+  "\t[disabletls13=enable|disable]",
+  "\t[disableocspstapling=enable|disable]",
+  "",
+].join("\r\n");
 
 /** connectImpl stub, adapted from verify/verify.test.js's makeConnectStub. */
 function makeConnectStub(outcome) {
@@ -203,30 +267,34 @@ describe("normalizeThumbprint", () => {
 // ---------------------------------------------------------------------------
 
 describe("queryCurrentBinding", () => {
-  it("parses the Certificate Hash line from netsh's show sslcert output", async () => {
-    const execFileImpl = makeExecStub(() => ({
-      error: null,
-      stdout: `SSL Certificate bindings:\r\n-------------------------\r\n\r\n    IP:port                      : 10.0.0.5:443\r\n    Certificate Hash              : ${FIXTURE_THUMBPRINT}\r\n    Application ID              : {00000000-0000-0000-0000-000000000000}\r\n`,
-    }));
+  it("reads the thumbprint bound at the binding's ipport from http.sys's configuration", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(FIXTURE_THUMBPRINT));
 
     const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
     assert.equal(result.ok, true);
     assert.equal(result.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
   });
 
-  it("returns thumbprint: null (ok: true) when netsh reports nothing bound", async () => {
-    const error = Object.assign(new Error("netsh failed"), { code: 1 });
-    const execFileImpl = makeExecStub(() => ({
-      error,
-      stdout: "The system cannot find the file specified.\r\n",
-    }));
+  it("runs the binding query through PowerShell, never netsh, and without a shell", async () => {
+    const execFileImpl = makeExecStub(() => null);
+    await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
+    assert.equal(execFileImpl.calls.length, 1);
+    const call = execFileImpl.calls[0];
+    assert.equal(call.file, "powershell.exe");
+    assert.match(call.args.at(-1), /SslSniBindingInfo/);
+    assert.equal(call.options.shell, undefined);
+  });
+
+  it("returns thumbprint: null (ok: true) and no parameters when nothing is bound at the selector", async () => {
+    const execFileImpl = makeExecStub(() => bindingsOutput({ ipPort: "10.0.0.6:443", thumbprint: OTHER_THUMBPRINT }));
 
     const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
     assert.equal(result.ok, true);
     assert.equal(result.thumbprint, null);
+    assert.equal(result.parameters, undefined);
   });
 
-  it("returns ok: false on a genuine netsh failure", async () => {
+  it("returns ok: false when the query fails", async () => {
     const error = Object.assign(new Error("access denied"), { code: 5 });
     const execFileImpl = makeExecStub(() => ({ error, stderr: "Access is denied." }));
 
@@ -236,43 +304,50 @@ describe("queryCurrentBinding", () => {
     assert.match(result.stderrExcerpt, /Access is denied/);
   });
 
-  it("invokes netsh http show sslcert with the expected ipport argv", async () => {
-    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
-    await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
-    assert.equal(execFileImpl.calls.length, 1);
-    const call = execFileImpl.calls[0];
-    assert.deepEqual(call.args, ["http", "show", "sslcert", "ipport=10.0.0.5:443"]);
-    assert.equal(call.options.shell, undefined);
+  it("returns ok: false when the query output is unreadable", async () => {
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "not json" }));
+    const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, null);
   });
 
-  it("invokes netsh http show sslcert with hostnameport= when the binding has an sniHost", async () => {
-    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
-    await queryCurrentBinding({
-      binding: { ...VALID_BINDING, sniHost: "www.example.com" },
+  it("returns ok: false rather than 'nothing bound' when the binding exists but its hash is unreadable", async () => {
+    const stdout = JSON.stringify({ items: [{ kind: "SslBindingInfo", key: "10.0.0.5:443", values: {} }] });
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout }));
+    const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
+    assert.equal(result.ok, false);
+    assert.match(result.stderrExcerpt, /ipport=10\.0\.0\.5:443 has no readable certificate hash/);
+  });
+
+  it("matches an sniHost binding against SNI entries only, case-insensitively", async () => {
+    const execFileImpl = makeExecStub(() =>
+      bindingsOutput(
+        { ipPort: "10.0.0.5:443", thumbprint: OTHER_THUMBPRINT },
+        { hostnamePort: "WWW.Example.com:443", thumbprint: FIXTURE_THUMBPRINT },
+      ),
+    );
+    const result = await queryCurrentBinding({ binding: { ...VALID_BINDING, sniHost: "www.example.com" }, execFileImpl });
+    assert.equal(result.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
+  });
+
+  it("matches a '*' binding against http.sys's 0.0.0.0 key and an IPv6 address in any spelling", async () => {
+    const execFileImpl = makeExecStub(() =>
+      bindingsOutput(
+        { ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT },
+        { ipPort: "[2001:db8::1]:443", thumbprint: FIXTURE_THUMBPRINT },
+      ),
+    );
+    const wildcard = await queryCurrentBinding({ binding: { ...VALID_BINDING, address: "*" }, execFileImpl });
+    assert.equal(wildcard.thumbprint, OTHER_THUMBPRINT);
+    const ipv6 = await queryCurrentBinding({
+      binding: { ...VALID_BINDING, address: "[2001:DB8:0:0::1]" },
       execFileImpl,
     });
-    const call = execFileImpl.calls[0];
-    assert.deepEqual(call.args, ["http", "show", "sslcert", "hostnameport=www.example.com:443"]);
+    assert.equal(ipv6.thumbprint, FIXTURE_THUMBPRINT.toUpperCase());
   });
 
-  it("also parses the non-thumbprint parameters into result.parameters (rebind-settings preservation)", async () => {
-    const execFileImpl = makeExecStub(() => ({
-      error: null,
-      stdout: [
-        `Certificate Hash              : ${FIXTURE_THUMBPRINT}`,
-        "Application ID              : {00000000-0000-0000-0000-000000000000}",
-        "Certificate Store Name       : My",
-        "Verify Client Certificate Revocation : Enabled",
-        "Verify Revocation Using Cached Client Certificate Only : Disabled",
-        "Usage Check                  : Enabled",
-        "Revocation Freshness Time    : 0",
-        "URL Retrieval Timeout        : 0",
-        "Ctl Identifier               : (null)",
-        "Ctl Store Name                : (null)",
-        "DS Mapper Usage              : Disabled",
-        "Negotiate Client Certificate : Enabled",
-      ].join("\r\n"),
-    }));
+  it("decodes the binding's settings into result.parameters (rebind-settings preservation)", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(FIXTURE_THUMBPRINT, { DefaultFlags: 0x2 }));
 
     const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
     assert.equal(result.ok, true);
@@ -287,191 +362,194 @@ describe("queryCurrentBinding", () => {
       dsMapperUsage: false,
       negotiateClientCert: true,
     });
+    assert.equal(result.unsupportedSettings, undefined);
   });
 
-  it("returns parameters: {} (not throwing, not defaulting fields) when nothing is bound yet", async () => {
-    const error = Object.assign(new Error("netsh failed"), { code: 1 });
-    const execFileImpl = makeExecStub(() => ({
-      error,
-      stdout: "The system cannot find the file specified.\r\n",
-    }));
-
+  it("reports settings it cannot carry over in result.unsupportedSettings", async () => {
+    const execFileImpl = makeExecStub(() => boundAtValidBinding(FIXTURE_THUMBPRINT, { DefaultFlags: 0x2000 }));
     const result = await queryCurrentBinding({ binding: VALID_BINDING, execFileImpl });
     assert.equal(result.ok, true);
-    assert.equal(result.thumbprint, null);
-    assert.equal(result.parameters, undefined);
+    assert.deepEqual(result.unsupportedSettings, ["DefaultFlags 0x2000"]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// parseSslcertParameters / formatPreservedParamArgs: rebind-settings
+// canonicalSelectorValue
+// ---------------------------------------------------------------------------
+
+describe("canonicalSelectorValue", () => {
+  it("lowercases hostnames and maps '*' to 0.0.0.0", () => {
+    assert.equal(canonicalSelectorValue("WWW.Example.COM:443"), "www.example.com:443");
+    assert.equal(canonicalSelectorValue("*:8443"), "0.0.0.0:8443");
+  });
+
+  it("compresses IPv6 literals", () => {
+    assert.equal(canonicalSelectorValue("[2001:DB8:0:0:0:0:0:1]:443"), "[2001:db8::1]:443");
+    assert.equal(canonicalSelectorValue("[::]:443"), "[::]:443");
+  });
+
+  it("leaves an unparseable IPv6 literal as written instead of throwing", () => {
+    assert.equal(canonicalSelectorValue("[not:an:ip:zz]:443"), "[not:an:ip:zz]:443");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decodeHttpSysSettings / formatPreservedParamArgs: rebind-settings
 // preservation round-trip
 // ---------------------------------------------------------------------------
 
-describe("parseSslcertParameters", () => {
-  it("omits a field entirely when its label is absent from the output, rather than defaulting it", () => {
-    const parsed = parseSslcertParameters("Certificate Hash              : AA\r\n");
-    assert.deepEqual(parsed, {});
+describe("decodeHttpSysSettings", () => {
+  it("reports netsh's defaults for a binding with no settings at all", () => {
+    assert.deepEqual(decodeHttpSysSettings({}), {
+      unsupported: [],
+      parameters: {
+        verifyClientCertRevocation: true,
+        verifyRevocationWithCachedClientCertOnly: false,
+        usageCheck: true,
+        revocationFreshnessTime: 0,
+        urlRetrievalTimeout: 0,
+        ctlIdentifier: null,
+        ctlStoreName: null,
+        dsMapperUsage: false,
+        negotiateClientCert: false,
+      },
+    });
+    assert.deepEqual(decodeHttpSysSettings(), decodeHttpSysSettings({}));
   });
 
-  it("reads a real Ctl Identifier/Ctl Store Name pair when both are set", () => {
-    const parsed = parseSslcertParameters(
-      ["Ctl Identifier                : MyCtl", "Ctl Store Name                : CA"].join("\r\n"),
-    );
-    assert.equal(parsed.ctlIdentifier, "MyCtl");
-    assert.equal(parsed.ctlStoreName, "CA");
+  it("maps every DefaultSslCertCheckMode bit and the revocation timers", () => {
+    const { parameters, unsupported } = decodeHttpSysSettings({
+      DefaultSslCertCheckMode: 0x1 | 0x2 | 0x4 | 0x10000,
+      DefaultSslRevocationFreshnessTime: 3600,
+      DefaultSslRevocationUrlRetrievalTimeout: 5000,
+    });
+    assert.deepEqual(unsupported, []);
+    assert.equal(parameters.verifyClientCertRevocation, false);
+    assert.equal(parameters.verifyRevocationWithCachedClientCertOnly, true);
+    assert.equal(parameters.usageCheck, false);
+    assert.equal(parameters.revocationFreshnessTime, 3600);
+    assert.equal(parameters.urlRetrievalTimeout, 5000);
   });
 
-  it("reads the newer per-connection policy flags when they report a real Set/Not-Set value", () => {
-    // Real-host finding (2026-08-09): every newer per-connection flag on a
-    // real Windows Server 2025 build renders as "Set"/"Not Set" when
-    // explicitly configured, the same vocabulary previously believed
-    // (2026-08-07) to be unique to "Disable Legacy TLS Versions" -- see the
-    // dedicated regression test below for the full real transcript that
-    // proved this.
-    const parsed = parseSslcertParameters(
-      [
-        "Reject Connections            : Not Set",
-        "Disable HTTP2                 : Set",
-        "Disable QUIC                  : Not Set",
-        "Disable OCSP Stapling         : Set",
-        "Enable Token Binding          : Not Set",
-      ].join("\r\n"),
-    );
-    assert.equal("rejectConnections" in parsed, false);
-    assert.equal(parsed.disableHttp2, true);
-    assert.equal("disableQuic" in parsed, false);
-    assert.equal(parsed.disableOcspStapling, true);
-    assert.equal("enableTokenBinding" in parsed, false);
+  it("maps the classic DefaultFlags bits", () => {
+    const { parameters } = decodeHttpSysSettings({ DefaultFlags: 0x1 | 0x2 });
+    assert.equal(parameters.dsMapperUsage, true);
+    assert.equal(parameters.negotiateClientCert, true);
   });
 
-  it("also accepts the newer per-connection policy flags' Enabled/Disabled vocabulary defensively, in case a different Windows build ever reports them that way", () => {
-    // Not the vocabulary any real host observed so far actually uses (see
-    // above), but accepted the same way disableLegacyTls already
-    // defensively accepts both vocabularies: "Disabled" is treated the
-    // same as "Not Set" (omitted, never forced to false), since none of
-    // these fields' real defaults are ever the opposite of "off".
-    const parsed = parseSslcertParameters(
-      ["Disable HTTP2                 : Enabled", "Disable QUIC                  : Disabled"].join("\r\n"),
-    );
-    assert.equal(parsed.disableHttp2, true);
-    assert.equal("disableQuic" in parsed, false);
+  it("reads a CTL identifier and store pair", () => {
+    const { parameters, unsupported } = decodeHttpSysSettings({
+      DefaultSslCtlIdentifier: "MyCtl",
+      DefaultSslCtlStoreName: "CA",
+    });
+    assert.deepEqual(unsupported, []);
+    assert.equal(parameters.ctlIdentifier, "MyCtl");
+    assert.equal(parameters.ctlStoreName, "CA");
   });
 
-  it("omits (does not default) a newer per-connection policy flag reported as 'Not Set'", () => {
-    const parsed = parseSslcertParameters(
-      [
-        "Disable HTTP2                 : Not Set",
-        "Disable QUIC                  : Not Set",
-        "Enable Token Binding          : Not Set",
-        "Log Extended Events           : Not Set",
-        "Enable Session Ticket         : Not Set",
-      ].join("\r\n"),
-    );
-    assert.deepEqual(parsed, {});
+  it("reports the newer per-connection flags only when set, each from its own DefaultFlags bit", () => {
+    const bits = {
+      rejectConnections: 0x8,
+      disableHttp2: 0x10,
+      disableQuic: 0x20,
+      disableTls13: 0x40,
+      disableOcspStapling: 0x80,
+      enableTokenBinding: 0x100,
+      logExtendedEvents: 0x200,
+      disableLegacyTls: 0x400,
+      enableSessionTicket: 0x800,
+      disableTls12: 0x1000,
+      disableSessionId: 0x4000,
+    };
+    for (const [key, bit] of Object.entries(bits)) {
+      const { parameters, unsupported } = decodeHttpSysSettings({ DefaultFlags: bit });
+      assert.deepEqual(unsupported, [], key);
+      const newer = Object.keys(parameters).filter((name) => Object.hasOwn(bits, name));
+      assert.deepEqual(newer, [key]);
+      assert.equal(parameters[key], true);
+    }
+    assert.equal("disableHttp2" in decodeHttpSysSettings({ DefaultFlags: 0 }).parameters, false);
   });
 
-  it("reads 'Disable Legacy TLS Versions: Set' as true, not omitted (Microsoft's documented vocabulary for this field is Set/Not Set, not Enabled/Disabled/Not Set)", () => {
-    // Captured real `netsh http show sslcert` output shape
-    // (learn.microsoft.com/security/engineering/disable-legacy-tls: "Watch
-    // for Disable Legacy TLS Versions: Set/Not Set") -- a PR review found
-    // (2026-08-07) that the Enabled/Disabled/Not-Set regex every sibling
-    // per-connection flag used at the time never matches a bare "Set", so
-    // this field was silently dropped from the preserved-parameters set
-    // entirely. (2026-08-09 real-host finding: every sibling flag turned
-    // out to have the exact same gap -- see the dedicated regression test
-    // below.)
-    const parsed = parseSslcertParameters(
-      [
-        "Certificate Store Name        : My",
-        "Reject Connections            : Disabled",
-        "Disable HTTP2                 : Not Set",
-        "Disable QUIC                  : Not Set",
-        "Disable TLS1.2                : Not Set",
-        "Disable TLS1.3                : Not Set",
-        "Disable OCSP Stapling         : Not Set",
-        "Enable Token Binding          : Not Set",
-        "Log Extended Events           : Not Set",
-        "Disable Legacy TLS Versions   : Set",
-        "Enable Session Ticket         : Not Set",
-      ].join("\r\n"),
-    );
-    assert.equal(parsed.disableLegacyTls, true);
-  });
-
-  it("reads 'Disable Legacy TLS Versions: Not Set' (the real captured default) as omitted, not false", () => {
-    // Captured real `netsh http show sslcert` output shape (every source
-    // above reports "Not Set" as this field's own default, never
-    // "Disabled").
-    const parsed = parseSslcertParameters("Disable Legacy TLS Versions  : Not Set\r\n");
-    assert.equal("disableLegacyTls" in parsed, false);
-  });
-
-  it("also accepts 'Disable Legacy TLS Versions: Enabled'/'Disabled' defensively, in case a future Windows build reports this field the same way as its siblings", () => {
-    assert.equal(parseSslcertParameters("Disable Legacy TLS Versions : Enabled\r\n").disableLegacyTls, true);
-    assert.equal("disableLegacyTls" in parseSslcertParameters("Disable Legacy TLS Versions : Disabled\r\n"), false);
-  });
-
-  it("real-host regression (2026-08-09, tokentimer-winverify-vm, Windows Server 2025 build 26100): every newer per-connection flag, not only Disable Legacy TLS Versions, renders as Set/Not Set, and the pre-fix parser silently dropped all of them", () => {
-    // Exact real `netsh http show sslcert` transcript captured after
-    // binding a real certificate with seven of these flags explicitly set
-    // via a real `netsh http add sslcert ... disablehttp2=enable
-    // disablequic=enable disablelegacytls=enable enabletokenbinding=enable
-    // logextendedevents=enable enablesessionticket=enable
-    // disablesessionid=enable` call (the real-host verification pass,
-    // `windows-iis-flag-preservation-and-sni-shadowing-verify.js`).
-    // Every one of these seven rendered as "Set", not "Enabled" -- proving
-    // the original per-field Enabled/Disabled/Not-Set regex never matched
-    // a real positive value for ANY of them, not only disableLegacyTls as
-    // the 2026-08-07 fix assumed.
-    const realTranscript = [
-      "    IP:port                      : 0.0.0.0:21443",
-      "    Certificate Store Name       : My",
-      "    Reject Connections           : Disabled",
-      "    Disable HTTP2                : Set",
-      "    Disable QUIC                 : Set",
-      "    Disable TLS1.2               : Not Set",
-      "    Disable TLS1.3               : Not Set",
-      "    Disable OCSP Stapling        : Not Set",
-      "    Enable Token Binding         : Set",
-      "    Log Extended Events          : Set",
-      "    Disable Legacy TLS Versions  : Set",
-      "    Enable Session Ticket        : Set",
-      "    Disable Session ID           : Set",
-      "    Enable Caching Client Hello  : Not Set",
-    ].join("\r\n");
-    const parsed = parseSslcertParameters(realTranscript);
-    assert.equal(parsed.disableHttp2, true);
-    assert.equal(parsed.disableQuic, true);
-    assert.equal(parsed.enableTokenBinding, true);
-    assert.equal(parsed.logExtendedEvents, true);
-    assert.equal(parsed.disableLegacyTls, true);
-    assert.equal(parsed.enableSessionTicket, true);
-    assert.equal(parsed.disableSessionId, true);
-    assert.deepEqual(formatPreservedParamArgs(parsed).sort(), [
+  it("round-trips a binding with seven newer flags set back into the same netsh flags", () => {
+    const { parameters } = decodeHttpSysSettings({ DefaultFlags: 0x4f30 });
+    assert.deepEqual(formatPreservedParamArgs(parameters), [
+      "verifyclientcertrevocation=enable",
+      "verifyrevocationwithcachedclientcertonly=disable",
+      "usagecheck=enable",
+      "dsmapperusage=disable",
+      "clientcertnegotiation=disable",
       "disablehttp2=enable",
-      "disablelegacytls=enable",
       "disablequic=enable",
-      "disablesessionid=enable",
-      "enablesessionticket=enable",
+      "disablelegacytls=enable",
       "enabletokenbinding=enable",
       "logextendedevents=enable",
-    ].sort());
+      "enablesessionticket=enable",
+      "disablesessionid=enable",
+    ]);
+  });
+
+  it("lists unknown value names, flag bits and check-mode bits as unsupported", () => {
+    const { unsupported } = decodeHttpSysSettings({
+      DefaultFlags: (0x2 | 0x2000 | 0x80000000) >>> 0,
+      DefaultSslCertCheckMode: 0x10000 | 0x8,
+      DefaultSslSomethingNew: 1,
+    });
+    assert.deepEqual(unsupported.sort(), [
+      "DefaultFlags 0x80002000",
+      "DefaultSslCertCheckMode 0x8",
+      "DefaultSslSomethingNew",
+    ]);
+  });
+
+  it("lists a value of the wrong type as unsupported", () => {
+    const { unsupported, parameters } = decodeHttpSysSettings({
+      DefaultFlags: [1, 0, 0, 0],
+      DefaultSslCtlIdentifier: 7,
+    });
+    assert.deepEqual(unsupported.sort(), ["DefaultFlags", "DefaultSslCtlIdentifier"]);
+    assert.equal(parameters.ctlIdentifier, null);
+  });
+
+  it("lists a freshness time without its check-mode bit, or the bit without a time, as unsupported", () => {
+    assert.deepEqual(decodeHttpSysSettings({ DefaultSslRevocationFreshnessTime: 3600 }).unsupported, [
+      "DefaultSslRevocationFreshnessTime",
+    ]);
+    assert.deepEqual(decodeHttpSysSettings({ DefaultSslCertCheckMode: 0x4 }).unsupported, [
+      "DefaultSslRevocationFreshnessTime",
+    ]);
+  });
+
+  it("lists a CTL store without a CTL identifier as unsupported, since netsh cannot set it alone", () => {
+    assert.deepEqual(decodeHttpSysSettings({ DefaultSslCtlStoreName: "CA" }).unsupported, ["DefaultSslCtlStoreName"]);
   });
 });
 
-describe("formatPreservedParamArgs -> parseSslcertParameters round-trip for Disable Legacy TLS Versions", () => {
-  it("an outgoing binding with legacy TLS disabled (netsh's 'Set' vocabulary) survives a rebind and reproduces disablelegacytls=enable", () => {
-    const outgoingStdout = [
-      "Certificate Store Name        : My",
-      "Disable Legacy TLS Versions   : Set",
-    ].join("\r\n");
-    const parsed = parseSslcertParameters(outgoingStdout);
-    const args = formatPreservedParamArgs(parsed);
-    assert.deepEqual(args, ["disablelegacytls=enable"]);
+describe("findUnsupportedNetshParams", () => {
+  it("never asks netsh for its help when only classic parameters are replayed", async () => {
+    const execFileImpl = makeExecStub(() => null);
+    const missing = await findUnsupportedNetshParams({
+      args: formatPreservedParamArgs(decodeHttpSysSettings({ DefaultFlags: 0x2 }).parameters),
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.deepEqual(missing, []);
+    assert.equal(execFileImpl.calls.length, 0);
+  });
+
+  it("returns the newer parameters this host's netsh help does not list", async () => {
+    const execFileImpl = makeExecStub((key) => (key === "help" ? { error: null, stdout: NETSH_2019_ADD_HELP } : null));
+    const missing = await findUnsupportedNetshParams({
+      args: ["usagecheck=enable", "disablehttp2=enable", "enablesessionticket=enable", "disablesessionid=enable"],
+      execFileImpl,
+      netshPath: "netsh.exe",
+      timeoutMs: 1000,
+    });
+    assert.deepEqual(missing, ["enablesessionticket", "disablesessionid"]);
+    assert.deepEqual(execFileImpl.calls[0].args, ["http", "add", "sslcert", "help"]);
   });
 });
-
 
 describe("formatPreservedParamArgs", () => {
   it("returns an empty array for {} (nothing to preserve, e.g. a first-ever bind)", () => {
@@ -557,28 +635,29 @@ describe("formatPreservedParamArgs", () => {
     ]);
   });
 
-  it("round-trips a full parseSslcertParameters output (including the newer flags) back into valid netsh add sslcert flags", () => {
-    const parameters = parseSslcertParameters(
-      [
-        "Verify Client Certificate Revocation : Enabled",
-        "Usage Check                  : Enabled",
-        "Revocation Freshness Time    : 120",
-        "Negotiate Client Certificate : Disabled",
-        "Reject Connections           : Not Set",
-        "Disable HTTP2                : Set",
-        "Disable QUIC                 : Not Set",
-        "Disable OCSP Stapling        : Set",
-      ].join("\r\n"),
-    );
-    const args = formatPreservedParamArgs(parameters);
-    assert.deepEqual(args, [
+  it("round-trips decoded http.sys settings (including the newer flags) back into valid netsh add sslcert flags", () => {
+    const { parameters } = decodeHttpSysSettings({
+      DefaultSslCertCheckMode: 0x4,
+      DefaultSslRevocationFreshnessTime: 120,
+      DefaultFlags: 0x1 | 0x10 | 0x80,
+    });
+    assert.deepEqual(formatPreservedParamArgs(parameters), [
       "verifyclientcertrevocation=enable",
+      "verifyrevocationwithcachedclientcertonly=disable",
       "usagecheck=enable",
       "revocationfreshnesstime=120",
+      "dsmapperusage=enable",
       "clientcertnegotiation=disable",
       "disablehttp2=enable",
       "disableocspstapling=enable",
     ]);
+  });
+
+  it("carries a CTL pair over with both flags", () => {
+    const { parameters } = decodeHttpSysSettings({ DefaultSslCtlIdentifier: "MyCtl", DefaultSslCtlStoreName: "CA" });
+    const args = formatPreservedParamArgs(parameters);
+    assert.ok(args.includes("sslctlidentifier=MyCtl"));
+    assert.ok(args.includes("sslctlstorename=CA"));
   });
 });
 
@@ -799,12 +878,7 @@ describe("bindCertificate", () => {
 describe("deployIisBinding", () => {
   it("binds and verifies successfully, reporting outgoing/bound thumbprints", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return {
-          error: null,
-          stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n`,
-        };
-      }
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
@@ -844,9 +918,7 @@ describe("deployIisBinding", () => {
 
   it("rolls back to the outgoing thumbprint when verification fails", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);
       return { error: null, stdout: "" };
     });
     // Wrong peer cert bytes => fingerprint mismatch => verify fails.
@@ -866,7 +938,7 @@ describe("deployIisBinding", () => {
 
     // The rollback bind call: two netsh calls per bindCertificate
     // invocation (delete+add), so the second bindCertificate's add call is
-    // execFileImpl.calls[5] (0,1 = first delete/add; 2 = show; 3,4 = ... )
+    // execFileImpl.calls[5] (0,1 = first delete/add; 2 = query; 3,4 = ... )
     // -- rather than counting exact indices, assert on the LAST add call's
     // certhash instead, which is robust to the exact call ordering.
     const addCalls = execFileImpl.calls.filter((c) => c.args[1] === "add");
@@ -875,12 +947,7 @@ describe("deployIisBinding", () => {
   });
 
   it("does not attempt a rollback when nothing was bound before (outgoingThumbprint null)", async () => {
-    const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return { error: Object.assign(new Error("none"), { code: 1 }), stdout: "The system cannot find the file specified." };
-      }
-      return { error: null, stdout: "" };
-    });
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
     const connectImpl = makeConnectStub({ peerDer: Buffer.from([0x01, 0x02, 0x03]) });
 
     const result = await deployIisBinding({
@@ -901,7 +968,6 @@ describe("deployIisBinding", () => {
 
   it("returns BIND_FAILED without touching verify when the add sslcert call fails", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") return { error: null, stdout: "" };
       if (key === "add") return { error: Object.assign(new Error("fail"), { code: 87 }), stderr: "bad" };
       return { error: null, stdout: "" };
     });
@@ -934,9 +1000,7 @@ describe("deployIisBinding", () => {
     // succeed, so only fail add calls whose certhash matches the NEW
     // (fixture) thumbprint, not the rollback's OTHER_THUMBPRINT.
     const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show") {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);
       if (key === "add") {
         const isRollbackAdd = args.some((a) => a === `certhash=${OTHER_THUMBPRINT}`);
         if (!isRollbackAdd) {
@@ -966,7 +1030,6 @@ describe("deployIisBinding", () => {
 
   it("does not attempt a rollback on BIND_FAILED when nothing was bound before", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") return { error: null, stdout: "" };
       if (key === "add") return { error: Object.assign(new Error("fail"), { code: 87 }), stderr: "bad" };
       return { error: null, stdout: "" };
     });
@@ -986,9 +1049,9 @@ describe("deployIisBinding", () => {
     assert.equal(addCalls.length, 1);
   });
 
-  it("returns QUERY_FAILED on a genuine netsh show failure, without binding anything", async () => {
+  it("returns QUERY_FAILED when the http.sys binding query fails, without binding anything", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
+      if (key === "query") {
         return { error: Object.assign(new Error("denied"), { code: 5 }), stderr: "Access is denied." };
       }
       return { error: null, stdout: "" };
@@ -1032,9 +1095,7 @@ describe("deployIisBinding", () => {
 
   it("skips the delete+add mutation when already bound to the target certificate, but still verifies", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return { error: null, stdout: `Certificate Hash              : ${FIXTURE_THUMBPRINT}\r\n` };
-      }
+      if (key === "query") return boundAtValidBinding(FIXTURE_THUMBPRINT);
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
@@ -1051,7 +1112,7 @@ describe("deployIisBinding", () => {
     assert.equal(result.outgoingThumbprint, FIXTURE_THUMBPRINT.toUpperCase());
     assert.equal(result.boundThumbprint, FIXTURE_THUMBPRINT.toUpperCase());
 
-    // No delete/add netsh call at all: only the "show" query ran.
+    // No delete/add netsh call at all: only the binding query ran.
     const addCalls = execFileImpl.calls.filter((c) => c.args[1] === "add");
     const deleteCalls = execFileImpl.calls.filter((c) => c.args[1] === "delete");
     assert.equal(addCalls.length, 0);
@@ -1060,9 +1121,7 @@ describe("deployIisBinding", () => {
 
   it("still fails verification when already bound but the handshake disagrees, without attempting a rollback", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return { error: null, stdout: `Certificate Hash              : ${FIXTURE_THUMBPRINT}\r\n` };
-      }
+      if (key === "query") return boundAtValidBinding(FIXTURE_THUMBPRINT);
       return { error: null, stdout: "" };
     });
     // Store/http.sys desync: thumbprint claims a match but the live
@@ -1087,9 +1146,7 @@ describe("deployIisBinding", () => {
 
   it("re-queries the binding after a successful rollback and reports agreement", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT);
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: Buffer.from([0x01, 0x02, 0x03]) });
@@ -1105,22 +1162,20 @@ describe("deployIisBinding", () => {
     assert.equal(result.rolledBack, true);
     assert.equal(result.rollbackVerifyDetail, undefined);
 
-    // Two "show" calls: the initial pre-bind query, plus the post-rollback
-    // re-verification query.
-    const showCalls = execFileImpl.calls.filter((c) => c.args[1] === "show");
-    assert.equal(showCalls.length, 2);
+    // Two binding queries: the initial pre-bind query, plus the
+    // post-rollback re-verification query.
+    assert.equal(queryCalls(execFileImpl).length, 2);
   });
 
   it("surfaces a non-fatal rollbackVerifyDetail when the post-rollback query disagrees", async () => {
-    let showCallCount = 0;
+    let queryCount = 0;
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        showCallCount += 1;
+      if (key === "query") {
+        queryCount += 1;
         // First query (pre-bind): OTHER_THUMBPRINT was bound.
         // Second query (post-rollback): unexpectedly reports something else,
         // simulating a store/http.sys desync surviving the rollback bind.
-        const hash = showCallCount === 1 ? OTHER_THUMBPRINT : FIXTURE_THUMBPRINT.toUpperCase();
-        return { error: null, stdout: `Certificate Hash              : ${hash}\r\n` };
+        return boundAtValidBinding(queryCount === 1 ? OTHER_THUMBPRINT : FIXTURE_THUMBPRINT);
       }
       return { error: null, stdout: "" };
     });
@@ -1140,15 +1195,8 @@ describe("deployIisBinding", () => {
 
   it("preserves the outgoing binding's revocation/negotiation settings across the delete+add rebind", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return {
-          error: null,
-          stdout: [
-            `Certificate Hash              : ${OTHER_THUMBPRINT}`,
-            "Usage Check                  : Enabled",
-            "Negotiate Client Certificate : Enabled",
-          ].join("\r\n"),
-        };
+      if (key === "query") {
+        return boundAtValidBinding(OTHER_THUMBPRINT, { DefaultFlags: 0x2, DefaultSslCertCheckMode: 0x10000 });
       }
       return { error: null, stdout: "" };
     });
@@ -1163,21 +1211,96 @@ describe("deployIisBinding", () => {
 
     assert.equal(result.ok, true);
     const addCall = execFileImpl.calls.find((c) => c.args[1] === "add");
-    assert.equal(addCall.args.includes("usagecheck=enable"), true);
+    assert.equal(addCall.args.includes("usagecheck=disable"), true);
     assert.equal(addCall.args.includes("clientcertnegotiation=enable"), true);
+  });
+
+  it("preserves a newer per-connection flag this host's netsh accepts", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT, { DefaultFlags: 0x400 });
+      if (key === "help") return { error: null, stdout: NETSH_2019_ADD_HELP };
+      return { error: null, stdout: "" };
+    });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+    });
+
+    assert.equal(result.ok, true);
+    const addCall = execFileImpl.calls.find((c) => c.args[1] === "add" && c.args[3] !== "help");
+    assert.equal(addCall.args.includes("disablelegacytls=enable"), true);
+  });
+
+  it("refuses with UNSUPPORTED_BINDING_SETTINGS, touching nothing, when http.sys holds a setting the agent cannot read back", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT, { DefaultFlags: 0x2 | 0x2000 });
+      return { error: null, stdout: "" };
+    });
+    let connectCalled = false;
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl: () => {
+        connectCalled = true;
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "UNSUPPORTED_BINDING_SETTINGS");
+    assert.match(result.detail, /left unchanged: DefaultFlags 0x2000$/);
+    assert.equal(result.outgoingThumbprint, OTHER_THUMBPRINT);
+    assert.equal(result.rolledBack, false);
+    assert.equal(connectCalled, false);
+    assert.deepEqual(execFileImpl.calls.map((call) => call.file), ["powershell.exe"]);
+  });
+
+  it("refuses with UNSUPPORTED_BINDING_SETTINGS when this host's netsh does not offer a flag the binding uses", async () => {
+    // netsh exits 0 without creating the binding when given a parameter it
+    // does not know, which would leave the endpoint unbound.
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT, { DefaultFlags: 0x800 });
+      if (key === "help") return { error: null, stdout: NETSH_2019_ADD_HELP };
+      return { error: null, stdout: "" };
+    });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+    });
+
+    assert.equal(result.code, "UNSUPPORTED_BINDING_SETTINGS");
+    assert.match(result.detail, /enablesessionticket \(not supported by this host's netsh\)/);
+    const netshCalls = execFileImpl.calls.filter((call) => call.file === "netsh.exe").map((call) => call.args.join(" "));
+    assert.deepEqual(netshCalls, ["http add sslcert help"]);
+  });
+
+  it("does not refuse over unsupported settings when the binding already serves the target certificate", async () => {
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return boundAtValidBinding(FIXTURE_THUMBPRINT, { DefaultFlags: 0x2000 });
+      return { error: null, stdout: "" };
+    });
+
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      execFileImpl,
+      connectImpl: makeConnectStub({ peerDer: fixtureX509.raw }),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skippedMutation, true);
   });
 
   it("carries the same preserved settings into a rollback bind, not just the primary bind", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return {
-          error: null,
-          stdout: [
-            `Certificate Hash              : ${OTHER_THUMBPRINT}`,
-            "Usage Check                  : Enabled",
-          ].join("\r\n"),
-        };
-      }
+      if (key === "query") return boundAtValidBinding(OTHER_THUMBPRINT, { DefaultSslCertCheckMode: 0x10000 });
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: Buffer.from([0x01, 0x02, 0x03]) });
@@ -1193,11 +1316,11 @@ describe("deployIisBinding", () => {
     assert.equal(result.rolledBack, true);
     // Two "add" calls: the primary (verify-failed) bind, then the rollback
     // bind restoring OTHER_THUMBPRINT -- both should carry the preserved
-    // usagecheck=enable flag read from the original outgoing binding.
+    // usagecheck=disable flag read from the original outgoing binding.
     const addCalls = execFileImpl.calls.filter((c) => c.args[1] === "add");
     assert.equal(addCalls.length, 2);
     for (const call of addCalls) {
-      assert.equal(call.args.includes("usagecheck=enable"), true);
+      assert.equal(call.args.includes("usagecheck=disable"), true);
     }
   });
 });
@@ -1216,74 +1339,46 @@ describe("checkSniPrecedenceConflict", () => {
     site: "SNI Site",
   });
 
-  it("returns undefined when neither wildcard address has any non-SNI binding on the port", async () => {
-    const execFileImpl = makeExecStub(() => ({
-      error: Object.assign(new Error("not found"), { code: 1 }),
-      stdout: "The system cannot find the file specified.\r\n",
-    }));
+  const check = (execFileImpl) =>
+    checkSniPrecedenceConflict({ binding: SNI_BINDING, execFileImpl, powershellPath: "powershell.exe", timeoutMs: 1000 });
 
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
-    assert.equal(warning, undefined);
+  it("returns undefined when no non-SNI binding exists on the port", async () => {
+    const execFileImpl = makeExecStub(() =>
+      bindingsOutput({ hostnamePort: "www.example.com:8443", thumbprint: OTHER_THUMBPRINT }),
+    );
+    assert.equal(await check(execFileImpl), undefined);
   });
 
   it("warns when a non-SNI IPv4 wildcard (0.0.0.0) binding exists on the same port", async () => {
-    const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show" && args.some((a) => a.includes("0.0.0.0"))) {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
-      return {
-        error: Object.assign(new Error("not found"), { code: 1 }),
-        stdout: "The system cannot find the file specified.\r\n",
-      };
-    });
-
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
+    const warning = await check(makeExecStub(() => bindingsOutput({ ipPort: "0.0.0.0:8443", thumbprint: OTHER_THUMBPRINT })));
     assert.match(warning, /ipport=0\.0\.0\.0:8443/);
     assert.match(warning, /hostnameport=www\.example\.com:8443/);
   });
 
   it("warns when a non-SNI IPv6 wildcard ([::]) binding exists on the same port", async () => {
-    const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show" && args.some((a) => a.includes("[::]"))) {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
-      return {
-        error: Object.assign(new Error("not found"), { code: 1 }),
-        stdout: "The system cannot find the file specified.\r\n",
-      };
-    });
-
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
+    const warning = await check(makeExecStub(() => bindingsOutput({ ipPort: "[::]:8443", thumbprint: OTHER_THUMBPRINT })));
     assert.match(warning, /ipport=\[::\]:8443/);
   });
 
-  it("swallows a query error for either wildcard rather than throwing or warning", async () => {
+  it("reports a wildcard before a concrete address when both shadow the binding", async () => {
+    const warning = await check(
+      makeExecStub(() =>
+        bindingsOutput(
+          { ipPort: "192.0.2.10:8443", thumbprint: OTHER_THUMBPRINT },
+          { ipPort: "[::]:8443", thumbprint: OTHER_THUMBPRINT },
+        ),
+      ),
+    );
+    assert.match(warning, /ipport=\[::\]:8443/);
+  });
+
+  it("swallows a query error rather than throwing or warning", async () => {
     const execFileImpl = () => {
       throw new Error("execFile blew up");
     };
-
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
-    assert.equal(warning, undefined);
+    assert.equal(await check(execFileImpl), undefined);
+    const failing = makeExecStub(() => ({ error: Object.assign(new Error("denied"), { code: 5 }) }));
+    assert.equal(await check(failing), undefined);
   });
 
   it("warns when a non-SNI binding exists on a CONCRETE (non-wildcard) IP on the same port", async () => {
@@ -1291,58 +1386,17 @@ describe("checkSniPrecedenceConflict", () => {
     // the same port shadows this SNI binding for clients connecting to
     // that exact IP -- the gap a PR review found (2026-08-07): checking
     // only the two wildcard forms missed this shape entirely.
-    const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show" && args.length === 3) {
-        // The unfiltered "netsh http show sslcert" full-listing call
-        // (../windows-discovery's listHttpSysBindings): reports one
-        // concrete-IP ipport binding on the same port as the SNI binding.
-        return {
-          error: null,
-          stdout:
-            `IP:port                       : 192.0.2.10:8443\r\n` +
-            `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` +
-            `Application ID                : {00000000-0000-0000-0000-000000000000}\r\n` +
-            `Certificate Store Name        : My\r\n`,
-        };
-      }
-      return {
-        error: Object.assign(new Error("not found"), { code: 1 }),
-        stdout: "The system cannot find the file specified.\r\n",
-      };
-    });
-
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
+    const warning = await check(
+      makeExecStub(() => bindingsOutput({ ipPort: "192.0.2.10:8443", thumbprint: OTHER_THUMBPRINT })),
+    );
     assert.match(warning, /ipport=192\.0\.2\.10:8443/);
     assert.match(warning, /hostnameport=www\.example\.com:8443/);
   });
 
   it("does not warn about a concrete-IP binding on a DIFFERENT port", async () => {
-    const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show" && args.length === 3) {
-        return {
-          error: null,
-          stdout:
-            `IP:port                       : 192.0.2.10:9999\r\n` +
-            `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n`,
-        };
-      }
-      return {
-        error: Object.assign(new Error("not found"), { code: 1 }),
-        stdout: "The system cannot find the file specified.\r\n",
-      };
-    });
-
-    const warning = await checkSniPrecedenceConflict({
-      binding: SNI_BINDING,
-      execFileImpl,
-      netshPath: "netsh.exe",
-      timeoutMs: 1000,
-    });
+    const warning = await check(
+      makeExecStub(() => bindingsOutput({ ipPort: "192.0.2.10:9999", thumbprint: OTHER_THUMBPRINT })),
+    );
     assert.equal(warning, undefined);
   });
 });
@@ -1357,23 +1411,9 @@ describe("deployIisBinding precedenceWarning wiring", () => {
   });
 
   it("attaches precedenceWarning on a successful SNI deploy when a wildcard non-SNI binding shadows it", async () => {
-    const execFileImpl = makeExecStub((key, args) => {
-      if (key === "show" && args.some((a) => a.startsWith("hostnameport="))) {
-        // The SNI binding's own pre-bind query: nothing bound yet.
-        return {
-          error: Object.assign(new Error("not found"), { code: 1 }),
-          stdout: "The system cannot find the file specified.\r\n",
-        };
-      }
-      if (key === "show" && args.some((a) => a.includes("0.0.0.0"))) {
-        return { error: null, stdout: `Certificate Hash              : ${OTHER_THUMBPRINT}\r\n` };
-      }
-      if (key === "show") {
-        return {
-          error: Object.assign(new Error("not found"), { code: 1 }),
-          stdout: "The system cannot find the file specified.\r\n",
-        };
-      }
+    // Nothing is bound at the SNI selector itself yet.
+    const execFileImpl = makeExecStub((key) => {
+      if (key === "query") return bindingsOutput({ ipPort: "0.0.0.0:8443", thumbprint: OTHER_THUMBPRINT });
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
@@ -1391,12 +1431,7 @@ describe("deployIisBinding precedenceWarning wiring", () => {
 
   it("does NOT attach precedenceWarning for a non-SNI binding deploy (the check only applies to SNI deploys)", async () => {
     const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return {
-          error: Object.assign(new Error("not found"), { code: 1 }),
-          stdout: "The system cannot find the file specified.\r\n",
-        };
-      }
+      if (key === "query") return bindingsOutput({ ipPort: "0.0.0.0:443", thumbprint: OTHER_THUMBPRINT });
       return { error: null, stdout: "" };
     });
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
@@ -1413,15 +1448,7 @@ describe("deployIisBinding precedenceWarning wiring", () => {
   });
 
   it("does NOT attach precedenceWarning for a successful SNI deploy when no shadowing binding exists", async () => {
-    const execFileImpl = makeExecStub((key) => {
-      if (key === "show") {
-        return {
-          error: Object.assign(new Error("not found"), { code: 1 }),
-          stdout: "The system cannot find the file specified.\r\n",
-        };
-      }
-      return { error: null, stdout: "" };
-    });
+    const execFileImpl = makeExecStub(() => ({ error: null, stdout: "" }));
     const connectImpl = makeConnectStub({ peerDer: fixtureX509.raw });
 
     const result = await deployIisBinding({

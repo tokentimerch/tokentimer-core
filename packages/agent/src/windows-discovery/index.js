@@ -22,8 +22,9 @@
  * provider names come from `certutil -store`, matched by thumbprint and by
  * line structure rather than by its labels. certutil's labels, banners and
  * dates follow the host's display language, so nothing here reads them.
- * `netsh http show sslcert` is still parsed as English text. A future move
- * to a structured API would change these internals without changing this
+ * http.sys bindings come from the registry configuration `netsh http show
+ * sslcert` itself prints, whose labels are localized too. A future move to
+ * a structured API would change these internals without changing this
  * module's return shapes.
  *
  * Module style follows the sibling modules: CommonJS, node builtins only,
@@ -31,15 +32,16 @@
  * WITHOUT a shell, every dynamic argv element re-validated against a
  * shell-metacharacter pattern as defense in depth.
  *
- * Status: the store query and key-container parsing are real-host verified
- * on Windows Server 2019 and 2022 (en-US) and 2025 (de-DE); the netsh
- * parser on English hosts only, including real http.sys SNI bindings.
+ * Status: the store query, key-container parsing and http.sys binding query
+ * are real-host verified on Windows Server 2019 and 2022 (en-US) and 2025
+ * (de-DE, fr-FR), also under Constrained Language Mode. The SNI binding
+ * layout the query reads was observed on 2019, 2022 and 2025.
  *
  * `site` is deliberately always null. Unlike thumbprint/subject/expiry,
- * an IIS site name has no representation in `certutil`'s or `netsh http`'s
- * output: http.sys bindings are keyed by IP:port or hostname:port, never by
- * IIS site, matching ../windows-iis's own documented stance that `site` is
- * caller-supplied evidence/addressing metadata, not something `netsh http`
+ * an IIS site name has no representation in the store or in http.sys's
+ * configuration: http.sys bindings are keyed by IP:port or hostname:port,
+ * never by IIS site, matching ../windows-iis's own documented stance that `site` is
+ * caller-supplied evidence/addressing metadata, not something http.sys
  * itself understands. Resolving a real site name would require a separate
  * IIS-configuration query (e.g. `appcmd list site`) this module does not
  * perform; the field exists on every record so callers can rely on its
@@ -362,51 +364,112 @@ function parseCertutilKeyInfo(stdout, thumbprints) {
   return keyInfo;
 }
 
+/** Registry subkeys http.sys keeps its TLS bindings under, by selector form. */
+const HTTPSYS_BINDING_KINDS = Object.freeze({
+  SslBindingInfo: "ipport",
+  SslSniBindingInfo: "hostnameport",
+});
+
 /**
- * Parses `netsh http show sslcert` output (no ipport filter: the full
- * binding list) into one record per binding. Each binding block in
- * netsh's output is separated by a blank line and keyed by EITHER an
- * "IP:port" line (address-keyed bindings) OR a "Hostname:port" line
- * (SNI-keyed bindings, added via `hostnameport=` -- see ../windows-iis's
- * formatBindingSelector). Both forms must be recognized: a real-host run
- * (2026-08-05) against a genuine SNI binding created by ../windows-iis
- * found the original version of this function silently dropped every
- * hostname-keyed block, because its filter only matched "IP:port :". That
- * is a real discovery gap, not cosmetic: any host using an SNI binding
- * would have that certificate's binding invisibly missing from both
- * `listHttpSysBindings` and the cross-referenced inventory's `boundAt`,
- * with no error raised anywhere.
- *
- * The returned `ipPort` field is populated for BOTH forms (kept under
- * this name for backward compatibility with existing callers, since
- * discoverWindowsCertificateInventory's cross-reference keys on this
- * field regardless of which selector netsh used to create the binding);
- * `keyedBy` distinguishes which selector form the real binding actually
- * used, for callers that need to reconstruct the original ipport= vs
- * hostnameport= selector (e.g. to delete or rebind it later).
+ * PowerShell that dumps http.sys's TLS bindings from the registry, the
+ * configuration `netsh http show sslcert` prints with localized labels.
+ * Binary values travel as byte lists and strings as UTF-16 code units (the
+ * OEM code page stdout uses would mangle a Unicode hostname). Like
+ * buildStoreQueryScript, it works under Constrained Language Mode.
+ * @returns {string}
+ */
+function buildHttpSysBindingQueryScript() {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$base = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters'",
+    "$items = @()",
+    `foreach ($kind in @(${Object.keys(HTTPSYS_BINDING_KINDS).map((kind) => `'${kind}'`).join(", ")})) {`,
+    "  $path = $base + '\\' + $kind",
+    "  if (Test-Path -LiteralPath $path) {",
+    "    $items += @(Get-ChildItem -LiteralPath $path | ForEach-Object {",
+    "      $values = @{}",
+    "      foreach ($p in (Get-ItemProperty -LiteralPath $_.PSPath).PSObject.Properties) {",
+    "        if (@('PSPath', 'PSParentPath', 'PSChildName', 'PSDrive', 'PSProvider') -notcontains $p.Name) {",
+    "          $v = $p.Value",
+    "          if ($v -is [byte[]]) { $v = [int[]]$v }",
+    "          elseif ($v -is [string]) { $v = @{ chars = [int[]][char[]]$v } }",
+    "          $values[$p.Name] = $v",
+    "        }",
+    "      }",
+    "      @{ kind = $kind; key = $_.PSChildName; values = $values }",
+    "    })",
+    "  }",
+    "}",
+    "ConvertTo-Json -InputObject @{ items = $items } -Compress -Depth 6",
+  ].join("\n");
+}
+
+function decodeRegistryValue(value) {
+  if (value !== null && typeof value === "object" && !Array.isArray(value) && Array.isArray(value.chars)) {
+    return value.chars.length === 0 ? "" : decodeCodeUnits(value.chars);
+  }
+  // DWORDs come back as signed 32-bit integers.
+  if (Number.isInteger(value) && value < 0 && value >= -0x80000000) return value >>> 0;
+  return value;
+}
+
+function decodeBytes(value, length) {
+  if (!Array.isArray(value) || value.length !== length) return null;
+  if (!value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)) return null;
+  return Buffer.from(value);
+}
+
+// GUIDs are stored with their first three fields little-endian.
+function formatGuid(bytes) {
+  if (!bytes) return null;
+  const hex = (start, end, reverse) => {
+    const slice = Array.from(bytes.subarray(start, end));
+    return Buffer.from(reverse ? slice.reverse() : slice).toString("hex");
+  };
+  return `{${hex(0, 4, true)}-${hex(4, 6, true)}-${hex(6, 8, true)}-${hex(8, 10)}-${hex(10, 16)}}`;
+}
+
+/**
+ * Parses buildHttpSysBindingQueryScript's JSON into one record per binding.
+ * `ipPort` holds the IP:port or hostname:port selector for both forms and
+ * `keyedBy` says which one it is. `settings` carries every other registry
+ * value under its own name, for ../windows-iis to carry over on a rebind.
  *
  * @param {string} stdout
- * @returns {{ ipPort: string|null, keyedBy: "ipport"|"hostnameport", thumbprint: string|null, storeName: string|null, appId: string|null }[]}
+ * @returns {{ ipPort: string|null, keyedBy: "ipport"|"hostnameport", thumbprint: string|null, storeName: string|null, appId: string|null, settings: Record<string, unknown> }[]}
+ * @throws when stdout is not the expected JSON.
  */
-function parseNetshSslcertBindings(stdout) {
-  const blocks = stdout
-    .split(/\r?\n\r?\n/)
-    .map((block) => block.trim())
-    .filter((block) => /^\s*(IP:port|Hostname:port)\s*:/im.test(block));
-
-  return blocks.map((block) => {
-    const ipPortMatch = /^\s*IP:port\s*:\s*(\S+)/im.exec(block);
-    const hostnamePortMatch = /^\s*Hostname:port\s*:\s*(\S+)/im.exec(block);
-    const thumbprintMatch = /Certificate Hash\s*:\s*([0-9A-Fa-f]{40})/i.exec(block);
-    const storeMatch = /Certificate Store Name\s*:\s*(.+)/i.exec(block);
-    const appIdMatch = /Application ID\s*:\s*(\{[0-9a-fA-F-]+\})/i.exec(block);
-    return {
-      ipPort: ipPortMatch ? ipPortMatch[1].trim() : hostnamePortMatch ? hostnamePortMatch[1].trim() : null,
-      keyedBy: hostnamePortMatch ? "hostnameport" : "ipport",
-      thumbprint: thumbprintMatch ? thumbprintMatch[1].toUpperCase() : null,
-      storeName: storeMatch ? storeMatch[1].trim() : null,
-      appId: appIdMatch ? appIdMatch[1] : null,
-    };
+function parseHttpSysBindingQueryOutput(stdout) {
+  const parsed = JSON.parse(stdout);
+  if (parsed === null || typeof parsed !== "object" || !("items" in parsed)) {
+    throw new Error("http.sys binding query output has no items field");
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : parsed.items === null ? [] : [parsed.items];
+  return items.flatMap((item) => {
+    const keyedBy = HTTPSYS_BINDING_KINDS[item?.kind];
+    if (!keyedBy) return [];
+    const values = {};
+    if (item.values !== null && typeof item.values === "object") {
+      for (const [name, value] of Object.entries(item.values)) values[name] = decodeRegistryValue(value);
+    }
+    const { AppId, SslCertHash, SslCertStoreName, ...settings } = values;
+    let ipPort = typeof item.key === "string" && item.key ? item.key : null;
+    // SNI bindings live under a GUID-named key with the selector in a value.
+    if (keyedBy === "hostnameport") {
+      ipPort = typeof settings.HostnamePort === "string" && settings.HostnamePort ? settings.HostnamePort : null;
+      delete settings.HostnamePort;
+    }
+    const hash = decodeBytes(SslCertHash, 20);
+    return [
+      {
+        ipPort,
+        keyedBy,
+        thumbprint: hash ? hash.toString("hex").toUpperCase() : null,
+        storeName: typeof SslCertStoreName === "string" && SslCertStoreName ? SslCertStoreName : null,
+        appId: formatGuid(decodeBytes(AppId, 16)),
+        settings,
+      },
+    ];
   });
 }
 
@@ -501,44 +564,48 @@ async function listMachineStoreCertificates({
 }
 
 /**
- * Runs `netsh http show sslcert` (no ipport filter) and returns every
- * binding on the host. A nonzero exit meaning "no bindings configured at
- * all" is reported as `ok: true, bindings: []`, same posture as
- * listMachineStoreCertificates above.
+ * Returns every http.sys TLS binding on the host (IP- and SNI-keyed; CCS
+ * bindings are not reported). A host with none is `ok: true, bindings: []`.
  *
  * @param {object} input
  * @param {Function} [input.execFileImpl]
- * @param {string} [input.netshPath]
+ * @param {string} [input.powershellPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
- *   | { ok: true, bindings: ReturnType<typeof parseNetshSslcertBindings> }
+ *   | { ok: true, bindings: ReturnType<typeof parseHttpSysBindingQueryOutput> }
  *   | { ok: false, exitCode: number|null, stderrExcerpt: string }
  * >}
  */
 async function listHttpSysBindings({
   execFileImpl = childProcess.execFile,
-  netshPath = "netsh.exe",
+  powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
-  assertSafeArgvElements("netshPath", [netshPath]);
-  const argv = [netshPath, "http", "show", "sslcert"];
-  assertSafeArgvElements("argv", argv);
+  assertSafeArgvElements("powershellPath", [powershellPath]);
+  const powershellArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
+  assertSafeArgvElements("argv", powershellArgv);
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
-  const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
-
+  const { exitCode, stdout, stderr } = await execWithoutShell(
+    execFileImpl,
+    [...powershellArgv, buildHttpSysBindingQueryScript()],
+    timeoutMs,
+    { env: buildPowerShellEnv() },
+  );
   if (exitCode !== 0) {
-    if (/cannot find|no ssl certificate/i.test(stdoutText) || /cannot find|no ssl certificate/i.test(String(stderr ?? ""))) {
-      return { ok: true, bindings: [] };
-    }
+    return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
+  }
+  try {
+    return {
+      ok: true,
+      bindings: parseHttpSysBindingQueryOutput(typeof stdout === "string" ? stdout : String(stdout ?? "")),
+    };
+  } catch (error) {
     return {
       ok: false,
-      exitCode,
-      stderrExcerpt: boundAndRedactExcerpt(stderr || stdout),
+      exitCode: null,
+      stderrExcerpt: boundAndRedactExcerpt(`unreadable http.sys binding query output: ${error.message}`),
     };
   }
-
-  return { ok: true, bindings: parseNetshSslcertBindings(stdoutText) };
 }
 
 /**
@@ -546,7 +613,7 @@ async function listHttpSysBindings({
  * binding list decoded into structured `{ protocol, address, port,
  * hostHeader }` entries. Best-effort only: this is auxiliary evidence used
  * to resolve a binding's `site` name, not part of this module's core
- * certutil/netsh contract, so a caller must never treat a parse miss on
+ * store/binding contract, so a caller must never treat a parse miss on
  * one line as reason to fail the whole call -- unrecognized `SITE` lines
  * are silently skipped rather than thrown.
  *
@@ -678,7 +745,6 @@ function findSitesForBinding(sites, binding) {
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certutilPath]
  * @param {string} [input.powershellPath]
- * @param {string} [input.netshPath]
  * @param {string} [input.appcmdPath]
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
@@ -691,7 +757,6 @@ async function discoverWindowsCertificateInventory({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   powershellPath = "powershell.exe",
-  netshPath = "netsh.exe",
   appcmdPath,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
@@ -704,12 +769,12 @@ async function discoverWindowsCertificateInventory({
     };
   }
 
-  const bindingsResult = await listHttpSysBindings({ execFileImpl, netshPath, timeoutMs });
+  const bindingsResult = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
   if (!bindingsResult.ok) {
     return {
       ok: false,
       code: "BINDING_QUERY_FAILED",
-      detail: `netsh http show sslcert failed: ${bindingsResult.stderrExcerpt}`,
+      detail: `http.sys binding query failed: ${bindingsResult.stderrExcerpt}`,
     };
   }
 
@@ -756,7 +821,8 @@ module.exports = {
   parseNodeSubjectAltName,
   splitCertutilStoreBlocks,
   parseCertutilKeyInfo,
-  parseNetshSslcertBindings,
+  buildHttpSysBindingQueryScript,
+  parseHttpSysBindingQueryOutput,
   parseAppcmdSiteListOutput,
   findSitesForBinding,
   listMachineStoreCertificates,
