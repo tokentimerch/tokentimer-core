@@ -62,6 +62,48 @@ function toneForStatus(status) {
   return 'neutral';
 }
 
+/** Strip logger chrome so phase heuristics see the bare agent message. */
+function lineBodyText(line) {
+  const raw = String(line?.msg || line?.message || '').trim();
+  return raw
+    .replace(/^\d{4}-\d{2}-\d{2}T\S+\s+/i, '')
+    .replace(/^tokentimer-agent:\s*/i, '')
+    .trim();
+}
+
+/**
+ * POC shell tones: start white, execution blue, success green, failure red.
+ * Prefer level + message phase over the stream status string (almost always "info").
+ */
+export function toneForLine(line) {
+  const level = String(line?.status || line?.level || '').toLowerCase();
+  const body = lineBodyText(line);
+
+  if (
+    level === 'error' ||
+    level === 'warn' ||
+    /\b(fail(?:ed|ure)?|error|reject(?:ed)?|abandon(?:ed)?)\b/i.test(body)
+  ) {
+    if (!/\bsucceed(?:ed|s)?\b/i.test(body)) return 'danger';
+  }
+  if (
+    /\b(succeed(?:ed|s)?|success|completed?|dry[_\s-]?run)\b/i.test(body) ||
+    level === 'success'
+  ) {
+    return 'success';
+  }
+  if (
+    /^(Starting\b|lease claimed\b|claiming\b|Waiting\b|Queued\b|Connecting\b)/i.test(
+      body
+    ) ||
+    level === 'claim'
+  ) {
+    return 'neutral';
+  }
+  // Execution / progress lines (level info and anything else).
+  return 'info';
+}
+
 export function deliveryLabel(payload, failed = false) {
   if (failed) return 'Could not load agent output. Retrying.';
   if (!payload) return 'Waiting for output';
@@ -320,7 +362,7 @@ export default function AgentShellConsole({
           : 'gray';
 
   const colorForLine = line => {
-    const tone = toneForStatus(line.status);
+    const tone = toneForLine(line);
     if (tone === 'success') return lineSuccess;
     if (tone === 'danger') return lineDanger;
     if (tone === 'info') return lineInfo;
@@ -361,21 +403,14 @@ export default function AgentShellConsole({
             {title}
           </Text>
         </HStack>
-        <HStack spacing={2}>
-          <Badge
-            colorScheme={badgeScheme}
-            variant='subtle'
-            fontSize='0.7em'
-            role='status'
-          >
-            {STATUS_LABEL[statusHint] || statusHint}
-          </Badge>
-          {jobId ? (
-            <Text fontSize='xs' color={muted} fontFamily='mono'>
-              {String(jobId).slice(0, 8)}
-            </Text>
-          ) : null}
-        </HStack>
+        <Badge
+          colorScheme={badgeScheme}
+          variant='subtle'
+          fontSize='0.7em'
+          role='status'
+        >
+          {STATUS_LABEL[statusHint] || statusHint}
+        </Badge>
       </HStack>
       <Box
         bg={shellBg}

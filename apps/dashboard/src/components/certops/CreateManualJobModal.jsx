@@ -589,9 +589,14 @@ export default function CreateManualJobModal({
 
   const handleClose = () => {
     if (submitting) return;
+    // Refresh again on close so a job created while the modal was open
+    // (including while its assigned agent was offline) is visible in the
+    // list behind the modal once the operator dismisses it.
+    const createdWhileOpen = Boolean(createdJobId);
     setCreatedJobId(null);
     resetForm();
     onClose();
+    if (createdWhileOpen) onCreated?.();
   };
 
   // Suggestions adapt to the selected subject type: each type with an
@@ -857,7 +862,7 @@ export default function CreateManualJobModal({
           </DashboardModalTitle>
           <DashboardModalDescription>
             {createdJobId
-              ? 'Live agent execution. The console below streams curated agent output as it arrives.'
+              ? 'Live agent execution. The console below streams agent output as it arrives.'
               : isTrustOp
                 ? `${trustOp.anchorName || 'Trust anchor'}${
                     trustOp.anchorFingerprint

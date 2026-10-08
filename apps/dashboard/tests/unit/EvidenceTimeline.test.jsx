@@ -44,9 +44,9 @@ function renderWithProviders(ui) {
   );
 }
 
-/** Date line is `Approved ${formatDateTime(...)}`; locale may start with a month name. */
-function approvedAtLine(content) {
-  return /^Approved /.test(content) && !content.startsWith('Approved by');
+/** Metadata label for the approval timestamp (value is a separate date node). */
+function approvedAtLabel(content) {
+  return content === 'Approved';
 }
 
 function baseJob(overrides = {}) {
@@ -469,7 +469,7 @@ describe('EvidenceTimeline', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Approved by Alice Admin')).toBeInTheDocument();
     expect(screen.queryByText('9')).not.toBeInTheDocument();
-    expect(screen.getByText(approvedAtLine)).toBeInTheDocument();
+    expect(screen.getByText(approvedAtLabel)).toBeInTheDocument();
   });
 
   it('falls back to the user id when no display name is available', () => {
@@ -502,7 +502,7 @@ describe('EvidenceTimeline', () => {
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
     expect(screen.queryByText(/Approved by/)).not.toBeInTheDocument();
-    expect(screen.queryByText(approvedAtLine)).not.toBeInTheDocument();
+    expect(screen.queryByText(approvedAtLabel)).not.toBeInTheDocument();
   });
 
   it('renders friendly labels for approval.granted, approval.rejected, and approval.invalidated log entries', () => {
@@ -958,7 +958,7 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText('Later attempt')).not.toBeInTheDocument();
   });
 
-  it('shows the claimed agent hostname next to the copyable id', () => {
+  it('keeps agent hostname and id stacked in the job metadata popover', () => {
     useCertOpsAgentsMock.mockReturnValue({
       enabled: true,
       agents: [
@@ -974,7 +974,11 @@ describe('EvidenceTimeline', () => {
       refresh: vi.fn(),
     });
     useCertOpsJobTimelineMock.mockReturnValue({
-      job: baseJob({ claimedByAgentId: 'agent-row-1' }),
+      job: baseJob({
+        claimedByAgentId: 'agent-row-1',
+        attemptCount: 1,
+        maxAttempts: 3,
+      }),
       logEntries: [],
       evidence: [],
       loading: false,
@@ -983,12 +987,16 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    // Compact strip shows the agent label; full copyable field stays in Details.
-    expect(
-      screen.getByText('DESKTOP-J85DKKR (agent-row-1)')
-    ).toBeInTheDocument();
+    // Agent/attempt live only in the metadata popover, not the timeline header.
+    expect(screen.queryByText('DESKTOP-J85DKKR')).not.toBeInTheDocument();
+    expect(screen.queryByText('Attempt 1 of 3')).not.toBeInTheDocument();
     expect(screen.queryByText('Claimed by agent')).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
     expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
+    expect(screen.getByText('DESKTOP-J85DKKR')).toBeInTheDocument();
+    expect(screen.getByText('agent-row-1')).toBeInTheDocument();
+    expect(screen.getByText('Attempt')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
   });
 });

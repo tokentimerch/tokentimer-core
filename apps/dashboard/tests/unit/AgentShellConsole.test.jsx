@@ -5,6 +5,7 @@ import { ChakraProvider } from '@chakra-ui/react';
 import AgentShellConsole, {
   deliveryLabel,
   formatConsoleLine,
+  toneForLine,
 } from '../../src/components/certops/AgentShellConsole.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -65,7 +66,22 @@ describe('AgentShellConsole', () => {
     expect(screen.getByText('Agent output')).toBeInTheDocument();
     expect(screen.getByText(/HOST\s+tokentimer-agent/)).toBeInTheDocument();
     expect(screen.getByText('Streaming')).toBeInTheDocument();
-    expect(screen.getByText('job-1')).toBeInTheDocument();
+    expect(screen.queryByText('job-1')).not.toBeInTheDocument();
+  });
+
+  it('colors start white, execution blue, success green, failure red', () => {
+    expect(toneForLine({ status: 'info', msg: 'Starting renew' })).toBe(
+      'neutral'
+    );
+    expect(
+      toneForLine({ status: 'info', msg: 'deploying certificate to /x' })
+    ).toBe('info');
+    expect(
+      toneForLine({ status: 'info', msg: 'ACME order succeeded' })
+    ).toBe('success');
+    expect(
+      toneForLine({ status: 'error', msg: 'deploy failed: permission denied' })
+    ).toBe('danger');
   });
 
   it('polls from the last cursor and appends only new lines', async () => {

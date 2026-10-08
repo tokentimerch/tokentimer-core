@@ -1142,8 +1142,26 @@ async function claimJobs({
               ) AS subject_is_provisioning
          FROM certificate_jobs cj
         WHERE workspace_id = $1
-          AND status = 'pending'
           AND executor_kind = 'agent'
+          AND (
+            (
+              status = 'pending'
+              AND (scheduled_for IS NULL OR scheduled_for <= NOW())
+              AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+            )
+            OR (
+              -- Same agent reclaiming a never-renewed expired claim after a
+              -- restart/offline gap. Without this, the row stays "claimed"
+              -- until the lease reaper's hard grace, so the returning agent
+              -- cannot retry even though no side effects were proven.
+              status = 'claimed'
+              AND claimed_by_agent_id = $3::uuid
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < NOW()
+              AND lease_renewed_at IS NULL
+              AND attempt_count < COALESCE(max_attempts, 3)
+            )
+          )
           AND (
             cj.subject_type IS DISTINCT FROM 'managed_certificate'
             OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
@@ -1165,8 +1183,6 @@ async function claimJobs({
                     AND cj.payload->>'canRestoreOriginal' = 'false'))
             )
           )
-          AND (scheduled_for IS NULL OR scheduled_for <= NOW())
-          AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
           AND (assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid)
           AND (
@@ -1290,7 +1306,7 @@ async function claimJobs({
                     completed_at = COALESCE(completed_at, NOW()),
                     updated_at = NOW()
               WHERE id = $1
-                AND status = 'pending'`,
+                AND status IN ('pending', 'claimed')`,
             [row.id, `Trust job dispatch revalidation failed: ${revalidation.reason}`],
           );
           continue;

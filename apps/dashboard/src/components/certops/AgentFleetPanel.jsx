@@ -40,7 +40,7 @@ import {
 } from '../DashboardModalFrame.jsx';
 import CopyableId from '../CopyableId.jsx';
 import AgentShellConsole from './AgentShellConsole.jsx';
-import { listAgentFleetLog } from './certopsJobsApi';
+import { listAgentFleetLog, listAgentJobLog } from './certopsJobsApi';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
@@ -604,43 +604,96 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   panel title (the tab's "Deploy an agent" button), so the fleet keeps
  *   its own title/description without the caller duplicating them.
  */
+const FLEET_ALL = 'all';
+
+async function loadAgentLogPages(workspaceId, jobId, { signal, maxPages = 3 } = {}) {
+  const items = [];
+  let cursor;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await listAgentJobLog(workspaceId, jobId, {
+      cursor,
+      limit: 200,
+      signal,
+    });
+    items.push(...(result?.items || []));
+    if (!result?.hasMore || !result?.nextCursor) break;
+    cursor = result.nextCursor;
+  }
+  return items;
+}
+
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const { overlayProps, headerProps, bodyProps, closeButtonProps, footerProps } =
     useDashboardModalProps();
   const { muted, text } = useDashboardThemeColors();
   const [jobs, setJobs] = useState([]);
-  const [jobId, setJobId] = useState(null);
+  const [source, setSource] = useState(FLEET_ALL);
+  const [mergedLines, setMergedLines] = useState([]);
   const [loading, setLoading] = useState(false);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
   useEffect(() => {
     if (!isOpen || !agent?.id || !workspaceId) return undefined;
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setJobs([]);
-    setJobId(null);
-    listAgentFleetLog(workspaceId, agent.id)
-      .then(result => {
+    setMergedLines([]);
+    setSource(FLEET_ALL);
+
+    (async () => {
+      try {
+        const result = await listAgentFleetLog(workspaceId, agent.id, {
+          limit: 20,
+          signal: controller.signal,
+        });
         if (cancelled) return;
         const seen = new Set();
         const items = (result.items || []).filter(item => {
-          if (seen.has(item.jobId)) return false;
+          if (!item?.jobId || seen.has(item.jobId)) return false;
           seen.add(item.jobId);
           return true;
         });
         setJobs(items);
-        setJobId(items[0]?.jobId || null);
-      })
-      .catch(() => {
-        if (!cancelled) setJobs([]);
-      })
-      .finally(() => {
+
+        // Newest streams first from the API; reverse so the shell reads oldest→newest.
+        const jobIds = [...items.map(item => item.jobId)].reverse();
+        const batches = await Promise.all(
+          jobIds.map(async jobId => {
+            try {
+              const lines = await loadAgentLogPages(workspaceId, jobId, {
+                signal: controller.signal,
+              });
+              return lines.map(line => ({
+                ...line,
+                jobId,
+                message: line.message
+                  ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+                  : line.message,
+              }));
+            } catch {
+              return [];
+            }
+          })
+        );
+        if (cancelled) return;
+        setMergedLines(batches.flat());
+      } catch {
+        if (!cancelled) {
+          setJobs([]);
+          setMergedLines([]);
+        }
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [isOpen, agent, workspaceId]);
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
       <ModalOverlay {...overlayProps} />
@@ -648,7 +701,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Agent logs</DashboardModalTitle>
           <DashboardModalDescription>
-            Curated agent output from recent CertOps jobs for {agentLabel}.
+            Recent CertOps job output for {agentLabel}, across attempts.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
@@ -677,9 +730,12 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                 </Text>
                 <Select
                   size='sm'
-                  value={jobId || ''}
-                  onChange={event => setJobId(event.target.value || null)}
+                  value={source}
+                  onChange={event => setSource(event.target.value || FLEET_ALL)}
                 >
+                  <option value={FLEET_ALL}>
+                    All recent jobs ({jobs.length})
+                  </option>
                   {jobs.map(job => (
                     <option key={job.jobId} value={job.jobId}>
                       Job {String(job.jobId).slice(0, 8)} · {job.jobStatus}
@@ -687,14 +743,20 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                   ))}
                 </Select>
               </Box>
-              {jobId ? (
+              {source === FLEET_ALL ? (
+                <AgentShellConsole
+                  title={`Agent · ${agentLabel}`}
+                  staticEntries={mergedLines}
+                  maxHeight='360px'
+                />
+              ) : (
                 <AgentShellConsole
                   workspaceId={workspaceId}
-                  jobId={jobId}
+                  jobId={source}
                   title={`Agent · ${agentLabel}`}
                   maxHeight='360px'
                 />
-              ) : null}
+              )}
             </Stack>
           ) : null}
         </ModalBody>

@@ -48,7 +48,7 @@ import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
 import AgentShellConsole from './AgentShellConsole.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
-import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
+import { agentDisplayName, indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
@@ -66,73 +66,104 @@ function ApprovedByLine({ job, color }) {
   );
 }
 
-function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
+function MetadataField({ label, children }) {
   return (
-    <VStack align='stretch' spacing={2}>
-      {includeJobId && job.id ? <CopyableId id={job.id} label='Job ID' /> : null}
+    <Box minW={0}>
+      <Text fontSize='xs' color='gray.500' mb={0.5}>
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+function AgentMetadataField({ id, label, agentsById }) {
+  if (!id) return null;
+  const agent =
+    agentsById instanceof Map ? agentsById.get(String(id)) : null;
+  const name = agentDisplayName(agent);
+  return (
+    <MetadataField label={label}>
+      {name ? (
+        <Text fontSize='xs' fontWeight='medium' noOfLines={1} title={name}>
+          {name}
+        </Text>
+      ) : null}
+      <CopyableId id={id} />
+    </MetadataField>
+  );
+}
+
+function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
+  const attemptLabel =
+    typeof job.attemptCount === 'number'
+      ? typeof job.maxAttempts === 'number'
+        ? `${job.attemptCount} of ${job.maxAttempts}`
+        : String(job.attemptCount)
+      : null;
+
+  return (
+    <VStack align='stretch' spacing={3}>
+      {includeJobId && job.id ? (
+        <MetadataField label='Job ID'>
+          <CopyableId id={job.id} />
+        </MetadataField>
+      ) : null}
       {job.source ? (
-        <Text fontSize='xs'>Executor source: {job.source}</Text>
+        <MetadataField label='Executor source'>
+          <Text fontSize='xs'>{job.source}</Text>
+        </MetadataField>
       ) : null}
       {job.subjectId ? (
-        <CopyableId
-          id={job.subjectId}
+        <MetadataField
           label={subjectTypeLabel(job.subjectType) || 'Subject'}
-        />
+        >
+          <CopyableId id={job.subjectId} />
+        </MetadataField>
       ) : null}
-      {job.claimId ? <CopyableId id={job.claimId} label='Claim ID' /> : null}
-      {job.claimedByAgentId ? (
-        <CopyableId
-          id={job.claimedByAgentId}
-          label='Claimed by agent'
-          display={
-            formatAgentLabel(job.claimedByAgentId, agentsById) !==
-            String(job.claimedByAgentId)
-              ? formatAgentLabel(job.claimedByAgentId, agentsById)
-              : undefined
-          }
-        />
+      {job.claimId ? (
+        <MetadataField label='Claim ID'>
+          <CopyableId id={job.claimId} />
+        </MetadataField>
       ) : null}
+      <AgentMetadataField
+        id={job.claimedByAgentId}
+        label='Claimed by agent'
+        agentsById={agentsById}
+      />
       {job.assignedAgentId &&
       job.assignedAgentId !== job.claimedByAgentId ? (
-        <CopyableId
+        <AgentMetadataField
           id={job.assignedAgentId}
           label='Assigned agent'
-          display={
-            formatAgentLabel(job.assignedAgentId, agentsById) !==
-            String(job.assignedAgentId)
-              ? formatAgentLabel(job.assignedAgentId, agentsById)
-              : undefined
-          }
+          agentsById={agentsById}
         />
       ) : null}
       {job.claimedByControllerClusterId ? (
-        <CopyableId
-          id={job.claimedByControllerClusterId}
-          label='Claimed by controller'
-        />
+        <MetadataField label='Claimed by controller'>
+          <CopyableId id={job.claimedByControllerClusterId} />
+        </MetadataField>
       ) : null}
       {job.claimedByAgentSigningKeyId ? (
-        <CopyableId
-          id={job.claimedByAgentSigningKeyId}
-          label="Agent's pinned signing key"
-        />
+        <MetadataField label="Agent's pinned signing key">
+          <CopyableId id={job.claimedByAgentSigningKeyId} />
+        </MetadataField>
       ) : null}
       <ApprovedByLine job={job} />
       {job.leaseExpiresAt ? (
-        <Text fontSize='xs'>
-          Lease expires {formatDateTime(job.leaseExpiresAt)}
-        </Text>
+        <MetadataField label='Lease expires'>
+          <Text fontSize='xs'>{formatDateTime(job.leaseExpiresAt)}</Text>
+        </MetadataField>
       ) : null}
-      {typeof job.attemptCount === 'number' ? (
-        <Text fontSize='xs'>
-          Attempt {job.attemptCount}
-          {typeof job.maxAttempts === 'number'
-            ? ` of ${job.maxAttempts}`
-            : ''}
-        </Text>
+      {attemptLabel ? (
+        <MetadataField label='Attempt'>
+          <Text fontSize='xs'>{attemptLabel}</Text>
+        </MetadataField>
       ) : null}
       {job.approvedAt ? (
-        <Text fontSize='xs'>Approved {formatDateTime(job.approvedAt)}</Text>
+        <MetadataField label='Approved'>
+          <Text fontSize='xs'>{formatDateTime(job.approvedAt)}</Text>
+        </MetadataField>
       ) : null}
       {job.id ? (
         <Link
@@ -147,16 +178,34 @@ function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
   );
 }
 
-function JobMetadataPopover({ job, agentsById, includeJobId = true, border }) {
+function JobMetadataPopover({
+  job,
+  agentsById,
+  includeJobId = true,
+  border,
+  borderStrong,
+  muted,
+  text,
+}) {
   return (
-    <Popover placement='bottom-end' isLazy>
+    <Popover placement='bottom-start' isLazy>
       <PopoverTrigger>
         <IconButton
           aria-label='Job metadata'
           title='Job metadata'
-          icon={<Icon as={MoreHorizontal} boxSize={4} />}
-          size='xs'
-          variant='ghost'
+          icon={<Icon as={MoreHorizontal} boxSize={5} />}
+          size='sm'
+          variant='outline'
+          color={text}
+          borderColor={borderStrong || border}
+          borderWidth='1px'
+          bg='transparent'
+          _hover={{ bg: 'blackAlpha.50', borderColor: muted }}
+          _dark={{
+            color: 'white',
+            borderColor: 'whiteAlpha.500',
+            _hover: { bg: 'whiteAlpha.150', borderColor: 'whiteAlpha.700' },
+          }}
         />
       </PopoverTrigger>
       <PopoverContent
@@ -388,7 +437,7 @@ export default function EvidenceTimeline({
   embedded = false,
 }) {
   const { workspaceId } = useWorkspace();
-  const { muted, border, dashboard } = useDashboardTheme();
+  const { muted, border, borderStrong, text, dashboard } = useDashboardTheme();
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
   const waitingBg = dashboard.callout.warningSurface;
@@ -448,20 +497,19 @@ export default function EvidenceTimeline({
     }),
   ].filter(Boolean);
 
-  const agentLabel = job.claimedByAgentId
-    ? formatAgentLabel(job.claimedByAgentId, agentsById)
-    : null;
-  const attemptSummary =
-    typeof job.attemptCount === 'number'
-      ? `Attempt ${job.attemptCount}${
-          typeof job.maxAttempts === 'number' ? ` of ${job.maxAttempts}` : ''
-        }`
-      : null;
-
   return (
     <VStack align='stretch' spacing={3}>
       <HStack justify='space-between' align='center' spacing={3}>
         <HStack spacing={2} flexWrap='wrap' minW={0} flex='1'>
+          <JobMetadataPopover
+            job={job}
+            agentsById={agentsById}
+            includeJobId={!embedded || compact}
+            border={border}
+            borderStrong={borderStrong}
+            muted={muted}
+            text={text}
+          />
           {!embedded && !compact ? (
             <>
               <Text fontSize='sm' fontWeight='bold'>
@@ -471,40 +519,17 @@ export default function EvidenceTimeline({
               {job.source ? <CertOpsBadge>{job.source}</CertOpsBadge> : null}
             </>
           ) : null}
-          {agentLabel ? (
-            <Text
-              fontSize='xs'
-              color={muted}
-              fontFamily='mono'
-              noOfLines={1}
-              title={agentLabel}
-            >
-              {agentLabel}
-            </Text>
-          ) : null}
-          {attemptSummary ? (
-            <Text fontSize='xs' color={muted}>
-              {attemptSummary}
-            </Text>
-          ) : null}
         </HStack>
-        <HStack spacing={1} flexShrink={0}>
-          <JobMetadataPopover
-            job={job}
-            agentsById={agentsById}
-            includeJobId={!embedded || compact}
-            border={border}
+        {typeof onClose === 'function' ? (
+          <IconButton
+            aria-label='Close timeline'
+            icon={<Icon as={X} boxSize={3.5} />}
+            size='xs'
+            variant='ghost'
+            onClick={onClose}
+            flexShrink={0}
           />
-          {typeof onClose === 'function' ? (
-            <IconButton
-              aria-label='Close timeline'
-              icon={<Icon as={X} boxSize={3.5} />}
-              size='xs'
-              variant='ghost'
-              onClick={onClose}
-            />
-          ) : null}
-        </HStack>
+        ) : null}
       </HStack>
 
       {job.errorCode || job.errorMessage ? (
