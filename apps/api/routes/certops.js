@@ -668,9 +668,11 @@ function handleCertOpsError(res, err) {
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
   ]);
+  // err.message already names the field and reason; surface it so operators
+  // see what to fix instead of a generic "request is invalid".
   if (certOpsJobBadRequestCodes.has(err?.code)) {
     return res.status(400).json({
-      error: "CertOps job request is invalid",
+      error: err.message || "CertOps job request is invalid",
       code: err.code,
     });
   }

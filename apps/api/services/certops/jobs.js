@@ -600,9 +600,10 @@ const JOB_KEY_MODES = Object.freeze([
 ]);
 const JOB_KEY_MODE_SET = new Set(JOB_KEY_MODES);
 
-function executionFieldError(fieldName) {
+function executionFieldError(fieldName, reason) {
+  const detail = reason ? `: ${reason}` : "";
   return serviceError(
-    `CertOps job payload field ${fieldName} is invalid`,
+    `CertOps job payload field ${fieldName} is invalid${detail}`,
     CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   );
 }
@@ -610,66 +611,102 @@ function executionFieldError(fieldName) {
 const EXECUTION_FIELD_VALIDATORS = Object.freeze({
   commandRef(value) {
     if (typeof value !== "string" || !COMMAND_REF_PATTERN.test(value)) {
-      throw executionFieldError("commandRef");
+      throw executionFieldError(
+        "commandRef",
+        "use 1-128 chars from A-Z a-z 0-9 _ . : -",
+      );
     }
   },
   caEndpoint(value) {
     if (typeof value !== "string" || value.length > 512) {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must be an http(s) URL of at most 512 characters",
+      );
     }
     let parsed;
     try {
       parsed = new URL(value);
     } catch (_error) {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must be a valid http(s) URL",
+      );
     }
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must use http: or https:",
+      );
     }
   },
   acmeKind(value) {
     if (typeof value !== "string" || !ACME_KIND_SET.has(value)) {
-      throw executionFieldError("acmeKind");
+      throw executionFieldError(
+        "acmeKind",
+        `must be one of: ${ACME_KINDS.join(", ")}`,
+      );
     }
   },
   keyRotation(value) {
     if (typeof value !== "boolean") {
-      throw executionFieldError("keyRotation");
+      throw executionFieldError("keyRotation", "must be true or false");
     }
   },
   certPath(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 512) {
-      throw executionFieldError("certPath");
+      throw executionFieldError(
+        "certPath",
+        "must be a non-empty path of at most 512 characters",
+      );
     }
   },
   reloadService(value) {
     if (typeof value !== "string" || !RELOAD_SERVICE_PATTERN.test(value)) {
-      throw executionFieldError("reloadService");
+      throw executionFieldError(
+        "reloadService",
+        "use 1-128 chars from A-Z a-z 0-9 _ . : @ -",
+      );
     }
   },
   verifyHost(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 255) {
-      throw executionFieldError("verifyHost");
+      throw executionFieldError(
+        "verifyHost",
+        "must be a non-empty hostname of at most 255 characters",
+      );
     }
   },
   verifyPort(value) {
     if (!Number.isInteger(value) || value < 1 || value > 65535) {
-      throw executionFieldError("verifyPort");
+      throw executionFieldError(
+        "verifyPort",
+        "must be an integer between 1 and 65535",
+      );
     }
   },
   dnsZone(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 255) {
-      throw executionFieldError("dnsZone");
+      throw executionFieldError(
+        "dnsZone",
+        "must be a non-empty zone name of at most 255 characters",
+      );
     }
   },
   dnsProvider(value) {
     if (typeof value !== "string" || !DNS_PROVIDER_PATTERN.test(value)) {
-      throw executionFieldError("dnsProvider");
+      throw executionFieldError(
+        "dnsProvider",
+        "use 1-64 chars from A-Z a-z 0-9 _ . : -",
+      );
     }
   },
   keyMode(value) {
     if (typeof value !== "string" || !JOB_KEY_MODE_SET.has(value)) {
-      throw executionFieldError("keyMode");
+      throw executionFieldError(
+        "keyMode",
+        `must be one of: ${JOB_KEY_MODES.join(", ")}`,
+      );
     }
   },
 });
@@ -1150,7 +1187,10 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     requiredDnsProvider &&
     !DNS_PROVIDER_PATTERN.test(requiredDnsProvider)
   ) {
-    throw executionFieldError("dnsProvider");
+    throw executionFieldError(
+      "dnsProvider",
+      "use 1-64 chars from A-Z a-z 0-9 _ . : -",
+    );
   }
 
   const requiredCommandProfile =
@@ -1162,7 +1202,10 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     requiredCommandProfile &&
     !COMMAND_REF_PATTERN.test(requiredCommandProfile)
   ) {
-    throw executionFieldError("commandRef");
+    throw executionFieldError(
+      "commandRef",
+      "use 1-128 chars from A-Z a-z 0-9 _ . : -",
+    );
   }
 
   return {

@@ -279,6 +279,22 @@ function createJobErrorMessage(err) {
       err?.response?.data?.error || 'This trust-anchor job request is invalid.'
     );
   }
+  // Job validation codes: the API returns the service's field-specific
+  // message. Prefer that over a generic toast so the operator knows what to fix.
+  if (
+    code === 'CERTOPS_JOB_INVALID' ||
+    code === 'CERTOPS_JOB_OPERATION_INVALID' ||
+    code === 'CERTOPS_JOB_METADATA_INVALID' ||
+    code === 'CERTOPS_JOB_EXECUTION_FIELD_INVALID' ||
+    code === 'CERTOPS_JOB_EXECUTION_FIELD_REQUIRED' ||
+    code === 'CERTOPS_JOB_SOURCE_INVALID' ||
+    code === 'CERTOPS_JOB_STATUS_INVALID'
+  ) {
+    return (
+      err?.response?.data?.error ||
+      'This job request is invalid. Check the operation, subject, and payload fields.'
+    );
+  }
   if (code === 'CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY') {
     return 'This certificate/secret name was already retired in this namespace and cannot be reactivated by provisioning. Choose a different certificate or secret name.';
   }
