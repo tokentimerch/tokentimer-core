@@ -611,7 +611,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.used_by)) &&
                   renderEditable('Used by', 'used_by', token.used_by, {
                     inputProps: {
-                        maxLength: 500,
+                      maxLength: 500,
                       placeholder: 'Application, service',
                     },
                   })}
@@ -777,7 +777,7 @@ function TokenDetailModal({
                 {(isEditing || hasDisplayValue(token.used_by)) &&
                   renderEditable('Used by', 'used_by', token.used_by, {
                     inputProps: {
-                        maxLength: 500,
+                      maxLength: 500,
                       placeholder: 'Application, service',
                     },
                   })}

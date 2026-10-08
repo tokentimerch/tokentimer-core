@@ -4,6 +4,10 @@
  * Stops at version 66, plants names that the old length>=3 check allowed
  * (plain, padded, three-space, and tab-only), then applies 67 and checks
  * the widened CHECK plus auto-sync connection_key bound.
+ *
+ * Also covers mixed-version writes against the old VARCHAR(100) column,
+ * rollback of an in-flight 67 transaction, and a representative row load
+ * (TT_NAME_LENGTH_LOAD_ROWS, default 10000).
  */
 
 const { expect } = require("chai");
@@ -16,6 +20,10 @@ const DB_USER = process.env.DB_USER || "tokentimer";
 const DB_PASSWORD = process.env.DB_PASSWORD || "password";
 const ADMIN_DB_NAME = process.env.DB_NAME || "tokentimer";
 const UPGRADE_DB_NAME = "tokentimer_inventory_name_67_upgrade_test";
+const LOAD_ROWS = Math.max(
+  0,
+  Number.parseInt(process.env.TT_NAME_LENGTH_LOAD_ROWS || "10000", 10) || 0,
+);
 
 const { migrations, applyMigrationSql, applyPostCommitSql } = require(
   path.join(__dirname, "..", "..", "apps", "api", "migrations", "migrate.js"),
@@ -62,8 +70,17 @@ async function applyMigrations(client, list) {
   }
 }
 
+async function nameColumnLength(pool) {
+  const { rows } = await pool.query(
+    `SELECT character_maximum_length
+       FROM information_schema.columns
+      WHERE table_name = 'tokens' AND column_name = 'name'`,
+  );
+  return rows[0].character_maximum_length;
+}
+
 describe("Inventory name length migration 67 - upgrade path", function () {
-  this.timeout(180000);
+  this.timeout(600000);
 
   let pool;
   let workspaceId;
@@ -73,9 +90,14 @@ describe("Inventory name length migration 67 - upgrade path", function () {
   let whitespaceId;
   let tabOnlyId;
   let configId;
+  let widen;
+  let walBytes = 0;
+  let ddlMs = 0;
+  let validateMs = 0;
+  let rewritten = 0;
 
   before(async function () {
-    const widen = migrations.find((m) => m.version === 67);
+    widen = migrations.find((m) => m.version === 67);
     expect(widen, "migration 67 must exist").to.not.equal(undefined);
     expect(widen.name).to.equal("inventory_and_auto_sync_name_length");
 
@@ -142,8 +164,6 @@ describe("Inventory name length migration 67 - upgrade path", function () {
         [workspaceId, userId],
       );
       configId = config.rows[0].id;
-
-      await applyMigrations(client, [widen]);
     } finally {
       client.release();
     }
@@ -154,114 +174,225 @@ describe("Inventory name length migration 67 - upgrade path", function () {
     await dropDatabase(UPGRADE_DB_NAME);
   });
 
-  it("rewrites only whitespace-only names and leaves padded names stored", async () => {
-    const { rows } = await pool.query(
-      `SELECT id, name FROM tokens WHERE id = ANY($1::int[])`,
-      [[normalId, paddedId, whitespaceId, tabOnlyId]],
-    );
-    const byId = new Map(rows.map((row) => [row.id, row.name]));
-    expect(byId.get(normalId)).to.equal("NormalName");
-    expect(byId.get(paddedId)).to.equal("  Padded Name  ");
-    expect(byId.get(whitespaceId)).to.equal("unnamed");
-    expect(byId.get(tabOnlyId)).to.equal("unnamed");
-  });
-
-  it("widens tokens.name to VARCHAR(255) with a 1-255 trimmed CHECK", async () => {
-    const { rows } = await pool.query(
-      `SELECT character_maximum_length
-         FROM information_schema.columns
-        WHERE table_name = 'tokens' AND column_name = 'name'`,
-    );
-    expect(rows[0].character_maximum_length).to.equal(255);
-
-    await pool.query(
-      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
-       VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
-      [userId, workspaceId, "A"],
-    );
-    await pool.query(
-      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
-       VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
-      [userId, workspaceId, "B".repeat(255)],
-    );
+  it("rejects 255-character names on the old VARCHAR(100) column", async () => {
+    expect(await nameColumnLength(pool)).to.equal(100);
     await pool
       .query(
         `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
          VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
-        [userId, workspaceId, "C".repeat(256)],
+        [userId, workspaceId, "N".repeat(255)],
       )
       .then(
-        () => expect.fail("256-character name should fail"),
+        () => expect.fail("255-character name should fail before migration 67"),
         (err) => expect(err.code).to.equal("22001"),
       );
     await pool
       .query(
         `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
-         VALUES ($1, $2, $1, '   ', CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+         VALUES ($1, $2, $1, 'A', CURRENT_DATE + 90, 'api_key', 'key_secret')`,
         [userId, workspaceId],
       )
       .then(
-        () => expect.fail("whitespace-only name should fail"),
+        () => expect.fail("1-character name should fail the old length>=3 check"),
         (err) => expect(err.code).to.equal("23514"),
       );
-    await pool
-      .query(
-        `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
-         VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
-        [userId, workspaceId, "\t\n"],
-      )
-      .then(
-        () => expect.fail("tab and newline-only name should fail"),
-        (err) => expect(err.code).to.equal("23514"),
-      );
-    await pool.query(
-      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
-       VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
-      [userId, workspaceId, "  Padded New  "],
-    );
-
-    const { rows: checks } = await pool.query(
-      `SELECT conname, convalidated
-         FROM pg_constraint
-        WHERE conname IN ('tokens_name_check', 'auto_sync_configs_name_canonical')
-        ORDER BY conname`,
-    );
-    expect(checks.map((row) => [row.conname, row.convalidated])).to.deep.equal([
-      ["auto_sync_configs_name_canonical", true],
-      ["tokens_name_check", true],
-    ]);
   });
 
-  it("raises the auto-sync connection_key CHECK to 255 without altering TEXT", async () => {
+  it("rolls back an interrupted migration 67 without widening the column", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await applyMigrationSql(client, widen);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+    expect(await nameColumnLength(pool)).to.equal(100);
     const { rows } = await pool.query(
-      `SELECT character_maximum_length
-         FROM information_schema.columns
-        WHERE table_name = 'auto_sync_configs' AND column_name = 'connection_key'`,
+      `SELECT name FROM tokens WHERE id = $1`,
+      [whitespaceId],
     );
-    expect(rows[0].character_maximum_length).to.equal(null);
+    expect(rows[0].name).to.equal("   ");
+  });
 
-    const { rows: kept } = await pool.query(
-      `SELECT connection_key FROM auto_sync_configs WHERE id = $1`,
-      [configId],
+  it("limits UPDATE-of-name trigger blast radius to whitespace-only rewrites", async () => {
+    const { rows } = await pool.query(`
+      SELECT tgname, pg_get_triggerdef(oid) AS def
+        FROM pg_trigger
+       WHERE tgrelid = 'tokens'::regclass AND NOT tgisinternal
+       ORDER BY tgname
+    `);
+    const names = rows.map((row) => row.tgname);
+    expect(names).to.include("trg_resolve_token_operational_notifications");
+    expect(names).to.include("trg_certops_capture_token_before");
+    expect(names).to.include("trg_certops_capture_token_after");
+    const operational = rows.find(
+      (row) => row.tgname === "trg_resolve_token_operational_notifications",
     );
-    expect(kept[0].connection_key).to.equal("Existing Config");
+    expect(operational.def).to.match(/UPDATE OF workspace_id/i);
+  });
 
-    await pool.query(
-      `INSERT INTO auto_sync_configs
-         (workspace_id, provider, credentials_encrypted, connection_key, created_by, enabled)
-       VALUES ($1, 'github', 'test-only', $2, $3, FALSE)`,
-      [workspaceId, "D".repeat(255), userId],
-    );
-    await pool
-      .query(
+  describe("after migration 67", function () {
+    before(async function () {
+      if (LOAD_ROWS > 0) {
+        await pool.query(
+          `INSERT INTO tokens
+             (user_id, workspace_id, created_by, name, expiration, type, category)
+           SELECT $1, $2, $1,
+                  'LoadToken-' || g,
+                  CURRENT_DATE + 90,
+                  'api_key',
+                  'key_secret'
+             FROM generate_series(1, $3) AS g`,
+          [userId, workspaceId, LOAD_ROWS],
+        );
+      }
+
+      const beforeCount = await pool.query(`SELECT COUNT(*)::int AS n FROM tokens`);
+      const lsnBefore = await pool.query(`SELECT pg_current_wal_lsn() AS lsn`);
+      const ddlStart = Date.now();
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await applyMigrationSql(client, widen);
+        await client.query("COMMIT");
+        ddlMs = Date.now() - ddlStart;
+        const validateStart = Date.now();
+        await applyPostCommitSql(client, widen);
+        validateMs = Date.now() - validateStart;
+      } finally {
+        client.release();
+      }
+      const lsnAfter = await pool.query(
+        `SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn) AS bytes`,
+        [lsnBefore.rows[0].lsn],
+      );
+      walBytes = Number(lsnAfter.rows[0].bytes);
+      const unnamed = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM tokens WHERE name = 'unnamed'`,
+      );
+      rewritten = unnamed.rows[0].n;
+      expect(beforeCount.rows[0].n).to.be.at.least(LOAD_ROWS + 4);
+      // Catalog widen plus a two-row unnamed rewrite should not WAL the whole table.
+      expect(walBytes).to.be.below(32 * 1024 * 1024);
+      expect(ddlMs + validateMs).to.be.below(120000);
+    });
+
+    it("rewrites only whitespace-only names and leaves padded names stored", async () => {
+      const { rows } = await pool.query(
+        `SELECT id, name FROM tokens WHERE id = ANY($1::int[])`,
+        [[normalId, paddedId, whitespaceId, tabOnlyId]],
+      );
+      const byId = new Map(rows.map((row) => [row.id, row.name]));
+      expect(byId.get(normalId)).to.equal("NormalName");
+      expect(byId.get(paddedId)).to.equal("  Padded Name  ");
+      expect(byId.get(whitespaceId)).to.equal("unnamed");
+      expect(byId.get(tabOnlyId)).to.equal("unnamed");
+      expect(rewritten).to.equal(2);
+    });
+
+    it("widens tokens.name to VARCHAR(255) with a 1-255 trimmed CHECK", async () => {
+      expect(await nameColumnLength(pool)).to.equal(255);
+
+      await pool.query(
+        `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+         VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+        [userId, workspaceId, "A"],
+      );
+      await pool.query(
+        `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+         VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+        [userId, workspaceId, "B".repeat(255)],
+      );
+      await pool
+        .query(
+          `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+           VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+          [userId, workspaceId, "C".repeat(256)],
+        )
+        .then(
+          () => expect.fail("256-character name should fail"),
+          (err) => expect(err.code).to.equal("22001"),
+        );
+      await pool
+        .query(
+          `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+           VALUES ($1, $2, $1, '   ', CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+          [userId, workspaceId],
+        )
+        .then(
+          () => expect.fail("whitespace-only name should fail"),
+          (err) => expect(err.code).to.equal("23514"),
+        );
+      await pool
+        .query(
+          `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+           VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+          [userId, workspaceId, "\t\n"],
+        )
+        .then(
+          () => expect.fail("tab and newline-only name should fail"),
+          (err) => expect(err.code).to.equal("23514"),
+        );
+      await pool.query(
+        `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+         VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
+        [userId, workspaceId, "  Padded New  "],
+      );
+
+      const { rows: checks } = await pool.query(
+        `SELECT conname, convalidated
+           FROM pg_constraint
+          WHERE conname IN ('tokens_name_check', 'auto_sync_configs_name_canonical')
+          ORDER BY conname`,
+      );
+      expect(checks.map((row) => [row.conname, row.convalidated])).to.deep.equal([
+        ["auto_sync_configs_name_canonical", true],
+        ["tokens_name_check", true],
+      ]);
+    });
+
+    it("raises the auto-sync connection_key CHECK to 255 without altering TEXT", async () => {
+      const { rows } = await pool.query(
+        `SELECT character_maximum_length
+           FROM information_schema.columns
+          WHERE table_name = 'auto_sync_configs' AND column_name = 'connection_key'`,
+      );
+      expect(rows[0].character_maximum_length).to.equal(null);
+
+      const { rows: kept } = await pool.query(
+        `SELECT connection_key FROM auto_sync_configs WHERE id = $1`,
+        [configId],
+      );
+      expect(kept[0].connection_key).to.equal("Existing Config");
+
+      await pool.query(
         `INSERT INTO auto_sync_configs
            (workspace_id, provider, credentials_encrypted, connection_key, created_by, enabled)
-         VALUES ($1, 'aws', 'test-only', $2, $3, FALSE)`,
-        [workspaceId, "E".repeat(256), userId],
-      )
-      .then(
-        () => expect.fail("256-character connection_key should fail"),
-        (err) => expect(err.code).to.equal("23514"),
+         VALUES ($1, 'github', 'test-only', $2, $3, FALSE)`,
+        [workspaceId, "D".repeat(255), userId],
       );
+      await pool
+        .query(
+          `INSERT INTO auto_sync_configs
+             (workspace_id, provider, credentials_encrypted, connection_key, created_by, enabled)
+           VALUES ($1, 'aws', 'test-only', $2, $3, FALSE)`,
+          [workspaceId, "E".repeat(256), userId],
+        )
+        .then(
+          () => expect.fail("256-character connection_key should fail"),
+          (err) => expect(err.code).to.equal("23514"),
+        );
+    });
+
+    it("records migration 67 timing under a representative load", async () => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `migration 67 load=${LOAD_ROWS} ddlMs=${ddlMs} validateMs=${validateMs} walBytes=${walBytes} rewritten=${rewritten}`,
+      );
+      expect(ddlMs).to.be.greaterThan(0);
+      expect(validateMs).to.be.at.least(0);
+      expect(walBytes).to.be.greaterThan(0);
+    });
   });
 });
