@@ -1,6 +1,6 @@
 "use strict";
 
-// Real-host verification for real certutil-store parsing, real
+// Real-host verification for real machine-store listing, real
 // netsh-http-show-sslcert parsing (no filter -- full list), real
 // cross-referenced inventory, and fixture-vs-real format drift, especially
 // for the hostname-keyed binding form surfaced by the IIS SNI-precision
@@ -22,7 +22,7 @@ const {
 async function main() {
   const workDir = process.argv[2] || "C:\\TokenTimerAgentTest\\work";
 
-  console.log("=== real certutil -store My parsing ===");
+  console.log("=== real machine store My listing ===");
   const storeResult = await listMachineStoreCertificates({ store: "My" });
   if (!storeResult.ok) {
     console.log("FAIL: listMachineStoreCertificates failed ->", JSON.stringify(storeResult));
@@ -42,7 +42,7 @@ async function main() {
       console.log("FAIL: expected hasPrivateKey:true for a CNG-enrolled cert with its key in the store");
       process.exitCode = 1;
     } else {
-      console.log("OK: hasPrivateKey correctly true, read from certutil's own report (Key Container/Provider line)");
+      console.log("OK: hasPrivateKey correctly true, read from the store's own HasPrivateKey flag");
     }
   }
 

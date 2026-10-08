@@ -3,22 +3,23 @@
 /**
  * Tests for packages/agent/src/windows-discovery/index.js.
  *
- * certutil/netsh invocations are exercised through injected execFile stubs
- * (same pattern as the sibling windows-cert-store/windows-iis modules).
- * Sample stdout fixtures below are modeled on certutil -store and
- * netsh http show sslcert's documented/previously-observed text format;
- * this module has NOT yet been run against the real tools on a real host
- * (see the module's own doc comment), so these fixtures are a best-effort
- * reproduction, not a captured real transcript.
+ * PowerShell/certutil/netsh/appcmd invocations are exercised through
+ * injected execFile stubs (same pattern as the sibling
+ * windows-cert-store/windows-iis modules). The German and French certutil
+ * fixtures are trimmed copies of real Windows Server and Windows 11
+ * output; the store query JSON matches what Windows PowerShell 5.1 emits.
  */
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const { X509Certificate } = require("node:crypto");
 
 const {
+  buildStoreQueryScript,
+  parseStoreQueryOutput,
+  parseNodeSubjectAltName,
   splitCertutilStoreBlocks,
-  parseCertutilStoreBlock,
-  parseSubjectAlternativeNames,
+  parseCertutilKeyInfo,
   parseNetshSslcertBindings,
   parseAppcmdSiteListOutput,
   findSitesForBinding,
@@ -29,65 +30,133 @@ const {
 } = require("./index.js");
 
 const SAMPLE_THUMBPRINT = "AABBCCDDEEFF00112233445566778899AABBCCDD";
+const OTHER_THUMBPRINT = "11223344556677889900AABBCCDDEEFF00112233";
 
-const CERTUTIL_STORE_OUTPUT = `My "Personal"
+// EC P-256, CN=www.example.com, SAN DNS:www.example.com, DNS:example.com, IP:10.0.0.5.
+const SAN_CERT_PEM = `-----BEGIN CERTIFICATE-----
+MIIBuTCCAWCgAwIBAgIUA+2GVAwmAglQq2NglPLJBqzbHbEwCgYIKoZIzj0EAwIw
+GjEYMBYGA1UEAwwPd3d3LmV4YW1wbGUuY29tMB4XDTI2MTAwODE2NTEyMFoXDTM2
+MTAwNTE2NTEyMFowGjEYMBYGA1UEAwwPd3d3LmV4YW1wbGUuY29tMFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAEQSXXWHZASeePjojKSJ4YSj476eJPGawgh6yVeOjI
+ARwawL2vjec/t1Tk6aXKRAfLoTGwPOgwkIG7m1lCVINiGKOBgzCBgDAdBgNVHQ4E
+FgQUhDzyxJU4qH27lHFdIldK4Zj+MvYwHwYDVR0jBBgwFoAUhDzyxJU4qH27lHFd
+IldK4Zj+MvYwDwYDVR0TAQH/BAUwAwEB/zAtBgNVHREEJjAkgg93d3cuZXhhbXBs
+ZS5jb22CC2V4YW1wbGUuY29thwQKAAAFMAoGCCqGSM49BAMCA0cAMEQCIAZwIplN
+5eSk616Gt/WeVEKrpiiIC3qZJBWmChMh7HgPAiB0xVvz080YD5t+XqPCXGOudEbJ
+nhKKLrWtsrcRdzlSyw==
+-----END CERTIFICATE-----`;
+const SAN_CERT_DER = new X509Certificate(SAN_CERT_PEM).raw;
+
+const JAN_1_2026 = Date.UTC(2026, 0, 1);
+const JAN_1_2027 = Date.UTC(2027, 0, 1);
+
+function codeUnits(text) {
+  return Array.from({ length: text.length }, (_unused, index) => text.charCodeAt(index));
+}
+
+function storeItem({
+  thumbprint = SAMPLE_THUMBPRINT,
+  subject = "CN=www.example.com",
+  issuer = "CN=Test Root CA",
+  notBefore = JAN_1_2026,
+  notAfter = JAN_1_2027,
+  serialNumber = "1A2B3C4D5E",
+  hasPrivateKey = false,
+  rawData = [],
+} = {}) {
+  return {
+    thumbprint,
+    subject: codeUnits(subject),
+    issuer: codeUnits(issuer),
+    notBefore: `/Date(${notBefore})/`,
+    notAfter: `/Date(${notAfter})/`,
+    serialNumber,
+    hasPrivateKey,
+    rawData: Array.from(rawData),
+  };
+}
+
+// ConvertTo-Json escapes the slashes around /Date(...)/.
+function powershellJson(items) {
+  return JSON.stringify({ items }).replace(/"\/Date\((-?\d+)\)\/"/g, '"\\/Date($1)\\/"');
+}
+
+const STORE_JSON = powershellJson([
+  storeItem({ hasPrivateKey: true, rawData: SAN_CERT_DER }),
+  storeItem({ thumbprint: OTHER_THUMBPRINT, subject: "CN=old.example.com", serialNumber: "9F8E7D6C5B" }),
+]);
+const EMPTY_STORE_JSON = powershellJson([]);
+
+const CERTUTIL_KEY_INFO_EN = `My "Personal"
 ================ Certificate 0 ================
 Serial Number: 1a2b3c4d5e
 Issuer: CN=Test Root CA
  NotBefore: 1/1/2026 12:00 AM
  NotAfter: 1/1/2027 12:00 AM
 Subject: CN=www.example.com
-Certificate Template Name (Certificate Type): WebServer
-Signature matches Public Key
-Cert Hash(sha1): aa bb cc dd ee ff 00 11 22 33 44 55 66 77 88 99 aa bb cc dd
+Non-root Certificate
+Cert Hash(sha1): aabbccddeeff00112233445566778899aabbccdd
   Key Container = tokentimer-job-1-abcd1234
+  Unique container name: a11a37ef57bb64c3f31f8f99421d1550_e64079bf-f1d8-450e-ba59-2f4d921306df
   Provider = Microsoft Software Key Storage Provider
-  Signature test passed
+Private key is NOT exportable
+Encryption test passed
+
 ================ Certificate 1 ================
 Serial Number: 9f8e7d6c5b
 Issuer: CN=Test Root CA
  NotBefore: 6/1/2025 12:00 AM
  NotAfter: 6/1/2026 12:00 AM
 Subject: CN=old.example.com
-Cert Hash(sha1): 11 22 33 44 55 66 77 88 99 00 aa bb cc dd ee ff 00 11 22 33
+Non-root Certificate
+Cert Hash(sha1): 11223344556677889900aabbccddeeff00112233
+No key provider information
 CertUtil: -store command completed successfully.
 `;
 
-const CERTUTIL_EMPTY_STORE_OUTPUT = `My "WebHosting"
-CertUtil: -store command completed successfully.
+const CERTUTIL_KEY_INFO_DE = `My "Eigene Zertifikate"
+================ Zertifikat 14 ================
+Seriennummer: 1a2b3c4d5e
+Aussteller: CN=Test Root CA
+ Nicht vor: 01.01.2026 01:00
+ Nicht nach: 01.01.2027 01:00
+Antragsteller: CN=www.example.com
+Kein Stammzertifikat
+Vorlage: TTWebServer
+Zertifikathash(sha1): aabbccddeeff00112233445566778899aabbccdd
+  Schl\uFFFDsselcontainer = tokentimer-job-1-abcd1234
+  Eindeutiger Containername: a11a37ef57bb64c3f31f8f99421d1550_e64079bf-f1d8-450e-ba59-2f4d921306df
+  Anbieter = Microsoft Software Key Storage Provider
+Der private Schl\uFFFDssel ist NICHT exportierbar
+Verschl\uFFFDsselungstest wurde durchgef\uFFFDhrt
+CertUtil: -store-Befehl wurde erfolgreich ausgef\uFFFDhrt.
 `;
 
-// -v (verbose) output with a Subject Alternative Name extension, modeled on
-// certutil's documented multi-line "DNS Name=" per-entry format for this
-// extension.
-const CERTUTIL_STORE_OUTPUT_WITH_SAN = `My "Personal"
-================ Certificate 0 ================
-Serial Number: 1a2b3c4d5e
-Issuer: CN=Test Root CA
- NotBefore: 1/1/2026 12:00 AM
- NotAfter: 1/1/2027 12:00 AM
-Subject: CN=www.example.com
-Certificate Template Name (Certificate Type): WebServer
-2.5.29.17: Flags = 0, Length = 34
-Subject Alternative Name
-    DNS Name=www.example.com
-    DNS Name=example.com
-    IP Address=10.0.0.5
-
-Signature matches Public Key
-Cert Hash(sha1): aa bb cc dd ee ff 00 11 22 33 44 55 66 77 88 99 aa bb cc dd
-  Key Container = tokentimer-job-1-abcd1234
-  Provider = Microsoft Software Key Storage Provider
-  Signature test passed
-================ Certificate 1 ================
-Serial Number: 9f8e7d6c5b
-Issuer: CN=Test Root CA
- NotBefore: 6/1/2025 12:00 AM
- NotAfter: 6/1/2026 12:00 AM
-Subject: CN=old.example.com
-Cert Hash(sha1): 11 22 33 44 55 66 77 88 99 00 aa bb cc dd ee ff 00 11 22 33
-CertUtil: -store command completed successfully.
+// French puts a non-breaking space before ":" and before the key
+// container's "=".
+const CERTUTIL_KEY_INFO_FR = `My "Personnel"
+================ Certificat 0 ================
+Numéro de série : 1a2b3c4d5e
+Émetteur: CN=Test Root CA
+ NotBefore : 01/01/2026 01:00
+ NotAfter : 01/01/2027 01:00
+Objet: CN=www.example.com
+Il ne s’agit pas d’un certificat racine
+Hach. cert. (sha1)\u00A0: aabbccddeeff00112233445566778899aabbccdd
+  Conteneur de clé\u00A0= tokentimer-job-1-abcd1234
+  Fournisseur = Microsoft Software Key Storage Provider
+Test de chiffrement réussi
+CertUtil: -store La commande s’est terminée correctement.
 `;
+
+// The same output read through an OEM code page: the accented letter and
+// the non-breaking space decode to replacement characters.
+const CERTUTIL_KEY_INFO_FR_OEM = CERTUTIL_KEY_INFO_FR.replace(/[é\u00A0]/g, "\uFFFD");
+
+const CERTUTIL_KEY_INFO_FR_SPACED_HASH = CERTUTIL_KEY_INFO_FR.replace(
+  "aabbccddeeff00112233445566778899aabbccdd",
+  "aa bb cc dd ee ff 00 11 22 33 44 55 66 77 88 99 aa bb cc dd",
+);
 
 // Real `appcmd list site` line format:
 //   SITE "Default Web Site" (id:1,bindings:http/*:80:,https/*:443:www.example.com,state:Started)
@@ -113,8 +182,7 @@ SSL Certificate bindings:
 // Real, captured (not hand-authored) netsh http show sslcert output for a
 // hostname-keyed (SNI, via hostnameport=) binding, from a real-host
 // verification run against a live IIS SNI binding. This is the format
-// splitCertutilStoreBlocks' sibling parseNetshSslcertBindings originally
-// failed to recognize at all.
+// parseNetshSslcertBindings originally failed to recognize at all.
 const NETSH_SHOW_SSLCERT_HOSTNAME_OUTPUT = `
 SSL Certificate bindings:
 -------------------------
@@ -143,18 +211,140 @@ function makeExecStub(response) {
   return execFileStub;
 }
 
+/** Routes each executable to its own canned response; unrouted calls fail. */
+function makeExecRouter(responses) {
+  const calls = [];
+  function execFileStub(file, args, options, callback) {
+    calls.push({ file, args, options });
+    const name = String(file).toLowerCase();
+    const key = ["powershell", "certutil", "netsh", "appcmd"].find((tool) => name.includes(tool));
+    const response = responses[key] || { error: Object.assign(new Error("unexpected"), { code: 1 }) };
+    process.nextTick(() => callback(response.error || null, response.stdout || "", response.stderr || ""));
+  }
+  execFileStub.calls = calls;
+  return execFileStub;
+}
+
+const denied = (stderr = "Access is denied.") => ({ error: Object.assign(new Error("denied"), { code: 5 }), stderr });
+
 // ---------------------------------------------------------------------------
-// splitCertutilStoreBlocks / parseCertutilStoreBlock
+// buildStoreQueryScript / parseStoreQueryOutput
+// ---------------------------------------------------------------------------
+
+describe("buildStoreQueryScript", () => {
+  it("reads the LocalMachine store through the Cert: provider with the store name single-quoted", () => {
+    const script = buildStoreQueryScript("WebHosting");
+    assert.match(script, /\$path = 'Cert:\\LocalMachine\\WebHosting'/);
+    assert.match(script, /Test-Path -LiteralPath \$path/);
+  });
+
+  it("uses only constructs that Constrained Language Mode allows", () => {
+    const script = buildStoreQueryScript("My");
+    assert.doesNotMatch(script, /PSCustomObject|\[Convert\]|\[Console\]|ToUniversalTime|Add-Type|New-Object/);
+  });
+
+  it("keeps nested arrays as arrays (ConvertTo-Json defaults to depth 2)", () => {
+    assert.match(buildStoreQueryScript("My"), /ConvertTo-Json -InputObject @\{ items = \$items \} -Compress -Depth 4/);
+  });
+});
+
+describe("parseStoreQueryOutput", () => {
+  it("decodes subject and issuer from UTF-16 code units, including non-ASCII names", () => {
+    const [cert] = parseStoreQueryOutput(
+      powershellJson([storeItem({ subject: "CN=Müller GmbH, O=Société Générale", issuer: "CN=Zürich CA" })]),
+    );
+    assert.equal(cert.subject, "CN=Müller GmbH, O=Société Générale");
+    assert.equal(cert.issuer, "CN=Zürich CA");
+  });
+
+  it("decodes a single-character subject that serializes as a one-element array", () => {
+    const [cert] = parseStoreQueryOutput(powershellJson([storeItem({ subject: "C" })]));
+    assert.equal(cert.subject, "C");
+  });
+
+  it("reports an empty subject as null", () => {
+    const [cert] = parseStoreQueryOutput(powershellJson([storeItem({ subject: "" })]));
+    assert.equal(cert.subject, null);
+  });
+
+  it("reports validity dates as ISO 8601 UTC regardless of the host's date format", () => {
+    const [cert] = parseStoreQueryOutput(STORE_JSON);
+    assert.equal(cert.notBefore, "2026-01-01T00:00:00.000Z");
+    assert.equal(cert.notAfter, "2027-01-01T00:00:00.000Z");
+  });
+
+  it("normalizes the serial number to certutil's form: lowercase, without the DER sign byte", () => {
+    const [cert] = parseStoreQueryOutput(powershellJson([storeItem({ serialNumber: "00F300F1E194A05C" })]));
+    assert.equal(cert.serialNumber, "f300f1e194a05c");
+  });
+
+  it("reads subject alternative names from the certificate's own DER bytes", () => {
+    const [cert] = parseStoreQueryOutput(STORE_JSON);
+    assert.deepEqual(cert.subjectAlternativeNames, ["www.example.com", "example.com", "10.0.0.5"]);
+  });
+
+  it("returns [] for subjectAlternativeNames when the bytes do not parse", () => {
+    const [, cert] = parseStoreQueryOutput(STORE_JSON);
+    assert.deepEqual(cert.subjectAlternativeNames, []);
+  });
+
+  it("uppercases thumbprints and reads hasPrivateKey as a strict boolean", () => {
+    const certs = parseStoreQueryOutput(
+      powershellJson([
+        storeItem({ thumbprint: SAMPLE_THUMBPRINT.toLowerCase(), hasPrivateKey: true }),
+        storeItem({ thumbprint: OTHER_THUMBPRINT, hasPrivateKey: "True" }),
+      ]),
+    );
+    assert.equal(certs[0].thumbprint, SAMPLE_THUMBPRINT);
+    assert.equal(certs[0].hasPrivateKey, true);
+    assert.equal(certs[1].hasPrivateKey, false);
+  });
+
+  it("drops entries without a valid thumbprint", () => {
+    const certs = parseStoreQueryOutput(powershellJson([storeItem({ thumbprint: "not-a-thumbprint" }), storeItem()]));
+    assert.equal(certs.length, 1);
+  });
+
+  it("never returns raw certificate bytes or anything resembling key material", () => {
+    const serialized = JSON.stringify(parseStoreQueryOutput(STORE_JSON));
+    assert.doesNotMatch(serialized, /rawData|PRIVATE KEY/);
+  });
+
+  it("returns [] for an empty or missing store", () => {
+    assert.deepEqual(parseStoreQueryOutput(EMPTY_STORE_JSON), []);
+  });
+
+  it("throws on output that is not the expected JSON", () => {
+    assert.throws(() => parseStoreQueryOutput("Get-ChildItem : Access denied"));
+    assert.throws(() => parseStoreQueryOutput('{"value":[]}'), /no items field/);
+  });
+});
+
+describe("parseNodeSubjectAltName", () => {
+  it("parses Node's comma-separated format into bare values", () => {
+    assert.deepEqual(
+      parseNodeSubjectAltName("DNS:example.com, DNS:www.example.com, IP Address:10.0.0.5"),
+      ["example.com", "www.example.com", "10.0.0.5"],
+    );
+  });
+
+  it("preserves JSON-quoted values containing commas", () => {
+    assert.deepEqual(parseNodeSubjectAltName('DNS:example.com, URI:"https://example.com/a,b"'), [
+      "example.com",
+      "https://example.com/a,b",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitCertutilStoreBlocks / parseCertutilKeyInfo
 // ---------------------------------------------------------------------------
 
 describe("splitCertutilStoreBlocks", () => {
-  it("splits multiple certificate entries on the banner line", () => {
-    const blocks = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    assert.equal(blocks.length, 2);
-  });
-
-  it("returns an empty array for an empty store", () => {
-    assert.deepEqual(splitCertutilStoreBlocks(CERTUTIL_EMPTY_STORE_OUTPUT), []);
+  it("splits on the banner line whatever language its word is in", () => {
+    assert.equal(splitCertutilStoreBlocks(CERTUTIL_KEY_INFO_EN).length, 2);
+    assert.equal(splitCertutilStoreBlocks(CERTUTIL_KEY_INFO_DE).length, 1);
+    assert.equal(splitCertutilStoreBlocks(CERTUTIL_KEY_INFO_FR).length, 1);
   });
 
   it("returns an empty array for unrecognizable output", () => {
@@ -162,73 +352,59 @@ describe("splitCertutilStoreBlocks", () => {
   });
 });
 
-describe("parseCertutilStoreBlock", () => {
-  it("extracts subject/issuer/validity/serial/thumbprint from a well-formed block", () => {
-    const [certWithKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    const parsed = parseCertutilStoreBlock(certWithKey);
-    assert.equal(parsed.thumbprint, SAMPLE_THUMBPRINT);
-    assert.equal(parsed.subject, "CN=www.example.com");
-    assert.equal(parsed.issuer, "CN=Test Root CA");
-    assert.equal(parsed.serialNumber, "1a2b3c4d5e");
-    assert.equal(parsed.notBefore, "1/1/2026 12:00 AM");
-    assert.equal(parsed.notAfter, "1/1/2027 12:00 AM");
+describe("parseCertutilKeyInfo", () => {
+  const thumbprints = new Set([SAMPLE_THUMBPRINT, OTHER_THUMBPRINT]);
+  const expected = {
+    keyContainer: "tokentimer-job-1-abcd1234",
+    keyProvider: "Microsoft Software Key Storage Provider",
+  };
+
+  it("reads the key container and provider from English output, skipping the colon-labeled unique name", () => {
+    assert.deepEqual(parseCertutilKeyInfo(CERTUTIL_KEY_INFO_EN, thumbprints).get(SAMPLE_THUMBPRINT), expected);
   });
 
-  it("reports hasPrivateKey: true when a Key Container line is present", () => {
-    const [certWithKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    const parsed = parseCertutilStoreBlock(certWithKey);
-    assert.equal(parsed.hasPrivateKey, true);
-    assert.equal(parsed.keyContainer, "tokentimer-job-1-abcd1234");
-    assert.equal(parsed.keyProvider, "Microsoft Software Key Storage Provider");
+  it("reads the key container and provider from German output", () => {
+    assert.deepEqual(parseCertutilKeyInfo(CERTUTIL_KEY_INFO_DE, thumbprints).get(SAMPLE_THUMBPRINT), expected);
   });
 
-  it("reports hasPrivateKey: false when no Key Container/Provider line is present", () => {
-    const [, certWithoutKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    const parsed = parseCertutilStoreBlock(certWithoutKey);
-    assert.equal(parsed.hasPrivateKey, false);
-    assert.equal(parsed.keyContainer, null);
+  it("reads the key container, not the provider, when its label ends in a non-breaking space (French)", () => {
+    assert.deepEqual(parseCertutilKeyInfo(CERTUTIL_KEY_INFO_FR, thumbprints).get(SAMPLE_THUMBPRINT), expected);
   });
 
-  it("never reads or returns anything resembling key material, only presence", () => {
-    const [certWithKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    const parsed = parseCertutilStoreBlock(certWithKey);
-    const serialized = JSON.stringify(parsed);
-    assert.doesNotMatch(serialized, /PRIVATE KEY/);
+  it("reads French output decoded through an OEM code page", () => {
+    assert.deepEqual(parseCertutilKeyInfo(CERTUTIL_KEY_INFO_FR_OEM, thumbprints).get(SAMPLE_THUMBPRINT), expected);
   });
 
-  it("degrades gracefully (nulls, not throws) on a block missing fields", () => {
-    const parsed = parseCertutilStoreBlock("Subject: CN=weird.example.com\r\n");
-    assert.equal(parsed.thumbprint, null);
-    assert.equal(parsed.subject, "CN=weird.example.com");
-    assert.equal(parsed.hasPrivateKey, false);
+  it("matches a hash printed as space-separated byte pairs", () => {
+    assert.deepEqual(
+      parseCertutilKeyInfo(CERTUTIL_KEY_INFO_FR_SPACED_HASH, thumbprints).get(SAMPLE_THUMBPRINT),
+      expected,
+    );
   });
 
-  it("returns an empty array (not null) for subjectAlternativeNames when the extension is absent", () => {
-    const [certWithKey] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT);
-    const parsed = parseCertutilStoreBlock(certWithKey);
-    assert.deepEqual(parsed.subjectAlternativeNames, []);
+  it("handles CRLF line endings", () => {
+    const crlf = CERTUTIL_KEY_INFO_DE.replace(/\n/g, "\r\n");
+    assert.deepEqual(parseCertutilKeyInfo(crlf, thumbprints).get(SAMPLE_THUMBPRINT), expected);
   });
 
-  it("extracts DNS Name and IP Address entries from a -v Subject Alternative Name section", () => {
-    const [certWithSan] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT_WITH_SAN);
-    const parsed = parseCertutilStoreBlock(certWithSan);
-    assert.deepEqual(parsed.subjectAlternativeNames, [
-      "www.example.com",
-      "example.com",
-      "10.0.0.5",
-    ]);
+  it("reports neither field when only one of the two lines is recognized, so the provider never stands in for the container", () => {
+    const containerLineUnrecognized = CERTUTIL_KEY_INFO_EN.replace("  Key Container =", "  Key: Container =");
+    assert.deepEqual(parseCertutilKeyInfo(containerLineUnrecognized, thumbprints).get(SAMPLE_THUMBPRINT), {
+      keyContainer: null,
+      keyProvider: null,
+    });
   });
 
-  it("does not sweep unrelated extension fields into subjectAlternativeNames", () => {
-    const [, certWithoutSan] = splitCertutilStoreBlocks(CERTUTIL_STORE_OUTPUT_WITH_SAN);
-    const parsed = parseCertutilStoreBlock(certWithoutSan);
-    assert.deepEqual(parsed.subjectAlternativeNames, []);
+  it("reports null key fields for a certificate without key provider information", () => {
+    assert.deepEqual(parseCertutilKeyInfo(CERTUTIL_KEY_INFO_EN, thumbprints).get(OTHER_THUMBPRINT), {
+      keyContainer: null,
+      keyProvider: null,
+    });
   });
-});
 
-describe("parseSubjectAlternativeNames", () => {
-  it("returns [] for a block with no Subject Alternative Name heading at all", () => {
-    assert.deepEqual(parseSubjectAlternativeNames("Subject: CN=no-san.example.com\r\n"), []);
+  it("ignores blocks whose hash is not one of the requested thumbprints", () => {
+    const result = parseCertutilKeyInfo(CERTUTIL_KEY_INFO_EN, new Set([OTHER_THUMBPRINT]));
+    assert.equal(result.has(SAMPLE_THUMBPRINT), false);
   });
 });
 
@@ -274,105 +450,107 @@ describe("parseNetshSslcertBindings", () => {
 // ---------------------------------------------------------------------------
 
 describe("listMachineStoreCertificates", () => {
-  it("returns parsed certificates on success", async () => {
-    const execFileImpl = makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT });
+  it("joins the store query's fields with certutil's key container and provider", async () => {
+    const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: { stdout: CERTUTIL_KEY_INFO_EN } });
     const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
     assert.equal(result.ok, true);
     assert.equal(result.certificates.length, 2);
-  });
-
-  it("treats an empty/nonexistent store as ok: true, certificates: []", async () => {
-    const error = Object.assign(new Error("not found"), { code: 1 });
-    const execFileImpl = makeExecStub({ error, stdout: "Cannot find object or property." });
-    const result = await listMachineStoreCertificates({ store: "WebHosting", execFileImpl });
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.certificates, []);
-  });
-
-  it("returns ok: false on a genuine certutil failure", async () => {
-    const error = Object.assign(new Error("denied"), { code: 5 });
-    const execFileImpl = makeExecStub({ error, stderr: "Access is denied." });
-    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
-    assert.equal(result.ok, false);
-    assert.equal(result.exitCode, 5);
-  });
-
-  it("rejects an invalid store name before invoking execFile", async () => {
-    const execFileImpl = makeExecStub({ stdout: "" });
-    await assert.rejects(
-      listMachineStoreCertificates({ store: "My/../evil", execFileImpl }),
-      /valid Windows certificate store name/,
-    );
-    assert.equal(execFileImpl.calls.length, 0);
-  });
-
-  it("invokes certutil -v -store <name> with the expected argv", async () => {
-    const execFileImpl = makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT });
-    await listMachineStoreCertificates({ store: "My", execFileImpl, certutilPath: "certutil.exe" });
-    assert.equal(execFileImpl.calls.length, 1);
-    assert.deepEqual(execFileImpl.calls[0].args, ["-v", "-store", "My"]);
-  });
-
-  it("tags every returned certificate with the queried store name", async () => {
-    const execFileImpl = makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT });
-    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
-    assert.equal(result.certificates.length, 2);
+    const [keyed, unkeyed] = result.certificates;
+    assert.equal(keyed.thumbprint, SAMPLE_THUMBPRINT);
+    assert.equal(keyed.subject, "CN=www.example.com");
+    assert.equal(keyed.notAfter, "2027-01-01T00:00:00.000Z");
+    assert.equal(keyed.hasPrivateKey, true);
+    assert.equal(keyed.keyContainer, "tokentimer-job-1-abcd1234");
+    assert.equal(keyed.keyProvider, "Microsoft Software Key Storage Provider");
+    assert.equal(unkeyed.hasPrivateKey, false);
+    assert.equal(unkeyed.keyContainer, null);
     assert.ok(result.certificates.every((cert) => cert.store === "My"));
   });
 
-  // Defense in depth: if a correctly ordered verbose call still fails for
-  // an unrelated reason, the non-verbose query preserves core discovery.
-  it("falls back to a non-verbose query when the verbose (-v) query fails with a real error, still returning the store's certificates", async () => {
-    let call = 0;
-    const execFileImpl = (file, args, options, callback) => {
-      call += 1;
-      if (args.includes("-v")) {
-        const error = Object.assign(new Error("NTE_NOT_FOUND"), { code: -2146893807 });
-        process.nextTick(() =>
-          callback(
-            error,
-            "My \"Personal\"\n",
-            "CertUtil: -store command FAILED: 0x80090011 (-2146893807 NTE_NOT_FOUND)\nCertUtil: Object was not found.\n",
-          ),
-        );
-        return;
-      }
-      process.nextTick(() => callback(null, CERTUTIL_STORE_OUTPUT, ""));
-    };
-    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
-    assert.equal(result.ok, true);
-    assert.equal(result.certificates.length, 2);
-    assert.equal(call, 2);
+  it("resolves the key container on German and French hosts", async () => {
+    for (const certutilStdout of [CERTUTIL_KEY_INFO_DE, CERTUTIL_KEY_INFO_FR, CERTUTIL_KEY_INFO_FR_OEM]) {
+      const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: { stdout: certutilStdout } });
+      const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
+      assert.equal(result.ok, true);
+      assert.equal(result.certificates[0].keyContainer, "tokentimer-job-1-abcd1234");
+    }
   });
 
-  it("falls back to a non-verbose query but still reports SANs as [] (the -v-only field), never fabricating them", async () => {
-    const execFileImpl = (file, args, options, callback) => {
-      if (args.includes("-v")) {
-        const error = Object.assign(new Error("NTE_NOT_FOUND"), { code: -2146893807 });
-        process.nextTick(() => callback(error, "My \"Personal\"\n", "CertUtil: Object was not found.\n"));
-        return;
-      }
-      process.nextTick(() => callback(null, CERTUTIL_STORE_OUTPUT, ""));
-    };
-    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
-    assert.ok(result.certificates.every((cert) => Array.isArray(cert.subjectAlternativeNames) && cert.subjectAlternativeNames.length === 0));
+  it("runs Windows PowerShell without a profile, without PSModulePath, then non-verbose certutil -store", async () => {
+    const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: { stdout: CERTUTIL_KEY_INFO_EN } });
+    await listMachineStoreCertificates({ store: "My", execFileImpl });
+    assert.equal(execFileImpl.calls.length, 2);
+    const [query, keyInfo] = execFileImpl.calls;
+    assert.equal(query.file, "powershell.exe");
+    assert.deepEqual(query.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
+    assert.equal(query.args[3], buildStoreQueryScript("My"));
+    assert.ok(!Object.keys(query.options.env).some((key) => key.toLowerCase() === "psmodulepath"));
+    assert.equal(keyInfo.file, "certutil.exe");
+    assert.deepEqual(keyInfo.args, ["-store", "My"]);
   });
 
-  it("still reports ok: false (not a silent [] result) when BOTH the verbose and non-verbose queries fail", async () => {
-    const execFileImpl = makeExecStub({
-      error: Object.assign(new Error("denied"), { code: 5 }),
-      stderr: "Access is denied.",
+  it("skips certutil entirely when no certificate has a private key", async () => {
+    const execFileImpl = makeExecRouter({
+      powershell: { stdout: powershellJson([storeItem({ thumbprint: OTHER_THUMBPRINT })]) },
     });
+    const result = await listMachineStoreCertificates({ store: "Root", execFileImpl });
+    assert.equal(result.ok, true);
+    assert.equal(execFileImpl.calls.length, 1);
+  });
+
+  it("reports an empty or missing store as ok: true, certificates: []", async () => {
+    const execFileImpl = makeExecRouter({ powershell: { stdout: EMPTY_STORE_JSON } });
+    const result = await listMachineStoreCertificates({ store: "WebHosting", execFileImpl });
+    assert.deepEqual(result, { ok: true, certificates: [] });
+  });
+
+  it("returns ok: false when the store query fails", async () => {
+    const execFileImpl = makeExecRouter({ powershell: denied() });
     const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
     assert.equal(result.ok, false);
     assert.equal(result.exitCode, 5);
   });
 
-  it("does not fall back at all when the verbose query already succeeds (no wasted second call)", async () => {
-    const execFileImpl = makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT });
+  it("returns ok: false when the store query output is not JSON", async () => {
+    const execFileImpl = makeExecRouter({ powershell: { stdout: "Cert: drive not found" } });
     const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
-    assert.equal(result.ok, true);
-    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(result.ok, false);
+    assert.match(result.stderrExcerpt, /unreadable store query output/);
+  });
+
+  it("returns ok: false when certutil fails, rather than reporting keyed certificates without a container", async () => {
+    const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: denied() });
+    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 5);
+  });
+
+  it("returns ok: false when certutil does not report a container for a keyed certificate", async () => {
+    const withoutContainer = CERTUTIL_KEY_INFO_EN.replace(/^ {2}(Key Container|Provider) = .*\n/gm, "");
+    const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: { stdout: withoutContainer } });
+    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
+    assert.equal(result.ok, false);
+    assert.match(result.stderrExcerpt, new RegExp(`no key container for ${SAMPLE_THUMBPRINT}`));
+  });
+
+  it("returns ok: false when a keyed certificate is missing from certutil's listing (store changed in between)", async () => {
+    const execFileImpl = makeExecRouter({
+      powershell: { stdout: STORE_JSON },
+      certutil: { stdout: 'My "Personal"\nCertUtil: -store command completed successfully.\n' },
+    });
+    const result = await listMachineStoreCertificates({ store: "My", execFileImpl });
+    assert.equal(result.ok, false);
+  });
+
+  it("rejects an invalid store name before invoking execFile", async () => {
+    const execFileImpl = makeExecRouter({});
+    for (const store of ["My/../evil", "My'; Remove-Item C:\\", "..", "."]) {
+      await assert.rejects(
+        listMachineStoreCertificates({ store, execFileImpl }),
+        /valid Windows certificate store name/,
+      );
+    }
+    assert.equal(execFileImpl.calls.length, 0);
   });
 });
 
@@ -481,17 +659,14 @@ describe("listIisSites", () => {
 
 describe("discoverWindowsCertificateInventory", () => {
   it("cross-references store certificates with the bindings and IIS sites that reference them", async () => {
-    const execFileImpl = (file, args, options, callback) => {
-      if (args.includes("-store")) {
-        return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
-      }
-      if (args[0] === "list") {
-        return makeExecStub({ stdout: APPCMD_LIST_SITE_OUTPUT })(file, args, options, callback);
-      }
-      return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);
-    };
+    const execFileImpl = makeExecRouter({
+      powershell: { stdout: STORE_JSON },
+      certutil: { stdout: CERTUTIL_KEY_INFO_EN },
+      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+      appcmd: { stdout: APPCMD_LIST_SITE_OUTPUT },
+    });
 
-    const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
+    const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl, appcmdPath: "appcmd.exe" });
     assert.equal(result.ok, true);
     const bound = result.certificates.find((c) => c.thumbprint === SAMPLE_THUMBPRINT);
     assert.deepEqual(bound.boundAt, ["10.0.0.5:443"]);
@@ -503,52 +678,37 @@ describe("discoverWindowsCertificateInventory", () => {
   });
 
   it("reports boundSites: [] (not an error) when appcmd/IIS management tools are unavailable", async () => {
-    const execFileImpl = (file, args, options, callback) => {
-      if (args.includes("-store")) {
-        return makeExecStub({ stdout: CERTUTIL_STORE_OUTPUT })(file, args, options, callback);
-      }
-      if (args[0] === "list") {
-        const error = Object.assign(new Error("not found"), { code: 9009 });
-        return makeExecStub({ error, stderr: "'appcmd' is not recognized" })(file, args, options, callback);
-      }
-      return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);
-    };
+    const execFileImpl = makeExecRouter({
+      powershell: { stdout: STORE_JSON },
+      certutil: { stdout: CERTUTIL_KEY_INFO_EN },
+      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+      appcmd: { error: Object.assign(new Error("not found"), { code: 9009 }), stderr: "'appcmd' is not recognized" },
+    });
 
-    const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
+    const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl, appcmdPath: "appcmd.exe" });
     assert.equal(result.ok, true);
     assert.ok(result.certificates.every((cert) => Array.isArray(cert.boundSites) && cert.boundSites.length === 0));
   });
 
   it("surfaces a store query failure distinctly from an empty store", async () => {
-    const error = Object.assign(new Error("denied"), { code: 5 });
-    const execFileImpl = makeExecStub({ error, stderr: "Access is denied." });
+    const execFileImpl = makeExecRouter({ powershell: denied() });
     const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
     assert.equal(result.ok, false);
     assert.equal(result.code, "STORE_QUERY_FAILED");
   });
 
   it("surfaces a binding query failure distinctly", async () => {
-    let call = 0;
-    const execFileImpl = (file, args, options, callback) => {
-      call += 1;
-      if (call === 1) {
-        return makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT })(file, args, options, callback);
-      }
-      const error = Object.assign(new Error("denied"), { code: 5 });
-      return makeExecStub({ error, stderr: "Access is denied." })(file, args, options, callback);
-    };
+    const execFileImpl = makeExecRouter({ powershell: { stdout: EMPTY_STORE_JSON }, netsh: denied() });
     const result = await discoverWindowsCertificateInventory({ store: "My", execFileImpl });
     assert.equal(result.ok, false);
     assert.equal(result.code, "BINDING_QUERY_FAILED");
   });
 
   it("never touches the binding query's actual store scoping (reports bindings for all stores)", async () => {
-    const execFileImpl = (file, args, options, callback) => {
-      if (args.includes("-store")) {
-        return makeExecStub({ stdout: CERTUTIL_EMPTY_STORE_OUTPUT })(file, args, options, callback);
-      }
-      return makeExecStub({ stdout: NETSH_SHOW_SSLCERT_OUTPUT })(file, args, options, callback);
-    };
+    const execFileImpl = makeExecRouter({
+      powershell: { stdout: EMPTY_STORE_JSON },
+      netsh: { stdout: NETSH_SHOW_SSLCERT_OUTPUT },
+    });
     const result = await discoverWindowsCertificateInventory({ store: "WebHosting", execFileImpl });
     assert.equal(result.ok, true);
     assert.deepEqual(result.certificates, []);

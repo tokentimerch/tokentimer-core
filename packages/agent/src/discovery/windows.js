@@ -14,11 +14,9 @@
  * agentObservations.js -> certificate_targets -> certificate_instances)
  * handles both without a Windows-specific inventory table or API.
  *
- * One real gap exists at the adapter boundary: ../windows-discovery's
- * `certutil -store -v` text parser reports a certificate's SHA-1
- * `Cert Hash(sha1)` (Windows' own legacy thumbprint convention), never the
- * certificate's raw DER bytes, because certutil's text report has no
- * base64/DER dump mode. The control-plane observation contract requires a
+ * One real gap exists at the adapter boundary: ../windows-discovery reports
+ * a certificate's SHA-1 thumbprint (Windows' own legacy convention), not
+ * its raw DER bytes. The control-plane observation contract requires a
  * real SHA-256 `fingerprintSha256` (see ../evidence's FINGERPRINT_SHA256_PATTERN),
  * which cannot be derived from a SHA-1 hex string. This module closes that
  * gap with a minimal, read-only PowerShell call that fetches each store
@@ -30,10 +28,8 @@
  * canonical module.
  *
  * Subject Alternative Names are also derived from those already-fetched
- * public bytes when available. The canonical scanner uses certutil's
- * documented global-option ordering (`certutil -v -store <name>`), while
- * DER parsing remains an independent defense-in-depth path if verbose text
- * output is unavailable or differs across supported Windows versions.
+ * public bytes when available, falling back to the canonical module's own
+ * list.
  */
 
 const { spawnSync } = require("node:child_process");
@@ -43,6 +39,7 @@ const {
   listHttpSysBindings,
   listIisSites,
   findSitesForBinding,
+  parseNodeSubjectAltName,
 } = require("../windows-discovery");
 
 const POWERSHELL_TIMEOUT_MS = 30000;
@@ -173,70 +170,8 @@ function computeFingerprintSha256(rawCertificateBase64, onWarning = () => {}) {
 }
 
 /**
- * Parses Node's own `X509Certificate#subjectAltName` string format (e.g.
- * `"DNS:example.com, DNS:www.example.com, IP Address:10.0.0.5"`) into a
- * plain array of bare name values, matching ../windows-discovery's
- * `parseSubjectAlternativeNames` output shape (no "DNS:"/"IP Address:"
- * prefix) so a caller never has to know which parser produced a given
- * subjectAltNames array. Deliberately a separate parser rather than a
- * reuse of that function: the two tools format the same extension
- * differently ("DNS Name=" with a space+equals vs "DNS:" with a colon).
- *
- * @param {string|undefined} subjectAltName
- * @returns {string[]}
- */
-function parseNodeSubjectAltName(subjectAltName) {
-  if (typeof subjectAltName !== "string" || !subjectAltName) return [];
-  const entries = [];
-  let start = 0;
-  let inQuotedValue = false;
-  let escaped = false;
-  for (let index = 0; index <= subjectAltName.length; index += 1) {
-    const char = subjectAltName[index];
-    if (inQuotedValue) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inQuotedValue = false;
-      }
-    } else if (char === '"') {
-      inQuotedValue = true;
-    }
-    if (index === subjectAltName.length || (char === "," && !inQuotedValue)) {
-      entries.push(subjectAltName.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-
-  const values = [];
-  for (const entry of entries) {
-    const match = /^(?:DNS|IP Address|URI|email)\s*:\s*(.+)$/i.exec(entry);
-    if (!match) continue;
-    let value = match[1].trim();
-    if (value.startsWith('"')) {
-      try {
-        const decoded = JSON.parse(value);
-        if (typeof decoded !== "string") continue;
-        value = decoded;
-      } catch (_error) {
-        continue;
-      }
-    }
-    if (value) values.push(value);
-  }
-  return values;
-}
-
-/**
  * Reads Subject Alternative Names directly off a certificate's own raw DER
- * bytes via Node's `X509Certificate#subjectAltName`, rather than relying on
- * ../windows-discovery's parse of certutil's `-v` text dump.
- *
- * Deriving SANs from the already-fetched public bytes keeps SAN reporting
- * independent from certutil's verbose text format and costs no additional
- * certificate-store access.
+ * bytes via Node's `X509Certificate#subjectAltName`.
  *
  * @param {string|null|undefined} rawCertificateBase64
  * @param {(m: string) => void} onWarning
@@ -257,13 +192,13 @@ function readSubjectAltNamesFromDer(rawCertificateBase64, onWarning = () => {}) 
 /**
  * Resolves the subjectAltNames field for one certificate, preferring the
  * raw-bytes-derived list (see readSubjectAltNamesFromDer above) and only
- * falling back to ../windows-discovery's own certutil-text-parsed list when
- * the raw-bytes derivation is unavailable (e.g. the fingerprint-completion
- * PowerShell step itself is unavailable on this host). Either source, once
- * chosen, remains an array so commas inside legitimate SAN values are not
- * mistaken for entry delimiters downstream.
+ * falling back to ../windows-discovery's own list when the raw-bytes
+ * derivation is unavailable (e.g. the fingerprint-completion PowerShell
+ * step itself is unavailable on this host). Either source, once chosen,
+ * remains an array so commas inside legitimate SAN values are not mistaken
+ * for entry delimiters downstream.
  *
- * @param {ReturnType<typeof parseCertutilStoreBlock>} cert
+ * @param {{ subjectAlternativeNames?: string[] }} cert
  * @param {string|undefined} rawCertificateBase64
  * @param {(m: string) => void} onWarning
  * @returns {string[]}
@@ -394,7 +329,7 @@ async function collectWindowsDiscoveryObservations({
     });
     if (!storeResult.ok) {
       onWarning(
-        `windows discovery (windows_store ${storeName}): ${storeResult.stderrExcerpt || "certutil query failed"}`,
+        `windows discovery (windows_store ${storeName}): ${storeResult.stderrExcerpt || "store query failed"}`,
       );
       continue;
     }

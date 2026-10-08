@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows agent on non-English hosts** ([#327](https://github.com/tokentimerch/tokentimer-core/issues/327)): the agent read the machine certificate store through `certutil`'s English labels, so on hosts with another display language it found no certificates. Windows store discovery came back empty, replaced certificates never became eligible for retention cleanup, and the startup cleanup after an interrupted renewal could delete the private key of the certificate it had just installed. The store is now read through Windows PowerShell's certificate provider whatever the display language, and discovered validity dates are reported in UTC. **Operator action:** upgrade Windows agents running on non-English hosts.
+
 ## [0.17.3] - 2026-10-08
 
 ### Added
