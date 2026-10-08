@@ -17,7 +17,7 @@ const DB_PASSWORD = process.env.DB_PASSWORD || "password";
 const ADMIN_DB_NAME = process.env.DB_NAME || "tokentimer";
 const UPGRADE_DB_NAME = "tokentimer_inventory_name_67_upgrade_test";
 
-const { migrations, applyMigrationSql } = require(
+const { migrations, applyMigrationSql, applyPostCommitSql } = require(
   path.join(__dirname, "..", "..", "apps", "api", "migrations", "migrate.js"),
 );
 
@@ -52,6 +52,7 @@ async function applyMigrations(client, list) {
     try {
       await applyMigrationSql(client, migration);
       await client.query("COMMIT");
+      await applyPostCommitSql(client, migration);
     } catch (err) {
       await client.query("ROLLBACK");
       throw new Error(
@@ -218,6 +219,17 @@ describe("Inventory name length migration 67 - upgrade path", function () {
        VALUES ($1, $2, $1, $3, CURRENT_DATE + 90, 'api_key', 'key_secret')`,
       [userId, workspaceId, "  Padded New  "],
     );
+
+    const { rows: checks } = await pool.query(
+      `SELECT conname, convalidated
+         FROM pg_constraint
+        WHERE conname IN ('tokens_name_check', 'auto_sync_configs_name_canonical')
+        ORDER BY conname`,
+    );
+    expect(checks.map((row) => [row.conname, row.convalidated])).to.deep.equal([
+      ["auto_sync_configs_name_canonical", true],
+      ["tokens_name_check", true],
+    ]);
   });
 
   it("raises the auto-sync connection_key CHECK to 255 without altering TEXT", async () => {

@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Inventory token names and auto-sync configuration names accept 1–255 characters (previously 3–100 for token names and 1–100 for auto-sync names). Related identity fields such as issuer, serial, and vendor also allow 255 characters. **Operator action:** apply migration 67 (`inventory_and_auto_sync_name_length`) before storing names longer than 100 characters. Names that are only whitespace (including tabs and newlines) become `unnamed`; other existing names are not rewritten.
+- Inventory token names and auto-sync configuration names accept 1–255 characters (previously 3–100 for token names and 1–100 for auto-sync names). Related identity fields such as issuer, serial, and vendor also allow 255 characters. **Operator action:** apply migration 67 (`inventory_and_auto_sync_name_length`) before deploying API or worker processes that accept 255-character names. Names that are only whitespace (including tabs and newlines) become `unnamed`; other existing names are not rewritten. The VARCHAR widen is catalog-only; the new CHECKs are added `NOT VALID` and validated after commit so existing rows are scanned without holding an exclusive write lock.
 
 ### Added
 

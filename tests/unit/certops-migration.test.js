@@ -80,6 +80,11 @@ describe("operational notifications migration", () => {
       /regexp_replace\(name, '\^\[\[:space:\]\]\+\|\[\[:space:\]\]\+\$'/,
     );
     assert.match(widen.sql, /ALTER COLUMN name TYPE VARCHAR\(255\)/);
+    assert.match(widen.sql, /NOT VALID/);
+    assert.match(
+      widen.postCommitSql,
+      /VALIDATE CONSTRAINT tokens_name_check/,
+    );
     assert.match(
       widen.sql,
       /CHAR_LENGTH\(connection_key\) BETWEEN 1 AND 255/,

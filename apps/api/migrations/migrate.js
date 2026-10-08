@@ -4592,14 +4592,20 @@ const migrations = [
        WHERE char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) < 1;
       ALTER TABLE tokens ALTER COLUMN name TYPE VARCHAR(255);
       ALTER TABLE tokens ADD CONSTRAINT tokens_name_check
-        CHECK (char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) BETWEEN 1 AND 255);
+        CHECK (char_length(regexp_replace(name, '^[[:space:]]+|[[:space:]]+$', '', 'g')) BETWEEN 1 AND 255)
+        NOT VALID;
 
       ALTER TABLE auto_sync_configs DROP CONSTRAINT IF EXISTS auto_sync_configs_name_canonical;
       ALTER TABLE auto_sync_configs ADD CONSTRAINT auto_sync_configs_name_canonical
         CHECK (connection_key = REGEXP_REPLACE(
                  regexp_replace(connection_key, '^[[:space:]]+|[[:space:]]+$', '', 'g'),
                  '[[:space:]]+', ' ', 'g')
-               AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 255);
+               AND CHAR_LENGTH(connection_key) BETWEEN 1 AND 255)
+        NOT VALID;
+    `,
+    postCommitSql: `
+      ALTER TABLE tokens VALIDATE CONSTRAINT tokens_name_check;
+      ALTER TABLE auto_sync_configs VALIDATE CONSTRAINT auto_sync_configs_name_canonical;
     `,
   },
 ];
@@ -4910,6 +4916,11 @@ async function applyMigrationSql(client, migration) {
   if (migration.version === 62) await client.query("DROP VIEW pg_temp.audit_events");
 }
 
+async function applyPostCommitSql(client, migration) {
+  if (!migration.postCommitSql) return;
+  await client.query(migration.postCommitSql);
+}
+
 async function runMigrations() {
   logger.info("Starting database migrations...");
 
@@ -5015,6 +5026,7 @@ async function runMigrations() {
             [migration.version, migration.name],
           );
           await client.query("COMMIT");
+          await applyPostCommitSql(client, migration);
           logger.info(`Migration ${migration.version} completed successfully`);
           migrationsRun++;
         } catch (error) {
@@ -5042,4 +5054,10 @@ if (require.main === module) {
   runMigrations().finally(() => migrationPool.end());
 }
 
-module.exports = { runMigrations, migrations, validateMigrationHistory, applyMigrationSql };
+module.exports = {
+  runMigrations,
+  migrations,
+  validateMigrationHistory,
+  applyMigrationSql,
+  applyPostCommitSql,
+};

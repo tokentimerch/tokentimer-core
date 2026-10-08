@@ -2358,8 +2358,8 @@ router.post(
       for (let itemIndex = 0; itemIndex < itemsToImport.length; itemIndex++) {
         const it = itemsToImport[itemIndex];
         try {
-          // Length is the operator-facing name (after JS trim). Escape after that
-          // so a 255-character name is not rejected only because < became &lt;.
+          // Operator-facing cap is 1-255 on the trimmed name. HTML-escaping can
+          // still make the stored value longer; reject those so they fit VARCHAR(255).
           let name = String(it?.name || "").trim();
           if (!name) throw new Error("missing name");
           if (name.length > 255)

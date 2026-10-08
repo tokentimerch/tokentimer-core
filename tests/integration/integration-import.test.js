@@ -1,4 +1,4 @@
-const { request, expect } = require("./setup");
+const { request, expect, TestUtils } = require("./setup");
 
 // Helper function to generate future dates for test tokens
 function getFutureDate(daysInFuture = 90) {
@@ -73,121 +73,117 @@ describe("Generic integration import endpoint", () => {
       });
   });
 
-  it("rejects a missing import name", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: "",
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body).to.have.property("error_count");
-          expect(res.body.error_count).to.equal(1);
-          expect(res.body.errors[0].error).to.match(/missing name/i);
-        }
-      });
-  });
+  describe("authenticated name length", function () {
+    this.timeout(60000);
 
-  it("rejects a 256-character import name", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: "A".repeat(256),
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body).to.have.property("error_count");
-          expect(res.body.error_count).to.equal(1);
-          expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
-        }
-      });
-  });
+    let cookie;
+    let workspaceId;
 
-  it("accepts a 255-character import name that contains < after encoding stays in bound", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: `${"A".repeat(251)}<`,
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body.error_count || 0).to.equal(0);
-        }
-      });
-  });
+    before(async () => {
+      const testUser = await TestUtils.createVerifiedTestUser();
+      const session = await TestUtils.loginTestUser(
+        testUser.email,
+        "SecureTest123!@#",
+      );
+      if (!session?.cookie) {
+        throw new Error("import name-length tests require an authenticated session");
+      }
+      cookie = session.cookie;
+      workspaceId = await TestUtils.ensureTestWorkspace(cookie);
+    });
 
-  it("rejects a 255-character import name that encodes past VARCHAR(255)", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: `${"A".repeat(254)}<`,
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body).to.have.property("error_count");
-          expect(res.body.error_count).to.equal(1);
-          expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
-        }
-      });
-  });
+    function importItems(items) {
+      return request("http://localhost:4000")
+        .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
+        .set("Cookie", cookie)
+        .send({ items });
+    }
 
-  it("accepts 1-character and 255-character import names", async () => {
-    const res = await request("http://localhost:4000")
-      .post("/api/v1/integrations/import?workspace_id=test")
-      .send({
-        items: [
-          {
-            name: "A",
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-          {
-            name: "B".repeat(255),
-            expiration: getFutureDate(180),
-            category: "key_secret",
-            type: "api_key",
-          },
-        ],
-      })
-      .expect((res) => {
-        expect([400, 401, 201]).to.include(res.status);
-        if (res.status === 201) {
-          expect(res.body.error_count || 0).to.equal(0);
-        }
-      });
+    it("rejects a missing import name", async () => {
+      const res = await importItems([
+        {
+          name: "",
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/missing name/i);
+    });
+
+    it("rejects a 256-character import name", async () => {
+      const res = await importItems([
+        {
+          name: "A".repeat(256),
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+    });
+
+    it("stores a name whose encoded form still fits 255 characters", async () => {
+      const stored = `${"A".repeat(251)}&lt;`;
+      const res = await importItems([
+        {
+          name: `${"A".repeat(251)}<`,
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(0);
+      expect(res.body.created_count).to.equal(1);
+      expect(res.body.created[0].name).to.equal(stored);
+
+      const storedRow = await TestUtils.execQuery(
+        "SELECT name FROM tokens WHERE id = $1",
+        [res.body.created[0].id],
+      );
+      expect(storedRow.rows[0].name).to.equal(stored);
+    });
+
+    it("rejects a 255-character import name that encodes past VARCHAR(255)", async () => {
+      const res = await importItems([
+        {
+          name: `${"A".repeat(254)}<`,
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(1);
+      expect(res.body.created_count).to.equal(0);
+      expect(res.body.errors[0].error).to.match(/name.*1.*255/i);
+    });
+
+    it("accepts 1-character and 255-character import names and stores them", async () => {
+      const longName = "B".repeat(255);
+      const res = await importItems([
+        {
+          name: "A",
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+        {
+          name: longName,
+          expiration: getFutureDate(180),
+          category: "key_secret",
+          type: "api_key",
+        },
+      ]).expect(201);
+      expect(res.body.error_count).to.equal(0);
+      expect(res.body.created_count).to.equal(2);
+      const names = res.body.created.map((row) => row.name);
+      expect(names).to.include("A");
+      expect(names).to.include(longName);
+    });
   });
 
   it("validates renewal_date format", async () => {
