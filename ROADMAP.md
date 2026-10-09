@@ -1,4 +1,4 @@
-﻿# TokenTimer Core -- Roadmap
+# TokenTimer Core -- Roadmap
 
 Last reviewed: 2026-10-09 for the AD CS issuer contracts against main
 `91cc31d48322f63ae443676fc3657f4372e1b22e`.

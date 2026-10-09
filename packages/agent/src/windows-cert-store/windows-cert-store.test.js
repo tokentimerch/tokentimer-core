@@ -475,6 +475,77 @@ describe("generateCsrViaCng", () => {
     assert.deepEqual(fs.readdirSync(workDir), []);
   });
 
+  it("never calls certreq -new when the Software KSP listing probe fails", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const error = Object.assign(new Error("certutil failed"), { code: 1 });
+    const execFileImpl = makeExecStub({
+      error,
+      stderr: "CertUtil: The system cannot find the path specified.",
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "enrollment_container_probe_failed");
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.equal(
+      execFileImpl.calls.some((call) => call.file === "certreq.exe"),
+      false,
+    );
+    assert.deepEqual(fs.readdirSync(workDir), []);
+  });
+
+  it("does not treat a similarly named KSP line as the enrollment container", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    let infText = null;
+    const execFileImpl = makeExecStub({
+      onCall: ({ file, args }) => {
+        if (file === "certutil.exe") {
+          // Prefix / suffix neighbors must not match the exact listing line.
+          return;
+        }
+        if (file === "certreq.exe" && args.includes("-new")) {
+          infText = fs.readFileSync(args[3], "utf8");
+          fs.writeFileSync(
+            args[4],
+            "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+            "utf8",
+          );
+        }
+      },
+      stdout: [
+        "Microsoft Software Key Storage Provider:",
+        `  ${containerName}-extra`,
+        `  prefix-${containerName}`,
+        "",
+      ].join("\n"),
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.containerName, containerName);
+    assert.match(infText, new RegExp(`KeyContainer = "${containerName}"`));
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.equal(execFileImpl.calls[1].file, "certreq.exe");
+  });
+
   it("rejects a malformed enrollmentId before ever invoking execFile", async () => {
     const workDir = makeTempDir();
     const execFileImpl = makeExecStub();
