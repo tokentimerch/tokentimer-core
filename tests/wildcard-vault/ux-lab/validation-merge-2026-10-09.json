@@ -1,0 +1,86 @@
+{
+  "passed": true,
+  "runId": "7c8c5b33-0397-49ec-a4cb-eb63ea95c033",
+  "workspaceId": "5daaf885-b0db-414e-8fa0-1910a6d53f32",
+  "checks": [
+    {
+      "name": "normal admin bootstrap, email invitation/verification and three enrolled agents",
+      "passed": true
+    },
+    {
+      "name": "signed enrolled issuer: real DNS-01 order, Vault publication and custom canonical key",
+      "passed": true,
+      "jobId": "511f1465-5555-4430-8227-fffadc46f8e1",
+      "versionId": "c4285e3e-07fe-5ff0-b7cd-432c6cc6629c"
+    },
+    {
+      "name": "SAN-only publication automatically configures renewal; repair preserves profile and enforces admin/input boundaries",
+      "passed": true
+    },
+    {
+      "name": "concurrent unchanged PUTs and idempotent request before approval",
+      "passed": true
+    },
+    {
+      "name": "actual outbox expansion, two served/trusted TLS consumers and replay after completion",
+      "passed": true,
+      "approvalJobId": "70a15971-c0b0-4904-9097-801e5e42c321"
+    },
+    {
+      "name": "unchanged PUTs preserve deployed proof and convergence",
+      "passed": true
+    },
+    {
+      "name": "request replay after consumer membership changes",
+      "passed": true
+    },
+    {
+      "name": "public rejection releases never-claimed publication allocation and retains history",
+      "passed": true
+    },
+    {
+      "name": "real binding change advances revision, invalidates proof and preserves original request identity",
+      "passed": true
+    },
+    {
+      "name": "cross-tenant public API access denied",
+      "passed": true
+    },
+    {
+      "name": "reviewed local policy revision and new approval restore convergence",
+      "passed": true
+    },
+    {
+      "name": "reject unclaimed renewal, retained history and corrected same-group allocation",
+      "passed": true
+    },
+    {
+      "name": "lost Vault write/read responses leave old key and block fresh issuance",
+      "passed": true
+    },
+    {
+      "name": "operator retries original job: recovery promotes rotated custom key without another order",
+      "passed": true
+    },
+    {
+      "name": "next real ACME CSR reuses the recovered rotated key in custom directory",
+      "passed": true
+    },
+    {
+      "name": "renewed source never implies an offline consumer is current",
+      "passed": true
+    },
+    {
+      "name": "offline consumer catches up through signed pinned deployment without a fourth ACME order",
+      "passed": true
+    }
+  ],
+  "acmeOrders": 3,
+  "databaseInjection": false,
+  "limits": [
+    "Core lab only; Cloud/Enterprise billing/license flows are not exercised here.",
+    "Lab-only experimental build, Pebble CA and development Vault token; no customer/release qualification.",
+    "Never-claimed cancellation is not exercised: no standalone public job-cancel API exists, and agent retirement fences claimed/running work only.",
+    "Historical backfill cannot be manufactured through public APIs; previous migration regression remains separate evidence."
+  ]
+}
