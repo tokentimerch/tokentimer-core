@@ -1,7 +1,7 @@
-# TokenTimer Core -- Roadmap
+﻿# TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-08 for the AD CS issuer contracts against main
-`813b0b111c7b2d6e4a5a3cbfdb458bd0b4572ecd`.
+Last reviewed: 2026-10-09 for the AD CS issuer contracts against main
+`91cc31d48322f63ae443676fc3657f4372e1b22e`.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
