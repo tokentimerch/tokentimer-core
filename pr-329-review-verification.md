@@ -145,6 +145,15 @@ No Cloud or Enterprise changes were required for these Core-local corrections.
 
 ## Remaining risks / unexecuted qualification
 
+- **Default-branch dependency alerts:** the push reported three open High
+  Dependabot alerts. The GitHub API confirms `sharp`/librsvg
+  ([179](https://github.com/tokentimerch/tokentimer-core/security/dependabot/179),
+  [181](https://github.com/tokentimerch/tokentimer-core/security/dependabot/181),
+  fixed in sharp 0.35.5) and `source-map-js`
+  ([180](https://github.com/tokentimerch/tokentimer-core/security/dependabot/180),
+  fixed in 1.2.2). These are existing dependency findings, outside these four
+  corrections. The successful production-only pnpm audit and earlier main image
+  scan do not establish that these alerts are resolved; separate triage remains.
 - **Existing transfer limitation:** invoking `certops_transfer_management_sources`
   for published distribution history fails with foreign key
   `certops_material_versions_workspace_id_publishing_job_id_fkey`: the transfer
