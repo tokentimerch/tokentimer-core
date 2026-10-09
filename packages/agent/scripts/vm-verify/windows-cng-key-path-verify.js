@@ -49,11 +49,17 @@ function kspContainerList() {
 }
 
 // certutil labels are localized, the extension OID and the hex flags are not.
-// French inserts a non-breaking space before the colon after the OID.
+// The separator after the OID is often a non-breaking space that the console
+// code page mangles, so find the OID then take the last (hh) before the next OID.
 function csrKeyUsageHex(csrPath) {
   const dump = run("certutil.exe", ["-dump", csrPath]).stdout;
-  const m = dump.match(/2\.5\.29\.15[\s\u00a0]*:[\s\S]{0,400}?\(([0-9a-f]{2})\)/i);
-  return m ? m[1].toLowerCase() : null;
+  const idx = dump.search(/2\.5\.29\.15/);
+  if (idx < 0) return null;
+  const window = dump.slice(idx, idx + 500);
+  const nextOid = window.search(/\r?\n\s*2\.5\.29\./);
+  const region = nextOid > 0 ? window.slice(0, nextOid) : window;
+  const matches = [...region.matchAll(/\(([0-9a-f]{2})\)/gi)];
+  return matches.length > 0 ? matches[matches.length - 1][1].toLowerCase() : null;
 }
 
 function inspectStoreKey(thumbprint) {
