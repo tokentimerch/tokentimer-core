@@ -4,8 +4,16 @@ Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
 explicitly assigned Linux consumers → concrete TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
-deploying to every consumer. This candidate adds migration 68; Cloud applies the
-same SQL as migration 85. Enterprise inherits Core through staged composition.
+deploying to every consumer. This candidate adds migrations 68–69; Cloud applies
+the same SQL as migrations 86–87 after main's inventory migration 85. Enterprise
+inherits Core through staged composition.
+
+Rejected/cancelled publications release their allocation only when the database
+proves zero execution attempts and no claim/start/lease evidence. The retained
+version records the release reason/time. Generic failures and uncertain attempts
+must recover the same version; they never authorize another ACME order.
+Issuer key custody uses the configured local `execution.keysDir` throughout
+publication and recovery. The checkpoint records the actual rotation outcome.
 
 ## Deployment boundary and qualification
 

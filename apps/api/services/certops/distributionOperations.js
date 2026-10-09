@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const material = require("./materialDistribution");
-const { createCertificateJob } = require("./jobs");
+const { createCertificateJob, getCertificateJobById, assertSafePublicValue } = require("./jobs");
 const { assertDistributionPolicy: lockWorkspaceForCertOpsSideEffect } = require("./distributionPolicy");
 
 function fail(code, statusCode = 409) { const e = new Error(code); e.code = code; e.statusCode = statusCode; throw e; }
@@ -15,11 +15,19 @@ async function transaction(work, dbPool = pool) {
 }
 async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(), binding, actorUserId }) {
   material.validateDistributionContract("consumerBinding", binding);
+  groupId = groupId.toLowerCase();
+  binding = {...binding,agentId:binding.agentId.toLowerCase()};
   return transaction(async (client) => {
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     await material.lockGroup(client, workspaceId, groupId);
     const old = (await client.query(`SELECT * FROM certops_consumer_bindings WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, [workspaceId, bindingId])).rows[0];
     if (old && old.group_id !== groupId) fail("CERTOPS_BINDING_GROUP_IMMUTABLE");
+    // Compare validated typed values while holding the group and binding locks.
+    // An identical PUT must preserve approvals, proofs and local authorization.
+    const authorization = { assigned_agent_id: binding.agentId, deployment_profile_ref: binding.deploymentProfileRef,
+      profile_revision: binding.profileRevision, required: binding.required, wave: binding.wave,
+      verification_policy: binding.verificationPolicy, freshness_seconds: binding.freshnessSeconds, state: binding.state };
+    if (old && Object.entries(authorization).every(([key,value]) => old[key] === value)) return old;
     const row = (await client.query(`INSERT INTO certops_consumer_bindings(id,workspace_id,group_id,assigned_agent_id,deployment_profile_ref,
       profile_revision,required,wave,verification_policy,freshness_seconds,state)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -38,14 +46,41 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
   });
 }
 async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, actorUserId, idempotencyKey }) {
+  workspaceId = workspaceId.toLowerCase();
+  groupId = groupId.toLowerCase();
+  materialVersionId = materialVersionId.toLowerCase();
+  if (idempotencyKey !== undefined && idempotencyKey !== null) {
+    if (typeof idempotencyKey !== "string" || idempotencyKey.trim().length > 128) fail("CERTOPS_JOB_INVALID",422);
+    idempotencyKey = idempotencyKey.trim() || null;
+    if (idempotencyKey) assertSafePublicValue(idempotencyKey);
+  }
+  const requestHash = rolloutRequestHash({groupId,materialVersionId,maxParallel,verificationOnly,actorUserId});
   return transaction(async (client) => {
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
+    if (idempotencyKey) {
+      // Serialize even an initially absent key, across groups in this tenant.
+      // Resolve before checking mutable membership, generation or validity.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[JSON.stringify([workspaceId,idempotencyKey])]);
+      const existing = (await client.query(`SELECT id,payload,requested_by_user_id,distribution_request_hash
+        FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2`,[workspaceId,idempotencyKey])).rows[0];
+      if (existing) {
+        const prior=existing.payload?.distributionRollout;
+        const priorHash=existing.distribution_request_hash || (prior && rolloutRequestHash({...prior,actorUserId:existing.requested_by_user_id}));
+        if (!prior || priorHash !== requestHash) fail("CERTOPS_JOB_IDEMPOTENCY_CONFLICT");
+        return getCertificateJobById({client,workspaceId,jobId:existing.id});
+      }
+    }
     const { group, intent } = await material.buildRolloutIntent({ client, workspaceId, groupId, materialVersionId, maxParallel, verificationOnly });
-    return createCertificateJob({ client, workspaceId, operation: "noop", source: "control-plane",
+    const job = await createCertificateJob({ client, workspaceId, operation: "noop", source: "control-plane",
       subjectType: "managed_certificate", subjectId: group.managed_certificate_id,
       assignedAgentId: group.issuer_agent_id, requestedByUserId: actorUserId, requiresApproval: true,
       idempotencyKey, payload: { distributionRollout: intent } });
+    await client.query("UPDATE certificate_jobs SET distribution_request_hash=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,job.id,requestHash]);
+    return job;
   });
+}
+function rolloutRequestHash({groupId,materialVersionId,maxParallel=1,verificationOnly=false,actorUserId}) {
+  return material.hashIntent({groupId:groupId.toLowerCase(),materialVersionId:materialVersionId.toLowerCase(),maxParallel,verificationOnly,actorUserId:actorUserId==null?null:String(actorUserId)});
 }
 async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUserId }) {
   if (!["paused","deploying","retired"].includes(state)) fail("CERTOPS_ROLLOUT_STATE_INVALID",422);

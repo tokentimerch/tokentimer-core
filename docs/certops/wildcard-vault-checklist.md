@@ -130,4 +130,13 @@ Latest inspected Core main
 CI (37791839057) was cancelled, including Docker Build & Security Scan; Cloud
 main CI (37790767654) completed successfully; Enterprise master CI (37768437343)
 succeeded. These
-are remote baseline observations, not CI results for this unpushed candidate.
+are historical remote baseline observations from 8 October, not current PR CI results.
+
+## PR review corrections (9 October 2026)
+
+The four findings and isolated regression procedure are recorded in
+`wildcard-vault-review-fixes.md`. Migration 69 releases only provably unexecuted
+terminal allocations and stores stable rollout request identity separately from
+approved execution intent. Publication promotes into the configured local key
+directory; identical binding PUTs preserve authorization revisions. Historical
+image evidence above applies to 7bb65c1d and does not qualify these corrections.

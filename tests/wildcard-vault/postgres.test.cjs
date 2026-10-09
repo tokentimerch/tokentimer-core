@@ -36,8 +36,8 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   await assert.rejects(pool.query(nameInsert,[actor,workspaceId,"x".repeat(256)]),{code:"22001"});
   if(process.env.TT_WILDCARD_API_ROOT) {
     const {migrations,applyMigrationSql,applyPostCommitSql}=require(path.join(apiRoot,"migrations/migrate.js"));
-    const nameMigration=migrations.find(row=>row.version===86),upgrade=await pool.connect();
-    assert.equal(nameMigration.name,"inventory_name_length_core_0173");
+    const nameMigration=migrations.find(row=>row.version===85),upgrade=await pool.connect();
+    assert.equal(nameMigration.name,"inventory_name_length");
     try {
       await upgrade.query("BEGIN");
       await upgrade.query("CREATE TEMP TABLE tokens(name VARCHAR(100) NOT NULL CONSTRAINT tokens_name_check CHECK(length(name)>=3)) ON COMMIT PRESERVE ROWS");
@@ -87,12 +87,26 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   for(const [bindingId,agentId,wave] of [[bindingA,consumerA,0],[bindingB,consumerB,1]])await operations.putBinding({workspaceId,groupId,bindingId,actorUserId:actor,
     binding:{agentId,deploymentProfileRef:`web${wave}`,profileRevision:1,required:true,wave,verificationPolicy:"served",freshnessSeconds:3600,state:"active"}});
   const approval=await operations.requestRollout({workspaceId,groupId,materialVersionId,actorUserId:actor,idempotencyKey:`rollout-${workspaceId}`});
+  const rolloutRequest={workspaceId,groupId,materialVersionId,actorUserId:actor,idempotencyKey:`rollout-${workspaceId}`};
+  assert.equal((await operations.requestRollout(rolloutRequest)).id,approval.id,"retry before approval");
+  const sameBinding={agentId:consumerA,deploymentProfileRef:"web0",profileRevision:1,required:true,wave:0,verificationPolicy:"served",freshnessSeconds:3600,state:"active"};
+  const puts=await Promise.all(Array.from({length:3},()=>operations.putBinding({workspaceId,groupId,bindingId:bindingA,actorUserId:actor,binding:sameBinding})));
+  assert.ok(puts.every(b=>b.authorization_revision===1),"concurrent identical PUTs retain authorization");
+  assert.equal((await operations.putBinding({workspaceId,groupId:groupId.toUpperCase(),bindingId:bindingA,actorUserId:actor,binding:{...sameBinding,agentId:consumerA.toUpperCase()}})).authorization_revision,1,"UUID normalization preserves authorization");
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_CONSUMER_BINDING_CHANGED'",[workspaceId])).rows[0].n,2,"no-op PUTs emit no change audit");
   assert.equal(approval.status,"pending_approval");
   await assert.rejects(approveJob({workspaceId,jobId:approval.id,approverUserId:actor}),{code:"CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN"});
   await approveJob({workspaceId,jobId:approval.id,approverUserId:approver});
   const approvalIntent=approval.payload.distributionRollout;
   const snapshot=await operations.transaction(client=>material.createRolloutSnapshot({client,workspaceId,groupId,materialVersionId,approvalJobId:approval.id,approvedIntentHash:material.hashIntent(approvalIntent)}));
   assert.equal(snapshot.generation,1);
+  assert.equal((await operations.requestRollout(rolloutRequest)).id,approval.id,"retry after expansion preserves original generation");
+  assert.deepEqual((await Promise.all(Array.from({length:3},()=>operations.requestRollout(rolloutRequest)))).map(j=>j.id),[approval.id,approval.id,approval.id]);
+  await assert.rejects(operations.requestRollout({...rolloutRequest,maxParallel:2}),{code:"CERTOPS_JOB_IDEMPOTENCY_CONFLICT"});
+  await assert.rejects(operations.requestRollout({...rolloutRequest,actorUserId:approver}),{code:"CERTOPS_JOB_IDEMPOTENCY_CONFLICT"});
+  const legacy=await operations.transaction(client=>require(path.join(apiRoot,"services/certops/jobs")).createCertificateJob({client,workspaceId,operation:"noop",source:"control-plane",subjectType:"managed_certificate",subjectId:job.subject_id,assignedAgentId:issuer,requestedByUserId:actor,requiresApproval:true,idempotencyKey:`legacy-${workspaceId}`,payload:{distributionRollout:approval.payload.distributionRollout}}));
+  assert.equal((await operations.requestRollout({...rolloutRequest,idempotencyKey:`legacy-${workspaceId}`})).id,legacy.id,"pre-migration requests derive stable identity from frozen payload");
+  await assert.rejects(pool.query("UPDATE certificate_jobs SET distribution_request_hash=repeat('0',64) WHERE workspace_id=$1 AND id=$2",[workspaceId,approval.id]),/immutable/);
   assert.equal((await operations.transaction(client=>material.createRolloutSnapshot({client,workspaceId,groupId,materialVersionId,approvalJobId:approval.id,approvedIntentHash:material.hashIntent(approvalIntent)}))).rolloutId,snapshot.rolloutId);
   await assert.rejects(pool.query(`UPDATE certops_consumer_deployments SET assigned_agent_id=$2 WHERE rollout_id=$1`,[snapshot.rolloutId,issuer]),/immutable/);
   if(process.env.TT_WILDCARD_API_ROOT) {
@@ -137,6 +151,8 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   if(process.env.TT_WILDCARD_API_ROOT)await pool.query("UPDATE workspaces SET is_frozen=false,plan='pro' WHERE id=$1",[workspaceId]);
   await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
   const matrix=await material.consumerMatrix({client:pool,workspaceId,groupId});assert.equal(matrix.find(r=>r.binding_id===bindingA).converged,true);assert.equal(matrix.find(r=>r.binding_id===bindingB).observed_material_version_id,null);
+  assert.equal((await operations.putBinding({workspaceId,groupId,bindingId:bindingA,actorUserId:actor,binding:sameBinding})).authorization_revision,1);
+  assert.equal((await material.consumerMatrix({client:pool,workspaceId,groupId})).find(r=>r.binding_id===bindingA).converged,true,"identical PUT preserves deployment proof");
   await operations.setRolloutState({workspaceId,groupId,rolloutId:snapshot.rolloutId,state:"paused",actorUserId:actor});
   await assert.rejects(operations.transaction(client=>material.resolveDistributionJobDefaults({client,workspaceId,operation:"deploy-from-store",subjectId:child.subject_id,payload:child.payload,assignedAgentId:consumerA})),{code:"CERTOPS_DEPLOYMENT_INTENT_MISMATCH"});
   const checkJob=await operations.requestRollout({workspaceId,groupId,materialVersionId,actorUserId:actor,idempotencyKey:`verify-${workspaceId}`,verificationOnly:true});
@@ -189,6 +205,72 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal(afterRenewal.observed_material_version_id,materialVersionId);
   assert.equal(afterRenewal.observed_fingerprint_sha256,cert.fingerprintSha256);
   assert.equal(new Date(afterRenewal.observed_valid_to).toISOString(),cert.notAfter);
+  await pool.query("UPDATE certificate_jobs SET status='succeeded' WHERE workspace_id=$1 AND id=$2",[workspaceId,approval.id]);
+  const concurrentKey=`concurrent-${workspaceId}`;
+  const concurrent=await Promise.all(Array.from({length:3},()=>operations.requestRollout({...rolloutRequest,materialVersionId:renewedReceipt.materialVersionId,idempotencyKey:concurrentKey})));
+  assert.ok(concurrent.every(j=>j.id===concurrent[0].id),"concurrent first requests allocate one approval");
+  await approveJob({workspaceId,jobId:concurrent[0].id,approverUserId:approver});
+  const changedBinding=await operations.putBinding({workspaceId,groupId,bindingId:bindingA,actorUserId:actor,binding:{...sameBinding,freshnessSeconds:3601}});
+  assert.equal(changedBinding.authorization_revision,2);
+  assert.equal((await operations.putBinding({workspaceId,groupId,bindingId:bindingA,actorUserId:actor,binding:{...sameBinding,freshnessSeconds:3601}})).authorization_revision,2);
+  await assert.rejects(operations.transaction(client=>material.createRolloutSnapshot({client,workspaceId,groupId,materialVersionId:renewedReceipt.materialVersionId,approvalJobId:concurrent[0].id,approvedIntentHash:material.hashIntent(concurrent[0].payload.distributionRollout)})),{code:"CERTOPS_ROLLOUT_APPROVAL_MISMATCH"});
+  const original=await operations.requestRollout(rolloutRequest);
+  assert.equal(original.id,approval.id,"retry after completion/membership change returns original approval");
+  assert.deepEqual(original.payload.distributionRollout,approval.payload.distributionRollout);
+  // Simulate a withdrawn identity: existing request identity remains replayable,
+  // but a fresh rollout must still satisfy current material validity.
+  await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='decommissioned' WHERE workspace_id=$1 AND id=$2",[workspaceId,oldIdentity.id]);
+  assert.equal((await operations.requestRollout(rolloutRequest)).id,approval.id);
+  await assert.rejects(operations.requestRollout({...rolloutRequest,idempotencyKey:`invalid-now-${workspaceId}`}),{code:"CERTOPS_ROLLOUT_VERSION_INVALID"});
+  const otherWorkspace=crypto.randomUUID();
+  await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Other isolated tenant',$2,$3)",[otherWorkspace,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  await assert.rejects(operations.requestRollout({...rolloutRequest,workspaceId:otherWorkspace}),{code:"CERTOPS_DISTRIBUTION_NOT_FOUND"});
+  await assert.rejects(operations.putBinding({workspaceId:otherWorkspace,groupId,bindingId:bindingA,actorUserId:actor,binding:sameBinding}),{code:"CERTOPS_DISTRIBUTION_NOT_FOUND"});
   await operations.transaction(async client=>{await client.query(`UPDATE certops_management_periods SET ended_at=clock_timestamp(),ended_reason='retired' WHERE workspace_id=$1 AND id=$2`,[workspaceId,intent.managementPeriodId]);});
   await assert.rejects(operations.transaction(client=>material.acceptPublicationReceipt({client,workspaceId,agentId:issuer,job,receipt,certificatePem})),{code:"CERTOPS_DISTRIBUTION_INACTIVE"});
+});
+
+test("terminal never-executed publications release transactionally; uncertain attempts remain fenced",async()=>{
+  const {createCertificateJob,updateCertificateJobStatus}=require(path.join(apiRoot,"services/certops/jobs"));
+  const {rejectJob}=require(path.join(apiRoot,"services/certops/jobApprovals"));
+  const workspaceId=crypto.randomUUID();
+  const actor=(await pool.query("INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Release fixture','fixture-only','local') RETURNING id",[`${workspaceId}@example.test`])).rows[0].id;
+  await pool.query("INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always) VALUES($1,'Isolated releases',$2,$3,true)",[workspaceId,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  const issuer=(await pool.query("INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash) VALUES($1,$2,'0.17.3','1.0.0',$3,$4) RETURNING id",[workspaceId,crypto.randomUUID(),`ttagent_${crypto.randomBytes(8).toString("hex")}`,crypto.randomBytes(32).toString("hex")])).rows[0].id;
+  const first=await operations.transaction(client=>createCertificateIssuanceJob({client,workspaceId,idempotencyKey:`release-${workspaceId}`,...(process.env.TT_WILDCARD_API_ROOT?{workspacePlan:"pro"}:{}),requestedByUserId:actor,assignedAgentId:issuer,
+    payload:{target:{type:"domain",reference:cert.commonName},sans:cert.subjectAltNames,caEndpoint:"https://pebble:14000/dir",commandRef:"certbot",dnsProvider:"pebble-challtestsrv",dnsZone:"example.com",keyAlgorithm:"rsa",keySize:2048,
+      publicationDestination:{materialStoreRef:"customer",issuanceProfileRef:"wildcard",profileRevision:1}}}));
+  const original=first.job,groupId=original.payload.publication.groupId;
+  const next=()=>operations.transaction(client=>createCertificateJob({client,workspaceId,operation:"issue",source:"control-plane",subjectType:"managed_certificate",subjectId:original.subjectId,assignedAgentId:issuer,requestedByUserId:actor,requiresApproval:true,
+    payload:{...original.payload,publication:{...original.payload.publication,materialVersionId:crypto.randomUUID()}}}));
+  const allocation=async id=>(await pool.query("SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND publishing_job_id=$2",[workspaceId,id])).rows[0];
+  await assert.rejects(operations.transaction(async client=>{await rejectJob({client,workspaceId,jobId:original.id,approverUserId:actor,reason:"Correct issuer policy"});throw new Error("rollback fixture");}),/rollback fixture/);
+  assert.equal((await allocation(original.id)).state,"allocated","release rolls back with rejection");
+  await rejectJob({workspaceId,jobId:original.id,approverUserId:actor,reason:"Correct issuer policy"});
+  assert.equal((await allocation(original.id)).allocation_release_reason,"rejected_before_execution");
+  const corrected=await next();assert.notEqual(corrected.id,original.id);
+  await updateCertificateJobStatus({workspaceId,jobId:corrected.id,status:"cancelled"});
+  assert.equal((await allocation(corrected.id)).allocation_release_reason,"cancelled_before_execution");
+  const stranded=await next();
+  await operations.transaction(async client=>{
+    // Reproduce the pre-fix persisted state, then execute the migration's real
+    // backfill twice. Only this dedicated synthetic database is touched.
+    await client.query("ALTER TABLE certificate_jobs DISABLE TRIGGER trg_certops_release_unexecuted_publication");
+    await client.query("UPDATE certificate_jobs SET status='cancelled' WHERE workspace_id=$1 AND id=$2",[workspaceId,stranded.id]);
+    await client.query("ALTER TABLE certificate_jobs ENABLE TRIGGER trg_certops_release_unexecuted_publication");
+    const sql=fs.readFileSync(path.resolve(__dirname,"../../apps/api/migrations/069-certops-distribution-review.sql"),"utf8");
+    const repair=sql.slice(sql.indexOf("-- Repair"),sql.indexOf("-- Stable"));
+    await client.query(repair);await client.query(repair);
+  });
+  assert.equal((await allocation(stranded.id)).state,"failed");
+  const uncertain=await next();
+  await pool.query("UPDATE certificate_jobs SET status='claimed',attempt_count=1,claim_id=gen_random_uuid(),claimed_by_agent_id=$3 WHERE workspace_id=$1 AND id=$2",[workspaceId,uncertain.id,issuer]);
+  await updateCertificateJobStatus({workspaceId,jobId:uncertain.id,status:"cancelled"});
+  assert.equal((await allocation(uncertain.id)).state,"allocated");
+  await assert.rejects(next(),{code:"CERTOPS_PUBLICATION_UNRESOLVED"});
+  // Even if claim fields are later cleared, the monotonic attempt count fences
+  // this version. A generic failed job is never proof of no ACME effects.
+  await pool.query("UPDATE certificate_jobs SET status='failed',claim_id=NULL,claimed_by_agent_id=NULL WHERE workspace_id=$1 AND id=$2",[workspaceId,uncertain.id]);
+  await assert.rejects(next(),{code:"CERTOPS_PUBLICATION_UNRESOLVED"});
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM certops_material_versions WHERE workspace_id=$1",[workspaceId])).rows[0].n,4,"history remains intact");
 });

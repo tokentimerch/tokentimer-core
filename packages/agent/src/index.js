@@ -2316,7 +2316,7 @@ async function executeJob({
         },
       });
       if (action !== "renew") return { status: "blocked", errorMessage: "material_publication_action_invalid" };
-      const session = publicationSession({ job, stores: executionContext.materialStores, stateDir });
+      const session = publicationSession({ job, stores: executionContext.materialStores, stateDir, keysDir: execution.keysDir });
       return await withMaterialLock(path.join(stateDir, "material-locks"), `issuer:${job.workspaceId}:${job.publication.groupId}`, async () => {
         const recovered = await session.recover(checkLease);
         if (recovered) return recovered;
@@ -2905,7 +2905,7 @@ async function executeRenewJob({
       };
     }
     certificatePem = staged.pem;
-    if (publication) publication.stage(certificatePem, readProtectedFile(stagedKeyPath), computeCertificateFingerprint(certificatePem));
+    if (publication) publication.stage(certificatePem, readProtectedFile(stagedKeyPath), computeCertificateFingerprint(certificatePem), keyRotated);
   } catch (err) {
     // Every *returned* failure above discards the staged key explicitly, but a
     // thrown one skipped it: the finally below cleans the CSR and the staged

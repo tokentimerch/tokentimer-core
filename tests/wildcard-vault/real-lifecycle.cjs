@@ -56,7 +56,7 @@ async function main() {
     const evidence=[];
     const recovered=await executeJob({job,jobId,claimId:crypto.randomUUID(),policyEngine,client:{reportEvidence:async body=>{assert.equal(JSON.stringify(body).includes("PRIVATE KEY"),false);evidence.push(body);}},leaseClient:{renewLease:async()=>({ok:true,leaseExpiresAt:new Date(Date.now()+60000).toISOString()})},executionContext:{execution:{enabled:true,dryRun:false,keysDir:path.join(root,"keys")},materialStores:stores},log:()=>{}});orders++;
     assert.equal(recovered.status,"succeeded",JSON.stringify(recovered));
-    const session=publicationSession({job,stores,stateDir:root});
+    const session=publicationSession({job,stores,stateDir:root,keysDir:path.join(root,"keys")});
     const pem=recovered.publicationCertificatePem;
     const duplicate=await session.recover(async()=>{});assert.deepEqual(duplicate.publicationReceipt,recovered.publicationReceipt);
     assert.equal(duplicate.publicationReceipt.providerVersion,1);

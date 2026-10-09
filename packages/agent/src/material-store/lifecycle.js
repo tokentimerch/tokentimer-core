@@ -33,7 +33,10 @@ function intentFromJob(job) {
   return { ...destination, workspaceId: job.workspaceId };
 }
 
-function publicationSession({ job, stores, stateDir, fixtureLoopbackHttp = false }) {
+function publicationSession({ job, stores, stateDir, keysDir, fixtureLoopbackHttp = false }) {
+  // Both directories are authoritative customer-local execution configuration.
+  // Never resolve custody paths from control-plane payload fields.
+  if (typeof keysDir !== "string" || !path.isAbsolute(keysDir)) throw failure("material_local_path_invalid");
   const intent = intentFromJob(job);
   const store = createVaultStore(stores, intent, { fixtureLoopbackHttp });
   const scope = store.scope;
@@ -45,11 +48,17 @@ function publicationSession({ job, stores, stateDir, fixtureLoopbackHttp = false
   const bundleFile = path.join(directory, "bundle.json");
   const checkpointFile = path.join(directory, "checkpoint.json");
   protectDirectory(directory);
+  let keyRotated = null;
+  if (fs.existsSync(checkpointFile)) {
+    const saved = JSON.parse(readProtectedFile(checkpointFile, 16384));
+    if (saved.jobId !== job.jobId || saved.materialVersionId !== intent.materialVersionId || saved.groupId !== intent.groupId) throw failure("material_staging_invalid");
+    if (typeof saved.keyRotated === "boolean") keyRotated = saved.keyRotated;
+  }
 
   function checkpoint(phase) {
     // Metadata journal and key-bearing artifacts are deliberately separate.
     writeProtectedJson(checkpointFile, { schemaVersion: 1, jobId: job.jobId,
-      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase });
+      groupId: intent.groupId, materialVersionId: intent.materialVersionId, phase, keyRotated });
   }
   async function publish(bundle, checkLease) {
     validateBundle(bundle, intent, scope);
@@ -62,15 +71,16 @@ function publicationSession({ job, stores, stateDir, fixtureLoopbackHttp = false
     // Keep the issuer's local reuse key consistent after rotation and after
     // recovery. This protected customer-side copy never enters job metadata.
     if (/^[A-Za-z0-9_.:-]{1,128}$/.test(job.certificateId || "")) {
-      writeProtectedFile(path.join(stateDir,"keys",`${job.certificateId}.key.pem`),bundle.privateKeyPem);
+      writeProtectedFile(path.join(keysDir,`${job.certificateId}.key.pem`),bundle.privateKeyPem);
     }
-    return { status: "succeeded", keyRotated: true, errorMessage: null,
+    return { status: "succeeded", keyRotated, errorMessage: null,
       publicationReceipt: receipt, publicationCertificatePem: bundle.certificatePem };
   }
-  function stage(certificatePem, privateKeyPem, fingerprintSha256) {
+  function stage(certificatePem, privateKeyPem, fingerprintSha256, rotated = null) {
     const bundle = { schemaVersion: 1, workspaceId: intent.workspaceId, groupId: intent.groupId,
       materialVersionId: intent.materialVersionId, certificatePem, privateKeyPem, fingerprintSha256, sans: scope.sans };
     validateBundle(bundle, intent, scope);
+    keyRotated = typeof rotated === "boolean" ? rotated : null;
     writeProtectedJson(bundleFile, bundle);
     checkpoint("validated_staging");
   }

@@ -20,7 +20,7 @@ HAProxy processes, plus contract, unit, secret-boundary and legacy regressions.
 See `tests/wildcard-vault/README.md` for reproducible commands and the
 implementation ledger for executed evidence and outstanding gates.
 
-Release depends on coordinated Cloud migrations 85/86, policy mappings and Enterprise
+Release depends on coordinated Cloud migrations 86/87, policy mappings and Enterprise
 composition of the exact reviewed Core candidate. New execution capabilities
 remain absent from the shipped qualification input pending complete enrolled
 agent/customer qualification. Appliance, Windows shared-key and Kubernetes

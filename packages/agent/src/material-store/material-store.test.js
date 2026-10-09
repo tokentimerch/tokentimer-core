@@ -134,7 +134,7 @@ test("checkpoint without validated material exposes uncertainty and never permit
   const f=fixture(t,`http://127.0.0.1:${server.address().port}`);
   Object.assign(f.scope,{issuerAgentId:"issuer",issuanceProfileRef:"profile",profileRevision:1,caEndpoint:"https://ca.test/dir",dnsProvider:"test",dnsZone:"example.com"});
   const job={workspaceId:f.intent.workspaceId,agentId:"issuer",jobId:crypto.randomUUID(),publication:{...f.intent,type:"vault-kv2",issuanceProfileRef:"profile",profileRevision:1},sans:f.bundle.sans,keyAlgorithm:f.scope.keyAlgorithm,caEndpoint:f.scope.caEndpoint,dnsProvider:f.scope.dnsProvider,dnsZone:f.scope.dnsZone};
-  const session=()=>publicationSession({job,stores:f.stores,stateDir:f.directory,fixtureLoopbackHttp:true});
+  const session=()=>publicationSession({job,stores:f.stores,stateDir:f.directory,keysDir:path.join(f.directory,"custom-custody"),fixtureLoopbackHttp:true});
   assert.equal(await session().recover(async()=>{}),null);session().start();
   await assert.rejects(session().recover(async()=>{}),{code:"material_issuance_uncertain"});
 });
@@ -146,6 +146,55 @@ test("local binding lock excludes concurrent deployment and releases after failu
   });
   await assert.rejects(withMaterialLock(locks,"binding",async()=>{throw new Error("fixture");}),/fixture/);
   assert.equal(await withMaterialLock(locks,"binding",async()=>"released"),"released");
+});
+
+test("custom issuer custody survives lost responses and recovery; next CSR reuses the promoted key", async (t) => {
+  let stored, loseReadback = true, posts = 0;
+  const server=http.createServer((req,res)=>{
+    if(req.method==="POST") {
+      let body="";req.on("data",chunk=>{body+=chunk;});req.on("end",()=>{
+        posts++;
+        if(stored) {res.writeHead(400).end();return;}
+        stored=JSON.parse(body).data;req.socket.destroy();
+      });
+    } else if(loseReadback) {req.socket.destroy();}
+    else res.end(JSON.stringify({data:{data:stored,metadata:{version:1,deletion_time:"",destroyed:false}}}));
+  });
+  await new Promise(r=>server.listen(0,"127.0.0.1",r));t.after(()=>new Promise(r=>server.close(r)));
+  const f=fixture(t,`http://127.0.0.1:${server.address().port}`);
+  Object.assign(f.scope,{issuerAgentId:"issuer",issuanceProfileRef:"profile",profileRevision:1,caEndpoint:"https://ca.test/dir",dnsProvider:"test",dnsZone:"example.com"});
+  const job={workspaceId:f.intent.workspaceId,agentId:"issuer",jobId:crypto.randomUUID(),certificateId:crypto.randomUUID(),
+    publication:{...f.intent,type:"vault-kv2",issuanceProfileRef:"profile",profileRevision:1},sans:f.bundle.sans,
+    keyAlgorithm:f.scope.keyAlgorithm,caEndpoint:f.scope.caEndpoint,dnsProvider:f.scope.dnsProvider,dnsZone:f.scope.dnsZone};
+  const keysDir=path.join(f.directory,"issuer-custody-custom");
+  const canonical=path.join(keysDir,`${job.certificateId}.key.pem`);
+  const {writeProtectedFile,readProtectedFile}=require("./index");
+  const {generateCsr}=require("../keys");
+  const oldKey=crypto.generateKeyPairSync("rsa",{modulusLength:2048}).privateKey.export({type:"pkcs8",format:"pem"});
+  writeProtectedFile(canonical,oldKey);
+  // A control-plane-looking path is never consulted for local custody.
+  job.keysDir=path.join(f.directory,"unauthorized");
+  const session=()=>publicationSession({job,stores:f.stores,stateDir:f.directory,keysDir,fixtureLoopbackHttp:true});
+  session().stage(f.bundle.certificatePem,f.bundle.privateKeyPem,f.bundle.fingerprintSha256,true);
+  await assert.rejects(session().recover(async()=>{}),{code:"material_publication_uncertain"});
+  assert.equal(readProtectedFile(canonical),oldKey);
+  loseReadback=false;
+  const recovered=await session().recover(async()=>{});
+  assert.equal(recovered.keyRotated,true);assert.equal(posts,2);
+  assert.equal(readProtectedFile(canonical),f.bundle.privateKeyPem);
+  assert.equal(fs.existsSync(path.join(f.directory,"keys")),false);
+  assert.equal(fs.existsSync(job.keysDir),false);
+  const csr=generateCsr({keyPath:canonical,subject:{commonName:"example.com"},altNames:f.bundle.sans});
+  assert.equal(csr.publicKeyPem,crypto.createPublicKey(f.bundle.privateKeyPem).export({type:"spki",format:"pem"}));
+  assert.notEqual(csr.publicKeyPem,crypto.createPublicKey(oldKey).export({type:"spki",format:"pem"}));
+  assert.equal((await session().recover(async()=>{})).keyRotated,true,"durable rotation outcome survives repeated recovery");
+  session().stage(f.bundle.certificatePem,f.bundle.privateKeyPem,f.bundle.fingerprintSha256,false);
+  assert.equal((await session().recover(async()=>{})).keyRotated,false,"reuse does not report rotation");
+  await assert.rejects(session().recover(async()=>{throw Object.assign(new Error("lease"),{code:"material_lease_unavailable"});}),{code:"material_lease_unavailable"});
+  writeProtectedFile(canonical,oldKey);
+  let leaseChecks=0;
+  await assert.rejects(session().recover(async()=>{if(++leaseChecks===2)throw Object.assign(new Error("lease"),{code:"material_lease_unavailable"});}),{code:"material_lease_unavailable"});
+  assert.equal(readProtectedFile(canonical),oldKey,"lease loss after Vault reconciliation prevents promotion");
 });
 
 test("bounded transport times out a stalled Vault body without exposing contents", async (t) => {
