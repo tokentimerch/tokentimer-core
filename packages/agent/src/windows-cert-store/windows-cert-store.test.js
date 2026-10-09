@@ -37,6 +37,7 @@ const {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
+  acquireEnrollmentLock,
   isProcessAlive,
   isStoreLockStale,
   parseStoreLockContents,
@@ -977,6 +978,37 @@ describe("acquireStoreLock", () => {
   it("parseStoreLockContents returns null for garbage input", () => {
     assert.equal(parseStoreLockContents("garbage"), null);
     assert.equal(parseStoreLockContents(""), null);
+  });
+});
+
+describe("acquireEnrollmentLock", () => {
+  const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+
+  it("acquires and releases independently of the store lock", () => {
+    const stateDir = makeTempDir();
+    const store = acquireStoreLock(stateDir, "My");
+    const enrollment = acquireEnrollmentLock(stateDir, enrollmentId);
+    assert.notEqual(store.lockPath, enrollment.lockPath);
+    enrollment.release();
+    store.release();
+  });
+
+  it("refuses a second concurrent acquisition on the same enrollment", () => {
+    const stateDir = makeTempDir();
+    const lock = acquireEnrollmentLock(stateDir, enrollmentId);
+    assert.throws(
+      () => acquireEnrollmentLock(stateDir, enrollmentId),
+      /enrollment .* is locked by a concurrent AD CS operation/,
+    );
+    lock.release();
+  });
+
+  it("rejects a malformed enrollmentId", () => {
+    const stateDir = makeTempDir();
+    assert.throws(
+      () => acquireEnrollmentLock(stateDir, "not-a-uuid"),
+      /enrollmentId must be a lowercase UUID/,
+    );
   });
 });
 

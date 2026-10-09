@@ -26,6 +26,7 @@
  */
 
 const { createAcmeIssuer } = require("./acme");
+const { createAdcsIssuer } = require("./adcs");
 
 const ISSUANCE_OUTCOMES = Object.freeze([
   "issued",
@@ -37,8 +38,9 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "uncertain",
 ]);
 
-// Kinds this agent build can run. The contract also defines adcs, which an
-// agent without it must never fall back to ACME for.
+// Kinds the executor will run today. createAdcsIssuer is exported and tested,
+// but adcs stays off this list until the renew/continue-enrollment path wires
+// the enrollment snapshot, helper binary, and W6 durable enrollment lock.
 const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
@@ -111,4 +113,5 @@ module.exports = {
   resolveJobIssuerKind,
   assertIssuanceOutcome,
   createAcmeIssuer,
+  createAdcsIssuer,
 };
