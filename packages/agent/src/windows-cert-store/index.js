@@ -1151,14 +1151,7 @@ function isStoreLockStale(lockPath) {
  * @param {string} storeName Windows machine store name (e.g. "My").
  * @returns {{ lockPath: string, release: () => void }}
  */
-function acquireStoreLock(stateDir, storeName) {
-  if (!WINDOWS_STORE_NAME_PATTERN.test(storeName)) {
-    throw buildError(`invalid store name for lock: ${JSON.stringify(storeName)}`);
-  }
-  const lockDir = path.join(stateDir, "windows-cert-store");
-  fs.mkdirSync(lockDir, { recursive: true });
-  const lockPath = path.join(lockDir, `${storeName}.lock`);
-
+function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   function tryAcquire() {
     return fs.openSync(lockPath, "wx");
   }
@@ -1179,18 +1172,12 @@ function acquireStoreLock(stateDir, storeName) {
         fd = tryAcquire();
       } catch (retryErr) {
         if (retryErr && retryErr.code === "EEXIST") {
-          throw buildError(
-            `store ${JSON.stringify(storeName)} is locked by a concurrent enrollment/binding operation (${lockPath})`,
-            "STORE_LOCKED",
-          );
+          throw buildError(busyMessage, busyCode);
         }
         throw retryErr;
       }
     } else if (err && err.code === "EEXIST") {
-      throw buildError(
-        `store ${JSON.stringify(storeName)} is locked by a concurrent enrollment/binding operation (${lockPath})`,
-        "STORE_LOCKED",
-      );
+      throw buildError(busyMessage, busyCode);
     } else {
       throw err;
     }
@@ -1215,6 +1202,49 @@ function acquireStoreLock(stateDir, storeName) {
       }
     },
   };
+}
+
+function acquireStoreLock(stateDir, storeName) {
+  if (!WINDOWS_STORE_NAME_PATTERN.test(storeName)) {
+    throw buildError(`invalid store name for lock: ${JSON.stringify(storeName)}`);
+  }
+  const lockDir = path.join(stateDir, "windows-cert-store");
+  fs.mkdirSync(lockDir, { recursive: true });
+  const lockPath = path.join(lockDir, `${storeName}.lock`);
+  return acquireExclusiveLockFile(
+    lockPath,
+    "STORE_LOCKED",
+    `store ${JSON.stringify(storeName)} is locked by a concurrent enrollment/binding operation (${lockPath})`,
+  );
+}
+
+/**
+ * Cross-process mutex for one AD CS enrollment (W6). The KSP existence
+ * probe in generateCsrViaCng is not atomic with certreq -new; the
+ * executor must hold this lock across probe, -new, submit/retrieve, and
+ * -accept for that enrollmentId. Same wx + stale-steal rules as the
+ * store lock. Distinct from acquireStoreLock: two enrollments may share
+ * a store, and two stores must not serialize unrelated enrollments.
+ *
+ * @param {string} stateDir
+ * @param {string} enrollmentId lowercase UUID
+ * @returns {{ lockPath: string, release: () => void }}
+ */
+function acquireEnrollmentLock(stateDir, enrollmentId) {
+  if (typeof enrollmentId !== "string" || !ENROLLMENT_ID_PATTERN.test(enrollmentId)) {
+    throw buildError(`enrollmentId must be a lowercase UUID (got ${JSON.stringify(enrollmentId)})`);
+  }
+  if (!isNonEmptyString(stateDir)) {
+    throw buildError("acquireEnrollmentLock requires a non-empty stateDir");
+  }
+  const lockDir = path.join(stateDir, "windows-cert-store");
+  fs.mkdirSync(lockDir, { recursive: true });
+  const lockPath = path.join(lockDir, `enrollment-${enrollmentId}.lock`);
+  return acquireExclusiveLockFile(
+    lockPath,
+    "ENROLLMENT_LOCKED",
+    `enrollment ${enrollmentId} is locked by a concurrent AD CS operation (${lockPath})`,
+  );
 }
 
 /**
@@ -1414,6 +1444,7 @@ module.exports = {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
+  acquireEnrollmentLock,
   isProcessAlive,
   isStoreLockStale,
   parseStoreLockContents,
