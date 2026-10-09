@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const { mapAdcsDisposition, HRESULT } = require("./adcs-disposition.js");
 const { decodeCmcResponse, EXIT_OK, EXIT_UNKNOWN, EXIT_FAIL } = require("./cmc-helper.js");
-const { createAdcsIssuer, derB64ToPem } = require("./adcs.js");
+const { createAdcsIssuer, derB64ToPem, certificateFileToPem, certreqExitCode } = require("./adcs.js");
 const { assertIssuanceOutcome, createAdcsIssuer: exported } = require("./index.js");
 
 const PIN = "1aefab442a37a51b6ccb8a319af784c6c37fe227d9a1c2ecf5bf6c65889017f3";
@@ -268,10 +268,30 @@ describe("createAdcsIssuer", () => {
     assert.match(outcome.detail, /artefact was written/);
   });
 
+  it("retrieve argv is -retrieve -config <ca> <id> <cer> <chain> <rsp>", async () => {
+    let seen;
+    const issuer = makeIssuer({
+      execFileImpl: async (_bin, argv) => {
+        seen = argv;
+        const rsp = argv[argv.length - 1];
+        fs.writeFileSync(rsp, "fake-rsp");
+        return { stdout: "", stderr: "" };
+      },
+      decodeCmcImpl: async () => ({
+        ok: true,
+        result: { disposition: "pending", requestId: 5 },
+      }),
+    });
+    await issuer.retrieve(5);
+    assert.deepEqual(seen.slice(0, 5), ["-q", "-retrieve", "-config", CA_CONFIG, "5"]);
+  });
+
   it("retrieve refuses a mismatched pend token", async () => {
     const issuer = makeIssuer({
       execFileImpl: async (_bin, argv) => {
         assert.ok(argv.includes("-retrieve"));
+        assert.equal(argv[2], "-config");
+        assert.equal(argv[4], "5");
         const rsp = argv[argv.length - 1];
         fs.writeFileSync(rsp, "fake-rsp");
         return { stdout: "", stderr: "" };
@@ -284,5 +304,22 @@ describe("createAdcsIssuer", () => {
     const outcome = await issuer.retrieve(5);
     assert.equal(outcome.outcome, "uncertain");
     assert.match(outcome.detail, /differs from journaled RequestId 5/);
+  });
+
+  it("reads a DER .cer as PEM", () => {
+    const der = Buffer.from("leaf-cert-bytes");
+    const cerPath = path.join(scratchDir, "issued.cer");
+    fs.writeFileSync(cerPath, der);
+    assert.equal(certificateFileToPem(cerPath), derB64ToPem(der.toString("base64")));
+  });
+
+  it("prefers numeric status over string err.code for HRESULT", () => {
+    const err = new Error("denied");
+    err.code = "ENOENT";
+    err.status = HRESULT.CERTSRV_E_ADMIN_DENIED_REQUEST;
+    assert.equal(certreqExitCode(err), HRESULT.CERTSRV_E_ADMIN_DENIED_REQUEST);
+    const numeric = new Error("denied");
+    numeric.code = HRESULT.RPC_S_SERVER_UNAVAILABLE;
+    assert.equal(certreqExitCode(numeric), HRESULT.RPC_S_SERVER_UNAVAILABLE);
   });
 });

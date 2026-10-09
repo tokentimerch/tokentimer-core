@@ -51,14 +51,31 @@ function derB64ToPem(derB64) {
   return `-----BEGIN CERTIFICATE-----\n${lines.join("\n")}\n-----END CERTIFICATE-----\n`;
 }
 
-function readPemIfPresent(filePath) {
+function certificateFileToPem(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
-    const pem = fs.readFileSync(filePath, "utf8");
-    return pem.trim().length > 0 ? pem : null;
+    const raw = fs.readFileSync(filePath);
+    if (raw.length === 0) return null;
+    const asText = raw.toString("utf8");
+    if (asText.includes("-----BEGIN CERTIFICATE-----")) {
+      return asText.trim().endsWith("-----END CERTIFICATE-----")
+        ? asText
+        : `${asText.trim()}\n`;
+    }
+    // certreq writes DER by default.
+    return derB64ToPem(raw.toString("base64"));
   } catch {
     return null;
   }
+}
+
+function certreqExitCode(err) {
+  // Node's execFile sets err.code to a string (ENOENT/ETIMEDOUT) on spawn
+  // failures and to the numeric HRESULT/exit on a running process. Prefer
+  // a numeric status when both exist.
+  if (typeof err.status === "number") return err.status;
+  if (typeof err.code === "number") return err.code;
+  return null;
 }
 
 async function runCertreq(execFileImpl, argv, timeoutMs) {
@@ -71,9 +88,8 @@ async function runCertreq(execFileImpl, argv, timeoutMs) {
     });
     return { exitCode: 0, stdout: result.stdout || "", stderr: result.stderr || "" };
   } catch (err) {
-    const code = typeof err.code === "number" ? err.code : typeof err.status === "number" ? err.status : null;
     return {
-      exitCode: code,
+      exitCode: certreqExitCode(err),
       stdout: err.stdout || "",
       stderr: err.stderr || "",
       killed: Boolean(err.killed || err.signal),
@@ -177,7 +193,7 @@ function createAdcsIssuer({
       if (mapped.certificateDerB64) {
         certificatePem = derB64ToPem(mapped.certificateDerB64);
       } else {
-        certificatePem = readPemIfPresent(cerPath);
+        certificatePem = certificateFileToPem(cerPath);
       }
       if (!certificatePem) {
         return {
@@ -264,12 +280,13 @@ function createAdcsIssuer({
       const rspPath = path.join(workDir, "retrieve-response.rsp");
 
       info(`job ${jobId}: AD CS certreq -retrieve requestId=${requestId}`);
+      // PoC argv: certreq -q -retrieve -config <ca> <RequestId> <cer> <chain> <rsp>
       const argv = [
         "-q",
         "-retrieve",
-        String(requestId),
         "-config",
         caConfig,
+        String(requestId),
         cerPath,
         chainPath,
         rspPath,
@@ -305,6 +322,8 @@ function createAdcsIssuer({
 module.exports = {
   createAdcsIssuer,
   derB64ToPem,
+  certificateFileToPem,
+  certreqExitCode,
   withEnrollmentLock,
   // test seam
   _enrollmentLocks: enrollmentLocks,
