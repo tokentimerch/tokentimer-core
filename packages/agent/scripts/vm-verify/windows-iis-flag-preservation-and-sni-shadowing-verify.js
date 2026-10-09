@@ -144,25 +144,39 @@ async function main() {
   console.log(`--- binding OLD cert at ipport=0.0.0.0:${partAPort} with newer flags this host's netsh offers ---`);
   runCaptured("netsh", ["http", "delete", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
   const offered = offeredNetshSslcertParams();
-  const flagArgs = Object.keys(NETSH_FLAG_BITS)
+  let flagArgs = Object.keys(NETSH_FLAG_BITS)
     .filter((name) => offered.has(name))
     .map((name) => `${name}=enable`);
   if (flagArgs.length === 0) {
     fail("netsh http add sslcert help offered none of the newer flags this driver checks");
   }
-  const expectedFlags = flagArgs.reduce((mask, arg) => mask | NETSH_FLAG_BITS[arg.split("=")[0]], 0) >>> 0;
+  // Some Server 2019 builds exit 0 and create nothing when given newer flags
+  // they list in help (e.g. disablelegacytls). Fall back to disablehttp2 alone.
+  const tryBind = (args) => {
+    runCaptured("netsh", ["http", "delete", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
+    const addArgs = [
+      "http",
+      "add",
+      "sslcert",
+      `ipport=0.0.0.0:${partAPort}`,
+      `certhash=${oldCert.thumbprint}`,
+      `appid={${require("node:crypto").randomUUID()}}`,
+      "certstorename=My",
+      ...args,
+    ];
+    const addResult = runCaptured("netsh", addArgs);
+    const flags = readDefaultFlags(`0.0.0.0:${partAPort}`);
+    return { addResult, flags };
+  };
+  let expectedFlags = flagArgs.reduce((mask, arg) => mask | NETSH_FLAG_BITS[arg.split("=")[0]], 0) >>> 0;
   console.log("offered flags:", flagArgs.join(" "), `expected DefaultFlags=${expectedFlags}`);
-  const addArgs = [
-    "http",
-    "add",
-    "sslcert",
-    `ipport=0.0.0.0:${partAPort}`,
-    `certhash=${oldCert.thumbprint}`,
-    `appid={${require("node:crypto").randomUUID()}}`,
-    "certstorename=My",
-    ...flagArgs,
-  ];
-  const addResult = runCaptured("netsh", addArgs);
+  let { addResult, flags: beforeFlags } = tryBind(flagArgs);
+  if (addResult.exitCode === 0 && beforeFlags === null && offered.has("disablehttp2")) {
+    console.log("OBSERVE: netsh exited 0 but created no binding; retrying with disablehttp2 only");
+    flagArgs = ["disablehttp2=enable"];
+    expectedFlags = NETSH_FLAG_BITS.disablehttp2;
+    ({ addResult, flags: beforeFlags } = tryBind(flagArgs));
+  }
   if (addResult.exitCode !== 0) {
     fail(`initial OLD-cert bind with explicit flags failed: ${addResult.stdout} ${addResult.stderr}`);
   } else {
@@ -171,7 +185,6 @@ async function main() {
 
   console.log("");
   console.log("--- registry confirmation of DefaultFlags BEFORE rebind (display-language independent) ---");
-  const beforeFlags = readDefaultFlags(`0.0.0.0:${partAPort}`);
   console.log("DefaultFlags before rebind:", beforeFlags);
   fs.writeFileSync(path.join(workDir, "wiis07-before-flags.txt"), String(beforeFlags), { encoding: "utf8" });
   if (beforeFlags !== expectedFlags) {
