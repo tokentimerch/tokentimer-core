@@ -75,6 +75,24 @@ function readDefaultFlags(ipPort) {
   return Number.isInteger(n) ? n >>> 0 : null;
 }
 
+/** Independent of localized netsh labels: SslCertHash is binary in the registry. */
+function readSslCertHash(ipPort) {
+  const script = [
+    `$k = Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\${ipPort}' -ErrorAction SilentlyContinue`,
+    `if (-not $k) { Write-Output 'missing'; exit 0 }`,
+    `$v = $k.GetValue('SslCertHash'); if ($null -eq $v) { Write-Output 'missing'; exit 0 }`,
+    `[BitConverter]::ToString([byte[]]$v).Replace('-','')`,
+  ].join("; ");
+  const out = runCaptured("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+  const line = String(out.stdout || "")
+    .trim()
+    .split(/\r?\n/)
+    .pop();
+  if (!line || line === "missing") return null;
+  const hex = line.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  return /^[0-9A-F]{40}$/.test(hex) ? hex : null;
+}
+
 async function issueRealCert({ workDir, caConfig, commonName, basename }) {
   const csrResult = await generateCsrViaCng({ commonName, jobId: basename, workDir });
   if (csrResult.ok === false) {
@@ -206,7 +224,7 @@ async function main() {
   }
 
   console.log("");
-  console.log("--- registry confirmation of DefaultFlags AFTER rebind ---");
+  console.log("--- registry confirmation of DefaultFlags and SslCertHash AFTER rebind ---");
   const afterFlags = readDefaultFlags(`0.0.0.0:${partAPort}`);
   console.log("DefaultFlags after rebind:", afterFlags);
   fs.writeFileSync(path.join(workDir, "wiis07-after-flags.txt"), String(afterFlags), { encoding: "utf8" });
@@ -214,6 +232,16 @@ async function main() {
     fail(`after rebind, expected DefaultFlags ${expectedFlags} to survive, got ${afterFlags}`);
   } else {
     console.log(`OK: DefaultFlags ${expectedFlags} survived the real rebind`);
+  }
+  const afterHash = readSslCertHash(`0.0.0.0:${partAPort}`);
+  console.log("SslCertHash after rebind:", afterHash);
+  fs.writeFileSync(path.join(workDir, "wiis07-after-certhash.txt"), String(afterHash), { encoding: "utf8" });
+  if (afterHash !== newCert.thumbprint.toUpperCase()) {
+    fail(
+      `after rebind, HTTP.sys SslCertHash is not the NEW thumbprint: expected ${newCert.thumbprint}, got ${afterHash}`,
+    );
+  } else {
+    console.log("OK: independent registry SslCertHash matches the NEW certificate");
   }
 
   console.log("");

@@ -3,8 +3,8 @@
 // Real-host regression for the shared CNG key path: explicit -machine on
 // certreq -new and -accept, Silent = TRUE, and KeyUsage chosen per algorithm,
 // end to end against a real enterprise CA. Also checks enrollment-named
-// containers and records what certreq does when asked for a second key under
-// a container name that already exists.
+// containers and asserts that a second generate for the same enrollment
+// refuses without replacing the first key.
 //
 // Run as LocalSystem (the service identity), never in an interactive session:
 //   node windows-cng-key-path-verify.js <workDir> <caConfig> <rsaTemplate> [ecTemplate]
@@ -30,11 +30,6 @@ function check(label, ok, detail = "") {
   if (!ok) process.exitCode = 1;
 }
 
-// Observations are recorded for later design work and never fail the run.
-function observe(label, detail) {
-  console.log(`OBSERVE: ${label}: ${detail}`);
-}
-
 function run(file, args) {
   const r = spawnSync(file, args, { encoding: "utf8", windowsHide: true, timeout: 120000 });
   return { status: r.status, stdout: r.stdout || "", stderr: r.stderr || "", error: r.error || null };
@@ -45,7 +40,14 @@ function excerpt(r) {
 }
 
 function kspContainerList() {
-  return run("certutil.exe", ["-key", "-csp", KSP]).stdout;
+  // Line-trimmed set: `certutil -key <name>` exits 0 even when gone.
+  const stdout = run("certutil.exe", ["-key", "-csp", KSP]).stdout || "";
+  return new Set(
+    stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
 }
 
 // certutil labels are localized, the extension OID and the hex flags are not.
@@ -132,7 +134,7 @@ async function main() {
     check(`${label}: certreq -machine -new succeeded under the service identity`, csr.ok, JSON.stringify(csr));
     if (!csr.ok) return;
     bareContainers.push(csr.containerName);
-    check(`${label}: container ${csr.containerName} is in the Software KSP`, kspContainerList().includes(csr.containerName));
+    check(`${label}: container ${csr.containerName} is in the Software KSP`, kspContainerList().has(csr.containerName));
     const s = submit(label, csr.csrPem, template);
     check(`${label}: CSR asks for KeyUsage 0x${keyUsageHex}`, csrKeyUsageHex(s.csrPath) === keyUsageHex, csrKeyUsageHex(s.csrPath));
     check(`${label}: CA issued`, Boolean(s.certPem), excerpt(s.r));
@@ -153,26 +155,26 @@ async function main() {
     if (!first.ok) return;
     check(`enrollment: container is ${expected}`, first.containerName === expected, first.containerName);
     bareContainers.push(expected);
-    check("enrollment: container is in the Software KSP", kspContainerList().includes(expected));
+    check("enrollment: container is in the Software KSP", kspContainerList().has(expected));
 
     const second = await certStore.generateCsrViaCng({
       commonName, altNames: [commonName], jobId: "keypath-enr", enrollmentId, workDir,
     });
-    observe(
-      "second certreq -new under the same container name",
-      second.ok ? "succeeded (certreq did not refuse)" : `refused, exit ${second.exitCode}: ${second.stdoutExcerpt} ${second.stderrExcerpt}`.trim(),
+    check(
+      "enrollment: second generate refuses when the container already exists",
+      second.ok === false && second.reason === "enrollment_container_exists",
+      JSON.stringify(second),
     );
-    if (second.ok) {
-      observe("second CSR carries a different public key", String(second.csrPem !== first.csrPem));
-    }
+    check("enrollment: original container still in the Software KSP after refuse", kspContainerList().has(expected));
 
     const s = submit("enr", first.csrPem, template);
     check("enrollment: CA issued for the first CSR", Boolean(s.certPem), excerpt(s.r));
     if (!s.certPem) return;
     const accept = await certStore.acceptCertificateViaCng({ certificatePem: s.certPem, workDir, store: "My" });
-    observe(
-      "first key still accepts its certificate after the second -new",
-      accept.ok ? "yes" : `no: ${JSON.stringify(accept)}`,
+    check(
+      "enrollment: first key still accepts its certificate after the refused second generate",
+      accept.ok,
+      JSON.stringify(accept),
     );
     if (accept.ok) {
       enrolled.push({ thumbprint: accept.thumbprint, containerName: expected });
@@ -204,7 +206,7 @@ async function main() {
       console.log(`removed bare container ${containerName}: ${JSON.stringify(r.ok ?? r)}`);
     }
     const remaining = kspContainerList();
-    const stale = [...enrolled.map((e) => e.containerName), ...bareContainers].filter((n) => remaining.includes(n));
+    const stale = [...enrolled.map((e) => e.containerName), ...bareContainers].filter((n) => remaining.has(n));
     check("cleanup left none of this run's containers behind", stale.length === 0, stale.join(", "));
   }
 

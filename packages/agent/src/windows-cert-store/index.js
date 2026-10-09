@@ -40,8 +40,8 @@
  * qualified-capabilities manifest was updated in the same change that
  * flipped os-store-managed to agent-deployable, per decision 14 / the
  * gated-capabilities module's own doc comment. The addstore/repairstore
- * non-default-store mirror path is unit-tested only (not yet real-host
- * verified); every real-host pass so far targeted the default "My" store.
+ * non-default-store mirror path (e.g. WebHosting) is also real-host
+ * verified via the nondefault-store-verify driver.
  */
 
 const childProcess = require("node:child_process");
@@ -695,7 +695,9 @@ function ensureWorkDir(workDir) {
  * @param {string[]} [input.altNames] additional dNSName SAN entries.
  * @param {string} input.jobId used to derive a readable, unique container name.
  * @param {string} [input.enrollmentId] AD CS only: names the container after
- *   the enrollment instead (see buildEnrollmentContainerName).
+ *   the enrollment instead (see buildEnrollmentContainerName). When set,
+ *   a second generate for the same enrollment refuses if that container
+ *   already exists in the Software KSP (does not replace the first key).
  * @param {"rsa-2048"|"rsa-3072"|"rsa-4096"|"ec-p256"|"ec-p384"} [input.algorithm]
  * @param {string} input.workDir absolute, ACL-protected scratch directory
  *   for this enrollment's INF/.req files (caller-owned; see ensureWorkDir).
@@ -704,10 +706,12 @@ function ensureWorkDir(workDir) {
  * @param {string} [input.certreqPath] defaults to "certreq.exe" (resolved
  *   via PATH/System32, matching every other Windows-native tool this agent
  *   shells out to).
+ * @param {string} [input.certutilPath] defaults to "certutil.exe"; used only
+ *   for the enrollment-container existence probe.
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
  *   { ok: true, csrPem: string, containerName: string, infPath: string, reqPath: string }
- *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string, reason?: string, containerName?: string }
  * >}
  */
 async function generateCsrViaCng({
@@ -719,6 +723,7 @@ async function generateCsrViaCng({
   workDir,
   execFileImpl = childProcess.execFile,
   certreqPath = "certreq.exe",
+  certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   if (!isNonEmptyString(workDir)) {
@@ -734,6 +739,47 @@ async function generateCsrViaCng({
 
   const containerName =
     enrollmentId === undefined ? buildContainerName(jobId) : buildEnrollmentContainerName(enrollmentId);
+
+  // Enrollment names are deterministic. A second -new under the same name
+  // can replace or strand the first key; refuse before certreq runs.
+  if (enrollmentId !== undefined) {
+    if (!isNonEmptyString(certutilPath)) {
+      throw buildError("certutilPath must be a non-empty string");
+    }
+    assertSafeArgvElements("certutilPath", [certutilPath]);
+    const listArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"];
+    assertSafeArgvElements("listArgv", listArgv);
+    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs);
+    if (listing.exitCode !== 0) {
+      return {
+        ok: false,
+        exitCode: listing.exitCode,
+        reason: "enrollment_container_probe_failed",
+        containerName,
+        stdoutExcerpt: boundAndRedactExcerpt(listing.stdout),
+        stderrExcerpt: boundAndRedactExcerpt(listing.stderr),
+      };
+    }
+    // `certutil -key <name>` exits 0 even when the key is gone; match the
+    // full Software KSP listing line by line instead.
+    const present = String(listing.stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .includes(containerName);
+    if (present) {
+      return guardReturnValue({
+        ok: false,
+        exitCode: null,
+        reason: "enrollment_container_exists",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: boundAndRedactExcerpt(
+          `enrollment container ${containerName} already exists; refusing a second certreq -new`,
+        ),
+      });
+    }
+  }
+
   const infText = buildCertreqInf({ commonName, altNames, containerName, algorithm });
 
   ensureWorkDir(workDir);
@@ -803,10 +849,8 @@ async function generateCsrViaCng({
  * retrievable from targetStore afterward (see
  * mirrorAcceptedCertificateToStore's own doc comment, step 4) -- this
  * function's success therefore never rests on certutil's exit codes alone.
- * NOTE: only the default-store (`My`) path has been verified against a
- * real Windows host so far; the addstore/repairstore/verify sequence for a
- * non-default store is unit-tested against a stubbed certutil, not yet
- * real-host verified (tracked as a follow-up).
+ * Both the default-store (`My`) path and the non-default-store mirror
+ * (WebHosting via addstore/repairstore/verify) are real-host verified.
  *
  * The resulting store thumbprint is computed locally from the certificate
  * bytes (a Windows thumbprint IS sha1(DER)), not parsed from certreq's own

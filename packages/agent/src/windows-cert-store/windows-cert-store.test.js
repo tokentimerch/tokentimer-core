@@ -417,7 +417,8 @@ describe("generateCsrViaCng", () => {
     const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
     let infText = null;
     const execFileImpl = makeExecStub({
-      onCall: ({ args }) => {
+      onCall: ({ file, args }) => {
+        if (file !== "certreq.exe" || !args.includes("-new")) return;
         infText = fs.readFileSync(args[3], "utf8");
         fs.writeFileSync(
           args[4],
@@ -440,6 +441,38 @@ describe("generateCsrViaCng", () => {
     assert.equal(result.containerName, `tokentimer-enr-${enrollmentId}`);
     assert.match(infText, new RegExp(`KeyContainer = "tokentimer-enr-${enrollmentId}"`));
     assert.match(infText, /^KeyUsage = 0x80$/m);
+    assert.equal(execFileImpl.calls.length, 2);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.deepEqual(execFileImpl.calls[0].args, [
+      "-csp",
+      "Microsoft Software Key Storage Provider",
+      "-key",
+    ]);
+    assert.equal(execFileImpl.calls[1].file, "certreq.exe");
+  });
+
+  it("refuses a second enrollment generate when the container already exists", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    const execFileImpl = makeExecStub({
+      stdout: `Microsoft Software Key Storage Provider:\n  ${containerName}\n`,
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "enrollment_container_exists");
+    assert.equal(result.containerName, containerName);
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.deepEqual(fs.readdirSync(workDir), []);
   });
 
   it("rejects a malformed enrollmentId before ever invoking execFile", async () => {
