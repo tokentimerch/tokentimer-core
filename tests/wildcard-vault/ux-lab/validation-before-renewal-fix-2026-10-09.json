@@ -1,0 +1,64 @@
+{
+  "passed": false,
+  "runId": "57bf288d-7bc5-42fe-96b4-f79155c9bbbb",
+  "workspaceId": "94f4760b-49ef-4f32-b28c-03d21e44e345",
+  "completed": [
+    "setup",
+    "publish",
+    "bindings",
+    "rejection",
+    "authorization"
+  ],
+  "checks": [
+    {
+      "name": "normal admin bootstrap, email invitation/verification and three enrolled agents",
+      "passed": true
+    },
+    {
+      "name": "signed enrolled issuer: real DNS-01 order, Vault publication and custom canonical key",
+      "passed": true,
+      "jobId": "5c06d74b-7143-402d-9b5c-113e17b86330",
+      "versionId": "be3d83bd-f5f0-53a4-ad59-5d6f37d3760e"
+    },
+    {
+      "name": "concurrent unchanged PUTs and idempotent request before approval",
+      "passed": true
+    },
+    {
+      "name": "actual outbox expansion, two served/trusted TLS consumers and replay after completion",
+      "passed": true,
+      "approvalJobId": "106f4350-8313-4254-ae81-1b0268f95b69"
+    },
+    {
+      "name": "unchanged PUTs preserve deployed proof and convergence",
+      "passed": true
+    },
+    {
+      "name": "request replay after consumer membership changes",
+      "passed": true
+    },
+    {
+      "name": "public rejection releases never-claimed publication allocation and retains history",
+      "passed": true
+    },
+    {
+      "name": "real binding change advances revision, invalidates proof and preserves original request identity",
+      "passed": true
+    },
+    {
+      "name": "cross-tenant public API access denied",
+      "passed": true
+    },
+    {
+      "name": "reviewed local policy revision and new approval restore convergence",
+      "passed": true
+    }
+  ],
+  "databaseInjection": false,
+  "experimentalAgentBuild": true,
+  "failure": "owner POST /api/v1/workspaces/94f4760b-49ef-4f32-b28c-03d21e44e345/certops/jobs: 400 {\"error\":\"Certificate renewal profile is missing or invalid\",\"code\":\"CERTOPS_RENEWAL_PROFILE_INCOMPLETE\"}",
+  "blocked": [
+    "Recovery and next renewal require a usable public renewal workflow.",
+    "Historical migration backfill is not fabricated through the database."
+  ]
+}

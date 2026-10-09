@@ -43,6 +43,9 @@ async function lockGroup(client, workspaceId, groupId) {
 async function resolveDistributionJobDefaults({ client, workspaceId, operation, subjectId, payload, assignedAgentId, jobId }) {
   const intent = validateDistributionContract(payload.publication ? "publication" : "materialDeployment", payload.publication || payload.materialDeployment);
   const group = await lockGroup(client, workspaceId, intent.groupId);
+  // Manual renewals may omit routing. Publication always belongs to this
+  // group's issuer; an explicitly different agent remains forbidden.
+  if (payload.publication && !assignedAgentId) assignedAgentId = group.issuer_agent_id;
   if (!assignedAgentId || group.managed_certificate_id !== subjectId || group.material_store_ref !== intent.materialStoreRef) fail("CERTOPS_MATERIAL_ASSIGNMENT_REQUIRED", 422);
   if (payload.publication) {
     if (!["issue", "renew"].includes(operation) || group.issuer_agent_id !== assignedAgentId ||

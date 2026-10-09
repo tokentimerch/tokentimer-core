@@ -120,7 +120,7 @@ const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   findActiveJobForSubject,
   getCertificateJobById,
-  isAgentDeployableKeyMode,
+  isAgentRenewableKeyMode,
   isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
@@ -412,6 +412,9 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|PUBLICATION)_/.test(err.code || "")) {
+    return res.status(err.statusCode).json({ error: err.code, code: err.code });
+  }
   if (err?.detail === "CERTOPS_MANAGED_CERT_LIMIT") {
     return res.status(409).json({ error: "Managed certificate quota exceeded", code: "CERTOPS_MANAGED_CERT_LIMIT" });
   }
@@ -3097,7 +3100,11 @@ function deriveCertificateRenewalState(
     };
   }
 
-  if (!isAgentDeployableKeyMode(keyMode)) {
+  if (keyMode === "vault-managed" && !row?.profile_id) {
+    return { ...base, state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      detail: "The Vault publication renewal profile is missing. Repair it from the successful publication record." };
+  }
+  if (!isAgentRenewableKeyMode(row)) {
     return {
       ...base,
       state: CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE,
@@ -4117,6 +4124,20 @@ router.post(
 
 const distribution = require("../services/certops/distributionOperations");
 const materialDistribution = require("../services/certops/materialDistribution");
+router.post("/api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile/repair",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"), requireWorkspaceCertOpsActive,
+  csrRoute((req) => {
+    if (req.body && (typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length)) {
+      return { statusCode: 422, body: { error: "Repair accepts no execution settings", code: "CERTOPS_PUBLICATION_REPAIR_INPUT_INVALID" } };
+    }
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return { statusCode: 404, body: { error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" } };
+    }
+    return require("../services/certops/publicationRenewalRepair").repairPublicationRenewalProfile({
+      workspaceId: req.workspace.id, certificateId: req.params.certId, actorUserId: req.user.id,
+    });
+  }));
 router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...csrWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));

@@ -1213,6 +1213,21 @@ function isAgentDeployableKeyMode(certificateOrKeyMode) {
       : certificateOrKeyMode;
   return AGENT_DEPLOYABLE_KEY_MODES.has(keyMode);
 }
+
+// Renewal custody is broader than direct file/store deployment. This is a
+// projection only: publication job creation still validates the live group,
+// management period, profile revision and pinned issuer in materialDistribution.
+function isAgentRenewableKeyMode(certificateOrKeyMode) {
+  const mode = typeof certificateOrKeyMode === "object" && certificateOrKeyMode
+    ? certificateOrKeyMode.key_mode : certificateOrKeyMode;
+  if (isAgentDeployableKeyMode(mode)) return true;
+  if (mode !== "vault-managed" || !certificateOrKeyMode || typeof certificateOrKeyMode !== "object") return false;
+  try {
+    return Boolean(require("./renewalProfile").resolveRenewalProfileSnapshot(certificateOrKeyMode).publicationDestination);
+  } catch {
+    return false;
+  }
+}
 const SUBJECT_ID_UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -1360,7 +1375,7 @@ const MANUAL_RENEWAL_DEFAULT_REASON = "manual";
 async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId }) {
   if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
   const result = await db.query(
-    `SELECT mc.id,
+    `SELECT mc.id, mc.workspace_id,
             mc.common_name,
             mc.subject_alt_names,
             mc.not_after,
@@ -1432,6 +1447,20 @@ function manualRenewalJobCreator({
       overrides: options.payload,
       loadCertificate,
     });
+
+    // Distinct manual requests need distinct immutable versions even if the
+    // source expiry has not changed (e.g. rejection followed by correction).
+    // A replay of the same idempotency key must still produce the same intent.
+    if (payload.publication) {
+      const bytes = require("node:crypto").createHash("sha256")
+        .update(JSON.stringify(["manual-renew-material", workspaceId, certificateId,
+          options.idempotencyKey || require("node:crypto").randomUUID()]))
+        .digest().subarray(0, 16);
+      bytes[6] = (bytes[6] & 15) | 0x50;
+      bytes[8] = (bytes[8] & 63) | 0x80;
+      const hex = bytes.toString("hex");
+      payload.publication.materialVersionId = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
 
     return createJob({
       ...options,
@@ -2470,6 +2499,7 @@ module.exports = {
   findActiveJobForSubject,
   getCertificateJobById,
   isAgentDeployableKeyMode,
+  isAgentRenewableKeyMode,
   isTerminalJobStatus,
   isTrustAnchorOperation,
   jobCreationRequestFingerprint,

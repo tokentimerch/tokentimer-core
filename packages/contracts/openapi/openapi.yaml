@@ -4034,6 +4034,45 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/renewal-profile/repair:
+    post:
+      operationId: repairPublicationRenewalProfile
+      tags: [CertOps]
+      summary: Repair a missing Vault publication renewal profile
+      description: |
+        Session-admin action restoring a missing renewal profile from the current
+        accepted publication and successful job. Requires an active group and
+        management period and a non-retired issuer. Existing linked profiles are
+        returned unchanged. Accepts no execution settings and performs no issuance
+        or customer-side access. Subject to the workspace kill switch and CSRF.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Profile restored or already linked
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [profileId, created]
+                properties:
+                  profileId: { type: string, format: uuid }
+                  created: { type: boolean }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Requires an admin session user
+        "404":
+          description: No current distribution group for this certificate in this workspace
+        "409":
+          description: Workspace paused, group inactive, issuer retired, evidence missing, or derivation refused
+        "422":
+          description: Private material or invalid public metadata rejected
   /api/v1/workspaces/{id}/certops/certificates/{certId}/renewal-setup:
     post:
       tags: [CertOps]
