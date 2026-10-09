@@ -293,9 +293,9 @@ func parsePKIResponse(content []byte) (status int, requestID *uint32, certHash [
 			sawStatus = true
 			continue
 		}
-		// PoC responses put 1.3.6.1.4.1.311.21.17 under 1.3.6.1.4.1.311.21.10.1.
-		// Also accept a top-level 21.17 attribute if a CA emits that shape.
-		if h, ok := extractIssuedCertHash(attr.Values); ok {
+		// PoC: 21.17 nested under Microsoft control attr 21.10.1.
+		// Also accept a top-level 21.17 attribute (SET OF OCTET STRING).
+		if h, ok := extractIssuedCertHash(attr.Type, attr.Values); ok {
 			certHash = h
 		} else if attr.Type.Equal(oidMSCMCCertHash) || attr.Type.Equal(oidMSIssuedCertHash) {
 			return 0, nil, nil, fmt.Errorf("issued-cert hash attribute missing digest")
@@ -380,18 +380,43 @@ func parsePendToken(pendInfoBytes []byte) (uint32, error) {
 	return id, nil
 }
 
-func extractIssuedCertHash(values []asn1.RawValue) ([]byte, bool) {
-	// PoC shape: control attr 1.3.6.1.4.1.311.21.10.1 whose value nests
-	// OID 1.3.6.1.4.1.311.21.17 and a 20-byte SHA-1 OCTET STRING.
+func extractIssuedCertHash(attrType asn1.ObjectIdentifier, values []asn1.RawValue) ([]byte, bool) {
 	for _, v := range values {
+		// Top-level 21.17: attrValues are digest OCTET STRINGs (or a SET of them).
+		if attrType.Equal(oidMSIssuedCertHash) {
+			if hash, ok := digestOctet(v); ok {
+				return hash, true
+			}
+			if hash, ok := findFirstOctetString(v.FullBytes, 20); ok {
+				return hash, true
+			}
+			if hash, ok := findFirstOctetString(v.FullBytes, 32); ok {
+				return hash, true
+			}
+			continue
+		}
+		// Nested PoC shape under 21.10.1 (or any other attr): walk for OID 21.17.
 		hash, ok := findOctetStringOID(v.FullBytes, oidMSIssuedCertHash)
 		if ok && (len(hash) == 20 || len(hash) == 32) {
 			return hash, true
 		}
-		var direct []byte
-		if _, err := asn1.Unmarshal(v.Bytes, &direct); err == nil && (len(direct) == 20 || len(direct) == 32) {
-			return direct, true
+		if attrType.Equal(oidMSCMCCertHash) {
+			if hash, ok := digestOctet(v); ok {
+				return hash, true
+			}
 		}
+	}
+	return nil, false
+}
+
+func digestOctet(v asn1.RawValue) ([]byte, bool) {
+	// Prefer FullBytes so tag+length are present for asn1.Unmarshal.
+	var direct []byte
+	if _, err := asn1.Unmarshal(v.FullBytes, &direct); err == nil && (len(direct) == 20 || len(direct) == 32) {
+		return direct, true
+	}
+	if v.Tag == asn1.TagOctetString && (len(v.Bytes) == 20 || len(v.Bytes) == 32) {
+		return v.Bytes, true
 	}
 	return nil, false
 }

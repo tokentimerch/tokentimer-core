@@ -3,6 +3,7 @@ package cmccore
 import (
 	"crypto/sha1"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
 	"os"
@@ -83,6 +84,30 @@ func TestDecodePendingRequiresCACert(t *testing.T) {
 	pending := readFileBytes(t, filepath.Join("..", "testdata", "pending.rsp"))
 	if _, err := Decode(pending, string(pin)); err == nil {
 		t.Fatal("expected pending without ca cert to fail")
+	}
+}
+
+func TestExtractTopLevelIssuedCertHash(t *testing.T) {
+	digest := make([]byte, 20)
+	for i := range digest {
+		digest[i] = byte(i + 1)
+	}
+	oct, err := asn1.Marshal(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rv asn1.RawValue
+	if _, err := asn1.Unmarshal(oct, &rv); err != nil {
+		t.Fatal(err)
+	}
+	h, ok := extractIssuedCertHash(oidMSIssuedCertHash, []asn1.RawValue{rv})
+	if !ok || len(h) != 20 {
+		t.Fatalf("top-level 21.17 extract failed: ok=%v len=%d", ok, len(h))
+	}
+	for i := range digest {
+		if h[i] != digest[i] {
+			t.Fatalf("digest mismatch at %d", i)
+		}
 	}
 }
 
