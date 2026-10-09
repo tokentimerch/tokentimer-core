@@ -28,23 +28,11 @@ describe("mapAdcsDisposition", () => {
     assert.equal(m.outcome, "issued");
   });
 
-  it("maps CMC issued with a .cer and no derB64 to issued", () => {
+  it("maps CMC issued without certificateDerB64 to uncertain even with a .cer", () => {
     const m = mapAdcsDisposition({
       phase: "submit",
       responsePresent: true,
       certificatePresent: true,
-      exitCode: 0,
-      cmc: { disposition: "issued" },
-    });
-    assert.equal(m.outcome, "issued");
-    assert.equal(m.certificateDerB64, undefined);
-  });
-
-  it("maps CMC issued with neither der nor .cer to uncertain", () => {
-    const m = mapAdcsDisposition({
-      phase: "submit",
-      responsePresent: true,
-      certificatePresent: false,
       exitCode: 0,
       cmc: { disposition: "issued" },
     });
@@ -258,13 +246,12 @@ describe("createAdcsIssuer", () => {
     assert.equal(outcome.certificatePem, derB64ToPem(der.toString("base64")));
   });
 
-  it("submit issued falls back to a DER .cer when CMC omits derB64", async () => {
-    const der = Buffer.from("leaf-from-cer");
+  it("submit treats CMC issued without certificateDerB64 as uncertain", async () => {
     const issuer = makeIssuer({
       execFileImpl: async (_bin, argv) => {
         const cer = argv[argv.length - 3];
         const rsp = argv[argv.length - 1];
-        fs.writeFileSync(cer, der);
+        fs.writeFileSync(cer, Buffer.from("unverified-leaf"));
         fs.writeFileSync(rsp, "fake-rsp");
         return { stdout: "", stderr: "" };
       },
@@ -274,9 +261,75 @@ describe("createAdcsIssuer", () => {
       }),
     });
     const outcome = await issuer.submit({ csrPem: CSR_PEM });
-    assertIssuanceOutcome(outcome);
-    assert.equal(outcome.outcome, "issued");
-    assert.equal(outcome.certificatePem, derB64ToPem(der.toString("base64")));
+    assert.equal(outcome.outcome, "uncertain");
+  });
+
+  it("isolates each submit into a fresh work directory", async () => {
+    const rspPaths = [];
+    const issuer = makeIssuer({
+      execFileImpl: async (_bin, argv) => {
+        const rsp = argv[argv.length - 1];
+        rspPaths.push(rsp);
+        fs.writeFileSync(rsp, "fake-rsp");
+        return { stdout: "", stderr: "" };
+      },
+      decodeCmcImpl: async () => ({
+        ok: true,
+        result: { disposition: "pending", requestId: 1 },
+      }),
+    });
+    await issuer.submit({ csrPem: CSR_PEM });
+    await issuer.submit({ csrPem: CSR_PEM });
+    assert.equal(rspPaths.length, 2);
+    assert.notEqual(rspPaths[0], rspPaths[1]);
+    assert.ok(fs.existsSync(rspPaths[0]));
+    assert.ok(fs.existsSync(rspPaths[1]));
+  });
+
+  it("does not reuse a stale issued response when the next certreq writes nothing", async () => {
+    // Prior successful invocation left a signed issued CMC under the same job.
+    const priorDir = path.join(scratchDir, "adcs-job-1-submit-prior");
+    fs.mkdirSync(priorDir, { recursive: true });
+    const priorRsp = path.join(priorDir, "submit-response.rsp");
+    fs.writeFileSync(priorRsp, "stale-issued-rsp");
+
+    let decodedPaths = [];
+    const err = new Error("rpc");
+    err.code = HRESULT.RPC_S_SERVER_UNAVAILABLE;
+    const issuer = makeIssuer({
+      execFileImpl: async () => {
+        throw err;
+      },
+      decodeCmcImpl: async ({ responsePath }) => {
+        decodedPaths.push(responsePath);
+        return {
+          ok: true,
+          result: {
+            disposition: "issued",
+            certificateDerB64: Buffer.from("stale-leaf").toString("base64"),
+          },
+        };
+      },
+    });
+    const outcome = await issuer.submit({ csrPem: CSR_PEM });
+    assert.equal(outcome.outcome, "not_submitted");
+    assert.deepEqual(decodedPaths, []);
+    assert.ok(fs.existsSync(priorRsp), "prior evidence must remain for journal review");
+  });
+
+  it("rejects caConfig, template, and jobId outside ADR patterns", () => {
+    assert.throws(
+      () => makeIssuer({ caConfig: "host;evil\\CA" }),
+      /caConfig must match/,
+    );
+    assert.throws(
+      () => makeIssuer({ template: "WebServer:ExtraAttrib=1" }),
+      /template must match/,
+    );
+    assert.throws(
+      () => makeIssuer({ jobId: "../escape" }),
+      /jobId must match/,
+    );
   });
 
   it("submit maps RPC unavailable with no rsp to not_submitted", async () => {

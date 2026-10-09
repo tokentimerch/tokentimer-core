@@ -21,6 +21,12 @@ const { mapAdcsDisposition } = require("./adcs-disposition");
 
 const execFileAsync = promisify(execFile);
 
+// Same patterns as enrollment-snapshot / signed-dispatch-payload contracts.
+const CA_CONFIG_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\[A-Za-z0-9 ._()-]{1,64}$/;
+const TEMPLATE_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+
 /** @type {Map<string, Promise<unknown>>} */
 const enrollmentLocks = new Map();
 
@@ -99,6 +105,19 @@ async function runCertreq(execFileImpl, argv, timeoutMs) {
 }
 
 /**
+ * Fresh exclusive scratch dir for one certreq invocation. Prior .rsp/.cer/.p7b
+ * under the same jobId must never be consulted: classifyAfterCertreq treats
+ * existence as "this run wrote it", and CMC issued ignores the exit code.
+ * @param {string} scratchDir
+ * @param {string} jobId
+ * @param {"submit"|"retrieve"} phase
+ * @returns {Promise<string>}
+ */
+async function createInvocationWorkDir(scratchDir, jobId, phase) {
+  return fsp.mkdtemp(path.join(scratchDir, `adcs-${jobId}-${phase}-`));
+}
+
+/**
  * @param {object} params
  * @param {string} params.caConfig host\\CA Name
  * @param {string} params.template template common name
@@ -127,11 +146,11 @@ function createAdcsIssuer({
   timeoutMs = 60_000,
   info = () => {},
 }) {
-  if (typeof caConfig !== "string" || !caConfig.includes("\\")) {
-    throw new TypeError("caConfig must be host\\CA Name");
+  if (typeof caConfig !== "string" || !CA_CONFIG_PATTERN.test(caConfig)) {
+    throw new TypeError("caConfig must match host\\CA Name (ADR-0014 / enrollment-snapshot)");
   }
-  if (typeof template !== "string" || template.length === 0) {
-    throw new TypeError("template is required");
+  if (typeof template !== "string" || !TEMPLATE_PATTERN.test(template)) {
+    throw new TypeError("template must match ^[A-Za-z0-9_.-]{1,64}$");
   }
   if (typeof caKeySha256 !== "string" || !/^[a-f0-9]{64}$/.test(caKeySha256)) {
     throw new TypeError("caKeySha256 must be 64 lowercase hex characters");
@@ -145,8 +164,8 @@ function createAdcsIssuer({
   if (typeof scratchDir !== "string" || scratchDir.length === 0) {
     throw new TypeError("scratchDir is required");
   }
-  if (typeof jobId !== "string" || jobId.length === 0) {
-    throw new TypeError("jobId is required");
+  if (typeof jobId !== "string" || !JOB_ID_PATTERN.test(jobId)) {
+    throw new TypeError("jobId must match ^[A-Za-z0-9_.:-]{1,128}$");
   }
 
   async function classifyAfterCertreq({ phase, cerPath, chainPath, rspPath, exitCode, killed }) {
@@ -188,22 +207,16 @@ function createAdcsIssuer({
     });
 
     if (mapped.outcome === "issued") {
-      // Prefer CMC-exported leaf; fall back to certreq .cer on disk.
-      let certificatePem = null;
-      if (mapped.certificateDerB64) {
-        certificatePem = derB64ToPem(mapped.certificateDerB64);
-      } else {
-        certificatePem = certificateFileToPem(cerPath);
-      }
-      if (!certificatePem) {
+      // Only the CMC-exported leaf (hash-verified by tokentimer-adcs-cmc).
+      if (typeof mapped.certificateDerB64 !== "string" || mapped.certificateDerB64.length === 0) {
         return {
           outcome: "uncertain",
-          detail: "CMC reported issued but no certificate bytes were available",
+          detail: "CMC reported issued but certificateDerB64 was missing",
         };
       }
       return {
         outcome: "issued",
-        certificatePem,
+        certificatePem: derB64ToPem(mapped.certificateDerB64),
       };
     }
 
@@ -230,8 +243,7 @@ function createAdcsIssuer({
         };
       }
 
-      const workDir = path.join(scratchDir, `adcs-${jobId}`);
-      await fsp.mkdir(workDir, { recursive: true });
+      const workDir = await createInvocationWorkDir(scratchDir, jobId, "submit");
       const reqPath = path.join(workDir, "request.req");
       const cerPath = path.join(workDir, "issued.cer");
       const chainPath = path.join(workDir, "chain.p7b");
@@ -273,8 +285,7 @@ function createAdcsIssuer({
         };
       }
 
-      const workDir = path.join(scratchDir, `adcs-${jobId}-retrieve-${requestId}`);
-      await fsp.mkdir(workDir, { recursive: true });
+      const workDir = await createInvocationWorkDir(scratchDir, jobId, "retrieve");
       const cerPath = path.join(workDir, "retrieved.cer");
       const chainPath = path.join(workDir, "chain.p7b");
       const rspPath = path.join(workDir, "retrieve-response.rsp");
@@ -325,6 +336,9 @@ module.exports = {
   certificateFileToPem,
   certreqExitCode,
   withEnrollmentLock,
+  CA_CONFIG_PATTERN,
+  TEMPLATE_PATTERN,
+  JOB_ID_PATTERN,
   // test seam
   _enrollmentLocks: enrollmentLocks,
 };

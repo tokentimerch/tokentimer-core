@@ -90,21 +90,18 @@ function mapAdcsDisposition({
 
   switch (cmc.disposition) {
     case "issued": {
-      const hasDer =
-        typeof cmc.certificateDerB64 === "string" && cmc.certificateDerB64.length > 0;
-      // ADR-0014: CMC success needs a certificate. The helper may export
-      // DER, or certreq may have written the .cer the 21.17 hash already
-      // matched. Either source is enough to call this issued.
-      if (!hasDer && !certificatePresent) {
+      // tokentimer-adcs-cmc only reports issued with hash-verified DER.
+      // Do not accept a bare .cer; that would bypass the CMC hash check.
+      if (typeof cmc.certificateDerB64 !== "string" || cmc.certificateDerB64.length === 0) {
         return {
           outcome: "uncertain",
-          detail: "CMC success without certificateDerB64 or a certificate file",
+          detail: "CMC success without certificateDerB64",
           hresult: hr,
         };
       }
       return {
         outcome: "issued",
-        ...(hasDer ? { certificateDerB64: cmc.certificateDerB64 } : {}),
+        certificateDerB64: cmc.certificateDerB64,
         hresult: hr,
       };
     }
