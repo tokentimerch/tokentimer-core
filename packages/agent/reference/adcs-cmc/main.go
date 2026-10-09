@@ -61,6 +61,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	result, err := cmccore.Decode(raw, *caKey, caCerts...)
 	if err != nil {
+		// Hard fail-closed: parse/verify/usage-class errors (exit 2).
 		_ = json.NewEncoder(stdout).Encode(cmccore.Result{Error: err.Error()})
 		return exitFail
 	}
@@ -68,6 +69,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "encode: %v\n", err)
 		return exitFail
 	}
+	// Policy refusals return disposition=unknown with err=nil (exit 1).
 	if result.Disposition == "unknown" {
 		return exitUnknown
 	}

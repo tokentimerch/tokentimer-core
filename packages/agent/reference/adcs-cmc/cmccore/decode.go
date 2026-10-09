@@ -24,7 +24,9 @@ const MaxResponseBytes = 64 * 1024
 
 // OIDs from RFC 5272 / Microsoft AD CS CMC responses.
 var (
-	oidCMCStatusInfo    = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 7, 1}
+	oidCMCStatusInfo = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 7, 1}
+	// Microsoft nests the issued-cert hash (21.17) under this control attribute.
+	oidMSCMCCertHash = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 10, 1}
 	oidMSIssuedCertHash = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 17}
 )
 
@@ -105,28 +107,37 @@ func Decode(response []byte, caKeySHA256 string, caCerts ...*x509.Certificate) (
 	switch status {
 	case cmcStatusSuccess:
 		leaf := pickIssuedLeaf(sd.Certificates, signer)
-		if leaf == nil {
-			return Result{Disposition: "unknown"}, fmt.Errorf("success status without issued certificate")
-		}
-		if len(certHash) > 0 {
-			sum := sha1.Sum(leaf.Raw)
-			if !strings.EqualFold(hex.EncodeToString(sum[:]), hex.EncodeToString(certHash)) {
-				return Result{Disposition: "unknown"}, fmt.Errorf("issued-cert hash attribute does not match certificate")
-			}
-		}
-		return Result{
-			Disposition:       "issued",
-			CertificateDerB64: base64.StdEncoding.EncodeToString(leaf.Raw),
-		}, nil
+		return successResult(leaf, certHash), nil
 	case cmcStatusPending:
 		if requestID == nil {
-			return Result{Disposition: "unknown"}, fmt.Errorf("pending status without pend token")
+			return unknown("pending status without pend token"), nil
 		}
 		return Result{Disposition: "pending", RequestID: requestID}, nil
 	case cmcStatusFailed:
 		return Result{Disposition: "denied"}, nil
 	default:
-		return Result{Disposition: "unknown"}, fmt.Errorf("unsupported CMC status %d", status)
+		return unknown(fmt.Sprintf("unsupported CMC status %d", status)), nil
+	}
+}
+
+func unknown(reason string) Result {
+	return Result{Disposition: "unknown", Error: reason}
+}
+
+func successResult(leaf *x509.Certificate, certHash []byte) Result {
+	if leaf == nil {
+		return unknown("success status without issued certificate")
+	}
+	if len(certHash) == 0 {
+		return unknown("success status without issued-cert hash attribute")
+	}
+	sum := sha1.Sum(leaf.Raw)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), hex.EncodeToString(certHash)) {
+		return unknown("issued-cert hash attribute does not match certificate")
+	}
+	return Result{
+		Disposition:       "issued",
+		CertificateDerB64: base64.StdEncoding.EncodeToString(leaf.Raw),
 	}
 }
 
@@ -266,8 +277,7 @@ func parsePKIResponse(content []byte) (status int, requestID *uint32, certHash [
 
 	var sawStatus bool
 	for _, attr := range resp.ControlSequence {
-		switch {
-		case attr.Type.Equal(oidCMCStatusInfo):
+		if attr.Type.Equal(oidCMCStatusInfo) {
 			if sawStatus {
 				return 0, nil, nil, fmt.Errorf("multiple CMCStatusInfo attributes")
 			}
@@ -281,12 +291,14 @@ func parsePKIResponse(content []byte) (status int, requestID *uint32, certHash [
 			status = st
 			requestID = rid
 			sawStatus = true
-		case attr.Type.Equal(oidMSIssuedCertHash):
-			h, err := parseMSIssuedCertHash(attr.Values)
-			if err != nil {
-				return 0, nil, nil, err
-			}
+			continue
+		}
+		// PoC responses put 1.3.6.1.4.1.311.21.17 under 1.3.6.1.4.1.311.21.10.1.
+		// Also accept a top-level 21.17 attribute if a CA emits that shape.
+		if h, ok := extractIssuedCertHash(attr.Values); ok {
 			certHash = h
+		} else if attr.Type.Equal(oidMSCMCCertHash) || attr.Type.Equal(oidMSIssuedCertHash) {
+			return 0, nil, nil, fmt.Errorf("issued-cert hash attribute missing digest")
 		}
 	}
 	if !sawStatus {
@@ -368,24 +380,20 @@ func parsePendToken(pendInfoBytes []byte) (uint32, error) {
 	return id, nil
 }
 
-func parseMSIssuedCertHash(values []asn1.RawValue) ([]byte, error) {
-	// attrValues SET OF SEQUENCE { bodyPartID, bodyList, SET OF SEQUENCE { OID, SET OF OCTET STRING } }
-	// PoC shape: one value SEQUENCE containing the hash OCTET STRING under 1.3.6.1.4.1.311.21.17.
+func extractIssuedCertHash(values []asn1.RawValue) ([]byte, bool) {
+	// PoC shape: control attr 1.3.6.1.4.1.311.21.10.1 whose value nests
+	// OID 1.3.6.1.4.1.311.21.17 and a 20-byte SHA-1 OCTET STRING.
 	for _, v := range values {
 		hash, ok := findOctetStringOID(v.FullBytes, oidMSIssuedCertHash)
 		if ok && (len(hash) == 20 || len(hash) == 32) {
-			return hash, nil
+			return hash, true
 		}
-		// Some encodings put the OCTET STRING directly under the SET.
 		var direct []byte
 		if _, err := asn1.Unmarshal(v.Bytes, &direct); err == nil && (len(direct) == 20 || len(direct) == 32) {
-			return direct, nil
-		}
-		if hash, ok := findFirstOctetString(v.FullBytes, 20); ok {
-			return hash, nil
+			return direct, true
 		}
 	}
-	return nil, fmt.Errorf("issued-cert hash attribute missing digest")
+	return nil, false
 }
 
 func findOctetStringOID(der []byte, want asn1.ObjectIdentifier) ([]byte, bool) {

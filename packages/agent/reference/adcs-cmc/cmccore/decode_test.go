@@ -1,11 +1,16 @@
 package cmccore
 
 import (
+	"crypto/sha1"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"go.mozilla.org/pkcs7"
 )
 
 func TestDecodeRejectsEmptyAndOversized(t *testing.T) {
@@ -24,6 +29,7 @@ func TestDecodeRejectsEmptyAndOversized(t *testing.T) {
 func TestDecodePoCFixtures(t *testing.T) {
 	pin := readFile(t, filepath.Join("..", "testdata", "ca-key-sha256.txt"))
 	ca := mustParseCert(t, filepath.Join("..", "testdata", "ca.cer"))
+	leaf := mustParseCert(t, filepath.Join("..", "testdata", "issued.cer"))
 
 	issued := readFileBytes(t, filepath.Join("..", "testdata", "issued.rsp"))
 	r, err := Decode(issued, string(pin), ca)
@@ -32,6 +38,16 @@ func TestDecodePoCFixtures(t *testing.T) {
 	}
 	if r.Disposition != "issued" || r.CertificateDerB64 == "" {
 		t.Fatalf("issued result: %+v", r)
+	}
+
+	// Nested 1.3.6.1.4.1.311.21.17 under 21.10.1 must be read and enforced.
+	status, _, hash, err := parsePKIResponse(mustCMSContent(t, issued))
+	if err != nil || status != cmcStatusSuccess || len(hash) != 20 {
+		t.Fatalf("issued hash extract: status=%d hashLen=%d err=%v", status, len(hash), err)
+	}
+	sum := sha1.Sum(leaf.Raw)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), hex.EncodeToString(hash)) {
+		t.Fatalf("extracted hash %x != leaf SHA-1 %x", hash, sum[:])
 	}
 
 	pending := readFileBytes(t, filepath.Join("..", "testdata", "pending.rsp"))
@@ -68,6 +84,39 @@ func TestDecodePendingRequiresCACert(t *testing.T) {
 	if _, err := Decode(pending, string(pin)); err == nil {
 		t.Fatal("expected pending without ca cert to fail")
 	}
+}
+
+func TestSuccessResultPolicyUnknown(t *testing.T) {
+	leaf := mustParseCert(t, filepath.Join("..", "testdata", "issued.cer"))
+	sum := sha1.Sum(leaf.Raw)
+
+	if r := successResult(nil, sum[:]); r.Disposition != "unknown" || r.Error == "" {
+		t.Fatalf("missing leaf: %+v", r)
+	}
+	if r := successResult(leaf, nil); r.Disposition != "unknown" {
+		t.Fatalf("missing hash: %+v", r)
+	}
+	wrong := append([]byte(nil), sum[:]...)
+	wrong[0] ^= 0xff
+	if r := successResult(leaf, wrong); r.Disposition != "unknown" {
+		t.Fatalf("hash mismatch: %+v", r)
+	}
+	if r := successResult(leaf, sum[:]); r.Disposition != "issued" || r.CertificateDerB64 == "" {
+		t.Fatalf("match: %+v", r)
+	}
+}
+
+func mustCMSContent(t *testing.T, rsp []byte) []byte {
+	t.Helper()
+	der, err := normalizeDER(rsp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := pkcs7.Parse(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sd.Content
 }
 
 func readFile(t *testing.T, path string) string {
