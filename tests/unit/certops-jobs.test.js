@@ -25,6 +25,7 @@ const {
   listCertificateJobLog,
   listCertificateJobs,
   updateCertificateJobStatus,
+  validateJobPayloadForOperation,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -1767,6 +1768,67 @@ describe("CertOps jobs service", () => {
       },
     });
     assert.equal(renew.operation, "renew");
+  });
+
+  it("refuses client-supplied issuerKind and enrollment fields on every create path", async () => {
+    const client = createMemoryClient();
+    const smuggled = [
+      { issuerKind: "adcs" },
+      { issuerKind: "acme" },
+      { issuerKind: null },
+      {
+        enrollment: {
+          enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
+          attempt: 1,
+          snapshotB64: "e30=",
+          snapshotSha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        },
+      },
+    ];
+
+    for (const operation of ["issue", "renew", "deploy", "noop"]) {
+      for (const extra of smuggled) {
+        await assert.rejects(
+          () =>
+            createCertificateJob({
+              client,
+              workspaceId: WORKSPACE_A,
+              operation,
+              source: "api",
+              subjectType: "managed_certificate",
+              subjectId: "cert-1",
+              payload: { target: "example.com", ...extra },
+            }),
+          (error) =>
+            error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID &&
+            /set by the control plane/.test(error.message),
+          `expected ${Object.keys(extra)[0]} to be refused on ${operation}`,
+        );
+        assert.throws(
+          () =>
+            validateJobPayloadForOperation(
+              { target: "example.com", ...extra },
+              operation,
+            ),
+          (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+        );
+      }
+    }
+
+    const listed = await listCertificateJobs({ client, workspaceId: WORKSPACE_A });
+    assert.equal(listed.items.length, 0, "no job row may be written for a refused payload");
+
+    // The certificate's issuer name stays ordinary public metadata.
+    const withIssuerName = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "example.com", issuer: "CN=Corp Issuing CA 01" },
+    });
+    assert.equal(withIssuerName.payload.issuer, "CN=Corp Issuing CA 01");
   });
 
   it("rejects execution fields on operations that never execute them", async () => {

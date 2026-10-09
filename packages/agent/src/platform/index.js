@@ -83,6 +83,19 @@ function buildError(message) {
 }
 
 /**
+ * Absolute path to a System32 tool. Bare names like `whoami` resolve to Git
+ * Bash's POSIX stub when PATH puts `usr\bin` first (the ACME dns_certops
+ * child inherits that PATH), and that stub exits 1 on `/user /fo csv`.
+ *
+ * @param {string} toolBaseName e.g. "whoami" or "icacls" (no .exe)
+ * @returns {string}
+ */
+function windowsSystem32Tool(toolBaseName) {
+  const root = process.env.SystemRoot || "C:\\Windows";
+  return path.join(root, "System32", `${toolBaseName}.exe`);
+}
+
+/**
  * Runs a Windows utility and returns its exit status plus streams. Kept behind
  * a single seam so tests can inject a fake without spawning processes.
  *
@@ -97,14 +110,15 @@ function runTool(file, args, spawn = spawnSync) {
     windowsHide: true,
     timeout: 30000,
   });
+  const toolLabel = path.parse(file).name;
   if (!result || (result.error && result.error.code === "ENOENT")) {
     throw buildError(
-      `${file} is not available on this host, so file permissions cannot be ` +
+      `${toolLabel} is not available on this host, so file permissions cannot be ` +
         "enforced; refusing to continue with unprotected state files",
     );
   }
   if (result.error) {
-    throw buildError(`${file} failed to run: ${result.error.message}`);
+    throw buildError(`${toolLabel} failed to run: ${result.error.message}`);
   }
   return result;
 }
@@ -121,7 +135,7 @@ let cachedUserSid = null;
  */
 function currentUserSid({ spawn = spawnSync, useCache = true } = {}) {
   if (useCache && cachedUserSid !== null) return cachedUserSid;
-  const result = runTool("whoami", ["/user", "/fo", "csv", "/nh"], spawn);
+  const result = runTool(windowsSystem32Tool("whoami"), ["/user", "/fo", "csv", "/nh"], spawn);
   if (result.status !== 0) {
     throw buildError(
       `whoami exited ${result.status} while resolving the agent's own SID`,
@@ -185,7 +199,7 @@ function applyWindowsAcl(
     (sid, index, all) => all.indexOf(sid) === index,
   );
   const grantResult = runTool(
-    "icacls",
+    windowsSystem32Tool("icacls"),
     [
       targetPath,
       "/inheritance:r",
@@ -209,7 +223,7 @@ function applyWindowsAcl(
 
   if (foreign.length > 0) {
     const removeResult = runTool(
-      "icacls",
+      windowsSystem32Tool("icacls"),
       [
         targetPath,
         ...foreign.flatMap((sid) => ["/remove:g", `*${sid}`, "/remove:d", `*${sid}`]),
@@ -262,7 +276,7 @@ function readWindowsSddl(
     `tokentimer-acl-${process.pid}-${crypto.randomBytes(6).toString("hex")}.sddl`,
   );
   try {
-    const result = runTool("icacls", [targetPath, "/save", savePath], spawn);
+    const result = runTool(windowsSystem32Tool("icacls"), [targetPath, "/save", savePath], spawn);
     if (result.status !== 0) {
       throw buildError(
         `icacls exited ${result.status} while reading the ACL of ${targetPath}`,
@@ -681,4 +695,5 @@ module.exports = {
   readWindowsOwnerSid,
   readWindowsSddl,
   resetPlatformCaches,
+  windowsSystem32Tool,
 };

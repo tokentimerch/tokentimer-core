@@ -2,10 +2,10 @@
 
 /**
  * Tests for packages/agent/src/discovery/windows.js -- the adapter that
- * normalizes ../windows-discovery's canonical certutil/netsh/appcmd
+ * normalizes ../windows-discovery's canonical store/http.sys/appcmd
  * enumeration into the same observation-input shape ../index.js's
- * discoverCertificates produces for filesystem certificates. Real
- * certutil/netsh/appcmd parsing is exercised in
+ * discoverCertificates produces for filesystem certificates. The canonical
+ * parsing is exercised in
  * ../windows-discovery/windows-discovery.test.js; this file focuses on the
  * adapter's own responsibilities: cross-referencing bindings against the
  * store, resolving iis_binding vs http_sys, and the fingerprint-completion
@@ -28,60 +28,83 @@ const {
   resolveSubjectAltNames,
 } = require("./windows.js");
 
-const CERTUTIL_STORE_OUTPUT = `My "Personal"
-================ Certificate 0 ================
-Serial Number: 1a2b3c4d5e
-Issuer: CN=Test Root CA
- NotBefore: 1/1/2026 12:00 AM
- NotAfter: 1/1/2027 12:00 AM
-Subject: CN=store-only.example.com
-Cert Hash(sha1): aa bb cc dd ee ff 00 11 22 33 44 55 66 77 88 99 aa bb cc dd
-CertUtil: -store command completed successfully.
-`;
+const EMPTY_STORE_JSON = JSON.stringify({ items: [] });
 
-const CERTUTIL_EMPTY_STORE_OUTPUT = `My "Personal"
-CertUtil: -store command completed successfully.
-`;
-
-/**
- * Builds a minimal single-entry certutil -store -v block for a given
- * thumbprint/subject, formatted as `Cert Hash(sha1)` (space-separated hex
- * pairs, matching certutil's real output), so a test's netsh/http.sys
- * binding fixture and its certutil store fixture always reference the same
- * certificate by construction rather than by two independently-typed
- * literals.
- */
-function certutilStoreOutputFor(thumbprint, subject, { hasPrivateKey = false } = {}) {
-  const hexPairs = thumbprint.match(/.{2}/g).join(" ");
-  return `My "Personal"
-================ Certificate 0 ================
-Serial Number: 1a2b3c4d5e
-Issuer: CN=Test Root CA
- NotBefore: 1/1/2026 12:00 AM
- NotAfter: 1/1/2027 12:00 AM
-Subject: CN=${subject}
-Cert Hash(sha1): ${hexPairs}
-${hasPrivateKey ? "  Key Container = tokentimer-job-1-abcd1234\n  Provider = Microsoft Software Key Storage Provider\n" : ""}CertUtil: -store command completed successfully.
-`;
+function codeUnits(text) {
+  return Array.from({ length: text.length }, (_unused, index) => text.charCodeAt(index));
 }
 
-function makeExecFileImplRouter({ certutilStdout, netshStdout, appcmdStdout, certutilExitCode, netshExitCode }) {
+/**
+ * Builds the canonical module's store query JSON (plus certutil key info
+ * when the certificate has a key) for one thumbprint/subject, so a test's
+ * http.sys binding fixture and its store fixture always reference
+ * the same certificate by construction rather than by two
+ * independently-typed literals.
+ */
+function storeFixtureFor(thumbprint, subject, { hasPrivateKey = false } = {}) {
+  const item = {
+    thumbprint: thumbprint.toUpperCase(),
+    subject: codeUnits(`CN=${subject}`),
+    issuer: codeUnits("CN=Test Root CA"),
+    notBefore: `/Date(${Date.UTC(2026, 0, 1)})/`,
+    notAfter: `/Date(${Date.UTC(2027, 0, 1)})/`,
+    serialNumber: "1A2B3C4D5E",
+    hasPrivateKey,
+    rawData: [],
+  };
+  return {
+    storeJson: JSON.stringify({ items: [item] }),
+    certutilStdout: hasPrivateKey
+      ? `My "Personal"\n================ Certificate 0 ================\nCert Hash(sha1): ${thumbprint.toLowerCase()}\n` +
+        "  Key Container = tokentimer-job-1-abcd1234\n  Provider = Microsoft Software Key Storage Provider\n"
+      : undefined,
+  };
+}
+
+const STORE_FIXTURE = storeFixtureFor("AABBCCDDEEFF00112233445566778899AABBCCDD", "store-only.example.com");
+
+/** IP-keyed bindings as ../windows-discovery's http.sys registry query reports them. */
+function httpSysJson(bindings) {
+  return JSON.stringify({
+    items: bindings.map(({ ipPort, thumbprint, storeName }) => ({
+      kind: "SslBindingInfo",
+      key: ipPort,
+      values: {
+        SslCertHash: Array.from(Buffer.from(thumbprint, "hex")),
+        ...(storeName ? { SslCertStoreName: { chars: codeUnits(storeName) } } : {}),
+      },
+    })),
+  });
+}
+
+const isHttpSysQuery = (args) => String(args.at(-1)).includes("SslBindingInfo");
+
+/** fetchRawCertificateDerByThumbprint's PowerShell output for one certificate. */
+function rawDataJson(thumbprint, derBase64) {
+  return JSON.stringify({ items: [{ Thumbprint: thumbprint, RawData: Array.from(Buffer.from(derBase64, "base64")) }] });
+}
+
+function makeExecFileImplRouter({ storeJson, certutilStdout, bindingsJson, appcmdStdout, storeExitCode, bindingsExitCode }) {
   return function execFileImpl(file, args, options, callback) {
     process.nextTick(() => {
-      if (String(file).includes("certutil")) {
-        if (certutilExitCode) {
-          callback({ code: certutilExitCode }, "", "certutil: access denied");
+      if (isHttpSysQuery(args)) {
+        if (bindingsExitCode) {
+          callback({ code: bindingsExitCode }, "", "Get-ChildItem: access denied");
           return;
         }
-        callback(null, certutilStdout ?? CERTUTIL_EMPTY_STORE_OUTPUT, "");
+        callback(null, bindingsJson ?? JSON.stringify({ items: [] }), "");
         return;
       }
-      if (String(file).includes("netsh")) {
-        if (netshExitCode) {
-          callback({ code: netshExitCode }, "", "netsh: access denied");
+      if (String(file).includes("powershell")) {
+        if (storeExitCode) {
+          callback({ code: storeExitCode }, "", "Get-ChildItem: access denied");
           return;
         }
-        callback(null, netshStdout ?? "", "");
+        callback(null, storeJson ?? EMPTY_STORE_JSON, "");
+        return;
+      }
+      if (String(file).includes("certutil")) {
+        callback(null, certutilStdout ?? "", "");
         return;
       }
       // appcmd (IIS site listing) -- a nonzero exit here is normal (no IIS
@@ -152,8 +175,7 @@ function generateSelfSignedCertDerBase64(commonName) {
 /**
  * Same as generateSelfSignedCertDerBase64, but with a real Subject
  * Alternative Name extension (via an openssl config file), for tests that
- * need to prove SANs are read from the certificate's own raw bytes rather
- * than from certutil's -v text dump.
+ * need to prove SANs are read from the certificate's own raw bytes.
  */
 function generateSelfSignedCertWithSanDerBase64(commonName, sanEntries) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-windows-adapter-san-test-"));
@@ -239,15 +261,37 @@ describe("fetchRawCertificateDerByThumbprint", () => {
     assert.ok(warnings.some((m) => m.includes("not available")));
   });
 
-  it("maps lowercased thumbprint -> RawCertificateBase64", () => {
+  it("maps lowercased thumbprint -> base64 of the RawData byte list", () => {
     const stdout = JSON.stringify({
-      items: [{ Thumbprint: "AABBCC", RawCertificateBase64: "ZGVy" }],
+      items: [{ Thumbprint: "AABBCC", RawData: [100, 101, 114] }],
     });
     const spawn = () => fakeSpawnResult({ stdout });
 
     const result = fetchRawCertificateDerByThumbprint({ spawn });
 
     assert.equal(result.get("aabbcc"), "ZGVy");
+  });
+
+  it("skips entries whose RawData is not a byte list", () => {
+    const stdout = JSON.stringify({
+      items: [
+        { Thumbprint: "AABBCC", RawData: "ZGVy" },
+        { Thumbprint: "DDEEFF", RawData: [1, 256] },
+      ],
+    });
+    const result = fetchRawCertificateDerByThumbprint({ spawn: () => fakeSpawnResult({ stdout }) });
+    assert.equal(result.size, 0);
+  });
+
+  it("uses only constructs that Constrained Language Mode allows", () => {
+    let script = "";
+    const spawn = (_file, args) => {
+      script = args.at(-1);
+      return fakeSpawnResult({ stdout: JSON.stringify({ items: [] }) });
+    };
+    fetchRawCertificateDerByThumbprint({ spawn });
+    assert.match(script, /RawData = \[int\[\]\]\$c\.RawData/);
+    assert.doesNotMatch(script, /PSCustomObject|\[Convert\]|\[Console\]|Add-Type|New-Object/);
   });
 });
 
@@ -310,21 +354,21 @@ describe("readSubjectAltNamesFromDer", () => {
 
 describe("resolveSubjectAltNames", () => {
   it(
-    "prefers the raw-bytes-derived SANs over windows-discovery's certutil-text-parsed list",
+    "prefers the raw-bytes-derived SANs over windows-discovery's own list",
     // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     () => {
       const derBase64 = generateSelfSignedCertWithSanDerBase64("resolve-san-test.example.com", [
         "DNS:from-der.example.com",
       ]);
-      const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
+      const cert = { subjectAlternativeNames: ["from-store.example.com"] };
       assert.deepEqual(resolveSubjectAltNames(cert, derBase64), ["from-der.example.com"]);
     },
   );
 
-  it("falls back to windows-discovery's certutil-text-parsed SANs when raw bytes are unavailable", () => {
-    const cert = { subjectAlternativeNames: ["from-certutil-text.example.com"] };
-    assert.deepEqual(resolveSubjectAltNames(cert, undefined), ["from-certutil-text.example.com"]);
+  it("falls back to windows-discovery's own SANs when raw bytes are unavailable", () => {
+    const cert = { subjectAlternativeNames: ["from-store.example.com"] };
+    assert.deepEqual(resolveSubjectAltNames(cert, undefined), ["from-store.example.com"]);
   });
 
   it("returns an empty array when neither source has SANs", () => {
@@ -358,13 +402,9 @@ describe("collectWindowsDiscoveryObservations", () => {
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("store-only.example.com");
-      const execFileImpl = makeExecFileImplRouter({ certutilStdout: CERTUTIL_STORE_OUTPUT });
+      const execFileImpl = makeExecFileImplRouter(STORE_FIXTURE);
       const spawn = () =>
-        fakeSpawnResult({
-          stdout: JSON.stringify({
-            items: [{ Thumbprint: "AABBCCDDEEFF00112233445566778899AABBCCDD", RawCertificateBase64: derBase64 }],
-          }),
-        });
+        fakeSpawnResult({ stdout: rawDataJson("AABBCCDDEEFF00112233445566778899AABBCCDD", derBase64) });
 
       const observations = await collectWindowsDiscoveryObservations({ execFileImpl, spawn });
 
@@ -375,6 +415,8 @@ describe("collectWindowsDiscoveryObservations", () => {
       assert.equal(obs.locationSlot, "LocalMachine/My/store-only.example.com");
       assert.equal(obs.keyPresent, false);
       assert.equal(obs.subject, "CN=store-only.example.com");
+      assert.equal(obs.notBefore, "2026-01-01T00:00:00.000Z");
+      assert.equal(obs.notAfter, "2027-01-01T00:00:00.000Z");
       // Never leaks raw certificate bytes or key material into the
       // observation shape handed off to the evidence-building caller.
       const serialized = JSON.stringify(obs);
@@ -390,25 +432,13 @@ describe("collectWindowsDiscoveryObservations", () => {
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("iis-bound.example.com");
       const thumbprint = "1122334455667788990011223344556677889900";
-      const netshStdout = [
-        "SSL Certificate bindings:",
-        "-------------------------",
-        "",
-        "    IP:port                      : 10.0.0.5:443",
-        `    Certificate Hash             : ${thumbprint}`,
-        "    Certificate Store Name       : My",
-        "",
-      ].join("\r\n");
       const appcmdStdout = 'SITE "Default Web Site" (id:1,bindings:https/10.0.0.5:443:,state:Started)\n';
       const execFileImpl = makeExecFileImplRouter({
-        certutilStdout: certutilStoreOutputFor(thumbprint, "iis-bound.example.com", { hasPrivateKey: true }),
-        netshStdout,
+        ...storeFixtureFor(thumbprint, "iis-bound.example.com", { hasPrivateKey: true }),
+        bindingsJson: httpSysJson([{ ipPort: "10.0.0.5:443", thumbprint, storeName: "My" }]),
         appcmdStdout,
       });
-      const spawn = () =>
-        fakeSpawnResult({
-          stdout: JSON.stringify({ items: [{ Thumbprint: thumbprint, RawCertificateBase64: derBase64 }] }),
-        });
+      const spawn = () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, derBase64) });
 
       const observations = await collectWindowsDiscoveryObservations({ execFileImpl, spawn });
 
@@ -434,15 +464,10 @@ describe("collectWindowsDiscoveryObservations", () => {
       const thumbprint = "1234567890abcdef1234567890abcdef12345678";
       const myDer = generateSelfSignedCertDerBase64("my-copy.example.com");
       const webDer = generateSelfSignedCertDerBase64("webhosting-copy.example.com");
-      const netshStdout = [
-        "    IP:port                      : 10.0.0.5:443",
-        `    Certificate Hash             : ${thumbprint}`,
-        "    Certificate Store Name       : WebHosting",
-        "",
-      ].join("\r\n");
+      const bindingsJson = httpSysJson([{ ipPort: "10.0.0.5:443", thumbprint, storeName: "WebHosting" }]);
       const execFileImpl = (file, args, options, callback) => {
         process.nextTick(() => {
-          if (String(file).includes("netsh")) return callback(null, netshStdout, "");
+          if (isHttpSysQuery(args)) return callback(null, bindingsJson, "");
           if (String(file).includes("appcmd")) {
             return callback(
               null,
@@ -450,28 +475,21 @@ describe("collectWindowsDiscoveryObservations", () => {
               "",
             );
           }
-          const storeName = args.includes("WebHosting") ? "WebHosting" : "My";
+          const storeName = args.join(" ").includes("WebHosting") ? "WebHosting" : "My";
           return callback(
             null,
-            certutilStoreOutputFor(
+            storeFixtureFor(
               thumbprint,
               storeName === "WebHosting"
                 ? "webhosting-copy.example.com"
                 : "my-copy.example.com",
-            ),
+            ).storeJson,
             "",
           );
         });
       };
       const spawn = (_file, args) =>
-        fakeSpawnResult({
-          stdout: JSON.stringify({
-            items: [{
-              Thumbprint: thumbprint,
-              RawCertificateBase64: args.join(" ").includes("WebHosting") ? webDer : myDer,
-            }],
-          }),
-        });
+        fakeSpawnResult({ stdout: rawDataJson(thumbprint, args.join(" ").includes("WebHosting") ? webDer : myDer) });
 
       const observations = await collectWindowsDiscoveryObservations({
         stores: ["My"],
@@ -498,19 +516,11 @@ describe("collectWindowsDiscoveryObservations", () => {
     async () => {
       const derBase64 = generateSelfSignedCertDerBase64("httpsys-bound.example.com");
       const thumbprint = "9988776655443322110099887766554433221100";
-      const netshStdout = [
-        "    IP:port                      : 0.0.0.0:8443",
-        `    Certificate Hash             : ${thumbprint}`,
-        "",
-      ].join("\r\n");
       const execFileImpl = makeExecFileImplRouter({
-        certutilStdout: certutilStoreOutputFor(thumbprint, "httpsys-bound.example.com"),
-        netshStdout,
+        ...storeFixtureFor(thumbprint, "httpsys-bound.example.com"),
+        bindingsJson: httpSysJson([{ ipPort: "0.0.0.0:8443", thumbprint }]),
       });
-      const spawn = () =>
-        fakeSpawnResult({
-          stdout: JSON.stringify({ items: [{ Thumbprint: thumbprint, RawCertificateBase64: derBase64 }] }),
-        });
+      const spawn = () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, derBase64) });
 
       const observations = await collectWindowsDiscoveryObservations({ execFileImpl, spawn });
 
@@ -524,14 +534,8 @@ describe("collectWindowsDiscoveryObservations", () => {
   );
 
   it("skips a binding whose thumbprint is not found in the machine store, with a warning", async () => {
-    const netshStdout = [
-      "    IP:port                      : 0.0.0.0:8443",
-      "    Certificate Hash             : ffffffffffffffffffffffffffffffffffffffff",
-      "",
-    ].join("\r\n");
     const execFileImpl = makeExecFileImplRouter({
-      certutilStdout: CERTUTIL_EMPTY_STORE_OUTPUT,
-      netshStdout,
+      bindingsJson: httpSysJson([{ ipPort: "0.0.0.0:8443", thumbprint: "ff".repeat(20) }]),
     });
     const warnings = [];
 
@@ -545,7 +549,7 @@ describe("collectWindowsDiscoveryObservations", () => {
   });
 
   it("returns [] (not throw) when the store and http.sys surfaces are both empty", async () => {
-    const execFileImpl = makeExecFileImplRouter({ certutilStdout: CERTUTIL_EMPTY_STORE_OUTPUT });
+    const execFileImpl = makeExecFileImplRouter({});
 
     const observations = await collectWindowsDiscoveryObservations({ execFileImpl });
 
@@ -553,7 +557,7 @@ describe("collectWindowsDiscoveryObservations", () => {
   });
 
   it("skips a windows_store certificate and warns when no fingerprint is available (powershell unavailable)", async () => {
-    const execFileImpl = makeExecFileImplRouter({ certutilStdout: CERTUTIL_STORE_OUTPUT });
+    const execFileImpl = makeExecFileImplRouter(STORE_FIXTURE);
     const spawn = () => fakeSpawnResult({ error: { code: "ENOENT" } });
     const warnings = [];
 
@@ -567,8 +571,8 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.ok(warnings.some((m) => m.includes("no fingerprint available")));
   });
 
-  it("propagates a warning (not throw) when the certutil store query itself fails outright", async () => {
-    const execFileImpl = makeExecFileImplRouter({ certutilExitCode: 5 });
+  it("propagates a warning (not throw) when the store query itself fails outright", async () => {
+    const execFileImpl = makeExecFileImplRouter({ storeExitCode: 5 });
     const warnings = [];
 
     const observations = await collectWindowsDiscoveryObservations({
@@ -580,11 +584,8 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.ok(warnings.some((m) => m.includes("windows_store")));
   });
 
-  it("propagates a warning (not throw) when the netsh binding query itself fails outright", async () => {
-    const execFileImpl = makeExecFileImplRouter({
-      certutilStdout: CERTUTIL_EMPTY_STORE_OUTPUT,
-      netshExitCode: 5,
-    });
+  it("propagates a warning (not throw) when the http.sys binding query itself fails outright", async () => {
+    const execFileImpl = makeExecFileImplRouter({ bindingsExitCode: 5 });
     const warnings = [];
 
     const observations = await collectWindowsDiscoveryObservations({
@@ -596,39 +597,18 @@ describe("collectWindowsDiscoveryObservations", () => {
     assert.ok(warnings.some((m) => m.includes("http_sys")));
   });
 
-  // Defense-in-depth regression: if a correctly ordered verbose query still
-  // fails for an unrelated reason, the plain-query fallback keeps store
-  // observations flowing and raw public certificate bytes retain SANs.
   it(
-    "still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed",
+    "reports real subjectAltNames end-to-end from the certificate's raw bytes",
     // skip-reason: no-host - needs a real openssl binary on PATH.
     { skip: !OPENSSL_BINARY ? "openssl is not available on this machine" : false },
     async () => {
       const thumbprint = "aabbccddeeff00112233445566778899aabbccdd";
-      const derBase64 = generateSelfSignedCertWithSanDerBase64("v-broken.example.com", [
-        "DNS:v-broken.example.com",
-        "DNS:alt.v-broken.example.com",
+      const derBase64 = generateSelfSignedCertWithSanDerBase64("san-e2e.example.com", [
+        "DNS:san-e2e.example.com",
+        "DNS:alt.san-e2e.example.com",
       ]);
-      const plainStdout = certutilStoreOutputFor(thumbprint, "v-broken.example.com");
-      const execFileImpl = (file, args, options, callback) => {
-        process.nextTick(() => {
-          if (String(file).includes("certutil")) {
-            if (args.includes("-v")) {
-              const error = Object.assign(new Error("NTE_NOT_FOUND"), { code: -2146893807 });
-              callback(error, "My \"Personal\"\n", "CertUtil: Object was not found.\n");
-              return;
-            }
-            callback(null, plainStdout, "");
-            return;
-          }
-          // No http.sys bindings / IIS sites in this scenario.
-          callback({ code: 1 }, "", "");
-        });
-      };
-      const spawn = () =>
-        fakeSpawnResult({
-          stdout: JSON.stringify({ items: [{ Thumbprint: thumbprint, RawCertificateBase64: derBase64 }] }),
-        });
+      const execFileImpl = makeExecFileImplRouter(storeFixtureFor(thumbprint, "san-e2e.example.com"));
+      const spawn = () => fakeSpawnResult({ stdout: rawDataJson(thumbprint, derBase64) });
 
       const observations = await collectWindowsDiscoveryObservations({ execFileImpl, spawn });
 
@@ -636,8 +616,8 @@ describe("collectWindowsDiscoveryObservations", () => {
       const [obs] = observations;
       assert.equal(obs.locationKind, "windows_store");
       assert.deepEqual(obs.subjectAltNames, [
-        "v-broken.example.com",
-        "alt.v-broken.example.com",
+        "san-e2e.example.com",
+        "alt.san-e2e.example.com",
       ]);
     },
   );

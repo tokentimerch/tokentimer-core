@@ -1,6 +1,6 @@
 # Executed user/API lab — 9 October 2026
 
-**Result: all 17 journey checks passed.** The isolated lab remains running at <http://127.0.0.1:58801>. The harness uses public HTTP APIs, normal session/CSRF authentication, separate owner/approver actions, real enrolled agents and customer-host controls. No database fixtures or direct SQL injection were used.
+**Historical r4 result: all 17 journey checks passed.** This installation was subsequently stopped with volumes/evidence retained. The latest replay after merging main is documented in `MERGE-VALIDATION.md`. The harness uses public HTTP APIs, normal session/CSRF authentication, separate owner/approver actions, real enrolled agents and customer-host controls. No database fixtures or direct SQL injection were used.
 
 - Core source: base commit `63a8aa37909b71ab5086fe50ea6839eeb79735f5`, plus the local renewal fixes and lab files.
 - Project: `tt-wildcard-ux-20261009-r4`.

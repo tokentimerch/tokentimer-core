@@ -23,6 +23,22 @@ const { deployIisBinding } = require(path.join(iisRoot, "index.js"));
 
 const RUN_CAPTURED_TIMEOUT_MS = 60 * 1000;
 
+// Enterprise CAs need the template at submit; standalone CAs take none.
+const SUBMIT_TEMPLATE_ARGS = process.env.TT_VERIFY_CA_TEMPLATE
+  ? ["-attrib", `CertificateTemplate:${process.env.TT_VERIFY_CA_TEMPLATE}`]
+  : [];
+
+// netsh option -> DefaultFlags bit. Confirmed alone on Server 2019/2022/2025.
+const NETSH_FLAG_BITS = Object.freeze({
+  disablehttp2: 0x10,
+  disablequic: 0x20,
+  disablelegacytls: 0x400,
+  enabletokenbinding: 0x100,
+  logextendedevents: 0x200,
+  enablesessionticket: 0x800,
+  disablesessionid: 0x4000,
+});
+
 function runCaptured(cmd, args) {
   try {
     const stdout = execFileSync(cmd, args, { encoding: "utf8", timeout: RUN_CAPTURED_TIMEOUT_MS, killSignal: "SIGKILL" });
@@ -33,6 +49,48 @@ function runCaptured(cmd, args) {
     }
     return { stdout: err.stdout ? err.stdout.toString() : "", stderr: err.stderr ? err.stderr.toString() : String(err.message || err), exitCode: typeof err.status === "number" ? err.status : null };
   }
+}
+
+function offeredNetshSslcertParams() {
+  const help = runCaptured("netsh", ["http", "add", "sslcert", "help"]);
+  const names = new Set();
+  const text = `${help.stdout}\n${help.stderr}`;
+  for (const match of text.matchAll(/\[([a-z0-9]+)=/g)) names.add(match[1]);
+  return names;
+}
+
+function readDefaultFlags(ipPort) {
+  const script = [
+    `$k = Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\${ipPort}' -ErrorAction SilentlyContinue`,
+    `if (-not $k) { Write-Output 'missing'; exit 0 }`,
+    `$v = $k.GetValue('DefaultFlags'); if ($null -eq $v) { Write-Output '0' } else { Write-Output ([uint32]$v) }`,
+  ].join("; ");
+  const out = runCaptured("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+  const line = String(out.stdout || "")
+    .trim()
+    .split(/\r?\n/)
+    .pop();
+  if (line === "missing") return null;
+  const n = Number(line);
+  return Number.isInteger(n) ? n >>> 0 : null;
+}
+
+/** Independent of localized netsh labels: SslCertHash is binary in the registry. */
+function readSslCertHash(ipPort) {
+  const script = [
+    `$k = Get-Item -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\${ipPort}' -ErrorAction SilentlyContinue`,
+    `if (-not $k) { Write-Output 'missing'; exit 0 }`,
+    `$v = $k.GetValue('SslCertHash'); if ($null -eq $v) { Write-Output 'missing'; exit 0 }`,
+    `[BitConverter]::ToString([byte[]]$v).Replace('-','')`,
+  ].join("; ");
+  const out = runCaptured("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+  const line = String(out.stdout || "")
+    .trim()
+    .split(/\r?\n/)
+    .pop();
+  if (!line || line === "missing") return null;
+  const hex = line.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  return /^[0-9A-F]{40}$/.test(hex) ? hex : null;
 }
 
 async function issueRealCert({ workDir, caConfig, commonName, basename }) {
@@ -54,7 +112,7 @@ async function issueRealCert({ workDir, caConfig, commonName, basename }) {
   }
 
   let requestId = null;
-  const submit = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-f", "-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath, cerPath]);
   if (submit.timedOut) throw new Error(`certreq -submit for ${commonName} timed out`);
   const combined = `${submit.stdout}\n${submit.stderr}`;
   const idMatch = combined.match(/RequestId:\s*(\d+)/i);
@@ -101,18 +159,42 @@ async function main() {
   console.log("NEW thumbprint:", newCert.thumbprint);
 
   console.log("");
-  console.log(`--- binding OLD cert at ipport=0.0.0.0:${partAPort} with explicit newer per-connection flags set ---`);
-  const explicitFlagArgs = [
-    "http", "delete", "sslcert", `ipport=0.0.0.0:${partAPort}`,
-  ];
-  runCaptured("netsh", explicitFlagArgs); // best-effort cleanup of any stale prior binding
-  const addArgs = [
-    "http", "add", "sslcert", `ipport=0.0.0.0:${partAPort}`,
-    `certhash=${oldCert.thumbprint}`, `appid={${require("node:crypto").randomUUID()}}`, "certstorename=My",
-    "disablehttp2=enable", "disablequic=enable", "disablelegacytls=enable",
-    "enabletokenbinding=enable", "logextendedevents=enable", "enablesessionticket=enable", "disablesessionid=enable",
-  ];
-  const addResult = runCaptured("netsh", addArgs);
+  console.log(`--- binding OLD cert at ipport=0.0.0.0:${partAPort} with newer flags this host's netsh offers ---`);
+  runCaptured("netsh", ["http", "delete", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
+  const offered = offeredNetshSslcertParams();
+  let flagArgs = Object.keys(NETSH_FLAG_BITS)
+    .filter((name) => offered.has(name))
+    .map((name) => `${name}=enable`);
+  if (flagArgs.length === 0) {
+    fail("netsh http add sslcert help offered none of the newer flags this driver checks");
+  }
+  // Some Server 2019 builds exit 0 and create nothing when given newer flags
+  // they list in help (e.g. disablelegacytls). Fall back to disablehttp2 alone.
+  const tryBind = (args) => {
+    runCaptured("netsh", ["http", "delete", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
+    const addArgs = [
+      "http",
+      "add",
+      "sslcert",
+      `ipport=0.0.0.0:${partAPort}`,
+      `certhash=${oldCert.thumbprint}`,
+      `appid={${require("node:crypto").randomUUID()}}`,
+      "certstorename=My",
+      ...args,
+    ];
+    const addResult = runCaptured("netsh", addArgs);
+    const flags = readDefaultFlags(`0.0.0.0:${partAPort}`);
+    return { addResult, flags };
+  };
+  let expectedFlags = flagArgs.reduce((mask, arg) => mask | NETSH_FLAG_BITS[arg.split("=")[0]], 0) >>> 0;
+  console.log("offered flags:", flagArgs.join(" "), `expected DefaultFlags=${expectedFlags}`);
+  let { addResult, flags: beforeFlags } = tryBind(flagArgs);
+  if (addResult.exitCode === 0 && beforeFlags === null && offered.has("disablehttp2")) {
+    console.log("OBSERVE: netsh exited 0 but created no binding; retrying with disablehttp2 only");
+    flagArgs = ["disablehttp2=enable"];
+    expectedFlags = NETSH_FLAG_BITS.disablehttp2;
+    ({ addResult, flags: beforeFlags } = tryBind(flagArgs));
+  }
   if (addResult.exitCode !== 0) {
     fail(`initial OLD-cert bind with explicit flags failed: ${addResult.stdout} ${addResult.stderr}`);
   } else {
@@ -120,26 +202,14 @@ async function main() {
   }
 
   console.log("");
-  console.log("--- independent netsh confirmation of the flags BEFORE rebind ---");
-  const beforeShow = runCaptured("netsh", ["http", "show", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
-  console.log(beforeShow.stdout);
-  fs.writeFileSync(path.join(workDir, "wiis07-before-rebind.txt"), beforeShow.stdout, { encoding: "utf8" });
-  const beforeChecks = [
-    ["Disable HTTP2", "Set"],
-    ["Disable QUIC", "Set"],
-    ["Disable Legacy TLS Versions", "Set"],
-    ["Enable Token Binding", "Set"],
-    ["Log Extended Events", "Set"],
-    ["Enable Session Ticket", "Set"],
-    ["Disable Session ID", "Set"],
-  ];
-  for (const [label, expected] of beforeChecks) {
-    const re = new RegExp(`${label}\\s*:\\s*${expected}`, "i");
-    if (!re.test(beforeShow.stdout)) {
-      fail(`expected "${label}: ${expected}" in pre-rebind netsh output, not found`);
-    }
+  console.log("--- registry confirmation of DefaultFlags BEFORE rebind (display-language independent) ---");
+  console.log("DefaultFlags before rebind:", beforeFlags);
+  fs.writeFileSync(path.join(workDir, "wiis07-before-flags.txt"), String(beforeFlags), { encoding: "utf8" });
+  if (beforeFlags !== expectedFlags) {
+    fail(`expected DefaultFlags ${expectedFlags} before rebind, got ${beforeFlags}`);
+  } else {
+    console.log("OK: pre-rebind DefaultFlags match the flags netsh accepted");
   }
-  console.log("pre-rebind flag checks done.");
 
   console.log("");
   console.log("--- real rebind via deployIisBinding (queries current binding, preserves params, delete+add to NEW cert) ---");
@@ -154,20 +224,24 @@ async function main() {
   }
 
   console.log("");
-  console.log("--- independent netsh confirmation of the flags AFTER rebind (the real-host proof this driver exists to produce) ---");
-  const afterShow = runCaptured("netsh", ["http", "show", "sslcert", `ipport=0.0.0.0:${partAPort}`]);
-  console.log(afterShow.stdout);
-  fs.writeFileSync(path.join(workDir, "wiis07-after-rebind.txt"), afterShow.stdout, { encoding: "utf8" });
-  if (!afterShow.stdout.toUpperCase().includes(newCert.thumbprint.toUpperCase())) {
-    fail("after rebind, netsh does not report the NEW cert's thumbprint");
+  console.log("--- registry confirmation of DefaultFlags and SslCertHash AFTER rebind ---");
+  const afterFlags = readDefaultFlags(`0.0.0.0:${partAPort}`);
+  console.log("DefaultFlags after rebind:", afterFlags);
+  fs.writeFileSync(path.join(workDir, "wiis07-after-flags.txt"), String(afterFlags), { encoding: "utf8" });
+  if (afterFlags !== expectedFlags) {
+    fail(`after rebind, expected DefaultFlags ${expectedFlags} to survive, got ${afterFlags}`);
+  } else {
+    console.log(`OK: DefaultFlags ${expectedFlags} survived the real rebind`);
   }
-  for (const [label, expected] of beforeChecks) {
-    const re = new RegExp(`${label}\\s*:\\s*${expected}`, "i");
-    if (!re.test(afterShow.stdout)) {
-      fail(`after rebind, expected "${label}: ${expected}" to have survived, but it did not (silently reset to netsh default)`);
-    } else {
-      console.log(`OK: "${label}: ${expected}" survived the real rebind`);
-    }
+  const afterHash = readSslCertHash(`0.0.0.0:${partAPort}`);
+  console.log("SslCertHash after rebind:", afterHash);
+  fs.writeFileSync(path.join(workDir, "wiis07-after-certhash.txt"), String(afterHash), { encoding: "utf8" });
+  if (afterHash !== newCert.thumbprint.toUpperCase()) {
+    fail(
+      `after rebind, HTTP.sys SslCertHash is not the NEW thumbprint: expected ${newCert.thumbprint}, got ${afterHash}`,
+    );
+  } else {
+    console.log("OK: independent registry SslCertHash matches the NEW certificate");
   }
 
   console.log("");

@@ -33,19 +33,19 @@ Total skips found: 63
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 343 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 372 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 192 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 283 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 315 | prefers the raw-bytes-derived SANs over windows-discovery's certutil-text-parsed list | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 358 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 389 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 432 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 497 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/discovery/windows.test.js` | 605 | still reports real subjectAltNames end-to-end when certutil -v fails but plain certutil -store and raw-bytes fingerprinting both succeed | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 214 | computes a real SHA-256 fingerprint from base64 DER bytes | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 327 | reads real SAN entries directly from a certificate's own raw DER bytes | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 359 | prefers the raw-bytes-derived SANs over windows-discovery's own list | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 402 | reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 431 | resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 462 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 515 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/discovery/windows.test.js` | 603 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/platform/platform.test.js` | 440 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/platform/platform.test.js` | 454 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-e2e.test.js` | 424 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |

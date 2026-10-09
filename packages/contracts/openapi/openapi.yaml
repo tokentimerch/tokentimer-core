@@ -9374,6 +9374,9 @@ components:
             (commandRef, caEndpoint, acmeKind, keyRotation, certPath,
             reloadService, verifyHost, verifyPort, dnsZone, dnsProvider); a
             renewalProfile snapshot is not valid on an "issue" job.
+            payload.issuerKind and payload.enrollment are set by the control
+            plane at signed dispatch and are refused on every operation with
+            CERTOPS_JOB_EXECUTION_FIELD_INVALID, even when null.
         idempotencyKey:
           type: string
           maxLength: 128
@@ -12348,7 +12351,7 @@ components:
                   maxItems: 16
                   items:
                     type: string
-                    enum: [renew, deploy, reload, revoke, noop, protocol_smoke, distribute-trust, revoke-trust, deploy-from-store]
+                    enum: [renew, deploy, reload, revoke, noop, continue-enrollment, protocol_smoke, distribute-trust, revoke-trust, adcs-preflight, deploy-from-store]
     CertOpsAgentClaimResponse:
       type: object
       description: Signed claimed jobs. Each job is the signed dispatch payload the agent verifies before execution.
@@ -12468,8 +12471,8 @@ components:
                   description: Result messages only. Doubles as the claimId when claimId is omitted.
                 status:
                   type: string
-                  enum: [succeeded, failed, rejected, blocked, dry_run_complete, orphaned_unknown_effect]
-                  description: Result messages only.
+                  enum: [succeeded, failed, rejected, blocked, dry_run_complete, orphaned_unknown_effect, awaiting_issuer]
+                  description: Result messages only. awaiting_issuer requires enrollmentResult.
                 rejectionReason:
                   type: string
                   nullable: true
@@ -12484,6 +12487,9 @@ components:
                     - dns_provider_not_allowlisted
                     - key_export_requested
                     - clock_drift_suspected
+                    - unexpected_job_type
+                    - issuer_not_allowlisted
+                    - enrollment_snapshot_mismatch
                 keyRotated:
                   type: boolean
                   nullable: true
@@ -12491,6 +12497,14 @@ components:
                   type: string
                   maxLength: 1024
                   nullable: true
+                enrollmentResult:
+                  type: object
+                  nullable: true
+                  description: Result messages for a job that carries an enrollment. Shape defined by packages/contracts/certops/enrollment-result-contract.schema.json.
+                preflightResult:
+                  type: object
+                  nullable: true
+                  description: Result messages for an adcs-preflight job. Shape defined by packages/contracts/certops/adcs-preflight-result-contract.schema.json.
                 claimId:
                   type: string
                   maxLength: 128

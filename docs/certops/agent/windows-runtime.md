@@ -36,6 +36,14 @@ The agent supports native Windows service installation. Its runtime differs from
   hardened PowerShell-trust alternative) and CNG non-exportable key custody
   (decision 1) generally available. This is a preflight check only; it does
   not change what the agent itself requires at runtime.
+- **Windows PowerShell 5.1 is a runtime dependency.** The agent reads the
+  machine certificate store (`Cert:\LocalMachine`) and the `http.sys`
+  bindings (registry) through `powershell.exe`, so these reads do not
+  depend on the display language. If `powershell.exe` is missing or the
+  query fails, discovery reports the failure and an IIS deploy fails with
+  `QUERY_FAILED` before changing the binding. Key container and provider names
+  still come from `certutil -store`, matched by thumbprint and line
+  structure rather than by label.
 - **Registry-persisted bootstrap token is cleared after registration.** The
   installer writes the bootstrap token into the service's own
   `HKLM:\SYSTEM\CurrentControlSet\Services\TokenTimerAgent\Environment`
@@ -117,25 +125,27 @@ The agent supports native Windows service installation. Its runtime differs from
   every renewal previously reset any operator-configured
   revocation-checking, CTL-issuer-restriction, DS-mapper, and
   client-certificate-negotiation setting back to default. The agent now
-  reads the outgoing binding's settings back via `netsh http show sslcert`
-  before deleting it and reapplies every one it can positively parse on the
-  new binding, including the newer Windows Server 2019+ per-connection
+  reads the outgoing binding's settings from `http.sys`'s own configuration
+  in the registry (`HKLM\SYSTEM\CurrentControlSet\Services\HTTP\Parameters`,
+  `SslBindingInfo` and `SslSniBindingInfo`) before deleting it, and
+  reapplies them on the new binding, including the newer per-connection
   policy flags (`reject`, `disablehttp2`, `disablequic`, `disablelegacytls`,
   `disabletls12`, `disabletls13`, `disableocspstapling`,
   `enabletokenbinding`, `logextendedevents`, `enablesessionticket`,
-  `disablesessionid`). A setting `netsh` reports as its own "Not Set"
-  tri-state default is never forced either way, matching pre-fix behavior
-  for that one field. `disableLegacyTls` specifically is parsed against a
-  *different* vocabulary than every other per-connection flag above:
-  Microsoft's own documentation reports this one field as `Set`/`Not Set`,
-  not `Enabled`/`Disabled`/`Not Set` -- a PR review found (2026-08-07) that
-  the shared Enabled/Disabled/Not-Set parser never matched a bare `Set`, so
-  an outgoing binding with legacy TLS genuinely disabled had that
-  restriction silently dropped, not merely reset, on every renewal. The
-  parser now recognizes both vocabularies (defensively accepting
-  `Enabled`/`Disabled` too, should a future Windows build ever report this
-  field the same way as its siblings), with a regression test built from
-  Microsoft's own documented `netsh http show sslcert` output shape.
+  `disablesessionid`). `netsh http show sslcert` is never parsed: its labels
+  are translated on non-English Windows, so that approach silently dropped
+  every setting there. `netsh` is only used to delete and add bindings.
+- **A binding the agent cannot rebind faithfully is left untouched.** If the
+  outgoing binding holds a setting the agent does not recognize (an unknown
+  registry value or flag bit, as a future Windows release may add), or one
+  this host's `netsh` cannot set (`netsh` exits successfully *without*
+  creating the binding when given a parameter it does not know, seen on
+  Windows Server 2019), the deploy fails with `UNSUPPORTED_BINDING_SETTINGS`
+  before deleting anything, and the detail names the settings involved.
+  A binding already serving the target certificate is never affected.
+- **The `http.sys` and certificate-store queries run under PowerShell
+  Constrained Language Mode** (AppLocker or WDAC enforcement), since they
+  only use constructs that mode allows.
 - **A non-SNI binding on the same port always takes precedence over an SNI
   binding, and a deploy to an SNI binding now warns when one exists.** This
   is `http.sys`'s own dispatch rule, not something either binding's

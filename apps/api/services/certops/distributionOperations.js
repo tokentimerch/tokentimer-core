@@ -169,7 +169,7 @@ async function processDistributionIntent({client,row,payload}) {
       return { queued:true,reason:"approved_rollout_created" };
     }
     return advanceRollout(client,row.workspace_id,payload.groupId,payload.rolloutId);
-  
+
 }
 
 async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {

@@ -26,7 +26,9 @@ function fixture(t, address) {
     fingerprintSha256: computeCertificateFingerprint(cert), sans: parseDnsSans(x509.subjectAltName) };
   const scope = { workspaceId: intent.workspaceId, prefix: `${intent.workspaceId}/${intent.groupId}`,
     sans: bundle.sans, keyAlgorithm: x509.publicKey.asymmetricKeyType };
-  const stores = { customer: { address, mount: "secret", tokenFile, timeoutMs: 500,
+  // Concurrent Windows ACL checks can delay the loopback fixture beyond 500ms.
+  // These tests assert protocol outcomes, not a sub-second transport deadline.
+  const stores = { customer: { address, mount: "secret", tokenFile, timeoutMs: 10000,
     groups: { [intent.groupId]: scope } } };
   return { intent, bundle, scope, stores, directory };
 }
@@ -130,6 +132,10 @@ test("real Vault ACL separates issuer, consumer, scanner and customer prefixes",
 
 test("checkpoint without validated material exposes uncertainty and never permits a new order", async (t) => {
   const server=http.createServer((req,res)=>{assert.equal(req.method,"GET");res.writeHead(404).end();});
+  // Synchronous Windows ACL work between recoveries may exceed Node's 5s
+  // server idle timeout. Keep this protocol fixture's socket valid; production
+  // transport failures must still fence issuance and are tested separately.
+  server.keepAliveTimeout = 60000;
   await new Promise(r=>server.listen(0,"127.0.0.1",r));t.after(()=>new Promise(r=>server.close(r)));
   const f=fixture(t,`http://127.0.0.1:${server.address().port}`);
   Object.assign(f.scope,{issuerAgentId:"issuer",issuanceProfileRef:"profile",profileRevision:1,caEndpoint:"https://ca.test/dir",dnsProvider:"test",dnsZone:"example.com"});

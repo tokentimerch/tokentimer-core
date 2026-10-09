@@ -785,7 +785,21 @@ function validateIssueDeploymentTargets(payload, operation) {
   }
 }
 
+// The issuer kind and enrollment snapshot are attached at signed dispatch
+// from the control plane's issuer and enrollment records (ADR-0014). Signed
+// dispatch spreads the stored payload, so a client-supplied value would be
+// signed as if the control plane had resolved it. Refused even when null.
+const DISPATCH_ATTACHED_FIELD_NAMES = Object.freeze(["issuerKind", "enrollment"]);
+
 function validateExecutionFields(payload, operation) {
+  for (const fieldName of DISPATCH_ATTACHED_FIELD_NAMES) {
+    if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
+    throw serviceError(
+      `CertOps job payload field ${fieldName} is set by the control plane ` +
+        "and cannot be supplied on a job request",
+      CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+  }
   if (payload.publication || payload.materialDeployment || operation === "deploy-from-store") {
     const { validateDistributionContract } = require("./materialDistribution");
     if (payload.publication) {

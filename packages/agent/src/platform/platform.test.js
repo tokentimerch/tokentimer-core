@@ -24,7 +24,10 @@ function fakeSpawn(handlers) {
   const merged = { powershell: () => ({ stdout: `${OWN_SID}\r\n` }), ...handlers };
   const spawn = (file, args) => {
     calls.push({ file, args });
-    const handler = merged[file];
+    // Production resolves System32 absolute paths; match on basename so stubs
+    // stay keyed as "whoami" / "icacls" / "powershell".
+    const base = path.parse(file).name.toLowerCase();
+    const handler = merged[base] || merged[file];
     if (!handler) return { error: Object.assign(new Error("nope"), { code: "ENOENT" }) };
     return { status: 0, stdout: "", stderr: "", ...handler(args) };
   };
@@ -114,7 +117,9 @@ describe("platform: permission application", () => {
     assert.equal(result.mechanism, "windows-acl");
     assert.equal(result.inheritance, "removed");
     assert.deepEqual(result.removed, []);
-    const icacls = spawn.calls.find((call) => call.file === "icacls");
+    const icacls = spawn.calls.find(
+      (call) => path.parse(call.file).name.toLowerCase() === "icacls",
+    );
     assert.deepEqual(icacls.args, [
       "C:\\state\\credential",
       "/inheritance:r",
@@ -188,9 +193,18 @@ describe("platform: permission application", () => {
       spawn,
       tmpDir: os.tmpdir(),
     });
-    const icacls = spawn.calls.find((call) => call.file === "icacls");
+    const icacls = spawn.calls.find(
+      (call) => path.parse(call.file).name.toLowerCase() === "icacls",
+    );
     assert.ok(icacls.args.includes(`*${platform.SYSTEM_SID}:(OI)(CI)(F)`));
     assert.ok(icacls.args.includes(`*${OWN_SID}:(OI)(CI)(F)`));
+  });
+
+  it("resolves whoami through System32 so Git Bash cannot shadow it", () => {
+    const spawn = fakeSpawn({ whoami: whoamiHandler });
+    const sid = platform.currentUserSid({ spawn, useCache: false });
+    assert.equal(sid, OWN_SID);
+    assert.equal(spawn.calls[0].file, platform.windowsSystem32Tool("whoami"));
   });
 
   it("collapses the grant list when the agent already runs as SYSTEM", () => {

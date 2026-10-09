@@ -24,6 +24,10 @@ const {
 const protocolSmokePayloadSchema = require("../../packages/contracts/certops/protocol-smoke-payload.schema.json");
 const trustJobPayloadSchema = require("../../packages/contracts/certops/trust-job-payload.schema.json");
 const trustResultContractSchema = require("../../packages/contracts/certops/trust-result-contract.schema.json");
+const enrollmentSnapshotSchema = require("../../packages/contracts/certops/enrollment-snapshot.schema.json");
+const enrollmentResultContractSchema = require("../../packages/contracts/certops/enrollment-result-contract.schema.json");
+const adcsPreflightPayloadSchema = require("../../packages/contracts/certops/adcs-preflight-payload.schema.json");
+const adcsPreflightResultContractSchema = require("../../packages/contracts/certops/adcs-preflight-result-contract.schema.json");
 
 const openApiSource = fs.readFileSync(
   path.join(repoRoot, "packages/contracts/openapi/openapi.yaml"),
@@ -173,6 +177,10 @@ const certopsSchemas = {
   "signed-dispatch-wire-v2.schema.json": signedDispatchWireV2Schema,
   "trust-job-payload.schema.json": trustJobPayloadSchema,
   "trust-result-contract.schema.json": trustResultContractSchema,
+  "enrollment-snapshot.schema.json": enrollmentSnapshotSchema,
+  "enrollment-result-contract.schema.json": enrollmentResultContractSchema,
+  "adcs-preflight-payload.schema.json": adcsPreflightPayloadSchema,
+  "adcs-preflight-result-contract.schema.json": adcsPreflightResultContractSchema,
 };
 
 // Not part of certopsSchemas: these are partial building-block definitions

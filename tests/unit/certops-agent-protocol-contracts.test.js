@@ -462,7 +462,12 @@ describe("CertOps agent protocol contracts", () => {
     const supportedActionsEnum =
       agentProtocolSchema.definitions.claimBody.properties.supportedActions
         .items.enum;
-    const ownSchemaActions = ["protocol_smoke", "distribute-trust", "revoke-trust"];
+    const ownSchemaActions = [
+      "protocol_smoke",
+      "distribute-trust",
+      "revoke-trust",
+      "adcs-preflight",
+    ];
     assert.deepEqual(
       supportedActionsEnum.filter((action) => !ownSchemaActions.includes(action)),
       jobPayloadSchema.properties.action.enum,

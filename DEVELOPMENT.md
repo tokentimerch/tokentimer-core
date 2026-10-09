@@ -165,6 +165,123 @@ pnpm --filter @tokentimer/worker start:weekly-digest
 pnpm --filter @tokentimer/worker start:certops
 ```
 
+## Helm smoke test
+
+The Helm smoke test deploys TokenTimer into an ephemeral Kubernetes cluster and verifies that the API is reachable through its Kubernetes Service and returns a healthy response from `/health`.
+
+### Prerequisites
+
+- Docker
+- `kubectl`
+- Helm
+- [kind](https://kind.sigs.k8s.io/)
+- A working internet connection to pull the required container images and Helm charts
+
+### Run locally
+
+Create a Kubernetes cluster using a version compatible with the chart requirements:
+
+```bash
+kind create cluster \
+  --name ephemeral-smoke-test-cluster \
+  --image kindest/node:v1.29.14
+
+kubectl cluster-info \
+  --context kind-ephemeral-smoke-test-cluster
+```
+
+Install the chart prerequisites (ServiceMonitor CRD and CloudNativePG operator), using the same versions and commands as the CI workflow:
+
+```bash
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo update
+
+kubectl apply -f https://raw.githubusercontent.com/prometheus-community/helm-charts/main/charts/kube-prometheus-stack/charts/crds/crds/crd-servicemonitors.yaml
+
+kubectl wait \
+  --for=condition=Established \
+  crd/servicemonitors.monitoring.coreos.com \
+  --timeout=30s
+
+helm install cnpg-operator cnpg/cloudnative-pg \
+  --namespace cnpg-system \
+  --create-namespace \
+  --version 0.23.0 \
+  --wait
+```
+
+Install TokenTimer using the smoke-test values. `config.adminEmail` is required by the chart even when the smoke-test values leave it empty:
+
+```bash
+helm install tokentimer ./deploy/helm \
+  --namespace tokentimer \
+  --create-namespace \
+  -f deploy/helm/ci/ci-values-smoke-test.yaml \
+  --set config.adminEmail=admin@example.com \
+  --set api.env.NODE_ENV=development
+```
+
+Wait for the API deployment:
+
+```bash
+kubectl rollout status deployment/tokentimer-api \
+  -n tokentimer \
+  --timeout=240s
+```
+
+Run the health check from inside the cluster. Use `--attach` so the command waits for the curl response. The test pod must use labels permitted by the API NetworkPolicy:
+
+```bash
+response=$(kubectl run smoke-test \
+  --image=curlimages/curl:8.12.1 \
+  --restart=Never \
+  --namespace=tokentimer \
+  --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
+  --attach \
+  --quiet \
+  --command -- \
+  curl -sS --connect-timeout 5 --max-time 10 \
+  -w '\n%{http_code}\n' \
+  http://tokentimer-api:4000/health)
+
+http_code=$(printf '%s\n' "$response" | tail -n 1)
+body=$(printf '%s\n' "$response" | sed '$d')
+
+echo "HTTP status: $http_code"
+
+if [ "$http_code" != "200" ]; then
+  echo "API returned HTTP $http_code"
+  exit 1
+fi
+
+if ! echo "$body" | grep -q '"status":"healthy"'; then
+  echo "API is not healthy"
+  exit 1
+fi
+
+echo "API health check passed"
+```
+
+The check fails unless the response is HTTP `200` with a JSON body containing `"status":"healthy"`.
+
+### Troubleshooting
+
+Inspect the API deployment, Service endpoints, NetworkPolicies and pod logs:
+
+```bash
+kubectl get pods,svc,endpoints -n tokentimer
+kubectl get networkpolicy -n tokentimer
+kubectl logs -n tokentimer deployment/tokentimer-api
+helm status tokentimer -n tokentimer
+```
+
+### Cleanup
+
+```bash
+helm uninstall tokentimer -n tokentimer
+kind delete cluster --name ephemeral-smoke-test-cluster
+```
+
 ## Worker Runner
 
 `apps/worker/src/runner.js` is the long-running worker scheduler used by local

@@ -116,9 +116,10 @@ const { createClockOffsetEstimator } = require("./clock");
 const { checkNtpSynced } = require("./ntp");
 const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
 const {
-  createAcmeAdapter,
-  resolveCertificateOutputPaths,
-} = require("./acme");
+  resolveJobIssuerKind,
+  assertIssuanceOutcome,
+  createAcmeIssuer,
+} = require("./issuers");
 const {
   deployCertificate,
   deployCertificateAndKey,
@@ -974,24 +975,49 @@ function boundMetadataExcerpt(value) {
 }
 
 /**
- * Picks the most useful diagnostic text out of a failed ACME adapter run.
- * acme.sh (unlike certbot) writes most of its diagnostic detail, including
- * the reason a run was skipped or rejected, to stdout via its own `_info`
- * logger; only messages routed through `_err` land on stderr. A failure
- * message that only ever looks at stderrExcerpt therefore reports
- * "no stderr" for the exact acme.sh failures an operator most needs
- * explained (e.g. `RENEW_SKIP`), even though the real explanation was
- * captured and redacted right there in stdoutExcerpt. Prefers stderr when
- * both are present since certbot's own errors are conventionally there.
- * @param {{ stderrExcerpt?: string, stdoutExcerpt?: string }} renewal
- * @returns {string}
+ * @param {object} job
+ * @returns {string|null} job.preferredChain, else the nested renewal profile's
  */
-function acmeFailureDetail(renewal) {
-  const stderr = renewal.stderrExcerpt || "";
-  const stdout = renewal.stdoutExcerpt || "";
-  if (stderr) return stderr;
-  if (stdout) return stdout;
-  return "no output captured";
+function resolveJobPreferredChain(job) {
+  if (typeof job.preferredChain === "string" && job.preferredChain.length > 0) {
+    return job.preferredChain;
+  }
+  const fromProfile = job?.renewalProfile?.preferredChain;
+  return typeof fromProfile === "string" && fromProfile.length > 0 ? fromProfile : null;
+}
+
+/**
+ * Job result for an issuer outcome other than issued. Renewal jobs cannot
+ * wait on a CA or reconcile an uncertain submission yet, so pending,
+ * not_submitted and uncertain fail rather than being read as anything else.
+ *
+ * @param {object} issuance outcome checked by assertIssuanceOutcome
+ * @returns {{ status: string, rejectionReason?: string, errorMessage: string }}
+ */
+function resultForUnissuedOutcome(issuance) {
+  if (issuance.outcome === "refused") {
+    return {
+      status: "rejected",
+      rejectionReason: issuance.rejectionReason,
+      errorMessage: boundErrorMessage(issuance.detail),
+    };
+  }
+  if (issuance.outcome === "failed" || issuance.outcome === "denied") {
+    return { status: "failed", errorMessage: boundErrorMessage(issuance.detail) };
+  }
+  const detail = typeof issuance.detail === "string" ? `: ${issuance.detail}` : "";
+  return {
+    status: "failed",
+    errorMessage: boundErrorMessage(
+      `issuer returned ${issuance.outcome}, which renewal jobs do not handle yet${detail}`,
+    ),
+  };
+}
+
+async function reportIssuanceEvidence(client, jobId, issuance) {
+  if (Array.isArray(issuance.evidence) && issuance.evidence.length > 0) {
+    await reportStepEvidence(client, jobId, issuance.evidence);
+  }
 }
 
 /**
@@ -1109,33 +1135,6 @@ function splitLeafAndChainPem(pem) {
     leafPem: blocks[0],
     chainPem: `${blocks.slice(1).join("\n")}\n`,
   };
-}
-
-/**
- * Reads the certificate material an ACME run staged, preferring the
- * fullchain artifact: nearly every server expects leaf plus intermediates at
- * its certificate path, and a leaf-only deployment is what makes clients
- * report an incomplete chain. The leaf-only file stays a fallback for tools
- * (or CAs) that produced no chain artifact at all.
- *
- * @param {{ leafPath: string, fullchainPath: string }} paths
- * @returns {{ pem: string }|{ error: string }}
- */
-function readStagedCertificateChain(paths) {
-  const candidates = [paths.fullchainPath, paths.leafPath];
-  const errors = [];
-  for (const candidate of candidates) {
-    try {
-      const pem = fs.readFileSync(candidate, "utf8");
-      if (pem.trim().length > 0) {
-        return { pem };
-      }
-      errors.push(`${candidate} is empty`);
-    } catch (err) {
-      errors.push(err.message);
-    }
-  }
-  return { error: errors.join("; ") };
 }
 
 /**
@@ -2339,6 +2338,13 @@ async function executeJob({
     };
   }
 
+  if (action === "renew") {
+    const issuerKind = resolveJobIssuerKind(job);
+    if (issuerKind.error) {
+      return { status: "blocked", errorMessage: boundErrorMessage(issuerKind.error) };
+    }
+  }
+
   // B4: signed job.mode wins. Local execution.dryRun may only refuse a
   // real job outright — never silently swap in the dry-run code path.
   if (jobMode === "dry_run") {
@@ -2762,6 +2768,21 @@ async function executeRenewJob({
   }
 
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
+  const issuer = createAcmeIssuer({
+    acmeKind,
+    argv: commandVerdict.argv,
+    caEndpoint: job.caEndpoint,
+    preferredChain: resolveJobPreferredChain(job),
+    eabCredentials,
+    // ACME account/state nests under the agent config/state dir. keysDir
+    // defaults to <configDir>/keys, so its parent is that state dir.
+    stateDir: path.dirname(execution.keysDir),
+    scratchDir: execution.keysDir,
+    jobId,
+    checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
+    execFileImpl: executionContext.acmeExecFileImpl,
+    info: emitInfo,
+  });
 
   // Step 1: keys. Reuse-if-exists unless job.keyRotation is truthy
   // (forward-compatible field, absent from the base schema). Rotation
@@ -2791,26 +2812,18 @@ async function executeRenewJob({
     stagedKeyPath = generated.stagedKeyPath;
   }
 
-  // Step 2: CSR, written to a job-scoped temp path under keysDir (0600).
-  // Always signed with the key that will be deployed (staged on rotation).
+  // Step 2: CSR, always signed with the key that will be deployed (staged on
+  // rotation). The issuer writes it to a job-scoped 0600 file under keysDir
+  // and removes it, along with any staged chain, whatever the outcome.
   const { csrPem } = generateCsr({
     keyPath: stagedKeyPath,
     subject: { commonName: csrCommonName },
     altNames: domains,
   });
-  const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
-  fs.writeFileSync(csrPath, csrPem, { mode: 0o600 });
-
-  // The ACME client writes to job-scoped staging paths; the deploy module
-  // then owns the atomic install (with backup/rollback) to certPath. The
-  // chain and fullchain artifacts are siblings of the leaf, named by the
-  // same helper the adapter uses to build its argv.
-  const stagedCertPath = path.join(execution.keysDir, `${jobId}.cert.pem`);
-  const stagedCertPaths = resolveCertificateOutputPaths(stagedCertPath);
 
   let certificatePem;
   try {
-    // Step 3: ACME renewal via the policy-resolved command profile.
+    // Step 3: issuance.
     {
       const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
       if (leaseGate && leaseGate.ok === false) {
@@ -2818,113 +2831,27 @@ async function executeRenewJob({
         return leaseGate.abort;
       }
     }
-    if (typeof onBeforeMutation === "function") onBeforeMutation("acme");
-    emitInfo(
-      `job ${jobId}: starting ACME order (${acmeKind}) against ${job.caEndpoint} for ${domains.join(", ")}`,
-    );
-    const adapter = createAcmeAdapter({
-      kind: acmeKind,
-      commandProfile: { argv: commandVerdict.argv },
-      execFileImpl: executionContext.acmeExecFileImpl,
-    });
-    // ACME account/state nests under the agent config/state dir. keysDir
-    // defaults to <configDir>/keys, so its parent is that state dir.
-    const stateDir = path.dirname(execution.keysDir);
-    const renewalOpts = {
-      caEndpoint: job.caEndpoint,
-      domains,
-      csrPath,
-      outCertPath: stagedCertPath,
-      stateDir,
-      checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
-    };
-    if (typeof job.preferredChain === "string" && job.preferredChain.length > 0) {
-      renewalOpts.preferredChain = job.preferredChain;
-    } else if (
-      typeof job?.renewalProfile?.preferredChain === "string" &&
-      job.renewalProfile.preferredChain.length > 0
-    ) {
-      renewalOpts.preferredChain = job.renewalProfile.preferredChain;
-    }
-    if (eabCredentials) {
-      renewalOpts.eabKid = eabCredentials.eabKid;
-      renewalOpts.eabHmacKey = eabCredentials.eabHmacKey;
-    }
-    const renewal = await adapter.runRenewal(renewalOpts);
-    if (renewal.allowed === false) {
+    if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
+    const issuance = assertIssuanceOutcome(await issuer.submit({ csrPem, domains }));
+    await reportIssuanceEvidence(client, jobId, issuance);
+    if (issuance.outcome !== "issued") {
       discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
-      return {
-        status: "rejected",
-        rejectionReason: renewal.rejectionReason,
-        errorMessage: boundErrorMessage(renewal.detail),
-      };
+      const result = resultForUnissuedOutcome(issuance);
+      return result.status === "rejected" ? result : { ...result, keyRotated };
     }
-    if (renewal.renewed !== true) {
-      discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
-      await reportStepEvidence(client, jobId, [
-        buildEvidenceItem({
-          eventType: "validation.failed",
-          observedAt: new Date().toISOString(),
-          summary: `ACME renewal step failed for job ${jobId} (exit code ${renewal.exitCode}).`,
-          metadata: [
-            { name: "step", value: "acme" },
-            { name: "exitCode", value: renewal.exitCode },
-            { name: "stderrExcerpt", value: boundMetadataExcerpt(renewal.stderrExcerpt) },
-            { name: "stdoutExcerpt", value: boundMetadataExcerpt(renewal.stdoutExcerpt) },
-          ],
-        }),
-      ]);
-      return {
-        status: "failed",
-        keyRotated,
-        errorMessage: boundErrorMessage(
-          `acme step failed with exit code ${renewal.exitCode}: ${acmeFailureDetail(renewal)}`,
-        ),
-      };
-    }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "validation.passed",
-        observedAt: new Date().toISOString(),
-        summary: `ACME renewal step succeeded for job ${jobId}.`,
-        metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
-      }),
-    ]);
-    emitInfo(`job ${jobId}: ACME order succeeded`);
-
     // Steps 4-6 are shared with the deploy action (possibly multi-target).
-    const staged = readStagedCertificateChain(stagedCertPaths);
-    if (staged.error) {
-      discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
-      return {
-        status: "failed",
-        keyRotated,
-        errorMessage: boundErrorMessage(
-          `acme step reported success but produced no certificate file: ${staged.error}`,
-        ),
-      };
-    }
-    certificatePem = staged.pem;
+    certificatePem = issuance.certificatePem;
     if (publication) publication.stage(certificatePem, readProtectedFile(stagedKeyPath), computeCertificateFingerprint(certificatePem), keyRotated);
   } catch (err) {
     // Every *returned* failure above discards the staged key explicitly, but a
-    // thrown one skipped it: the finally below cleans the CSR and the staged
-    // chain, never the key. An exception here (adapter crash, unreadable
-    // staging dir, lease transport error) therefore left a 0600 private key in
+    // thrown one would skip it. An exception here (issuer crash, unreadable
+    // staging dir, lease transport error) would leave a 0600 private key in
     // keysDir forever, since nothing else knows the path. The key is worthless
     // without the certificate that was never issued, but a private key that
     // outlives its job is residue on the one boundary this agent exists to
     // keep clean, so it goes before the error propagates.
     discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
     throw err;
-  } finally {
-    // The CSR is public material, but it is job-scoped scratch: remove it.
-    fs.rmSync(csrPath, { force: true });
-    // Every route out of the block above, success or failure, lands here, so
-    // a partially written chain never survives a failed renewal.
-    for (const stagedArtifact of Object.values(stagedCertPaths)) {
-      fs.rmSync(stagedArtifact, { force: true });
-    }
   }
 
   if (publication) {
@@ -3276,8 +3203,8 @@ async function runWindowsIisDeployTail({
  * Ownership is decided by THREE independent signals, ALL required, not
  * merely container PRESENCE: any non-exportable CNG certificate (one an
  * operator or a different tool enrolled directly on this host, not just
- * one this agent installed) also reports a "Key Container =" line in
- * certutil's output, so presence alone is not evidence this agent may
+ * one this agent installed) also reports a key container in the store
+ * listing, so presence alone is not evidence this agent may
  * delete it; a container name matching this agent's own naming convention
  * alone is a closed-alphabet pattern match, not proof this agent process
  * actually created that exact container; and even a genuine
@@ -4014,11 +3941,24 @@ async function executeWindowsIisRenewJob({
   const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
   const windowsExecFileImpl = executionContext.windowsExecFileImpl;
   const windowsConnectImpl = executionContext.windowsConnectImpl;
+  const issuer = createAcmeIssuer({
+    acmeKind,
+    argv: commandVerdict.argv,
+    caEndpoint: job.caEndpoint,
+    preferredChain: resolveJobPreferredChain(job),
+    eabCredentials,
+    stateDir,
+    scratchDir: execution.keysDir,
+    jobId,
+    checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
+    execFileImpl: executionContext.acmeExecFileImpl,
+    info: emitInfo,
+  });
 
   // Steps 1-2: CNG-native key + CSR. The private key never exists as a
   // file (it is a CNG key handle inside containerName); only the CSR
-  // (public material) is ever written to disk, at the same job-scoped
-  // csrPath the ACME adapter already expects below.
+  // (public material) is ever written to disk, by the issuer, as job-scoped
+  // scratch it removes again.
   {
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -4086,113 +4026,28 @@ async function executeWindowsIisRenewJob({
         `issuance (non-fatal, continuing): ${err.message}`,
     );
   }
-  fs.mkdirSync(execution.keysDir, { recursive: true });
-  const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
-  fs.writeFileSync(csrPath, csrResult.csrPem, { mode: 0o600 });
-
-  const stagedCertPath = path.join(execution.keysDir, `${jobId}.cert.pem`);
-  const stagedCertPaths = resolveCertificateOutputPaths(stagedCertPath);
-
   let certificatePem;
   try {
-    // Step 3: ACME renewal, unmodified from executeRenewJob's file-based
-    // path -- the adapter only ever sees a csrPath file, never how the CSR
-    // inside it was produced.
+    // Step 3: issuance. The issuer only ever sees the CSR, never how it was
+    // produced, so this is the same ACME order the file-based path places.
     {
       const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
       if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
     }
-    if (typeof onBeforeMutation === "function") onBeforeMutation("acme");
-    emitInfo(
-      `job ${jobId}: starting ACME order (${acmeKind}) against ${job.caEndpoint} for ${domains.join(", ")}`,
+    if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
+    const issuance = assertIssuanceOutcome(
+      await issuer.submit({ csrPem: csrResult.csrPem, domains }),
     );
-    const adapter = createAcmeAdapter({
-      kind: acmeKind,
-      commandProfile: { argv: commandVerdict.argv },
-      execFileImpl: executionContext.acmeExecFileImpl,
-    });
-    const renewalOpts = {
-      caEndpoint: job.caEndpoint,
-      domains,
-      csrPath,
-      outCertPath: stagedCertPath,
-      stateDir,
-      checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
-    };
-    if (typeof job.preferredChain === "string" && job.preferredChain.length > 0) {
-      renewalOpts.preferredChain = job.preferredChain;
-    } else if (
-      typeof job?.renewalProfile?.preferredChain === "string" &&
-      job.renewalProfile.preferredChain.length > 0
-    ) {
-      renewalOpts.preferredChain = job.renewalProfile.preferredChain;
+    await reportIssuanceEvidence(client, jobId, issuance);
+    if (issuance.outcome !== "issued") {
+      return { ...resultForUnissuedOutcome(issuance), keyRotated: null };
     }
-    if (eabCredentials) {
-      renewalOpts.eabKid = eabCredentials.eabKid;
-      renewalOpts.eabHmacKey = eabCredentials.eabHmacKey;
-    }
-    const renewal = await adapter.runRenewal(renewalOpts);
-    if (renewal.allowed === false) {
-      return {
-        status: "rejected",
-        keyRotated: null,
-        rejectionReason: renewal.rejectionReason,
-        errorMessage: boundErrorMessage(renewal.detail),
-      };
-    }
-    if (renewal.renewed !== true) {
-      await reportStepEvidence(client, jobId, [
-        buildEvidenceItem({
-          eventType: "validation.failed",
-          observedAt: new Date().toISOString(),
-          summary: `ACME renewal step failed for job ${jobId} (exit code ${renewal.exitCode}).`,
-          metadata: [
-            { name: "step", value: "acme" },
-            { name: "exitCode", value: renewal.exitCode },
-            { name: "stderrExcerpt", value: boundMetadataExcerpt(renewal.stderrExcerpt) },
-            { name: "stdoutExcerpt", value: boundMetadataExcerpt(renewal.stdoutExcerpt) },
-          ],
-        }),
-      ]);
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `acme step failed with exit code ${renewal.exitCode}: ${acmeFailureDetail(renewal)}`,
-        ),
-      };
-    }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "validation.passed",
-        observedAt: new Date().toISOString(),
-        summary: `ACME renewal step succeeded for job ${jobId}.`,
-        metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
-      }),
-    ]);
-    emitInfo(`job ${jobId}: ACME order succeeded`);
-
-    const staged = readStagedCertificateChain(stagedCertPaths);
-    if (staged.error) {
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `acme step reported success but produced no certificate file: ${staged.error}`,
-        ),
-      };
-    }
-    certificatePem = staged.pem;
+    certificatePem = issuance.certificatePem;
   } finally {
-    // The CSR is public material, but it is job-scoped scratch: remove it.
     // Unlike the file-based path, there is no staged private key to worry
-    // about leaking here -- the CNG key never left the store.
-    fs.rmSync(csrPath, { force: true });
-    for (const stagedArtifact of Object.values(stagedCertPaths)) {
-      fs.rmSync(stagedArtifact, { force: true });
-    }
+    // about leaking here: the CNG key never left the store.
     // certificatePem is only ever assigned on the success path above,
-    // just before this finally runs; if the ACME step was rejected,
+    // just before this finally runs; if issuance was refused,
     // failed, or produced no certificate (every early `return` above), the
     // CNG key container generateCsrViaCng just created is now orphaned --
     // never enrolled, never bound to anything, and (unlike a superseded

@@ -1,6 +1,6 @@
 param(
   [ValidateSet('Up','Test','Status','Stop')][string]$Action = 'Status',
-  [ValidatePattern('^tt-wildcard-ux-[a-z0-9-]+$')][string]$Project = 'tt-wildcard-ux-20261009-r4',
+  [ValidatePattern('^tt-wildcard-ux-[a-z0-9-]+$')][string]$Project = 'tt-wildcard-ux-20261009-merge2',
   [ValidateSet('all','setup','publish','bindings','rejection','authorization','recovery','repair','status')][string]$Phase = 'all',
   [switch]$BuildImages
 )

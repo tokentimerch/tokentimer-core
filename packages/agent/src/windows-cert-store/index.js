@@ -40,8 +40,8 @@
  * qualified-capabilities manifest was updated in the same change that
  * flipped os-store-managed to agent-deployable, per decision 14 / the
  * gated-capabilities module's own doc comment. The addstore/repairstore
- * non-default-store mirror path is unit-tested only (not yet real-host
- * verified); every real-host pass so far targeted the default "My" store.
+ * non-default-store mirror path (e.g. WebHosting) is also real-host
+ * verified via the nondefault-store-verify driver.
  */
 
 const childProcess = require("node:child_process");
@@ -338,12 +338,14 @@ function removeIssuedContainerRecord({ stateDir, containerName }) {
   }
 }
 
+// KeyUsage: digitalSignature + keyEncipherment for RSA. An ECDSA key cannot
+// encipher, so EC requests ask for digitalSignature only.
 const SUPPORTED_KEY_ALGORITHMS = Object.freeze({
-  "rsa-2048": Object.freeze({ keyAlgorithm: "RSA", keyLength: 2048 }),
-  "rsa-3072": Object.freeze({ keyAlgorithm: "RSA", keyLength: 3072 }),
-  "rsa-4096": Object.freeze({ keyAlgorithm: "RSA", keyLength: 4096 }),
-  "ec-p256": Object.freeze({ keyAlgorithm: "ECDSA_P256", keyLength: 256 }),
-  "ec-p384": Object.freeze({ keyAlgorithm: "ECDSA_P384", keyLength: 384 }),
+  "rsa-2048": Object.freeze({ keyAlgorithm: "RSA", keyLength: 2048, keyUsage: "0xa0" }),
+  "rsa-3072": Object.freeze({ keyAlgorithm: "RSA", keyLength: 3072, keyUsage: "0xa0" }),
+  "rsa-4096": Object.freeze({ keyAlgorithm: "RSA", keyLength: 4096, keyUsage: "0xa0" }),
+  "ec-p256": Object.freeze({ keyAlgorithm: "ECDSA_P256", keyLength: 256, keyUsage: "0x80" }),
+  "ec-p384": Object.freeze({ keyAlgorithm: "ECDSA_P384", keyLength: 384, keyUsage: "0x80" }),
 });
 const SUPPORTED_KEY_ALGORITHM_NAMES = Object.freeze(
   Object.keys(SUPPORTED_KEY_ALGORITHMS),
@@ -437,6 +439,26 @@ function buildContainerName(jobId) {
   return name;
 }
 
+/** Lowercase UUID, as the job-payload contract defines enrollmentId. */
+const ENROLLMENT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Container name for an AD CS enrollment (ADR-0014 decision 7): one
+ * enrollment owns one key, so the name is deterministic and recovery can
+ * find the key from the enrollment id alone. The id is validated, never
+ * sanitized, so two enrollments can never map to the same container. It
+ * cannot collide with buildContainerName either: those end in 8 hex
+ * characters, a UUID ends in 12.
+ * @param {string} enrollmentId
+ * @returns {string}
+ */
+function buildEnrollmentContainerName(enrollmentId) {
+  if (typeof enrollmentId !== "string" || !ENROLLMENT_ID_PATTERN.test(enrollmentId)) {
+    throw buildError(`enrollmentId must be a lowercase UUID (got ${JSON.stringify(enrollmentId)})`);
+  }
+  return `${AGENT_CONTAINER_NAME_PREFIX}enr-${enrollmentId}`;
+}
+
 /**
  * Builds the certreq INF request descriptor for a CNG-native, non-exportable
  * machine-context key. Every value that ends up inside the INF text is
@@ -467,6 +489,9 @@ function buildCertreqInf({ commonName, altNames, containerName, algorithm }) {
   const uniqueAltNames = [...new Set([commonName, ...altNames])];
   const sanValue = uniqueAltNames.map((name) => `dns=${name}`).join("&");
 
+  // Never a [RequestAttributes] CertificateTemplate: with the Software KSP,
+  // certreq -new fails NTE_PROV_TYPE_NOT_DEF on schema v1/v2 templates, so an
+  // AD CS template travels at submit instead (ADR-0014 decision 7).
   const lines = [
     "[Version]",
     'Signature="$Windows NT$"',
@@ -480,12 +505,14 @@ function buildCertreqInf({ commonName, altNames, containerName, algorithm }) {
     "ProviderType = 0",
     `KeyLength = ${spec.keyLength}`,
     `KeyAlgorithm = ${spec.keyAlgorithm}`,
-    "KeyUsage = 0xa0",
+    `KeyUsage = ${spec.keyUsage}`,
     "Exportable = FALSE",
     "ExportableEncrypted = FALSE",
     "SMIME = FALSE",
     "PrivateKeyArchive = FALSE",
     "UserProtected = FALSE",
+    // The service session has no desktop; certreq must never wait on UI.
+    "Silent = TRUE",
     "RequestType = PKCS10",
     "HashAlgorithm = SHA256",
     "",
@@ -667,6 +694,10 @@ function ensureWorkDir(workDir) {
  * @param {string} input.commonName CSR/certificate subject CN (hostname).
  * @param {string[]} [input.altNames] additional dNSName SAN entries.
  * @param {string} input.jobId used to derive a readable, unique container name.
+ * @param {string} [input.enrollmentId] AD CS only: names the container after
+ *   the enrollment instead (see buildEnrollmentContainerName). When set,
+ *   a second generate for the same enrollment refuses if that container
+ *   already exists in the Software KSP (does not replace the first key).
  * @param {"rsa-2048"|"rsa-3072"|"rsa-4096"|"ec-p256"|"ec-p384"} [input.algorithm]
  * @param {string} input.workDir absolute, ACL-protected scratch directory
  *   for this enrollment's INF/.req files (caller-owned; see ensureWorkDir).
@@ -675,20 +706,24 @@ function ensureWorkDir(workDir) {
  * @param {string} [input.certreqPath] defaults to "certreq.exe" (resolved
  *   via PATH/System32, matching every other Windows-native tool this agent
  *   shells out to).
+ * @param {string} [input.certutilPath] defaults to "certutil.exe"; used only
+ *   for the enrollment-container existence probe.
  * @param {number} [input.timeoutMs]
  * @returns {Promise<
  *   { ok: true, csrPem: string, containerName: string, infPath: string, reqPath: string }
- *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
+ *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string, reason?: string, containerName?: string }
  * >}
  */
 async function generateCsrViaCng({
   commonName,
   altNames = [],
   jobId,
+  enrollmentId,
   algorithm = "rsa-2048",
   workDir,
   execFileImpl = childProcess.execFile,
   certreqPath = "certreq.exe",
+  certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   if (!isNonEmptyString(workDir)) {
@@ -702,7 +737,49 @@ async function generateCsrViaCng({
   }
   assertSafeArgvElements("certreqPath", [certreqPath]);
 
-  const containerName = buildContainerName(jobId);
+  const containerName =
+    enrollmentId === undefined ? buildContainerName(jobId) : buildEnrollmentContainerName(enrollmentId);
+
+  // Enrollment names are deterministic. A second -new under the same name
+  // can replace or strand the first key; refuse before certreq runs.
+  if (enrollmentId !== undefined) {
+    if (!isNonEmptyString(certutilPath)) {
+      throw buildError("certutilPath must be a non-empty string");
+    }
+    assertSafeArgvElements("certutilPath", [certutilPath]);
+    const listArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"];
+    assertSafeArgvElements("listArgv", listArgv);
+    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs);
+    if (listing.exitCode !== 0) {
+      return {
+        ok: false,
+        exitCode: listing.exitCode,
+        reason: "enrollment_container_probe_failed",
+        containerName,
+        stdoutExcerpt: boundAndRedactExcerpt(listing.stdout),
+        stderrExcerpt: boundAndRedactExcerpt(listing.stderr),
+      };
+    }
+    // `certutil -key <name>` exits 0 even when the key is gone; match the
+    // full Software KSP listing line by line instead.
+    const present = String(listing.stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .includes(containerName);
+    if (present) {
+      return guardReturnValue({
+        ok: false,
+        exitCode: null,
+        reason: "enrollment_container_exists",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: boundAndRedactExcerpt(
+          `enrollment container ${containerName} already exists; refusing a second certreq -new`,
+        ),
+      });
+    }
+  }
+
   const infText = buildCertreqInf({ commonName, altNames, containerName, algorithm });
 
   ensureWorkDir(workDir);
@@ -713,7 +790,9 @@ async function generateCsrViaCng({
   fs.writeFileSync(infPath, infText, { encoding: "utf8", flag: "wx" });
 
   try {
-    const argv = [certreqPath, "-q", "-new", infPath, reqPath];
+    // MachineKeySet already implies machine context; -machine states it for
+    // certreq too, so -new and -accept can never disagree under LocalSystem.
+    const argv = [certreqPath, "-q", "-machine", "-new", infPath, reqPath];
     assertSafeArgvElements("argv", argv);
     const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
 
@@ -770,10 +849,8 @@ async function generateCsrViaCng({
  * retrievable from targetStore afterward (see
  * mirrorAcceptedCertificateToStore's own doc comment, step 4) -- this
  * function's success therefore never rests on certutil's exit codes alone.
- * NOTE: only the default-store (`My`) path has been verified against a
- * real Windows host so far; the addstore/repairstore/verify sequence for a
- * non-default store is unit-tested against a stubbed certutil, not yet
- * real-host verified (tracked as a follow-up).
+ * Both the default-store (`My`) path and the non-default-store mirror
+ * (WebHosting via addstore/repairstore/verify) are real-host verified.
  *
  * The resulting store thumbprint is computed locally from the certificate
  * bytes (a Windows thumbprint IS sha1(DER)), not parsed from certreq's own
@@ -827,7 +904,7 @@ async function acceptCertificateViaCng({
   fs.writeFileSync(certPath, certificatePem, { encoding: "utf8", flag: "wx" });
 
   try {
-    const argv = [certreqPath, "-q", "-accept", certPath];
+    const argv = [certreqPath, "-q", "-machine", "-accept", certPath];
     assertSafeArgvElements("argv", argv);
     const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
 
@@ -1317,6 +1394,7 @@ module.exports = {
   CERTREQ_ACCEPT_DEFAULT_STORE,
   THUMBPRINT_PATTERN,
   buildContainerName,
+  buildEnrollmentContainerName,
   isAgentOwnedContainerName,
   issuedContainerRecordDir,
   issuedContainerRecordPath,

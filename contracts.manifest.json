@@ -266,6 +266,36 @@
           "status": "existing"
         },
         {
+          "id": "certops-enrollment-snapshot-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/enrollment-snapshot.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-enrollment-result-contract-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/enrollment-result-contract.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-adcs-preflight-payload-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/adcs-preflight-payload.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-adcs-preflight-result-contract-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/adcs-preflight-result-contract.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-adcs-contracts-test",
+          "kind": "test",
+          "path": "tests/unit/certops-adcs-contracts.test.js",
+          "status": "existing"
+        },
+        {
           "id": "certops-route-compat-contract",
           "kind": "spec",
           "path": "packages/contracts/api/certops-route-compat.contract.json",

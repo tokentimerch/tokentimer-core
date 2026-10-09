@@ -9,6 +9,7 @@
 // store) fails and leaves the CNG key container permanently orphaned.
 //
 // Usage: node windows-retention-interrupted-cleanup.js <caConfig> <workDir>
+//   Against an enterprise CA, set TT_VERIFY_CA_TEMPLATE to an auto-issue template.
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -17,6 +18,11 @@ const { execFileSync } = require("node:child_process");
 const modRoot = "C:\\TokenTimerAgentTest\\src";
 const certStore = require(path.join(modRoot, "windows-cert-store", "index.js"));
 const { generateCsrViaCng, acceptCertificateViaCng, removeCertificateAndKeyContainer } = certStore;
+
+// An enterprise CA needs the template at submit; a standalone CA takes none.
+const SUBMIT_TEMPLATE_ARGS = process.env.TT_VERIFY_CA_TEMPLATE
+  ? ["-attrib", `CertificateTemplate:${process.env.TT_VERIFY_CA_TEMPLATE}`]
+  : [];
 
 function runCaptured(cmd, args) {
   try {
@@ -50,7 +56,7 @@ async function main() {
   const rspPath = path.join(workDir, "iis10.rsp");
   for (const p of [cerPath, rspPath]) { try { fs.unlinkSync(p); } catch { /* fine */ } }
 
-  const submit = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-f", "-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath, cerPath]);
   let requestId = null;
   const idMatch = `${submit.stdout}\n${submit.stderr}`.match(/RequestId:\s*(\d+)/i);
   if (idMatch) requestId = idMatch[1];
@@ -129,7 +135,7 @@ async function main() {
   const cerPath2 = path.join(workDir, "iis10b.cer");
   const rspPath2 = path.join(workDir, "iis10b.rsp");
   for (const p of [cerPath2, rspPath2]) { try { fs.unlinkSync(p); } catch { /* fine */ } }
-  const submit2 = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath2, cerPath2]);
+  const submit2 = runCaptured("certreq", ["-f", "-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath2, cerPath2]);
   let requestId2 = null;
   const idMatch2 = `${submit2.stdout}\n${submit2.stderr}`.match(/RequestId:\s*(\d+)/i);
   if (idMatch2) requestId2 = idMatch2[1];

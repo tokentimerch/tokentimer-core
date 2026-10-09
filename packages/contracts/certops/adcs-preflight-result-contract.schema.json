@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/adcs-preflight-result-contract.schema.json",
+  "title": "CertOps AD CS Preflight Result",
+  "description": "Typed result of an adcs-preflight job, reported in resultBody.preflightResult (ADR-0014 decision 5). Parsed fields only, size-capped, never raw command output. The operator confirms one of caCertificates[].keySha256, which becomes caKeySha256 on a new issuer version. A preflight refused by agent-local enrollment rules reports status rejected with issuer_not_allowlisted and no preflightResult, since no CA was contacted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caConfig", "template", "templateCheck", "caCheck", "caCertificates"],
+  "properties": {
+    "caConfig": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/caConfig"
+    },
+    "template": {
+      "$ref": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json#/properties/template"
+    },
+    "templateCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "reasons"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["safe", "unsafe", "unreadable"]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "eku_not_server_auth_only",
+              "application_policy_not_server_auth_only",
+              "schema_version_1",
+              "template_unreadable"
+            ]
+          }
+        },
+        "schemaVersion": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 16
+        },
+        "templateOid": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "pattern": "^[0-2](\\.(0|[1-9][0-9]{0,9})){1,63}$",
+          "description": "msPKI-Cert-Template-OID. Issued certificates must carry it in their template extension (ADR-0014 decision 6)."
+        },
+        "minimalKeySize": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "asymmetricAlgorithm": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9_]{1,32}$",
+          "description": "Key algorithm a schema version 3 or later template names, for example RSA or ECDSA_P256. Null when the template names none."
+        },
+        "enrolleeSuppliesSubject": {
+          "type": ["boolean", "null"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "verdict": { "const": "safe" } } },
+          "then": { "properties": { "reasons": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "verdict": { "enum": ["unsafe", "unreadable"] } } },
+          "then": { "properties": { "reasons": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "caCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "reasons", "operatorAttested"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["safe", "unsafe", "unreadable"]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "subject_alt_name_attribute_enabled",
+              "encrypted_requests_not_enforced",
+              "flags_unreadable",
+              "ca_unreachable"
+            ]
+          }
+        },
+        "operatorAttested": {
+          "type": "boolean",
+          "description": "True when the CA flags could not be read and agent-local policy carries an operator attestation for this CA instead."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "verdict": { "const": "safe" } } },
+          "then": { "properties": { "reasons": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "verdict": { "enum": ["unsafe", "unreadable"] } } },
+          "then": { "properties": { "reasons": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "caCertificates": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Every CA certificate the CA itself returned, in its own index order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["certificateB64", "keySha256", "thumbprintSha1", "notBefore", "notAfter"],
+        "properties": {
+          "certificateB64": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 8192,
+            "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+            "description": "Standard padded base64 of the DER certificate. Public CA material only."
+          },
+          "keySha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 (hex) of the certificate's DER SubjectPublicKeyInfo, the value an issuer pins as caKeySha256."
+          },
+          "thumbprintSha1": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{40}$"
+          },
+          "notBefore": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "notAfter": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
