@@ -37,6 +37,7 @@ function hexHresult(code) {
  * @param {AdcsPhase} params.phase
  * @param {boolean} params.responsePresent
  * @param {boolean} params.certificatePresent
+ * @param {boolean} params.chainPresent
  * @param {number|null|undefined} params.exitCode certreq process exit / HRESULT
  * @param {{ disposition?: string, requestId?: number, certificateDerB64?: string, error?: string }|null} params.cmc
  */
@@ -44,22 +45,37 @@ function mapAdcsDisposition({
   phase,
   responsePresent,
   certificatePresent,
+  chainPresent = false,
   exitCode,
   cmc,
 }) {
   const hr = toUint32(exitCode);
   const hrText = hexHresult(exitCode);
 
-  // Narrow not_submitted: RPC pair + no artefacts on submit only.
+  // Narrow not_submitted: RPC pair + no response/certificate/chain on submit.
   if (
     phase === "submit" &&
     !responsePresent &&
     !certificatePresent &&
+    !chainPresent &&
     (hr === HRESULT.RPC_S_SERVER_UNAVAILABLE || hr === HRESULT.RPC_S_CALL_FAILED_DNE)
   ) {
     return {
       outcome: "not_submitted",
-      detail: `CA unreachable (${hrText}); no CMC response or certificate was written`,
+      detail: `CA unreachable (${hrText}); no CMC response, certificate, or chain was written`,
+      hresult: hr,
+    };
+  }
+
+  // RPC pair with any artefact written is uncertain (may have executed).
+  if (
+    phase === "submit" &&
+    (hr === HRESULT.RPC_S_SERVER_UNAVAILABLE || hr === HRESULT.RPC_S_CALL_FAILED_DNE) &&
+    (responsePresent || certificatePresent || chainPresent)
+  ) {
+    return {
+      outcome: "uncertain",
+      detail: `CA RPC failure (${hrText}) but a response/certificate/chain artefact was written`,
       hresult: hr,
     };
   }

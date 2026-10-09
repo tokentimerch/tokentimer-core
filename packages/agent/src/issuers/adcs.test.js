@@ -90,10 +90,23 @@ describe("mapAdcsDisposition", () => {
       phase: "submit",
       responsePresent: false,
       certificatePresent: false,
+      chainPresent: false,
       exitCode: HRESULT.RPC_S_SERVER_UNAVAILABLE,
       cmc: null,
     });
     assert.equal(m.outcome, "not_submitted");
+  });
+
+  it("maps RPC unavailable with a chain artefact to uncertain", () => {
+    const m = mapAdcsDisposition({
+      phase: "submit",
+      responsePresent: false,
+      certificatePresent: false,
+      chainPresent: true,
+      exitCode: HRESULT.RPC_S_SERVER_UNAVAILABLE,
+      cmc: null,
+    });
+    assert.equal(m.outcome, "uncertain");
   });
 });
 
@@ -235,6 +248,24 @@ describe("createAdcsIssuer", () => {
     });
     const outcome = await issuer.submit({ csrPem: CSR_PEM });
     assert.equal(outcome.outcome, "not_submitted");
+  });
+
+  it("submit maps RPC unavailable with a chain file to uncertain", async () => {
+    const err = new Error("rpc");
+    err.code = HRESULT.RPC_S_SERVER_UNAVAILABLE;
+    const issuer = makeIssuer({
+      execFileImpl: async (_bin, argv) => {
+        const chainPath = argv[argv.length - 2];
+        fs.writeFileSync(chainPath, "p7b-bytes");
+        throw err;
+      },
+      decodeCmcImpl: async () => {
+        throw new Error("should not decode");
+      },
+    });
+    const outcome = await issuer.submit({ csrPem: CSR_PEM });
+    assert.equal(outcome.outcome, "uncertain");
+    assert.match(outcome.detail, /artefact was written/);
   });
 
   it("retrieve refuses a mismatched pend token", async () => {

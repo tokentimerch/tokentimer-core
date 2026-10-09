@@ -133,7 +133,7 @@ function createAdcsIssuer({
     throw new TypeError("jobId is required");
   }
 
-  async function classifyAfterCertreq({ phase, workDir, cerPath, rspPath, exitCode, killed }) {
+  async function classifyAfterCertreq({ phase, cerPath, chainPath, rspPath, exitCode, killed }) {
     if (killed) {
       return {
         outcome: "uncertain",
@@ -143,6 +143,7 @@ function createAdcsIssuer({
 
     const responsePresent = fs.existsSync(rspPath);
     const certificatePresent = fs.existsSync(cerPath);
+    const chainPresent = fs.existsSync(chainPath);
     let cmc = null;
 
     if (responsePresent) {
@@ -165,6 +166,7 @@ function createAdcsIssuer({
       phase,
       responsePresent,
       certificatePresent,
+      chainPresent,
       exitCode,
       cmc,
     });
@@ -236,8 +238,8 @@ function createAdcsIssuer({
       const ran = await runCertreq(execFileImpl, argv, timeoutMs);
       return classifyAfterCertreq({
         phase: "submit",
-        workDir,
         cerPath,
+        chainPath,
         rspPath,
         exitCode: ran.exitCode,
         killed: ran.killed,
@@ -275,8 +277,8 @@ function createAdcsIssuer({
       const ran = await runCertreq(execFileImpl, argv, timeoutMs);
       const outcome = await classifyAfterCertreq({
         phase: "retrieve",
-        workDir,
         cerPath,
+        chainPath,
         rspPath,
         exitCode: ran.exitCode,
         killed: ran.killed,
