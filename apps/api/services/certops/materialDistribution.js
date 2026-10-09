@@ -31,12 +31,12 @@ function enqueueDistributionEvent(client, workspaceId, eventType, dedupeKey, pay
   return require("./outbox").enqueueOutboxEvent({ client,workspaceId,eventType,dedupeKey,payload });
 }
 
-async function lockGroup(client, workspaceId, groupId) {
+async function lockGroup(client, workspaceId, groupId, { allowInactive = false } = {}) {
   const group = (await client.query(`SELECT g.*, p.ended_at FROM certops_distribution_groups g
     JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
     WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p`, [workspaceId, groupId])).rows[0];
   if (!group) fail("CERTOPS_DISTRIBUTION_NOT_FOUND", 404);
-  if (group.state !== "active" || group.ended_at) fail("CERTOPS_DISTRIBUTION_INACTIVE");
+  if (!allowInactive && (group.state !== "active" || group.ended_at)) fail("CERTOPS_DISTRIBUTION_INACTIVE");
   return group;
 }
 

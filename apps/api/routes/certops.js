@@ -4138,7 +4138,10 @@ router.post("/api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile
       workspaceId: req.workspace.id, certificateId: req.params.certId, actorUserId: req.user.id,
     });
   }));
-router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...csrWriteGuards,
+// Distribution authorization is an attributable human decision. Internal
+// workers expand approved intents through the outbox, never these mutations.
+const distributionWriteGuards = [...csrWriteGuards, requireCertOpsSessionUser];
+router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
@@ -4147,16 +4150,16 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumer
   csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
   csrRoute(async (req) => ({ versions: (await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,req.params.groupId])).rows })));
-router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...csrWriteGuards,
+router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.putBinding({ workspaceId:req.workspace.id,groupId:req.params.groupId,
     bindingId:req.params.bindingId,binding:req.body,actorUserId:req.user?.id })));
-router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...csrWriteGuards,
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute(async (req) => ({ statusCode:201,body:await distribution.requestRollout({ workspaceId:req.workspace.id,
     groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
     actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
-router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...csrWriteGuards,
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.setRolloutState({ workspaceId:req.workspace.id,groupId:req.params.groupId,
     rolloutId:req.params.rolloutId,state:req.body?.state,actorUserId:req.user?.id })));

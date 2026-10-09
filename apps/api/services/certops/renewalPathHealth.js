@@ -658,7 +658,11 @@ const CERTIFICATE_ROW_SELECT = `
     FROM managed_certificates mc
     LEFT JOIN certificate_profiles cp
       ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
-    LEFT JOIN certops_distribution_groups dg ON dg.workspace_id=mc.workspace_id AND dg.managed_certificate_id=mc.id AND dg.state='active'
+    LEFT JOIN certops_management_periods mp
+      ON mp.workspace_id=mc.workspace_id AND mp.managed_certificate_id=mc.id AND mp.ended_at IS NULL
+    LEFT JOIN certops_distribution_groups dg
+      ON dg.workspace_id=mp.workspace_id AND dg.managed_certificate_id=mp.managed_certificate_id
+     AND dg.management_period_id=mp.id AND dg.state='active'
 `;
 
 async function resolveRenewalPathForCertificate({
