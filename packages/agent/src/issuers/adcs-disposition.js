@@ -90,16 +90,21 @@ function mapAdcsDisposition({
 
   switch (cmc.disposition) {
     case "issued": {
-      if (typeof cmc.certificateDerB64 !== "string" || cmc.certificateDerB64.length === 0) {
+      const hasDer =
+        typeof cmc.certificateDerB64 === "string" && cmc.certificateDerB64.length > 0;
+      // ADR-0014: CMC success needs a certificate. The helper may export
+      // DER, or certreq may have written the .cer the 21.17 hash already
+      // matched. Either source is enough to call this issued.
+      if (!hasDer && !certificatePresent) {
         return {
           outcome: "uncertain",
-          detail: "CMC success without certificateDerB64",
+          detail: "CMC success without certificateDerB64 or a certificate file",
           hresult: hr,
         };
       }
       return {
         outcome: "issued",
-        certificateDerB64: cmc.certificateDerB64,
+        ...(hasDer ? { certificateDerB64: cmc.certificateDerB64 } : {}),
         hresult: hr,
       };
     }

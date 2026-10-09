@@ -28,6 +28,29 @@ describe("mapAdcsDisposition", () => {
     assert.equal(m.outcome, "issued");
   });
 
+  it("maps CMC issued with a .cer and no derB64 to issued", () => {
+    const m = mapAdcsDisposition({
+      phase: "submit",
+      responsePresent: true,
+      certificatePresent: true,
+      exitCode: 0,
+      cmc: { disposition: "issued" },
+    });
+    assert.equal(m.outcome, "issued");
+    assert.equal(m.certificateDerB64, undefined);
+  });
+
+  it("maps CMC issued with neither der nor .cer to uncertain", () => {
+    const m = mapAdcsDisposition({
+      phase: "submit",
+      responsePresent: true,
+      certificatePresent: false,
+      exitCode: 0,
+      cmc: { disposition: "issued" },
+    });
+    assert.equal(m.outcome, "uncertain");
+  });
+
   it("maps pending only with exit 0", () => {
     assert.equal(
       mapAdcsDisposition({
@@ -227,6 +250,27 @@ describe("createAdcsIssuer", () => {
       decodeCmcImpl: async () => ({
         ok: true,
         result: { disposition: "issued", certificateDerB64: der.toString("base64") },
+      }),
+    });
+    const outcome = await issuer.submit({ csrPem: CSR_PEM });
+    assertIssuanceOutcome(outcome);
+    assert.equal(outcome.outcome, "issued");
+    assert.equal(outcome.certificatePem, derB64ToPem(der.toString("base64")));
+  });
+
+  it("submit issued falls back to a DER .cer when CMC omits derB64", async () => {
+    const der = Buffer.from("leaf-from-cer");
+    const issuer = makeIssuer({
+      execFileImpl: async (_bin, argv) => {
+        const cer = argv[argv.length - 3];
+        const rsp = argv[argv.length - 1];
+        fs.writeFileSync(cer, der);
+        fs.writeFileSync(rsp, "fake-rsp");
+        return { stdout: "", stderr: "" };
+      },
+      decodeCmcImpl: async () => ({
+        ok: true,
+        result: { disposition: "issued" },
       }),
     });
     const outcome = await issuer.submit({ csrPem: CSR_PEM });
