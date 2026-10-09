@@ -4,7 +4,10 @@
 //
 // Usage:
 //
-//	tokentimer-adcs-cmc --response <file> --ca-key-sha256 <hex>
+//	tokentimer-adcs-cmc --response <file> --ca-key-sha256 <hex> [--ca-cert <file>]
+//
+// --ca-cert is required for pending/denied responses that name the signer by
+// issuer/serial only (no certificate bag). Issued responses may embed the CA.
 //
 // Exit codes:
 //
@@ -14,7 +17,9 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -32,11 +37,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	responsePath := fs.String("response", "", "path to the CMC response bytes")
 	caKey := fs.String("ca-key-sha256", "", "hex SHA-256 of the pinned CA public key")
+	caCertPath := fs.String("ca-cert", "", "PEM/DER CA certificate for signature verify (required when the response omits the cert bag)")
 	if err := fs.Parse(args); err != nil {
 		return exitFail
 	}
 	if *responsePath == "" || *caKey == "" {
-		fmt.Fprintln(stderr, "usage: tokentimer-adcs-cmc --response <file> --ca-key-sha256 <hex>")
+		fmt.Fprintln(stderr, "usage: tokentimer-adcs-cmc --response <file> --ca-key-sha256 <hex> [--ca-cert <file>]")
 		return exitFail
 	}
 	raw, err := os.ReadFile(*responsePath)
@@ -44,7 +50,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "read response: %v\n", err)
 		return exitFail
 	}
-	result, err := cmccore.Decode(raw, *caKey)
+	var caCerts []*x509.Certificate
+	if *caCertPath != "" {
+		cert, err := loadCert(*caCertPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "read ca-cert: %v\n", err)
+			return exitFail
+		}
+		caCerts = append(caCerts, cert)
+	}
+	result, err := cmccore.Decode(raw, *caKey, caCerts...)
 	if err != nil {
 		_ = json.NewEncoder(stdout).Encode(cmccore.Result{Error: err.Error()})
 		return exitFail
@@ -57,6 +72,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitUnknown
 	}
 	return exitOK
+}
+
+func loadCert(path string) (*x509.Certificate, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if block, _ := pem.Decode(raw); block != nil {
+		raw = block.Bytes
+	}
+	return x509.ParseCertificate(raw)
 }
 
 func main() {
