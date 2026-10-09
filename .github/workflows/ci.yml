@@ -7,12 +7,6 @@ name: CI
 on:
   push:
     branches: [main, master]
-
-  pull_request:
-    branches: [main, master]
-    paths:
-      - 'deploy/helm/**'
-      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 permissions:
